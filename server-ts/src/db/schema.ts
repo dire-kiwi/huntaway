@@ -701,11 +701,20 @@ export function open(path: string): Conn {
     );
   }
   if (version < 92) {
+    // The linked host a profile's assistant runs on (see agent/assistant.ts), and whether a linked host's agents may use
+    // this board's tools (see hosts/uplink.ts).
+    batch("BEGIN;");
+    for (const [table, column, kind] of [["profiles", "assistant_host", "TEXT"], ["links", "uplink", "INTEGER NOT NULL DEFAULT 0"]]) {
+      if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
+    }
+    batch("PRAGMA user_version=92; COMMIT;");
+  }
+  if (version < 93) {
     // The folder each run's agent was started with (CLAUDE_CONFIG_DIR or CODEX_HOME, '' for the agent's default), so a
     // thread goes on in the folder its conversation is in after its config's folder changes (see db.task_config_dir).
     // Only if it isn't there, in case another migration takes this version first.
     const add = has_column(conn, "runs", "config_dir") ? "" : "ALTER TABLE runs ADD COLUMN config_dir TEXT;";
-    batch(`BEGIN; ${add} PRAGMA user_version=92; COMMIT;`);
+    batch(`BEGIN; ${add} PRAGMA user_version=93; COMMIT;`);
   }
   return conn;
 }
@@ -717,7 +726,7 @@ function parent_dir(path: string): string {
 }
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 92;
+export const VERSION = 93;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

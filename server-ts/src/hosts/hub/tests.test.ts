@@ -16,6 +16,9 @@ import * as release from "../../update/release.ts";
 import * as broker from "../broker.ts";
 import * as test_broker from "../broker/test_broker.ts";
 import { API_VERSION, VERSION } from "../proto.ts";
+import { read_jsonl } from "../../threads/examples.ts";
+import * as store from "../../threads/store.ts";
+import * as live from "../../threads/live.ts";
 import { dial_out, find_link, host_request, hub_url, link_http, list_hosts, spawn_outbound, tunnel_to, type LinkConn } from "../hub.ts";
 
 relay.test_timing();
@@ -374,4 +377,55 @@ test("the_join_command_dials_the_hub_where_the_browser_reached_it", () => {
   assert.equal(hub_url(s, brokered), "http://127.0.0.1:7878");
   s.broker_url = "https://broker.example.com/_broker/h/hub";
   assert.equal(hub_url(s, brokered), "https://broker.example.com/_broker/h/hub");
+});
+
+// HA-215: a linked host's thread kept as items, and its live thread events, through the hub, over either kind of link.
+test("a_linked_hosts_thread_and_its_events_are_relayed", async () => {
+  for (const kind of ["outbound", "inbound"]) {
+    const [hub, host] = [node("hub", "hub"), node("host", "laptop")];
+    if (kind === "outbound") {
+      const url = `http://${await serve(host)}`;
+      db.upsert_link(hub.db(), "host", "laptop", "outbound", url, "host-tok");
+      outbound(hub, outbound_link("host", url, "host-tok"));
+    } else {
+      api.router(host);
+      dial(host, `http://${await serve(hub)}`, "hub-hub");
+    }
+    await until(`the ${kind} link`, () => find_link(hub, "host"));
+    const p = db.insert_profile(host.db(), "personal", [], null);
+    const t = db.insert_task(host.db(), { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
+    const events = read_jsonl("thread.events.jsonl").filter((e: any) => e.type !== "delta" && e.type !== "thread.updated");
+    store.append(host.db(), t.id, events.map(({ thread_id: _t, seq: _s, ...e }: any) => e));
+
+    // Its routes, through the hub's path for the host.
+    const [status, state] = await call(hub, "GET", `/api/h/host/tasks/${t.id}/thread?limit=8`);
+    assert.equal(status, 200, `${kind}: ${JSON.stringify(state)}`);
+    assert.deepEqual(state, await call(host, "GET", `/api/tasks/${t.id}/thread?limit=8`).then(([, v]) => v), kind);
+    const [, page] = await call(hub, "GET", `/api/h/host/tasks/${t.id}/thread/events?after=20&limit=2`);
+    assert.deepEqual([page.events.map((e: any) => e.seq), page.more], [[21, 22], true], kind);
+    const body = Buffer.from(JSON.stringify({ type: "set_options", model: "opus" }));
+    const headers = { authorization: `Bearer ${hub.token}`, "content-type": "application/json" };
+    const a = await api.dispatch(hub, api.makeReq("POST", `/api/h/host/tasks/${t.id}/thread/commands`, headers, body));
+    assert.equal(a.status, 200, `${kind}: ${a.body}`);
+    assert.equal(db.get_task(host.db(), t.id)!.model, "opus", kind);
+    assert.equal((await call(hub, "GET", `/api/h/host/tasks/nope/thread`))[0], 404, kind);
+
+    // Its live events, tagged with its id.
+    const got: any[] = [];
+    const off = hub.hub_events.subscribe((v) => {
+      if (v?.type === "thread_event" || v?.type === "thread_resync") got.push(v);
+    });
+    const saved = store.append(host.db(), t.id, [{ type: "item.added", item: { id: "a9", type: "assistant_message", text: "" } }]);
+    live.send_events(host, t.id, saved);
+    live.send_delta(host, t.id, "a9", "text", "Hi");
+    live.send_resync(host, t.id);
+    await until(`${kind}: the events at the hub`, () => got.length >= 3);
+    off();
+    assert.deepEqual(got.map((v) => [v.type, v.host_id, v.task_id, v.event?.type ?? null, v.event?.seq ?? null]), [
+      ["thread_event", "host", t.id, "item.added", saved[0].seq],
+      ["thread_event", "host", t.id, "delta", saved[0].seq],
+      ["thread_resync", "host", t.id, null, null],
+    ], kind);
+    for (const f of cleanups.splice(0)) f();
+  }
 });

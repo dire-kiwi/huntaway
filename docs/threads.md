@@ -149,14 +149,22 @@ its events at all (a client catching up from before it takes a snapshot), and th
 to what a reconnecting client misses (a few hundred) or go by age only. With no log, items beside messages come to
 about 1.9 times today's `messages` (1.7 GB on this board).
 
+## The API
+
+[threads-api.md](threads-api.md) has the routes (a snapshot or window, pages of earlier items, the events after a
+seq, and commands), and the live events. What writes a thread's items sends its events to clients with
+`threads/live.ts`'s `send_events` once they're committed, streamed text with `send_delta` (which keeps the text so far
+in memory, so a window taken mid-message has it), and `send_resync` when it changes a thread in a way its log doesn't
+say (a rebuild).
+
 ## Status
 
 | Step | Task | State |
 | --- | --- | --- |
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
-| 2. The translator, and a dry run on a copy of the board | HA-214 | This change: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
+| 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
 | 3. Items written live, behind a setting | HA-216 | Not started |
-| 4. Thread API and live events | HA-215 | Not started |
+| 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). Live events start once step 3 writes items. |
 | 5. The UI on items | HA-218 | Not started |
 | 6. Readers on items | HA-217 | Not started |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
@@ -169,9 +177,10 @@ about 1.9 times today's `messages` (1.7 GB on this board).
 
 Left for later steps:
 
-- Live snapshots that include streamed text: the store doesn't apply deltas, so a client that connects mid-message gets
-  the text so far only from the server's memory (step 4).
-- Rebuilding a thread's items from its messages, keeping its seq going up (step 3).
+- Rebuilding a thread's items from its messages, keeping its seq going up, and sending `thread_resync` (step 3).
+- Sending the thread's events from the write points, once committed, and its deltas, and forgetting streamed text
+  (`live.forget_streamed`) when a run ends without saving it (step 3).
+- Saving `thread.updated` when the task's state changes: until then, a thread's state is read from its task (step 3 or 5).
 - A periodic `prune` of every thread's log: `append` prunes each thread as it writes (step 3).
 - How much of the event log to keep, and a rebuild that doesn't log (steps 3 and 7: see the dry run's sizes above).
 - Calling the translator from `add_message` and `update_message_data` (a permission or question's status), in the same

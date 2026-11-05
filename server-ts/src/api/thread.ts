@@ -19,6 +19,7 @@ import * as workflows from "../integrations/workflows.ts";
 import * as summary from "../review/summary.ts";
 import { def_str, json_map, opt_str, query_bool, query_int, query_opt_bool, req_str, body_rejection, def_bool } from "./extract.ts";
 import { create_task_inner } from "./new_task.ts";
+import * as live from "../threads/live.ts";
 
 /**
  * A thread's messages: all of them as a list, or with any of `before`, `after` (message ids) and `limit`, one page of
@@ -37,6 +38,42 @@ export async function list_messages(s: AppState, r: Req) {
   return { messages, more, subagents };
 }
 
+// ---------- the thread kept as items (API 114, docs/threads-api.md) ----------
+
+/**
+ * `GET /tasks/{id}/thread[?limit=N]`: the task's thread kept as items, as a Snapshot `{thread, items, requests, seq}`
+ * with the text streamed so far, or with `limit` a window of its last N items (with `start` and `context`). A 404 for
+ * a task without items.
+ */
+export async function get_thread(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  const limit = query_int(r, "limit", 0);
+  return live.window(s, task, limit ?? undefined);
+}
+
+/** `GET /tasks/{id}/thread/items?before=I[&limit=N]`: an ItemPage of the thread's items before index I (100 of them unless `limit` says). */
+export async function thread_items(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  const before = query_int(r, "before", 0);
+  if (before === null) throw ApiError.bad("before is required: the index of the window's start");
+  return live.page(s, task, before, query_int(r, "limit", 0) ?? live.PAGE_ITEMS);
+}
+
+/**
+ * `GET /tasks/{id}/thread/events?after=SEQ[&limit=N]`: `{events, more, seq}`, the thread's saved events after SEQ (0
+ * unless given), at most N and 1000; with `resync: true` instead when the log no longer goes back that far.
+ */
+export async function thread_events(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  return live.events(s, task, query_int(r, "after", 0) ?? 0, query_int(r, "limit", 1) ?? live.MAX_EVENTS);
+}
+
+/** `POST /tasks/{id}/thread/commands`: a protocol Command for the task's thread (see threads/live.ts's command). */
+export async function thread_command(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  return await live.command(s, task, r.body);
+}
+
 export async function send_message(s: AppState, r: Req) {
   const id = r.params.id;
   const text = def_str(json_map(r), "text");
@@ -49,17 +86,32 @@ export async function send_message(s: AppState, r: Req) {
   return t;
 }
 
-/** `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's asked for. */
+/**
+ * `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's
+ * asked for. API 112: with its `host_id`, which is the profile's assistant host's when it has one, where the request goes
+ * (see assistant::on_its_host), unless `local` is set: a hub that routed the request here sets it, and it's this host's
+ * then, whatever its profile's `assistant_host`.
+ */
 export async function get_assistant(s: AppState, r: Req) {
-  return assistant.get_or_create(s, r.params.id);
+  if (r.query.local === undefined) {
+    const t = await assistant.on_its_host(s, r.params.id, "GET");
+    if (t !== null) return t;
+  }
+  return assistant.with_host(s, assistant.get_or_create(s, r.params.id));
 }
 
 /**
  * `POST /profiles/{id}/assistant` (API 109): send the user's message to the profile's assistant, as `POST
- * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
+ * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task, on its assistant host if it
+ * has one, as `GET` does (API 112).
  */
 export async function send_to_assistant(s: AppState, r: Req) {
-  return assistant.send(s, r.params.id, def_str(json_map(r), "text"));
+  const text = def_str(json_map(r), "text");
+  if (r.query.local === undefined) {
+    const t = await assistant.on_its_host(s, r.params.id, "POST", { text });
+    if (t !== null) return t;
+  }
+  return assistant.with_host(s, assistant.send(s, r.params.id, text));
 }
 
 /** Answer a question an agent asked with request_user_input, from its card (API 64): the answer is sent as the user's message. */

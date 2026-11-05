@@ -158,6 +158,8 @@ export interface Profile {
    * projects can say otherwise.
    */
   require_pr_approval: boolean;
+  /** The linked host its assistant runs on (API 112, a link id; see agent/assistant.ts). Null for this host. */
+  assistant_host: string | null;
   created_at: string;
 }
 
@@ -187,6 +189,7 @@ export function Profile_from_row(r: any): Profile {
     summarizer: json_opt(r.summarizer, Reviewer_from_json),
     merge_approval: !!r.merge_approval,
     require_pr_approval: !!r.require_pr_approval,
+    assistant_host: r.assistant_host ?? null,
     created_at: r.created_at,
   });
   return p;
@@ -369,6 +372,7 @@ export function task_is_codex(c: Conn, task: Task): boolean {
 const PROFILE_COLUMNS = [
   "name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled",
   "limit_wait", "limit_switch", "reviewers", "summarizer", "summarizers", "merge_approval", "require_pr_approval",
+  "assistant_host",
 ];
 
 export function update_profile(c: Conn, id: string, fields: Array<[string, any]>): Profile | null {

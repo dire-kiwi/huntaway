@@ -3,7 +3,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { createServer as createNetServer } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -247,9 +247,40 @@ test("a_body_over_the_limit_is_answered_413_rather_than_reset", async () => {
   assert.equal(r.status, 413);
   assert.deepEqual(await r.json(), { error: "length limit exceeded" });
   assert.equal(r.headers.get("connection"), "close");
+  // HA-233: a client that writes the whole body before it reads (a slow writer, or fetch on a busy runner) got EPIPE
+  // rather than the 413, as the server answered when the limit was passed and closed the connection under its writes.
+  const slow = await write_then_read(port, "/api/profiles", token, Buffer.from(big));
+  assert.equal(slow.write_error, null);
+  assert.match(slow.answer, /^HTTP\/1\.1 413 /);
+  assert.match(slow.answer, /\r\nconnection: close\r\n/i);
+  assert.match(slow.answer, /\{"error":"length limit exceeded"\}$/);
   // And the server answers the next one.
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
 });
+
+/**
+ * POST `body` over a socket that writes all of it, in pieces with pauses between, before reading anything back, and
+ * then reads to the end: the error a write got (EPIPE, say), if one did, and the answer.
+ */
+async function write_then_read(port: number, path: string, token: string, body: Buffer) {
+  const sock = connect(port, "127.0.0.1");
+  await new Promise<void>((r, j) => sock.once("connect", r).once("error", j));
+  sock.pause();
+  const got: Buffer[] = [];
+  sock.on("data", (c: Buffer) => got.push(c));
+  const closed = new Promise<void>((r) => sock.once("close", () => r()));
+  let write_error: string | null = null;
+  sock.on("error", (e: any) => (write_error ??= e.code ?? String(e)));
+  const write = (b: Buffer | string) => new Promise<void>((r) => sock.write(b, (e) => (e && (write_error ??= (e as any).code ?? String(e)), r())));
+  await write(`POST ${path} HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer ${token}\r\ncontent-type: application/json\r\ncontent-length: ${body.length}\r\n\r\n`);
+  for (let i = 0; i < body.length && write_error === null; i += 256 << 10) {
+    await write(body.subarray(i, i + (256 << 10)));
+    await sleep(20);
+  }
+  sock.resume();
+  await closed;
+  return { write_error, answer: Buffer.concat(got).toString("utf8") };
+}
 
 // ---------- a bug doesn't take the board down (HA-182) ----------
 
