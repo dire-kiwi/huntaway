@@ -48,20 +48,22 @@ export function start() {
   hist.enable();
   // A timer that should fire every TICK ms: when it fires late, the thread was busy for the difference.
   let last = performance.now();
-  let last_busy: string | null = null;
+  // The longest work since the last tick: `busy` is cleared when it ends, before the timer sees the stall.
+  let longest: { what: string; ms: number } | null = null;
   ticker = setInterval(() => {
     const t = performance.now();
     const late = t - last - TICK;
     last = t;
-    if (late >= log_ms() && log_ms() > 0) stalled(late, last_busy ?? busy);
-    last_busy = null;
+    if (late >= log_ms() && log_ms() > 0) stalled(late, longest?.what ?? busy);
+    longest = null;
   }, TICK);
   ticker.unref();
-  // `busy` is cleared when the work ends, before the timer sees the stall, so it's kept for the next tick.
-  note = (what) => (last_busy = what);
+  note = (what, ms) => {
+    if (!longest || ms > longest.ms) longest = { what, ms };
+  };
 }
 
-let note: (what: string) => void = () => {};
+let note: (what: string, ms: number) => void = () => {};
 
 function stalled(ms: number, what: string | null) {
   const s: Stall = { at: new Date().toISOString(), ms: Math.round(ms), busy: what };
@@ -78,7 +80,8 @@ export function busy_with<T>(what: string, f: () => T): T {
   try {
     return f();
   } finally {
-    if (performance.now() - t0 >= 1) note(what);
+    const ms = performance.now() - t0;
+    if (ms >= 1) note(what, ms);
     busy = outer;
   }
 }
@@ -93,7 +96,7 @@ export function record(route: string, path: string, ms: number) {
     r.max = ms;
     r.max_path = path;
   }
-  if (ms >= 1) note(`${route} ${path}`);
+  if (ms >= 1) note(`${route} ${path}`, ms);
 }
 
 const round = (n: number) => Math.round(n * 10) / 10;

@@ -22,6 +22,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
                ram-compare.mjs: memory use of the Rust server and the TypeScript one on the same data
+               event-loop-probe.mjs: how long the TS server's heavy reads hold up its one thread
                install.sh: install the desktop app from source (Linux, macOS)
 docs/          notes; structure.md: where code goes and how big modules are split
 ```
