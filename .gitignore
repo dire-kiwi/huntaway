@@ -8,3 +8,4 @@ __pycache__/
 *.key
 /app/release
 /release-server
+/server-ts/bin/ia-shim
