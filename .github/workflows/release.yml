@@ -157,9 +157,10 @@ jobs:
           node scripts/desktop-app-check.mjs "$exe" --version "$VERSION"
 
       # How macOS sees the app: electron-builder signs it ad hoc (identity "-", no hardened runtime) and nothing is
-      # notarized (the server tarball's node keeps the Node.js Foundation's signature), so Gatekeeper rejects a downloaded copy until the user allows it (System Settings → Privacy & Security
-      # → Open Anyway, or `xattr -dr com.apple.quarantine`). For the record, nothing here fails the build: the step
-      # writes what codesign and spctl say as a notice on the run (the job's log is too long to read back through the API).
+      # notarized, so Gatekeeper rejects a downloaded copy until the user allows it (System Settings → Privacy & Security
+      # → Open Anyway, or `xattr -dr com.apple.quarantine`). The server tarball's node keeps the Node.js Foundation's
+      # signature. For the record, nothing here fails the build: the step writes what codesign and spctl say as a notice
+      # on the run (the job's log is too long to read back through the API).
       - name: Signatures and Gatekeeper (macOS)
         if: matrix.os == 'mac'
         run: |
