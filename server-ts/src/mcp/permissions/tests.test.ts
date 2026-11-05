@@ -73,7 +73,7 @@ async function asked(s: Shared, task: Task, call_id: string, tool: string, input
 
 function prompt_message(s: Shared, id: string): any {
   const mid = db.value<number>(s.db(), "SELECT message_id FROM permission_requests WHERE id=?1", id);
-  return testing.message(s.db(), mid)!.data;
+  return testing.message(s.db(), mid!)!.data;
 }
 
 function two_questions(): any {

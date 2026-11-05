@@ -2513,7 +2513,7 @@ test("a_run_an_automation_starts_is_a_routine_run_and_one_the_user_starts_isnt",
   const make = (title: string) => new_task(state.db(), { profile_id: p.id, title, status: "todo" });
   const turn = (task: Task): any => {
     const id = db.value<number>(state.db(), "SELECT turn_message_id FROM runs WHERE task_id=?1", task.id);
-    return testing.message(state.db(), id)!.data;
+    return testing.message(state.db(), id!)!.data;
   };
   const [routine, started, mine] = [make("Routine"), make("Started"), make("Mine")];
   send_from_routine(state, routine.id, "Check the mail", null);

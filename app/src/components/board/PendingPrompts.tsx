@@ -1,14 +1,12 @@
 import { Check, Map as MapIcon, MessageCircleQuestion, ShieldQuestion, X } from "lucide-react";
 import { useState } from "react";
-import { api, ownWorkDir, type Message, type Task } from "../../api";
+import { api, ownWorkDir, type Task } from "../../api";
 import { openTask } from "../../router";
-import { useStore, useThreadMessages } from "../../store";
-import { threadModel, type Item } from "../../threadModel";
+import { type Item } from "../../threadModel";
+import { useThreadModel } from "../../threadView";
 import { QUESTION_TOOLS, questionsOf } from "../../questions";
 import { toolMeta } from "../task/thread/tools";
 import { AskCard, BoardQuestionCard, PlanCard } from "../task/Questions";
-
-const NO_MESSAGES: Message[] = [];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
@@ -71,9 +69,8 @@ const pendingPrompts = (items: Item[]) => items.filter((it): it is Extract<Item,
 
 /** The permission prompts, questions and plans a task's agent is waiting on, to answer without opening its thread. */
 export function PendingPrompts({ task }: { task: Task }) {
-  const messages = useThreadMessages(task.id);
-  const earlier = useStore((s) => s.threads[task.id]?.subagents);
-  const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
+  // From its items or its messages, as its thread is drawn (an items task has no messages since it moved onto them).
+  const model = useThreadModel(task, true);
   const prompts = pendingPrompts(model.items);
   // The question it asked with request_user_input, while nothing's been sent to it since.
   const question = model.items.findLast((it) => it.type === "question");

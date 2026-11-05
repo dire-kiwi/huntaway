@@ -12,6 +12,10 @@ import { threadHistory } from "../fixtures/threadHistory.mjs";
 import { convert } from "../../../server-ts/src/threads/translate.ts";
 import { apply_events, initial_state, item_page, snapshot_window } from "../../src/threads.ts";
 
+// Its threads are seeded as messages rows, which a task whose items are its source (HA-222) has none of: its server is
+// on the older database file, where tasks stay on their messages.
+process.env.IA_NEW_DB_FILE = "0";
+
 let server, project;
 before(async () => {
   server = startServer();

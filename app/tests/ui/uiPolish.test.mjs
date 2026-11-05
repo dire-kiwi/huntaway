@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { demoProject, routeThread, startServer, withBrowser } from "./harness.mjs";
 
+// Its threads are faked on the messages routes, which a task whose items are its source (HA-222) doesn't read: its server
+// is on the older database file, where tasks stay on their messages.
+process.env.IA_NEW_DB_FILE = "0";
+
 let server, project, tasks;
 before(async () => {
   server = startServer();
