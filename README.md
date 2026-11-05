@@ -2093,9 +2093,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   ends tool sessions that nobody is attached to and nobody has renewed for 90 seconds.
   Reloading the page keeps them. **Close** ends one straight away. If a tool exits with an
   error, the message stays on screen until you press Enter (API 13).
-- **Permissions:** in *Ask* mode, Claude's permission prompts are routed
-  (`--permission-prompt-tool`) to an approval card in the thread: Allow, Always allow (for
-  that thread), or Deny. Codex's approvals get the same card, which names the agent asking.
+- **Permissions:** in *Ask* mode, Claude's permission prompts are routed to an approval card in
+  the thread: Allow, Always allow (for that thread), or Deny. Claude asks on its own output
+  (`--permission-prompt-tool stdio`: a `can_use_tool` control request in the run's `out.jsonl`)
+  and gets the answer on its input (`input.jsonl`); a prompt still open when the server restarts
+  is asked again, and can be answered as before. A `/compact` run, which takes no input, asks
+  through the MCP helper's `permission_prompt`, as Codex's approvals do. Codex's approvals get the
+  same card, which names the agent asking. Runs that ask on their output are run format 3: an
+  older build that's rolled back to stops them (it couldn't answer them) rather than follow them.
 - **Questions and plans** (API 64) are cards in the thread rather than approvals, and the task's
   card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
   Keys 1–9 pick an option in the latest one that's waiting, unless you're typing.
@@ -2178,7 +2183,7 @@ the board's MCP servers* below):
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
-*Waiting*), plus the internal `permission_prompt`. Review threads
+*Waiting*), plus the internal `permission_prompt` (for Codex runs and compactions). Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
 `list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see

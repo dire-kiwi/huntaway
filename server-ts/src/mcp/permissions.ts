@@ -661,6 +661,17 @@ export function expire_for_run(s: Shared, run_id: string): void {
 }
 
 /**
+ * Expire the unanswered prompt call `call_id` raised, which its agent no longer wants answered (see
+ * agent/runner/requests.ts): its thread is back to work if no other prompt is waiting.
+ */
+export function expire_for_call(s: Shared, call_id: string): void {
+  const task_id = db.value<string>(s.db(), "SELECT task_id FROM permission_requests WHERE call_id=?1 AND status='pending'", call_id);
+  if (task_id === undefined) return;
+  expire(s, "SELECT id, message_id FROM permission_requests WHERE call_id=?1 AND status='pending'", call_id);
+  back_to_work(s, task_id);
+}
+
+/**
  * Expire the unanswered approvals of changes to a project that's being deleted (and of deleting its tasks, and of its
  * automations), asked from any thread.
  */
