@@ -26,6 +26,7 @@ import * as threads from "../../threads/write.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
 import * as plan from "./plan.ts";
+import { on_control_cancel, on_control_request } from "./requests.ts";
 import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended } from "./queue.ts";
 
 const SUBAGENT_EVENTS = ["task_started", "task_progress", "task_updated", "task_notification"];
@@ -244,6 +245,11 @@ export function handle_line(state: Shared, run: Run, line: string) {
     state.add_message(task_id, "claude", s);
     // A tool call may have changed the task's document: the task shows it as it's written.
     if (tool_result) documents.follow(state, task_id);
+  } else if (type === "control_request") {
+    // A permission prompt (see requests.ts).
+    on_control_request(state, run, v);
+  } else if (type === "control_cancel_request") {
+    on_control_cancel(state, run, v);
   } else if (type === "control_response") {
     context.on_control_response(state, task_id, v);
   } else if (type === "result") {

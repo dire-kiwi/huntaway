@@ -18,6 +18,7 @@ import { launch } from "./runner/launch.ts";
 import { requeue_ahead, check_not_archived, start_unblocked } from "./runner/send.ts";
 import { requeue_steers, set_writes_documents, write_steers, close_unless_taken_in, has_queued, send_queued, turn_ended } from "./runner/queue.ts";
 import { finish } from "./runner/output.ts";
+import { resume_requests } from "./runner/requests.ts";
 import { start_queued_merges } from "./runner/merge.ts";
 
 export * from "./runner/access.ts";
@@ -25,6 +26,7 @@ export * from "./runner/merge.ts";
 export * from "./runner/output.ts";
 export * from "./runner/prompt.ts";
 export * from "./runner/queue.ts";
+export * from "./runner/requests.ts";
 export * from "./runner/send.ts";
 
 export const MCP_SERVER_NAME = "huntaway";
@@ -360,6 +362,9 @@ export function load_active(state: Shared) {
     } else if (runs.exists(state, run.id)) {
       if (run.status === "preparing") db.run(state.db(), "UPDATE runs SET status='running' WHERE id=?1", run.id);
       console.log(`run ${run.id}: resuming run at offset ${run.out_offset}`);
+      // The prompts it asked on its output before that offset, still open (before its output is read again, which may
+      // have one of them again).
+      resume_requests(state, run);
       runs.follow(state, run.id, run.out_offset);
       const takes_input = runs.accepts_input(state, run.id);
       const task = db.get_task(state.db(), run.task_id);

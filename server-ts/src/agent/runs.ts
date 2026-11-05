@@ -37,7 +37,14 @@ import { context, err_str, expand_tilde, sleep } from "../util.ts";
 import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
-export const RUN_FORMAT = 2;
+export const RUN_FORMAT = 3;
+
+/**
+ * Format 3 is a run whose agent asks for permission on its output and waits for the answer on its input (see
+ * runner/requests.ts): a server that doesn't answer it there would leave it waiting for good, so a run that doesn't is
+ * still written as format 2, which older builds follow.
+ */
+const UNASKED_FORMAT = 2;
 
 export interface Launch {
   run_id: string;
@@ -57,6 +64,8 @@ export interface Launch {
   github_account: string | null;
   /** Run Codex instead of Claude Code: `args` are ignored, and the adapter gets this as `codex.json` (see agent/codex.ts). */
   codex: Spec | null;
+  /** Its agent asks for permission on its output (`--permission-prompt-tool stdio`, see runner/requests.ts). */
+  asks_on_output?: boolean;
 }
 
 /** A value tests can set (Rust's thread-local `Cell`). */
@@ -204,7 +213,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   }
   await mkdir(dir, { recursive: true });
   // The boot tells whether its pids are still its own later (see `pid_reused`).
-  const run = { boot: boot_id(), format: RUN_FORMAT, version: VERSION };
+  const run = { boot: boot_id(), format: l.asks_on_output ? RUN_FORMAT : UNASKED_FORMAT, version: VERSION };
   await writeFile(join(dir, "run.json"), JSON.stringify(run));
   await writeFile(join(dir, "prompt"), l.prompt);
   if (l.input) await writeFile(join(dir, "input.jsonl"), "");
