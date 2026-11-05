@@ -107,6 +107,11 @@ export function list_messages(c: Conn, task_id: string): Message[] {
   return all(c, "SELECT * FROM messages WHERE task_id=?1 ORDER BY id", task_id).map(Message_from_row);
 }
 
+// Queries of one task's messages that also filter on `kind` write it `+kind`, which keeps it from using an index: without
+// the database's statistics (it's never ANALYZEd), SQLite takes the (kind, created_at) index over (task_id, id) for
+// `task_id=? AND kind=?`, and reads every message of that kind on the board, not the task's (80 ms a query on a board of
+// 280,000 messages, on every thread's first page: HA-188).
+
 /** A page stops once it has this much message data, even short of its limit (some tool results are huge). */
 export const PAGE_BYTES = 1 << 20;
 
@@ -160,9 +165,10 @@ function clip(s: any): any {
 export function subagent_messages(c: Conn, task_id: string, before: number): Message[] {
   // Forked Skills have no Agent/Task call: their local_agent lifecycle identifies the call.
   // Look beyond `before` too, as a page can start between the launch and task_started.
+  // `+kind` keeps SQLite off the (kind, created_at) index, which reads every agent message on the board (see message_page).
   const starts = all(
     c,
-    `SELECT json_extract(data, '$.tool_use_id') AS id FROM messages WHERE task_id=?1 AND kind='claude'
+    `SELECT json_extract(data, '$.tool_use_id') AS id FROM messages WHERE task_id=?1 AND +kind='claude'
          AND data LIKE '%"task_started"%' AND json_extract(data, '$.type')='system'
          AND json_extract(data, '$.subtype')='task_started' AND json_extract(data, '$.task_type')='local_agent'
          AND json_type(data, '$.tool_use_id')='text'`,
@@ -244,7 +250,7 @@ export function subagent_messages(c: Conn, task_id: string, before: number): Mes
  * one, after `since` (a timestamp) if given, oldest first.
  */
 export function tool_calls_since(c: Conn, task_id: string, since: string | null): Array<[any, any | null]> {
-  const st = c.prepare("SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND created_at>?2 AND data LIKE '%tool\\_use%' ESCAPE '\\' ORDER BY id");
+  const st = c.prepare("SELECT data FROM messages WHERE task_id=?1 AND +kind='claude' AND created_at>?2 AND data LIKE '%tool\\_use%' ESCAPE '\\' ORDER BY id");
   const calls: any[] = [];
   const results = new Map<string, any>();
   for (const r of st.iterate(task_id, since ?? "") as Iterable<any>) {

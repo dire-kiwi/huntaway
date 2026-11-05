@@ -1187,6 +1187,32 @@ test("threads_load_in_pages_of_main_conversation_messages", () => {
   assert.deepEqual(ids(message_page(c, t.id, null, null, 100)), [range(call, end), true]);
 });
 
+test("a_threads_queries_read_only_its_own_messages", () => {
+  // HA-188: with no statistics, SQLite took the (kind, created_at) index for `task_id=? AND kind=?` and read every agent
+  // message on the board, which made each thread's first page take 80 ms on a big board, however short the thread.
+  const c = open(":memory:");
+  const p = insert_profile(c, "p", [], null);
+  const t = insert_task(c, nt(p.id));
+  insert_message(c, t.id, "claude", { type: "assistant", message: { content: [{ type: "tool_use", id: "a1", name: "Agent", input: {} }] } });
+  const prepared: string[] = [];
+  const spy = new Proxy(c, {
+    get(target, k) {
+      if (k === "prepare") return (sql: string) => (prepared.push(sql), target.prepare(sql));
+      const v = (target as any)[k];
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  subagent_messages(spy, t.id, 1 << 30);
+  db.tool_calls_since(spy, t.id, null);
+  message_page(spy, t.id, null, null, 100);
+  assert.ok(prepared.length >= 4, prepared.join("\n"));
+  for (const sql of prepared) {
+    const plan = db.all(c, `EXPLAIN QUERY PLAN ${sql}`).map((r) => r.detail).join("; ");
+    assert.match(plan, /messages_task/, `${sql}\n${plan}`);
+    assert.doesNotMatch(plan, /messages_kind_time/, `${sql}\n${plan}`);
+  }
+});
+
 test("subagent_summaries_include_forked_skills_and_their_launch_calls", () => {
   const c = open(":memory:");
   const p = insert_profile(c, "p", [], null);
