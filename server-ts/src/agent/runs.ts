@@ -38,6 +38,8 @@ import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
 export const RUN_FORMAT = 3;
+/** The format from which a run's agent may ask for permission on its output. */
+const ASKS_FORMAT = 3;
 
 /**
  * Format 3 is a run whose agent asks for permission on its output and waits for the answer on its input (see
@@ -213,7 +215,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   }
   await mkdir(dir, { recursive: true });
   // The boot tells whether its pids are still its own later (see `pid_reused`).
-  const run = { boot: boot_id(), format: l.asks_on_output ? RUN_FORMAT : UNASKED_FORMAT, version: VERSION };
+  const run = { boot: boot_id(), format: l.asks_on_output ? ASKS_FORMAT : UNASKED_FORMAT, version: VERSION };
   await writeFile(join(dir, "run.json"), JSON.stringify(run));
   await writeFile(join(dir, "prompt"), l.prompt);
   if (l.input) await writeFile(join(dir, "input.jsonl"), "");
@@ -422,6 +424,11 @@ function read_json(path: string): any {
   } catch {
     return undefined;
   }
+}
+
+/** Whether run `run_id`'s agent asks for permission on its output (see runner/requests.ts). */
+export function asks_on_output(state: Shared, run_id: string): boolean {
+  return format(state, run_id) >= ASKS_FORMAT;
 }
 
 /** Format of an existing run directory. */

@@ -8,7 +8,7 @@ import { err_str, new_id, path_str } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as documents from "../documents.ts";
 import * as automations from "../../integrations/automations.ts";
-import { STEER_GRACE } from "../runner.ts";
+import { BACKGROUND_GRACE, STEER_GRACE } from "../runner.ts";
 import { is_compact, send_as, send_message } from "./send.ts";
 
 /**
@@ -168,6 +168,9 @@ export function turn_ended(state: Shared, run: Run) {
 /**
  * Claude Code said how many background tasks the agent has going. Once none are left, between turns, its input is
  * closed as at the end of a turn without them: Claude Code still takes the turn it does on their outcome, then exits.
+ * An agent that asks for permission on its output (runs.asks_on_output) needs its input for that turn's prompts, which
+ * Claude Code denies unasked once it's closed ("Stream closed"): it's left open for the turn, whose end closes it (see
+ * `turn_ended`), unless no turn starts (see `close_unless_turn_starts`).
  */
 export function background_changed(state: Shared, run: Run, count: number) {
   runs.set_background_tasks(state, run.id, count);
@@ -176,7 +179,53 @@ export function background_changed(state: Shared, run: Run, count: number) {
   try {
     between = !!db.value<number>(state.db(), "SELECT between_turns FROM runs WHERE id=?1 AND status != 'exited'", run.id);
   } catch {}
-  if (between) turn_ended(state, run);
+  if (!between) return;
+  if (runs.asks_on_output(state, run.id) && !stopping(state, run.id)) close_unless_turn_starts(state, run);
+  else turn_ended(state, run);
+}
+
+function stopping(state: Shared, run_id: string): boolean {
+  try {
+    return !!db.value<number>(state.db(), "SELECT stop_requested FROM runs WHERE id=?1", run_id);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The agent's background tasks ended between turns, and its input is left open for the turn Claude Code takes on their
+ * outcome (see `background_changed`). Once that turn starts (see `turn_started`), its end closes the input. If none has
+ * after BACKGROUND_GRACE, and the agent hasn't written anything since, its turn is over as it would have been without
+ * them (see `turn_ended`); if it has written something, it gets another BACKGROUND_GRACE.
+ */
+export function close_unless_turn_starts(state: Shared, run: Run) {
+  const run_id = run.id;
+  // How far its output has been read, once the chunk this came in has been (see output::on_output, which saves it after).
+  let offset = Number.MAX_SAFE_INTEGER;
+  setImmediate(() => {
+    try {
+      offset = db.value<number>(state.db(), "SELECT out_offset FROM runs WHERE id=?1", run_id) ?? offset;
+    } catch {}
+  });
+  setTimeout(() => {
+    let r: Run | null = null;
+    try {
+      r = db.get_run(state.db(), run_id);
+    } catch {}
+    if (!r || r.status === "exited" || !r.between_turns || runs.background_tasks(state, run_id) > 0) return;
+    if (r.out_offset > offset) return close_unless_turn_starts(state, r);
+    console.warn(`run ${run_id}: the agent took no turn on its background tasks' outcome; ending its run`);
+    turn_ended(state, r);
+  }, BACKGROUND_GRACE).unref();
+}
+
+/**
+ * The agent is working on a turn of its own (an assistant message of the top-level thread, or one starting): one it takes
+ * between turns, on the outcome of its background tasks, is no longer between them (see `close_unless_turn_starts`), so
+ * its `result` ends it as any turn's does.
+ */
+export function turn_started(state: Shared, run: Run) {
+  db.run(state.db(), "UPDATE runs SET between_turns=0 WHERE id=?1 AND between_turns=1 AND status != 'exited'", run.id);
 }
 
 /**

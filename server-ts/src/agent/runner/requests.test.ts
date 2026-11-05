@@ -2,7 +2,7 @@
 // run's output and answered on its input.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as db from "../../db.ts";
 import type { Run, Task } from "../../db.ts";
@@ -11,12 +11,12 @@ import * as testing from "../../testing.ts";
 import { sleep } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as permissions from "../../mcp/permissions.ts";
-import { finish, load_active, on_output } from "../runner.ts";
+import { BACKGROUND_GRACE, finish, load_active, on_output } from "../runner.ts";
 import { control_call_id } from "./requests.ts";
 
 process.env.IA_SHIM_BIN = "/nonexistent/ia-shim";
 
-/** A task whose agent is running a run that takes input, with no process behind it. */
+/** A task whose agent is running a run that takes input and asks on its output, with no process behind it. */
 function running(mode: string | null = null): [Shared, Task, Run] {
   const state = testing.state();
   const p = db.insert_profile(state.db(), "p", [], null);
@@ -38,6 +38,7 @@ function running(mode: string | null = null): [Shared, Task, Run] {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "out.jsonl"), "");
   writeFileSync(join(dir, "input.jsonl"), "");
+  writeFileSync(join(dir, "run.json"), JSON.stringify({ format: runs.RUN_FORMAT }));
   state.runs.set(task.id, { run_id: run.id, cancel: null });
   const t = state.update_task(task.id, [["running", true], ["permission_mode", mode]])!;
   return [state, t, db.get_run(state.db(), run.id)!];
@@ -280,4 +281,61 @@ test("other_control_requests_get_an_error", async () => {
   assert.equal(r.subtype, "error");
   assert.equal(r.request_id, "m1");
   assert.equal(db.value<number>(state.db(), "SELECT COUNT(*) FROM permission_requests"), 0);
+});
+
+const background = (n: number) => ({ type: "system", subtype: "background_tasks_changed", tasks: Array.from({ length: n }, (_, i) => ({ id: `b${i}` })) });
+const result = () => ({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0, num_turns: 1 });
+const said = (text: string) => ({
+  type: "assistant",
+  uuid: `u-${text}`,
+  parent_tool_use_id: null,
+  message: { id: `m-${text}`, role: "assistant", content: [{ type: "text", text }] },
+});
+const input_closed = (state: Shared, run: Run) => existsSync(join(runs.run_dir(state, run.id), "input.closed"));
+
+test("the_turn_on_background_tasks_outcome_can_still_ask", async () => {
+  const [state, task, run] = running();
+  output(state, run, [background(1), result()]);
+  // They end between turns: Claude Code takes a turn on their outcome, and its prompts need the input.
+  output(state, run, [background(0)]);
+  assert.ok(!input_closed(state, run));
+  output(state, run, [said("The build finished; committing."), can_use_tool("r1", "Bash", { command: "git commit" })]);
+  assert.equal(reload(state, task.id).status, "needs_attention");
+  // However long the user takes.
+  await sleep(BACKGROUND_GRACE * 1.5);
+  assert.ok(!input_closed(state, run));
+  permissions.decide(state, request_of(state, run, "r1")!.id, true, false, null);
+  await answered(state, run, 1);
+  // That turn's end closes it, as any turn's without background tasks does.
+  output(state, run, [result()]);
+  assert.ok(input_closed(state, run));
+});
+
+test("without_a_turn_on_background_tasks_outcome_the_input_is_closed", async () => {
+  const [state, , run] = running();
+  output(state, run, [background(1), result(), background(0)]);
+  await sleep(BACKGROUND_GRACE / 2);
+  assert.ok(!input_closed(state, run));
+  await sleep(BACKGROUND_GRACE);
+  assert.ok(input_closed(state, run));
+});
+
+test("after_a_restart_the_turn_on_background_tasks_outcome_can_still_ask", async () => {
+  const [state, task, run] = running();
+  output(state, run, [background(1), result(), background(0)]);
+  state.runs.delete(task.id);
+  load_active(state);
+  assert.ok(!input_closed(state, run));
+  output(state, run, [said("Done in the background.")]);
+  await sleep(BACKGROUND_GRACE * 1.5);
+  assert.ok(!input_closed(state, run));
+  output(state, run, [result()]);
+  assert.ok(input_closed(state, run));
+});
+
+test("a_run_that_asks_through_the_helper_closes_its_input_when_background_tasks_end", () => {
+  const [state, , run] = running();
+  writeFileSync(join(runs.run_dir(state, run.id), "run.json"), JSON.stringify({ format: 2 }));
+  output(state, run, [background(1), result(), background(0)]);
+  assert.ok(input_closed(state, run));
 });

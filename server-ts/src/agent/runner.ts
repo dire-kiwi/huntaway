@@ -16,7 +16,16 @@ import * as permissions from "../mcp/permissions.ts";
 import * as automations from "../integrations/automations.ts";
 import { launch } from "./runner/launch.ts";
 import { requeue_ahead, check_not_archived, start_unblocked } from "./runner/send.ts";
-import { requeue_steers, set_writes_documents, write_steers, close_unless_taken_in, has_queued, send_queued, turn_ended } from "./runner/queue.ts";
+import {
+  requeue_steers,
+  set_writes_documents,
+  write_steers,
+  close_unless_taken_in,
+  close_unless_turn_starts,
+  has_queued,
+  send_queued,
+  turn_ended,
+} from "./runner/queue.ts";
 import { finish } from "./runner/output.ts";
 import { resume_requests } from "./runner/requests.ts";
 import { start_queued_merges } from "./runner/merge.ts";
@@ -51,6 +60,12 @@ export const STOP_GRACE = IN_TEST ? 1000 : 10_000;
  * If it doesn't, its input is closed (it exits) and they're sent to the next run instead.
  */
 export const STEER_GRACE = IN_TEST ? 1000 : 30_000;
+/**
+ * How long an agent that asks on its output (see runner/requests.ts) has, once its background tasks have ended between
+ * turns, to start the turn Claude Code takes on their outcome (ms), while it says nothing at all. Its input stays open
+ * for that turn, which may ask for permission; if no turn starts, it's closed (see queue::background_changed).
+ */
+export const BACKGROUND_GRACE = IN_TEST ? 1000 : 120_000;
 
 /**
  * A session idle this long is compacted while its prompt cache (1 hour) is still warm, so compacting is cheap and the
@@ -390,6 +405,9 @@ export function load_active(state: Shared) {
         }
         const waiting = (t?.steering ?? []).filter((s) => s.run_id === run.id).map((s) => s.id);
         if (waiting.length) close_unless_taken_in(state, run, waiting);
+        // Its background tasks may have ended just before, and the turn on their outcome may yet ask for permission on
+        // its input (see queue::background_changed).
+        else if (runs.asks_on_output(state, run.id) && !row.stop_requested && runs.background_tasks(state, run.id) === 0) close_unless_turn_starts(state, run);
         else turn_ended(state, run);
       }
     } else {

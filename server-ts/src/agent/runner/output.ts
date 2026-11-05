@@ -27,7 +27,7 @@ import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
 import * as plan from "./plan.ts";
 import { on_control_cancel, on_control_request } from "./requests.ts";
-import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended } from "./queue.ts";
+import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended, turn_started } from "./queue.ts";
 
 const SUBAGENT_EVENTS = ["task_started", "task_progress", "task_updated", "task_notification"];
 
@@ -207,6 +207,7 @@ export function handle_line(state: Shared, run: Run, line: string) {
     // Only the top-level thread streams a preview.
     if (v.parent_tool_use_id != null) return;
     const ev = v.event;
+    if (ev?.type === "message_start") turn_started(state, run);
     if (ev?.type === "content_block_delta" && ev?.delta?.type === "text_delta") {
       if (typeof ev.delta.text === "string") state.emit_delta(task_id, ev.delta.text);
     } else if (ev?.type === "message_start" || ev?.type === "content_block_start") {
@@ -225,6 +226,7 @@ export function handle_line(state: Shared, run: Run, line: string) {
       return;
     }
     if (wait.is_activity(v)) wait.resumed(state, task_id, run.id);
+    if (type === "assistant" && v.parent_tool_use_id == null) turn_started(state, run);
     if (type === "assistant") context.on_assistant(state, run, v);
     const s = slim(v);
     if (Array.isArray(s?.message?.content) && s.message.content.length === 0) return;
