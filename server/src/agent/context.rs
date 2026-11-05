@@ -105,7 +105,8 @@ fn compaction_source(c: &rusqlite::Connection, run: &Run, trigger: &str) -> anyh
         return Ok("auto");
     }
     let prompted: bool = c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND created_at>=?2)",
+        // `+kind`: see db::messages.
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND +kind='user' AND created_at>=?2)",
         rusqlite::params![run.task_id, run.created_at],
         |r| r.get(0),
     )?;
