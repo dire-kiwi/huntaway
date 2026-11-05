@@ -4,7 +4,7 @@
 // Paths from git are bytes, as in Rust: they're kept as latin1 strings (one char per byte, so any path round-trips),
 // turned into Buffers for the file system and git's stdin, and decoded as UTF-8 (`lossy`) for the API.
 import { spawn } from "node:child_process";
-import { copyFileSync, lstatSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, lstatSync, rmSync, statSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as db from "../../db.ts";
 import type { Task } from "../../db.ts";
@@ -89,7 +89,14 @@ export class ScratchIndex {
     const scratch = new ScratchIndex(join(dirname(index), `huntaway-checkpoint-${new_id()}.index`));
     if (copy) {
       try {
+        // The copy keeps the index's time (HA-237). Git takes an entry whose file changed in the second the index was
+        // written for one that may have changed since, and reads the file; with the copy's own, later time it trusts the
+        // entry, so a file rewritten in that second at the same size, as the agent's first edit after the worktree's
+        // checkout can be, looks unchanged. Read before copying, so an index written meanwhile gets an earlier time
+        // rather than a later one (which only means more files read), and to the second, at or before git's own reading.
+        const t = Math.floor(statSync(index).mtimeMs / 1000);
         copyFileSync(index, scratch.path);
+        utimesSync(scratch.path, t, t);
       } catch (e: any) {
         if (e?.code !== "ENOENT") throw context("copying the worktree's index", e);
       }
