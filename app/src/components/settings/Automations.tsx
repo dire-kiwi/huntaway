@@ -544,7 +544,8 @@ function inputOf(d: Draft, existing: Automation | null, labelling: boolean, rout
         : d.when === "cron"
           ? { kind: "cron", expr: d.cron.trim() }
           : d.when === "at"
-            ? { kind: "at", at: new Date(d.at).toISOString() }
+            ? // As it was if it's unchanged, to the second, so the server doesn't take it for a new time.
+              { kind: "at", at: existing?.trigger.kind === "at" && localInput(existing.trigger.at) === d.at ? existing.trigger.at : new Date(d.at).toISOString() }
             : {
             kind: "webhook",
             filters: [
@@ -658,7 +659,10 @@ export function AutomationEditor({
     if (d.does === "send_to_task" && !d.taskId) return setErr("Pick the task to message.");
     if (d.does !== "create_task" && !d.message.trim()) return setErr("Write the message.");
     if (d.when === "cron" && d.cron.trim().split(/\s+/).length !== 5 && !d.cron.trim().startsWith("@")) return setErr("A cron expression has five fields.");
-    if (d.when === "at" && !(new Date(d.at).getTime() > Date.now())) return setErr("Pick a time to come.");
+    // Only a time that's just been set (or a routine just turned on) has to be to come, as on the server: one that's run
+    // (and so turned itself off) can still be renamed or edited.
+    const atChanged = !saved || !saved.enabled || saved.trigger.kind !== "at" || localInput(saved.trigger.at) !== d.at;
+    if (d.when === "at" && d.enabled && atChanged && !(new Date(d.at).getTime() > Date.now())) return setErr("Pick a time to come.");
     setBusy(true);
     try {
       const b = inputOf(d, saved, labelling, routines);

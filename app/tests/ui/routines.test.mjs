@@ -47,3 +47,38 @@ test("a routine's report links to its thread, which opens though no list has it"
     assert.equal(await page.getByText("Inbox ·").count(), 0);
   });
 });
+
+// HA-234: an `at` routine whose time has passed (it ran, and turned itself off) can still be renamed and saved; only
+// turning it on, or giving it a new time, needs one to come.
+test("an at routine whose time has passed can be edited while it's off", async () => {
+  const [profile] = await server.api("GET", "/profiles");
+  await server.api("GET", `/profiles/${profile.id}/assistant`);
+  // To the second, as one made by an agent can be (the editor shows minutes).
+  const at = new Date(Math.floor(Date.now() / 60_000) * 60_000 - 3600_000 + 17_000).toISOString();
+  const routine = await server.api("POST", `/profiles/${profile.id}/automations`, {
+    name: "Reminder",
+    enabled: false,
+    trigger: { kind: "at", at },
+    action: { kind: "message_assistant", message: "Renew the domain" },
+  });
+
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const dialog = page.getByRole("dialog");
+    await ui.run(["goto /assistant/Default", "click routines", "click css=[data-testid=routine] >> text=Reminder", "wait Edit Reminder"]);
+    await dialog.getByPlaceholder("Morning inbox check").fill("Domain reminder");
+    await dialog.getByRole("button", { name: "Save routine" }).click();
+    await ui.run(["gone Edit Reminder", "wait css=[data-testid=routine] >> text=Domain reminder"]);
+    const renamed = await server.api("GET", `/automations/${routine.id}`);
+    assert.equal(renamed.name, "Domain reminder");
+    assert.equal(renamed.enabled, false);
+    assert.deepEqual(renamed.trigger, { kind: "at", at }, "its time is kept to the second");
+
+    // Turned on, it needs a time to come.
+    await ui.run(["click css=[data-testid=routine] >> text=Domain reminder", "wait Edit Domain reminder"]);
+    await dialog.getByRole("switch", { name: "On", exact: true }).click();
+    await dialog.getByRole("button", { name: "Save routine" }).click();
+    await ui.run(["wait Pick a time to come."]);
+    assert.equal((await server.api("GET", `/automations/${routine.id}`)).enabled, false);
+  });
+});

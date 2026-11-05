@@ -554,16 +554,35 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   }
   if (updated && is_task && plan_check) {
     // Its column waits for its checkpoints (see plan.ts), and so does what follows from the task entering it.
-    plan
-      .settle(state, updated, run, (t) => {
-        if (t.status === "in_review") review.on_in_review(state, t);
-        workflows.on_status(state, t);
-      })
-      .catch((e) => console.error(`task ${task_id}: settling its column: ${err_str(e)}`));
+    settle_plan(state, updated, run);
   } else {
     if (updated && is_task && updated.status === "in_review" && status === "in_review") review.on_in_review(state, updated);
     // The task's workflows that start when it enters the column its run ended in.
     if (updated && is_task && status === updated.status && updated.status !== task.status) workflows.on_status(state, updated);
+  }
+}
+
+/** Settle the column of `task` at the end of its run `run` (see plan.ts), and start what entering it starts. */
+function settle_plan(state: Shared, task: Task, run: Run) {
+  plan
+    .settle(state, task, run, (t) => {
+      if (t.status === "in_review") review.on_in_review(state, t);
+      workflows.on_status(state, t);
+    })
+    .catch((e) => console.error(`task ${task.id}: settling its column: ${err_str(e)}`));
+}
+
+/** Startup: settle the columns of the tasks a restart left in "In progress" before they were (see plan::unsettled). */
+export function settle_plans(state: Shared) {
+  let left: Array<[Task, Run]> = [];
+  try {
+    left = plan.unsettled(state);
+  } catch (e) {
+    console.error(`finding plan tasks left in progress: ${err_str(e)}`);
+  }
+  for (const [task, run] of left) {
+    console.log(`task ${task.id}: settling the column its run ${run.id} ended in before the server stopped`);
+    settle_plan(state, task, run);
   }
 }
 
