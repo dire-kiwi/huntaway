@@ -252,7 +252,7 @@ or deleting events, sharing files or handing them over, changing files, mail fil
 anything `manage_*` ask; deleting or trashing mail and files is never. A switch adds an *ask* on the
 board's `create_task`.
 
-- **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`, `server-ts/src/agent/approval_rules.ts`) that
+- **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`, `server-ts/src/agent/approval_rules/hook.ts`) that
   allows, asks or denies the calls a rule matches. Its *ask* goes to the board's permission prompt in every mode,
   Bypass included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool too; in
   *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are left out of the run
