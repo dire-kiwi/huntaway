@@ -273,6 +273,8 @@ without the tests):
   and threads/live.ts's question check (it answers through mcp/questions.ts). `open_questions` finds the questions
   from items and reads the messages it updates. Step 10, which makes ids point at requests, moves these.
 - Routines' `report` messages (`unread_reports`), which the translator keeps only in messages (`unknown_kind`).
+- Telegram's (integrations/telegram.ts, HA-207, which landed with this step): the agent's latest result and messages
+  before an id, and the count of pending questions. They're to move onto history.ts before step 10.
 
 ### `huntaway threads-readers`
 
