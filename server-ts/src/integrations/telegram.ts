@@ -569,8 +569,8 @@ export function restart(s: Shared, profile_id: string) {
     if (!(e instanceof Stopped)) console.error(`telegram: the ${what} stopped (profile ${profile_id}): ${err_str(e)}`);
   };
   poll(s, profile_id, signal)
-    .catch(ended("poller"))
-    .finally(() => (h.poller_done = true));
+    .finally(() => (h.poller_done = true))
+    .catch(ended("poller"));
   sender(s, profile_id, signal).catch(ended("sender"));
 }
 
@@ -1503,11 +1503,14 @@ export async function update(s: Shared, r: Req) {
     // Another of this host's profiles already reads this bot (by its id, the token's first part, as a bot's token can be
     // replaced): only one can.
     const bot_id = (t: string) => t.split(":")[0];
-    const taken = db.list_profiles(s.db()).some((p) => {
-      const o = p.id !== id ? token(s.db(), p.id) : null;
-      return o !== null && bot_id(o) === bot_id(t);
-    });
-    if (taken) throw ApiError.conflict("another profile's assistant already uses this bot: make one for each");
+    const check_free = () => {
+      const taken = db.list_profiles(s.db()).some((p) => {
+        const o = p.id !== id ? token(s.db(), p.id) : null;
+        return o !== null && bot_id(o) === bot_id(t);
+      });
+      if (taken) throw ApiError.conflict("another profile's assistant already uses this bot: make one for each");
+    };
+    check_free();
     let me: any;
     try {
       me = await call(s, t, "getMe", {}, 20_000);
@@ -1515,6 +1518,8 @@ export async function update(s: Shared, r: Req) {
       throw ApiError.bad(`checking the token: ${e instanceof CallError ? e.message : without_token(e, t)}`);
     }
     const bot: Bot = { id: is_int(me?.id) ? me.id : 0, username: typeof me?.username === "string" ? me.username : "" };
+    // Again, as another profile may have taken it while Telegram was asked (HA-207).
+    check_free();
     const c = s.db();
     const same_bot = config(c, id).bot?.id === bot.id;
     db.set_setting(c, token_key(id), t);

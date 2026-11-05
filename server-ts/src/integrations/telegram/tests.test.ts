@@ -330,6 +330,20 @@ test("the_token_is_checked_and_never_shown", async (t) => {
   assert.equal(token(s.db(), p), null);
 });
 
+// HA-207: two profiles given the same bot at once (each waiting on Telegram's getMe) don't both get it.
+test("two_profiles_cant_take_one_bot_at_once", async (t) => {
+  const [s, , p] = await board(t);
+  await set(s, p, { token: null });
+  const q = db.insert_profile(s.db(), "work", [], null).id;
+  const tries = await Promise.allSettled([set(s, p, { token: TOKEN }), set(s, q, { token: TOKEN })]);
+  assert.deepEqual(
+    tries.map((r) => r.status),
+    ["fulfilled", "rejected"],
+  );
+  assert.equal((tries[1] as PromiseRejectedResult).reason.status, 409);
+  assert.deepEqual([token(s.db(), p), token(s.db(), q)], [TOKEN, null]);
+});
+
 test("a_chat_links_with_the_boards_code_and_strangers_are_dropped", async (t) => {
   const [s, f, p] = await board(t);
   // Before it's linked, nobody is listened to.
