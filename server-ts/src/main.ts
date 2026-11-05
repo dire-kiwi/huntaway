@@ -45,6 +45,11 @@ async function main() {
     }
     case "title-check":
       return (await import("./agent/title.ts")).check_cli(rest);
+    case "threads-import": {
+      const report = await import("./threads/report.ts");
+      report.run(report.parse_args(rest));
+      return;
+    }
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
     case "--version":
