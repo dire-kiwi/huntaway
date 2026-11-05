@@ -420,7 +420,7 @@ MCP servers.
 | `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
-| `IA_NEW_DB_FILE` | off | `1` keeps the board in `huntaway-2.db`, copied from `huntaway.db` on the first start (see *The database file*). For tests until the release that needs it turns it on |
+| `IA_NEW_DB_FILE` | on | The board is kept in `huntaway-2.db`, copied from `huntaway.db` on the first start (see *The database file*); `0` keeps it in `huntaway.db`, where threads stay on their messages |
 | `--recopy-db` / `IA_RECOPY_DB` | off | With `IA_NEW_DB_FILE`: copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see *The database file*). Only for the start it's given to: a restart, Update or Roll back from the board leaves it out |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
 
@@ -457,12 +457,12 @@ alive across service restarts.
 
 ### The database file
 
-The board's database is `<data dir>/huntaway.db` (or `issue-agent.db`, from before the rename to
-Huntaway). A release whose database an older build can't read correctly once it has migrated it (the
-one that moves task threads onto items, HA-222) will keep the board in a file of its own,
-`huntaway-2.db`, so that going back to an older build is safe. Until then that's off, and only
-`IA_NEW_DB_FILE=1` turns it on, for tests (`IA_NEW_DB_FILE=1 scripts/test-server.sh`, whose restarts
-keep it). With it on:
+The board's database is `<data dir>/huntaway-2.db`. Older builds used `huntaway.db` (or `issue-agent.db`, from before
+the rename to Huntaway); the release that moves task threads onto items (HA-222, see `docs/threads.md`), whose
+database an older build can't read correctly (a thread on items has no messages since it moved), keeps the board in a
+file of its own so that going back to an older build is safe. `IA_NEW_DB_FILE=0` keeps a server on the older file
+(where threads stay on their messages; `IA_NEW_DB_FILE=0 scripts/test-server.sh`, whose restarts keep it). With it on,
+as by default:
 
 - The first time the server starts on a data dir, it copies the older file into `huntaway-2.db` (with
   what's still in its write-ahead log, as `VACUUM INTO` to `huntaway-2.db.partial`, then a rename),
@@ -471,7 +471,8 @@ keep it). With it on:
   it was: a start that stops part-way leaves it in use and copies it again next time. A fresh data dir
   gets only `huntaway-2.db`.
 - **Going back** to an older build (Roll back, an older package or a checkout from before) opens the
-  older file as it was at the switch. What was done in between is only in `huntaway-2.db`. Agents that
+  older file as it was at the switch, with every thread whole. What was done in between (tasks, threads, settings) is
+  only in `huntaway-2.db`, and lost to the older build. Agents that
   were running at the switch carry on, as over any restart.
 - **Coming forward again** after an older build has run for a while: `huntaway-2.db` hasn't got what
   the older build did. The server notices that the older file has changed since it was copied (its size

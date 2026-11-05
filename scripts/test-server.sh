@@ -14,8 +14,8 @@
 #                  Codex runs fail
 #   --no-agents    no agent runs at all (claude and codex are /bin/false)
 #
-# IA_NEW_DB_FILE=1 in its environment starts the server on huntaway-2.db (see server-ts/src/db/file.ts), as do its
-# restarts; `restart` leaves out IA_RECOPY_DB, which is for one start (pass --recopy-db to `huntaway serve` for that).
+# The server keeps the board in huntaway-2.db (see server-ts/src/db/file.ts); IA_NEW_DB_FILE=0 in its environment starts
+# it on huntaway.db instead, where threads stay on their messages (server-ts/src/threads/source.ts), as do its restarts; `restart` leaves out IA_RECOPY_DB, which is for one start (pass --recopy-db to `huntaway serve` for that).
 #
 # `start` prints shell assignments (IA_TEST_URL, IA_TEST_TOKEN, IA_TEST_PID, IA_TEST_DATA_DIR,
 # IA_TEST_ENV, and with --seed IA_TEST_PROFILE, IA_TEST_PROJECT, IA_TEST_REPO), so
