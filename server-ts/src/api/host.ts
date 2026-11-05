@@ -169,7 +169,7 @@ export async function roll_back_release(s: AppState) {
   return { ok: true };
 }
 
-/** Copy the older builds' database into this build's again, as a restart job (API 107; see db/file.ts). */
+/** Copy the older builds' database into this build's again, as a restart job (API 108; see db/file.ts). */
 export async function recopy_database(s: AppState) {
   admin.recopy_database(s);
   return { ok: true };

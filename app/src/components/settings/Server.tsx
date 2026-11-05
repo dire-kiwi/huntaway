@@ -208,7 +208,7 @@ export function ServerPanel() {
   );
 }
 
-/** Which file the database is in (API 107, on a server that keeps the board in `huntaway-2.db`), and when an older build has
+/** Which file the database is in (API 108, on a server that keeps the board in `huntaway-2.db`), and when an older build has
  * changed the one it was copied from since, a warning with Copy again. */
 export function DatabaseLine({ status, onRecopy }: { status: ServerStatus; onRecopy: () => void }) {
   const db = status.database;

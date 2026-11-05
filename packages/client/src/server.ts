@@ -30,7 +30,7 @@ export interface ServerStatus {
   deployed_commits?: string[];
   /** API 88, with `--release-updates`: the GitHub release this server could update to. */
   release?: ReleaseStatus;
-  /** API 107, on a server that keeps the board in `huntaway-2.db` (`IA_NEW_DB_FILE`): which file the database is in. */
+  /** API 108, on a server that keeps the board in `huntaway-2.db` (`IA_NEW_DB_FILE`): which file the database is in. */
   database?: DatabaseFile;
 }
 
@@ -149,7 +149,7 @@ export const serverApi = ({ on }: Http) => ({
   updateRelease: (h: string, version: string) => on(h).post<{ ok: boolean }>("/admin/release/update", { version }),
   /** Restart onto `release.rollback_to`, marking the running version bad, as a restart job. */
   rollbackRelease: (h: string) => on(h).post<{ ok: boolean }>("/admin/release/rollback"),
-  /** API 107: copy `database.older_changed` into `database.file` again as the server restarts, as a restart job. It
+  /** API 108: copy `database.older_changed` into `database.file` again as the server restarts, as a restart job. It
    * discards what's been done in `database.file` since it was copied (kept in `<file>.replaced` until the next copy). */
   recopyDatabase: (h: string) => on(h).post<{ ok: boolean }>("/admin/database/recopy"),
   /** Fetch `commit` from the host's origin, fast-forward its checkout to it, then rebuild and restart. */

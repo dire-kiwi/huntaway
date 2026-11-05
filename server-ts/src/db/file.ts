@@ -97,7 +97,7 @@ export interface Origin {
 
 /**
  * Which file the database is in, and whether the older one has changed since it was copied (`/admin/server`'s `database`,
- * API 107).
+ * API 108).
  */
 export interface Status {
   /** `FILE`. */

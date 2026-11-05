@@ -125,7 +125,7 @@ export async function status(state: AppState): Promise<any> {
     running_agents: state.runs.size,
     restart: state.restart,
   };
-  // API 107: with the new database file (see db/file.ts), which file the database is in, and whether an older build has
+  // API 108: with the new database file (see db/file.ts), which file the database is in, and whether an older build has
   // changed the one it was copied from.
   const database = db_file.current(state.data_dir, state.db());
   if (database !== null) v.database = db_file.status_json(database);
