@@ -140,9 +140,9 @@ const failed = new WeakMap<Conn, Set<string>>();
 /**
  * Gives task `task_id` its thread kept as items if the setting is on and it doesn't have one this build wrote: one
  * from before the setting (or before step 7, when it defaulted on), or one an older converter wrote. A thread whose
- * live writes stopped on an error is left to `huntaway threads-rebuild` and the batch. True if it rebuilt it, so the
- * caller can tell clients (the task, with `thread_items`, and a `thread_resync`); a failed rebuild is logged, and
- * changes nothing. It's how a done task, which the batch (threads/batch.ts) leaves out, gets its items: when it's
+ * live writes stopped on an error is left to `huntaway threads-rebuild` and the batch, and a task with no messages to
+ * its first message, which flags it (as for a new task). True if it rebuilt it, so the caller can tell clients (the
+ * task, with `thread_items`, and a `thread_resync`); a failed rebuild is logged, and changes nothing. It's how a done task, which the batch (threads/batch.ts) leaves out, gets its items: when it's
  * opened, or when a reader reads it (threads/history.ts's `source`).
  */
 export function ensure(c: Conn, task_id: string): boolean {
@@ -153,6 +153,8 @@ export function ensure(c: Conn, task_id: string): boolean {
   );
   if (!r || r.error || (r.thread_items && r.has && r.converter === CONVERTER_VERSION)) return false;
   if (failed.get(c)?.has(task_id) || !setting_on(c)) return false;
+  // None yet: its first message flags it, as for a new task.
+  if (!r.thread_items && !one(c, "SELECT 1 FROM messages WHERE task_id=?1 LIMIT 1", task_id)) return false;
   try {
     rebuild(c, task_id);
     return true;

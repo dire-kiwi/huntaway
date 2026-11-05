@@ -2,7 +2,8 @@
 // rebuild of a task that's opened without items.
 //
 // The batch covers every task that isn't done whose thread this build doesn't keep as items yet (`pending`): one from
-// before the setting was on, one an older converter wrote, or one whose live writes stopped on an error. Each is
+// before the setting was on, one an older converter wrote, or one whose live writes stopped on an error. Not a task
+// with no messages, which its first message flags (with the setting on), as for a new task. Each is
 // rebuilt from its messages by threads/write.ts's `rebuild`, one task per transaction. In the server that transaction
 // is synchronous, so no message of the task can be written in the middle of it (it's the task's write lock): a task
 // that's running, streaming even, goes on writing its items live from the rebuilt thread (whose translator the rebuild
@@ -27,14 +28,20 @@ import { ensure, rebuild } from "./write.ts";
 /** Set (to when it started) while the server's batch is unfinished, so a restart goes on with it. */
 export const SETTING = "thread_batch";
 
-/** The tasks the batch covers, oldest first: those that aren't done and whose readers don't read items yet. */
+/**
+ * What the batch covers, on tasks aliased `t`: tasks that aren't done, have messages, and whose readers don't read
+ * items yet. One with no messages needs no rebuild: its first message flags it (with the setting on), with no gap.
+ */
+const PENDING = `t.status <> 'done' AND EXISTS(SELECT 1 FROM messages m WHERE m.task_id = t.id) AND NOT ${on_items()}`;
+
+/** The tasks the batch covers, oldest first. */
 export function pending(c: Conn): string[] {
-  return db.all<{ id: string }>(c, `SELECT t.id FROM tasks t WHERE t.status <> 'done' AND NOT ${on_items()} ORDER BY t.created_at, t.id`).map((r) => r.id);
+  return db.all<{ id: string }>(c, `SELECT t.id FROM tasks t WHERE ${PENDING} ORDER BY t.created_at, t.id`).map((r) => r.id);
 }
 
 /** Whether task `task_id` is still one the batch covers. */
 function is_pending(c: Conn, task_id: string): boolean {
-  return !!db.one(c, `SELECT 1 FROM tasks t WHERE t.id=?1 AND t.status <> 'done' AND NOT ${on_items()}`, task_id);
+  return !!db.one(c, `SELECT 1 FROM tasks t WHERE t.id=?1 AND ${PENDING}`, task_id);
 }
 
 /** A batch's progress, as `GET /admin/threads` shows it. */

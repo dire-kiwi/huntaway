@@ -247,6 +247,23 @@ test("a done task gets its items when it's opened, or read, with the setting on"
   assert.equal(flagged(s, off!), false);
 });
 
+// The UI tests: a task opened before its first message got an empty thread and was flagged, so its composer sent
+// thread commands, and the batch counted every task that had never started.
+test("a task with no messages isn't in the batch or rebuilt when it's opened: its first message flags it", async () => {
+  const { s, tasks } = board(["in_progress"]);
+  const c = s.db();
+  const p = db.get_task(c, tasks[0]!.id)!.profile_id;
+  const empty = db.insert_task(c, { profile_id: p, project_id: null, kind: "task", title: "new", description: "", status: "todo", use_worktree: false });
+  assert.deepEqual(batch.pending(c), [tasks[0]!.id]);
+  await call(s, "GET", `/api/tasks/${empty.id}`);
+  await call(s, "GET", `/api/tasks/${empty.id}/messages?limit=100`);
+  assert.equal((await call(s, "GET", `/api/tasks/${empty.id}/thread`))[0], 404);
+  assert.deepEqual([flagged(s, empty.id), count(s, "threads", empty.id)], [false, 0]);
+  s.add_message(empty.id, "user", { text: "first" });
+  assert.equal(flagged(s, empty.id), true);
+  assert.equal(history.reads_items(c, empty.id), true);
+});
+
 test("a task's items written by an older converter are rebuilt when it's opened; a broken one is left alone", async () => {
   const { s, tasks } = board(["done", "done"]);
   const c = s.db();

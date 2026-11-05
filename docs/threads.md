@@ -358,7 +358,8 @@ setting is on by default (API 120). It's still additive: messages are the source
 (and `tasks.thread_items`) undoes it.
 
 - **The batch** covers every task that isn't done whose readers don't read items yet (`batch.pending`: not flagged,
-  written by an older converter, or stopped on an error), oldest first. It's started from Settings → Server ("N tasks
+  written by an older converter, or stopped on an error), oldest first. Not one with no messages yet: its first
+  message flags it, as for a new task, so neither the batch nor opening it builds it an empty thread. It's started from Settings → Server ("N tasks
   that aren't done don't keep their thread as items yet", *Rebuild them*, with its progress and a *Stop*), which is
   `POST /admin/threads/batch` (`{"stop": true}` stops it) and `GET /admin/threads` (`{pending, batch}`), or from the
   command line: `huntaway threads-rebuild --batch`, which prints `[n/N] <task>: …` as it goes.
