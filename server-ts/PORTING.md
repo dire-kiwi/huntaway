@@ -12,8 +12,10 @@ The code keeps the shape and the names of the Rust it came from, and new code fo
 there's no plan to rename things to TypeScript's usual camelCase. A file's first line says which Rust file it's a port
 of (`// Port of server/src/agent/runner/queue.rs.`). That Rust is in git history: the parent of the commit that removed
 it has it (`c136b11`, for one), so `git show c136b11:server/src/agent/runner/queue.rs` reads it. Branches from before
-the removal that changed the Rust server (HA-117's personal mode, HA-173's workflow automations, HA-128 and HA-143's
-agent threads) are ported by HA-190, HA-189 and HA-191, by reading those changes against the same paths here.
+the removal that changed the Rust server were ported by reading those changes against the same paths here. HA-117's
+personal mode was ported in HA-201 to HA-210 (HA-190's slices) from its branch,
+`ia/ha-117-research-personal-agent-features-for-hun` (tip `bb59d8a`, kept on GitHub). HA-173's workflow automations
+are ported by HA-189, and HA-128 and HA-143's agent threads by HA-191.
 
 Scope: the whole server, including linking hosts (hub links, relay, SSH, broker: the broker's side of its protocol is
 `hosts/broker/proto.ts`, from `server/broker/src/proto.rs`, and tests run the Rust broker as a process, see

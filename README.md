@@ -63,6 +63,10 @@ UI development with hot reload: run the server, then `npm run dev` in `app/` (Vi
 `/api` to `127.0.0.1:7878`, override with `IA_SERVER`). Use `npm run electron:dev` to load the
 dev server in Electron.
 
+Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
+servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
+`/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
+
 Faster Rust builds (`ia-shim` and the broker): install [sccache](https://github.com/mozilla/sccache) (`cargo install sccache
 --locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
@@ -225,6 +229,13 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
+### The personal assistant
+
+The assistant is a profile's personal mode, apart from its projects. This section covers its thread, memory, approval
+rules and Google. The rest is elsewhere: its routines and the morning brief under *Automations*, running it on a
+machine of its own under *An assistant host*, talking to it from Telegram under *Telegram*, push for its replies,
+reports and prompts under *Push notifications on a phone*, and the phone app's Assistant tab under *The mobile app*.
+
 Each profile has an **assistant** (API 109): one long-lived conversation outside every project,
 opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
 It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
@@ -385,10 +396,6 @@ with a few of its tools by name and canned mail, events and files for today (one
 injection), which logs each call to `$STUB_GOOGLE_LOG`. Make it the Google server's command
 (`{"command": "python3", "args": ["-I", "<path>/scripts/stub-google-mcp.py"]}`) in Settings → Skills and
 MCP servers.
-
-Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
-`/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
 ### Server options
 
@@ -788,7 +795,7 @@ Notifications (FCM V1)*, with that file. Without the secret the APK builds with 
 can't register for push.
 
 **iOS** isn't built yet: TestFlight builds through EAS wait for an Apple Developer Program
-membership and an Expo account (HA-163, in the backlog), and this repository has no workflow for
+membership and an Expo account (HA-258, in the backlog), and this repository has no workflow for
 them yet.
 
 `eas.json`'s other profiles are for EAS builds by hand: `development` (a dev build, below) and
