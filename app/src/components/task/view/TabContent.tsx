@@ -3,6 +3,7 @@ import { ownWorkDir, type DocumentType, type Project, type Task } from "../../..
 import { DocumentView } from "../Document";
 import { ChangeSummaryView, ReviewSummary } from "../Review";
 import { Thread } from "../Thread";
+import { isWorkflowTab, WorkflowTabView } from "../Workflows";
 import { Details } from "./details/Details";
 import type { Mode, Tab } from "./layout";
 
@@ -60,6 +61,12 @@ export function TabContent({
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-5 py-5">
         <ChangeSummaryView task={task} />
+      </div>
+    </div>
+  ) : isWorkflowTab(shown) ? (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-3xl px-5 py-5">
+        <WorkflowTabView task={task} label={shown.slice(3)} />
       </div>
     </div>
   ) : shown === "details" ? (
