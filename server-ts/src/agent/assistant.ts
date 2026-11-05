@@ -8,7 +8,8 @@
  * `get_or_create` is the one place a profile's assistant is found. A later step routes it to a linked host of its own
  * (an *Assistant host* setting per profile), which goes there.
  */
-import { mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import { ApiError } from "../http.ts";
@@ -17,6 +18,41 @@ import { err_str } from "../util.ts";
 import * as runner from "./runner.ts";
 import * as documents from "./documents.ts";
 import * as questions from "../mcp/questions.ts";
+
+/**
+ * The assistant whose workspace a run of `task` has: the assistant's own, and a routine thread's its parent's
+ * (`parent`), whose workspace it has to be in. None for any other thread.
+ */
+export function whose_workspace(task: Task, parent: Task | null): Task | null {
+  if (db.is_assistant(task)) return task;
+  if (!db.is_routine(task)) return null;
+  if (parent && db.is_assistant(parent) && parent.work_dir === task.work_dir) return parent;
+  throw new Error("this routine thread's assistant, or its workspace, is gone");
+}
+
+/**
+ * The assistant's workspace, made if it isn't there, once it's checked to be its own: `assistants/<task id>` in the data
+ * dir, as real folders. A symlink in their place (or a file) could lead to another assistant's workspace, or anywhere
+ * else, so it's refused, and nothing is run there. The data dir itself may be a symlink. (Rust's
+ * `assistant::memory::checked`, which the memory's port keeps with the rest of it.)
+ */
+export function checked(state: Shared, task: Task): string {
+  if (!db.is_assistant(task)) throw new Error(`${task.id} isn't an assistant`);
+  if (task.work_dir !== work_dir(task.id)) throw new Error(`the assistant's folder isn't its own workspace (${JSON.stringify(task.work_dir)})`);
+  let dir = state.data_dir;
+  for (const part of ["assistants", task.id]) {
+    dir = join(dir, part);
+    try {
+      mkdirSync(dir);
+    } catch (e: any) {
+      if (e?.code !== "EEXIST") throw new Error(`making ${dir}: ${err_str(e)}`);
+    }
+    if (!lstatSync(dir).isDirectory()) {
+      throw new Error(`${dir} isn't a folder of its own (it's a symlink or a file), so the assistant's memory isn't used`);
+    }
+  }
+  return dir;
+}
 
 /** Where an assistant works, relative to the data dir (see documents.work_dir), so it moves with it. */
 export function work_dir(task_id: string): string {

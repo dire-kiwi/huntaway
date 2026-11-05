@@ -2456,3 +2456,49 @@ test("agents_only_reach_workflows_on_boards_they_can_use", async () => {
   assert.ok(too_old("laptop", 106, "list_workflows", {})?.includes("without workflows"));
   assert.equal(too_old("laptop", 107, "list_workflows", {}), null);
 });
+
+// ---------- routines (HA-122, ported by HA-205) ----------
+
+test("the_assistant_sets_up_routines_once_the_user_approves", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  project(s, p, "kiwicd", "KIW");
+  const mine = assistant.get_or_create(s, p.id);
+  const me = (call_id: string) => ctx(p, { task: mine, call_id });
+  const remind = {
+    name: "Call Sam",
+    trigger: { kind: "at", at: new Date(Date.now() + 86_400_000).toISOString() },
+    action: { kind: "message_assistant", mode: "thread", message: "Remind the user to call Sam." },
+    reason: "The user asked to be reminded",
+  };
+  const [res, asked] = await Promise.all([call(s, me("c1"), "create_automation", remind), answer_approval(s, true)]);
+  const made = res;
+  // The approval names the profile, not a project.
+  const input = asked.input;
+  assert.deepEqual([input.profile?.id, input.project ?? null], [p.id, null], JSON.stringify(input));
+  assert.equal(input.automation.action.kind, "message_assistant");
+  assert.deepEqual([made.profile_id, made.project_id], [p.id, null], JSON.stringify(made));
+  // The assistant lists its routines without saying so; a project's agent asks for them.
+  const listed = await call(s, me("c2"), "list_automations", {});
+  assert.equal(listed.routines[0].name, "Call Sam");
+  const worker = task(s, "kiwicd", "Worker");
+  const theirs = ctx(p, { task: worker, call_id: "c3" });
+  assert.deepEqual((await call(s, theirs, "list_automations", {})).automations, []);
+  assert.equal((await call(s, theirs, "list_automations", { routines: true })).routines[0].name, "Call Sam");
+  // Changing what it does asks; by name among the routines.
+  const change = { automation_id: "call sam", precheck: "test -f flag", budget_usd: 0.5 };
+  const [res2, asked2] = await Promise.all([call(s, me("c4"), "update_automation", change), answer_approval(s, true)]);
+  assert.equal(res2.precheck, "test -f flag");
+  assert.deepEqual(asked2.input.changes, ["budget_usd", "precheck"]);
+  // A routine can't make tasks.
+  const bad = { name: "x", routines: true, trigger: { kind: "interval", every_minutes: 60 }, action: { kind: "create_task", title: "x" } };
+  assert.ok((await err(call(s, me("c5"), "create_automation", bad))).includes("only message the assistant"));
+
+  // Another profile's agents can't reach it, even with access to this board.
+  const work = db.insert_profile(s.db(), "work", [], null);
+  grant(s, p, ["work"]);
+  const id = made.id;
+  assert.equal(await err(call(s, ctx(work), "run_automation", { automation_id: id })), `automation ${id}`);
+  const e = await err(call(s, ctx(work), "list_automations", { routines: true, profile: "personal" }));
+  assert.ok(e.includes("its own profile"), e);
+});

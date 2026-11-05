@@ -11,6 +11,12 @@ export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_A
 
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "assistant";
 
+/** A routine's run of the assistant (API 110): a thread under it (`parent_id`), off the board, keyed `A-<n>` too. */
+export const isRoutine = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "routine";
+
+/** The assistant or one of its routine threads: off the board. */
+export const isAssistants = (t: Pick<Task, "kind" | "task_type">) => isAssistant(t) || isRoutine(t);
+
 export const assistantApi = ({ on }: Http) => ({
   /** The profile's assistant, which the host makes the first time it's asked for. */
   assistant: (h: string, profileId: string) => on(h).get<Task>(`/profiles/${enc(profileId)}/assistant`),

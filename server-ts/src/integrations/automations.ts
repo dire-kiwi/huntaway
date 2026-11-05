@@ -2,9 +2,12 @@
 /**
  * Automations: a project's tasks created (or messages sent to one of its tasks) on a schedule or
  * when a webhook is delivered, so recurring work and outside events land on the board by themselves.
+ * A profile's automations, its **routines**, wake its assistant instead (see `routines`): they
+ * have a profile and no project, and their one action is `message_assistant`.
  *
  * **Triggers.** An interval (`every_minutes`, from when it's turned on), a time of day on some
- * weekdays in the host's time zone, or a webhook: `POST /api/hooks/<id>/<token>`, which is the
+ * weekdays in the host's time zone, a cron expression (in the host's time zone), a moment (`at`,
+ * once: it turns itself off once it's run), or a webhook: `POST /api/hooks/<id>/<token>`, which is the
  * one route that doesn't take the board's token. It reaches nothing but its own automation: an
  * unknown id or a wrong token (compared in constant time) is the same 404, the payload only fills
  * in templates (it can't pick the project, the task, the agent config or anything else), and a
@@ -15,17 +18,35 @@
  * coalesced: those within a window (and with the same key) make one run, from the latest of them.
  * Bodies are at most `MAX_BODY`, and an automation takes at most `RATE_PER_MINUTE` deliveries a minute.
  *
+ * **Before a run.** An automation can have `active_hours` (a scheduled run outside them waits for
+ * them, and a delivery outside them is skipped; Run now and `at` don't heed them), a `precheck`
+ * (a command run first, in the assistant's workspace or the project's folder: exit 1 skips the
+ * run, and what it prints fills in `{{precheck}}`) and a `budget_usd` a day (a run once its runs
+ * today have cost that much is skipped, and says so). A run's cost is its agent's: a routine's
+ * thread, or the assistant's run that took its message in; for a project's automation, the agent
+ * run of the task it made that it started, or the run that took its message in (not the task's
+ * later work, which is the user's).
+ *
  * **Actions.** Create a task from a template (title, description, type, agent config, model,
- * effort, status, and whether to start it), or send a message to a task. Templates take
+ * effort, status, and whether to start it), or send a message to a task; a routine messages the
+ * assistant, in a fresh thread of its own (its report is posted to the assistant unless it has
+ * nothing to say) or in the assistant's own thread. Templates take
  * `{{body.issue.title}}`-style values from a delivery (see `lookup`); in a description or
  * message each one is wrapped in `<untrusted-data>` tags, with a note telling the agent that
  * what's inside is data, not instructions.
+ *
+ * **Webhook responses.** A delivery that runs is answered as soon as its run is recorded (202,
+ * `running`), and its action goes on by itself, so a slow precheck doesn't outlast the sender's
+ * timeout. One turned away is answered with why: 401 rejected, 409 skipped (the automation is off),
+ * 200 for a duplicate, 202 for one filtered out, coalesced or waiting (`pending`), 429 past the rate.
  *
  * **Missed runs and restarts.** The scheduler (`tick`, every few seconds) claims a due run by
  * moving the automation's `next_run_at` on, and records it, in one transaction before it does
  * anything, so a restart can't run it twice. There's no backfill: an interval that came due while
  * the server was down runs once, late; a time of day more than `LATE_GRACE` late is skipped (and
- * recorded as missed). A run that was under way when the server stopped is marked as interrupted
+ * recorded as missed). Each automation's run goes on by itself, so a slow one doesn't hold up the
+ * others; one that comes due again before its last run is over waits for it. A run that was under
+ * way when the server stopped is marked as interrupted
  * on the next start, and isn't run again. Coalesced deliveries wait in the database, so they run
  * after a restart.
  *
@@ -41,6 +62,7 @@ export * from "./automations/check.ts";
 export * from "./automations/delivery.ts";
 export * from "./automations/running.ts";
 export * from "./automations/handlers.ts";
+export * as routines from "./automations/routines.ts";
 
 /** The shortest and longest intervals a schedule can have. */
 export const MIN_INTERVAL_MINUTES = 5;
@@ -82,13 +104,17 @@ const DAY = 86_400_000;
 /**
  * `{"kind": "interval", every_minutes}`: every `every_minutes`, from when it's turned on (or its schedule changes).
  * `{"kind": "daily", time, weekdays}`: at `time` (`HH:MM`, in the host's time zone) on `weekdays` (`mon` … `sun`; none
- * is every day). `{"kind": "webhook", filters, coalesce_seconds, coalesce_key}`: each delivery to its URL that passes
+ * is every day). `{"kind": "cron", expr}`: when a cron expression (`minute hour day-of-month month day-of-week`, in the
+ * host's time zone) matches; see cron.ts. `{"kind": "at", at}`: once, at `at` (stored as UTC RFC 3339; given as that, or
+ * `YYYY-MM-DD HH:MM` in the host's time zone); it turns itself off once it's run. `{"kind": "webhook", filters, coalesce_seconds, coalesce_key}`: each delivery to its URL that passes
  * its `filters`; deliveries in `coalesce_seconds` from the first make one run (0: each runs by itself), and with
  * coalescing, only deliveries whose key (a template, e.g. `{{body.issue.number}}`) is the same go together.
  */
 export type Trigger =
   | { kind: "interval"; every_minutes: number }
   | { kind: "daily"; time: string; weekdays: string[] }
+  | { kind: "cron"; expr: string }
+  | { kind: "at"; at: string }
   | { kind: "webhook"; filters: Filter[]; coalesce_seconds: number; coalesce_key: string };
 
 export type FilterOp = "equals" | "not_equals" | "starts_with" | "contains" | "in" | "not_in" | "exists" | "not_exists";
@@ -107,7 +133,8 @@ export interface Filter {
  * `create_task`: a task in the automation's project, from these templates and settings (`task_type` one of
  * db::TASK_TYPES, or null for a code task, or one of db::LABELS in an action stored before API 71; `labels` some of
  * db::LABELS, left out when empty; `status` `todo` or `backlog`; `start` starts its agent). `send_to_task`: a message
- * to a task in the automation's project.
+ * to a task in the automation's project. `message_assistant`: a routine's message to its profile's assistant (see
+ * routines.ts), in `mode` `fresh` (the default) or `thread`.
  */
 export type Action =
   | {
@@ -122,11 +149,31 @@ export type Action =
       status: string;
       start: boolean;
     }
-  | { kind: "send_to_task"; task_id: string; message: string };
+  | { kind: "send_to_task"; task_id: string; message: string }
+  | { kind: "message_assistant"; message: string; mode: AssistantMode };
+
+/**
+ * Where a routine's message goes: `fresh`, a fresh thread under the assistant, whose last message is posted to the
+ * assistant as a report, unless it's `NO_REPLY` or empty; `thread`, the assistant's own thread, as `send_to_task` does.
+ */
+export type AssistantMode = "fresh" | "thread";
+export const ASSISTANT_MODES: AssistantMode[] = ["fresh", "thread"];
+
+/**
+ * The hours a scheduled run may start in (from `start` up to `end`, which may be past midnight), on `weekdays` (none is
+ * every day), in the host's time zone.
+ */
+export interface ActiveHours {
+  start: string;
+  end: string;
+  weekdays: string[];
+}
 
 export interface Automation {
   id: string;
-  project_id: string;
+  profile_id: string;
+  /** None for a profile's routine. */
+  project_id: string | null;
   name: string;
   enabled: boolean;
   trigger: Trigger;
@@ -138,6 +185,11 @@ export interface Automation {
   /** When its schedule next runs (UTC); none for a webhook, or while it's off. */
   next_run_at: string | null;
   last_run_at: string | null;
+  active_hours: ActiveHours | null;
+  /** A command run before each run (see routines.precheck). */
+  precheck: string | null;
+  /** What its runs may cost a day (in the host's time zone), from their agents' runs. */
+  budget_usd: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -193,9 +245,11 @@ function kind_of<K extends string>(v: any, what: string, kinds: K[]): K {
 
 /** A Trigger from its JSON, as serde reads it. Throws serde's sort of error. */
 export function Trigger_from_json(v: any): Trigger {
-  const kind = kind_of(v, "Trigger", ["interval", "daily", "webhook"]);
+  const kind = kind_of(v, "Trigger", ["interval", "daily", "cron", "at", "webhook"]);
   if (kind === "interval") return { kind, every_minutes: field(v, "every_minutes", "u32") };
   if (kind === "daily") return { kind, time: field(v, "time", "string"), weekdays: field(v, "weekdays", "string_list", []) };
+  if (kind === "cron") return { kind, expr: field(v, "expr", "string") };
+  if (kind === "at") return { kind, at: field(v, "at", "string") };
   const filters = field(v, "filters", "any", []);
   if (!Array.isArray(filters)) throw new Error(`invalid type: ${type_name(filters)}, expected a sequence`);
   return {
@@ -218,8 +272,17 @@ function Filter_from_json(v: any): Filter {
 
 /** An Action from its JSON, as serde reads it. Throws serde's sort of error. */
 export function Action_from_json(v: any): Action {
-  const kind = kind_of(v, "Action", ["create_task", "send_to_task"]);
+  const kind = kind_of(v, "Action", ["create_task", "send_to_task", "message_assistant"]);
   if (kind === "send_to_task") return { kind, task_id: field(v, "task_id", "string"), message: field(v, "message", "string") };
+  if (kind === "message_assistant") {
+    const message = field(v, "message", "string");
+    const mode = v.mode === undefined ? "fresh" : v.mode;
+    if (typeof mode !== "string") throw new Error(`invalid type: ${type_name(mode)}, expected variant identifier`);
+    if (!ASSISTANT_MODES.includes(mode as AssistantMode)) {
+      throw new Error(`unknown variant \`${mode}\`, expected one of ${ASSISTANT_MODES.map((k) => `\`${k}\``).join(", ")}`);
+    }
+    return { kind, message, mode: mode as AssistantMode };
+  }
   const a = {
     kind: "create_task" as const,
     title: field(v, "title", "string"),
@@ -250,10 +313,21 @@ export function sorted_json(v: any): string {
   );
 }
 
+/** ActiveHours from its JSON, as serde reads it. Throws serde's sort of error. */
+export function ActiveHours_from_json(v: any): ActiveHours {
+  const o = object(v, "struct ActiveHours");
+  return { start: field(o, "start", "string"), end: field(o, "end", "string"), weekdays: field(o, "weekdays", "string_list", []) };
+}
+
 export function Automation_from_row(r: any): Automation {
+  let active_hours: ActiveHours | null = null;
+  try {
+    active_hours = r.active_hours ? ActiveHours_from_json(JSON.parse(r.active_hours)) : null;
+  } catch {}
   return {
     id: r.id,
-    project_id: r.project_id,
+    profile_id: r.profile_id,
+    project_id: r.project_id ?? null,
     name: r.name,
     enabled: !!r.enabled,
     trigger: Trigger_from_json(JSON.parse(r.trigger)),
@@ -262,9 +336,17 @@ export function Automation_from_row(r: any): Automation {
     secret: r.secret ?? null,
     next_run_at: r.next_run_at ?? null,
     last_run_at: r.last_run_at ?? null,
+    active_hours,
+    precheck: r.precheck ?? null,
+    budget_usd: r.budget_usd ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+}
+
+/** A profile's routine, rather than a project's automation. */
+export function is_routine(a: Automation): boolean {
+  return a.project_id === null;
 }
 
 export function is_webhook(a: Automation): boolean {
@@ -284,11 +366,19 @@ export interface Run {
   source: string;
   /**
    * `pending` (waiting to coalesce), `coalesced` (into `batch_id`), `running`, `ok`, `failed`,
-   * `skipped` (missed, the automation was off, or too many coalesced runs were waiting), `filtered` (or an ignored
-   * ping), `duplicate` or `rejected` (a bad signature).
+   * `skipped` (missed, the automation was off, too many coalesced runs were waiting, outside its active hours, its
+   * precheck found nothing, over its budget, or its last run is still going), `filtered` (or an ignored ping),
+   * `duplicate` or `rejected` (a bad signature).
    */
   status: string;
   detail: string | null;
+  /**
+   * For a routine's run in a fresh thread, once its agent has stopped: `quiet` (it had nothing to report), `reported`,
+   * `asked` (it needs the user), `failed` or `stopped`.
+   */
+  outcome: string | null;
+  /** What its agent's runs cost, once they've ended. */
+  cost_usd: number | null;
   /** The task it created or messaged. */
   task_id: string | null;
   delivery_id: string | null;
@@ -314,6 +404,8 @@ export function Run_from_row(r: any): Run {
     source: r.source,
     status: r.status,
     detail: r.detail ?? null,
+    outcome: r.outcome ?? null,
+    cost_usd: r.cost_usd ?? null,
     task_id: r.task_id ?? null,
     delivery_id: r.delivery_id ?? null,
     event: r.event ?? null,
@@ -335,6 +427,8 @@ export function Run_new(automation_id: string, source: string, status: string, n
     source,
     status,
     detail: null,
+    outcome: null,
+    cost_usd: null,
     task_id: null,
     delivery_id: null,
     event: null,
@@ -373,13 +467,18 @@ export function list(c: Conn, project_id: string): Automation[] {
   return db.all(c, "SELECT * FROM automations WHERE project_id=?1 ORDER BY created_at, id", project_id).map(Automation_from_row);
 }
 
+/** A profile's routines (its automations in no project). */
+export function list_routines(c: Conn, profile_id: string): Automation[] {
+  return db.all(c, "SELECT * FROM automations WHERE profile_id=?1 AND project_id IS NULL ORDER BY created_at, id", profile_id).map(Automation_from_row);
+}
+
 export function insert_run(c: Conn, r: Run): void {
   db.run(
     c,
-    `INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)`,
+    `INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at,outcome,cost_usd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`,
     r.id, r.automation_id, r.source, r.status, r.detail, r.task_id, r.delivery_id, r.event, r.count, r.batch_key ?? null, r.batch_id, r.payload ?? null,
-    r.due_at, r.created_at, r.finished_at,
+    r.due_at, r.created_at, r.finished_at, r.outcome, r.cost_usd,
   );
 }
 
@@ -393,12 +492,19 @@ export function runs(c: Conn, automation_id: string, limit: number): Run[] {
   return db.all(c, "SELECT * FROM automation_runs WHERE automation_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2", automation_id, limit).map(Run_from_row);
 }
 
-/** How a run went: the task it made or messaged, or why it failed (with the task, if it made one). */
-export type RunResult = { ok: string | null } | { err: [string | null, string] };
+/**
+ * Why a run didn't do what it does (Rust's `Outcome`): it went wrong (`err`, with the task, if it made one), or it was
+ * checked and not run (`skipped`, and why).
+ */
+export type Outcome = { err: [string | null, string] } | { skipped: string };
 
-/** Ends a run: what it did, or why it didn't. */
+/** How a run went: the task it made or messaged, or why it didn't (see Outcome). */
+export type RunResult = { ok: string | null } | Outcome;
+
+/** Ends a run: what it did, or why it didn't (a run that was skipped says why). */
 export function finish(c: Conn, run_id: string, result: RunResult): void {
-  const [status, task, detail] = "ok" in result ? ["ok", result.ok, null] : ["failed", result.err[0], result.err[1]];
+  const [status, task, detail] =
+    "ok" in result ? ["ok", result.ok, null] : "skipped" in result ? ["skipped", null, result.skipped] : ["failed", result.err[0], result.err[1]];
   db.run(
     c,
     "UPDATE automation_runs SET status=?2, task_id=COALESCE(?3, task_id), detail=?4, finished_at=?5 WHERE id=?1",
@@ -417,17 +523,28 @@ export function mark_interrupted(c: Conn): number {
   ).changes;
 }
 
-/** Drops old runs (see KEEP_RUNS) and payloads. */
+/**
+ * Drops old runs (see KEEP_RUNS) and payloads. The runs that made or messaged a task (a routine's, woke its assistant)
+ * in the last two days (its "today" in any time zone) are kept whatever the limits, as its budget a day counts their
+ * cost (see routines.spent_today), even while their agent is still at work.
+ */
 export function prune(c: Conn, now: number): void {
   const cutoff = fmt(now - days(DEDUPE_DAYS));
+  const costs_since = fmt(now - days(2));
   const ids = db.all(c, "SELECT id FROM automations").map((r: any) => r.id as string);
   for (const id of ids) {
     const newest = "SELECT id FROM automation_runs WHERE automation_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2";
-    db.run(c, `DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN (${newest})`, id, KEEP_RUNS);
+    const costs = "(created_at >= ?4 AND (COALESCE(cost_usd, 0) > 0 OR (status='ok' AND task_id IS NOT NULL)))";
     db.run(
       c,
-      `DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND created_at < ?3 AND id NOT IN (${newest})`,
-      id, KEEP_RECENT, cutoff,
+      `DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN (${newest}) AND NOT ${costs}`,
+      id, KEEP_RUNS, null, costs_since,
+    );
+    db.run(
+      c,
+      `DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND created_at < ?3 AND id NOT IN (${newest})
+                   AND NOT ${costs}`,
+      id, KEEP_RECENT, cutoff, costs_since,
     );
     db.run(
       c,
@@ -439,7 +556,7 @@ export function prune(c: Conn, now: number): void {
 }
 
 export function changed(s: Shared, a: Automation): void {
-  s.emit({ type: "automations_changed", project_id: a.project_id, automation_id: a.id });
+  s.emit({ type: "automations_changed", project_id: a.project_id, profile_id: a.profile_id, automation_id: a.id });
 }
 
 /** `ApiError::bad`. */
