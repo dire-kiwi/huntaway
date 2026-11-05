@@ -28,6 +28,7 @@ import {
   type Trigger,
 } from "../automations.ts";
 import * as runner from "../../agent/runner.ts";
+import * as assistant from "../../agent/assistant.ts";
 import {
   Local,
   check_action,
@@ -205,7 +206,11 @@ export function create(s: Shared, project_id: string, b: Record<string, any>): A
 
 /** Adds a routine to a profile. */
 export function create_routine(s: Shared, profile_id: string, b: Record<string, any>): Automation {
-  if (!db.get_profile(s.db(), profile_id)) throw ApiError.not_found("profile");
+  const p = db.get_profile(s.db(), profile_id);
+  if (!p) throw ApiError.not_found("profile");
+  // Not one that couldn't run (see running.guards).
+  const why = assistant.routines_elsewhere(s, p);
+  if (why !== null) throw ApiError.conflict(why);
   return create_in(s, { profile: profile_id }, b);
 }
 
