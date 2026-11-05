@@ -26,7 +26,7 @@ import type { Spent } from "./tokens/calls.ts";
 import * as usage from "./usage.ts";
 import * as codex from "./codex.ts";
 import type { Shared } from "../state.ts";
-import { context, err_str, expand_tilde } from "../util.ts";
+import { background, context, err_str, expand_tilde } from "../util.ts";
 
 /** How often the loop looks at the windows (ms). */
 const TICK = 30_000;
@@ -87,12 +87,12 @@ export function start(s: Shared) {
       await check(s, c, w, Date.now());
     }
   };
-  (async () => {
+  background("restarting 5-hour windows", (async () => {
     for (;;) {
       await tick().catch((e) => log.warn(`restarting 5-hour windows: ${err_str(e)}`));
       await new Promise((r) => setTimeout(r, TICK).unref());
     }
-  })();
+  })());
 }
 
 export function window(s: Shared, c: ClaudeConfig, w: Watch, now: number): Window {

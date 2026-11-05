@@ -41,6 +41,15 @@ Node can't, so `bin/huntaway` (a shell) runs `node` as its child for `serve`: to
 to the file the wrapper named in `IA_RESTART_FILE` and exits with 75, and the wrapper execs it as the same process (see
 `update/admin.ts`'s `exec`). TERM, INT and HUP to the wrapper stop node; node stops by itself if the wrapper is killed.
 
+Crashes (HA-182): a panic in a Rust task ended that task, and the server carried on. Here, a promise that rejects with
+nothing to handle it, or a throw in a timer or an event's listener, is logged to the server log with its stack and the
+server carries on (`src/crash.ts` says why uncaught exceptions are carried on from too). Every promise the server makes is
+awaited, `.catch`ed or run with `util.ts`'s `background`, which logs what it throws; `tests/floating_promises.test.ts`
+checks that with the TypeScript compiler (there's no ESLint). If node exits with an error anyway once it's up (or
+aborts, as it does when it runs out of memory), `bin/huntaway` starts it again as the same process, after 1, 2, 4, 8 and
+16 seconds, then gives up (see its comments). `IA_DEBUG_FAULTS=1` adds `POST /api/debug/fault {"kind": "reject" |
+"throw" | "loop" | "exit"}`, which makes the server fail on purpose, to try that.
+
 Tests: every Rust test that applies is ported (737 TS tests: `src/**/*.test.ts` beside their modules, and
 `tests/` for `server/tests/`). Not ported: `state.rs`'s two tests of the database lock, which the TS server doesn't have,
 and `testing.rs`'s tests of the cargo test harness. All 220 browser checks in `app/tests/ui/` pass against it. The broker
@@ -59,8 +68,8 @@ JSON):
 | After loading every thread once | 279 MB | 310 MB (peak 347 MB) |
 | After 5 rounds of that | 421 MB | 322 MB (peak 414 MB) |
 | 10 s later, websockets closed | 421 MB | 321 MB |
-| Each agent's `huntaway mcp` helper | 9 MB | 87 MB |
-| Each agent's `huntaway gh-mcp` helper | 7 MB | 90 MB |
+| Each agent's `huntaway mcp` helper | 9 MB | 87 MB (none since HA-180) |
+| Each agent's `huntaway gh-mcp` helper | 7 MB | 90 MB (none since HA-180) |
 
 On the `--demo` data, idle is 20 MB against 128 MB, and loading the board keeps them at about 26 MB and 133 MB.
 
@@ -70,3 +79,19 @@ On the `--demo` data, idle is 20 MB against 128 MB, and loading the board keeps 
   server's single thread isn't affected: 322 MB).
 - Each agent run starts its own `mcp` and `gh-mcp` helpers, so the TS port also costs about 160 MB more per running
   agent: with ten agents at work, that's 1.6 GB more than the Rust helpers' 160 MB.
+- Since HA-180 runs have no helpers: the server serves both MCP servers itself, over HTTP (see `src/mcp/http.ts` and
+  *How runs reach the board's MCP servers* in the top README). Measured before choosing (Node 26.8, one helper after
+  `initialize` and `tools/list`, RSS / private memory):
+
+  | | RSS | Private |
+  |---|---|---|
+  | `mcp.ts` as it ran (type stripping) | 89 MB | 37 MB |
+  | the same, precompiled to `.js` | 59 MB | 16 MB |
+  | `.js` with `--jitless --max-semi-space-size=1 --max-old-space-size=32` | 52 MB | 12 MB |
+  | `--lite-mode` | 51 MB | – |
+  | Node's floor (`node -e` reading stdin, `--jitless`) | 45 MB | 9 MB |
+
+  So lighter Node helpers would still have cost 90–100 MB of RSS per agent. With five agents at once on a test server,
+  each agent's processes came to 424 MB RSS (242 MB PSS, of which its helpers were 187 MB RSS and 87 MB PSS) before and
+  239 MB RSS (159 MB PSS) after; the server's own RSS stayed about the same (145 MB before, 123 MB after, with their
+  five calls open).

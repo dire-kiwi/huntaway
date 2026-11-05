@@ -188,6 +188,123 @@ test("a_restart_keeps_the_process_id_and_port", async () => {
   assert.deepEqual(children(s.child.pid!), []);
 });
 
+// ---------- a bug doesn't take the board down (HA-182) ----------
+
+/** `bin/huntaway serve` on a free port with `IA_DEBUG_FAULTS` (see crash.ts), and how to call its API. */
+async function faulty_server(env: Record<string, string> = {}) {
+  const port = await free_port();
+  const s = serve_bin(["--port", String(port)], { IA_DEBUG_FAULTS: "1", IA_CRASH_BACKOFF: "0", ...env });
+  await s.ready(1);
+  const token = readFileSync(join(s.data_dir, "auth_token"), "utf8").trim();
+  const req = (path: string, body?: unknown) =>
+    fetch(`http://127.0.0.1:${port}/api${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).then((r) => r.json() as any);
+  return { ...s, port, req };
+}
+
+/** Wait until `f()` is true, for up to 15 seconds. */
+async function until(what: string, f: () => boolean) {
+  const deadline = Date.now() + 15_000;
+  while (!f()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(50);
+  }
+}
+
+test("a_rejection_or_a_throw_in_the_background_is_logged_and_the_server_carries_on", async () => {
+  const s = await faulty_server();
+  const node = children(s.child.pid!);
+  // A route's handler that leaves a promise to reject with nothing to handle it, a timer that throws once, and one
+  // that throws every second.
+  for (const kind of ["reject", "throw", "loop"]) assert.deepEqual(await s.req("/debug/fault", { kind }), { ok: true });
+  await until("the errors in the log", () => /unhandled rejection.*a rejection nobody handles/.test(s.log()) && /uncaught exception.*a timer that throws/.test(s.log()));
+  await until("the loop's second throw", () => s.log().includes("a background loop that throws"));
+  await sleep(2500);
+  // Still the same server, serving.
+  assert.equal((await s.req("/health")).ok, true);
+  assert.equal(s.child.exitCode, null);
+  assert.deepEqual(children(s.child.pid!), node, "not started again");
+  // With the stack, to find the bug by.
+  assert.match(s.log(), /a timer that throws\n\s+at /);
+  // The loop's error, thrown every second, is logged once a minute rather than every time.
+  assert.equal(s.log().split("a background loop that throws").length - 1, 1, s.log());
+  assert.deepEqual(await s.req("/debug/fault", { kind: "nope" }).then((r) => typeof r.error), "string");
+});
+
+test("the_fault_route_is_only_there_with_ia_debug_faults", async () => {
+  const s = await faulty_server({ IA_DEBUG_FAULTS: "" });
+  assert.match((await s.req("/debug/fault", { kind: "exit" })).error, /no such API route/);
+  await sleep(200);
+  assert.equal(s.child.exitCode, null);
+});
+
+test("a_server_that_crashes_once_up_is_started_again_as_the_same_process", async () => {
+  const s = await faulty_server();
+  const before = await s.req("/admin/server");
+  const node = children(s.child.pid!);
+  assert.deepEqual(await s.req("/debug/fault", { kind: "exit" }), { ok: true });
+  assert.equal((await s.ready(2)).port, s.port);
+  const after = await s.req("/admin/server");
+  assert.notEqual(after.boot_id, before.boot_id);
+  assert.equal(s.child.exitCode, null, "bin/huntaway's process carries on");
+  assert.notDeepEqual(children(s.child.pid!), node);
+  assert.match(s.log(), /the server stopped with 1; starting it again in 0s \(1 of 5\)/);
+  // It can still restart (exec) and stop as before.
+  assert.deepEqual(await s.req("/admin/restart", { rebuild: false }), { ok: true });
+  assert.equal((await s.ready(3)).port, s.port);
+  s.child.kill("SIGTERM");
+  assert.equal(await s.exited, 0);
+  assert.deepEqual(children(s.child.pid!), []);
+});
+
+test("a_server_that_fails_to_start_isn_t_started_again", async () => {
+  // Its port is taken.
+  const taken = createNetServer();
+  await new Promise<void>((r) => taken.listen(0, "127.0.0.1", r));
+  servers.push(() => taken.close());
+  const s = serve_bin(["--port", String((taken.address() as any).port)], { IA_CRASH_BACKOFF: "0" });
+  assert.equal(await s.exited, 1);
+  assert.match(s.log(), /binding/);
+  assert.doesNotMatch(s.log(), /starting it again/);
+});
+
+/**
+ * `bin/huntaway serve` with a stand-in for node that says it's up (as `supervisor_started` does), then runs `then`
+ * (sh), and the number of times it was run once it has exited.
+ */
+async function crashing_node(then: string): Promise<{ code: number | null; runs: number; log: string }> {
+  const dir = testing.temp_dir();
+  const node = join(dir, "node");
+  writeFileSync(node, `#!/bin/sh\necho run >> "${dir}/runs"\n: > "$(dirname "$IA_RESTART_FILE")/started"\n${then}\n`, { mode: 0o755 });
+  const s = serve_bin([], { IA_NODE: node, IA_CRASH_BACKOFF: "0" });
+  const code = await s.exited;
+  return { code, runs: readFileSync(join(dir, "runs"), "utf8").split("\n").filter(Boolean).length, log: s.log() };
+}
+
+test("bin_huntaway_gives_up_after_five_crashes_in_a_row", async () => {
+  const r = await crashing_node("exit 3");
+  assert.equal(r.runs, 6, r.log);
+  assert.equal(r.code, 3, "the server's own code");
+  assert.match(r.log, /\(5 of 5\)/);
+  assert.match(r.log, /after starting it again 5 times in a row; giving up/);
+});
+
+test("bin_huntaway_starts_a_server_that_aborted_again_but_not_one_killed_or_stopped", async () => {
+  // SIGABRT is how node ends when it runs out of memory.
+  const aborted = await crashing_node('kill -ABRT $$');
+  assert.equal(aborted.runs, 6, aborted.log);
+  for (const sig of ["KILL", "TERM"]) {
+    const r = await crashing_node(`kill -${sig} $$`);
+    assert.equal(r.runs, 1, `${sig}: ${r.log}`);
+    assert.doesNotMatch(r.log, /starting it again/);
+  }
+  // Nor one that exited cleanly.
+  assert.equal((await crashing_node("exit 0")).runs, 1);
+});
+
 test("a_release_this_host_updated_to_is_exec_d_at_startup", async () => {
   const out = join(testing.temp_dir(), "started");
   // A release in app/ that says how it was started, in place of serving.

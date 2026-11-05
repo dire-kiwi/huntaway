@@ -1,8 +1,10 @@
 // Port of `serve` in server/src/main.rs (main.ts has the command line, and loads this only for `serve`).
 import * as backup from "./backup.ts";
+import * as crash from "./crash.ts";
 import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
+import type { Duplex } from "node:stream";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import * as db from "./db.ts";
@@ -21,6 +23,7 @@ import * as focus from "./agent/focus.ts";
 import * as runs from "./agent/runs.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
 import * as pr_watch from "./mcp/pr_watch.ts";
+import * as mcp_http from "./mcp/http.ts";
 import * as terminal from "./hosts/terminal.ts";
 import * as hub from "./hosts/hub.ts";
 import * as broker from "./hosts/broker.ts";
@@ -280,6 +283,9 @@ export function open_token(token: string, loopback_only: boolean): (headers: Rec
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*", vary: "origin" };
 
 export async function serve(args: ServeArgs) {
+  // A bug in a background job is logged rather than ending the server (see crash.ts). What serve itself throws while
+  // starting isn't unhandled: main.ts logs it and exits.
+  crash.install();
   // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
   admin.take_supervisor();
   admin.reap_inherited();
@@ -346,13 +352,14 @@ export async function serve(args: ServeArgs) {
     }
   }
   api.router(state);
+  crash.debug_route(state.local_router!);
   const ui = find_ui_dir(args.ui_dir, from_app, admin.current_exe());
   if (ui) log.info(`serving UI from ${ui}`);
   else log.warn("no UI build found; API only (build app/ or pass --ui-dir)");
   const loopback_only = ["127.0.0.1", "::1", "localhost"].includes(args.host) || args.host.startsWith("127.");
   if (args.open_token) log.warn("--open-token: handing the access token to every browser that opens the board");
 
-  server.on("request", async (req, res) => {
+  const answer = async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "/";
     const path = url.split("?")[0];
     try {
@@ -361,6 +368,8 @@ export async function serve(args: ServeArgs) {
         return;
       }
       if (path === "/api/open-token" && args.open_token && req.method === "GET") return send(res, open_token(token, loopback_only)(req.headers));
+      // Runs' MCP servers, which answer on event streams (see mcp/http.ts).
+      if (path.startsWith(mcp_http.PREFIX)) return await mcp_http.serve(state, req, res);
       if (path === "/api" || path.startsWith("/api/")) {
         for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
         const found = state.local_router!.find(path.slice(4));
@@ -376,10 +385,17 @@ export async function serve(args: ServeArgs) {
       if (!res.headersSent) send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
       else res.destroy();
     }
-  });
+  };
+  // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
+  server.on("request", (req, res) =>
+    answer(req, res).catch((e) => {
+      console.error(`answering ${req.method} ${(req.url ?? "/").split("?")[0]}:`, e);
+      res.destroy();
+    }),
+  );
 
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-  server.on("upgrade", async (req, socket, head) => {
+  const upgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = req.url ?? "/";
     let path = url.split("?")[0];
     const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
@@ -425,7 +441,13 @@ export async function serve(args: ServeArgs) {
         ws.close(1011);
       }
     });
-  });
+  };
+  server.on("upgrade", (req, socket, head) =>
+    upgrade(req, socket, head).catch((e) => {
+      console.error(`websocket ${(req.url ?? "/").split("?")[0]}:`, e);
+      socket.destroy();
+    }),
+  );
 
   // Agents kept running while we were down; catch up on their output.
   runner.load_active(state);
@@ -475,9 +497,6 @@ export async function serve(args: ServeArgs) {
   } catch (e) {
     log.warn(`settling the release: ${err_str(e)}`);
   }
-  // Machine-readable line for the Electron shell.
-  console.log(`IA_READY ${JSON.stringify({ port, token: token_from_env ? null : token })}`);
-
   const shutdown = () => {
     log.info("shutting down");
     server.close();
@@ -486,7 +505,12 @@ export async function serve(args: ServeArgs) {
     server.closeAllConnections?.();
     setImmediate(() => process.exit(0));
   };
+  // Before saying it's ready: until then, TERM ends node at once (exiting with 143, which bin/huntaway passes on), and
+  // whoever read IA_READY may stop it straight away.
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
   admin.watch_supervisor(shutdown);
+  // Machine-readable line for the Electron shell.
+  console.log(`IA_READY ${JSON.stringify({ port, token: token_from_env ? null : token })}`);
+  admin.supervisor_started();
 }

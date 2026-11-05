@@ -23,7 +23,7 @@ import type { Conn, Task } from "../db.ts";
 import { ApiError } from "../http.ts";
 import type { AppState } from "../state.ts";
 import { run_cmd, type Output } from "../proc.ts";
-import { err_str, expand_tilde, new_id, path_str } from "../util.ts";
+import { background, err_str, expand_tilde, new_id, path_str } from "../util.ts";
 import * as documents from "../agent/documents.ts";
 import * as task_tmp from "../agent/task_tmp.ts";
 import { Pty } from "./pty.ts";
@@ -269,22 +269,24 @@ export function keepalive(task_id: string, tool: string) {
 /** End tool sessions that no board has kept open: nobody attached and the lease ran out. */
 export function start_reaper(s: AppState) {
   if (!available()) return;
-  setInterval(async () => {
-    const sessions = await list_sessions(s);
-    const expired: string[] = [];
-    for (const name of [...leases.keys()]) if (!sessions.some(([n]) => n === name)) leases.delete(name);
-    for (const [name, attached] of sessions.filter(([n]) => n.startsWith("ia-") && n.includes("~"))) {
-      // Sessions from before a restart get a full lease to be claimed again.
-      if (!leases.has(name)) leases.set(name, Date.now());
-      if (attached > 0) leases.set(name, Date.now());
-      else if (Date.now() - leases.get(name)! > TOOL_LEASE) expired.push(name);
-    }
-    for (const name of expired) {
-      console.error(`terminal: ending ${name}, no board has it open`);
-      await tmux(s, ["kill-session", "-t", `=${name}`]).catch(() => {});
-      leases.delete(name);
-    }
-  }, REAP_EVERY).unref();
+  setInterval(() => background("ending tool terminals no board has open", reap(s)), REAP_EVERY).unref();
+}
+
+async function reap(s: AppState) {
+  const sessions = await list_sessions(s);
+  const expired: string[] = [];
+  for (const name of [...leases.keys()]) if (!sessions.some(([n]) => n === name)) leases.delete(name);
+  for (const [name, attached] of sessions.filter(([n]) => n.startsWith("ia-") && n.includes("~"))) {
+    // Sessions from before a restart get a full lease to be claimed again.
+    if (!leases.has(name)) leases.set(name, Date.now());
+    if (attached > 0) leases.set(name, Date.now());
+    else if (Date.now() - leases.get(name)! > TOOL_LEASE) expired.push(name);
+  }
+  for (const name of expired) {
+    console.error(`terminal: ending ${name}, no board has it open`);
+    await tmux(s, ["kill-session", "-t", `=${name}`]).catch(() => {});
+    leases.delete(name);
+  }
 }
 
 /** Attach a websocket to the task's session (or a tool's), creating the session if needed. */
@@ -357,13 +359,18 @@ async function attach(s: AppState, task: Task, tool: Tool | null, cols: number, 
   });
   await new Promise<void>((done) => {
     // The shell or tool exited (or the session was killed): the attach client has gone too.
-    out.on("end", async () => {
+    out.on("end", () => {
       if (gone) return;
       gone = true;
       clearInterval(ping);
-      await pty.wait();
-      await close(ws, [1000, "Session ended"]);
-      done();
+      background("closing an ended terminal's websocket", (async () => {
+        try {
+          await pty.wait();
+          await close(ws, [1000, "Session ended"]);
+        } finally {
+          done();
+        }
+      })());
     });
     ws.on("close", () => {
       clearInterval(ping);

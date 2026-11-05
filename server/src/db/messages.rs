@@ -119,6 +119,10 @@ pub fn list_messages(c: &Connection, task_id: &str) -> Result<Vec<Message>> {
     Ok(rows)
 }
 
+// Queries of one task's messages that also filter on `kind` write it `+kind`, which keeps it from using an index: without
+// the database's statistics (it's never ANALYZEd), SQLite takes the (kind, created_at) index over (task_id, id) for
+// `task_id=? AND kind=?`, and reads every message of that kind on the board, not the task's (HA-188).
+
 /// A page stops once it has this much message data, even short of its limit (some tool results are huge).
 pub(super) const PAGE_BYTES: usize = 1 << 20;
 
@@ -154,8 +158,9 @@ pub fn message_page(c: &Connection, task_id: &str, after: Option<i64>, before: O
 pub fn subagent_messages(c: &Connection, task_id: &str, before: i64) -> Result<Vec<Message>> {
     // Forked Skills have no Agent/Task call: their local_agent lifecycle identifies the call.
     // Look beyond `before` too, as a page can start between the launch and task_started.
+    // `+kind` keeps SQLite off the (kind, created_at) index, which reads every agent message on the board (see message_page).
     let mut starts = c.prepare(
-        "SELECT json_extract(data, '$.tool_use_id') FROM messages WHERE task_id=?1 AND kind='claude'
+        "SELECT json_extract(data, '$.tool_use_id') FROM messages WHERE task_id=?1 AND +kind='claude'
          AND data LIKE '%\"task_started\"%' AND json_extract(data, '$.type')='system'
          AND json_extract(data, '$.subtype')='task_started' AND json_extract(data, '$.task_type')='local_agent'
          AND json_type(data, '$.tool_use_id')='text'",
@@ -247,7 +252,7 @@ pub fn subagent_messages(c: &Connection, task_id: &str, before: i64) -> Result<V
 /// (`tool_result` block) if it has one, after `since` (a timestamp) if given, oldest first.
 pub fn tool_calls_since(c: &Connection, task_id: &str, since: Option<&str>) -> Result<Vec<(Value, Option<Value>)>> {
     let mut st =
-        c.prepare("SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND created_at>?2 AND data LIKE '%tool\\_use%' ESCAPE '\\' ORDER BY id")?;
+        c.prepare("SELECT data FROM messages WHERE task_id=?1 AND +kind='claude' AND created_at>?2 AND data LIKE '%tool\\_use%' ESCAPE '\\' ORDER BY id")?;
     let mut rows = st.query(params![task_id, since.unwrap_or("")])?;
     let mut calls = Vec::new();
     let mut results = std::collections::HashMap::new();
