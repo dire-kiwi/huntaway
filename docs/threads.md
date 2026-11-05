@@ -67,6 +67,14 @@ Every table is keyed by `task_id`, and its rows are deleted with the task (`ON D
   client takes a fresh snapshot.
 - Deltas aren't saved, and the store doesn't apply them. `thread.updated` goes in the log only.
 
+## The API
+
+[threads-api.md](threads-api.md) has the routes (a snapshot or window, pages of earlier items, the events after a
+seq, and commands), and the live events. What writes a thread's items sends its events to clients with
+`threads/live.ts`'s `send_events` once they're committed, streamed text with `send_delta` (which keeps the text so far
+in memory, so a window taken mid-message has it), and `send_resync` when it changes a thread in a way its log doesn't
+say (a rebuild).
+
 ## Status
 
 | Step | Task | State |
@@ -74,7 +82,7 @@ Every table is keyed by `task_id`, and its rows are deleted with the task (`ON D
 | 1. The model and its store, dormant | HA-212 | This change: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Not started |
 | 3. Items written live, behind a setting | HA-216 | Not started |
-| 4. Thread API and live events | HA-215 | Not started |
+| 4. Thread API and live events | HA-215 | This change: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 110, `ia-api thread`. See [threads-api.md](threads-api.md). Live events start once step 3 writes items. |
 | 5. The UI on items | HA-218 | Not started |
 | 6. Readers on items | HA-217 | Not started |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
@@ -87,7 +95,8 @@ Every table is keyed by `task_id`, and its rows are deleted with the task (`ON D
 
 Left for later steps:
 
-- Live snapshots that include streamed text: the store doesn't apply deltas, so a client that connects mid-message gets
-  the text so far only from the server's memory (step 4).
-- Rebuilding a thread's items from its messages, keeping its seq going up (step 3).
+- Rebuilding a thread's items from its messages, keeping its seq going up, and sending `thread_resync` (step 3).
+- Sending the thread's events from the write points, once committed, and its deltas, and forgetting streamed text
+  (`live.forget_streamed`) when a run ends without saving it (step 3).
+- Saving `thread.updated` when the task's state changes: until then, a thread's state is read from its task (step 3 or 5).
 - A periodic `prune` of every thread's log: `append` prunes each thread as it writes (step 3).
