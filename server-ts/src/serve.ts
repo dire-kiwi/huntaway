@@ -443,7 +443,7 @@ export async function serve(args: ServeArgs) {
       res.writeHead(404).end();
     } catch (e) {
       if (!res.headersSent) {
-        // A body over the limit, which isn't read to its end (see readBody): the connection goes after the answer.
+        // A body over the limit (see readBody): the connection goes after the answer, so a client can't go on sending.
         if (e instanceof ApiError && e.status === 413) res.setHeader("connection", "close");
         send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
       } else res.destroy();
