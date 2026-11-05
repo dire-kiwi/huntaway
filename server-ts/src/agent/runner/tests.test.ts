@@ -16,6 +16,7 @@ import * as context from "../context.ts";
 import * as title from "../title.ts";
 import * as usage from "../usage.ts";
 import * as agent_tools from "../agent_tools.ts";
+import * as assistant from "../assistant.ts";
 import * as prompts from "../prompts.ts";
 import * as analytics from "../../analytics.ts";
 import * as api from "../../api.ts";
@@ -1185,6 +1186,22 @@ test("a_group_task_is_told_its_groups_projects", () => {
   assert.ok(text.includes('task G-1 ("Plan it"') && text.includes("Web (key WEB, id pr, repository /src/web)"), text);
   assert_paragraphs(text);
   assert.ok(start_prompt(task, null, "").startsWith("# G-1: Plan it\n"));
+});
+
+test("the_assistant_is_told_what_it_is", () => {
+  const s = testing.state();
+  const p = db.insert_profile(s.db(), "p", [], null);
+  const task = assistant.get_or_create(s, p.id);
+  const text = system_prompt(task, null, null, [], [], null, true);
+  assert.ok(text.includes(`thread A-1 (id ${task.id})`), text);
+  assert.ok(text.includes("personal assistant") && text.includes("aren't a coding agent"), text);
+  assert.ok(text.includes(`(assistants/${task.id} in the board's data dir)`), text);
+  assert.ok(text.includes("`create_task`") && text.includes("list_projects") && text.includes("request_user_input"), text);
+  assert.ok(!text.includes('In review".'), text);
+  assert_paragraphs(text);
+  // Its first prompt is the user's message, not a task to start on.
+  assert.equal(start_prompt(task, null, " What's on today?\n"), "What's on today?");
+  assert.ok(!start_prompt(task, null, "Hi").includes(prompts.DEFAULT_START));
 });
 
 test("previews_what_a_new_thread_in_a_project_is_told", async () => {

@@ -118,3 +118,31 @@ test("storage that throws (a browser that blocks it) is no token and nothing rem
   await client.updateTask("local", "t", { status: "done" });
   assert.equal(client.movedHere("local", "t", "done"), false);
 });
+
+// HA-119: the assistant works in a folder of its own, but isn't a task that makes only documents.
+test("a profile's assistant isn't a documents-only task", async () => {
+  const { documentsOnly, isAssistant, ASSISTANT_API, hasAssistant } = await import("@huntaway/client");
+  const assistant = { kind: "task", task_type: "assistant", labels: [], work_dir: "assistants/a1" };
+  assert.equal(isAssistant(assistant), true);
+  assert.equal(documentsOnly(assistant), false);
+  // As a document task from before labels, with its folder in the data dir, is.
+  assert.equal(documentsOnly({ kind: "task", task_type: null, labels: ["plan"], work_dir: "documents/t1" }), true);
+  assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API - 1 }), false);
+  assert.equal(hasAssistant({ local: false, api_version: ASSISTANT_API }), true);
+});
+
+test("the assistant's calls go to its profile on its host", async () => {
+  const { client, requests } = board("http://board");
+  await client.assistant("h1", "p 1");
+  await client.sendToAssistant("h1", "p 1", "Hi");
+  await client.groupTasks("h1", "p1", true);
+  assert.deepEqual(
+    requests.map((r) => [r.method ?? "GET", r.url]),
+    [
+      ["GET", "http://board/api/h/h1/profiles/p%201/assistant"],
+      ["POST", "http://board/api/h/h1/profiles/p%201/assistant"],
+      ["GET", "http://board/api/h/h1/profiles/p1/group-tasks?include_assistant=true"],
+    ],
+  );
+  assert.deepEqual(JSON.parse(requests[1].body), { text: "Hi" });
+});

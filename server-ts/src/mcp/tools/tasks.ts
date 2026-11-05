@@ -150,6 +150,7 @@ export function summarize(s: Shared, t: Task): any {
     v.documents = files;
   }
   if (db.is_scratch(t)) v.type = db.SCRATCH;
+  if (db.is_assistant(t)) v.type = db.ASSISTANT;
   if (t.parent_id && t.kind === "task") {
     let sp: Task | null = null;
     try {

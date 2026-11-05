@@ -18,6 +18,7 @@ const { href, parse } = await import("../src/router.ts");
 test("routes round-trip through their paths", () => {
   for (const route of [
     { name: "profile", profile: "work" },
+    { name: "assistant", profile: "my work" },
     { name: "board", projectId: "p1" },
     { name: "projectSettings", projectId: "p1", tab: "agents" },
     { name: "task", taskId: "t1" },

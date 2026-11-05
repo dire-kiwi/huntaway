@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, CHECKS_API, documentsOnly, hostSupports, isScratch, LABELS_API, START_FROM_API, taskLabels, type Task } from "../../../../api";
+import { api, CHECKS_API, documentsOnly, hostSupports, isAssistant, isScratch, LABELS_API, START_FROM_API, taskLabels, type Task } from "../../../../api";
 import { isGroupTask, useProject, useStore } from "../../../../store";
 import { Dependencies } from "../../../board/Dependencies";
 import { useConfirmDone } from "../../../board/ConfirmDone";
@@ -29,6 +29,8 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   const docsOnly = documentsOnly(task);
   // A scratch task has no repository either.
   const scratch = isScratch(task);
+  // Nor does the profile's assistant, which lasts: it isn't moved between columns, reviewed or merged.
+  const assistant = isAssistant(task);
   const host = useStore((s) => s.hosts.find((h) => h.id === task.host_id));
   const asana = usesAsana(useStore((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)));
   const [wtBusy, setWtBusy] = useState(false);
@@ -54,14 +56,14 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
 
   return (
     <aside className={className}>
-      <StatusSection task={task} host={host} confirmDone={confirmDone} />
+      {!assistant && <StatusSection task={task} host={host} confirmDone={confirmDone} />}
 
       <TitleSection task={task} />
 
       <DescriptionSection task={task} />
 
       {/* With Asana turned off for the profile, only to show (and unlink) the links it has. */}
-      {hostSupports(host, LINKS_API) && task.kind === "task" && (asana || !!task.external_links?.length) && (
+      {hostSupports(host, LINKS_API) && task.kind === "task" && ((asana && !assistant) || !!task.external_links?.length) && (
         <Section title="Asana">
           <LinkedTasks task={task} canLink={asana} />
         </Section>
@@ -90,13 +92,29 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
-      {hostSupports(host, 24) && task.kind === "task" && !groupTask && !scratch && (
+      {assistant && (
+        <Section title="Assistant">
+          <div className="space-y-1">
+            <div className="text-[12.5px] text-muted">
+              This profile's assistant: one lasting conversation, outside every project. It has the profile's skills and MCP servers and the
+              board's tools, and hands code work to project tasks. Its agent works in its own folder.
+            </div>
+            {task.work_dir && (
+              <Row label="Folder">
+                <span className="font-mono text-[11px] break-all">{task.work_dir}</span>
+              </Row>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {hostSupports(host, 24) && task.kind === "task" && !groupTask && !scratch && !assistant && (
         <Section title="Depends on">
           <Dependencies task={task} project={project} />
         </Section>
       )}
 
-      {hostSupports(host, 8) && (
+      {hostSupports(host, 8) && !assistant && (
         <Section title="Preview" right={showsPreview(task) && <PreviewDot url={task.preview_url!} label className="text-[11.5px] text-faint" />}>
           <TextInput
             value={task.preview_url ?? null}
@@ -116,7 +134,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
-      {hostSupports(host, 26) && task.kind === "task" && !groupTask && !docsOnly && !scratch && (
+      {hostSupports(host, 26) && task.kind === "task" && !groupTask && !docsOnly && !scratch && !assistant && (
         <Section title="Pull request" right={task.pr_url && <PrIcon url={task.pr_url} label className="text-[11.5px] text-faint" />}>
           <TextInput
             value={task.pr_url ?? null}
@@ -131,9 +149,9 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
-      {hostSupports(host, 17) && task.kind === "task" && !groupTask && !docsOnly && !scratch && <SubprojectSection task={task} />}
+      {hostSupports(host, 17) && task.kind === "task" && !groupTask && !docsOnly && !scratch && !assistant && <SubprojectSection task={task} />}
 
-      {!groupTask && !docsOnly && !scratch && (
+      {!groupTask && !docsOnly && !scratch && !assistant && (
         <Section title="Worktree">
           {!task.use_worktree && task.worktree_state === "none" ? (
             <div className="space-y-2">

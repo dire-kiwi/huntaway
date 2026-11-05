@@ -6,7 +6,7 @@ import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
 import { path_str } from "../util.ts";
 import { config_for_dir } from "./profiles.ts";
-import { SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
+import { ASSISTANT_TASK_KEY, SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
 
 /** Whether `table` has a column `column`. */
 const has_column = (c: Conn, table: string, column: string): boolean =>
@@ -672,6 +672,13 @@ export function open(path: string): Conn {
     // Nothing writes them yet.
     batch(`BEGIN; ${SCHEMA_V89} PRAGMA user_version=89; COMMIT;`);
   }
+  if (version < 90) {
+    // Each profile's assistant (see is_assistant): one at most, keyed A-<n>, so a project with the key A moves to a free
+    // one.
+    batch("BEGIN;");
+    free_task_key(conn, ASSISTANT_TASK_KEY, "AP");
+    batch("CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_assistant ON tasks(profile_id) WHERE task_type='assistant'; PRAGMA user_version=90; COMMIT;");
+  }
   return conn;
 }
 
@@ -682,7 +689,7 @@ function parent_dir(path: string): string {
 }
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 89;
+export const VERSION = 90;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

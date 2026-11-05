@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 export const PROTOCOL = 1;
 
 /** Version of the host API (endpoints, fields and events the UI relies on). It went on from the Rust server's. */
-export const API_VERSION = 108;
+export const API_VERSION = 109;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

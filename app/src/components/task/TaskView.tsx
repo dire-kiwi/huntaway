@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
+import { api, canRunAgents, dependencyQueued, documentsOnly, isAssistant, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
 import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
@@ -163,12 +163,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // that makes only its documents. Each of a task's labels has a tab for its document, first.
   const group = isGroupTask(task) ? task.group_name! : undefined;
   const scratch = isScratch(task);
+  // The profile's assistant: no repository either, and it opens on a page of its own.
+  const assistant = isAssistant(task);
   // One in no project is on its profile's board (a scratch task can be in a project since API 51).
   const profileScratch = scratch && !task.project_id;
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
-  const tabs: Tab[] = [...labels, ...(group || scratch || docsOnly ? ["thread"] : ["thread", "changes"])];
-  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch;
+  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || docsOnly ? ["thread"] : ["thread", "changes"])];
+  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant;
   if (reviews) tabs.push("review");
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
@@ -204,6 +206,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const toProject = () => {
     if (group) navigate(mode === "page" ? href({ name: "group", hostId: task.host_id, group }) : groupTaskUrl(task.host_id, group, task.id));
     else if (profileScratch && profileName) navigate(mode === "page" ? href({ name: "profile", profile: profileName }) : profileTaskUrl(profileName, task.id));
+    else if (assistant && profileName) navigate({ name: "profile", profile: profileName });
     else if (project) navigate(mode === "page" ? href({ name: "board", projectId: project.id }) : boardTaskUrl(project.id, task.id));
   };
 
@@ -228,7 +231,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       </span>
     ) : (
       !task.session_id &&
-      agents && (
+      agents &&
+      !assistant && (
         <Button
           size="sm"
           variant="primary"
@@ -307,7 +311,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         ? navigate({ name: "board", projectId: project.id })
         : group
           ? navigate({ name: "group", hostId: task.host_id, group })
-          : profileScratch && profileName
+          : (profileScratch || assistant) && profileName
             ? navigate({ name: "profile", profile: profileName })
             : history.back();
 
@@ -327,6 +331,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               </span>
             ) : profileScratch ? (
               <span title="A scratch task: in no project, on its profile's board">{profileName}</span>
+            ) : assistant ? (
+              <span title="The profile's assistant: in no project, and off the board">{profileName}</span>
             ) : (
               project?.name
             )}

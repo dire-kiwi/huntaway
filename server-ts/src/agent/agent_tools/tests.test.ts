@@ -1,7 +1,7 @@
 // Port of server/src/agent/agent_tools/tests.rs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as db from "../../db.ts";
 import type { Conn, NewProject, NewTask, Project, Task } from "../../db.ts";
@@ -9,6 +9,8 @@ import * as testing from "../../testing.ts";
 import { path_str } from "../../util.ts";
 import * as runner from "../runner.ts";
 import * as documents from "../documents.ts";
+import * as assistant from "../assistant.ts";
+import { CreateTask_default, create_scratch_task_inner } from "../../api/new_task.ts";
 import {
   MAX_DESCRIPTION,
   board_skills_off,
@@ -17,10 +19,13 @@ import {
   check_server_name,
   check_skill,
   claude_skills,
+  create_mcp_server_in,
   create_skill_in,
   delete_in,
   effective,
   effective_with,
+  for_task,
+  for_task_run,
   frontmatter,
   get_overrides,
   last_run_skills,
@@ -434,4 +439,64 @@ test("records_what_runs_had", () => {
   set_overrides(c, "p", o);
   record_seen(c, "p", "cfg", { skills: ["beta"] });
   assert.deepEqual(names("skills"), ["beta", "zeta"]);
+});
+
+// HA-119 review: the assistant (in no project) had none of its profile's global skills and servers.
+test("a_profiles_assistant_gets_the_global_tools_its_profile_switches_on", async () => {
+  const s = testing.state();
+  const c = s.db();
+  const me = db.insert_profile(c, "me", [], null);
+  const other = db.insert_profile(c, "other", [], null);
+  const skill = (name: string) => create_skill_in(c, null, { content: `---\nname: ${name}\ndescription: d ${name}\n---\n`, enabled: null });
+  const server = (name: string, auto: boolean) =>
+    create_mcp_server_in(c, null, { name, config: { type: "http", url: `https://${name}.example` }, enabled: null, auto_allow: auto });
+  // `unset` has no switch, so it's off for the profile.
+  const [on, off, , probe, quiet] = [skill("on"), skill("off"), skill("unset"), server("probe", true), server("quiet", false)];
+  const set = (scope_id: string, item: string, v: boolean) => db.run(c, "INSERT OR REPLACE INTO agent_tool_switches VALUES ('profile',?1,?2,?3)", scope_id, item, v);
+  set(me.id, on.id, true);
+  set(me.id, off.id, false);
+  set(me.id, probe.id, true);
+  set(me.id, quiet.id, false);
+  // Another profile's switches are its own.
+  set(other.id, off.id, true);
+  set(other.id, quiet.id, true);
+  const mine = assistant.get_or_create(s, me.id);
+  let tools = for_task_run(s, mine, null);
+  assert.deepEqual(Object.keys(tools.mcp_servers), ["probe"]);
+  assert.deepEqual(tools.allowed, [tool_prefix("probe")]);
+  assert.deepEqual(tools.disallowed, []);
+  assert.ok(tools.skills_dir !== null, "a skills folder");
+  const dir = tools.skills_dir!;
+  assert.equal(dir, join(s.data_dir, "profiles", me.id, "agent"));
+  const written = (d: string) => readdirSync(join(d, ".claude", "skills")).sort();
+  assert.deepEqual(written(dir), ["on"]);
+  // A skill switched off later is taken out of its folder on the next run.
+  set(me.id, on.id, false);
+  tools = for_task_run(s, mine, null);
+  assert.equal(tools.skills_dir, null);
+  assert.deepEqual(written(dir), []);
+  set(me.id, on.id, true);
+  // A global one that's off everywhere (the item itself) isn't given either.
+  update_skill_in(c, null, on.id, { content: null, enabled: false });
+  assert.equal(for_task_run(s, mine, null).skills_dir, null);
+  update_skill_in(c, null, on.id, { content: null, enabled: true });
+  // The other profile's assistant has its own.
+  const theirs = assistant.get_or_create(s, other.id);
+  tools = for_task_run(s, theirs, null);
+  assert.deepEqual(Object.keys(tools.mcp_servers), ["quiet"]);
+  assert.deepEqual(written(tools.skills_dir!), ["off"]);
+  // A scratch task in no project still gets none.
+  const scratch = create_scratch_task_inner(s, me.id, CreateTask_default());
+  tools = for_task_run(s, scratch, null);
+  assert.ok(!Object.keys(tools.mcp_servers).length && tools.skills_dir === null);
+  // A project's run is as it was.
+  const project = db.insert_project(c, { id: "web", profile_id: me.id, name: "Web", key: "WEB", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+  tools = for_task_run(s, scratch, project);
+  assert.deepEqual(Object.keys(tools.mcp_servers), ["probe"]);
+
+  // The composer's `/` menu lists the skills the assistant has, and not those that are off.
+  const v = await for_task(s, { method: "GET", path: "", params: { id: mine.id }, query: {}, query_string: "", headers: {}, body: {}, raw: Buffer.alloc(0) });
+  const names: string[] = v.skills.map((s: TaskSkill) => s.name);
+  assert.ok(names.includes("on"), JSON.stringify(v));
+  assert.ok(!names.includes("off") && !names.includes("unset"), JSON.stringify(v));
 });
