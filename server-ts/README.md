@@ -99,8 +99,8 @@ TypeScript compiler.
   load left about 30 s after it ends.
 - **A 1 GB old-space limit** (`--max-old-space-size=1024`; V8's default here is about 4 GB): under a lower limit V8 grows
   the heap less eagerly, so loading every thread peaks at about 240 MB rather than 340 to 380 MB. The largest thread on
-  the live board is 12 MB of JSON. Together with the young generation, loading every thread 5 times takes about 10%
-  longer (15.5 s rather than 14.2 s).
+  the live board is 12 MB of JSON, and a server that does run out aborts, which `bin/huntaway` starts again (HA-182).
+  Together with the young generation, loading every thread 5 times takes about 10% longer (15.5 s rather than 14.2 s).
 - **A fixed malloc mmap threshold** (`MALLOC_MMAP_THRESHOLD_=131072`, which `bin/huntaway` gives node alone and
   `main.ts` takes out of what agents and git inherit): glibc serves blocks above its threshold with mappings of their
   own, which go back to the system when freed, but raises the threshold (up to 32 MB) as they're freed, so the large
