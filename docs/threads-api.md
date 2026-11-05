@@ -12,8 +12,9 @@ thread is read from the board's own tables, and commands go onto the board's own
 - A host serves these routes from **API 114** (`api_version` in `/api/info`, and in the hub's `/api/hosts`). For an
   older host, keep using the message API (`/tasks/{id}/messages`, and the `message`, `message_updated`, `delta` and
   `delta_reset` events), which every host keeps serving.
-- A task has a thread kept as items once one of its events has been saved (step 3 writes them for tasks flagged
-  `thread_items`). Otherwise the routes answer **404** `{"error": "task <id> has no thread kept as items"}`, and its
+- A task has a thread kept as items once its first message has been written with the host's *Keep threads as items*
+  setting on (API 116, which flags it `thread_items`), or it has been rebuilt (`huntaway threads-rebuild`), and while
+  its live writes haven't stopped on an error. Otherwise the routes answer **404** `{"error": "task <id> has no thread kept as items"}`, and its
   thread is its messages.
 - A task's thread has the task's id, and it's reached only through its task: a command can't name another thread,
   and a request or item id is looked up in the task's own thread only. As for the message routes, the board's token
@@ -37,7 +38,8 @@ included (the last event's `seq` when there are `more`, and otherwise the last o
 given). Set your state's `seq` to it once you've applied `events`, and start the next page after it. A window's `seq`
 covers them too.
 
-The log is short: a thread's events are kept for a day, and at least its last 1,000 whatever their age. When it no
+The log is short: a thread's events are kept for a day. A rebuild logs none, and moves the thread's seq on by one, so
+even a client that had every event before it finds a gap. When it no
 longer goes back to `SEQ`, or `SEQ` is past the thread's last event (the client's state is from something else), the
 answer is `{events: [], more: false, seq: <the thread's last>, resync: true}`: take a fresh window instead.
 
@@ -51,8 +53,11 @@ Every thread's events, deltas included, are on `/api/ws` (and the hub's, with `h
 
 - To show a thread, connect to `/api/ws` first, then load the window, and apply the events with `apply_event`
   (saved events at or below the window's `seq` are already in it, and so is the text of deltas it's past).
-- A **delta** has the seq of the thread's last saved event and the `offset` its text goes at. A window taken while
-  text streams has the text so far, which later deltas follow on from.
+- A **delta** has the seq of the thread's last saved event and the `offset` its text goes at. The board streams into
+  a message before it's saved, so a delta names a preview item the thread doesn't have (`stream:<server>:<n>`), which
+  `apply_event` leaves out: show it after the thread's items until an item is added to the main conversation (the
+  message saved), or a delta for another id comes. A window doesn't have a preview's text so far: a client that
+  connects mid-message shows the rest as it streams, and the saved message has all of it.
 - **Catching up:** a saved event whose `seq` is more than one past the client's (`is_gap`) means it missed some. Fetch
   `/thread/events?after=<its seq>` rather than apply it, and apply what comes back, then carry on; with `resync`, take
   a fresh window.

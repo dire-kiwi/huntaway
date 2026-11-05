@@ -1,6 +1,6 @@
 // Port of server/src/devices.rs (HA-136, from the HA-117 branch at bb59d8a; ported by HA-208).
 //
-// Devices paired with this board, such as the mobile app on a phone (API 116). Each has a token of its own, kept only as
+// Devices paired with this board, such as the mobile app on a phone (API 117). Each has a token of its own, kept only as
 // its SHA-256 in `device_tokens`, which the API takes as well as the board's own token (`auth_token`), and which can be
 // revoked: that cuts the device off at once, open websockets included. A lost phone is then no reason to replace
 // `auth_token`.

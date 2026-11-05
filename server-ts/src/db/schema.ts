@@ -735,9 +735,14 @@ export function open(path: string): Conn {
     batch(`${SCHEMA_V94} PRAGMA user_version=94; COMMIT;`);
   }
   if (version < 95) {
+    // Threads kept as items, written live (threads/write.ts): which tasks have them, and each thread's own state.
+    const add = has_column(conn, "tasks", "thread_items") ? "" : "ALTER TABLE tasks ADD COLUMN thread_items INTEGER NOT NULL DEFAULT 0;";
+    batch(`BEGIN; ${add} ${SCHEMA_V95} PRAGMA user_version=95; COMMIT;`);
+  }
+  if (version < 96) {
     // Devices paired with the board, each with a token of its own (see devices.ts). Only if it isn't there (`IF NOT
     // EXISTS`), in case another migration takes this version first.
-    batch(`BEGIN; ${devices.TABLE} PRAGMA user_version=95; COMMIT;`);
+    batch(`BEGIN; ${devices.TABLE} PRAGMA user_version=96; COMMIT;`);
   }
   return conn;
 }
@@ -784,7 +789,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 95;
+export const VERSION = 96;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what
@@ -1189,6 +1194,24 @@ CREATE TABLE IF NOT EXISTS thread_item_origins (
   PRIMARY KEY (task_id, item_id, message_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS thread_item_origins_message ON thread_item_origins(task_id, message_id);
+`;
+
+/**
+ * A thread kept as items (version 95), for a task whose `thread_items` is set (see threads/write.ts): `seq` is its last
+ * saved event's, kept when its events have been pruned (or a rebuild logged none); `converter` the translator's
+ * CONVERTER_VERSION that wrote its items; `writes` how many times its items have been written, which the server's
+ * translator in memory checks it's still in step with; `error` why live writes stopped, until a rebuild.
+ */
+const SCHEMA_V95 = `
+CREATE TABLE IF NOT EXISTS threads (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL DEFAULT 0,
+  converter INTEGER,
+  writes INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  rebuilt_at TEXT,
+  created_at TEXT NOT NULL
+);
 `;
 
 /**

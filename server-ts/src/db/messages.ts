@@ -1,7 +1,8 @@
 // Port of server/src/db/messages.rs: a thread's messages, and the message queued for its next run.
-import { all, one, run, value, type Conn } from "../db.ts";
+import { all, one, run, tx, value, type Conn } from "../db.ts";
 import { byte_len, now } from "../util.ts";
 import { get_task, type Task } from "./tasks.ts";
+import * as threads from "../threads/write.ts";
 
 export interface Message {
   id: number;
@@ -150,19 +151,48 @@ export function clear_queued(c: Conn, task_id: string): Task | null {
 
 // ---------- messages ----------
 
+// Every write of a message goes through these three (plan decision D3 of docs/threads.md), so that a task whose thread
+// is kept as items (`tasks.thread_items`) gets them written in the same transaction (threads/write.ts). What they
+// return carries the thread's events, for AppState.emit_message (or emit_message_updated) to send once committed.
+
 export function insert_message(c: Conn, task_id: string, kind: string, data: any): Message {
-  const ts = now();
-  const json = JSON.stringify(data ?? null);
-  const id = run(c, "INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,?2,?3,?4)", task_id, kind, json, ts).lastInsertRowid;
-  run(c, "UPDATE tasks SET last_activity_at=?1 WHERE id=?2", ts, task_id);
-  // A copy of `data` as it's stored (Rust's `data.clone()`), so changing one doesn't change the other.
-  return { id, task_id, kind, data: JSON.parse(json), created_at: ts };
+  return tx(c, () => {
+    const ts = now();
+    const json = JSON.stringify(data ?? null);
+    const id = run(c, "INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,?2,?3,?4)", task_id, kind, json, ts).lastInsertRowid;
+    const t = one<{ thread_items: number }>(c, "UPDATE tasks SET last_activity_at=?1 WHERE id=?2 RETURNING thread_items", ts, task_id);
+    // A copy of `data` as it's stored (Rust's `data.clone()`), so changing one doesn't change the other.
+    const m: Message = { id, task_id, kind, data: JSON.parse(json), created_at: ts };
+    threads.written(c, m, !!t?.thread_items, true);
+    return m;
+  });
 }
 
 export function update_message_data(c: Conn, id: number, data: any): Message | null {
-  run(c, "UPDATE messages SET data=?1 WHERE id=?2", JSON.stringify(data ?? null), id);
-  const r = one(c, "SELECT * FROM messages WHERE id=?1", id);
-  return r ? Message_from_row(r) : null;
+  return tx(c, () => {
+    run(c, "UPDATE messages SET data=?1 WHERE id=?2", JSON.stringify(data ?? null), id);
+    return updated(c, id);
+  });
+}
+
+/**
+ * update_message_data, if the message's status is still `pending`: in one statement, so of two answers at once only one
+ * is taken. Null if it isn't (or there's no such message).
+ */
+export function update_pending_message(c: Conn, id: number, data: any): Message | null {
+  return tx(c, () => {
+    const sql = "UPDATE messages SET data=?1 WHERE id=?2 AND json_extract(data, '$.status')='pending'";
+    if (!run(c, sql, JSON.stringify(data ?? null), id).changes) return null;
+    return updated(c, id);
+  });
+}
+
+function updated(c: Conn, id: number): Message | null {
+  const r = one(c, "SELECT m.*, t.thread_items FROM messages m JOIN tasks t ON t.id = m.task_id WHERE m.id=?1", id);
+  if (!r) return null;
+  const m = Message_from_row(r);
+  threads.written(c, m, !!r.thread_items, false);
+  return m;
 }
 
 export function list_messages(c: Conn, task_id: string): Message[] {

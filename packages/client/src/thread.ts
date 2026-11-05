@@ -156,7 +156,7 @@ export interface PendingPermission {
 }
 
 export const threadApi = ({ on }: Http) => ({
-  /** Pending permission prompts, oldest first: a task's, or (API 116) one profile's; all of the host's without either. */
+  /** Pending permission prompts, oldest first: a task's, or (API 117) one profile's; all of the host's without either. */
   pendingPermissions: (h: string, q: { task_id?: string; profile_id?: string } = {}) =>
     on(h).get<PendingPermission[]>(`/permissions?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null) as [string, string][])}`),
   messages: (h: string, id: string) => on(h).get<Message[]>(`/tasks/${enc(id)}/messages`),

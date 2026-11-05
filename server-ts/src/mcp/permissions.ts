@@ -647,7 +647,7 @@ function update_message(s: Shared, message_id: number, f: (v: any) => void): voi
   if (!v || typeof v !== "object" || Array.isArray(v)) v = {};
   f(v);
   const m = db.update_message_data(s.db(), message_id, v);
-  if (m) s.emit({ type: "message_updated", task_id: m.task_id, message: m });
+  if (m) s.emit_message_updated(m);
 }
 
 /** Expire unanswered permission prompts for a thread whose run ended. */

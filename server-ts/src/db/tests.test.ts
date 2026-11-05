@@ -389,6 +389,27 @@ test("a_database_from_version_88_gets_the_thread_tables", () => {
   again.close();
 });
 
+test("a_database_from_version_94_gets_threads_kept_as_items", () => {
+  const path = db_path();
+  // A task from before, with a message: it isn't flagged.
+  const c0 = open(path);
+  const p = db.insert_profile(c0, "p", [], null);
+  const t = db.insert_task(c0, { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false });
+  db.insert_message(c0, t.id, "user", { text: "hi" });
+  c0.close();
+  prepare_at(path, "DROP TABLE threads; ALTER TABLE tasks DROP COLUMN thread_items; PRAGMA user_version=94;");
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  assert.ok(Number(db.value(c, "SELECT COUNT(*) FROM pragma_table_info('threads')")) > 0);
+  assert.equal(db.value(c, "SELECT thread_items FROM tasks WHERE id=?1", t.id), 0);
+  c.close();
+  // Again from 94 with them there (another build took the version): it goes on.
+  prepare_at(path, "PRAGMA user_version=94;");
+  const again = open(path);
+  assert.equal(user_version(again), VERSION);
+  again.close();
+});
+
 test("a_database_from_version_54_gets_automations", () => {
   const path = db_path();
   prepare_at(path, "DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version=54;");

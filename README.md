@@ -617,7 +617,7 @@ token still works later, and the notification keeps its buttons.
 
 ### The mobile app
 
-`mobile/` is an Expo app for Android and iOS (API 116) that follows and drives your tasks on several
+`mobile/` is an Expo app for Android and iOS (API 117) that follows and drives your tasks on several
 boards at once, a work hub and a personal board say: an **Inbox** of what's waiting for you on every
 paired board together, each item labelled with its board (tasks that need attention, permission
 prompts to allow or deny, and agents' questions to answer, in place); **Projects** with each
@@ -639,7 +639,7 @@ the network changes.
   aren't set up, so there are no iPhone builds for now. Until then, use the board on the iPhone
   as a web app.
 
-The app works with a board of the same API or newer: a board older than the app's minimum (API 116,
+The app works with a board of the same API or newer: a board older than the app's minimum (API 117,
 `MIN_API` in `mobile/src/pairing.ts`) says so in the app, both when pairing and on a paired board
 that's later found older (after a rollback, say), rather than failing somewhere later. Update that
 board's Huntaway to use it again.
@@ -709,10 +709,10 @@ release installs over the one before. The repository keeps 1.0.0. Its icons and 
 **Android** is built by the release workflow's `android` job (`.github/workflows/release.yml`) on
 GitHub's runner, with `npx expo prebuild` and Gradle, rather than on EAS: it needs no Expo account
 or EAS build quota, it's attached to the release with the other files, and the signing key stays
-in this repository's secrets. A pull request that changes the app's packaging (`mobile/app.json`,
-`eas.json`, its `package.json`) builds the APK too, as an artifact of its run, signed with the
-debug key of Expo's template: fine for trying, but it won't update a release's app or the other
-way round. A release's APK needs the release key, made once and kept:
+in this repository's secrets. Pull requests don't build it (as the rest of the release, HA-244): a
+change to the app's packaging (`mobile/app.json`, `eas.json`, its `package.json`) is first built by
+the release that ships it, or by hand (Actions → Release → Run workflow) on a tag of its own. A
+release's APK needs the release key, made once and kept:
 
 ```sh
 keytool -genkeypair -v -storetype PKCS12 -keystore huntaway-release.jks -alias huntaway \
@@ -725,9 +725,9 @@ gh secret set ANDROID_KEY_PASSWORD                  # a PKCS12 key's is the keys
 
 Keep a copy of `huntaway-release.jks` and its password somewhere safe outside the repository
 (`*.jks` is ignored there): phones only update the app from an APK signed with the same key, so
-losing it means everyone uninstalling and pairing again. Only a release's build (a tag) uses the
-key, never a branch's; until all four secrets are set, a release skips the `android` job (its
-`android-key` job says so in a notice) and has the other files without an APK.
+losing it means everyone uninstalling and pairing again. Until all four secrets are set, a release
+skips the `android` job (its `android-key` job says so in a notice) and has the other files without
+an APK.
 
 The app's push (to come) on Android goes through Firebase Cloud Messaging, which Expo's push
 service hands it to, so the APK needs a Firebase app's config: in the
@@ -816,7 +816,9 @@ case the app updates through that server, which follows a deployment only if it 
 ### Release builds
 
 Publishing a GitHub release runs `.github/workflows/release.yml`, which builds the release's tag
-and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
+and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`. Nothing else starts
+it: pull requests don't build the release (their tests are `test.yml`'s), and Actions → Release → Run
+workflow builds an existing release's tag again and replaces its files.
 
 | File | What |
 |---|---|

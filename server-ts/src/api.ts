@@ -308,7 +308,7 @@ export async function local_request(s: AppState, method: string, path: string, b
 
 /** Unauthenticated: with the commit it runs, for hosts that follow it with `--update-from`. */
 function health(s: AppState) {
-  // API 116: and its API version, which the mobile app checks before pairing.
+  // API 117: and its API version, which the mobile app checks before pairing.
   return { ok: true, commit: s.meta.running_commit, api_version: API_VERSION };
 }
 

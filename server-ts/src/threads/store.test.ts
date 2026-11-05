@@ -203,31 +203,33 @@ describe("pruning", () => {
   const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
   const turns = (n: number): NewEvent[] => Array.from({ length: n }, (_, i) => ({ type: "turn.started", turn_id: `t${i}` }));
 
-  test("keeps a thread's last day of events, and at least its last KEEP_EVENTS", () => {
+  test("keeps a thread's last day of events, and its seq when they've gone", () => {
     const { c, task, thread } = setup();
-    store.append(c, task, [added({ id: "a", type: "assistant_message", text: "a" }), ...turns(store.KEEP_EVENTS + 9)], { at: ago(2 * store.KEEP_MS) });
-    // Old, but the latest: all kept.
-    assert.equal(rows(c, "thread_events", task), store.KEEP_EVENTS + 10);
+    store.append(c, task, [added({ id: "a", type: "assistant_message", text: "a" }), ...turns(9)], { at: ago(2 * store.KEEP_MS) });
+    // Old, but nothing has been written since: all kept.
+    assert.equal(rows(c, "thread_events", task), 10);
     store.append(c, task, turns(5), { at: ago(store.KEEP_MS / 2) });
     store.append(c, task, turns(1));
     const last = store.last_seq(c, task);
-    assert.equal(last, store.KEEP_EVENTS + 16);
-    assert.equal(rows(c, "thread_events", task), store.KEEP_EVENTS);
+    assert.equal(last, 16);
+    assert.equal(rows(c, "thread_events", task), 6);
     // The items stay, and so does the seq.
     assert.deepEqual(ids(store.snapshot(c, thread).items), ["a"]);
     assert.equal(store.snapshot(c, thread).seq, last);
     // A client further behind than the log takes a snapshot.
     assert.equal(store.events_after(c, task, 0), null);
-    assert.equal(store.events_after(c, task, last - store.KEEP_EVENTS - 1), null);
-    assert.equal(store.events_after(c, task, last - store.KEEP_EVENTS)!.length, store.KEEP_EVENTS);
+    assert.equal(store.events_after(c, task, 9), null);
+    assert.equal(store.events_after(c, task, 10)!.length, 6);
     assert.deepEqual(store.events_after(c, task, last - 2)!.map((e) => e.seq), [last - 1, last]);
-  });
-
-  test("keeps events from the last day beyond KEEP_EVENTS", () => {
-    const { c, task } = setup();
-    store.append(c, task, turns(store.KEEP_EVENTS + 20), { at: ago(1000) });
-    store.append(c, task, turns(1));
-    assert.equal(rows(c, "thread_events", task), store.KEEP_EVENTS + 21);
+    // With every event gone, the seq is kept: one up to date has nothing to catch up on, and one behind takes a snapshot.
+    assert.equal(store.prune(c, new Date(Date.now() + 2 * store.KEEP_MS).toISOString()), 6);
+    assert.equal(rows(c, "thread_events", task), 0);
+    assert.equal(store.last_seq(c, task), last);
+    assert.deepEqual(store.events_after(c, task, last), []);
+    assert.equal(store.events_after(c, task, last - 1), null);
+    const [next] = store.append(c, task, turns(1));
+    assert.equal(next.seq, last + 1);
+    assert.deepEqual(store.events_after(c, task, last)!.map((e) => e.seq), [last + 1]);
   });
 
   test("prune sweeps every thread", () => {
@@ -236,11 +238,32 @@ describe("pruning", () => {
     store.append(c, task, turns(10), { at: ago(2 * store.KEEP_MS) });
     store.append(c, other, turns(3), { at: ago(2 * store.KEEP_MS) });
     store.append(c, other, turns(2));
-    assert.equal(store.prune(c, undefined, 4), 6 + 1);
-    assert.deepEqual(db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", task).map((r) => r.seq), [7, 8, 9, 10]);
-    assert.deepEqual(db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", other).map((r) => r.seq), [2, 3, 4, 5]);
-    assert.equal(store.prune(c, undefined, 4), 0);
+    assert.deepEqual(db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", other).map((r) => r.seq), [4, 5]);
+    assert.equal(store.prune(c), 10);
+    assert.equal(rows(c, "thread_events", task), 0);
+    assert.deepEqual(db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", other).map((r) => r.seq), [4, 5]);
+    assert.equal(store.prune(c), 0);
+    assert.deepEqual([store.last_seq(c, task), store.last_seq(c, other)], [10, 5]);
   });
+});
+
+test("clear empties a thread for a rebuild, and its seq goes up past what clients had", () => {
+  const { c, task, thread } = setup();
+  store.append(c, task, [added({ id: "a", type: "assistant_message", text: "a" }), { type: "request.opened", request: { id: "r", type: "plan", plan: "p" } }], { message_id: 1 });
+  store.set_item_meta(c, task, "a", { auto: true });
+  store.clear(c, task);
+  assert.deepEqual(store.snapshot(c, thread), { thread, items: [], requests: [], seq: 3 });
+  for (const t of ["thread_items", "thread_requests", "thread_events", "thread_item_origins"]) assert.equal(rows(c, t, task), 0, t);
+  // Even a client that had every event: it takes a snapshot.
+  assert.equal(store.events_after(c, task, 2), null);
+  assert.deepEqual(store.events_after(c, task, 3), []);
+  // Events applied without logging them: the seq stays, and nothing is logged.
+  assert.deepEqual(store.append(c, task, [added({ id: "b", type: "assistant_message", text: "b" })], { message_id: 2, log: false }), []);
+  assert.deepEqual(ids(store.items(c, task)), ["b"]);
+  assert.deepEqual(store.item_origins(c, task, "b"), [2]);
+  assert.equal(store.last_seq(c, task), 3);
+  assert.equal(rows(c, "thread_events", task), 0);
+  assert.equal(store.has_thread(c, task), true);
 });
 
 test("a task's thread goes with it", () => {

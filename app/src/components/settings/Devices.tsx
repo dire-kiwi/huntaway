@@ -33,7 +33,7 @@ function QrSvg({ text, size = 200 }: { text: string; size?: number }) {
 
 /**
  * Settings → Network access → Phones: pair the mobile app by its QR code (a one-time code that lasts five minutes,
- * never the board's token), and rename or revoke the devices paired with this board (API 116).
+ * never the board's token), and rename or revoke the devices paired with this board (API 117).
  */
 export function DevicesPanel() {
   const localHostId = useStore((s) => s.localHostId);
