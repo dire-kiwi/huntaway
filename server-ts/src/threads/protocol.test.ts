@@ -278,9 +278,9 @@ describe("windows", () => {
   test("a window has the last items, the parents they and open requests need, and the requests anchored in it", () => {
     const w = snapshot_window(state(), 2);
     assert.equal(w.start, 8);
-    // p-sa is open: its call (tc) and its subagent (sa) come too.
-    assert.deepEqual(w.context, [1, 7]);
-    assert.deepEqual(ids(w.items), ["sa", "tc", "m8", "m9"]);
+    // p-sa is open: its call (tc) and its subagent (sa) come too, and so does every subagent's call (sb).
+    assert.deepEqual(w.context, [1, 3, 7]);
+    assert.deepEqual(ids(w.items), ["sa", "sb", "tc", "m8", "m9"]);
     assert.deepEqual(ids(w.requests), ["p-sa", "p-new", "p-turn", "p-none"]);
     assert.equal(w.seq, 20);
     assert.deepEqual(w.thread, state().thread);
@@ -293,7 +293,7 @@ describe("windows", () => {
     assert.deepEqual(ids(w.items), ["sa", "sb", "b1", "m6", "tc", "m8", "m9"]);
   });
 
-  test("a window brings the subagents still running, with theirs, for the items they'll go on to add", () => {
+  test("a window brings every subagent's call, running or not, with theirs", () => {
     // sb (sa's) is running but quiet: none of its items, nor a request of its, is in the window.
     const s = state();
     const quiet = { ...s, items: s.items.map((i) => (i.id === "sb" ? { ...i, status: "running" as const } : i)) as Item[], requests: [] };
@@ -303,20 +303,20 @@ describe("windows", () => {
     // It goes on: its new item has its call to belong to.
     const next = apply_event(w, { type: "item.added", thread_id: "th", seq: 21, item: msg("b10", "sb") });
     assert.equal((next.items.find((i) => i.id === "sb") as ToolCall).status, "running");
-    // Pending counts as running; one that's ended doesn't.
+    // One that's ended comes too (HA-218): a client lists every subagent of the thread, as the Agents list does.
     const with_sb = (change: object) => ({ ...quiet, items: quiet.items.map((i) => (i.id === "sb" ? { ...i, ...change } : i)) as Item[] });
     assert.deepEqual(snapshot_window(with_sb({ status: "pending" }), 2).context, [1, 3]);
-    assert.ok(!("context" in snapshot_window(with_sb({ status: "cancelled" }), 2)));
-    // Where the call has its subagent's own status, that says: a background subagent runs on after its call has
-    // completed, and one that ended with its call still running doesn't.
+    assert.deepEqual(snapshot_window(with_sb({ status: "cancelled" }), 2).context, [1, 3]);
     const sub = (status: "running" | "completed") => with_sb({ status: "completed", subagent: { status, background: true } });
     assert.deepEqual(snapshot_window(sub("running"), 2).context, [1, 3]);
-    assert.ok(!("context" in snapshot_window(sub("completed"), 2)));
+    assert.deepEqual(snapshot_window(sub("completed"), 2).context, [1, 3]);
   });
 
   test("a window leaves context out when it needs nothing from before it", () => {
-    const w = snapshot_window({ ...state(), requests: [] }, 1);
-    assert.deepEqual(w, { thread, items: [msg("m9", undefined, "t2")], requests: [], seq: 20, start: 9 });
+    // No subagent calls, nor items of theirs.
+    const s = state();
+    const w = snapshot_window({ ...s, items: s.items.filter((i) => i.type !== "tool_call" && !i.parent_id), requests: [] }, 1);
+    assert.deepEqual(w, { thread, items: [msg("m9", undefined, "t2")], requests: [], seq: 20, start: 5 });
   });
 
   test("a page has the items before an index, the parents they need, and the requests anchored in them", () => {
@@ -354,10 +354,10 @@ describe("windows", () => {
   });
 
   test("with_page orders the context of both by index", () => {
-    // A window whose context is sa (1); a page from 4 whose context is sa and sb (1, 3).
+    // A window whose context is the subagents' calls (1, 3); a page from 4 whose context is sa and sb (1, 3).
     const whole = state();
     const w = snapshot_window({ ...whole, requests: [] }, 4);
-    assert.deepEqual(w.context, [1]);
+    assert.deepEqual(w.context, [1, 3]);
     const next = with_page(w, item_page(whole, 6, 2));
     assert.equal(next.start, 4);
     assert.deepEqual(next.context, [1, 3]);
@@ -385,7 +385,7 @@ describe("windows", () => {
     const w = snapshot_window(state(), 2);
     const next = apply_event(w, { type: "item.added", thread_id: "th", seq: 21, item: msg("m10") });
     assert.equal(next.start, 8);
-    assert.deepEqual(next.context, [1, 7]);
+    assert.deepEqual(next.context, [1, 3, 7]);
     assert.equal(ids(next.items).at(-1), "m10");
     // An update to an item it doesn't have only advances seq.
     const gone = apply_event(next, { type: "item.updated", thread_id: "th", seq: 22, item_id: "m0", patch: { text: "x" } });

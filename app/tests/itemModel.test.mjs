@@ -147,3 +147,38 @@ test("requests from before the board's metadata (converter 2) still draw as prom
   assert.deepEqual(m.items.map((i) => i.type), ["tools", "permission"]);
   assert.deepEqual(m.items[1].data, { request_id: "r", status: "pending", tool_use_id: "c", tool_name: "Bash", input: { command: "ls" } });
 });
+
+// HA-218 review: a window's context had only the subagents still running, so a long thread's earlier subagents that had
+// ended were missing from its Agents list, which the messages path lists from the page's `subagents` (what lists the
+// subagents started before it, db::subagent_messages).
+test("a long thread's window lists every subagent before it, as the messages path's first page does", () => {
+  const out = [];
+  const add = (kind, data) => out.push({ id: out.length + 1, task_id: "t", kind, data, created_at: `2026-10-26T07:${String(Math.floor(out.length / 60)).padStart(2, "0")}:${String(out.length % 60).padStart(2, "0")}.000Z` });
+  const assistant = (content, parent = null) => add("claude", { type: "assistant", parent_tool_use_id: parent, session_id: "s", message: { content } });
+  const result = (id, content, extra = {}) => add("claude", { type: "user", session_id: "s", message: { content: [{ type: "tool_result", tool_use_id: id, content }] }, ...extra });
+  add("user", { text: "Go" });
+  assistant([{ type: "tool_use", id: "toolu_sub", name: "Agent", input: { description: "Look", prompt: "Look around" } }]);
+  add("claude", { type: "system", subtype: "task_started", task_type: "local_agent", tool_use_id: "toolu_sub", task_id: "k1", session_id: "s" });
+  assistant([{ type: "text", text: "Looking." }], "toolu_sub");
+  add("claude", { type: "system", subtype: "task_notification", task_id: "k1", status: "completed", session_id: "s" });
+  result("toolu_sub", "Found it", { tool_use_result: { status: "completed", totalToolUseCount: 2 } });
+  assistant([{ type: "tool_use", id: "toolu_bg", name: "Agent", input: { description: "Away", prompt: "Go away", run_in_background: true } }]);
+  add("claude", { type: "system", subtype: "task_started", task_type: "local_agent", tool_use_id: "toolu_bg", task_id: "k2", is_backgrounded: true, session_id: "s" });
+  result("toolu_bg", "Async agent launched successfully");
+  add("claude", { type: "system", subtype: "task_notification", task_id: "k2", status: "completed", summary: "Back", session_id: "s" });
+  for (let i = 0; i < 400; i++) assistant([{ type: "text", text: `Reply ${i}` }]);
+
+  // The messages path: the latest page of 100, and the subagents' calls, results and task_* messages before it.
+  const page = out.slice(-100);
+  const block = (m) => m.data.message?.content?.[0]?.type;
+  const earlier = out.slice(0, -100).filter((m) => m.kind === "claude" && (m.data.type === "system" || block(m) === "tool_use" || block(m) === "tool_result"));
+  const messages = drawn(buildModel(page, false, undefined, earlier), () => []);
+  // The items path: the window of 300.
+  const w = snapshot_window(snapshot(out), 300);
+  assert.ok(w.start > 10);
+  const items = drawn(buildItemModel(w, false), () => []);
+  assert.deepEqual(items.subagents.map((s) => s.id), ["toolu_bg", "toolu_sub"]);
+  assert.deepStrictEqual(items.subagents, messages.subagents);
+  // Its rows are the window's: the subagents' calls aren't drawn until their page loads.
+  assert.ok(items.items.every((r) => r.type === "text"));
+});

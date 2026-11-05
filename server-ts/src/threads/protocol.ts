@@ -610,9 +610,9 @@ function replace<T>(list: readonly T[], at: number, value: T): T[] {
 
 /**
  * The window of `state` with its last `limit` items, and what they need from before them: the subagent calls they and
- * the open requests belong to, the open requests' tool calls, and the subagents still running (which may go on adding
- * items to the window), with their own. Without a limit, or with one it's within, it's the state itself. `state` must
- * be whole (not a window).
+ * the open requests belong to, the open requests' tool calls, and every subagent's call (one still running may go on
+ * adding items to the window, and a client lists them all, as Huntaway's Agents list does), with their own. Without a
+ * limit, or with one it's within, it's the state itself. `state` must be whole (not a window).
  */
 export function snapshot_window(state: Snapshot, limit?: number): Snapshot {
   const items = state.items;
@@ -626,7 +626,7 @@ export function snapshot_window(state: Snapshot, limit?: number): Snapshot {
     need.add(r.parent_id ?? "");
     need.add(r.tool_call_id ?? "");
   }
-  for (let i = 0; i < start; i++) if (is_running_subagent(items[i]!)) need.add(items[i]!.id);
+  for (let i = 0; i < start; i++) if (is_subagent(items[i]!)) need.add(items[i]!.id);
   const context = context_of(items, at, need, start);
   const window: Snapshot = {
     thread: state.thread,
@@ -707,6 +707,11 @@ export function with_page(state: Snapshot, page: ItemPage): Snapshot {
 /** Where a request is in the thread's items: the index of its tool call, or else of the last item of its turn; -1 if it has neither. */
 export function request_anchor(items: readonly Item[], request: ThreadRequest): number {
   return anchor(items, indices(items), request);
+}
+
+/** A subagent's call (a tool_call of kind subagent), running or not. */
+export function is_subagent(item: Item): boolean {
+  return item.type === "tool_call" && item.kind === "subagent";
 }
 
 /**

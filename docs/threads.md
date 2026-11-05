@@ -38,7 +38,7 @@ passes both packages' typechecks. There's no code generation and no JSON Schema.
   gives. `apply_event` is that fold, a pure reducer: an event changes only what it's about, keeping the identity of the
   rest, and replayed or other threads' events change nothing.
 - **Windows**: a snapshot of the last `limit` items (`snapshot_window`), from index `start`, with the items from before
-  it that they need (the subagent calls they belong to, open requests' calls, subagents still running) as `context`.
+  it that they need (the subagent calls they belong to, open requests' calls, every subagent's call) as `context`.
   `item_page` reads the items before a window a page at a time, and `with_page` puts a page in.
 
 What it leaves out of agent-threads' protocol: the thread's run, standing answers, rate limits, `resume_at` and
@@ -235,7 +235,9 @@ Step 5 (HA-218): the app draws a task's thread from its items when the task's th
 every task on an older host, is drawn from its messages as before (`app/src/threadModel.ts`), and so is a flagged task
 once the setting is turned off (its messages are still written). A host that answers 404 for a flagged task's thread
 (its live writes stopped on an error) has it drawn from its messages too, until a `thread_resync` says it was rebuilt.
-`app/src/threadView.ts` decides which.
+`app/src/threadView.ts` decides which. It's one view either way (`components/task/Thread.tsx`), so a thread that
+switches (its first message flags it, the setting changes) keeps its rows' state and the composer its text and focus,
+and shows the messages it has until its window has loaded.
 
 - **Following it** (`app/src/itemThreads.ts`): a window of the thread's last 300 items, then its `thread_event`s,
   folded with protocol.ts's `apply_event`. Events that come while the window or a catch-up loads are held and applied
@@ -248,8 +250,9 @@ once the setting is turned off (its messages are still written). A host that ans
   threadModel.ts builds from messages, which `components/task/Thread.tsx` and `thread/*` draw unchanged: rows (a run of
   tool calls is one group), each subagent's own rows, the subagents, the calls' results. Requests go in among the items
   in the order their messages were stored. Keys are the message path's (`legacy:12:3` is `12.3`), so rewinding to a
-  message and a prompt's "moved on" work as they did. A window's context items (the calls its items belong to, from
-  before it) aren't drawn until their page loads, as a subagent from before the loaded messages isn't. What a new
+  message and a prompt's "moved on" work as they did. A window's context has every subagent's call from before it, so
+  the Agents list has them all, as the messages path's first page does with what lists the earlier subagents; its
+  context items aren't drawn until their page loads, as a subagent from before the loaded messages isn't. What a new
   snapshot leaves as it was stays the same objects, so rows that didn't change don't redraw.
 - **What it sends**: the composer's messages, its stop and its mode go as thread commands (`send`, `interrupt`,
   `set_options`), and the prompt cards answer with `respond` (a permission, a plan with the mode to carry on in, Claude's

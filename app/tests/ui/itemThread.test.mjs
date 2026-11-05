@@ -123,9 +123,10 @@ test("a thread drawn from its items looks as it does drawn from its messages", a
     const fromMessages = await look();
     assert.deepEqual(asked, [], "no items asked for");
 
-    // On: the same task's thread is drawn from its items.
+    // On: the same task's thread is drawn from its items. The view switches in place, keeping the rows opened, so it's
+    // opened again to start as fresh as the view on messages did.
     await setting(true);
-    await ui.run(["wait [data-thread=items]"]);
+    await ui.run(["wait [data-thread=items]", `goto /p/${project.id}?task=${task.id}`, "click Thread", "wait [data-thread=items]"]);
     const fromItems = await look();
     assert.ok(asked.some((a) => a.startsWith("thread?limit=")), "a window of its items");
     await same(page, fromMessages[0], fromItems[0], "the thread");
@@ -164,5 +165,22 @@ test("a long thread drawn from its items loads its earlier items as it's scrolle
     assert.deepEqual(asked, ["thread?limit=300", "thread/items?before=100&limit=200"]);
     await ui.run(["gone Load earlier messages"]);
   });
+  await setting(false);
+});
+
+// HA-218 review: the view on messages and the view on items were different components, so a task switching from one to
+// the other (its first message flags it, with the setting on) drew its thread again from scratch, composer and all:
+// what was typed after sending went, and so did the focus.
+test("a task's first message flags it, and the composer keeps its focus and what's typed after it", async () => {
+  await setting(true);
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Flagged by its first message" });
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait [data-thread=messages]", "click css=textarea", "type First message", "press Enter"]);
+    await ui.run(["type follow", "wait [data-thread=items]", "wait First message", "type up"]);
+    assert.equal(await page.locator("textarea").inputValue(), "followup");
+    assert.equal(await page.evaluate(() => document.activeElement?.tagName), "TEXTAREA");
+  });
+  assert.equal((await server.api("GET", `/tasks/${task.id}`)).task.thread_items, true);
   await setting(false);
 });

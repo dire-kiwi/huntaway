@@ -28,11 +28,32 @@ type ThreadProps = {
 
 /**
  * Memoized, so the task view redrawing leaves a long thread be: pass an `empty` that stays the same. A thread kept as
- * items is drawn from them (threadView.ts), and every other from its messages, the same way.
+ * items is drawn from them (threadView.ts), and every other from its messages, the same way. It's one element tree
+ * either way, so a thread that switches (its first message flags it, the setting changes, its host has no items for it)
+ * keeps its view, and the composer what's being typed in it and its focus.
  */
 export const Thread = memo(function Thread(props: ThreadProps) {
-  const items = useDrawsItems(props.task);
-  return items ? <ItemsThread {...props} /> : <MessagesThread {...props} />;
+  const { task } = props;
+  const items = useDrawsItems(task);
+  const fromItems = useItemsView(task, items);
+  // Until its window has loaded, a thread that's just switched to its items shows the messages it has.
+  const fromMessages = useMessagesView(task, !fromItems, !items);
+  const view = fromItems ?? fromMessages!;
+  // The prompt cards answer a thread drawn from its items with its commands.
+  const host = task.host_id;
+  const id = task.id;
+  const answerer = useMemo<PromptAnswerer>(
+    () => ({
+      respond: (request_id, resolution) => respond({ host_id: host, id }, request_id, resolution),
+      answers: (request_id, lists) => answersById(id, request_id, lists),
+    }),
+    [host, id],
+  );
+  return (
+    <PromptAnswers.Provider value={fromItems ? answerer : null}>
+      <ThreadView {...props} model={view.model} paging={view.paging} source={fromItems ? "items" : "messages"} />
+    </PromptAnswers.Provider>
+  );
 });
 
 /** How the thread's earlier part loads, either way. */
@@ -52,13 +73,17 @@ interface Paging {
   retry?: () => void;
 }
 
-function MessagesThread(props: ThreadProps) {
-  const { task } = props;
-  const messages = useThreadMessages(task.id);
+type View = { model: ThreadModel; paging: Paging };
+
+/**
+ * The thread from its messages, while `on` (null otherwise): kept while it's on, and loaded if `load` (a thread that's
+ * switched to its items keeps the messages it had until its window comes, without loading them).
+ */
+function useMessagesView(task: Task, on: boolean, load: boolean): View | null {
+  const messages = useThreadMessages(on ? task.id : null, load);
   // A long thread loads in pages, older ones as it's scrolled up (API 56).
-  const pages = useStore((s) => s.threads[task.id]);
+  const pages = useStore((s) => (on ? s.threads[task.id] : undefined));
   const loadOlderMessages = useStore((s) => s.loadOlderMessages);
-  const model = threadModel(task.id, messages ?? NO_MESSAGES, task.running, pages?.subagents);
   const oldest = messages?.[0]?.id;
   const paging = useMemo<Paging>(
     () => ({
@@ -71,17 +96,17 @@ function MessagesThread(props: ThreadProps) {
     }),
     [messages, pages?.more, pages?.loading, oldest, loadOlderMessages, task.id],
   );
-  return <ThreadView {...props} model={model} paging={paging} source="messages" />;
+  if (!on) return null;
+  return { model: threadModel(task.id, messages ?? NO_MESSAGES, task.running, pages?.subagents), paging };
 }
 
-const NO_SNAPSHOT: Pick<Snapshot, "items" | "requests"> = { items: [], requests: [] };
-
-/** A thread kept as items: its window, followed live and paged back (itemThreads.ts), drawn as itemModel.ts makes it. */
-function ItemsThread(props: ThreadProps) {
-  const { task } = props;
-  const thread = useItemThread(task, true);
+/**
+ * A thread kept as items, while `on`: its window, followed live and paged back (itemThreads.ts), drawn as itemModel.ts
+ * makes it. Null until its window has loaded.
+ */
+function useItemsView(task: Task, on: boolean): View | null {
+  const thread = useItemThread(task, on);
   const snap = thread?.snap;
-  const model = itemModel(task.id, snap ?? NO_SNAPSHOT, task.running);
   const start = snap?.start ?? 0;
   const context = snap?.context;
   const items = snap?.items;
@@ -99,22 +124,12 @@ function ItemsThread(props: ThreadProps) {
     }),
     [items, start, context, thread?.loading, thread?.failed, task.id],
   );
-  // The prompt cards answer the thread's requests with commands.
-  const host = task.host_id;
-  const id = task.id;
-  const answerer = useMemo<PromptAnswerer>(
-    () => ({
-      respond: (request_id, resolution) => respond({ host_id: host, id }, request_id, resolution),
-      answers: (request_id, lists) => answersById(id, request_id, lists),
-    }),
-    [host, id],
-  );
-  return (
-    <PromptAnswers.Provider value={answerer}>
-      <ThreadView {...props} model={model} paging={paging} source="items" />
-    </PromptAnswers.Provider>
-  );
+  // A window that failed to load is shown as such, with its way to try again.
+  if (!on || (!snap && !thread?.failed)) return null;
+  return { model: itemModel(task.id, snap ?? NO_SNAPSHOT, task.running), paging };
 }
+
+const NO_SNAPSHOT: Pick<Snapshot, "items" | "requests"> = { items: [], requests: [] };
 
 /** The thread, drawn from `model` (`source` says which way, in `data-thread`, for tests). */
 function ThreadView({ task, cwd, placeholder, empty, model, paging, source }: ThreadProps & { model: ThreadModel; paging: Paging; source: "items" | "messages" }) {
