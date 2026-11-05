@@ -171,9 +171,11 @@ export function events_after(c: Conn, task_id: string, after: number, limit?: nu
   return rows.map((r) => JSON.parse(r.data));
 }
 
-/** Removes the thread's events older than `keep_ms` before `at`. */
+/** Removes the thread's events older than `keep_ms` before `at`: none, without reading its log, if its oldest isn't. */
 function prune_thread(c: Conn, task_id: string, at: string, keep_ms = KEEP_MS): void {
   const before = new Date(Date.parse(at) - keep_ms).toISOString();
+  const oldest = value<string>(c, "SELECT created_at FROM thread_events WHERE task_id=?1 ORDER BY seq LIMIT 1", task_id);
+  if (oldest === undefined || oldest >= before) return;
   run(c, "DELETE FROM thread_events WHERE task_id=?1 AND created_at<?2", task_id, before);
 }
 
