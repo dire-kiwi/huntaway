@@ -150,6 +150,11 @@ test("a_task_moved_or_run_again_meanwhile_is_left_alone", async () => {
   const task = await plan_task(s);
   const t = await run(s, task, write_plan(s));
   const r = db.get_run(s.db(), db.value<string>(s.db(), "SELECT id FROM runs WHERE task_id=?1", task.id)!)!;
+  // Settled, it starts what entering its column starts (a review, the column's workflows), with the task as it's left.
+  const seen: string[] = [];
+  s.update_task(t.id, [["status", "in_progress"]]);
+  await settle(s, { ...t, status: "in_progress" }, r, (x) => seen.push(x.status));
+  assert.deepEqual(seen, ["needs_attention"]);
   // Moved by the user before the column was settled.
   s.update_task(t.id, [["status", "todo"]]);
   let entered = 0;
