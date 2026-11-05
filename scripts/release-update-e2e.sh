@@ -100,6 +100,8 @@ fake_release() {
   rm -rf "$dir"
   mkdir -p "$dir"
   tar -xzf "$assets/huntaway-server-0.9.1-linux-x64.tar.gz" -C "$dir" --strip-components 1
+  # Only the server changes: a desktop shell of its own would have the app relaunch onto it (the appimage check covers that).
+  rm -rf "$dir/electron"
   mv "$dir/huntaway" "$dir/huntaway-0.9.1"
   printf '#!/bin/sh\nREAL="$(dirname "$0")/huntaway-0.9.1"\n%s\n' "$script" > "$dir/huntaway"
   chmod +x "$dir/huntaway"
