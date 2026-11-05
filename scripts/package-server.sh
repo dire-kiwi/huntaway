@@ -25,7 +25,7 @@ node_bin=${2:-$(command -v node)}
 
 rm -rf "$out"
 mkdir -p "$out/server-ts" "$out/node/bin"
-# Absolute: tsc runs in a scratch copy below.
+# Absolute: tsrs runs in a scratch copy below.
 out=$(cd "$out" && pwd)
 cp "$root/server-ts/bin/huntaway" "$out/huntaway"
 cp "$root/server-ts/bin/issue-agent" "$out/issue-agent"
@@ -35,14 +35,14 @@ cp -R "$root/app/dist" "$out/ui"
 # The code without its tests, compiled to .js (server-ts/tsconfig.build.json: types and comments stripped, imports of
 # ./x.ts rewritten to ./x.js), with the same layout as src/. Node then runs it as it is: run as .ts, every process
 # (the server, and each agent's MCP helpers) would load Node's TypeScript compiler, about 20 MB more each (HA-181).
-# tsc comes from the lockfile's devDependencies, installed in a scratch copy; it type-checks too, so a type error
-# fails the package.
+# The compiler is tsrs (HA-199), from the lockfile's devDependencies, installed in a scratch copy; it type-checks too, so a
+# type error fails the package.
 build=$(mktemp -d "${TMPDIR:-/tmp}/package-server.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 cp -R "$root/server-ts/src" "$root/server-ts/package.json" "$root/server-ts/package-lock.json" "$root/server-ts/tsconfig.json" \
   "$root/server-ts/tsconfig.build.json" "$build/"
-(cd "$build" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error && node_modules/.bin/tsc -p tsconfig.build.json --outDir "$out/server-ts/src")
-[[ -f $out/server-ts/src/main.js && -f $out/server-ts/src/mcp.js ]] || { echo "tsc didn't write server-ts/src/main.js" >&2; exit 1; }
+(cd "$build" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error && node_modules/.bin/tsrs -p tsconfig.build.json --outDir "$out/server-ts/src")
+[[ -f $out/server-ts/src/main.js && -f $out/server-ts/src/mcp.js ]] || { echo "tsrs didn't write server-ts/src/main.js" >&2; exit 1; }
 cp "$root/server-ts/package.json" "$root/server-ts/package-lock.json" "$out/server-ts/"
 if [[ -n ${VERSION:-} ]]; then
   node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));

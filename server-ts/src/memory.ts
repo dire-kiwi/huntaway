@@ -8,9 +8,14 @@
 const TICK = 30_000;
 const SLACK = 32 << 20;
 
-/** Whether a server at `rss` bytes, after a full GC left it at `after` bytes, should have another. */
-export function should_collect(rss: number, after: number): boolean {
-  return rss - after >= SLACK;
+/**
+ * One tick: whether a server at `rss` bytes should have a full GC, given `after`, what the last one left it at; and what
+ * to measure from next. That goes down when RSS went down by itself (V8's memory reducer, or after a GC taken in the
+ * middle of a burst, which left it high).
+ */
+export function tick(after: number, rss: number): { collect: boolean; after: number } {
+  after = Math.min(after, rss);
+  return { collect: rss - after >= SLACK, after };
 }
 
 let started = false;
@@ -22,7 +27,9 @@ export function start() {
   started = true;
   let after = process.memoryUsage.rss();
   setInterval(() => {
-    if (!should_collect(process.memoryUsage.rss(), after)) return;
+    const t = tick(after, process.memoryUsage.rss());
+    after = t.after;
+    if (!t.collect) return;
     gc();
     after = process.memoryUsage.rss();
   }, TICK).unref();
