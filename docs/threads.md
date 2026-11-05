@@ -55,7 +55,7 @@ message and its items can be written in one transaction:
 | `thread_requests` | Requests, open or resolved (JSON), in order. |
 | `thread_events` | The saved events (JSON), kept for a day. |
 | `thread_item_origins` | Which message(s) each item came from: `(task_id, item_id, message_id)`. |
-| `threads` | Each thread's own row (migration 92): its last `seq` (kept when its events have been pruned), the `converter` version that wrote it, a `writes` count, and the `error` that stopped its live writes, if one did. |
+| `threads` | Each thread's own row (migration 93): its last `seq` (kept when its events have been pruned), the `converter` version that wrote it, a `writes` count, and the `error` that stopped its live writes, if one did. |
 
 Every table is keyed by `task_id`, and its rows are deleted with the task (`ON DELETE CASCADE`). `tasks.thread_items`
 says which tasks have a thread kept as items.
@@ -164,7 +164,7 @@ about 1.9 times today's `messages` (1.7 GB on this board).
 
 `server-ts/src/threads/write.ts`, step 3 (plan decisions D3 and D4).
 
-- **The switch:** the host setting *Keep threads as items* (`thread_items` in `/api/settings`, API 112; Settings, a
+- **The switch:** the host setting *Keep threads as items* (`thread_items` in `/api/settings`, API 113; Settings, a
   host's Agent defaults), off by default. A task whose first message is written while it's on is flagged
   (`tasks.thread_items`), in the same transaction, and keeps its items written from then on, so a flagged task's
   items have no gaps. Turning it off flags no more tasks, and those already flagged carry on. With it off, and for
@@ -223,7 +223,7 @@ approval), the threads were a rebuild's too.
 | --- | --- | --- |
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
 | 2. The translator, and a dry run on a copy of the board | HA-214 | This change: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
-| 3. Items written live, behind a setting | HA-239 (was HA-216) | This change: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 92, `huntaway threads-rebuild`, API 112. |
+| 3. Items written live, behind a setting | HA-239 (was HA-216) | This change: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 93, `huntaway threads-rebuild`, API 113. |
 | 4. Thread API and live events | HA-215 | Not started |
 | 5. The UI on items | HA-218 | Not started |
 | 6. Readers on items | HA-217 | Not started |

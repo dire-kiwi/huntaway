@@ -3,6 +3,7 @@ import { join } from "node:path";
 import * as db from "./db.ts";
 import type { Conn, Message, Task } from "./db.ts";
 import type { Router } from "./http.ts";
+import type { Uplink } from "./hosts/uplink.ts";
 import type { ServerMeta, RestartJob, Deployed } from "./update/admin.ts";
 import { Releases } from "./update/release.ts";
 import { PushState } from "./integrations/push.ts";
@@ -111,6 +112,8 @@ export class AppState {
   runs = new Map<string, RunHandle>();
   /** Connected linked hosts by host id. */
   links = new Map<string, any>();
+  /** Hubs that take this host's agents' board tool calls up their links, by hub id (see hosts/uplink.ts). */
+  uplinks = new Map<string, Uplink>();
   /** Connection loops for outbound links, by host id (their stop functions). */
   link_tasks = new Map<string, () => void>();
   /** This host's API, for answering tunnelled and proxied requests in-process. */

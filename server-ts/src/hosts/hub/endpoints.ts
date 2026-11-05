@@ -182,10 +182,19 @@ export async function add_host(s: AppState, r: Req) {
   return link;
 }
 
-export function rename_host(s: AppState, r: Req) {
-  const name = r.body?.name;
-  if (typeof name !== "string") throw new ApiError(422, "Failed to deserialize the JSON body into the target type: missing field `name`");
-  db.run(s.db(), "UPDATE links SET name=?1 WHERE id=?2", name.trim(), r.params.id);
+/** Rename a linked host, or let its agents use this board (or not). */
+export function change_host(s: AppState, r: Req) {
+  const b = r.body && typeof r.body === "object" && !Array.isArray(r.body) ? r.body : {};
+  const bad = (field: string, kind: string) => new ApiError(422, `Failed to deserialize the JSON body into the target type: ${field}: invalid type, expected ${kind}`);
+  if (b.name != null && typeof b.name !== "string") throw bad("name", "a string");
+  /** Whether its agents may use this board's tools, up the link (API 112, see hosts/uplink.ts). */
+  if (b.uplink != null && typeof b.uplink !== "boolean") throw bad("uplink", "a boolean");
+  const id = r.params.id;
+  const c = s.db();
+  if (!db.get_link(c, id)) throw ApiError.not_found("host");
+  const name = typeof b.name === "string" ? b.name.trim() : "";
+  if (name) db.run(c, "UPDATE links SET name=?1 WHERE id=?2", name, id);
+  if (typeof b.uplink === "boolean") db.run(c, "UPDATE links SET uplink=?1 WHERE id=?2", b.uplink ? 1 : 0, id);
   changed(s);
   return { ok: true };
 }
@@ -194,6 +203,8 @@ export function rename_host(s: AppState, r: Req) {
 export function remove_host(s: AppState, r: Req) {
   const id = r.params.id;
   db.run(s.db(), "DELETE FROM links WHERE id=?1", id);
+  // Profiles whose assistants ran there have them here again.
+  if (db.run(s.db(), "UPDATE profiles SET assistant_host=NULL WHERE assistant_host=?1", id).changes > 0) s.emit({ type: "profiles_changed" });
   const t = s.link_tasks.get(id);
   if (t) {
     s.link_tasks.delete(id);

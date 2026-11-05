@@ -42,7 +42,7 @@ const STRING_SETTINGS = ["default_model", "default_effort", "default_permission_
  * are shown with. And whether release checks include prereleases (`release_prereleases`, API 88), which checks again
  * when it changes. And how many hours a task can go without activity in the board's Now view before it goes back to
  * Later (`now_expiry_hours`, API 97; 0 for never, null for the default of a day). And whether tasks started from now
- * on keep their threads as items as well as messages (`thread_items`, API 112, off by default; see threads/write.ts).
+ * on keep their threads as items as well as messages (`thread_items`, API 113, off by default; see threads/write.ts).
  */
 export async function update_settings(s: AppState, r: Req) {
   const b = { ...json_map(r) };

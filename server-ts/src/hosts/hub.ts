@@ -19,6 +19,9 @@ import * as relay from "./relay.ts";
 import { Chan, type Frame, type Pipe } from "./relay.ts";
 import * as broker from "./broker.ts";
 import * as ssh from "./ssh.ts";
+import { ToolCall_from, type ToolAnswer, type ToolCall } from "./proto.ts";
+import * as uplink from "./uplink.ts";
+import * as tools from "../mcp/tools.ts";
 
 export * from "./hub/inbound.ts";
 export * from "./hub/dial_out.ts";
@@ -31,7 +34,14 @@ export type Down =
   | { t: "ws_open"; id: number; path: string }
   | { t: "ws_msg"; id: number; text: string | null; data: string | null }
   | { t: "ws_close"; id: number }
-  | { t: "ping" };
+  | { t: "ping" }
+  /**
+   * Who the hub is, sent once the tunnel is up (API 112). A host may then pass it board tool calls (`tool_call`). Older
+   * hosts ignore it.
+   */
+  | { t: "hello"; hub_id: string; name: string; api_version: number }
+  /** The answer to `Up`'s `tool_call`. */
+  | ({ t: "tool_answer" } & ToolAnswer);
 
 /** Host → hub (proto.rs's `Up`), tagged by `t`. */
 export type Up =
@@ -40,7 +50,9 @@ export type Up =
   | { t: "event"; event: any }
   | { t: "ws_msg"; id: number; text: string | null; data: string | null }
   | { t: "ws_close"; id: number; code: number | null; reason: string | null }
-  | { t: "pong" };
+  | { t: "pong" }
+  /** A board tool call from one of our agents that we couldn't resolve here, for the hub to run (API 112). Sent only to a hub that said `hello`. */
+  | ({ t: "tool_call" } & ToolCall);
 
 export interface Version {
   version: string;
@@ -295,6 +307,57 @@ export async function call_tool(_s: AppState, link: LinkConn, tool: string, prof
   throw new Error(typeof body?.error === "string" ? body.error : JSON.stringify(body));
 }
 
+/** How a linked host's connection reached us: we dialled it (by URL or over SSH), or it dialled in (`--hub`). */
+export type Via = "dialled" | "tunnel";
+
+/**
+ * Whether a connection that came `via` is how `link` is linked. A host that dials in is known only by the id in its
+ * hello, behind the hub token every such host shares, so a tunnel can claim the id of a host we dial: it isn't that
+ * host for anything that acts for one of its profiles (up-calls, the assistant's routed requests).
+ */
+export function linked_via(link: Link, via: Via): boolean {
+  return via === "tunnel" ? link.mode === "inbound" : link.mode === "outbound" || link.mode === "ssh";
+}
+
+/** How live connection `conn` reached us. */
+export function conn_via(conn: LinkConn): Via {
+  return conn.kind.type === "tunnel" ? "tunnel" : "dialled";
+}
+
+/**
+ * A board tool call that linked host `host_id` passed up its link (see hosts/uplink.ts), over a connection that came
+ * `via`: run only if the user lets that host's agents use this board, only if it came the way that host is linked (a
+ * tunnel that took a dialled host's id isn't it), and only for the profiles whose assistants run there. The host says
+ * which profile its caller is in, and whoever controls it can say any: a profile of this board's whose assistant isn't
+ * there would let it act with that profile's access.
+ */
+export async function run_up_call(s: AppState, host_id: string, c: ToolCall, via: Via): Promise<ToolAnswer> {
+  const off = (why: string | null): ToolAnswer => ({ id: c.id, result: null, error: why, off: true });
+  let link: Link | null = null;
+  try {
+    link = db.get_link(s.db(), host_id);
+  } catch {}
+  if (!link?.uplink) return off(null);
+  if (!linked_via(link, via)) {
+    return off(`${s.host_name} links ${link.name} ${link.mode === "inbound" ? "as a host that dials in" : "itself"}, and this call came another way, so it isn't taken`);
+  }
+  let placed = false;
+  try {
+    placed = db.list_profiles(s.db()).some((p) => p.name === c.profile && p.assistant_host === host_id);
+  } catch {}
+  if (!placed) {
+    return off(
+      `${s.host_name} lets ${link.name}'s agents use its board only in the profiles whose assistant runs on ${link.name}, and ${c.profile} isn't one; ` +
+        `the user can pick ${link.name} as the profile's Assistant host in Settings → Profiles there`,
+    );
+  }
+  try {
+    return { id: c.id, result: (await tools.handle_up_call(s, host_id, c)) ?? null, error: null, off: false };
+  } catch (e) {
+    return { id: c.id, result: null, error: err_str(e), off: false };
+  }
+}
+
 export function changed(s: AppState) {
   s.hub_events.send({ type: "hosts_changed" });
 }
@@ -442,6 +505,15 @@ export async function run_outbound(s: AppState, link: Link, mode: string, on_abo
     } catch {
       return;
     }
+    if (ev?.type === "hub_call") {
+      const c = ToolCall_from(ev);
+      if (c) {
+        background("answering a host's board tool call", run_up_call(s, link.id, c, "dialled").then((a) => {
+          if (!finished && ws.readyState === ws.OPEN) ws.send(JSON.stringify(uplink.answer_frame(a)));
+        }));
+      }
+      return;
+    }
     if (ready) forward_event(s, link.id, ev);
     else early.push(ev);
   });
@@ -456,6 +528,12 @@ export async function run_outbound(s: AppState, link: Link, mode: string, on_abo
   register(s, conn);
   try {
     console.error(`connected to host ${link.name}`);
+    // Who we are, so the host can pass its agents' board tool calls up (hosts before API 112 ignore it).
+    try {
+      ws.send(JSON.stringify(uplink.hub_hello(s)));
+    } catch {
+      finish();
+    }
     // Anything missed while disconnected: tell the UI to reload this host.
     forward_event(s, link.id, { type: "resync" });
     ready = true;

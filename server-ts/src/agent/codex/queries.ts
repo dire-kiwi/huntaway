@@ -33,6 +33,17 @@ export async function task_title(codex_home: string, cwd: string, instructions: 
     await rpc.initialize();
     // Config overrides merge maps, so an empty map alone would keep the user's servers.
     const config = await rpc.request("config/read", { includeLayers: false, cwd });
+    // A cheap model, as Claude's titles use Haiku, rather than the config's default (often its biggest).
+    let list = cached_models(codex_home);
+    if (list === null) {
+      try {
+        list = save_models(codex_home, await rpc.request("model/list", {}));
+      } catch (e) {
+        console.warn(`codex: listing models for a title: ${err_str(e)}`);
+        list = [];
+      }
+    }
+    const pick = title_model(list);
     const servers: Record<string, any> = {};
     const have = config?.config?.mcp_servers;
     if (have && typeof have === "object" && !Array.isArray(have)) for (const name of Object.keys(have)) servers[name] = { enabled: false };
@@ -43,6 +54,7 @@ export async function task_title(codex_home: string, cwd: string, instructions: 
       sandbox: "read-only",
       baseInstructions: instructions,
       developerInstructions: "",
+      ...(pick.model !== null ? { model: pick.model } : {}),
       config: {
         mcp_servers: servers,
         project_doc_max_bytes: 0,
@@ -57,7 +69,7 @@ export async function task_title(codex_home: string, cwd: string, instructions: 
     if (thread === null) throw new Error("no title thread id");
     const m = str(started?.model);
     const model = m !== null && m !== "" ? m : "codex";
-    await rpc.request("turn/start", { threadId: thread, effort: "low", input: [{ type: "text", text: input, text_elements: [] }] });
+    await rpc.request("turn/start", { threadId: thread, effort: pick.effort, input: [{ type: "text", text: input, text_elements: [] }] });
     let title = "";
     for (;;) {
       const msg = await rpc.incoming.recv();
@@ -103,6 +115,8 @@ async function query(codex_home: string, requests: Array<[string, any]>): Promis
 export interface Model {
   id: string;
   name: string;
+  /** What Codex says it's for ("Fast and affordable model for easier tasks"). */
+  description?: string;
   is_default: boolean;
   efforts: string[];
   default_effort: string | null;
@@ -112,15 +126,27 @@ const MODELS = new Map<string, [number, Model[]]>();
 
 /** The models a Codex config can use (cached for 10 minutes). */
 export async function models(codex_home: string): Promise<Model[]> {
-  const hit = MODELS.get(codex_home);
-  if (hit && performance.now() - hit[0] < 600_000) return structuredClone(hit[1]);
+  const hit = cached_models(codex_home);
+  if (hit !== null) return hit;
   const r = await query(codex_home, [["model/list", {}]]);
-  const data: any[] = Array.isArray(r[0]?.data) ? r[0].data : [];
+  return save_models(codex_home, r[0]);
+}
+
+/** The models cached for a Codex config, if they're fresh. */
+function cached_models(codex_home: string): Model[] | null {
+  const hit = MODELS.get(codex_home);
+  return hit && performance.now() - hit[0] < 600_000 ? structuredClone(hit[1]) : null;
+}
+
+/** Cache the models in a reply to `model/list`, and return them. */
+function save_models(codex_home: string, r: any): Model[] {
+  const data: any[] = Array.isArray(r?.data) ? r.data : [];
   const list: Model[] = data
     .filter((m) => m?.hidden !== true)
     .map((m) => ({
       id: str(m.model) ?? str(m.id) ?? "",
       name: str(m.displayName) ?? str(m.model) ?? "",
+      description: str(m.description) ?? "",
       is_default: m.isDefault === true,
       efforts: (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts : []).map((e: any) => str(e?.reasoningEffort)).filter((e: any) => e !== null),
       default_effort: str(m.defaultReasoningEffort),
@@ -128,6 +154,24 @@ export async function models(codex_home: string): Promise<Model[]> {
     .filter((m) => m.id !== "");
   MODELS.set(codex_home, [performance.now(), list]);
   return structuredClone(list);
+}
+
+/** What a model's name or description says when it's a cheap one, and when it's been superseded. */
+const CHEAP = /\b(?:mini|nano|lite|small|spark|fast|faster|affordable|efficient|cheap|cheaper|lightweight)\b/i;
+const OLD = /\b(?:older|legacy|deprecated|previous)\b/i;
+
+/**
+ * The model and effort for a title, from a config's models: the first cheap one (by its id, name or description),
+ * current ones before older ones and the default before the rest, or the config's default (null) if none is; at low
+ * effort, or the least the model has if it can't do low.
+ */
+export function title_model(list: Model[]): { model: string | null; effort: string } {
+  const text = (m: Model) => `${m.id} ${m.name} ${m.description ?? ""}`;
+  const rank = (m: Model) => (OLD.test(text(m)) ? 2 : 0) + (m.is_default ? 0 : 1);
+  const cheap = list.filter((m) => CHEAP.test(text(m))).sort((a, b) => rank(a) - rank(b));
+  const m = cheap[0] ?? null;
+  const effort = m === null || m.efforts.length === 0 || m.efforts.includes("low") ? "low" : m.efforts[0];
+  return { model: m?.id ?? null, effort };
 }
 
 /** Lists `models` for a Codex config, as if its app-server had (for tests). */
