@@ -1205,12 +1205,61 @@ test("a_threads_queries_read_only_its_own_messages", () => {
   subagent_messages(spy, t.id, 1 << 30);
   db.tool_calls_since(spy, t.id, null);
   message_page(spy, t.id, null, null, 100);
-  assert.ok(prepared.length >= 4, prepared.join("\n"));
+  // HA-193: those that run on each PR-watch poll (user_wrote_since), compaction (context.ts's compaction_source) and
+  // subagent's start or end (mcp/wait.ts, agent/codex/output.ts).
+  db.user_wrote_since(spy, t.id, "");
+  db.user_messaged_since(spy, t.id, "");
+  db.subagent_call(spy, t.id, "s");
+  db.is_subagent_call(spy, t.id, "a1");
+  db.has_assistant_block(spy, t.id, "a1");
+  assert.ok(prepared.length >= 9, prepared.join("\n"));
   for (const sql of prepared) {
     const plan = db.all(c, `EXPLAIN QUERY PLAN ${sql}`).map((r) => r.detail).join("; ");
     assert.match(plan, /messages_task/, `${sql}\n${plan}`);
     assert.doesNotMatch(plan, /messages_kind_time/, `${sql}\n${plan}`);
   }
+});
+
+test("per_task_message_lookups_read_only_that_tasks_messages", () => {
+  const c = open(":memory:");
+  const p = insert_profile(c, "p", [], null);
+  const t = insert_task(c, nt(p.id));
+  const other = insert_task(c, nt(p.id, { title: "other" }));
+  const at = (id: number, created_at: string) => db.run(c, "UPDATE messages SET created_at=?1 WHERE id=?2", created_at, id);
+  const call = (task: string, id: string, name: string) =>
+    insert_message(c, task, "claude", { type: "assistant", message: { content: [{ type: "tool_use", id, name, input: {} }] } }).id;
+  const started = (task: string, sub: string, call_id: string) => insert_message(c, task, "claude", { type: "system", subtype: "task_started", task_id: sub, tool_use_id: call_id }).id;
+
+  // Another task's messages, of every kind these look for, don't count.
+  at(insert_message(c, other.id, "user", { text: "hi" }).id, "2026-01-02");
+  call(other.id, "o1", "Agent");
+  started(other.id, "s1", "o1");
+  assert.equal(db.user_messaged_since(c, t.id, "2026-01-01"), false);
+  assert.equal(db.user_wrote_since(c, t.id, "2026-01-01"), false);
+  assert.equal(db.subagent_call(c, t.id, "s1"), null);
+  assert.equal(db.is_subagent_call(c, t.id, "o1"), false);
+  assert.equal(db.has_assistant_block(c, t.id, "o1"), false);
+
+  // compaction_source's `user_messaged_since` counts a message at `at` and the board's; user_wrote_since neither.
+  at(insert_message(c, t.id, "user", { text: "/compact", auto: true }).id, "2026-01-02");
+  assert.equal(db.user_messaged_since(c, t.id, "2026-01-02"), true);
+  assert.equal(db.user_messaged_since(c, t.id, "2026-01-03"), false);
+  assert.equal(db.user_wrote_since(c, t.id, "2026-01-01"), false);
+  at(insert_message(c, t.id, "user", { text: "hi" }).id, "2026-01-02");
+  assert.equal(db.user_wrote_since(c, t.id, "2026-01-01"), true);
+  assert.equal(db.user_wrote_since(c, t.id, "2026-01-02"), false);
+
+  // A subagent's call, from its latest task_started; only Agent and Task calls launch one.
+  call(t.id, "a1", "Agent");
+  call(t.id, "b1", "Bash");
+  started(t.id, "s1", "old");
+  started(t.id, "s1", "a1");
+  assert.equal(db.subagent_call(c, t.id, "s1"), "a1");
+  assert.equal(db.subagent_call(c, t.id, "s2"), null);
+  assert.equal(db.is_subagent_call(c, t.id, "a1"), true);
+  assert.equal(db.is_subagent_call(c, t.id, "b1"), false);
+  assert.equal(db.has_assistant_block(c, t.id, "b1"), true);
+  assert.equal(db.has_assistant_block(c, t.id, "x"), false);
 });
 
 test("subagent_summaries_include_forked_skills_and_their_launch_calls", () => {
