@@ -135,7 +135,7 @@ TypeScript compiler.
 
 ### Over hours
 
-A 2-hour soak of a package on the live copy (HA-181), with fake agents (a `claude` stand-in that streams text deltas,
+A 2-hour soak of a package on the live copy (HA-181, before merging HA-180 and HA-183), with fake agents (a `claude` stand-in that streams text deltas,
 tool calls and six turns a run) and a driver that kept up to 3 runs going, opened a UI websocket every few seconds and
 held each for 2 to 60 s, loaded a random task's thread every 2 s and every thread every 15 minutes, and deleted each task
 past 200 messages for a new one: 699 runs, 1.2 million streamed deltas, 1,151 websockets, 52 tasks made and deleted.
@@ -148,6 +148,11 @@ past 200 messages for a new one: 699 runs, 1.2 million streamed deltas, 1,151 we
 - Nothing in the code read for it (listeners on `s.events` and `hub_events`, Maps keyed by task, run or call, timers)
   outlives what it's for: the websocket handlers unsubscribe on close, and per-task and per-run entries go when the run
   ends or the task is deleted.
+- After merging HA-180 and HA-183 (MCP over HTTP, worker threads, a statement cache) and with the full GC after a burst,
+  a second soak of 1 h 50 min (654 runs, 1.1 million deltas, 1,057 websockets, 54 tasks made and 48 deleted) had RSS
+  medians of 118, 124, 125 and 129 MB per half hour, and was back to 107 MB a minute after it (112 MB at the start). The
+  heap after a full GC went 20.5, 22.8, 23.0, 23.5 and 22.7 MB, of which 2.6 MB more was compiled code. Open files and
+  threads stayed level.
 - For reference, the live 0.4.0 server (before these changes) was at 171 to 274 MB over 2.5 hours of the user's own
   work (2 to 4.5 hours after it started), with no upward trend.
 
