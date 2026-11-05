@@ -205,6 +205,7 @@ class App {
     fs.closeSync(out);
     this.proc.unref();
     this.pgid = this.proc.pid;
+    this.relaunchesSeen = this.relaunches();
     await until(`the app's board on ${this.base}`, () => this.boardLoaded(), 90_000);
     if (!attach) this.token = fs.readFileSync(path.join(this.data, "auth_token"), "utf8").trim();
   }
@@ -264,12 +265,51 @@ class App {
   }
 
   /**
+   * The process that keeps the server's pid over a restart, which the app keeps as its server: the TypeScript server's
+   * `bin/huntaway` (a shell that runs node as its child, and execs what a restart names), else the server itself (the Rust
+   * server exec'd in place).
+   */
+  serverRootPid() {
+    const pid = this.serverPid();
+    if (!pid) return null;
+    const ppid = Number(fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1].split(" ")[1]);
+    const cmd = fs.readFileSync(`/proc/${ppid}/cmdline`, "utf8").split("\0");
+    return /\/huntaway$/.test(cmd[1] ?? "") ? ppid : pid;
+  }
+
+  /** How many times the app has relaunched itself (main.cjs logs "…; relaunching"), by its log. */
+  relaunches() {
+    try {
+      return (fs.readFileSync(path.join(this.dir, "app.log"), "utf8").match(/; relaunching$/gm) ?? []).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** The process group of the app whose server listens on the port: its Electron is the server's (or bin/huntaway's) parent. */
+  serverAppGroup() {
+    const root = this.serverRootPid();
+    if (!root) return null;
+    const stat = (pid) => fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1].split(" ");
+    return Number(stat(Number(stat(root)[1]))[2]);
+  }
+
+  /** Go on with the app in process group `pgid` (one that relaunched itself), as the one this quits. */
+  adopt(pgid) {
+    this.pgid = pgid;
+    this.relaunchesSeen = this.relaunches();
+  }
+
+  /**
    * Quit as closing the window does (SIGTERM to Electron, which stops the server it started), and wait until the app is
-   * gone and, unless it only attached to a server (`attached`), the port is free.
+   * gone and, unless it only attached to a server (`attached`), the port is free. An app that relaunched itself (onto the
+   * desktop shell an Update brought) is a new process group, found by its server once it's up, and quit too.
    */
   async quit({ attached = false } = {}) {
     await this.browser?.close().catch(() => {});
     this.browser = null;
+    const first = this.pgid;
+    let relaunched = false;
     const alive = () => {
       try {
         process.kill(-this.pgid, 0);
@@ -283,7 +323,23 @@ class App {
     } catch {
       // gone already
     }
-    await until("the app to quit", async () => !alive() && (attached || !(await this.listening())), 30_000).catch(async (e) => {
+    const gone = async () => {
+      if (this.relaunches() > this.relaunchesSeen && !relaunched) {
+        const group = this.serverAppGroup();
+        if (group && group !== first) {
+          this.pgid = group;
+          relaunched = true;
+          try {
+            process.kill(-this.pgid, "SIGTERM");
+          } catch {
+            // gone already
+          }
+        }
+        return false;
+      }
+      return !alive() && (attached || !(await this.listening()));
+    };
+    await until("the app to quit", gone, 30_000).catch(async (e) => {
       try {
         process.kill(-this.pgid, "SIGKILL");
       } catch {
@@ -415,12 +471,12 @@ checks.updates = async (gh) => {
     await app.api("PATCH", `/tasks/${task.id}`, { status: "in_progress" });
     await app.api("POST", `/tasks/${task.id}/messages`, { text: "keep going" });
     await until("the agent to run", async () => (await app.api("GET", `/tasks/${task.id}`)).task.running);
-    const pid = app.serverPid();
+    const pid = app.serverRootPid();
     const up = await restartJob(app, "/admin/release/update", { version: "0.9.1" });
     check(!up.failed, "Update restarted the server", up.failed);
     info = await app.info();
     check(info.version === "0.9.1", "it runs 0.9.1 now", info.version);
-    check(app.serverPid() === pid, "in the same process (exec), which the app keeps", { pid, now: app.serverPid() });
+    check(app.serverRootPid() === pid, "in the same process (exec), which the app keeps", { pid, now: app.serverRootPid() });
     check(up.status.release.exe === path.join(app.data, "app/0.9.1/huntaway"), "from app/0.9.1", up.status.release.exe);
     check((await app.api("GET", `/tasks/${task.id}`)).task.running, "the agent is still running");
     const done = await until("the agent to finish", async () => {
@@ -593,9 +649,7 @@ checks.appimage = async (gh) => {
     const st = await app.status();
     check(st.release.shell.version === "0.9.3" && st.release.shell.outdated === false, "the relaunched app is 0.9.3, with its shell up to date", st.release.shell);
     // Stop the relaunched app: its Electron is the server's parent.
-    const server = app.serverPid();
-    const ppid = Number(fs.readFileSync(`/proc/${server}/stat`, "utf8").split(") ")[1].split(" ")[1]);
-    app.pgid = Number(fs.readFileSync(`/proc/${ppid}/stat`, "utf8").split(") ")[1].split(" ")[2]);
+    app.adopt(app.serverAppGroup());
     check(app.pgid !== oldPid, "in a new process");
     await app.quit();
   } finally {

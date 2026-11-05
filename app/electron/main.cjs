@@ -144,7 +144,8 @@ function findServerBinary(skip = []) {
     if (choice.version || fs.existsSync(bundled)) return { ...choice, bundled: !choice.version };
   }
   // A checkout: the TypeScript server, once its dependencies are installed. A checkout that hasn't run `npm ci` in
-  // server-ts/ since the server moved there (an install whose Rust server rebuilt it) runs its Rust build until then.
+  // server-ts/ since the server moved there (an install whose Rust server rebuilt it) runs the Rust build it has left
+  // from before the Rust server was removed (HA-179) until then.
   const root = path.join(__dirname, "..", "..");
   const ts = path.join(root, "server-ts", "bin", "huntaway");
   if (fs.existsSync(path.join(root, "server-ts", "node_modules", "ws", "package.json"))) return { bin: ts, version: null };

@@ -44,7 +44,7 @@ status=$?
 
 left=$(cd "$tmp" && find . -mindepth 1 -maxdepth 3 ! -name .lock | sort)
 if [[ -n $left ]]; then
-  echo "$(basename "$1") left $(grep -c . <<< "$left") files and folders in its TMPDIR (use testing::temp_dir()):" >&2
+  echo "$(basename "$1") left $(grep -c . <<< "$left") files and folders in its TMPDIR (remove what a test makes there):" >&2
   head -30 <<< "$left" | sed 's/^\./  /' >&2
   [[ $status -ne 0 ]] || status=1
 fi

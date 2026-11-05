@@ -1,25 +1,34 @@
-# Porting the server to TypeScript (HA-174)
+# The server's conventions (ported from Rust, HA-174)
 
-`server-ts/` is a port of the `huntaway` server crate (`server/src/`) to TypeScript, first made to compare its memory
-use with the Rust server's, and now the server itself: releases, checkouts and test servers run it, and `server/src/`
-is being removed, so server changes go here. The conventions below still hold for new code. It runs on Node 24+ straight from the `.ts` files (Node strips the types; there's no build step):
-`bin/huntaway serve …` takes the same arguments as the Rust binary. `ia-shim` and `huntaway-broker` stay in Rust (they're
-separate binaries); the TS server runs the Rust `ia-shim` (see `agent/runs.ts`).
+`server-ts/` is the `huntaway` server. It was ported to TypeScript from the Rust server crate (`server/src/`), which
+the port replaced in every release, checkout and test server, and which was removed in HA-179. It runs on Node 24+
+straight from the `.ts` files (Node strips the types; there's no build step): `bin/huntaway serve …` takes the same
+arguments the Rust binary did. `ia-shim` and `huntaway-broker` stay in Rust, in the `server/` workspace (they're
+separate binaries, and the shim's 1 MB per agent run is far below any Node process's); the server runs the Rust
+`ia-shim` (see `agent/runs.ts`).
+
+The code keeps the shape and the names of the Rust it came from, and new code follows the same conventions (below):
+there's no plan to rename things to TypeScript's usual camelCase. A file's first line says which Rust file it's a port
+of (`// Port of server/src/agent/runner/queue.rs.`). That Rust is in git history: the parent of the commit that removed
+it has it (`c136b11`, for one), so `git show c136b11:server/src/agent/runner/queue.rs` reads it. Branches from before
+the removal that changed the Rust server (HA-117's personal mode, HA-173's workflow automations, HA-128 and HA-143's
+agent threads) are ported by HA-190, HA-189 and HA-191, by reading those changes against the same paths here.
 
 Scope: the whole server, including linking hosts (hub links, relay, SSH, broker: the broker's side of its protocol is
 `hosts/broker/proto.ts`, from `server/broker/src/proto.rs`, and tests run the Rust broker as a process, see
 `hosts/broker/test_broker.ts`), Web Push, restarts, self-update from a checkout and release updates (`bin/huntaway` execs
 for the server, see `update/admin.ts`'s `exec`).
 
-## Conventions (keep to them: several people port modules at once, and call each other's code by these rules)
+## Conventions (keep to them: code calls other modules by these rules, and they keep it matching the Rust it came from)
 
-- **One TS file per Rust file, at the same path**: `server/src/agent/runner/queue.rs` → `server-ts/src/agent/runner/queue.ts`.
-  A Rust module with parts (`runner.rs` + `runner/*.rs`) is `runner.ts` + `runner/*.ts`, and `runner.ts` re-exports every
-  part with `export * from "./runner/queue.ts";` (as Rust's `pub use queue::*`), so callers import from `runner.ts`.
+- **One TS file per former Rust file, at the same path**: `server/src/agent/runner/queue.rs` →
+  `server-ts/src/agent/runner/queue.ts`, and new modules are laid out the same way. A module with parts (`runner.rs` +
+  `runner/*.rs`) is `runner.ts` + `runner/*.ts`, and `runner.ts` re-exports every part with
+  `export * from "./runner/queue.ts";` (as Rust's `pub use queue::*`), so callers import from `runner.ts`.
   A folder module's root (`agent.rs`, `git.rs`, …) has no TS file: import from the module itself (`../agent/runner.ts`).
 - **Same names as Rust**: functions, constants and struct fields keep their Rust names, snake_case included
   (`db.get_task(c, id)`, `runner.send_message(s, …)`, `task.project_id`). Types and classes keep their CamelCase names.
-  So code calling another module can be written before that module is ported, by reading its Rust signature.
+  New code names things the same way.
 - **Imports** use the `.ts` extension, relative paths, and namespace imports for modules from other areas, as Rust paths
   read: `import * as db from "../db.ts"; import * as runner from "../agent/runner.ts";` → `db.get_task(s.db(), id)`.
   `import type` for type-only imports (`verbatimModuleSyntax` is on). Circular imports are fine for functions, but don't
@@ -57,80 +66,28 @@ for the server, see `update/admin.ts`'s `exec`).
   the query string's values, last one wins), `r.body` (the parsed JSON body, `{}` when empty), `r.headers`, `r.raw`
   (the body's bytes). Return the JSON value for a 200, or `new Reply(status, body, headers)` for anything else
   (a `Buffer` or string body is sent as is). Websocket routes are `(s, r, ws) => void`, with `ws` a `ws` package
-  WebSocket. Add the handler to `api.ts`'s route table at the line the Rust route is on (the table is already there,
-  with every route; a route whose handler isn't ported yet answers 501).
+  WebSocket. Add the handler to `api.ts`'s route table (`host_routes`).
 - **Events**: `s.emit(ev)` broadcasts to `s.events` (this host's) and the hub forwards them to `s.hub_events`
   (the UI's). `s.events.subscribe(fn)` returns an unsubscribe function. A Rust `broadcast::Receiver` loop is a
   subscription.
 - **Shared state** in `AppState` (`state.ts`) keeps Rust's field names; `Mutex<HashMap<…>>` is a `Map`.
-- **Tests**: each Rust `tests.rs` (or inline `mod tests`) that applies becomes `<module>.test.ts` beside the module
-  (`git/worktree/tests.rs` → `git/worktree/tests.test.ts`), with `node:test` (`import { test } from "node:test";
+- **Tests**: a module's tests are `<module>.test.ts` beside it (`git/worktree/tests.test.ts` for the ported
+  `git/worktree/tests.rs`, `<module>.test.ts` for an inline `mod tests`), with `node:test` (`import { test } from "node:test";
   import assert from "node:assert/strict";`) and the same test names. `testing.ts` has `state()` (an `AppState` on an
   in-memory database with a temp data dir) and `temp_dir()` (removed when the test file's tests end).
-  Run one file: `node --test src/path/file.test.ts`; all: `npm test`. Skip tests of what's out of scope (hub links,
-  relay, SSH, broker, self-update, releases, push delivery) and say so in a comment where the module's tests would be.
-  Async tests can just be `async` (node:test times out at 60 s with `npm test`).
+  Run one file: `node --test src/path/file.test.ts`; all: `npm test`. Async tests can just be `async` (node:test times out at 60 s with `npm test`).
 - **Style**: lines up to about 160 characters, 2-space indents, double quotes, no Prettier/ESLint. Keep Rust's doc
   comments (as `/** … */`) where they explain something; drop ones that only describe Rust mechanics.
-- Check your files with `npm run typecheck` (from `server-ts/`). Errors in files that other people are still porting
-  (missing exports of modules not ported yet) are expected; your own files should be clean.
+- Check with `npm run typecheck` (from `server-ts/`), which should be clean.
 
-## Who ports what
+## Notes
 
-The base (`main.ts`, `state.ts`, `http.ts`, `api.ts` with the route table, `util.ts`, `proc.ts`, `testing.ts`,
-`hosts/proto.ts`) is written; change it only for a real need, and say what you changed. Each part below is one
-porter's; don't edit another part's files (write your code against the Rust names and note what you need instead).
-
-| Part | Rust files (in `server/src/`) |
-|---|---|
-| db | `db.rs`, `db/*` |
-| api | `api/*` (the handlers; the route table is `api.ts`), `demo.rs`, `attachments.rs` |
-| runner | `agent/runner.rs`, `agent/runner/*`, `agent/prompts.rs`, `agent/task_tmp.rs` |
-| runs | `agent/runs.rs`, `agent/codex.rs`, `agent/codex/*`, `agent/window.rs`, `agent/usage.rs`, `agent/tokens.rs`, `agent/tokens/*` |
-| agent-misc | `agent/agent_tools.rs`, `agent/agent_tools/*`, `agent/context.rs`, `agent/documents.rs`, `agent/focus.rs`, `agent/title.rs`, `analytics.rs`, `disk.rs` |
-| worktree | `git/worktree.rs`, `git/worktree/*`, `git/worktree_files.rs`, `git/relocate.rs`, `git/relocate/*` |
-| git-views | `git/checkpoints.rs`, `git/checkpoints/*`, `git/git_view.rs`, `git/git_view/*`, `git/changes.rs`, `git/changes/*` |
-| mcp | `mcp.rs`, `mcp/tools.rs`, `mcp/tools/*`, `mcp/permissions.rs`, `mcp/permissions/*`, `mcp/questions.rs` |
-| gh | `mcp/gh_mcp.rs`, `mcp/gh_mcp/*`, `mcp/wait.rs`, `mcp/wait/*`, `mcp/pr_watch.rs`, `mcp/pr_watch/*` |
-| review | `review.rs`, `review/*` |
-| integrations | `integrations/github.rs`, `integrations/asana.rs`, `integrations/automations.rs`, `integrations/automations/*`, `integrations/status_script.rs` |
-| hosts | `hosts/*` (but `proto.rs`), `update/*`, `integrations/push.rs`, `integrations/push/*` |
-
-Things the base already calls, which their parts must provide:
-
-- `update/admin.ts`: `ServerMeta` (`{boot_id, started_at, source_dir: string|null, running_commit: string|null,
-  update_from: string|null, release: Config|null, args: string[]}`), `RestartJob`, `Deployed`, `updates_from(meta)`,
-  `reap_inherited()`, `detect_source_dir(explicit: string|null): string|null`, `async head_commit(dir)`,
-  `bundle_commit(from_app: boolean)`, `start_update_check(s)`.
-- `update/release.ts`: class `Releases` (constructed with no arguments), `Config_from_env(repo: string)`, `start(s)`.
-  `update/staging.ts`: `settle(s)`.
-- `integrations/push.ts`: class `PushState` (no arguments), `start(s)`, and the push route handlers.
-- `git/relocate.ts`: class `Relocations` (no arguments), `start_recording(s)`.
-- `hosts/hub.ts`: `start(s)`, `dial_out(s, hub, token)`, the hub route handlers, `accept` (a websocket handler
-  `(s, r, ws)`), and `proxy_ws(s, host_id, rest, query, req, socket, head, wss)` for a linked host's websocket
-  (`req`/`socket`/`head` from node's `upgrade` event, `wss` a `ws` `WebSocketServer` in noServer mode).
-  `local_request(s, method, path, body)` is in `api.ts` (the in-process request the proxy makes for this host).
-- `hosts/broker.ts`: `VIA_BROKER` (a lowercase header name). `hosts/ssh.ts`: `ssh_host_cli(argv)`.
-  `hosts/terminal.ts`: `start_reaper(s)`.
-- `agent/runner.ts`: `load_active(s)`, `auto_compact(s)`. `agent/usage.ts`: `resume_loop(s)`. `agent/window.ts`,
-  `agent/focus.ts`: `start(s)`. `agent/runs.ts`: `start_pruner(s)`, `can_run_agents(s)`, `has_agent(agent)`.
-  `agent/task_tmp.ts`: `start_sweeper(s)`, `changed(s, task)`. `agent/codex.ts`: `async run_adapter(spec)`.
-  `agent/title.ts`: `async check_cli(argv)` (the `title-check` subcommand's flags).
-- `mcp.ts`, `mcp/gh_mcp.ts`: `async serve_stdio()`; `gh_mcp.ts`: `bash_hook()`, `async gh_run(args): number`.
-  `mcp/pr_watch.ts`: `watch_in_review(s)`.
-- `attachments.ts`: `start_pruner(s)`. `integrations/automations.ts`: `start(s)`, `MAX_BODY`, `webhook` and the route
-  handlers. `integrations/status_script.ts`: `status_changed(s, c, task, old_status)`. `review/merged.ts`: `start(s)`.
-  `git/worktree.ts`: `async keep_starts(s, task_id)`. `demo.ts`: `async seed(s)`.
-
-`AppState.exe` is `server-ts/bin/huntaway` (the command agents' MCP helpers run: `huntaway mcp`). The Rust `ia-shim`
-is found by `runs.ts`'s `shim_path`: `$IA_SHIM_BIN`, else `server/target/{release,debug}/ia-shim` in this checkout
-(the newer one), else `ia-shim` beside `bin/huntaway`.
-
-## Notes from porting so far
-
+- `AppState.exe` is `server-ts/bin/huntaway` (the command agents' MCP helpers run with `IA_MCP_STDIO=1`: `huntaway
+  mcp`). The Rust `ia-shim` is found by `runs.ts`'s `shim_path`: `$IA_SHIM_BIN`, else
+  `server/target/{release,debug}/ia-shim` in this checkout (the newer one), else `ia-shim` beside `bin/huntaway`.
 - Server code must not import `testing.ts` (it imports `node:test`, which turns a process into a test run). The race
   hooks `when`/`reached` are in `util.ts` (`testing.ts` re-exports them for tests).
-- db (done): fields serde never writes (`api_key`, `asana_token`, `queued_user_text`, `Project.repo_root`,
+- db: fields serde never writes (`api_key`, `asana_token`, `queued_user_text`, `Project.repo_root`,
   `Link.token`, …) are non-enumerable properties (`db.hidden(obj, key, value)`): readable, but `JSON.stringify` and
   spreads leave them out, so copy them by name. `Option` fields serde skips when empty are left off the object.
   `<Type>_from_json(v)` in `db/task_data.ts` does serde's deserialization of each struct there (defaults, shape checks);

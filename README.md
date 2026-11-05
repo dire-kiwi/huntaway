@@ -11,8 +11,6 @@ server-ts/     the server, in TypeScript on Node 24+ (node:sqlite): API, events,
                (see docs/structure.md); bin/huntaway runs it (see server-ts/README.md)
 server/shim/   ia-shim (Rust): tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker (Rust): public connection setup with managed tunnels, or a legacy relay
-server/src/    the Rust server the TypeScript one was ported from, which no release runs any more: it's being
-               removed, so don't change it
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -21,7 +19,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
-               ram-compare.mjs: memory use of the Rust server and the TypeScript one on the same data
+               ram-compare.mjs: memory use of a Rust release's server and the TypeScript one on the same data
                event-loop-probe.mjs: how long the TS server's heavy reads hold up its one thread
                install.sh: install the desktop app from source (Linux, macOS)
 docs/          notes; structure.md: where code goes and how big modules are split
@@ -33,7 +31,7 @@ Agents survive server restarts, and one board can span several machines. Each ma
 Huntaway used to be called Issue Agent. A machine that ran it under that name keeps its data
 where it was (`~/.local/share/issue-agent`, `issue-agent.db`, `~/.config/issue-agent/desktop.json`),
 and there's still an `issue-agent` command that starts `huntaway` beside it (`server-ts/bin/issue-agent`, in
-release packages too, and the Rust build's `issue-agent` binary), so hosts updating from an older build, SSH host
+release packages too, and the `issue-agent` binary of Rust releases), so hosts updating from an older build, SSH host
 commands and desktop configs that name it keep working. Board tools from
 before the rename (`mcp__issue_agent__…`) still show as board tools in old threads.
 
@@ -455,11 +453,12 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 
 The server's version is the release's too (`huntaway --version`).
 
-Releases carry the TypeScript server (`server-ts/`, see its README), not the Rust one in `server/`:
+Releases carry the TypeScript server (`server-ts/`, see its README) since 0.4.0, rather than the Rust
+server that 0.3.x and earlier carried (removed from the repository in HA-179):
 `scripts/package-server.sh` puts it together with the Node that runs it (the release job's own, so
 hosts don't need Node installed), `ia-shim` and the UI, and both the tarball and the desktop app
 carry that. A host on an earlier, Rust, release updates onto it like onto any release, and Roll back
-returns to the Rust release before it. Checkouts run the TypeScript server too.
+can return to a Rust release, which the backup below makes safe. Checkouts run the TypeScript server too.
 
 Whichever server starts on a data dir that another version last ran on (`<data dir>/server_version`;
 the Rust server doesn't write it) first copies the database to

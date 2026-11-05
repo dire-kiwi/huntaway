@@ -1,8 +1,9 @@
 # Builds the desktop app (app/package.json's `build`) and the server for Linux and macOS when a GitHub release is
 # published, and attaches them to that release. The server is the TypeScript one (server-ts/, HA-174), packaged with the
 # Node that runs it and the Rust ia-shim by scripts/package-server.sh; a host on an earlier (Rust) release updates onto
-# it as onto any release, and the server backs up its database as it starts on a new version (server-ts/src/backup.ts). The release's tag is the version (v1.2.3 → 1.2.3), so it must be
-# semver with an optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing
+# it as onto any release, and the server backs up its database as it starts on a new version (server-ts/src/backup.ts),
+# which is also what makes a Roll back onto a Rust release (0.3.x) safe. The release's tag is the version (v1.2.3 →
+# 1.2.3), so it must be semver with an optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing
 # release's tag again and replaces its files. A pull request that changes the packaging builds it too, as an
 # artifact of the run, without a release. Only the attach job, which pull requests don't run, can write to the repository.
 name: Release
@@ -22,6 +23,9 @@ on:
       - app/package-lock.json
       - app/electron/**
       - scripts/package-server.sh
+      - server/Cargo.toml
+      - server/Cargo.lock
+      - server/shim/**
       - server-ts/bin/**
       - server-ts/package.json
       - server-ts/package-lock.json
@@ -78,8 +82,7 @@ jobs:
         if: matrix.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y libarchive-tools
 
-      # The app's version, and the server's (`huntaway --version`). A cargo command without --locked updates the
-      # workspace's own entries in Cargo.lock, so that the --locked build passes, and leaves the dependencies alone.
+      # The app's version, and (through VERSION, which scripts/package-server.sh reads) the server's (`huntaway --version`).
       - name: Version
         working-directory: app
         run: |
@@ -87,24 +90,21 @@ jobs:
           [ -n "$TAG" ] || version="0.0.0-pr.${{ github.event.number }}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           npm version --no-git-tag-version --allow-same-version "$version"
-          cd ../server
-          node -e 'const fs = require("node:fs"); const toml = fs.readFileSync("Cargo.toml", "utf8");
-            fs.writeFileSync("Cargo.toml", toml.replace(/^version = ".*"$/m, `version = "${process.argv[1]}"`))' "$version"
-          cargo metadata --format-version 1 >/dev/null
-          grep -A1 '^name = "huntaway"$' Cargo.lock | grep -qxF "version = \"$version\""
 
       - name: npm ci
         working-directory: app
         run: npm ci --no-audit --no-fund
 
-      # IA_BUILD_COMMIT: the server reports the commit it was built from, as a checkout does (a hub that updates
-      # itself to a release goes by it to update hosts, and hosts that follow the hub with --update-from too).
+      # The UI, and ia-shim, the Rust supervisor the server runs agents under (the rest of server/ is the broker, which
+      # is deployed on its own).
       - name: Build
         working-directory: app
-        run: npm run build && (cd ../server && IA_BUILD_COMMIT=$(git rev-parse HEAD) cargo build --release --locked)
+        run: npm run build && (cd ../server && cargo build --release --locked -p ia-shim)
 
       # The server the desktop app and the server tarball carry: the TypeScript server, the Node this job runs on (the
-      # runner's own os and arch), ia-shim and the UI, in release-server/ (see the script).
+      # runner's own os and arch), ia-shim and the UI, in release-server/ (see the script). IA_BUILD_COMMIT: the server
+      # reports the commit it was built from, as a checkout does (a hub that updates itself to a release goes by it to
+      # update hosts, and hosts that follow the hub with --update-from too).
       - name: Package the TypeScript server
         run: IA_BUILD_COMMIT=$(git rev-parse HEAD) scripts/package-server.sh release-server "$(command -v node)"
 
