@@ -156,10 +156,11 @@ export async function remove(state: Shared, name: string): Promise<boolean> {
   const taken = take(state, name);
   if (!taken) return false;
   const { away, from } = taken;
-  // The test servers its agents left running (and their agents), which would run on with their data gone.
+  // The test servers its agents left running (and their agents), which would run on with their data gone. Also by where
+  // the folder went: a server started in it with a relative `--data-dir` names it by its working directory, which moved.
   try {
     const worktrees = tasks_of(state, name).flatMap((t) => (t.worktree_path ? [t.worktree_path] : []));
-    await leftovers.stop_task({ tmp: from, worktrees, data_dir: state.data_dir, tmp_root: root(state) }, `folder ${name}`);
+    await leftovers.stop_task({ tmp: [...from, away], worktrees, data_dir: state.data_dir, tmp_root: root(state) }, `folder ${name}`);
   } catch (e) {
     console.warn(`folder ${name}: stopping what the task left running: ${err_str(e)}`);
   }
@@ -241,25 +242,27 @@ function writable(dir: string) {
 /** Remove the folders of tasks that are done (with no agent working in them) or deleted, and any that a removal didn't finish. Returns how many went. */
 export async function sweep(state: Shared): Promise<number> {
   const r = root(state);
-  if (!existsSync(r)) return 0;
-  try {
-    check_root(r);
-  } catch (e) {
-    console.warn(`not sweeping the tasks' temp folders: ${err_str(e)}`);
-    return 0;
-  }
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(r, { withFileTypes: true });
-  } catch {
-    return 0;
-  }
   let n = 0;
-  for (const e of entries.filter(ours)) {
-    if (e.name.startsWith(REMOVING)) {
-      await remove_all_async(join(r, e.name)).catch(() => {});
-    } else if (await remove(state, e.name)) {
-      n++;
+  // With the whole root gone (removed by hand), there's nothing to remove, but what ran in its folders may still run.
+  if (existsSync(r)) {
+    try {
+      check_root(r);
+    } catch (e) {
+      console.warn(`not sweeping the tasks' temp folders: ${err_str(e)}`);
+      return 0;
+    }
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(r, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+    for (const e of entries.filter(ours)) {
+      if (e.name.startsWith(REMOVING)) {
+        await remove_all_async(join(r, e.name)).catch(() => {});
+      } else if (await remove(state, e.name)) {
+        n++;
+      }
     }
   }
   try {
@@ -290,7 +293,8 @@ async function stop_orphans(state: Shared) {
     }
     if (!tasks.every((t) => t.status === "done" && !t.running)) continue;
     const scope = { tmp: roots.map((x) => join(x, name)), worktrees: [], data_dir: state.data_dir, tmp_root: r };
-    await leftovers.stop_task(scope, `folder ${name} (gone)`, procs);
+    // Listed again for each folder: stopping the last one's may have taken seconds, in which pids are reused.
+    await leftovers.stop_task(scope, `folder ${name} (gone)`);
   }
 }
 
