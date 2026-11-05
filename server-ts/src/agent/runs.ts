@@ -240,8 +240,10 @@ export async function start(state: Shared, l: Launch): Promise<void> {
 
   // The board's tools, and GitHub through gh (outside the agent's sandbox; a server of the project's own by this name
   // replaces it). This server serves both over HTTP (see mcp/http.ts), with what they need of the run kept here; the URL
-  // stays valid across restarts. A run that calls the board's tools on its output has only gh's here.
-  const in_process = !!l.tools_on_output || !!l.board_tools_dynamic;
+  // stays valid across restarts. A run that calls the board's tools on its output has only gh's here, but for one
+  // that gives a new Codex session them as dynamic tools: the adapter gives it the board's server only if Codex won't
+  // take them (agent/codex/adapter.ts's start_thread).
+  const in_process = !!l.tools_on_output || (!!l.board_tools_dynamic && !l.codex?.board_tools);
   await writeFile(
     join(dir, mcp_http.SETTINGS_FILE),
     mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }),
