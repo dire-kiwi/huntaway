@@ -11,6 +11,7 @@ import type { Shared } from "../state.ts";
 import { err_str, expand_tilde, new_id, now, reached } from "../util.ts";
 import * as runs from "./runs.ts";
 import * as documents from "./documents.ts";
+import * as memory from "./assistant/memory.ts";
 import * as permissions from "../mcp/permissions.ts";
 import { launch } from "./runner/launch.ts";
 import { requeue_ahead, check_not_archived, start_unblocked } from "./runner/send.ts";
@@ -314,6 +315,8 @@ export function load(state: Shared, task_id: string): [Task, Project | null, Pro
 
 /** Where the running agent of `task` works, as `launch` picked it (its worktree is set up by now). */
 export function work_dir(state: Shared, task: Task): string {
+  // The assistant's workspace, if it's its own (not a symlink to another's, see assistant/memory.checked).
+  if (db.is_assistant(task)) return memory.checked(state, task);
   const d = documents.work_dir(state, task);
   if (d) return d;
   const project = task.project_id ? db.get_project(state.db(), task.project_id) : null;

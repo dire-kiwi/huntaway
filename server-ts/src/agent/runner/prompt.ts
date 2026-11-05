@@ -31,10 +31,12 @@ export interface Told {
   profile: Profile;
   /** Its temp folder (see agent/task_tmp.rs), if it has one. */
   tmp: string | null;
+  /** For the assistant, its memory as its files say now (see assistant/memory.prompt), last. */
+  memory: string;
 }
 
 /**
- * What a run is told on top of its agent's own system prompt: Claude Code's `--append-system-prompt`, or Codex's
+ * What a run is told on top of its agent's own system prompt: Claude Code's `--append-system-prompt-file`, or Codex's
  * developer instructions (to which `launch` adds a reviewer's sandbox). `s`: what system_prompt says.
  */
 export function instructions(s: string, task: Task, to: Told): string {
@@ -64,6 +66,7 @@ export function instructions(s: string, task: Task, to: Told): string {
   }
   // Which profiles' boards it can't use, so it asks rather than make a project that may be there.
   if (task.kind !== "review") s += profiles_note(to.profiles, to.profile);
+  s += to.memory;
   return s;
 }
 
@@ -158,7 +161,7 @@ export async function preview(state: Shared, project: Project, o: PreviewOptions
   const account = github_account(project, profile);
   const base = system_prompt(task, project, null, [], docs, github, gh_tools);
   const tmp = path_str(task_tmp.dir(state, task));
-  const to: Told = { codex, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp };
+  const to: Told = { codex, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: "" };
   return [instructions(base, task, to), codex, permission_mode];
 }
 
@@ -294,7 +297,8 @@ export function system_prompt(
       "you help the user with whatever they ask, such as answering questions, looking things up, keeping track " +
       "of things, and planning and following their work across the board.\n\n" +
       `Your working directory is your own workspace folder (${dir} in the board's data dir), which lasts ` +
-      "between conversations. Keep notes there that you'll want later.\n\n" +
+      "between conversations. Your memory is kept in files there (see below), and you can keep other notes " +
+      "there too.\n\n" +
       "You can use the skills and MCP servers set up for this profile (beyond any project), and the board's tools.\n\n" +
       `${tools}\n\n` +
       "Hand code work to project tasks rather than doing it yourself: find the project with `list_projects`, " +

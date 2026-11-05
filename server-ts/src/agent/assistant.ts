@@ -7,15 +7,16 @@
  *
  * `get_or_create` is the one place a profile's assistant is found. A later step routes it to a linked host of its own
  * (an *Assistant host* setting per profile), which goes there.
+ *
+ * Its memory (USER.md, MEMORY.md and daily logs in its workspace, with their history) is `assistant/memory.ts`.
  */
-import { mkdirSync } from "node:fs";
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import { ApiError } from "../http.ts";
 import type { Shared } from "../state.ts";
 import { err_str } from "../util.ts";
 import * as runner from "./runner.ts";
-import * as documents from "./documents.ts";
+import * as memory from "./assistant/memory.ts";
 import * as questions from "../mcp/questions.ts";
 
 /** Where an assistant works, relative to the data dir (see documents.work_dir), so it moves with it. */
@@ -41,14 +42,17 @@ export function get_or_create(s: Shared, profile_id: string): Task {
     // Its title stays: it isn't renamed after the user's prompts (see title.refresh).
     task = db.update_task(c, t.id, [["title_pinned", true]]) ?? t;
   }
-  // Its workspace, which later steps keep memory files in. Made again if it went missing.
-  const dir = documents.work_dir(s, task);
-  if (dir !== null) {
+  // Its workspace, with its memory files (see assistant/memory.ts). Made again if it went missing. It's made a git
+  // repository before its first run, or when the Memory tab opens.
+  try {
+    const dir = memory.checked(s, task);
     try {
-      mkdirSync(dir, { recursive: true });
+      memory.seed(dir);
     } catch (e) {
-      console.warn(`task ${task.id}: making the assistant's folder ${dir}: ${err_str(e)}`);
+      console.warn(`task ${task.id}: making the assistant's memory files in ${dir}: ${err_str(e)}`);
     }
+  } catch (e) {
+    console.warn(`task ${task.id}: the assistant's folder: ${err_str(e)}`);
   }
   if (made) s.emit_task(task);
   return task;
