@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
+import * as devices from "../devices.ts";
 import { path_str } from "../util.ts";
 import { config_for_dir } from "./profiles.ts";
 import { ASSISTANT_TASK_KEY, SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
@@ -596,7 +597,8 @@ export function open(path: string): Conn {
     for (const column of ["usage_at TEXT", "usage_session TEXT", "usage_snapshot TEXT", "usage_tail TEXT"]) {
       if (!has_column(conn, "runs", column.split(" ")[0])) batch(`ALTER TABLE runs ADD COLUMN ${column};`);
     }
-    stats.backfill(conn);
+    // From messages: the threads' tables come later (migrations 89 and 95).
+    stats.backfill(conn, "messages");
     batch("PRAGMA user_version=79; COMMIT;");
   }
   if (version < 80) {
@@ -738,6 +740,11 @@ export function open(path: string): Conn {
     const add = has_column(conn, "tasks", "thread_items") ? "" : "ALTER TABLE tasks ADD COLUMN thread_items INTEGER NOT NULL DEFAULT 0;";
     batch(`BEGIN; ${add} ${SCHEMA_V95} PRAGMA user_version=95; COMMIT;`);
   }
+  if (version < 96) {
+    // Devices paired with the board, each with a token of its own (see devices.ts). Only if it isn't there (`IF NOT
+    // EXISTS`), in case another migration takes this version first.
+    batch(`BEGIN; ${devices.TABLE} PRAGMA user_version=96; COMMIT;`);
+  }
   return conn;
 }
 
@@ -783,7 +790,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 95;
+export const VERSION = 96;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

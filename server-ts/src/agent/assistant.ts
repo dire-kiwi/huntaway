@@ -114,6 +114,22 @@ export function check_host(s: Shared, v: any): string | null {
 }
 
 /**
+ * Why profile `p`'s routines on this host don't run, if they don't: its assistant runs on another host
+ * (`assistant_host`), and they'd wake the one it had here, whose thread the board no longer opens. Its routines are
+ * that host's, made in its assistant's Routines tab there. (Routines aren't sent on: a run in a thread of its own, its
+ * precheck and its report are all in the assistant's workspace.)
+ */
+export function routines_elsewhere(s: Shared, p: db.Profile): string | null {
+  const host = p.assistant_host;
+  if (!host || host === s.host_id) return null;
+  let name = host;
+  try {
+    name = db.get_link(s.db(), host)?.name ?? host;
+  } catch {}
+  return `${p.name}'s assistant runs on ${name}, so routines on ${s.host_name} don't wake it: make this one on ${name}, in its assistant's Routines tab there`;
+}
+
+/**
  * Profile `profile_id`'s assistant on its assistant host, through `method` on `/profiles/{id}/assistant` there (with the
  * host's id): null when it has none, and it's on this host.
  */

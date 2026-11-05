@@ -349,7 +349,7 @@ export interface Task {
   context?: ContextSummary | null;
   /** The conversation rollback its agent's next run makes, after a rewind (API 70). */
   rewind?: PendingRewind | null;
-  /** Its thread is kept as items as well as messages (API 117), so the thread view can draw it from `api.thread` (see THREAD_VIEW_API). */
+  /** Its thread is kept as items as well as messages (API 119), so the thread view can draw it from `api.thread` (see THREAD_VIEW_API). */
   thread_items?: boolean;
   cost_usd: number;
   last_activity_at: string;
@@ -487,6 +487,8 @@ export const tasksApi = ({ on, storage }: Http) => ({
       fanout_id?: string;
     },
   ) => on(h).post<Task>(`/profiles/${enc(profileId)}/tasks`, b),
+  /** All of the profile's tasks (not reviews), in every project and none. */
+  profileTasks: (h: string, profileId: string) => on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
    *  assistant (API 109), which is off the board. */
   groupTasks: (h: string, profileId: string, assistant = false) =>

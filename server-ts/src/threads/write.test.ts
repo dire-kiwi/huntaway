@@ -15,6 +15,7 @@ import * as runner from "../agent/runner.ts";
 import * as questions from "../mcp/questions.ts";
 import * as permissions from "../mcp/permissions.ts";
 import * as merge_gate from "../review/merge_gate.ts";
+import * as routines from "../integrations/automations/routines.ts";
 import * as store from "./store.ts";
 import * as write from "./write.ts";
 import * as rebuild_cli from "./rebuild.ts";
@@ -77,7 +78,7 @@ test("with the setting off, nothing new is written", () => {
   s.add_message(u.id, "user", { text: "hi" });
   assert.equal(flagged(s, u.id), true);
   assert.equal(store.has_thread(s.db(), u.id), true);
-  // Its task says so (API 117), as the one with messages doesn't, so the thread view draws it from its items.
+  // Its task says so (API 119), as the one with messages doesn't, so the thread view draws it from its items.
   assert.deepEqual([db.get_task(s.db(), u.id)!.thread_items, db.get_task(s.db(), t.id)!.thread_items], [true, false]);
   // The thread API serves it.
   const w = live.window(s, live.open(s, u.id));
@@ -89,6 +90,22 @@ test("with the setting off, nothing new is written", () => {
   const v = task();
   s.add_message(v.id, "user", { text: "hi" });
   assert.equal(flagged(s, v.id), false);
+});
+
+// HA-218: a routine's report is a notice (converter 4), and routines mark it read in place (mark_read): fed again, it
+// was added a second time, and the throw stopped the thread's live writes.
+test("a routine's report marked read changes its item in place, and the thread goes on", () => {
+  const { s, task } = setup();
+  const t = task();
+  s.add_message(t.id, "user", { text: "hi" });
+  const r = s.add_message(t.id, "report", { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "reported", text: "All fine" });
+  routines.mark_read(s, [r.id]);
+  assert.equal(store.has_thread(s.db(), t.id), true, "its live writes didn't stop");
+  const item: any = store.get_item(s.db(), t.id, `legacy:${r.id}`);
+  assert.deepEqual([item.type, item.code, item.text, item.metadata.read], ["notice", "routine_report", "All fine", true]);
+  s.add_message(t.id, "user", { text: "and then" });
+  assert.equal(store.items(s.db(), t.id).length, 3);
+  matches_rebuild(s, t.id);
 });
 
 test("every kind of message, and every update in place, writes what a rebuild makes", () => {
@@ -144,7 +161,7 @@ test("every kind of message, and every update in place, writes what a rebuild ma
   merge_gate.ask(s, id);
   s.add_message(id, "user", { text: "and then", steered: true });
   matches_rebuild(s, id);
-  // The replaced card is a cancel with a message, the new one open, and nothing warns (a routine's report is a notice, converter 3).
+  // The replaced card is a cancel with a message, the new one open, and nothing warns (a routine's report is a notice, converter 4).
   const reqs = store.requests(s.db(), id);
   const replaced = reqs.filter((r) => r.resolution?.message?.startsWith("No longer asked"));
   assert.equal(replaced.length, 1);
@@ -235,7 +252,7 @@ test("start_run's writes are the thread's first: the start message flags the tas
     assert.deepEqual([first?.kind, first?.data.start], ["user", true]);
     const item = store.items(s.db(), t.id)[0];
     assert.deepEqual([item?.type, item?.id], ["user_message", `legacy:${first!.id}`]);
-    assert.deepEqual(store.item_meta(s.db(), t.id, item!.id), { auto: true });
+    assert.deepEqual(store.item_meta(s.db(), t.id, item!.id), { auto: true, start: true });
     assert.ok(seen.includes("message:false") && seen.includes("thread_event:false") && !seen.some((x) => x.endsWith(":true")), seen.join(" "));
     // runs.turn_message_id is the start message, as before.
     assert.equal(db.value(s.db(), "SELECT turn_message_id FROM runs WHERE task_id=?1", t.id), first!.id);

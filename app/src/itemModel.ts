@@ -2,7 +2,7 @@
 // (threads.ts, server-ts/src/threads/protocol.ts) onto the ThreadModel that threadModel.ts builds from messages, which
 // the thread's components draw. The same task looks the same either way (tests/ui/itemThread.test.mjs compares them).
 //
-// What the items don't say, the board's `metadata` on them does (converter 3 on the server): an auto message, a turn's
+// What the items don't say, the board's `metadata` on them does (converter 4 on the server): an auto message, a turn's
 // cost and turns, a compaction's tokens after, a request's stored prompt or question, and its message's id. Keys are
 // the message path's where an item came from one message (`legacy:<id>[:<block>]` is `<id>[.<block>]`), so the rows
 // that take a message id from them (rewinding, a prompt's "moved on") work as they do there.

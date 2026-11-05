@@ -38,6 +38,7 @@ import {
 import { as_told } from "./merge.ts";
 import { instructions, start_prompt, system_prompt, type Told } from "./prompt.ts";
 import { set_writes_documents, user_input, write_steers } from "./queue.ts";
+import { PROMPT_TOOL } from "./requests.ts";
 
 /** The nearest effort Claude has to one only Codex models offer. */
 export function claude_effort(e: string): string {
@@ -319,9 +320,10 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   // which otherwise has none.
   const all_rules = approval_rules.for_task(state.db(), task);
   const rules = all_rules ? approval_rules.for_mode(all_rules, permission_mode) : null;
-  if (permission_mode !== "bypassPermissions" || (rules && approval_rules.needs_prompt_tool(rules))) {
-    args.push("--permission-prompt-tool", `mcp__${MCP_SERVER_NAME}__permission_prompt`);
-  }
+  // Asked on the run's output and answered on its input (see requests.ts), or by the MCP helper for a compaction, which
+  // has no input.
+  const asks = permission_mode !== "bypassPermissions" || (rules && approval_rules.needs_prompt_tool(rules));
+  if (asks) args.push("--permission-prompt-tool", input ? PROMPT_TOOL : `mcp__${MCP_SERVER_NAME}__permission_prompt`);
   const rules_hook = rules ? approval_rules.claude_hook(state.exe, rules) : null;
   if (gh_tools || rules_hook) args.push("--settings", hook_settings(gh_tools ? state.exe : null, rules_hook));
   // Our board tools never need approval, nor do some of the gh server's (see gh_allowed).
@@ -366,6 +368,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     mcp_servers: tools.mcp_servers,
     github_account: account,
     codex: null,
+    asks_on_output: !!asks && input,
   };
   console.log(`task ${task_id} run ${run.id}: starting claude (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);
   await started(state, run, l, check);

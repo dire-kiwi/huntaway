@@ -16,9 +16,9 @@ thread is read from the board's own tables, and commands go onto the board's own
   setting on (API 116, which flags it `thread_items`), or it has been rebuilt (`huntaway threads-rebuild`), and while
   its live writes haven't stopped on an error. Otherwise the routes answer **404** `{"error": "task <id> has no thread kept as items"}`, and its
   thread is its messages.
-- From **API 117**, tasks have `thread_items` (whether a task's thread is kept as items), which the app's thread view
+- From **API 119**, tasks have `thread_items` (whether a task's thread is kept as items), which the app's thread view
   draws from these routes, with the host's setting on (see "The thread view on items" in threads.md). Items and
-  requests carry the board's own `metadata` (converter 3), and subagents their `ended_at`.
+  requests carry the board's own `metadata` (converter 4), and subagents their `ended_at`.
 - A task's thread has the task's id, and it's reached only through its task: a command can't name another thread,
   and a request or item id is looked up in the task's own thread only. As for the message routes, the board's token
   reaches every profile's tasks on the host; another task's requests (another profile's included) aren't reached

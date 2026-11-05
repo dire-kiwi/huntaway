@@ -32,6 +32,7 @@ import * as summary from "./review/summary.ts";
 import * as stats from "./review/stats.ts";
 import { ApiError, AsyncMutex, type AppState } from "./state.ts";
 import { err_str, now, reached } from "./util.ts";
+import * as history from "./threads/history.ts";
 
 /** Read-only tools a reviewer may use without asking. */
 export const ALLOWED_TOOLS = [
@@ -244,8 +245,8 @@ async function start_locked(state: AppState, task_id: string, manual: boolean): 
   }
   set_review(state, task.id, review);
   const commit = head.slice(0, 10);
-  const work: Work = elsewhere ? { kind: "elsewhere", last_message: db.last_assistant_text(state.db(), task.id) } : { kind: "branch", own_start };
-  const replies = db.user_replies(state.db(), task.id, REPLIES);
+  const work: Work = elsewhere ? { kind: "elsewhere", last_message: history.last_assistant_text(state.db(), task.id) } : { kind: "branch", own_start };
+  const replies = history.user_replies(state.db(), task.id, REPLIES);
   let started = 0;
   let failed: unknown = null;
   for (let i = 0; i < parts.length; i++) {
@@ -321,7 +322,7 @@ export async function rev_parse(dir: string, rev: string): Promise<string | null
  */
 export async function changed_elsewhere(state: AppState, task: Task, dir: string, previous: Review | null): Promise<boolean> {
   const since = previous != null && ["passed", "issues"].includes(previous.state) ? previous.updated_at : null;
-  if (db.tool_calls_since(state.db(), task.id, since).some(([call, result]: [any, any]) => changes.changes_code(call, result ?? null))) {
+  if (history.tool_calls_since(state.db(), task.id, since).some(([call, result]: [any, any]) => changes.changes_code(call, result ?? null))) {
     return true;
   }
   if (since == null && task.pr_url != null && task.pr_url.trim() !== "") return true;

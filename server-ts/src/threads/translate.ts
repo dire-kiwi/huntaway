@@ -30,14 +30,14 @@ import type {
 /**
  * Changes when what the translator makes of the same messages does: threads built by it record it (`threads.converter`),
  * and `huntaway threads-rebuild` brings them up to date. 2: a merge-gate card settled as `replaced` is a cancel with a
- * message, without a warning; a prompt that's pending again reopens its request. 3 (HA-218, for the thread view on
- * items): items and requests carry the board's `metadata` (an auto message, a turn's cost and turns, a compaction's
- * tokens after, a request's stored prompt or question and its message id, replaced in place when it changes, a result's
- * text that no message said, a subagent's description and prompt as its task_started says them), subagents their
- * `ended_at`,
- * and a routine's report is a notice (`routine_report`).
+ * message, without a warning; a prompt that's pending again reopens its request. 3: a user_message's meta has `start`,
+ * `routine` and `review_round` (for threads/history.ts's readers).
+ * 4 (HA-218, for the thread view on items): items and requests carry the board's `metadata` (an auto message, a turn's
+ * cost and turns, a compaction's tokens after, a request's stored prompt or question and its message id, replaced in
+ * place when it changes, a result's text that no message said, a subagent's description and prompt as its task_started
+ * says them), subagents their `ended_at`, and a routine's report is a notice (`routine_report`).
  */
-export const CONVERTER_VERSION = 3;
+export const CONVERTER_VERSION = 4;
 
 /** How Claude Code's result for a call that was stopped starts. */
 const REJECTED = "The user doesn't want to proceed with this tool use.";
@@ -80,6 +80,12 @@ export interface ItemMeta {
   from_agent?: boolean;
   /** Of a user_message sent along with other agents' messages, the user's own part. */
   user_text?: string;
+  /** Of a user_message, the board's start of the task (analytics counts it as a start, whatever its text). */
+  start?: boolean;
+  /** Of a user_message, an automation's routine run sent it (with nobody there to answer its prompts). */
+  routine?: boolean;
+  /** Of a user_message, the review round whose issues it asks the agent to fix. */
+  review_round?: number;
   /** Of a tool_call, the harness's id for the call where the item's isn't it (a thread with two calls with one id). */
   call_id?: string;
   /** Of a tool_call, the harness's session it was made in: calls with one id are told apart by it. */
@@ -467,7 +473,14 @@ export class Translator {
     if (d.steered === true) item.steered = true;
     if (d.auto === true) item.metadata = { auto: true };
     this.add(item);
-    this.set_meta(id, { auto: d.auto === true, from_agent: d.from_agent === true, user_text: typeof d.user_text === "string" ? d.user_text : undefined });
+    this.set_meta(id, {
+      auto: d.auto === true,
+      from_agent: d.from_agent === true,
+      user_text: typeof d.user_text === "string" ? d.user_text : undefined,
+      start: d.start === true,
+      routine: d.routine === true,
+      review_round: uint(d.review_round),
+    });
     return "converted";
   }
 
@@ -488,11 +501,16 @@ export class Translator {
     return "converted";
   }
 
-  /** A routine's report in the assistant's thread (API 110): a notice, with the whole report as its metadata. */
+  /**
+   * A routine's report in the assistant's thread (API 110): a notice, with the whole report as its metadata. One fed
+   * again (routines' mark_read updates it in place, as the assistant reads it) changes its item in place.
+   */
   private report(m: Message): Disposition {
     const d = m.data;
-    const level = d.outcome === "failed" ? "error" : "info";
-    this.add({ id: `legacy:${m.id}`, type: "notice", level, code: "routine_report", text: str(d, "text") ?? "", created_at: m.created_at, metadata: { ...d } });
+    const id = `legacy:${m.id}`;
+    const fields = { level: d.outcome === "failed" ? "error" : "info", text: str(d, "text") ?? "", metadata: { ...d } } as const;
+    if (this.items.has(id)) this.update(id, fields);
+    else this.add({ id, type: "notice", code: "routine_report", created_at: m.created_at, ...fields });
     return "converted";
   }
 

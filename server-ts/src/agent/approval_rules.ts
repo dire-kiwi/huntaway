@@ -33,6 +33,7 @@ import * as runner from "./runner.ts";
 import * as agent_tools from "./agent_tools.ts";
 import type { Decision, Rule, Rules } from "./approval_rules/hook.ts";
 import { BLOCKED, BOARD_SERVER_NAMES, HOOK_FAILED, decide, is_board_tool, parse_rule_list, rank, strict } from "./approval_rules/hook.ts";
+import * as history from "../threads/history.ts";
 
 export * from "./approval_rules/hook.ts";
 
@@ -194,10 +195,51 @@ export function claude_hook(exe: string, rules: Rules): any | null {
   // Claude Code lets a call through when its hook fails, so with rules that ask or refuse, a hook that can't run at all
   // (this binary moved, say) refuses it (exit 2). The hook does the same when it fails itself (see `hook`).
   if (strict(own)) command += ` || { echo ${quote(HOOK_FAILED)} >&2; exit 2; }`;
-  // Only MCP tools, unless a rule is for another tool. The hook checks the name again.
-  const matcher = own.every((r) => r.tool.toLowerCase().startsWith("mcp__")) ? "mcp__.*" : "*";
   // It answers at once: asking is the permission prompt's (the board's), not the hook's.
-  return { matcher, hooks: [{ type: "command", command, timeout: 30 }] };
+  return { matcher: claude_matcher(own), hooks: [{ type: "command", command, timeout: 30 }] };
+}
+
+/**
+ * The hook's matcher (a regular expression Claude Code tests tool names with) for `rules`: the MCP servers they name, so
+ * that other tools' calls (the board's, say) don't pay for starting it (HA-245), else every tool, for a rule that isn't
+ * for an MCP server's. It may match more than the rules do (the hook checks the name again), never less: a call it
+ * misses goes through as though no rule matched it. So it's case-insensitive, as `matches` is, by hand (`[gG]`, as a
+ * matcher has no flags), and anchored at both ends, so it means the same whether Claude Code anchors it or not.
+ */
+export function claude_matcher(rules: Rule[]): string {
+  const alts = new Set<string>();
+  for (const r of rules) {
+    const p = r.tool.trim().toLowerCase();
+    if (!p.startsWith("mcp__")) return "*";
+    const rest = p.slice(5);
+    const star = rest.indexOf("*"), sep = rest.indexOf("__");
+    // A pattern in the server's name matches whatever starts with what comes before it; otherwise the rule is for the
+    // server or its tools.
+    const in_server = star >= 0 && (sep < 0 || star < sep);
+    const prefix = in_server ? p.slice(0, 5 + star) : `mcp__${sep < 0 ? rest : rest.slice(0, sep)}`;
+    // Not one that other cases of a non-ASCII letter could match (MCP servers' names have none).
+    if (/[^\x00-\x7f]/.test(prefix)) return "*";
+    alts.add(any_case(prefix) + (in_server ? "[\\s\\S]*" : "(?:__[\\s\\S]*)?"));
+  }
+  return `^(?:${[...alts].join("|")})$`;
+}
+
+/**
+ * Lowercase ASCII `s` as a regular expression matching every name that lowercases to it: each letter either case, and the
+ * two other characters whose lowercase has an ASCII letter in it (the Kelvin sign's is k, and İ's is i and a dot above).
+ * Characters with a meaning in a regular expression are escaped, and no others, as an escape that means nothing is an
+ * error under the `u` flag.
+ */
+function any_case(s: string): string {
+  let out = "";
+  for (const c of s) {
+    if (c === "k") out += "[kK\\u212A]";
+    else if (c === "i") out += "[iI\\u0130]";
+    else if (c >= "a" && c <= "z") out += `[${c}${c.toUpperCase()}]`;
+    else if (/[\\^$.*+?()[\]{}|/]/.test(c)) out += `\\${c}`;
+    else out += c;
+  }
+  return out;
 }
 
 /** `--disallowedTools` for a Claude run with `rules`: the tools and servers a rule names exactly that are never, so the agent doesn't get them at all. */
@@ -246,24 +288,11 @@ export function on_tool_results(s: Shared, task: Task, v: any): void {
 
 /** The name and input of tool call `id` in `task_id`'s thread. */
 function tool_use(s: Shared, task_id: string, id: string): [string, any] | null {
-  let rows: Array<{ data: string }>;
   try {
-    rows = db.all(s.db(), "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND instr(data, ?2) > 0 ORDER BY id DESC LIMIT 5", task_id, id);
+    return history.tool_use(s.db(), task_id, id);
   } catch {
     return null;
   }
-  for (const { data } of rows) {
-    let v: any;
-    try {
-      v = JSON.parse(data);
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(v?.message?.content)) continue;
-    const b = v.message.content.find((b: any) => b?.type === "tool_use" && b?.id === id);
-    if (b) return [typeof b.name === "string" ? b.name : "unknown", b.input ?? null];
-  }
-  return null;
 }
 
 // ---------- Codex ----------

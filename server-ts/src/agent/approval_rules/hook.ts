@@ -4,9 +4,10 @@
  * Code's PreToolUse hook that holds them in the assistant's Claude runs (see approval_rules.ts, which re-exports all of
  * this).
  *
- * The hook runs once for every tool call a rule may match, so `bin/huntaway approval-hook` runs this file directly, as it
- * does `mcp.ts`: it imports nothing, not even the server's `util.ts`, so Node loads only this file. The few constants it
- * needs from other modules are mirrored below, and `approval_rules.test.ts` checks that they match.
+ * The hook runs once for every tool call a rule may match, so `bin/huntaway approval-hook` runs it straight from
+ * `hook_main.ts`, as it runs `mcp_main.ts`: this file imports nothing, not even the server's `util.ts`, so Node loads
+ * only these two. The few constants it needs from other modules are mirrored below, and `approval_rules.test.ts` checks
+ * that they match.
  */
 
 // ---------- constants mirrored from the modules that own them (see approval_rules.test.ts) ----------
@@ -192,24 +193,4 @@ export async function hook(rules: string | undefined, input: () => Promise<strin
   }
   if (out !== null) process.stdout.write(`${JSON.stringify(out)}\n`);
   return 0;
-}
-
-// `bin/huntaway approval-hook` runs this file directly (see above). Whatever goes wrong refuses the call, as `hook` does
-// when it fails: exit code 2.
-if (import.meta.main) {
-  const fail = () => {
-    try {
-      process.stderr.write(`${HOOK_FAILED}\n`);
-    } finally {
-      process.exit(2);
-    }
-  };
-  process.on("uncaughtException", fail);
-  process.on("unhandledRejection", fail);
-  hook(process.argv[2]).then(
-    (code) => {
-      process.exitCode = code;
-    },
-    fail,
-  );
 }

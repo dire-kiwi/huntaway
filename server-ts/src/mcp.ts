@@ -1066,11 +1066,3 @@ export async function serve_stdio(): Promise<void> {
   // Claude Code closed our stdin: the calls still going (a `wait`, a prompt) go with us, as they do in Rust.
   process.exit(0);
 }
-
-// `bin/huntaway mcp` runs this file directly, so the helper doesn't load the whole server (see main.ts).
-if (import.meta.main) {
-  serve_stdio().catch((e) => {
-    console.error(`Error: ${err_str(e)}`);
-    process.exit(1);
-  });
-}

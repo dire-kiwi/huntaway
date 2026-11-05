@@ -146,7 +146,7 @@ export interface RewindResult {
  * The host API whose tasks say whether their threads are kept as items (`thread_items`), and whose items and requests
  * carry the board's own metadata, so the thread view draws them from `api.thread` and its `thread_event`s (API 114).
  */
-export const THREAD_VIEW_API = 117;
+export const THREAD_VIEW_API = 119;
 
 /**
  * A page of a thread's saved events after a seq (API 114), or `resync`: the log doesn't go back that far. `E` is the
@@ -162,7 +162,20 @@ export interface ThreadEventPage<E> {
 /** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
 export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
 
+/** A permission prompt waiting for the user, as `GET /permissions` lists them. */
+export interface PendingPermission {
+  id: string;
+  task_id: string;
+  tool_name: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  input: any;
+  created_at: string;
+}
+
 export const threadApi = ({ on }: Http) => ({
+  /** Pending permission prompts, oldest first: a task's, or (API 118) one profile's; all of the host's without either. */
+  pendingPermissions: (h: string, q: { task_id?: string; profile_id?: string } = {}) =>
+    on(h).get<PendingPermission[]>(`/permissions?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null) as [string, string][])}`),
   messages: (h: string, id: string) => on(h).get<Message[]>(`/tasks/${enc(id)}/messages`),
   /**
    * The latest messages with ids between `after` and `before` (API 56): with a `limit`, that many of the

@@ -227,7 +227,7 @@ export interface Task {
   /** How full its agent's context window is, as of its latest reply (see agent/context.rs). */
   context: Context | null;
   /**
-   * Its thread is kept as items as well as messages (API 117: its first message was written with the host's Keep threads
+   * Its thread is kept as items as well as messages (API 119: its first message was written with the host's Keep threads
    * as items setting on, see threads/write.ts), so the thread view can draw it from `/tasks/{id}/thread`.
    */
   thread_items: boolean;

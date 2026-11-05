@@ -121,7 +121,7 @@ function normalize(item: any): any {
   if (out.type !== "tool_call") delete out.id;
   delete out.turn_id;
   delete out.created_at;
-  // Huntaway's own additions (converter 3).
+  // Huntaway's own additions (converter 4).
   delete out.metadata;
   if (out.subagent?.ended_at) {
     out.subagent = { ...out.subagent };

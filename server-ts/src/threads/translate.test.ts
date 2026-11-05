@@ -89,7 +89,7 @@ test("converts_a_turn", () => {
   assert.deepEqual(items.tu1.result, { content: "ok" });
   assert.equal(items["legacy:6"].ok, true);
   assert.equal(items["legacy:6"].duration_ms, 1200);
-  // What the board shows of a turn's end that the item doesn't say (converter 3).
+  // What the board shows of a turn's end that the item doesn't say (converter 4).
   assert.deepEqual(items["legacy:6"].metadata, { subtype: "success", num_turns: 3, total_cost_usd: 0.5 });
   assert.equal(items["legacy:7"].level, "warning");
   assert.equal(disposition(c, 4), "redundant");

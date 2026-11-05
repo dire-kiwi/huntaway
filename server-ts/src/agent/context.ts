@@ -18,6 +18,7 @@ import { ApiError, type Req } from "../http.ts";
 import type { AppState, Shared } from "../state.ts";
 import { err_str, new_id, now } from "../util.ts";
 import * as runs from "./runs.ts";
+import * as history from "../threads/history.ts";
 
 /** Prefix of the control requests' ids, so their responses can be told from others. */
 const REQUEST_PREFIX = "context-";
@@ -88,7 +89,7 @@ export function on_compacted(state: Shared, run: Run, meta: any): void {
  */
 function compaction_source(c: Conn, run: Run, trigger: string): string {
   if (trigger === "auto") return "auto";
-  const prompted = db.user_messaged_since(c, run.task_id, run.created_at);
+  const prompted = history.user_messaged_since(c, run.task_id, run.created_at);
   return run.kind === "compact" && !prompted ? "idle" : "user";
 }
 

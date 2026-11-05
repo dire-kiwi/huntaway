@@ -1,5 +1,5 @@
 // Which way a task's thread is drawn: from its items (itemThreads.ts and itemModel.ts, for a task whose thread is kept
-// as items, on a host from API 117 with its Keep threads as items setting on) or from its messages (threadModel.ts, for
+// as items, on a host from API 119 with its Keep threads as items setting on) or from its messages (threadModel.ts, for
 // every other task and older hosts), and what the composer and the prompt cards send for it: thread commands for one
 // drawn from its items (docs/threads-api.md), the board's own routes otherwise.
 
@@ -14,7 +14,7 @@ import type { PermissionMode, Resolution } from "./threads";
 type Settings = ReturnType<typeof useStore.getState>["hostSettings"][string] | undefined;
 
 /**
- * Whether a thread is drawn from its items: the task's is kept as items, its host serves the view (API 117), and its
+ * Whether a thread is drawn from its items: the task's is kept as items, its host serves the view (API 119), and its
  * setting is on there (turning it off goes back to messages, which are still written). Until the host's settings have
  * loaded, a flagged task is taken to have it on.
  */

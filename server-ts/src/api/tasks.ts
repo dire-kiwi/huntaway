@@ -25,6 +25,7 @@ import * as attachments from "../attachments.ts";
 import { char_count, debug_list, json_map, query_bool, query_rejection, rfc3339_utc } from "./extract.ts";
 import { check_external_links, check_start_from, pick_config } from "./new_task.ts";
 import { check_base_branch } from "./profiles.ts";
+import * as history from "../threads/history.ts";
 
 export async function list_project_tasks(s: AppState, r: Req) {
   const kind = r.query.kind ?? "task";
@@ -52,7 +53,7 @@ export async function get_task(s: AppState, r: Req) {
   const c = s.db();
   const t = db.get_task(c, id);
   if (!t) throw ApiError.not_found("task");
-  const last = db.last_assistant_text(c, id);
+  const last = history.last_assistant_text(c, id);
   const pending = db.value<number>(c, "SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending'", id) ?? 0;
   return { task: t, last_message: last, pending_permissions: pending };
 }
