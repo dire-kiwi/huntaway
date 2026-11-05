@@ -700,6 +700,39 @@ export function open(path: string): Conn {
              PRAGMA user_version=91; COMMIT; PRAGMA foreign_keys=ON;`,
     );
   }
+  if (version < 92) {
+    // The linked host a profile's assistant runs on (see agent/assistant.ts), and whether a linked host's agents may use
+    // this board's tools (see hosts/uplink.ts).
+    batch("BEGIN;");
+    for (const [table, column, kind] of [["profiles", "assistant_host", "TEXT"], ["links", "uplink", "INTEGER NOT NULL DEFAULT 0"]]) {
+      if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
+    }
+    batch("PRAGMA user_version=92; COMMIT;");
+  }
+  if (version < 93) {
+    // The folder each run's agent was started with (CLAUDE_CONFIG_DIR or CODEX_HOME, '' for the agent's default), so a
+    // thread goes on in the folder its conversation is in after its config's folder changes (see db.task_config_dir).
+    // Only if it isn't there, in case another migration takes this version first.
+    const add = has_column(conn, "runs", "config_dir") ? "" : "ALTER TABLE runs ADD COLUMN config_dir TEXT;";
+    batch(`BEGIN; ${add} PRAGMA user_version=93; COMMIT;`);
+  }
+  if (version < 94) {
+    // Approval rules and answers from notifications (see agent/approval_rules.ts and integrations/push_answers.ts): the
+    // one-time tokens that answer a permission prompt from a notification; when a prompt from a routine run is denied if
+    // nobody has answered it, and the approval rule that asked it (the notifications' tokens stop at the same time); and
+    // the action log of the calls that hit an ask or never rule. Each part only if it isn't there, in case another
+    // migration takes this version first.
+    batch(`BEGIN; ${SCHEMA_V94_TOKENS}`);
+    const columns: Array<[string, string, string]> = [
+      ["permission_requests", "expires_at", "TEXT"],
+      ["permission_requests", "rule", "TEXT"],
+      ["push_answer_tokens", "expires_at", "TEXT"],
+    ];
+    for (const [table, column, kind] of columns) {
+      if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
+    }
+    batch(`${SCHEMA_V94} PRAGMA user_version=94; COMMIT;`);
+  }
   return conn;
 }
 
@@ -709,8 +742,43 @@ function parent_dir(path: string): string {
   return d === "." && !path.startsWith("./") ? "" : d;
 }
 
+/** Migration 94's table of notifications' answer tokens (see push_answers.ts), as HA-126 made it. */
+const SCHEMA_V94_TOKENS = `
+CREATE TABLE IF NOT EXISTS push_answer_tokens (
+  token_hash TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  host_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  claimed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS push_answer_tokens_request ON push_answer_tokens(request_id, host_id);
+`;
+
+/** Migration 94's prompts' expiry index and the action log (see agent/approval_rules.ts). */
+const SCHEMA_V94 = `
+CREATE INDEX IF NOT EXISTS permission_requests_expiry ON permission_requests(expires_at) WHERE status='pending' AND expires_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS approval_log (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  request_id TEXT,
+  tool_name TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  rule TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  answered_by TEXT,
+  created_at TEXT NOT NULL,
+  decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, created_at);
+CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
+`;
+
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 91;
+export const VERSION = 94;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

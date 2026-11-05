@@ -21,6 +21,7 @@
  * `codex.json` in the run directory holds what the runner decided for the run (see `Spec`);
  * the MCP servers come from the same `mcp.json` Claude gets, converted to Codex's config.
  */
+import { parse_rules, type Rules } from "./approval_rules.ts";
 
 export * from "./codex/adapter.ts";
 export * from "./codex/queries.ts";
@@ -69,6 +70,8 @@ export interface Spec {
   review_waits: boolean;
   /** Revert the thread to before this turn first (a rewind's, see checkpoints::Rewind). Left out when there's none. */
   revert_before_turn?: string;
+  /** The user's approval rules, which its MCP servers' configs hold (see approval_rules.codex_server). Left out when there are none. */
+  approval_rules?: Rules;
 }
 
 /** `Spec::default()`, with `fields` over it. */
@@ -122,6 +125,12 @@ export function Spec_from_json(v: any): Spec | null {
     review_waits: v.review_waits === true,
   });
   if (typeof v.revert_before_turn === "string") spec.revert_before_turn = v.revert_before_turn;
+  if (v.approval_rules != null) {
+    // Rules it can't read: the run doesn't start, rather than without them.
+    const rules = parse_rules(v.approval_rules);
+    if (!rules) return null;
+    spec.approval_rules = rules;
+  }
   return spec;
 }
 

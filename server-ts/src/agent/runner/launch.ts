@@ -1,13 +1,15 @@
 // Port of server/src/agent/runner/launch.rs: launching a run: preparing its worktree, prompt, MCP config and sandbox,
 // then starting the agent.
 import { statSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import * as db from "../../db.ts";
 import type { Run, Task } from "../../db.ts";
 import type { Shared } from "../../state.ts";
-import { err_str, expand_tilde, new_id, path_str } from "../../util.ts";
+import { context, err_str, expand_tilde, new_id, path_str } from "../../util.ts";
 import * as runs from "../runs.ts";
 import * as documents from "../documents.ts";
+import * as memory from "../assistant/memory.ts";
 import * as agent_tools from "../agent_tools.ts";
 import * as codex from "../codex.ts";
 import * as task_tmp from "../task_tmp.ts";
@@ -19,15 +21,16 @@ import * as review from "../../review.ts";
 import * as attachments from "../../attachments.ts";
 import * as assistant from "../assistant.ts";
 import * as automations from "../../integrations/automations.ts";
+import * as approval_rules from "../approval_rules.ts";
 import { Cancelled, MCP_SERVER_NAME, load } from "../runner.ts";
 import {
   board_tools_allowed,
   cache_dirs,
   codex_run_effort,
   gh_allowed,
-  gh_hook_settings,
   git_common_dir,
   github_account,
+  hook_settings,
   ignored_dirs,
   review_filesystem,
   uses_gh_server,
@@ -94,16 +97,15 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   // A review thread works on the task it reviews; a task may be part of a subproject.
   let parent: Task | null = task.parent_id ? db.get_task(state.db(), task.parent_id) : null;
   // The assistant works only in a workspace of its own: not one that's become a symlink, which could be another's. A
-  // routine's thread works in its assistant's.
+  // routine's thread works in its assistant's, with its memory.
   const whose = assistant.whose_workspace(task, parent);
   if (whose) {
     try {
-      assistant.checked(state, whose);
+      memory.checked(state, whose);
     } catch (e) {
-      throw new Error(`the assistant's workspace: ${err_str(e)}`);
+      throw context("the assistant's workspace", e);
     }
   }
-
   // Resolve the working directory for this thread.
   const add_dirs: string[] = [];
   // (`work_dir` says the same for a thread whose run is going.)
@@ -204,6 +206,9 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
 
   const config = db.task_claude_config(state.db(), task);
   const is_codex = config != null && db.is_codex(config);
+  // The assistant's memory files, loaded here rather than by the agent so Claude and Codex both get them.
+  const told_memory = whose ? await memory.for_run(state, whose) : "";
+  check();
   // The project's own skills and MCP servers, and the ones it turns off (for the assistant, its profile's).
   const tools: agent_tools.RunTools = agent_tools.for_task_run(state, task, project);
   if (is_codex) {
@@ -217,11 +222,14 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     const codex_effort = config ? await codex_run_effort(config, codex_model, effort) : effort;
     check();
     record_effort(state, run.id, codex_effort);
-    const [approval_policy, approvals_reviewer, sandbox] = codex.policy(permission_mode, task.kind === "review");
+    // The user's approval rules (see agent/approval_rules.ts) may have Codex ask more, or keep it from running.
+    const rules = approval_rules.for_task(state.db(), task);
+    const codex_rules = rules ? approval_rules.for_mode(rules, permission_mode) : null;
+    const [approval_policy, approvals_reviewer, sandbox] = approval_rules.codex_policy(codex_rules, codex.policy(permission_mode, task.kind === "review"));
     const gh_tools = uses_gh_server(tools);
     const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
     const profiles = db.list_profiles(state.db());
-    const to: Told = { codex: true, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp };
+    const to: Told = { codex: true, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
     let instr = instructions(base, task, to);
     const own_gh = Object.hasOwn(tools.mcp_servers, gh_mcp.SERVER_NAME);
     // Reviewers read and report (see the Claude arguments below).
@@ -266,6 +274,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
       review_waits: approvals_reviewer === "auto_review",
     };
     if (rewind?.before_turn != null) spec.revert_before_turn = rewind.before_turn;
+    if (codex_rules) spec.approval_rules = codex_rules;
     const l: runs.Launch = {
       run_id: run.id,
       cwd,
@@ -293,11 +302,28 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const gh_tools = uses_gh_server(tools);
   const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
   const profiles = db.list_profiles(state.db());
-  const to: Told = { codex: false, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp };
-  args.push("--append-system-prompt", instructions(base, task, to));
+  const to: Told = { codex: false, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
+  // In a file rather than an argument: the assistant's memory and a project's documents can make it longer than the most
+  // an argument may be (128 KiB on Linux).
+  const prompt_file = join(runs.run_dir(state, run.id), "system-prompt.md");
+  await mkdir(runs.run_dir(state, run.id), { recursive: true });
+  try {
+    await writeFile(prompt_file, instructions(base, task, to));
+  } catch (e) {
+    throw context("writing the run's instructions", e);
+  }
+  check();
+  args.push("--append-system-prompt-file", path_str(prompt_file));
   args.push("--permission-mode", permission_mode);
-  if (permission_mode !== "bypassPermissions") args.push("--permission-prompt-tool", `mcp__${MCP_SERVER_NAME}__permission_prompt`);
-  if (gh_tools) args.push("--settings", gh_hook_settings(state.exe));
+  // The user's approval rules (see agent/approval_rules.ts): a hook's ask goes to the permission prompt even in Bypass,
+  // which otherwise has none.
+  const all_rules = approval_rules.for_task(state.db(), task);
+  const rules = all_rules ? approval_rules.for_mode(all_rules, permission_mode) : null;
+  if (permission_mode !== "bypassPermissions" || (rules && approval_rules.needs_prompt_tool(rules))) {
+    args.push("--permission-prompt-tool", `mcp__${MCP_SERVER_NAME}__permission_prompt`);
+  }
+  const rules_hook = rules ? approval_rules.claude_hook(state.exe, rules) : null;
+  if (gh_tools || rules_hook) args.push("--settings", hook_settings(gh_tools ? state.exe : null, rules_hook));
   // Our board tools never need approval, nor do some of the gh server's (see gh_allowed).
   args.push("--allowedTools");
   args.push(...board_tools_allowed(permission_mode, task.kind === "review"));
@@ -305,7 +331,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const gh_tool = (t: string) => `mcp__${gh_mcp.SERVER_NAME}__${t}`;
   if (!own_gh) args.push(...gh_allowed(task).map(gh_tool));
   args.push(...tools.allowed);
-  const disallowed = [...tools.disallowed];
+  const disallowed = [...tools.disallowed, ...(rules ? approval_rules.claude_disallowed(rules) : [])];
   if (task.kind === "review") {
     // Reviewers read and report; they don't change the work.
     args.push(...review.ALLOWED_TOOLS);
@@ -364,6 +390,8 @@ async function started(state: Shared, run: Run, l: runs.Launch, check: () => voi
   const task_id = run.task_id;
   // Not if it was stopped meanwhile: an agent started now would work unseen.
   check();
+  // Where its conversation is kept, if it starts one (see db.task_config_dir).
+  db.set_run_config_dir(state.db(), run.id, l.config_dir);
   await runs.start(state, l);
   // Stopped while ia-shim started: the launch's end reaps it (see runner::launch_ended).
   check();

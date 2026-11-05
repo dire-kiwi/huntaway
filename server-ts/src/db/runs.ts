@@ -109,6 +109,20 @@ export function set_run_session(c: Conn, run_id: string, session: string): void 
   run(c, "UPDATE runs SET session_id=?1 WHERE id=?2", session, run_id);
 }
 
+/** The folder run `run_id`'s agent is started with (see `session_config_dir`): '' for the agent's default. */
+export function set_run_config_dir(c: Conn, run_id: string, dir: string | null): void {
+  run(c, "UPDATE runs SET config_dir=?1 WHERE id=?2", dir ?? "", run_id);
+}
+
+/**
+ * The folder the task's conversation `session` is kept in: the one its first run (the one that started it) was given,
+ * '' for the agent's default. Undefined if that isn't known (a session from before runs kept their folder).
+ */
+export function session_config_dir(c: Conn, task_id: string, session: string): string | undefined {
+  const r = one(c, "SELECT config_dir FROM runs WHERE task_id=?1 AND session_id=?2 ORDER BY rowid LIMIT 1", task_id, session);
+  return typeof r?.config_dir === "string" ? r.config_dir : undefined;
+}
+
 /** Whether a run on the task hasn't exited yet. */
 export function has_active_run(c: Conn, task_id: string): boolean {
   return !!value(c, "SELECT EXISTS(SELECT 1 FROM runs WHERE task_id=?1 AND status != 'exited')", task_id);

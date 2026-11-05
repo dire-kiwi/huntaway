@@ -17,6 +17,8 @@ import * as au from "../../integrations/automations.ts";
 import * as wf from "../../integrations/workflows.ts";
 import * as runner from "../../agent/runner.ts";
 import * as assistant from "../../agent/assistant.ts";
+import * as approval_rules from "../../agent/approval_rules.ts";
+import type { Decision } from "../../agent/approval_rules.ts";
 import * as runs from "../../agent/runs.ts";
 import * as prompts from "../../agent/prompts.ts";
 import * as worktree from "../../git/worktree.ts";
@@ -2501,4 +2503,191 @@ test("the_assistant_sets_up_routines_once_the_user_approves", async () => {
   assert.equal(await err(call(s, ctx(work), "run_automation", { automation_id: id })), `automation ${id}`);
   const e = await err(call(s, ctx(work), "list_automations", { routines: true, profile: "personal" }));
   assert.ok(e.includes("its own profile"), e);
+});
+
+// ---------- the assistant's approval rules on the board's own tools (HA-123, ported by HA-206) ----------
+
+test("the_assistants_rules_can_make_creating_a_task_ask_first_whatever_its_mode", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  project(s, p, "kiwicd", "KIW");
+  const mine = assistant.get_or_create(s, p.id);
+  db.update_task(s.db(), mine.id, [["permission_mode", "bypassPermissions"]]);
+  approval_rules.set(s.db(), p.id, {
+    rules: [{ tool: "mcp__huntaway__create_task", decision: "ask" }, { tool: "mcp__huntaway__delete_task", decision: "never" }],
+    expiry_minutes: 30,
+  });
+  const run = started_run(s, mine.id);
+  const mcp = (call_id: string, tool: string, args: any): McpCall => ({ task_fields: true, run_id: run.id, call_id, tool, args });
+  const titles = () => db.list_tasks_for_project(s.db(), "kiwicd", "task").map((t) => t.title);
+  const next_prompt = async () => {
+    let p: any;
+    await until(() => (p = permissions.pending(s, mine.id).pop()) !== undefined, "a prompt");
+    return p;
+  };
+
+  // Asked, and denied: no task.
+  const denied = handle_mcp(s, mcp("c1", "create_task", { project_id: "kiwicd", title: "Book flights" }));
+  denied.catch(() => {});
+  let request = await next_prompt();
+  assert.deepEqual([request.tool_name, request.rule], ["mcp__huntaway__create_task", "mcp__huntaway__create_task"]);
+  permissions.decide(s, request.id, false, false, null);
+  await err(denied);
+  assert.deepEqual(titles(), []);
+
+  // Asked, and allowed: made.
+  const allowed = handle_mcp(s, mcp("c2", "create_task", { project_id: "kiwicd", title: "Book flights" }));
+  request = await next_prompt();
+  permissions.decide(s, request.id, true, false, null);
+  await allowed;
+  assert.deepEqual(titles(), ["Book flights"]);
+
+  // Never: refused without asking.
+  const t = db.list_tasks_for_project(s.db(), "kiwicd", "task")[0];
+  const e = await err(handle_mcp(s, mcp("c3", "delete_task", { task_id: t.id })));
+  assert.ok(e.startsWith(approval_rules.BLOCKED), e);
+  assert.deepEqual(
+    approval_rules.list(s.db(), p.id, 10).map((a) => [a.tool_name, a.outcome]),
+    [["mcp__huntaway__delete_task", "blocked"], ["mcp__huntaway__create_task", "allowed"], ["mcp__huntaway__create_task", "denied"]],
+  );
+  // Other tools are as they were.
+  await handle_mcp(s, mcp("c4", "list_projects", {}));
+});
+
+/** The profile's assistant, in Bypass, with `rules`, and a run of it that's going. */
+function ruled_assistant(s: Shared, p: db.Profile, rules: Array<[string, Decision]>): [Task, db.Run] {
+  const a = assistant.get_or_create(s, p.id);
+  const mine = db.update_task(s.db(), a.id, [["permission_mode", "bypassPermissions"]])!;
+  approval_rules.set(s.db(), p.id, { rules: rules.map(([tool, decision]) => ({ tool, decision })), expiry_minutes: 30 });
+  return [mine, started_run(s, mine.id)];
+}
+
+/** The next prompt an approval rule raised in `task_id`'s thread, once there is one. */
+async function rule_asked(s: Shared, task_id: string): Promise<any> {
+  let p: any;
+  await until(() => (p = permissions.pending(s, task_id).find((x) => x.rule != null)) !== undefined, "a rule to ask");
+  return p;
+}
+
+test("an_ask_rule_on_the_whole_board_leaves_tools_that_ask_for_themselves_to_ask_once", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  project(s, p, "kiwicd", "KIW");
+  const doomed = task(s, "kiwicd", "Doomed");
+  const [mine, run] = ruled_assistant(s, p, [["mcp__huntaway", "ask"]]);
+  const mcp = (call_id: string, tool: string, args: any): McpCall => ({ task_fields: true, run_id: run.id, call_id, tool, args });
+  const ruled = () => db.value<number>(s.db(), "SELECT COUNT(*) FROM permission_requests WHERE rule IS NOT NULL");
+
+  // delete_task asks with its own card, which shows what's deleted, and does it once that's approved.
+  const [, a] = await Promise.all([handle_mcp(s, mcp("d", "delete_task", { task_id: doomed.id })), answer_approval(s, true)]);
+  assert.deepEqual([a.kind, a.input.delete.key, a.input.tasks_with_it], ["delete_task", "KIW-1", []]);
+  assert.equal(db.get_task(s.db(), doomed.id), null);
+  // Its one card is the rule's asking: it's in the action log, answered.
+  assert.deepEqual(a.rule, { tool: "mcp__huntaway", decision: "ask" });
+  assert.equal(ruled(), 1, "delete_task was asked about twice");
+  const log = approval_rules.list(s.db(), p.id, 10);
+  assert.deepEqual([log[0].tool_name, log[0].rule, log[0].outcome, log[0].answered_by], ["mcp__huntaway__delete_task", "mcp__huntaway", "allowed", "user"]);
+
+  // update_project asks for some settings only: the rule asks first, then the change is approved as ever.
+  const answer_both = async () => {
+    const r = await rule_asked(s, mine.id);
+    assert.equal(r.tool_name, "mcp__huntaway__update_project");
+    permissions.decide(s, r.id, true, false, null);
+    return answer_approval(s, true);
+  };
+  const [res, a2] = await Promise.all([handle_mcp(s, mcp("u", "update_project", { project_id: "kiwicd", setup_script: "make deps" })), answer_both()]);
+  assert.equal(res.setup_script, "make deps");
+  assert.equal(a2.kind, "project");
+  assert.equal(db.get_project(s.db(), "kiwicd")!.setup_script, "make deps");
+  // And a setting that needs no approval is asked about by the rule alone.
+  const answer_rule = async () => {
+    const r = await rule_asked(s, mine.id);
+    permissions.decide(s, r.id, true, false, null);
+  };
+  const [res2] = await Promise.all([handle_mcp(s, mcp("g", "update_project", { project_id: "kiwicd", group_name: "Birds" })), answer_rule()]);
+  assert.equal(res2.group_name, "Birds");
+
+  // A never rule still refuses a tool that asks for itself.
+  const [, run2] = ruled_assistant(s, p, [["mcp__huntaway__delete_task", "never"]]);
+  const other = task(s, "kiwicd", "Kept");
+  const e = await err(handle_mcp(s, { task_fields: true, run_id: run2.id, call_id: "d2", tool: "delete_task", args: { task_id: other.id } }));
+  assert.ok(e.startsWith(approval_rules.BLOCKED), e);
+  assert.ok(db.get_task(s.db(), other.id));
+});
+
+test("rules_hold_for_wait_and_its_command", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  const marker = join(testing.temp_dir(), "ran");
+  const wait = (call_id: string, run: db.Run): McpCall => ({
+    task_fields: true, run_id: run.id, call_id, tool: "wait", args: { reason: "r", seconds: 5, command: `touch '${marker}'` },
+  });
+  // Never: refused, and its command doesn't run, in Bypass.
+  let [, run] = ruled_assistant(s, p, [["mcp__huntaway__wait", "never"]]);
+  assert.ok((await err(handle_mcp(s, wait("w1", run)))).startsWith(approval_rules.BLOCKED));
+  assert.ok(!existsSync(marker));
+  // An older name of the board's server holds too.
+  [, run] = ruled_assistant(s, p, [["mcp__issue_agent__wait", "never"]]);
+  await err(handle_mcp(s, wait("w2", run)));
+  assert.ok(!existsSync(marker));
+
+  // Ask, denied: nothing runs.
+  let mine: Task;
+  [mine, run] = ruled_assistant(s, p, [["mcp__huntaway__wait", "ask"]]);
+  const deny = async () => {
+    const r = await rule_asked(s, mine.id);
+    assert.equal(r.tool_name, "mcp__huntaway__wait");
+    permissions.decide(s, r.id, false, false, null);
+  };
+  await Promise.all([err(handle_mcp(s, wait("w3", run))), deny()]);
+  assert.ok(!existsSync(marker));
+  // Allowed: the wait goes on, and its command runs (Bypass allows it).
+  const allow = async () => {
+    const r = await rule_asked(s, mine.id);
+    permissions.decide(s, r.id, true, false, null);
+  };
+  const [res] = await Promise.all([handle_mcp(s, wait("w4", run)), allow()]);
+  assert.equal(res.ended, "command_exited");
+  assert.ok(existsSync(marker));
+  const log = approval_rules.list(s.db(), p.id, 10).map((a) => [a.tool_name, a.outcome]);
+  assert.deepEqual(log.slice(0, 2), [["mcp__huntaway__wait", "allowed"], ["mcp__huntaway__wait", "denied"]]);
+});
+
+test("a_bash_rule_holds_for_a_waits_command_even_when_claudes_classifier_reviewed_the_wait", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  const dir = testing.temp_dir();
+  const marker = join(dir, "ran");
+  // A Claude run in Auto mode: wait isn't in its --allowedTools, so Claude's classifier reviewed the call.
+  const auto = (rules: Array<[string, Decision]>): [Task, db.Run] => {
+    const [mine, run] = ruled_assistant(s, p, rules);
+    db.update_task(s.db(), mine.id, [["permission_mode", "auto"]]);
+    const run_dir = runs.run_dir(s, run.id);
+    mkdirSync(run_dir, { recursive: true });
+    const args = ["-p", "--permission-mode", "auto", "--allowedTools", "mcp__huntaway__list_tasks", "--add-dir", "/a"];
+    writeFileSync(join(run_dir, "spec.json"), JSON.stringify({ cwd: dir, args }));
+    assert.ok(runner.agent_reviews_waits(s, run.id));
+    return [mine, run];
+  };
+  const wait = (call_id: string, run: db.Run): McpCall => ({
+    task_fields: true, run_id: run.id, call_id, tool: "wait", args: { reason: "r", seconds: 5, command: `touch '${marker}'` },
+  });
+  // Never: the command doesn't run.
+  let [mine, run] = auto([["Bash", "never"]]);
+  const e = await err(handle_mcp(s, wait("w1", run)));
+  assert.ok(e.includes(approval_rules.BLOCKED), e);
+  assert.ok(!existsSync(marker));
+  // Ask: the user answers, not the classifier.
+  [mine, run] = auto([["Bash", "ask"]]);
+  const deny = async () => {
+    const r = await rule_asked(s, mine.id);
+    assert.deepEqual([r.tool_name, typeof r.input.command], ["Bash", "string"]);
+    permissions.decide(s, r.id, false, false, null);
+  };
+  await Promise.all([err(handle_mcp(s, wait("w2", run))), deny()]);
+  assert.ok(!existsSync(marker));
+  // No rule on Bash: the classifier's review stands, as before.
+  [, run] = auto([["mcp__google__*send*", "ask"]]);
+  assert.equal((await handle_mcp(s, wait("w3", run))).ended, "command_exited");
+  assert.ok(existsSync(marker));
 });

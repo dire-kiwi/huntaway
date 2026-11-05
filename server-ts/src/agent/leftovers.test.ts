@@ -2,9 +2,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as db from "../db.ts";
+import { run_cmd } from "../proc.ts";
 import * as testing from "../testing.ts";
 import { sleep } from "../util.ts";
 import { find, folders_in, list, list_ps, stop, stop_task, type Proc } from "./leftovers.ts";
@@ -40,13 +43,32 @@ function write(path: string, text: string) {
   writeFileSync(path, text);
 }
 
-/** The fake processes running now, by their tags. */
+/**
+ * In the environment of this run's fakes (see `start`), which their children inherit. Their tags are the same in every
+ * run of these tests, so without it a run at the same time (another worktree's, another agent's, another CI job's on
+ * the same runner) had its fakes taken for this one's, and stopped this one's as it cleaned up its own (HA-232).
+ */
+const RUN = { IA_LEFTOVERS_TEST_RUN: `${process.pid}-${randomBytes(6).toString("hex")}` };
+const RUN_ENV = `IA_LEFTOVERS_TEST_RUN=${RUN.IA_LEFTOVERS_TEST_RUN}`;
+
+/** Whether process `pid` is one of this run's fakes, by its environment. */
+async function this_runs(pid: number): Promise<boolean> {
+  if (process.platform === "linux") {
+    const env = await readFile(`/proc/${pid}/environ`, "utf8").catch(() => "");
+    return env.split("\0").includes(RUN_ENV);
+  }
+  // BSD and macOS `ps -E` puts the environment after the command line.
+  const o = await run_cmd("ps", ["-E", "-ww", "-o", "command=", "-p", String(pid)]).catch(() => null);
+  return !!o?.stdout.split(" ").includes(RUN_ENV);
+}
+
+/** This run's fake processes running now, by their tags. */
 async function fakes(): Promise<Map<string, Proc>> {
   const out = new Map<string, Proc>();
   for (const p of (await list()) ?? []) {
     // An agent's command line has its helper's tag in it too, before its own.
     const tag = [...p.cmd.matchAll(/\/\* fake:(\S+) \*\//g)].pop()?.[1] ?? /--name (\S+)|-- agent (\S+)$/.exec(p.cmd)?.slice(1).find((t) => t);
-    if (tag && p.cmd.includes(process.execPath)) out.set(tag, p);
+    if (tag && p.cmd.includes(process.execPath) && (await this_runs(p.pid))) out.set(tag, p);
   }
   return out;
 }
@@ -76,8 +98,9 @@ async function with_fakes(started: string[], body: () => Promise<void>) {
   }
 }
 
+/** Starts a fake, marked as this run's (see `RUN`). */
 function start(args: string[], cwd?: string) {
-  const c = spawn(process.execPath, args, { cwd, stdio: "ignore", detached: true });
+  const c = spawn(process.execPath, args, { cwd, env: { ...process.env, ...RUN }, stdio: "ignore", detached: true });
   c.unref();
 }
 
@@ -178,7 +201,7 @@ test("a_done_tasks_test_server_is_stopped_with_its_folder_or_once_its_folder_has
     start([exe, "serve", "--data-dir", data(a), "--name", "done-a"]);
     start([exe, "serve", "--data-dir", data(b), "--name", "gone-b"]);
     start([exe, "serve", "--data-dir", data(open), "--name", "open"]);
-    await running(tags);
+    await running([...tags, ...tags.map((t) => `${t}-child`)]);
     assert.deepEqual([...folders_in((await list())!, [root(s)])].sort(), [a, b, open].map((t) => folder(t.id)).sort());
 
     // A done task's folder goes, and its server with it.

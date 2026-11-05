@@ -11,7 +11,9 @@ import * as api from "../../../api.ts";
 import type { Req } from "../../../http.ts";
 import type { Shared } from "../../../state.ts";
 import * as testing from "../../../testing.ts";
+import * as approval_rules from "../../../agent/approval_rules.ts";
 import * as assistant from "../../../agent/assistant.ts";
+import * as memory from "../../../agent/assistant/memory.ts";
 import * as documents from "../../../agent/documents.ts";
 import * as runner from "../../../agent/runner.ts";
 import {
@@ -696,13 +698,16 @@ test("a_day_field_that_starts_with_a_star_keeps_its_steps_and_must_match_too", (
   assert.equal(next("0 9 */31 * wed", nz("2026-09-25 10:00")), nz("2027-09-01 09:00"));
 });
 
-test("a_routine_thread_has_its_assistants_workspace", () => {
+test("a_routine_thread_has_its_assistants_workspace_and_memory", async () => {
   const s = testing.state();
   const p = profile(s);
   const a = assistant.get_or_create(s, p.id);
   const t = db.insert_routine_task(s.db(), a, "Inbox");
   assert.equal(assistant.whose_workspace(t, a)?.id, a.id);
   assert.equal(assistant.whose_workspace(a, null)?.id, a.id);
+  // So its run is told the assistant's memory, as the assistant's are.
+  const told = await memory.for_run(s, assistant.whose_workspace(t, a)!);
+  assert.ok(told.includes("## Your memory") && told.includes('<memory-file path="USER.md">'), told);
   // Without its assistant, or in another folder, it doesn't run.
   assert.throws(() => assistant.whose_workspace(t, null));
   assert.throws(() => assistant.whose_workspace({ ...t, work_dir: "elsewhere" }, a));
@@ -830,7 +835,7 @@ test("pruning_keeps_the_runs_that_count_toward_todays_budget", async () => {
   assert.equal(get_run(s.db(), paid.id), null);
 });
 
-test("a_routines_messages_start_routine_runs", async () => {
+test("a_routines_messages_start_routine_runs_whose_prompts_expire", async () => {
   const s = testing.state();
   const p = profile(s);
   const the_assistant = assistant.get_or_create(s, p.id);
@@ -840,10 +845,11 @@ test("a_routines_messages_start_routine_runs", async () => {
   });
   const wake = (mode: string) => ({ name: mode, trigger: { kind: "cron", expr: "0 8 * * *" }, action: { kind: "message_assistant", message: "Inbox?", mode } });
   // Fresh: its thread's first message (waiting here, as no agent can start) is a routine's; so is a thread-mode
-  // routine's in the assistant's thread. (Slice 6's approval rules expire their prompts.)
+  // routine's in the assistant's thread. The approval rules, and expiry, hold in both.
   for (const mode of ["fresh", "thread"]) {
     const a = routine(s, p.id, wake(mode));
     const r = await run_now(s, a);
+    assert.ok(approval_rules.applies_to(s.db(), db.get_task(s.db(), r.task_id)!), mode);
     const queued = db.take_queued(s.db(), r.task_id)!;
     assert.ok(queued.routine, mode);
   }
