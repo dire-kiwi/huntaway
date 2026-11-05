@@ -18,6 +18,7 @@ import type { Project, Task } from "../db.ts";
 import { ApiError, type Req } from "../http.ts";
 import type { AppState, Shared } from "../state.ts";
 import { err_str, expand_tilde, now, path_str } from "../util.ts";
+import * as brief from "./assistant/brief.ts";
 
 /** A bigger file isn't kept, so a runaway agent can't fill the database. */
 const MAX_SIZE = 5 << 20;
@@ -90,10 +91,25 @@ export function work_dir(state: Shared, task: Task): string | null {
   return db.is_scratch(task) ? dir(state, task.id) : null;
 }
 
-/** Where a task's agent writes the document for one of its labels. */
+/** Where a task's agent writes the document for one of its labels, or the assistant its morning brief (see brief_path). */
 export function path(state: Shared, task: Task, label: string): string | null {
+  if (label === brief.LABEL) return brief_path(state, task);
+  if (label === brief.ITEMS_LABEL) {
+    const p = brief_path(state, task);
+    return p === null ? null : join(dirname(p), brief.ITEMS_FILE);
+  }
   const f = file_name(label);
   return f === null ? null : join(dir(state, task.id), f);
+}
+
+/**
+ * The assistant's morning brief (assistant/brief.ts): `brief.html` in its workspace, which its routine threads work in too.
+ * Kept as its `brief` document, one version a day. Null for any other task.
+ */
+export function brief_path(state: Shared, task: Task): string | null {
+  if (!db.is_assistant(task)) return null;
+  const d = work_dir(state, task);
+  return d === null ? null : join(d, brief.FILE);
 }
 
 /** The documents a task's agent writes, by label. */
@@ -197,20 +213,65 @@ function try_keep(state: Shared, task_id: string, end_of_turn: boolean): void {
   const task = db.get_task(state.db(), task_id);
   if (!task) return;
   let changed = false;
-  for (const [label, file] of paths(state, task)) changed = keep_one(state, task_id, label, file, end_of_turn) || changed;
+  for (const [label, file] of paths(state, task)) changed = keep_one(state, task_id, label, file, end_of_turn, false) || changed;
   // A label taken off during the turn leaves its version as it was.
   if (end_of_turn) db.run(state.db(), "UPDATE documents SET open=0 WHERE task_id=?1 AND open=1", task_id);
   if (changed) state.update_task(task_id, [["document_at", now()]]);
+  keep_brief(state, task, end_of_turn);
 }
 
-/** Keep the document for one label if it changed: whether it did. */
-function keep_one(state: Shared, task_id: string, label: string, file: string, end_of_turn: boolean): boolean {
+/**
+ * The assistant's morning brief, after a turn of the assistant or one of its routine threads (which write it): its
+ * version for the day follows the file (see brief_path).
+ */
+function keep_brief(state: Shared, task: Task, end_of_turn: boolean): void {
+  let assistant: Task;
+  if (db.is_assistant(task)) assistant = task;
+  else if (db.is_routine(task) && task.parent_id != null) {
+    const a = db.get_task(state.db(), task.parent_id);
+    if (!a || !db.is_assistant(a) || a.work_dir !== task.work_dir) return;
+    assistant = a;
+  } else return;
+  const file = brief_path(state, assistant);
+  if (file === null) return;
+  // The brief, and its items (brief.json) beside it.
+  let changed = false;
+  for (const [label, f] of [
+    [brief.LABEL, file],
+    [brief.ITEMS_LABEL, join(dirname(file), brief.ITEMS_FILE)],
+  ]) {
+    changed = keep_one(state, assistant.id, label, f, end_of_turn, true) || changed;
+    if (end_of_turn) db.run(state.db(), "UPDATE documents SET open=0 WHERE task_id=?1 AND label=?2 AND open=1", assistant.id, label);
+  }
+  if (changed) state.update_task(assistant.id, [["document_at", now()]]);
+}
+
+/** The host's date (`YYYY-MM-DD`, in its time zone) at `t`, milliseconds since the epoch or an RFC 3339 time. */
+function local_day(t: number | string): string | null {
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return null;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Whether a version made at `created_at` (RFC 3339) was made today, in the host's time zone. */
+function made_today(created_at: string): boolean {
+  return local_day(created_at) === local_day(Date.now());
+}
+
+/**
+ * Keep the document for one label if it changed: whether it did. With `daily`, a change goes into the day's version (one
+ * made today, in the host's time zone) rather than one for the turn.
+ */
+function keep_one(state: Shared, task_id: string, label: string, file: string, end_of_turn: boolean, daily: boolean): boolean {
   let size: number | null = null;
   let stamp: string | null = null;
+  let modified: number | null = null;
   try {
     const m = statSync(file, { bigint: true });
     size = Number(m.size);
     stamp = `${m.size}:${m.mtimeNs}`;
+    modified = Number(m.mtimeMs);
   } catch {}
   const key = `${task_id}\u0000${label}`;
   const unchanged = stamp !== null && SEEN.get(key) === stamp;
@@ -228,10 +289,14 @@ function keep_one(state: Shared, task_id: string, label: string, file: string, e
   if (content === null) return false;
   const ts = now();
   const c = state.db();
-  const latest = db.one(c, "SELECT version, content, open FROM documents WHERE task_id=?1 AND label=?2 ORDER BY version DESC LIMIT 1", task_id, label);
+  const latest = db.one(c, "SELECT version, content, open, created_at FROM documents WHERE task_id=?1 AND label=?2 ORDER BY version DESC LIMIT 1", task_id, label);
+  const open = latest ? !!latest.open || (daily && made_today(latest.created_at)) : false;
   // (The end of the turn closes an open version that doesn't change, in try_keep.)
-  if (latest && latest.content === content) return false;
-  if (latest && latest.open) {
+  // A daily document written today, the same as the last day's (the same starred mail, say), is today's version all the
+  // same; a file left as it was isn't, as its time says.
+  const written_today = daily && modified !== null && local_day(modified) === local_day(Date.now());
+  if (latest && latest.content === content && (open || !written_today)) return false;
+  if (latest && open) {
     // The turn's version follows the file.
     db.run(
       c,
@@ -276,7 +341,9 @@ export async function get(s: AppState, r: Req): Promise<any> {
   const all: string[] = db.LABELS;
   const asked = r.query.label?.trim() ?? "";
   let label: string;
-  if (asked !== "") {
+  // The assistant's morning brief (API 113).
+  if (asked === brief.LABEL && db.is_assistant(task)) label = brief.LABEL;
+  else if (asked !== "") {
     const l = all.find((x) => x === asked);
     if (l === undefined) throw ApiError.bad(`unknown label ${JSON.stringify(asked)}`);
     label = l;
@@ -292,7 +359,16 @@ export async function get(s: AppState, r: Req): Promise<any> {
     version !== null ? (db.value<string>(c, "SELECT content FROM documents WHERE task_id=?1 AND label=?2 AND version=?3", id, label, version) ?? null) : null;
   if (qversion !== null && content === null) throw ApiError.not_found("version");
   const file = path(s, task, label);
-  return { label, file: file !== null ? path_str(file) : null, versions, version: content !== null ? version : null, content };
+  const out: any = { label, file: file !== null ? path_str(file) : null, versions, version: content !== null ? version : null, content };
+  // The brief's items to rate (API 113): those the run wrote the same day, in the host's time zone, as checked.
+  if (label === brief.LABEL) {
+    const shown_at = versions.find((v) => v.version === version)?.created_at;
+    const shown = typeof shown_at === "string" ? local_day(shown_at) : null;
+    const lists = db.all(c, "SELECT content, created_at FROM documents WHERE task_id=?1 AND label=?2 ORDER BY version DESC", id, brief.ITEMS_LABEL);
+    const list = shown !== null ? lists.find((l) => local_day(l.created_at) === shown) : undefined;
+    out.items = list ? brief.items(list.content) : [];
+  }
+  return out;
 }
 
 /**

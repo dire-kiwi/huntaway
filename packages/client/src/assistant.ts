@@ -1,5 +1,6 @@
 import { enc, type Http } from "./http";
 import { type Host, hostSupports } from "./hosts";
+import type { Automation, Weekday } from "./automations";
 import type { Profile } from "./profiles";
 import type { Task } from "./tasks";
 
@@ -10,6 +11,66 @@ export const ASSISTANT_API = 109;
 /** Its memory (API 111): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
  *  commits after each turn that changed them (see server-ts/src/agent/assistant/memory.ts). The Memory tab edits them. */
 export const MEMORY_API = 111;
+
+/** Google and the morning brief (API 113): the Google card (whether the assistant's Google Workspace server is connected), the
+ *  morning brief routine template, the assistant's `brief` document (one version a day) and ratings of its items, which go into
+ *  MEMORY.md (see server-ts/src/agent/assistant/google.ts and brief.ts). */
+export const BRIEF_API = 113;
+
+/** Whether the host has the Google card, the brief template and the Brief tab. */
+export const hasBrief = (h: Host | undefined) => hostSupports(h, BRIEF_API);
+
+/** A file the Google server reads, on the assistant's host. */
+export interface GoogleFile {
+  path: string;
+  exists: boolean;
+  /** Readable by its owner alone. */
+  private: boolean;
+}
+
+/** An account with credentials in the Google server's folder. */
+export interface GoogleAccount {
+  email: string;
+  file: string;
+  refresh_token: boolean;
+  private: boolean;
+  scopes: string[];
+  /** What the brief reads that it wasn't granted. */
+  missing_scopes: string[];
+}
+
+/** Whether Google is connected for the assistant, on its host, and what's missing if it isn't. */
+export interface GoogleStatus {
+  connected: boolean;
+  /** The account it acts as, once connected. */
+  account: string | null;
+  /** What's in the way, in words. */
+  problem: string | null;
+  warnings: string[];
+  /** The host's global MCP server called `google`, if it has one: `on` when the profile switches it on. */
+  server: { id: string; enabled: boolean; on: boolean; command: string; command_found: boolean } | null;
+  client_secret: GoogleFile;
+  credentials_dir: string;
+  accounts: GoogleAccount[];
+  /** What to run on the host to sign in. */
+  consent_command: string;
+  /** The host's name and the port the sign-in listens on, for the ssh command. */
+  host: string;
+  consent_port: number;
+  /** With `check`: whether Google took the refresh token, and why not. */
+  verified?: boolean;
+  verify_error?: string;
+}
+
+/** How the user rated one of the brief's items: `clear` takes a rating back. */
+export type BriefRating = "up" | "down" | "clear";
+
+/** An item of the brief to rate: its kind, its topic and its text. */
+export interface BriefItem {
+  kind?: string;
+  topic?: string;
+  text?: string;
+}
 
 /** Whether the host has assistants. An older one shows no Assistant entry. */
 export const hasAssistant = (h: Host | undefined) => hostSupports(h, ASSISTANT_API);
@@ -142,5 +203,16 @@ export const assistantApi = ({ on }: Http) => {
     restoreMemoryFile: (h: string, profileId: string, path: string, rev: string) => on(h).post<MemoryWrite>(`${memory(profileId)}/restore`, { path, rev }),
     /** Send another assistant's answer to the import prompt to the assistant, to fold into its memory. */
     importMemory: (h: string, profileId: string, text: string) => on(h).post<Task>(`${memory(profileId)}/import`, { text }),
+    // Google and the brief (API 113), on the assistant's host too.
+    /** Whether Google is connected; `check` also tries the refresh token with Google. */
+    googleStatus: (h: string, profileId: string, check = false) =>
+      on(h).get<GoogleStatus>(`/profiles/${enc(profileId)}/assistant/google${check ? "?check=1" : ""}`),
+    /** Add the host's Google server (unless it has one) and switch it on for the profile. */
+    setupGoogle: (h: string, profileId: string) => on(h).post<GoogleStatus>(`/profiles/${enc(profileId)}/assistant/google`, {}),
+    /** Add the morning brief routine, on `weekdays` at `time` (the host's time zone; weekdays at 7:30 without them). */
+    addBrief: (h: string, profileId: string, b: { time?: string; weekdays?: Weekday[] }) => on(h).post<Automation>(`/profiles/${enc(profileId)}/assistant/brief`, b),
+    /** Rate one of the brief's items: it becomes (or changes, or drops) a line in MEMORY.md. */
+    rateBrief: (h: string, profileId: string, rating: BriefRating, item: BriefItem) =>
+      on(h).post<{ line: string | null; content: string; commit: string | null }>(`/profiles/${enc(profileId)}/assistant/brief/feedback`, { rating, ...item }),
   };
 };
