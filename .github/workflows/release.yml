@@ -4,8 +4,9 @@
 # it as onto any release, and the server backs up its database as it starts on a new version (server-ts/src/backup.ts),
 # which is also what makes a Roll back onto a Rust release (0.3.x) safe. The release's tag is the version (v1.2.3 →
 # 1.2.3), so it must be semver with an optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing
-# release's tag again and replaces its files. A pull request that changes the packaging builds it too, as an
-# artifact of the run, without a release. Only the attach job, which pull requests don't run, can write to the repository.
+# release's tag again and replaces its files. Nothing else runs it (HA-244): pull requests don't build the release, so a
+# change to the packaging is first built by the release that ships it (or by hand, on a tag of its own). Only the attach
+# job can write to the repository.
 name: Release
 
 on:
@@ -16,22 +17,6 @@ on:
       tag:
         description: Tag of the release to build and attach the files to
         required: true
-  pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - app/package.json
-      - app/package-lock.json
-      - app/electron/**
-      - scripts/package-server.sh
-      - scripts/desktop-app-check.mjs
-      - scripts/fake-claude
-      - server/Cargo.toml
-      - server/Cargo.lock
-      - server/shim/**
-      - server-ts/bin/**
-      - server-ts/package.json
-      - server-ts/package-lock.json
-      - server-ts/tsconfig.build.json
 
 permissions:
   contents: read
@@ -40,8 +25,8 @@ env:
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 concurrency:
-  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -63,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || '' }}
+          ref: refs/tags/${{ env.TAG }}
 
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -90,7 +75,6 @@ jobs:
         working-directory: app
         run: |
           version="${TAG#v}"
-          [ -n "$TAG" ] || version="0.0.0-pr.${{ github.event.number }}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           npm version --no-git-tag-version --allow-same-version "$version"
 
@@ -135,13 +119,10 @@ jobs:
           wait "$pid" || true
 
       # Linux: an AppImage and an Arch package. macOS: a dmg and a zip, ad-hoc signed (there's no Developer ID): every
-      # binary in it, node and ia-shim too, is signed again ad hoc, without the hardened runtime. electron-builder skips
-      # signing in a pull request's build unless CSC_FOR_PULL_REQUEST is set, and an ad-hoc signature takes no secrets,
-      # so pull requests sign too, and the checks below see the app a release ships (HA-185).
+      # binary in it, node and ia-shim too, is signed again ad hoc, without the hardened runtime, and the checks below
+      # see the app the release ships (HA-185).
       - name: Package the desktop app
         working-directory: app
-        env:
-          CSC_FOR_PULL_REQUEST: "true"
         run: npx electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
 
       # The server the packaged app starts from its resources.
@@ -249,12 +230,12 @@ jobs:
             app/release/*.tar.gz
             app/release/*.json
           if-no-files-found: error
-          retention-days: ${{ env.TAG && 1 || 7 }}
+          retention-days: 1
 
   # The builds' files, attached to the release (those that built, if one failed). On its own so that only this job,
   # which runs nothing from the repository, has write access.
   attach:
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() }}
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10

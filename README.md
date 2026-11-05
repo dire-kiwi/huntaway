@@ -597,7 +597,9 @@ case the app updates through that server, which follows a deployment only if it 
 ### Release builds
 
 Publishing a GitHub release runs `.github/workflows/release.yml`, which builds the release's tag
-and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
+and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`. Nothing else starts
+it: pull requests don't build the release (their tests are `test.yml`'s), and Actions → Release → Run
+workflow builds an existing release's tag again and replaces its files.
 
 | File | What |
 |---|---|
