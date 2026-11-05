@@ -47,24 +47,61 @@ tests run the Rust broker's `test_broker` example (`cargo build -p huntaway-brok
 ## Memory
 
 `node scripts/ram-compare.mjs [--live]` starts a test server of each on the same data, then reads their memory as they
-load every task's thread through the API with three UI websockets open. On 2026-11-05, with a release build of the Rust
-server and Node 26.8, on a scrubbed copy of the live board (`--live`: 1,568 tasks, 280,788 messages, 668 MB of thread
-JSON):
+load every task's thread through the API with three UI websockets open. `TS_BIN=<dir>/huntaway` measures a release's
+package (what `scripts/package-server.sh <dir>` puts together) rather than this checkout's `.ts`. On 2026-11-05, with a
+release build of the Rust server and a package of the TS server on Node 26.8, on a scrubbed copy of the live board
+(`--live`: 1,631 tasks, 286,590 messages, 680 MB of thread JSON):
 
-| | Rust | TypeScript |
-|---|---|---|
-| Idle after start (RSS) | 38 MB | 172 MB |
-| After loading every thread once | 279 MB | 310 MB (peak 347 MB) |
-| After 5 rounds of that | 421 MB | 322 MB (peak 414 MB) |
-| 10 s later, websockets closed | 421 MB | 321 MB |
-| Each agent's `huntaway mcp` helper | 9 MB | 87 MB |
-| Each agent's `huntaway gh-mcp` helper | 7 MB | 90 MB |
+| | Rust | TypeScript | TypeScript before HA-181 |
+|---|---|---|---|
+| Idle after start (RSS) | 38 MB | 108 MB | 172 MB |
+| After loading every thread once | 264 MB | 176 MB (peak 242 MB) | 310 MB (peak 347 MB) |
+| After 5 rounds of that | 481 MB | 172 MB (peak 242 MB) | 322 MB (peak 414 MB) |
+| 10 s later, websockets closed | 444 MB | 172 MB | 321 MB |
+| A minute later | 444 MB | 104 MB | |
+| Each agent's `huntaway mcp` helper | 9 MB | 55 MB | 87 MB |
+| Each agent's `huntaway gh-mcp` helper | 7 MB | 56 MB | 90 MB |
 
-On the `--demo` data, idle is 20 MB against 128 MB, and loading the board keeps them at about 26 MB and 133 MB.
+On the `--demo` data, idle is 20 MB against 85 MB (128 MB before), and loading the board keeps them at about 26 MB and
+87 MB. A checkout's `.ts` (test servers, `bin/huntaway` in `server-ts/`) idles at 132 MB on the live copy, and its
+helpers at 78 and 80 MB: Node's TypeScript compiler, below.
 
-- At rest, Node costs about 130 MB more: its runtime and heap, and the compiled server code.
-- Under load the two are close. The Rust server's RSS keeps growing over the rounds because glibc's malloc keeps freed
-  memory in its per-thread arenas: with `MALLOC_ARENA_MAX=2` the same run ends at 166 MB rather than 421 MB (the TS
-  server's single thread isn't affected: 322 MB).
-- Each agent run starts its own `mcp` and `gh-mcp` helpers, so the TS port also costs about 160 MB more per running
-  agent: with ten agents at work, that's 1.6 GB more than the Rust helpers' 160 MB.
+- At rest, Node costs about 70 MB more: its runtime and heap, and the server's code. About 45 MB of that is any Node
+  process's (most of it the pages of the `node` binary, which a package's processes share), which is also most of each
+  helper's.
+- Under load the TS server stays lower. The Rust server's RSS keeps growing over the rounds because glibc's malloc keeps
+  freed memory in its per-thread arenas: with `MALLOC_ARENA_MAX=2` the same run ends at 166 MB rather than 421 MB.
+- Each agent run starts its own `mcp` and `gh-mcp` helpers, so the TS port also costs about 95 MB more per running
+  agent than the Rust helpers' 16 MB (less in PSS, as they share Node's pages).
+
+### What HA-181 changed
+
+Where the 172 MB of an idle server went (`process.memoryUsage()`, a heap snapshot and `/proc/<pid>/smaps`): about 60 MB
+was the `node` binary's pages, 74 MB V8's heap, of which a full GC left 32 MB live, and 40 MB malloc'd outside it. Of
+what was live, about 23 MB was the server's code (126 modules, 1.5 MB of JavaScript) and Node's own, and 9 MB Node's
+TypeScript compiler.
+
+- **Precompiled `.js` in packages** (`scripts/package-server.sh`, `tsconfig.build.json`): run as `.ts`, every process
+  loads Node's type stripper (amaro: swc as WebAssembly), about 20 MB of RSS each, the helpers included. A checkout still
+  runs the `.ts`, as tests and test servers do.
+- **A small young generation** (`--max-semi-space-size=2`, set by `bin/huntaway`): V8 lets the young generation grow to
+  two 16 MB semi-spaces as the server starts, and an idle server then allocates too little to collect them, so it kept
+  20 to 30 MB of garbage. With 2 MB ones its heap is collected, and V8's memory reducer gives back what a burst of
+  load left about 30 s after it ends.
+- **A 1 GB old-space limit** (`--max-old-space-size=1024`; V8's default here is about 4 GB): under a lower limit V8 grows
+  the heap less eagerly, so loading every thread peaks at about 240 MB rather than 340 to 380 MB. The largest thread on
+  the live board is 12 MB of JSON. Together with the young generation, loading every thread 5 times takes about 10%
+  longer (15.5 s rather than 14.2 s).
+- **A fixed malloc mmap threshold** (`MALLOC_MMAP_THRESHOLD_=131072`, which `bin/huntaway` gives node alone and
+  `main.ts` takes out of what agents and git inherit): glibc serves blocks above its threshold with mappings of their
+  own, which go back to the system when freed, but raises the threshold (up to 32 MB) as they're freed, so the large
+  response bodies and query results that follow come from its heap, which kept 50 to 100 MB after a burst of load.
+- `demo.ts` loads only for `--demo`.
+
+Tried and left out:
+
+- Lazy imports for the rarely used parts: all the server's modules cost about 8 MB of heap over a bare Node, and the
+  rarely used ones (broker, SSH, push, release updates, Codex, `gh-mcp`) are 18% of the code, so 1 to 2 MB at most;
+  most have several static importers (`gh_mcp.ts` 19, `update/admin.ts` 8).
+- SQLite's `cache_size`: the server keeps one connection, and its default page cache is 2 MB.
+- `--optimize-for-size`: Node doesn't take it in `NODE_OPTIONS`, and the flags above already do what it's for here.
