@@ -17,7 +17,7 @@ import * as automations from "../integrations/automations.ts";
 import { launch } from "./runner/launch.ts";
 import { requeue_ahead, check_not_archived, start_unblocked } from "./runner/send.ts";
 import { requeue_steers, set_writes_documents, write_steers, close_unless_taken_in, has_queued, send_queued, turn_ended } from "./runner/queue.ts";
-import { finish } from "./runner/output.ts";
+import { finish, settle_plans } from "./runner/output.ts";
 import { start_queued_merges } from "./runner/merge.ts";
 
 export * from "./runner/access.ts";
@@ -349,6 +349,8 @@ export function work_dir(state: Shared, task: Task): string {
 /** Startup: resume following runs that were active when the server stopped. */
 export function load_active(state: Shared) {
   runs.resume_reaping(state);
+  // Before the runs carry on and end: their own ends settle theirs.
+  settle_plans(state);
   const active = db.active_runs(state.db());
   for (const run of active) {
     state.runs.set(run.task_id, { run_id: run.id, cancel: null });
