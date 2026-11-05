@@ -110,7 +110,7 @@ test("picking_one_completes_the_others_and_keeps_uncommitted_work", async () => 
   assert.ok(existsSync(join(c_wt, "draft")));
   const repo = join(root, "repo");
   assert.ok(has_ref(repo, `refs/heads/${b.branch}`));
-  const said = db.list_messages(s.db(), b.id);
+  const said = testing.messages(s.db(), b.id);
   assert.ok(said.some((m: any) => typeof m.data.text === "string" && m.data.text.includes("X-1, made from the same prompt, was picked")));
 
   // A task completed as not done isn't picked over the one that was, until it's moved out of Done.

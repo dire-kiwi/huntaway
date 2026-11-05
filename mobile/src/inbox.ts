@@ -4,6 +4,7 @@
 // (answered in place). A task with a prompt or a question shows once, as that.
 import { isScratch, type Client, type Message, type PendingPermission, type Project, type Task } from "@huntaway/client";
 import { loadProfiles, pickedProfile } from "./boardData";
+import { openItemQuestion } from "./thread";
 
 export interface BoardRef {
   id: string;
@@ -142,8 +143,15 @@ export async function loadBoardInbox(client: Client, board: BoardRef, profile: s
           tasks
             .filter((t) => t.status === "needs_attention")
             .map(async (t) => {
-              const page = await client.messagePage(hostId, t.id, { limit: 20 }).catch(() => null);
-              const q = page && openQuestion(page.messages);
+              // A task whose items are its thread's source (API 122) has no messages since it moved onto them.
+              let q: Message | undefined;
+              if (t.thread_source === "items") {
+                const w = await client.thread<{ requests?: unknown[] }>(hostId, t.id, 20).catch(() => null);
+                q = w ? openItemQuestion(t.id, w.requests ?? []) : undefined;
+              } else {
+                const page = await client.messagePage(hostId, t.id, { limit: 20 }).catch(() => null);
+                q = page ? openQuestion(page.messages) : undefined;
+              }
               if (q) questions.set(t.id, q);
             }),
         );

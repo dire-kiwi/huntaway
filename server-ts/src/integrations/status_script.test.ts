@@ -24,7 +24,7 @@ function project_and_task(s: Shared, repo: string): [Project, Task] {
 }
 
 function events(s: Shared, task_id: string): any[] {
-  return db.list_messages(s.db(), task_id).filter((m: any) => m.kind === "event").map((m: any) => m.data);
+  return testing.messages(s.db(), task_id).filter((m: any) => m.kind === "event").map((m: any) => m.data);
 }
 
 async function settled(task_id: string) {

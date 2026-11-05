@@ -149,6 +149,9 @@ const HOST: Array<[string, string]> = [
   ["PATCH", "tasks/*"],
   ["GET", "tasks/*/messages"],
   ["POST", "tasks/*/messages"],
+  // A thread whose items are its source (API 122) has no messages since it moved onto them: its window and pages.
+  ["GET", "tasks/*/thread"],
+  ["GET", "tasks/*/thread/items"],
   ["POST", "tasks/*/questions/*"],
   ["POST", "tasks/*/stop"],
   ["POST", "attachments"],

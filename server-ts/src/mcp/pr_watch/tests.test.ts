@@ -214,9 +214,10 @@ function sweep_at(s: Shared, watched: Map<string, Watched>, start: number, polls
 
 /** The messages the board sent the agent of `id` to wake it. */
 function wakes(s: Shared, id: string): string[] {
-  return db
-    .all<{ data: string }>(s.db(), "SELECT data FROM messages WHERE task_id=?1 AND kind='user' ORDER BY id", id)
-    .map((r) => JSON.parse(r.data))
+  return testing
+    .messages(s.db(), id)
+    .filter((m) => m.kind === "user")
+    .map((m) => m.data)
     .filter((m) => m.auto === true)
     .map((m) => m.text);
 }
@@ -384,7 +385,7 @@ test("comments_alone_wake_it_ten_times_in_a_row_until_the_user_writes", () =>
     await sweep_at(s, watched, start, 30);
     await sweep_at(s, watched, start, 31);
     assert.equal(wakes(s, t.id).length, COMMENT_WAKES);
-    const said = () => db.value<number>(s.db(), "SELECT COUNT(*) FROM messages WHERE task_id=?1 AND kind='event' AND data LIKE '%times in a row%'", t.id);
+    const said = () => testing.messages(s.db(), t.id).filter((m) => m.kind === "event" && JSON.stringify(m.data).includes("times in a row")).length;
     assert.equal(said(), 1);
     // Once the user writes to the agent, it goes with the next.
     await sleep(5);
@@ -597,9 +598,10 @@ function fake_gh(dir: string) {
 
 /** The messages sent to the agent of `id` on the user's behalf (not the board's own). */
 function users(s: Shared, id: string): string[] {
-  return db
-    .all<{ data: string }>(s.db(), "SELECT data FROM messages WHERE task_id=?1 AND kind='user' ORDER BY id", id)
-    .map((r) => JSON.parse(r.data))
+  return testing
+    .messages(s.db(), id)
+    .filter((m) => m.kind === "user")
+    .map((m) => m.data)
     .filter((m) => m.auto !== true)
     .map((m) => m.text);
 }

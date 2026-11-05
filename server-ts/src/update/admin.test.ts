@@ -370,7 +370,7 @@ test("start_without_a_backup_is_only_for_the_first_server_bin_huntaway_starts", 
 /**
  * HA-213: with IA_NEW_DB_FILE, a server on a data dir an older build used copies its database into huntaway-2.db and
  * leaves the old file as it was; Copy again copies it again on a restart, and the restart doesn't pass --recopy-db or
- * IA_RECOPY_DB on (an older build would exit on the flag). Without IA_NEW_DB_FILE, nothing changes.
+ * IA_RECOPY_DB on (an older build would exit on the flag). With IA_NEW_DB_FILE=0, nothing changes.
  */
 test("the_new_database_file_is_copied_once_and_again_on_request", async () => {
   const dir = testing.temp_dir();
@@ -382,7 +382,7 @@ test("the_new_database_file_is_copied_once_and_again_on_request", async () => {
 
   // Off: the server uses huntaway.db, as it did.
   let port = await free_port();
-  let s = serve_bin(["--port", String(port)], { IA_NEW_DB_FILE: "" }, dir);
+  let s = serve_bin(["--port", String(port)], { IA_NEW_DB_FILE: "0" }, dir);
   await s.ready(1);
   const token = readFileSync(join(dir, "auth_token"), "utf8").trim();
   const req = (path: string, body?: unknown) =>

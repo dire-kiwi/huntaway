@@ -2,22 +2,62 @@
 // its reply streaming in), the prompts and questions it waits on, kept current from the board's events, with earlier
 // pages on request.
 import type { Client, Message, Task } from "@huntaway/client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, Text, View } from "react-native";
 import { Markdown } from "./markdown";
 import { PermissionCard, QuestionCard, toolSummary } from "./prompts";
 import { useBoardEvents, useLoad } from "./session";
 import { colors } from "./theme";
-import { applyDelta, endsDelta, hiddenUser, threadItems, withMessage, type ThreadItem } from "./thread";
+import { applyDelta, endsDelta, hiddenUser, itemThreadItems, threadItems, withMessage, type ThreadItem } from "./thread";
 import { Button, Empty, ErrorText, s } from "./ui";
 
 const PAGE = 60;
+/** A thread kept as items loads a window of this many items (and pages of as many), which its tool calls are most of. */
+const ITEMS = 150;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Any = any;
+
+/**
+ * A thread as it's loaded: its messages (with whether there are earlier ones), or for a task whose items are its
+ * source (API 122, which has no messages since it moved onto them), its rows from its items (`items`), and the index
+ * of the first item loaded (`start`; earlier items are there while it's above 0).
+ */
+interface Loaded {
+  messages: Message[];
+  more: boolean;
+  subagents: unknown[];
+  items?: ThreadItem[];
+  start?: number;
+}
+
+/** Task `id`'s thread, from its items if they're its source, else its latest page of messages. */
+async function loadThread(client: Client, host: string, id: string): Promise<Loaded> {
+  const task = (await client.task(host, id)).task;
+  if (task?.thread_source !== "items") return client.messagePage(host, id, { limit: PAGE });
+  const w = await client.thread<Any>(host, id, ITEMS);
+  return { messages: [], more: (w.start ?? 0) > 0, subagents: [], items: itemThreadItems(w.items ?? [], w.requests ?? [], w.context?.length ?? 0), start: w.start ?? 0 };
+}
 
 /** Task `id` on host `host` of board `boardId`, and its thread, kept current. */
 export function useThread(boardId: string, client: Client | undefined, host: string, id: string) {
   const detail = useLoad(async () => (client && id ? (await client.task(host, id)).task : undefined), [boardId, host, id]);
-  const thread = useLoad(
-    async () => (client && id ? client.messagePage(host, id, { limit: PAGE }) : { messages: [] as Message[], more: false, subagents: [] }),
+  const thread = useLoad(async (): Promise<Loaded> => (client && id ? loadThread(client, host, id) : { messages: [], more: false, subagents: [] }), [boardId, host, id]);
+  // A thread kept as items is loaded again as its messages are written (they come as events too, but its rows are its
+  // items'), at most every half a second.
+  const again = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reloadSoon = () => {
+    if (again.current) return;
+    again.current = setTimeout(() => {
+      again.current = null;
+      thread.reload();
+    }, 500);
+  };
+  useEffect(
+    () => () => {
+      if (again.current) clearTimeout(again.current);
+      again.current = null;
+    },
     [boardId, host, id],
   );
   // The streamed reply and a request for earlier messages belong to one thread: the Assistant tab keeps this mounted
@@ -41,32 +81,52 @@ export function useThread(boardId: string, client: Client | undefined, host: str
       return;
     }
     if (ev.host_id !== host) return;
-    if (ev.type === "task" && ev.task?.id === id) detail.setData(ev.task as Task);
+    if (ev.type === "task" && ev.task?.id === id) {
+      detail.setData(ev.task as Task);
+      // It moved onto items: its rows are its items' from now on.
+      if ((ev.task as Task).thread_source === "items" && thread.data && !thread.data.items) reloadSoon();
+    }
     else if ((ev.type === "message" || ev.type === "message_updated") && ev.task_id === id) {
       const m = ev.message as Message;
       if (endsDelta(m)) setDelta(() => "");
-      thread.setData((t) => ({ more: t?.more ?? false, subagents: t?.subagents ?? [], messages: withMessage(t?.messages ?? [], m) }));
+      if (thread.data?.items) reloadSoon();
+      else thread.setData((t) => ({ ...t, more: t?.more ?? false, subagents: t?.subagents ?? [], messages: withMessage(t?.messages ?? [], m) }));
+    } else if (ev.type === "thread_resync" && ev.task_id === id && thread.data?.items) {
+      // Rebuilt: what's loaded may not be its thread now.
+      reloadSoon();
     } else if ((ev.type === "delta" || ev.type === "delta_reset") && ev.task_id === id) setDelta((d) => applyDelta(d, ev));
   });
 
-  const items = useMemo(() => threadItems(thread.data?.messages ?? []).filter((it) => !hiddenUser(it)), [thread.data]);
+  const items = useMemo(() => (thread.data?.items ?? threadItems(thread.data?.messages ?? [])).filter((it) => !hiddenUser(it)), [thread.data]);
   // Newest first, for the inverted list.
   const shown = useMemo(() => [...items].reverse(), [items]);
 
   const older = async () => {
     const first = thread.data?.messages[0];
-    if (!client || !first) return;
+    const start = thread.data?.items ? thread.data.start : undefined;
+    if (!client || (!first && !start)) return;
     const asked = key;
     setOlderState({ key: asked, busy: true, error: null });
     let error: string | null = null;
     try {
-      const page = await client.messagePage(host, id, { before: first.id, limit: PAGE });
-      // Another thread's shown now: these aren't its messages.
-      if (current.current === asked) {
-        thread.setData((t) => {
-          const have = new Set((t?.messages ?? []).map((m) => m.id));
-          return { more: page.more, subagents: t?.subagents ?? [], messages: [...page.messages.filter((m) => !have.has(m.id)), ...(t?.messages ?? [])] };
-        });
+      if (start) {
+        const page = await client.threadItems<Any>(host, id, start, ITEMS);
+        const rows = itemThreadItems(page.items ?? [], page.requests ?? [], page.context?.length ?? 0);
+        if (current.current === asked) {
+          thread.setData((t) => {
+            const have = new Set((t?.items ?? []).map((it) => it.key));
+            return { ...t!, more: page.start > 0, start: page.start, items: [...rows.filter((it) => !have.has(it.key)), ...(t?.items ?? [])] };
+          });
+        }
+      } else {
+        const page = await client.messagePage(host, id, { before: first!.id, limit: PAGE });
+        // Another thread's shown now: these aren't its messages.
+        if (current.current === asked) {
+          thread.setData((t) => {
+            const have = new Set((t?.messages ?? []).map((m) => m.id));
+            return { more: page.more, subagents: t?.subagents ?? [], messages: [...page.messages.filter((m) => !have.has(m.id)), ...(t?.messages ?? [])] };
+          });
+        }
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);

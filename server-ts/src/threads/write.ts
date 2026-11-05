@@ -74,16 +74,7 @@ export function written(c: Conn, m: Message, flagged: boolean, inserted: boolean
         if (!inserted || has_earlier(c, m)) return void rebuild_rows(c, m.task_id);
         run(c, "INSERT INTO threads (task_id, converter, created_at) VALUES (?1, ?2, ?3)", m.task_id, CONVERTER_VERSION, now());
       }
-      const writes = row?.writes ?? 0;
-      const l = translator(c, m.task_id, writes);
-      const step = l.t.message({ id: m.id, kind: m.kind, data: m.data, created_at: m.created_at });
-      // A translator or store bug, for the tests.
-      reached("threads:translated");
-      const saved = store.append(c, m.task_id, step.events, { message_id: m.id });
-      for (const [id, meta] of step.meta) store.set_item_meta(c, m.task_id, id, meta);
-      run(c, "UPDATE threads SET writes=?2 WHERE task_id=?1", m.task_id, writes + 1);
-      l.writes = writes + 1;
-      if (saved.length) written_events.set(m, saved);
+      write_step(c, m, row?.writes ?? 0);
     });
   } catch (e) {
     forget(c, m.task_id);
@@ -91,7 +82,48 @@ export function written(c: Conn, m: Message, flagged: boolean, inserted: boolean
     console.error(`${now()} ERROR huntaway: task ${m.task_id}'s thread stops being written as items (until huntaway threads-rebuild): ${why}`);
     run(c, "INSERT INTO threads (task_id, error, created_at) VALUES (?1, ?2, ?3) ON CONFLICT (task_id) DO UPDATE SET error=excluded.error", m.task_id, why, now());
   }
-  // The agent's message is saved: what streamed into it is in its items now.
+  saved_stream(c, m, inserted);
+}
+
+/**
+ * Message `m` of a task whose thread's source is its items (threads/source.ts), inserted (`inserted`) or changed in
+ * place, in the caller's transaction: it's written as items only, and no messages row. False if translating or storing
+ * it failed (logged, and nothing of it written: a savepoint), so the caller keeps it another way. Unlike a thread kept
+ * beside its messages, a failure doesn't stop the thread's live writes: there's nothing else to read it from.
+ */
+export function wrote_items(c: Conn, m: Message, inserted: boolean): boolean {
+  reached("threads:write");
+  const writes = value<number>(c, "SELECT writes FROM threads WHERE task_id=?1", m.task_id);
+  try {
+    tx(c, () => {
+      // Moving onto items made the row (source.ts's `flip`); one gone since starts again.
+      if (writes === undefined) run(c, "INSERT INTO threads (task_id, converter, created_at) VALUES (?1, ?2, ?3)", m.task_id, CONVERTER_VERSION, now());
+      write_step(c, m, writes ?? 0);
+    });
+  } catch (e) {
+    forget(c, m.task_id);
+    console.error(`${now()} ERROR huntaway: task ${m.task_id}'s message ${m.id} couldn't be written as items: ${err_str(e)}`);
+    return false;
+  }
+  saved_stream(c, m, inserted);
+  return true;
+}
+
+/** Translates message `m` and writes its events, metas and the thread's `writes`, for a thread at `writes`. */
+function write_step(c: Conn, m: Message, writes: number): void {
+  const l = translator(c, m.task_id, writes);
+  const step = l.t.message({ id: m.id, kind: m.kind, data: m.data, created_at: m.created_at });
+  // A translator or store bug, for the tests.
+  reached("threads:translated");
+  const saved = store.append(c, m.task_id, step.events, { message_id: m.id });
+  for (const [id, meta] of step.meta) store.set_item_meta(c, m.task_id, id, meta);
+  run(c, "UPDATE threads SET writes=?2 WHERE task_id=?1", m.task_id, writes + 1);
+  l.writes = writes + 1;
+  if (saved.length) written_events.set(m, saved);
+}
+
+/** The agent's message `m` is saved (inserted): what streamed into it is in its items now. */
+function saved_stream(c: Conn, m: Message, inserted: boolean): void {
   if (inserted && m.kind === "claude" && m.data?.type === "assistant" && m.data?.parent_tool_use_id == null) streams.get(c)?.delete(m.task_id);
 }
 
@@ -146,12 +178,14 @@ const failed = new WeakMap<Conn, Set<string>>();
  * opened, or when a reader reads it (threads/history.ts's `source`).
  */
 export function ensure(c: Conn, task_id: string): boolean {
-  const r = one<{ thread_items: number; converter: number | null; error: string | null; has: number }>(
+  const r = one<{ thread_items: number; thread_source: string; converter: number | null; error: string | null; has: number }>(
     c,
-    "SELECT t.thread_items, h.converter, h.error, h.task_id IS NOT NULL AS has FROM tasks t LEFT JOIN threads h ON h.task_id = t.id WHERE t.id=?1",
+    `SELECT t.thread_items, t.thread_source, h.converter, h.error, h.task_id IS NOT NULL AS has
+     FROM tasks t LEFT JOIN threads h ON h.task_id = t.id WHERE t.id=?1`,
     task_id,
   );
-  if (!r || r.error || (r.thread_items && r.has && r.converter === CONVERTER_VERSION)) return false;
+  // A thread whose items are its source has no messages to rebuild it from.
+  if (!r || r.thread_source === "items" || r.error || (r.thread_items && r.has && r.converter === CONVERTER_VERSION)) return false;
   if (failed.get(c)?.has(task_id) || !setting_on(c)) return false;
   // None yet: its first message flags it, as for a new task.
   if (!r.thread_items && !one(c, "SELECT 1 FROM messages WHERE task_id=?1 LIMIT 1", task_id)) return false;
@@ -167,8 +201,11 @@ export function ensure(c: Conn, task_id: string): boolean {
   }
 }
 
-function rebuild_rows(c: Conn, task_id: string, keep = true): Rebuilt {
-  if (!one(c, "SELECT 1 FROM tasks WHERE id=?1", task_id)) throw new Error(`no task ${task_id}`);
+export function rebuild_rows(c: Conn, task_id: string, keep = true): Rebuilt {
+  const task = one<{ thread_source: string }>(c, "SELECT thread_source FROM tasks WHERE id=?1", task_id);
+  if (!task) throw new Error(`no task ${task_id}`);
+  // Its messages stop where it moved onto items: a rebuild from them would lose everything since.
+  if (task.thread_source === "items") throw new Error(`task ${task_id}'s thread is written as items only (its items are its source), so it can't be rebuilt from its messages`);
   store.clear(c, task_id);
   // A translator or store bug in a rebuild, for the tests.
   reached("threads:rebuild");

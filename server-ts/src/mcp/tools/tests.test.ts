@@ -1982,7 +1982,7 @@ test("a_review_thread_isnt_a_task_by_its_id_either", async () => {
     const e = await err(call(s, me, tool, args));
     assert.equal(e, `task ${thread.id}`, tool);
   }
-  assert.equal(db.list_messages(s.db(), thread.id).length, 0);
+  assert.equal(testing.messages(s.db(), thread.id).length, 0);
   assert.equal(db.get_task(s.db(), thread.id)!.queued_message, null);
   assert.equal((await call(s, me, "get_task", { task_id: reviewed.id })).title, "Reviewed");
 });

@@ -231,6 +231,11 @@ export interface Task {
    * as items setting on, see threads/write.ts), so the thread view can draw it from `/tasks/{id}/thread`.
    */
   thread_items: boolean;
+  /**
+   * Where its thread is written (API 122, threads/source.ts): `items`, its items are the source and no messages are
+   * written for it; `messages`, its messages are (and its items too, if `thread_items`).
+   */
+  thread_source: "messages" | "items";
   /** The conversation rollback its next run makes, after a rewind (a checkpoints::Rewind); left out when there's none. */
   rewind?: any;
   cost_usd: number;
@@ -361,6 +366,7 @@ export function Task_from_row(r: any): Task {
     summaries,
     context: json_opt(r.context, Context_from_json),
     thread_items: !!r.thread_items,
+    thread_source: r.thread_source === "items" ? "items" : "messages",
   });
   const rewind = rewind_column(r.rewind);
   if (rewind) t.rewind = rewind;

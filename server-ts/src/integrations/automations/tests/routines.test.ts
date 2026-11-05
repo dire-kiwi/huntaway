@@ -120,7 +120,7 @@ function said(s: Shared, task_id: string, text: string) {
 }
 
 function reports(s: Shared, task_id: string): any[] {
-  return db.list_messages(s.db(), task_id).filter((m) => m.kind === "report").map((m) => m.data);
+  return testing.messages(s.db(), task_id).filter((m) => m.kind === "report").map((m) => m.data);
 }
 
 function req(params: Record<string, string>, body: any = {}): Req {
@@ -351,7 +351,7 @@ test("a_quiet_run_posts_nothing_and_a_report_reaches_the_assistant_once", () => 
   assert.equal(reports(s, the_assistant.id)[1].text, "Out of usage");
   // The assistant reads them with its next prompt, once.
   const [unread, ids] = routines.unread_reports(s, the_assistant.id)!;
-  routines.mark_read(s, ids);
+  routines.mark_read(s, the_assistant.id, ids);
   assert.ok(unread.includes('"Inbox" reported') && unread.includes("Two new mails from the bank") && unread.includes('"Inbox" failed'), unread);
   assert.equal(routines.unread_reports(s, the_assistant.id), null);
 });
@@ -727,7 +727,7 @@ test("reports_stay_unread_until_the_assistant_has_started_with_them", () => {
   const [text, ids] = routines.unread_reports(s, the_assistant.id)!;
   assert.ok(text.includes("New mail."));
   assert.deepEqual(routines.unread_reports(s, the_assistant.id)![1], ids);
-  routines.mark_read(s, ids);
+  routines.mark_read(s, the_assistant.id, ids);
   assert.equal(routines.unread_reports(s, the_assistant.id), null);
 });
 

@@ -157,7 +157,8 @@ test("unknown_api_routes_get_a_json_404_not_the_ui", async () => {
 });
 
 test("threads_are_listed_whole_or_in_pages", async () => {
-  const s = testing.state();
+  // The message routes, for a task on messages (one on items has none since it moved).
+  const s = testing.on_items(testing.state(), false);
   const profile = db.insert_profile(s.db(), "p", [], null);
   const t = db.insert_task(s.db(), new_task(profile.id));
   const add = (data: any) => db.insert_message(s.db(), t.id, "claude", data).id;
@@ -1371,12 +1372,12 @@ async function run_ends(s: AppState, id: string) {
 }
 
 function last_prompt(s: AppState, id: string): string {
-  const m = db.list_messages(s.db(), id).filter((m) => m.kind === "user").pop()!;
+  const m = testing.messages(s.db(), id).filter((m) => m.kind === "user").pop()!;
   return m.data.text;
 }
 
 function approval_cards(s: AppState, id: string): db.Message[] {
-  return db.list_messages(s.db(), id).filter((m) => m.kind === "question" && m.data.merge_approval === true);
+  return testing.messages(s.db(), id).filter((m) => m.kind === "question" && m.data.merge_approval === true);
 }
 
 const pick = (choice: string): questions.Answer => ({ choices: [choice], text: null });

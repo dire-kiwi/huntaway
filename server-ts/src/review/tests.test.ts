@@ -387,7 +387,7 @@ function reviewable(s: AppState): [Task, string] {
 
 /** The text of the first message sent to a thread. */
 function asked(s: AppState, thread_id: string): string {
-  return db.list_messages(s.db(), thread_id).find((m: any) => m.kind === "user")!.data.text;
+  return testing.messages(s.db(), thread_id).find((m: any) => m.kind === "user")!.data.text;
 }
 
 test("each_reviewer_looks_for_what_its_own_instructions_say_and_has_its_own_skills", async () => {
@@ -619,8 +619,8 @@ test("a_task_that_started_after_its_base_branch_is_reviewed_from_where_it_starte
       db.update_task(s.db(), task.id, fields);
       await start(s, task.id, true);
       const thread = db.review_threads(s.db(), task.id)[0];
-      const sent = db
-        .list_messages(s.db(), thread.id)
+      const sent = testing
+        .messages(s.db(), thread.id)
         .map((m: any) => JSON.stringify(m.data))
         .join("");
       const own = `\`git diff ${from}...HEAD\`) rather than \`pr_diff\``;
@@ -656,8 +656,8 @@ test("a_task_out_of_rounds_of_fixes_can_be_given_as_many_again", () => {
     assert.ok(s.is_running(task.id));
     const r = review_of(s, task);
     assert.deepEqual([r.fixes, r.extra_rounds], [3, 2]);
-    const sent = db
-      .list_messages(s.db(), task.id)
+    const sent = testing
+      .messages(s.db(), task.id)
       .reverse()
       .find((m: any) => m.kind === "user")!;
     assert.equal(sent.data.review_round, 3);

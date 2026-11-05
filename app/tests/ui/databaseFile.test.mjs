@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import { startServer, withBrowser } from "./harness.mjs";
 
-// The new database file is off by default (HA-213): this file's server has it on (test-server.sh keeps it for restarts).
+// The new database file is on by default since HA-222; this file says so for its server (test-server.sh keeps it for restarts).
 process.env.IA_NEW_DB_FILE = "1";
 
 let server;

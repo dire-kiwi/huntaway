@@ -251,9 +251,10 @@ test("copying_again_that_fails_carries_on_with_the_new_file", () => {
   }
 });
 
-test("the_new_file_is_off_unless_ia_new_db_file_turns_it_on", () => {
-  assert.equal(enabled({}), false);
-  assert.equal(enabled({ IA_NEW_DB_FILE: "" }), false);
+// HA-222 turned it on.
+test("the_new_file_is_on_unless_ia_new_db_file_turns_it_off", () => {
+  assert.equal(enabled({}), true);
+  assert.equal(enabled({ IA_NEW_DB_FILE: "" }), true);
   for (const off of ["0", "false", "no", "off"]) assert.equal(enabled({ IA_NEW_DB_FILE: off }), false, off);
   for (const on of ["1", "true", "yes"]) assert.equal(enabled({ IA_NEW_DB_FILE: on }), true, on);
 });

@@ -36,6 +36,7 @@ test("reports_a_profiles_activity_in_range", () => {
        ('r1','me','p1','review',0,'Review','done','t1'),
        ('x1','other','p9','task',1,'Not mine','todo',NULL);
      ALTER TABLE tasks ADD COLUMN thread_items INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE tasks ADD COLUMN thread_source TEXT NOT NULL DEFAULT 'messages';
      INSERT INTO messages VALUES
        ('t1','user','{"text":"Start working on this task.","auto":true}','2026-10-01T09:00:00.000Z'),
        ('t1','user','{"text":"looks good"}','2026-10-01T10:00:00.000Z'),

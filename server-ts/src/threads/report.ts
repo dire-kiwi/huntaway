@@ -257,6 +257,10 @@ export function run(o: Options & { db: string }, print: (s: string) => void = (s
     for (const { id, key } of wanted) {
       const task = db.get_task(c, id);
       if (!task) throw new Error(`no task ${id}`);
+      // Its items are its source (threads/source.ts): its messages stop where it moved onto them, so there's nothing
+      // to translate.
+      if (task.thread_source === "items" && !o.tasks.length) continue;
+      if (task.thread_source === "items") throw new Error(`task ${key}'s thread is on items: its messages stop where it moved onto them`);
       const { report, translated } = task_report(c, task, key);
       if (out && translated) {
         const w = performance.now();

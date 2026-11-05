@@ -28,7 +28,7 @@ process.env.IA_CLAUDE_BIN = "/nonexistent/claude";
 process.env.IA_CODEX_BIN = "/nonexistent/codex";
 
 function setup(on = true): { s: AppState; events: any[]; task: (title?: string) => Task } {
-  const s = testing.state();
+  const s = testing.on_items(testing.state(), false);
   db.set_setting(s.db(), write.SETTING, on ? "true" : "false");
   const events: any[] = [];
   s.events.subscribe((e) => events.push(e));
@@ -99,7 +99,7 @@ test("a routine's report marked read changes its item in place, and the thread g
   const t = task();
   s.add_message(t.id, "user", { text: "hi" });
   const r = s.add_message(t.id, "report", { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "reported", text: "All fine" });
-  routines.mark_read(s, [r.id]);
+  routines.mark_read(s, t.id, [r.id]);
   assert.equal(store.has_thread(s.db(), t.id), true, "its live writes didn't stop");
   const item: any = store.get_item(s.db(), t.id, `legacy:${r.id}`);
   assert.deepEqual([item.type, item.code, item.text, item.metadata.read], ["notice", "routine_report", "All fine", true]);

@@ -8,6 +8,8 @@ import { afterSend, answered, answersMessage, loadAnswers, readFields, resetFiel
 import { isWholePage, themedPlan } from "./planTheme";
 import planCss from "./planTheme.css?raw";
 import { useHost, useThreadMessages } from "../../store";
+import { useDrawsItems, useItemThread } from "../../threadView";
+import type { Item as ThreadItem } from "../../threads";
 import type { Progress } from "../board/TaskCard";
 import { Composer } from "./thread/Composer";
 import { Markdown } from "./thread/Markdown";
@@ -67,6 +69,20 @@ function lastReply(messages: Message[] | undefined): string | null {
     }
   }
   return null;
+}
+
+/**
+ * lastReply for a thread drawn from its items (threadView.ts): its latest assistant message in the main conversation,
+ * its text blocks (items of their own, `legacy:<message>:<block>`) joined, or a turn's result text no message said.
+ */
+function lastItemReply(items: readonly ThreadItem[] | undefined): string | null {
+  const said = (items ?? []).filter((i): i is Extract<ThreadItem, { type: "assistant_message" }> => i.type === "assistant_message" && !i.parent_id);
+  const last = said.at(-1);
+  if (!last) return null;
+  const message = (id: string) => /^legacy:(\d+)(?::|$)/.exec(id)?.[1];
+  const of = message(last.id);
+  const text = of === undefined ? [last.text] : said.filter((i) => message(i.id) === of).map((i) => i.text);
+  return text.join("\n") || null;
 }
 
 /** A short hash of a document's content (FNV-1a), to tell its revisions apart. */
@@ -134,8 +150,12 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
     };
   }, [task.host_id, task.id, type, picked, task.document_at]);
 
-  const messages = useThreadMessages(task.id);
-  const reply = useMemo(() => (task.running ? null : lastReply(messages)), [messages, task.running]);
+  // From its items or its messages, as its thread is drawn (an items task has no messages since it moved onto them).
+  const onItems = useDrawsItems(task) && task.thread_source === "items";
+  const messages = useThreadMessages(onItems ? null : task.id);
+  const thread = useItemThread(task, onItems);
+  const items = thread?.snap?.items;
+  const reply = useMemo(() => (task.running ? null : onItems ? lastItemReply(items) : lastReply(messages)), [onItems, items, messages, task.running]);
   // The agent's last reply covers the bottom of the document, so it's closed until asked for.
   const [showReply, setShowReply] = useState(false);
 

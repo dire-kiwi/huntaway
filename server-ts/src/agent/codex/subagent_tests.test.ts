@@ -38,7 +38,7 @@ function item(state: Shared, run: Run, thread: string, it: any) {
 }
 
 function messages(state: Shared, run: Run): any[] {
-  return db.list_messages(state.db(), run.task_id).filter((m) => m.kind === "claude").map((m) => m.data);
+  return testing.messages(state.db(), run.task_id).filter((m) => m.kind === "claude").map((m) => m.data);
 }
 
 function calls(state: Shared, run: Run): any[] {

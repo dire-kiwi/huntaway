@@ -129,7 +129,7 @@ export function settle(s: AppState, task_id: string, status: string): void {
     v.status = status;
     let m: db.Message | null = null;
     try {
-      m = db.update_pending_message(s.db(), id, v);
+      m = db.update_pending_message(s.db(), id, v, task_id);
     } catch {}
     if (m) questions.emit(s, id, m);
   }

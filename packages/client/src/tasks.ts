@@ -351,6 +351,11 @@ export interface Task {
   rewind?: PendingRewind | null;
   /** Its thread is kept as items as well as messages (API 119), so the thread view can draw it from `api.thread` (see THREAD_VIEW_API). */
   thread_items?: boolean;
+  /**
+   * Where its thread is written (API 122): `items`, its items are the source and it has no messages since it moved onto
+   * them (so it's drawn from its items whatever the host's Keep threads as items setting says); `messages` as before.
+   */
+  thread_source?: "messages" | "items";
   cost_usd: number;
   last_activity_at: string;
   created_at: string;

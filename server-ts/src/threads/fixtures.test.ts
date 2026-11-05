@@ -29,7 +29,7 @@ const jsonl = (path: string): any[] =>
  * row as it was inserted, and a permission prompt's again as each update left it), as the live path will see them.
  */
 function stored(scenario: string): { messages: db.Message[]; writes: db.Message[]; live: { items: Item[]; requests: ThreadRequest[]; differences: string[] } } {
-  const s = testing.state();
+  const s = testing.on_items(testing.state(), false);
   db.set_setting(s.db(), write.SETTING, "true");
   const profile = db.insert_profile(s.db(), "p", [], null);
   const task = db.insert_task(s.db(), {

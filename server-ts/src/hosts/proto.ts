@@ -48,8 +48,12 @@ export const PROTOCOL = 1;
  * API 121: every task gets items (HA-220, step 7 of docs/threads.md): the host setting `thread_items` is on by default
  * (null is on), the batch rebuild (`GET /admin/threads`, `POST /admin/threads/batch`), and a task opened without items
  * gets them.
+ *
+ * API 122: items become the source (HA-222, step 10 of docs/threads.md): tasks' `thread_source` (`items`: no messages
+ * are written for the task since it moved onto items, so it's drawn from its items whatever the `thread_items`
+ * setting, which is only for tasks still on messages).
  */
-export const API_VERSION = 121;
+export const API_VERSION = 122;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

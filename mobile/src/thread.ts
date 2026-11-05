@@ -77,3 +77,84 @@ export const endsDelta = (m: Message) => m.kind === "claude" && m.data?.type ===
 
 /** Whether a user message is the board's own (an empty start, or an automatic one), not shown as a bubble. */
 export const hiddenUser = (it: ThreadItem) => it.type === "user" && !it.text.trim();
+
+// ---------- a thread kept as items ----------
+
+// A task whose items are its thread's source (API 122, `thread_source`, see docs/threads.md) has no messages since it
+// moved onto them: its thread is read from `GET /tasks/{id}/thread` (a window of its last items) and its pages, whose
+// items and requests are server-ts/src/threads/protocol.ts's. These give what threadItems gives from messages.
+
+/** The message an item made from one names in its id (`legacy:<message id>[:<block>]`). */
+const messageOf = (id: string): number | undefined => {
+  const m = /^legacy:(\d+)(?::|$)/.exec(id);
+  return m ? Number(m[1]) : undefined;
+};
+
+/** A request (a prompt or a question) as a row: a question the board asked (request_user_input, a merge card), or a prompt. */
+function requestItem(r: Any): ThreadItem {
+  const { message_id: n, ...md } = (r.metadata ?? {}) as Any;
+  if (r.type === "question" && r.id === `legacy:${n}` && md.tool_name === undefined) return { type: "question", key: r.id, id: n, data: md };
+  const status = typeof md.status === "string" ? md.status : r.resolution ? "answered" : "pending";
+  return { type: "permission", key: r.id, requestId: md.request_id ?? r.id, status, tool: md.tool_name ?? r.name ?? "", input: md.input ?? r.input };
+}
+
+/**
+ * The items of a thread kept as items, as threadItems gives them from messages: its main conversation's items (not a
+ * window's context items, the first `context` of them, nor subagents' own), with its requests among them: a prompt
+ * after the call it's for, the rest in the order their messages were written.
+ */
+export function itemThreadItems(items: Any[], requests: Any[], context = 0): ThreadItem[] {
+  const out: ThreadItem[] = [];
+  const asked = requests.map((r) => ({ r, at: typeof r.metadata?.message_id === "number" ? r.metadata.message_id : Infinity })).sort((a, b) => a.at - b.at);
+  const calls = new Set(items.filter((it) => it.type === "tool_call").map((it) => it.id));
+  const placed = new Set<Any>();
+  const put = (r: Any) => {
+    if (placed.has(r)) return;
+    placed.add(r);
+    out.push(requestItem(r));
+  };
+  let next = 0;
+  const upTo = (at: number) => {
+    for (; next < asked.length && asked[next].at < at; next++) if (!calls.has(asked[next].r.tool_call_id)) put(asked[next].r);
+  };
+  for (const it of items.slice(context)) {
+    if (it.parent_id) continue;
+    const n = messageOf(it.id);
+    if (n !== undefined) upTo(n);
+    const md = it.metadata ?? {};
+    if (it.type === "user_message") out.push({ type: "user", key: it.id, text: it.text ?? "", auto: md.auto });
+    else if (it.type === "assistant_message" && !md.from_result && it.text?.trim()) out.push({ type: "text", key: it.id, text: it.text });
+    else if (it.type === "tool_call") {
+      const name = it.server ? `mcp__${it.server}__${it.name}` : it.name;
+      const done = it.status !== "running" && it.status !== "pending";
+      out.push({ type: "tool", key: it.id, id: it.id, name, input: it.input, failed: done ? it.status !== "completed" : undefined, done });
+      for (const { r } of asked) if (r.tool_call_id === it.id) put(r);
+    } else if (it.type === "notice" && it.code === "routine_report") {
+      out.push({
+        type: "report",
+        key: it.id,
+        automation: String(md.automation ?? "A routine"),
+        outcome: String(md.outcome ?? "reported"),
+        text: String(md.text ?? it.text ?? ""),
+        taskId: typeof md.task_id === "string" ? md.task_id : undefined,
+        taskKey: typeof md.key === "string" ? md.key : undefined,
+      });
+    } else if (it.type === "notice" && it.level === "error" && it.code) out.push({ type: "text", key: it.id, text: it.text ?? "" });
+    else if (it.type === "notice") out.push({ type: "event", key: it.id, level: it.level ?? "info", text: it.text ?? "" });
+    else if (it.type === "turn_result" && !it.ok && !it.interrupted) out.push({ type: "result", key: it.id, error: true, text: String(it.error ?? "The run failed") });
+  }
+  for (const { r } of asked) put(r);
+  return out;
+}
+
+/**
+ * The question the board asked (request_user_input, a merge card) that a thread kept as items still waits on, as its
+ * message would be (for the Inbox): the latest such request still open.
+ */
+export function openItemQuestion(taskId: string, requests: Any[]): Message | undefined {
+  const open = requests.map(requestItem).filter((it): it is Extract<ThreadItem, { type: "question" }> => it.type === "question" && it.data?.status === "pending");
+  const last = open[open.length - 1];
+  if (!last) return undefined;
+  const r = requests.find((x) => x.id === last.key);
+  return { id: last.id, task_id: taskId, kind: "question", data: last.data, created_at: r?.created_at ?? "" };
+}

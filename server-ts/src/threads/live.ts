@@ -351,7 +351,7 @@ async function respond(s: AppState, task: Task, body: any): Promise<any> {
   }
   // A request_user_input question's is `legacy:<its message's id>`.
   const m = /^legacy:(\d+)$/.exec(request_id);
-  if (request.type === "question" && m && db.one(c, "SELECT 1 FROM messages WHERE id=?1 AND task_id=?2 AND kind='question'", Number(m[1]), task.id)) {
+  if (request.type === "question" && m && db.get_message(c, Number(m[1]), task.id)?.kind === "question") {
     if (res.outcome !== "answer") throw ApiError.bad("this question is answered (outcome answer), or replied to with a send");
     const options = new Set((request.questions[0].options ?? []).map((o) => o.label));
     const given = answers_in_order(request, res)[0] ?? [];

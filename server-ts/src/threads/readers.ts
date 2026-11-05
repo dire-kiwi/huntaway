@@ -68,6 +68,8 @@ export interface Report {
   tasks: number;
   /** Tasks that were translated for it (their readers read messages). */
   translated: number;
+  /** Tasks whose items are their source (threads/source.ts), which aren't compared: they have no messages since. */
+  on_items: number;
   /** Tasks whose translation failed, with why. */
   failed: Array<{ task_id: string; error: string }>;
   /** By reader: how many inputs it was asked about, and how many gave different answers. */
@@ -205,13 +207,18 @@ export function compare_task(cmp: Comparer, c: Conn, task_id: string): void {
 export function compare(c: Conn, only: string[] = []): Report {
   const start = Date.now();
   const cmp = new Comparer();
-  const out: Report = { tasks: 0, translated: 0, failed: [], readers: cmp.readers, differences: cmp.differences, windowed: 0, ms: 0 };
+  const out: Report = { tasks: 0, translated: 0, on_items: 0, failed: [], readers: cmp.readers, differences: cmp.differences, windowed: 0, ms: 0 };
   const ROLL_BACK = Symbol("roll back");
   try {
     db.tx(c, () => {
       const ids = only.length ? only : db.all<{ id: string }>(c, "SELECT id FROM tasks ORDER BY created_at, id").map((r) => r.id);
       const ok: string[] = [];
       for (const id of ids) {
+        // Its items are its source: its messages stop where it moved onto them, so there's nothing to compare.
+        if (db.one(c, "SELECT 1 FROM tasks WHERE id=?1 AND thread_source='items'", id)) {
+          out.on_items++;
+          continue;
+        }
         if (!history.reads_items(c, id)) {
           try {
             rebuild(c, id);
@@ -225,7 +232,9 @@ export function compare(c: Conn, only: string[] = []): Report {
       }
       out.tasks = ok.length;
       for (const id of ok) compare_task(cmp, c, id);
-      if (!only.length) compare_board(cmp, c);
+      // Reading every task from messages, as the board's readers are compared, is only the board's thread before any
+      // task moved onto items.
+      if (!only.length && !out.on_items) compare_board(cmp, c);
       throw ROLL_BACK;
     });
   } catch (e) {
@@ -258,7 +267,7 @@ function print(r: Report, examples: number, write: (s: string) => void): void {
   }
   const differ = r.differences.length;
   write(
-    `${r.tasks} tasks (${r.translated} translated for it${r.failed.length ? `, ${r.failed.length} failed` : ""}), ` +
+    `${r.tasks} tasks (${r.translated} translated for it${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.on_items ? `; ${r.on_items} on items, not compared` : ""}), ` +
       `${differ ? `${differ} differences` : "no differences"}; the messages readers' windows changed ${r.windowed} answers; ${(r.ms / 1000).toFixed(1)} s\n`,
   );
 }

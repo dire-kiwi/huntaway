@@ -134,3 +134,29 @@ test("a routine's report shows in the thread, and opens its routine's thread", a
   fireEvent.press(screen.getByText("Open A-9"));
   expect(opened).toEqual(["r9"]);
 });
+
+// HA-222: a task whose items are its thread's source has no messages since it moved onto them.
+test("a task on items is drawn from its thread's window, loaded again as it's written, with its earlier items on request", async () => {
+  const user = (n: number, text: string) => ({ id: `legacy:${n}`, type: "user_message", text });
+  let window = { items: [user(5, "five")], requests: [], start: 3, seq: 1 };
+  const client: any = {
+    task: jest.fn(async (_h: string, id: string) => ({ task: { id, running: false, thread_source: "items" } })),
+    messagePage: jest.fn(async () => ({ messages: [], more: false, subagents: [] })),
+    thread: jest.fn(async () => window),
+    threadItems: jest.fn(async (_h: string, _id: string, before: number) => ({ items: [user(1, "one")], requests: [], start: 0, context: [], before })),
+  };
+  const view = await renderHook(() => useThread("b", client, "h", "T"));
+  const rows = () => view.result.current.shown.map((it: any) => it.text);
+  await waitFor(() => expect(rows()).toEqual(["five"]));
+  expect(client.messagePage).not.toHaveBeenCalled();
+  expect(view.result.current.thread.data?.more).toBe(true);
+  // A message written to it (its event) loads the window again.
+  window = { items: [user(5, "five"), user(6, "six")], requests: [], start: 3, seq: 2 };
+  await act(async () => emitBoardEvent("b", { type: "message", host_id: "h", task_id: "T", message: { id: 6, task_id: "T", kind: "user", data: { text: "six" }, created_at: "" } }));
+  await waitFor(() => expect(rows()).toEqual(["six", "five"]), { timeout: 2000 });
+  await act(async () => view.result.current.older());
+  expect(client.threadItems).toHaveBeenCalledWith("h", "T", 3, expect.any(Number));
+  expect(rows()).toEqual(["six", "five", "one"]);
+  expect(view.result.current.thread.data?.more).toBe(false);
+  expect(view.result.current.olderBusy).toBe(false);
+});

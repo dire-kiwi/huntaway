@@ -12,7 +12,7 @@ import * as store from "./store.ts";
 import * as write from "./write.ts";
 
 function running(): [Shared, Run] {
-  const state = testing.state();
+  const state = testing.on_items(testing.state(), false);
   // Its thread is kept as items too: `converted` checks they're a rebuild's.
   db.set_setting(state.db(), write.SETTING, "true");
   const profile = db.insert_profile(state.db(), "p", [], null);

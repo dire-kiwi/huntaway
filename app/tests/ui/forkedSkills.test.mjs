@@ -4,6 +4,10 @@ import { after, before, test } from "node:test";
 import { forkedSkillMessages } from "../fixtures/forkedSkill.mjs";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
+// Its threads are seeded as messages rows, which a task whose items are its source (HA-222) has none of: its server is
+// on the older database file, where tasks stay on their messages.
+process.env.IA_NEW_DB_FILE = "0";
+
 let server, project;
 before(async () => {
   server = startServer();

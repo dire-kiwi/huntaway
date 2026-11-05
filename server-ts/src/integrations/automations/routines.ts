@@ -342,9 +342,7 @@ export function finished(s: Shared, thread: Task, outcome: runner.Outcome, atten
 export function unread_reports(s: Shared, assistant_id: string): [string, number[]] | null {
   let reports: db.Message[];
   try {
-    reports = db
-      .all(s.db(), "SELECT * FROM messages WHERE task_id=?1 AND kind='report' AND json_extract(data,'$.read') IS NOT 1 ORDER BY id", assistant_id)
-      .map(db.Message_from_row);
+    reports = history.unread_reports(s.db(), assistant_id);
   } catch {
     return null;
   }
@@ -363,15 +361,15 @@ export function unread_reports(s: Shared, assistant_id: string): [string, number
 }
 
 /** The assistant's agent has started with these reports (see `unread_reports`): they're read. */
-export function mark_read(s: Shared, ids: number[]): void {
+export function mark_read(s: Shared, task_id: string, ids: number[]): void {
   for (const id of ids) {
     try {
-      const data = db.value<string>(s.db(), "SELECT data FROM messages WHERE id=?1", id);
-      if (data == null) continue;
-      const v = JSON.parse(data);
-      if (v === null || typeof v !== "object" || Array.isArray(v)) continue;
+      // Its row, or for a thread whose items are its source, its notice's record of it (see db.get_message).
+      const m = db.get_message(s.db(), id, task_id);
+      const v = m?.data;
+      if (m?.kind !== "report" || v === null || typeof v !== "object" || Array.isArray(v)) continue;
       v.read = true;
-      db.update_message_data(s.db(), id, v);
+      db.update_message_data(s.db(), id, v, task_id);
     } catch {}
   }
 }

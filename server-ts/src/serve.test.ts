@@ -22,11 +22,13 @@ test("db_path_keeps_the_database_from_before_the_rename", () => {
   assert.equal(older_db_path(dir), join(dir, "huntaway.db"));
 });
 
-test("db_path_is_huntaway_2_db_only_with_ia_new_db_file", () => {
+test("db_path_is_huntaway_2_db_unless_ia_new_db_file_turns_it_off", () => {
   const dir = temp_dir();
   const was = process.env.IA_NEW_DB_FILE;
   try {
     delete process.env.IA_NEW_DB_FILE;
+    assert.equal(db_path(dir), join(dir, "huntaway-2.db"));
+    process.env.IA_NEW_DB_FILE = "0";
     assert.equal(db_path(dir), join(dir, "huntaway.db"));
     process.env.IA_NEW_DB_FILE = "1";
     assert.equal(db_path(dir), join(dir, "huntaway-2.db"));

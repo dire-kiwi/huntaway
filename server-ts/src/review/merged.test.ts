@@ -67,8 +67,8 @@ async function new_task(s: AppState, project: string, url: string): Promise<Task
 const task = (s: AppState, id: string) => db.get_task(s.db(), id)!;
 
 function events(s: AppState, id: string): string[] {
-  return db
-    .list_messages(s.db(), id)
+  return testing
+    .messages(s.db(), id)
     .filter((m: any) => m.kind === "event")
     .map((m: any) => m.data.text ?? "");
 }

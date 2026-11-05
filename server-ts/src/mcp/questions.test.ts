@@ -37,7 +37,7 @@ function ask_with(s: Shared, run: db.Run, call_id: string, args: any): Promise<a
 }
 
 function questions(s: Shared, task_id: string): db.Message[] {
-  return db.list_messages(s.db(), task_id).filter((m) => m.kind === "question");
+  return testing.messages(s.db(), task_id).filter((m) => m.kind === "question");
 }
 
 function pick(choices: string[], text: string | null): Answer {

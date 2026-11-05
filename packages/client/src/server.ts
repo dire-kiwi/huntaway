@@ -148,6 +148,8 @@ export const THREAD_ITEMS_API = 116;
 
 /** The host API with the batch rebuild of threads as items (`/admin/threads`), and the thread_items setting on by default. */
 export const THREADS_BATCH_API = 121;
+/** The host API where threads move onto items (tasks' `thread_source`): the thread_items setting is only for tasks still on messages. */
+export const THREAD_SOURCE_API = 122;
 
 /** The batch rebuild of threads as items (API 121): how far it's got. */
 export interface ThreadsBatch {
