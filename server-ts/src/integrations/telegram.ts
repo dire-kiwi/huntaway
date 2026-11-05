@@ -64,7 +64,7 @@ const MAX_PROMPTS = 200;
 const UPDATES = ["message", "callback_query"];
 
 /** The API version from which a host has Telegram. */
-export const TELEGRAM_API = 116;
+export const TELEGRAM_API = 117;
 
 function token_key(profile_id: string): string {
   return `telegram_token:${profile_id}`;
@@ -1472,7 +1472,7 @@ function check_profile(s: Shared, id: string) {
   if (!db.get_profile(s.db(), id)) throw ApiError.not_found("profile");
 }
 
-/** `GET /profiles/{id}/telegram` (API 116): the profile's bot, who it's linked to and what it sends. */
+/** `GET /profiles/{id}/telegram` (API 117): the profile's bot, who it's linked to and what it sends. */
 export async function get(s: Shared, r: Req) {
   check_profile(s, r.params.id);
   return view(s, r.params.id);

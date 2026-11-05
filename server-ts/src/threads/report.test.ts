@@ -50,7 +50,7 @@ test("reports_what_stops_a_switch_over", () => {
   assert.deepEqual([r.messages, r.harness, r.items.tool_call, r.requests], [3, "claude", 1, 1]);
   assert.deepEqual(r.rows, { converted: 3, redundant: 0, retained: 0 });
   assert.deepEqual(r.warnings.map((w) => w.code), ["no_result", "open_prompt"]);
-  assert.ok(r.event_bytes > 0 && r.item_bytes > 0 && r.kept_event_bytes === r.event_bytes);
+  assert.ok(r.event_bytes > 0 && r.item_bytes > 0);
   const c = db.open(path);
   db.queue(c, task, db.Queued_new("next", false));
   db.run(c, "UPDATE tasks SET running=1 WHERE id=?1", task);

@@ -667,7 +667,9 @@ case the app updates through that server, which follows a deployment only if it 
 ### Release builds
 
 Publishing a GitHub release runs `.github/workflows/release.yml`, which builds the release's tag
-and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
+and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`. Nothing else starts
+it: pull requests don't build the release (their tests are `test.yml`'s), and Actions → Release → Run
+workflow builds an existing release's tag again and replaces its files.
 
 | File | What |
 |---|---|
@@ -962,7 +964,7 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
 
 ### Telegram
 
-You can talk to a profile's assistant from Telegram (API 116), and it can reach you there. Its bot
+You can talk to a profile's assistant from Telegram (API 117), and it can reach you there. Its bot
 runs on the host the assistant runs on, which long-polls Telegram for messages, so it needs no open
 port and keeps working while that host's link to the hub is down.
 

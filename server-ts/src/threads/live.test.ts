@@ -186,21 +186,25 @@ test("event types a newer build saved are left out of a catch-up, and gone past"
 
 test("a client further behind than the log, or ahead of the thread, is told to resync", async () => {
   const { s, task } = setup();
-  // Events from two days ago, past the log's day but for its last KEEP_EVENTS.
+  // Events from two days ago, past the log's day, then one now (which prunes them), then a few more.
   const old = new Date(Date.now() - 2 * 24 * 3600_000).toISOString();
   const turns = (n: number, from: number): NewEvent[] => [...Array(n).keys()].map((i) => ({ type: "turn.started", turn_id: `t${from + i}` }));
-  store.append(s.db(), task.id, turns(store.KEEP_EVENTS + 50, 0), { at: old });
-  store.append(s.db(), task.id, turns(1, store.KEEP_EVENTS + 50));
-  const last = store.KEEP_EVENTS + 51;
+  store.append(s.db(), task.id, turns(50, 0), { at: old });
+  store.append(s.db(), task.id, turns(3, 50));
+  const last = 53;
   const at = (q: string) => `/api/tasks/${task.id}/thread/events?${q}`;
-  // The log keeps the last KEEP_EVENTS: from seq 52 on.
+  // The log keeps the last day: from seq 51 on.
   assert.deepEqual((await call(s, "GET", at("after=10")))[1], { events: [], more: false, seq: last, resync: true });
-  assert.deepEqual((await call(s, "GET", at("after=50")))[1], { events: [], more: false, seq: last, resync: true });
-  const [, kept] = await call(s, "GET", at("after=51&limit=2"));
-  assert.deepEqual([seqs(kept.events), kept.more], [[52, 53], true]);
+  assert.deepEqual((await call(s, "GET", at("after=49")))[1], { events: [], more: false, seq: last, resync: true });
+  const [, kept] = await call(s, "GET", at("after=50&limit=2"));
+  assert.deepEqual([seqs(kept.events), kept.more], [[51, 52], true]);
   assert.deepEqual((await call(s, "GET", at(`after=${last + 5}`)))[1], { events: [], more: false, seq: last, resync: true });
   // Its window is whole, at the thread's seq.
   assert.equal((await call(s, "GET", `/api/tasks/${task.id}/thread?limit=5`))[1].seq, last);
+  // With every event gone, one up to date has nothing to catch up on, and one behind resyncs.
+  store.prune(s.db(), new Date(Date.now() + 2 * 24 * 3600_000).toISOString());
+  assert.deepEqual((await call(s, "GET", at(`after=${last}`)))[1], { events: [], more: false, seq: last });
+  assert.deepEqual((await call(s, "GET", at(`after=${last - 1}`)))[1], { events: [], more: false, seq: last, resync: true });
 });
 
 test("live events reach clients, with the text streamed so far in snapshots", async () => {

@@ -12,6 +12,8 @@ import { Relocations } from "./git/relocate.ts";
 import * as worktree from "./git/worktree.ts";
 import * as status_script from "./integrations/status_script.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
+import * as threads from "./threads/write.ts";
+import * as threads_live from "./threads/live.ts";
 
 export { ApiError } from "./http.ts";
 
@@ -179,8 +181,39 @@ export class AppState {
     this.emit({ type: "task", task: t });
   }
 
+  /** A message was added (once it's committed), with its thread's events if its task keeps its thread as items. */
   emit_message(m: Message) {
     this.emit({ type: "message", task_id: m.task_id, message: m });
+    this.emit_thread_events(m);
+  }
+
+  /** A message changed in place (once it's committed): `message_updated`, and its thread's events (see emit_message). */
+  emit_message_updated(m: Message) {
+    this.emit({ type: "message_updated", task_id: m.task_id, message: m });
+    this.emit_thread_events(m);
+  }
+
+  /**
+   * The thread events written with message `m` (see threads/write.ts), as `{type: "thread_event", task_id, event}`
+   * (threads/live.ts's send_events). Only for tasks whose threads are kept as items.
+   */
+  emit_thread_events(m: Message) {
+    const events = threads.events_of(m);
+    if (events.length) threads_live.send_events(this, m.task_id, events);
+  }
+
+  /** The agent streamed `text` into the message it's writing: `delta`, and for a thread kept as items its delta event. */
+  emit_delta(task_id: string, text: string) {
+    this.emit({ type: "delta", task_id, text });
+    try {
+      threads.stream_text(this, task_id, text);
+    } catch {}
+  }
+
+  /** What streamed is done with (another message starts, or the run ended): `delta_reset`. */
+  emit_delta_reset(task_id: string) {
+    this.emit({ type: "delta_reset", task_id });
+    threads.stream_reset(this, task_id);
   }
 
   /** Insert a message and broadcast it. */

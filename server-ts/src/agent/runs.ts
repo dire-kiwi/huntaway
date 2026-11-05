@@ -34,6 +34,7 @@ import * as codex from "./codex.ts";
 import type { Shared } from "../state.ts";
 import { VERSION } from "../hosts/proto.ts";
 import { context, err_str, expand_tilde, sleep } from "../util.ts";
+import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
 export const RUN_FORMAT = 2;
@@ -768,6 +769,12 @@ export function start_pruner(state: Shared): void {
       if (p.runs || p.calls) log.info(`runs: removed ${p.runs} finished runs' folders and ${p.calls} MCP calls`);
     } catch (e) {
       log.warn(`runs: pruning failed: ${err_str(e)}`);
+    }
+    // Threads kept as items prune their own logs as they're written; this takes the quiet ones' (see threads/store.ts).
+    try {
+      threads_store.prune(state.db());
+    } catch (e) {
+      log.warn(`runs: pruning threads' events failed: ${err_str(e)}`);
     }
   };
   setTimeout(tick, 0).unref();

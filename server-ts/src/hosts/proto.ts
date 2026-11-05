@@ -29,10 +29,13 @@ export const PROTOCOL = 1;
  * on a prompt's answer, and answering prompts from a notification (push's `prompts` event setting, a prompt's push with
  * `request_id` and `answer`, and `POST /permissions/{id}/push-answer`, see integrations/push_answers.ts).
  *
- * API 116: the assistant's Telegram bot (`/profiles/{id}/telegram`, `/telegram/link` and `/telegram/owner`, see
+ * API 116: the host setting `thread_items` (Keep threads as items: new tasks' threads are written as items too, live,
+ * see docs/threads.md), so tasks have threads for API 114's routes and events.
+ *
+ * API 117: the assistant's Telegram bot (`/profiles/{id}/telegram`, `/telegram/link` and `/telegram/owner`, see
  * integrations/telegram.ts), `telegram` events, and `telegram` as who answered in the action log.
  */
-export const API_VERSION = 116;
+export const API_VERSION = 117;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

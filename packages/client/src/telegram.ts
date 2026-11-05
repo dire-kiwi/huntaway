@@ -1,9 +1,9 @@
 import { enc, type Http } from "./http";
 import { type Host, hostSupports } from "./hosts";
 
-/** Telegram (API 116): a profile's assistant talks to you through a bot of its own, run by the host the assistant is on
+/** Telegram (API 117): a profile's assistant talks to you through a bot of its own, run by the host the assistant is on
  *  (see server-ts/src/integrations/telegram.ts). */
-export const TELEGRAM_API = 116;
+export const TELEGRAM_API = 117;
 
 export const hasTelegram = (h: Host | undefined) => hostSupports(h, TELEGRAM_API);
 
