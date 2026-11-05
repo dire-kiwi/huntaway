@@ -107,6 +107,24 @@ TypeScript compiler.
   response bodies and query results that follow come from its heap, which kept 50 to 100 MB after a burst of load.
 - `demo.ts` loads only for `--demo`.
 
+### Over hours
+
+A 2-hour soak of a package on the live copy (HA-181), with fake agents (a `claude` stand-in that streams text deltas,
+tool calls and six turns a run) and a driver that kept up to 3 runs going, opened a UI websocket every few seconds and
+held each for 2 to 60 s, loaded a random task's thread every 2 s and every thread every 15 minutes, and deleted each task
+past 200 messages for a new one: 699 runs, 1.2 million streamed deltas, 1,151 websockets, 52 tasks made and deleted.
+
+- RSS stayed level: its median was 119, 125, 123 and 127 MB in each half hour (peaks of 144 to 172 MB during the
+  rounds of every thread; 276 MB at most), and it was back to 105 MB a minute after the load stopped (110 MB at the
+  start).
+- The heap after a full GC went from 20 MB at the start to 22.3 MB after 30 minutes, then 22.5, 23.0 and 22.2 MB: what
+  it gained is compiled code, not data. Open files (25 to 34) and threads (11) stayed level.
+- Nothing in the code read for it (listeners on `s.events` and `hub_events`, Maps keyed by task, run or call, timers)
+  outlives what it's for: the websocket handlers unsubscribe on close, and per-task and per-run entries go when the run
+  ends or the task is deleted.
+- For reference, the live 0.4.0 server (before these changes) was at 171 to 274 MB over 2.5 hours of the user's own
+  work (2 to 4.5 hours after it started), with no upward trend.
+
 Tried and left out:
 
 - Lazy imports for the rarely used parts: all the server's modules cost about 8 MB of heap over a bare Node, and the
