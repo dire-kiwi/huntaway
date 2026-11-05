@@ -10,7 +10,7 @@ import * as backup from "../backup.ts";
 import * as db from "../db.ts";
 import { ApiError } from "../http.ts";
 import { AsyncMutex, type AppState } from "../state.ts";
-import { err_str, now, path_str } from "../util.ts";
+import { background, err_str, now, path_str } from "../util.ts";
 import { VERSION } from "../hosts/proto.ts";
 import * as admin from "./admin.ts";
 import * as staging from "./staging.ts";
@@ -302,16 +302,17 @@ export function start(state: AppState) {
   const cfg = state.meta.release;
   if (!cfg) return;
   log.info(`checking ${cfg.repo}'s GitHub releases for updates`);
+  const check_now = () => background("checking for releases", check(state));
   setTimeout(() => {
-    check(state);
-    setInterval(() => check(state), CHECK_EVERY).unref();
+    check_now();
+    setInterval(check_now, CHECK_EVERY).unref();
   }, FIRST_CHECK).unref();
 }
 
 /** Check in the background (when "Include prereleases" changes). */
 export function check_soon(state: AppState) {
   if (!state.meta.release) return;
-  check(state);
+  background("checking for releases", check(state));
 }
 
 /** Ask GitHub for the releases and pick the newest one this server could update to. A failed check keeps what the last one found, with the error. */

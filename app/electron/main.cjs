@@ -483,7 +483,8 @@ async function load(win) {
 /**
  * The server started here stopped. The board stays open and reconnects once there's a server again: one that started
  * meanwhile (a restart that runs the new binary from a new process), or one started here again, waiting longer after
- * each that stops at once. After a few of those, the error page says why.
+ * each that stops at once. After a few of those, the error page says why. (The TypeScript server's bin/huntaway starts
+ * node again itself after a crash, up to five times in a row, so for it, this is once that has given up.)
  *
  * A release version an Update exec'd into that died before it came up is still `trying`, so startServer passes it over
  * (and marks it bad) and starts the one before it, rather than the same one again.
