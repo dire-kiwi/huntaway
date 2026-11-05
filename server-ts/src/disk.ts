@@ -16,6 +16,7 @@ import type { AppState } from "./state.ts";
 import { path_str } from "./util.ts";
 import * as runs from "./agent/runs.ts";
 import { in_worker } from "./worker.ts";
+import { backup_dir } from "./backup.ts";
 
 export interface Size {
   bytes: number;
@@ -68,6 +69,8 @@ export interface Report {
   runs_kept_days: number;
   /** What the host's database takes up, all profiles' data together (API 59). */
   database: number | null;
+  /** What the database's backups take up (`<data dir>/backups`, see backup.ts), null when there are none (HA-184). */
+  backups: Size | null;
   /** The disk the data dir (and so, usually, the worktrees) is on. */
   filesystem: Filesystem | null;
   elapsed_ms: number;
@@ -363,6 +366,7 @@ export function measure(plan: Plan, data_dir: string): Report {
     runs: runs_size(plan.runs),
     runs_kept_days: runs.KEEP_DAYS,
     database,
+    backups: dir_size(backup_dir(data_dir), []),
     filesystem: filesystem(data_dir),
     elapsed_ms: Date.now() - started,
   };

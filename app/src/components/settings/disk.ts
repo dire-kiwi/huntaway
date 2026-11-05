@@ -44,7 +44,7 @@ export interface Disk {
   /** The agent runs' folders of tasks in no project. */
   runs: number;
   /** Each host's data dir disk, with its database's size and how long it keeps runs if it says. */
-  filesystems: { hostName: string; total: number; free: number; database: number | null; runsKeptDays: number | null }[];
+  filesystems: { hostName: string; total: number; free: number; database: number | null; backups: DiskSize | null; runsKeptDays: number | null }[];
   /** Hosts that couldn't be asked, and why. */
   errors: string[];
   /** The slowest host's time to measure. */
@@ -113,6 +113,7 @@ export async function loadDisk(): Promise<Disk> {
         hostName: r.host.name,
         ...r.report.filesystem,
         database: r.report.database ?? null,
+        backups: r.report.backups ?? null,
         runsKeptDays: r.report.runs_kept_days ?? null,
       });
     }
