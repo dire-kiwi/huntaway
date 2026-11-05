@@ -13,6 +13,7 @@ import * as task_tmp from "../task_tmp.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as summary from "../../review/summary.ts";
+import * as workflows from "../../integrations/workflows.ts";
 import { MCP_SERVER_NAME } from "../runner.ts";
 import { gh_note, github_account, uses_gh_server } from "./access.ts";
 
@@ -225,13 +226,24 @@ export function profiles_note(profiles: Profile[], own: Profile): string {
   return s;
 }
 
-/** How an agent asks the user for input, then how it finishes: with a summary of `done`. */
+/**
+ * How an agent asks the user for input, then how it finishes: with a summary of `done`. The last paragraph is the
+ * wording that made agents ask most often when they should, and least when they shouldn't, of those tried on the ends
+ * of real turns (HA-198, see scripts/ask-eval): without it they left their questions in their summaries, and the tasks
+ * went to "In review" as if they were finished.
+ */
 function ask_and_finish(done: string): string {
   return (
     "If you are blocked or need a decision or information from the user, call `request_user_input` with your question " +
     '(and its `options`, when the choices are known), then end your turn. The task is flagged "Needs attention", and ' +
     "the user's reply resumes this conversation.\n\n" +
-    `When you finish, end with a concise summary of ${done}; the task then moves to "In review".`
+    `When you finish, end with a concise summary of ${done}; the task then moves to "In review".\n\n` +
+    "You must call `request_user_input` before you end a turn whose last message needs something from the user before the " +
+    "task can go on: a question or choice for them, a plan or design to approve, whether to go ahead with a step (a merge, " +
+    "a deletion, a release), or something only they can do or give you (a credential, a setting, a command run as them). " +
+    "This holds wherever it is in the message, even in the middle of a report of what you did. The one exception is an offer " +
+    'of something extra once everything the user asked for is done ("I can also…", "want me to add…?"), which they can ' +
+    "take up or ignore: leave that in the summary."
   );
 }
 
@@ -309,12 +321,17 @@ export function system_prompt(
     const key = p?.key ?? "T";
     const [number, title] = parent ? [parent.number, parent.title] : [0, "?"];
     const is_summary = summary.is_summary(task);
-    const role = is_summary ? "You summarise the changes made" : "You are the code reviewer";
+    const workflow = workflows.is_workflow(task);
+    const role = workflow ? "You run a step of a workflow" : is_summary ? "You summarise the changes made" : "You are the code reviewer";
     s = `${role} for task ${key}-${number} ("${title}") on the Huntaway board, a kanban board where each task is worked by its own Claude agent.`;
     if (parent && parent.worktree_state === "ready") {
       s += ` Your working directory is that task's git worktree at ${parent.worktree_path ?? "?"}${parent.branch != null ? ` on branch \`${parent.branch}\`` : ""}.`;
     }
-    s += is_summary
+    s += workflow
+      ? "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
+        "board. Don't call `request_user_input`. Each message says what the step is to do and how to report: call " +
+        "`submit_review` only when it asks for a verdict."
+      : is_summary
       ? "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
         "board. Don't call `request_user_input` or `submit_review`. Your last message is the summary of the changes " +
         "the user reads before merging them."

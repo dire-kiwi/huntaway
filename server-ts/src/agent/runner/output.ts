@@ -15,10 +15,12 @@ import * as permissions from "../../mcp/permissions.ts";
 import * as checkpoints from "../../git/checkpoints.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as review from "../../review.ts";
+import * as workflows from "../../integrations/workflows.ts";
 import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
+import * as plan from "./plan.ts";
 import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended } from "./queue.ts";
 
 const SUBAGENT_EVENTS = ["task_started", "task_progress", "task_updated", "task_notification"];
@@ -380,7 +382,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     const id = task.id;
     worktree.keep_starts(state, id).catch((e: any) => console.error(`keeping the starts of tasks on ${id}: ${err_str(e)}`));
   }
-  if (run.kind === "review" && summary.is_summary(task)) summary.finished(state, task, run_id, outcome, run.attention);
+  if (run.kind === "review" && workflows.is_workflow(task)) workflows.finished(state, task, run_id, outcome, run.attention);
+  else if (run.kind === "review" && summary.is_summary(task)) summary.finished(state, task, run_id, outcome, run.attention);
   else if (run.kind === "review") review.finished(state, task, run_id, outcome, run.attention);
   if (run.kind === "compact") {
     if (outcome === "Cancelled") state.add_event(task_id, "warn", "Compacting stopped");
@@ -440,6 +443,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   } else {
     [status, reason] = ["in_review", null];
   }
+  // A run that may have only written or revised the task's plan: its column waits for its checkpoints (see plan.ts).
+  const plan_check = is_task && status === "in_review" && plan.candidate(state, task, run);
   // The queued message carries on the conversation, so the task stays where it is. Out of usage, it would only be
   // refused too: it stays queued for when the limit resets.
   if (queued && limit == null && send_queued(state, task_id)) return;
@@ -449,7 +454,7 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   ];
   if (wait_reset) fields.push(["waiting", true]);
   if (is_task) {
-    if (status != null) fields.push(["status", status]);
+    if (status != null && !plan_check) fields.push(["status", status]);
     if (status === "ready_for_merge") {
       // At the back of the queue, as the tasks behind it moved up while it was away.
       let end = task.position;
@@ -477,7 +482,19 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     start_next_merge(state, task.project_id);
     worktree.find_pr(state, task);
   }
-  if (updated && is_task && updated.status === "in_review" && status === "in_review") review.on_in_review(state, updated);
+  if (updated && is_task && plan_check) {
+    // Its column waits for its checkpoints (see plan.ts), and so does what follows from the task entering it.
+    plan
+      .settle(state, updated, run, (t) => {
+        if (t.status === "in_review") review.on_in_review(state, t);
+        workflows.on_status(state, t);
+      })
+      .catch((e) => console.error(`task ${task_id}: settling its column: ${err_str(e)}`));
+  } else {
+    if (updated && is_task && updated.status === "in_review" && status === "in_review") review.on_in_review(state, updated);
+    // The task's workflows that start when it enters the column its run ended in.
+    if (updated && is_task && status === updated.status && updated.status !== task.status) workflows.on_status(state, updated);
+  }
 }
 
 /** Rust's `s.lines().next()`. */

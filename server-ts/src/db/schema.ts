@@ -663,6 +663,10 @@ export function open(path: string): Conn {
     }
     batch("PRAGMA user_version=87; COMMIT;");
   }
+  if (version < 88) {
+    // Projects' workflows and their runs on tasks (see integrations/workflows.ts).
+    batch(`BEGIN; ${SCHEMA_V88} PRAGMA user_version=88; COMMIT;`);
+  }
   return conn;
 }
 
@@ -673,7 +677,7 @@ function parent_dir(path: string): string {
 }
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 87;
+export const VERSION = 88;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what
@@ -983,6 +987,41 @@ CREATE TABLE IF NOT EXISTS review_thread_skills (
   task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
   skills TEXT NOT NULL DEFAULT '[]'
 );
+`;
+
+/**
+ * Workflows, graphs of steps that act on a project's tasks, and their runs: each run keeps the graph it started with,
+ * what each node did (`nodes`) and the rounds its sends have used (see integrations/workflows.ts).
+ */
+const SCHEMA_V88 = `
+CREATE TABLE IF NOT EXISTS workflows (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  graph TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workflows_project ON workflows(project_id);
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  state TEXT NOT NULL,
+  head TEXT,
+  task_run TEXT,
+  graph TEXT NOT NULL,
+  nodes TEXT NOT NULL DEFAULT '{}',
+  rounds TEXT NOT NULL DEFAULT '{}',
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS workflow_runs_task ON workflow_runs(task_id, workflow_id);
+CREATE INDEX IF NOT EXISTS workflow_runs_state ON workflow_runs(state);
 `;
 
 /**
