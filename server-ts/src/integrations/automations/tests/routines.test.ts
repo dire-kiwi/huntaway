@@ -430,6 +430,51 @@ function routines_day_start(now: number): number {
   return from_local(Local, Date.UTC(l.y, l.mo - 1, l.d))!;
 }
 
+// HA-241: a routine kept waking the assistant left on this host after its profile's assistant moved to another (its
+// assistant host), so its reports went to a thread the board no longer opens.
+test("a_routine_doesnt_wake_an_assistant_that_has_moved_to_another_host", async () => {
+  const s = testing.state();
+  s.local_router = api.router(s);
+  const p = profile(s);
+  const the_assistant = assistant.get_or_create(s, p.id);
+  const marker = join(testing.temp_dir(), "prechecked");
+  const fresh = routine(s, p.id, { name: "Inbox", trigger: { kind: "interval", every_minutes: 60 }, precheck: `touch ${marker}`, action: { kind: "message_assistant", message: "x" } });
+  const thread = routine(s, p.id, { name: "Nudge", trigger: { kind: "interval", every_minutes: 60 }, action: { kind: "message_assistant", mode: "thread", message: "y" } });
+  db.upsert_link(s.db(), "laptop-id", "laptop", "ssh", null, null);
+  db.update_profile(s.db(), p.id, [["assistant_host", "laptop-id"]]);
+  const why = `personal's assistant runs on laptop, so routines on ${s.host_name} don't wake it: make this one on laptop, in its assistant's Routines tab there`;
+  // By hand, or on their schedule: failed, saying why, before their precheck runs or a thread's made or messaged.
+  for (const a of [fresh, thread]) {
+    const r = await run_now(s, a);
+    assert.deepEqual([r.status, r.detail], ["failed", why], JSON.stringify(r));
+    assert.equal(r.task_id, null);
+  }
+  set_next(s, fresh, Date.now() - MINUTE);
+  await tick(s, Date.now());
+  await until_ran(s, fresh, 2);
+  assert.deepEqual(statuses(s, fresh), ["failed", "failed"]);
+  assert.ok(!existsSync(marker));
+  assert.equal(count(s, "SELECT COUNT(*) FROM tasks WHERE task_type='routine'"), 0);
+  assert.equal(db.get_task(s.db(), the_assistant.id)!.queued_message, null);
+  // Nor is one made here.
+  assert.throws(() => routine(s, p.id, { name: "New", trigger: cron("0 8 * * *"), action: { kind: "message_assistant", message: "z" } }), (e: any) => e.message === why);
+  // Back on this host, they run again.
+  db.update_profile(s.db(), p.id, [["assistant_host", null]]);
+  busy(s, the_assistant.id);
+  const r = await run_now(s, thread);
+  assert.equal(r.status, "ok", JSON.stringify(r));
+  assert.ok(db.get_task(s.db(), the_assistant.id)!.queued_message?.includes("y"));
+});
+
+/** Waits for automation `a` to have `n` runs that are over. */
+async function until_ran(s: Shared, a: Automation, n: number) {
+  for (let i = 0; i < 500; i++) {
+    if (runs(s.db(), a.id, 100).filter((r) => r.status !== "running").length >= n) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`automation ${a.name} hasn't run ${n} times`);
+}
+
 test("a_routine_over_its_budget_today_is_skipped", async () => {
   const s = testing.state();
   const p = profile(s);

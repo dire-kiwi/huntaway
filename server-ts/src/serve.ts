@@ -33,10 +33,12 @@ import * as broker from "./hosts/broker.ts";
 import * as broker_proto from "./hosts/broker/proto.ts";
 import * as attachments from "./attachments.ts";
 import * as automations from "./integrations/automations.ts";
+import * as telegram from "./integrations/telegram.ts";
 import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
 import * as merged from "./review/merged.ts";
 import * as relocate from "./git/relocate.ts";
+import * as devices from "./devices.ts";
 
 const log = {
   info: (...a: any[]) => console.error(new Date().toISOString(), " INFO huntaway:", ...a),
@@ -314,6 +316,15 @@ const statOr = (p: string) => {
  * On a loopback-only server (`--host 127.0.0.1`) it also needs a loopback `Host`, so a page on another site that rebinds
  * its name to 127.0.0.1 can't read the token.
  */
+/** `decodeURIComponent`, or the text as it is where it isn't valid. */
+function safe_decode(v: string): string {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
 export function open_token(token: string, loopback_only: boolean): (headers: Record<string, any>) => Answer {
   return (headers) => {
     const json = (status: number, v: any): Answer => ({ status, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(v)) });
@@ -323,6 +334,75 @@ export function open_token(token: string, loopback_only: boolean): (headers: Rec
 }
 
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*", vary: "origin" };
+
+/**
+ * Answers a websocket upgrade for `/api/...`: the token check (the board's, or a paired device's, see devices.ts), this
+ * host's websocket routes, and the hub's relay of a linked host's.
+ */
+export async function upgrade(state: AppState, wss: WebSocketServer, req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+  const url = req.url ?? "/";
+  let path = url.split("?")[0];
+  const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+  const reject = (status: number, msg: string, error = msg) => {
+    socket.end(`HTTP/1.1 ${status} ${msg}\r\ncontent-type: application/json\r\n\r\n${JSON.stringify({ error })}`);
+  };
+  if (!path.startsWith("/api/")) return reject(404, "not found");
+  let trusted = false;
+  // A paired device's websocket (see devices.ts): checked on the path as it was sent, and closed when it's revoked.
+  let device: devices.DeviceAuth | null = null;
+  const sent = path;
+  const authed = (): boolean => {
+    const a = api.auth(state, "GET", sent, req.headers, query);
+    if (!a.ok) {
+      reject(a.status, a.status === 403 ? "Forbidden" : a.error, a.error);
+      return false;
+    }
+    device = a.device;
+    return true;
+  };
+  // A websocket for this host through the hub's proxy (`/api/h/<this host>/…`): handled by our own routes.
+  const via = path.match(/^\/api\/h\/([^/]+)\/(.*)$/);
+  if (via) {
+    if (!authed()) return;
+    // As the hub's proxy checks a device's request again on the path it forwards (hosts/hub/endpoints.ts).
+    const why = device && devices.refused_on_host("GET", safe_decode(via[2]));
+    if (why) return reject(403, "Forbidden", why);
+  }
+  if (via && safe_decode(via[1]) === state.host_id) {
+    path = `/api/${via[2]}`;
+    trusted = true;
+  }
+  const found = state.local_router!.find(path.slice(4));
+  if (!found?.route.ws) {
+    // A linked host's websocket, relayed by the hub.
+    if (via && hub.proxy_ws) return void hub.proxy_ws(state, safe_decode(via[1]), via[2], query, req, socket, head, wss, device);
+    return reject(404, "not found");
+  }
+  if (found.route.auth && !trusted && !authed()) return;
+  const r = api.makeReq("GET", `${path}${query ? `?${query.split("&").filter((kv) => !kv.startsWith("token=")).join("&")}` : ""}`, req.headers, Buffer.alloc(0));
+  r.params = found.params;
+  r.incoming = req;
+  r.device = device;
+  if (found.route.pre) {
+    try {
+      r.pre = await found.route.pre(state, r);
+    } catch (e) {
+      const a = errorAnswer(e);
+      socket.end(`HTTP/1.1 ${a.status} ${STATUS_CODES[a.status] ?? ""}\r\ncontent-type: application/json\r\ncontent-length: ${a.body.length}\r\n\r\n${a.body}`);
+      return;
+    }
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    // Rust wraps each websocket handler of a device's request in `devices::until_revoked`; here it's done for all.
+    devices.until_revoked(state, device, ws);
+    try {
+      found.route.ws!(state, r, ws);
+    } catch (e) {
+      console.error(`websocket ${path}:`, e);
+      ws.close(1011);
+    }
+  });
+}
 
 export async function serve(args: ServeArgs) {
   stamp_console();
@@ -461,55 +541,8 @@ export async function serve(args: ServeArgs) {
   );
 
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-  const upgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const url = req.url ?? "/";
-    let path = url.split("?")[0];
-    const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
-    const reject = (status: number, msg: string) => {
-      socket.end(`HTTP/1.1 ${status} ${msg}\r\ncontent-type: application/json\r\n\r\n${JSON.stringify({ error: msg })}`);
-    };
-    if (!path.startsWith("/api/")) return reject(404, "not found");
-    let trusted = false;
-    // A websocket for this host through the hub's proxy (`/api/h/<this host>/…`): handled by our own routes.
-    const via = path.match(/^\/api\/h\/([^/]+)\/(.*)$/);
-    if (via && decodeURIComponent(via[1]) === state.host_id) {
-      if (!api.authorized(state, req.headers, query)) return reject(401, "unauthorized");
-      path = `/api/${via[2]}`;
-      trusted = true;
-    }
-    const found = state.local_router!.find(path.slice(4));
-    if (!found?.route.ws) {
-      // A linked host's websocket, relayed by the hub.
-      if (via && hub.proxy_ws) {
-        if (!api.authorized(state, req.headers, query)) return reject(401, "unauthorized");
-        return void hub.proxy_ws(state, decodeURIComponent(via[1]), via[2], query, req, socket, head, wss);
-      }
-      return reject(404, "not found");
-    }
-    if (found.route.auth && !trusted && !api.authorized(state, req.headers, query)) return reject(401, "unauthorized");
-    const r = api.makeReq("GET", `${path}${query ? `?${query.split("&").filter((kv) => !kv.startsWith("token=")).join("&")}` : ""}`, req.headers, Buffer.alloc(0));
-    r.params = found.params;
-    r.incoming = req;
-    if (found.route.pre) {
-      try {
-        r.pre = await found.route.pre(state, r);
-      } catch (e) {
-        const a = errorAnswer(e);
-        socket.end(`HTTP/1.1 ${a.status} ${STATUS_CODES[a.status] ?? ""}\r\ncontent-type: application/json\r\ncontent-length: ${a.body.length}\r\n\r\n${a.body}`);
-        return;
-      }
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      try {
-        found.route.ws!(state, r, ws);
-      } catch (e) {
-        console.error(`websocket ${path}:`, e);
-        ws.close(1011);
-      }
-    });
-  };
   server.on("upgrade", (req, socket, head) =>
-    upgrade(req, socket, head).catch((e) => {
+    upgrade(state, wss, req, socket, head).catch((e) => {
       console.error(`websocket ${(req.url ?? "/").split("?")[0]}:`, e);
       socket.destroy();
     }),
@@ -528,6 +561,7 @@ export async function serve(args: ServeArgs) {
   task_tmp.start_sweeper(state);
   permissions.start_sweeper(state);
   automations.start(state);
+  telegram.start(state);
   workflows.resume(state);
   merged.start(state);
   relocate.start_recording(state);

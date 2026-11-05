@@ -2,7 +2,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { chmodSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import * as db from "../../db.ts";
 import type { Task } from "../../db.ts";
 import * as testing from "../../testing.ts";
@@ -12,7 +14,7 @@ import * as codex from "../codex.ts";
 import * as runner from "../runner.ts";
 import * as permissions from "../../mcp/permissions.ts";
 import {
-  BLOCKED, BOARD_SERVER_NAMES, HOOK_FAILED, MAX_EXPIRY_MINUTES, Rules_default, applies_to, blocked_reason, checked, claude_disallowed, claude_hook,
+  BLOCKED, BOARD_SERVER_NAMES, HOOK_FAILED, MAX_EXPIRY_MINUTES, Rules_default, applies_to, blocked_reason, checked, claude_disallowed, claude_hook, claude_matcher,
   codex_needs_user_reviewer, codex_own_tools, codex_policy, codex_server, decide, default_rules, for_mode, for_task, get, hook_decision, list,
   matches, needs_prompt_tool, on_tool_results, parse_rule_list, set, summarize,
 } from "../approval_rules.ts";
@@ -153,7 +155,7 @@ test("the_hook_allows_asks_or_blocks_by_the_rules", () => {
 test("claude_gets_the_hook_the_prompt_tool_and_the_tools_that_are_never", () => {
   const r = rules([["mcp__g__get*", "allow"], ["mcp__g__send_mail", "ask"], ["mcp__g__delete_mail", "never"], ["mcp__x", "never"], ["mcp__g__*trash*", "never"]]);
   const hook = claude_hook("/opt/it's/huntaway", r);
-  assert.equal(hook.matcher, "mcp__.*");
+  assert.equal(hook.matcher, "^(?:[mM][cC][pP]__[gG](?:__[\\s\\S]*)?|[mM][cC][pP]__[xX](?:__[\\s\\S]*)?)$");
   const command: string = hook.hooks[0].command;
   assert.ok(command.startsWith("'/opt/it'\\''s/huntaway' approval-hook '"), command);
   // The command's last argument is the rules, as the hook reads them back. (Then what refuses the call if the hook
@@ -172,6 +174,38 @@ test("claude_gets_the_hook_the_prompt_tool_and_the_tools_that_are_never", () => 
   assert.equal(claude_hook("/h", board), null);
   assert.ok(!needs_prompt_tool(board) && claude_disallowed(board).length === 0);
   assert.ok(!needs_prompt_tool(rules([["mcp__g__get*", "allow"], ["mcp__g__x", "never"]])));
+});
+
+// The hook runs only for the calls its matcher matches, and a call it misses goes through as though no rule matched it:
+// the matcher must match every tool a rule does, whatever its case (HA-245).
+test("the_hooks_matcher_matches_every_tool_a_rule_does_and_only_the_servers_they_name", () => {
+  const patterns = [
+    "mcp__google", "mcp__Google__send_gmail_message", "mcp__google__*send*", "mcp__goo*", "mcp__*", "mcp__*__delete*", "mcp__g___x",
+    "mcp__a.b-c(1)+[x]{2}|y^$\\z/w", "MCP__Work", " mcp__kit__x ", "mcp__", "mcp____x", "mcp__k*__x",
+  ];
+  const tools = [
+    "mcp__google", "mcp__google__send_gmail_message", "mcp__GOOGLE__Send_Gmail_Message", "mcp__gOoGlE__list", "mcp__googlex__send",
+    "mcp__goober__x", "mcp__g___x", "mcp__g__x", "mcp__a.b-c(1)+[x]{2}|y^$\\z/w__t", "mcp__aXb-c(1)+[x]{2}|y^$\\z/w__t", "mcp__work__x",
+    "Mcp__WORK", "mcp__\u212Ait__x", "mcp__k\u0130t__x", "mcp__kit__x", "mcp____x", "mcp__", "mcp__other__x", "mcp__huntaway__create_task",
+    "Bash", "mcp__google__line\nbreak",
+  ];
+  for (const pattern of patterns) {
+    const matcher = claude_matcher([{ tool: pattern, decision: "ask" }]);
+    assert.notEqual(matcher, "*", pattern);
+    // A valid regular expression either way Claude Code may build one, anchored or not.
+    for (const re of [new RegExp(matcher), new RegExp(matcher, "u"), new RegExp(`^(?:${matcher})$`)]) {
+      for (const tool of tools) {
+        if (matches(pattern, tool)) assert.ok(re.test(tool), `${pattern} matches ${JSON.stringify(tool)}, but ${re} doesn't`);
+      }
+    }
+  }
+  // Only the servers named: other servers' and the board's tools don't start the hook.
+  const google = new RegExp(claude_matcher(Rules_default().rules.filter((r) => !r.tool.toLowerCase().startsWith("mcp__huntaway"))));
+  assert.ok(google.test("mcp__google__send_gmail_message") && google.test("mcp__Google__x"));
+  for (const tool of ["mcp__huntaway__list_tasks", "mcp__gh__pr_view", "mcp__googlex__send", "Bash"]) assert.ok(!google.test(tool), tool);
+  // Every tool for a rule that isn't an MCP server's, or one a non-ASCII letter's other cases could match.
+  assert.equal(claude_matcher([{ tool: "mcp__g__x", decision: "ask" }, { tool: "Bash", decision: "never" }]), "*");
+  assert.equal(claude_matcher([{ tool: "mcp__é__x", decision: "ask" }]), "*");
 });
 
 test("codex_asks_about_every_call_of_a_server_a_rule_may_match", () => {
@@ -369,4 +403,50 @@ test("the_hook_refuses_what_it_cant_check_while_rules_ask_or_refuse", () => {
   // With only allow rules, the call is left to the run's own permissions.
   const out = hook('[{"tool": "mcp__google__get*", "decision": "allow"}]', "not json");
   assert.deepEqual([out.status, hook_out(out)], [0, null]);
+});
+
+// Node before 24.2 doesn't set import.meta.main, and engines allows Node 24.0: there, a hook that ran only `if
+// (import.meta.main)` exited 0 with no output, which Claude Code takes as no decision, so ask and never rules didn't
+// hold (HA-245). bin/huntaway's node here is one whose modules see import.meta.main as undefined, as they do there.
+function old_node(): Record<string, string> {
+  const dir = testing.temp_dir();
+  const preload = join(dir, "no_main.mjs");
+  writeFileSync(
+    preload,
+    `import { registerHooks } from "node:module";
+registerHooks({
+  load(url, context, next) {
+    const r = next(url, context);
+    if (url.startsWith("file:") && r.source != null) r.source = String(r.source).replaceAll("import.meta.main", "undefined");
+    return r;
+  },
+});
+`,
+  );
+  const node = join(dir, "node");
+  writeFileSync(node, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --import ${JSON.stringify(pathToFileURL(preload).href)} "$@"\n`);
+  chmodSync(node, 0o755);
+  // It does take import.meta.main away.
+  const probe = join(dir, "probe.mjs");
+  writeFileSync(probe, "if (import.meta.main) process.exit(3);\n");
+  assert.equal(spawnSync(node, [probe]).status, 0);
+  assert.equal(spawnSync(process.execPath, [probe]).status, 3);
+  return { ...process.env, IA_NODE: node } as Record<string, string>;
+}
+
+test("the_hook_runs_without_import_meta_main", () => {
+  const env = old_node();
+  const run = (args: string[], input: string) => spawnSync(BIN, args, { input, encoding: "utf8", env });
+  for (const [rules, input] of [[STRICT, "not json"], [STRICT, "{}"], ["not rules", hook_call("mcp__google__get_mail")]]) {
+    const out = run(["approval-hook", rules], input);
+    assert.equal(out.status, 2, `${rules} ${input}: ${out.stderr}`);
+    assert.ok(out.stderr.includes("couldn't be checked"), out.stderr);
+  }
+  const out = run(["approval-hook", STRICT], hook_call("mcp__google__delete_mail"));
+  assert.deepEqual([out.status, hook_out(out)], [0, "deny"], out.stderr);
+  // The agents' MCP helper starts too: here, to say it has no board to talk to, rather than exiting 0 with nothing said.
+  const env_without = { ...env };
+  for (const k of ["IA_URL", "IA_TOKEN", "IA_RUN_ID"]) delete env_without[k];
+  const mcp = spawnSync(BIN, ["mcp"], { input: "", encoding: "utf8", env: env_without });
+  assert.deepEqual([mcp.status, mcp.stderr.trim()], [1, "Error: IA_URL not set"]);
 });

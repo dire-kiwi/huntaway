@@ -49,8 +49,14 @@ export function mint(c: Conn, host_id: string, request_id: string, task_id: stri
   return token;
 }
 
-/** Prompt `request_id` on `host_id` was answered or expired (`status`, as its thread message says): its tokens don't answer it any more. */
-export function settle(c: Conn, host_id: string, request_id: string, status: string): void {
+/**
+ * Prompt `request_id` on `host_id` was answered or expired (`status` and `note`, as its thread message says): its tokens
+ * don't answer it any more. One that expired because nobody answered it in time (a routine run's, see
+ * permissions.expire_due) is noted as `timed_out`, so a later tap on its notification says so rather than that its run
+ * ended.
+ */
+export function settle(c: Conn, host_id: string, request_id: string, status: string, note: unknown = null): void {
+  if (status === "expired" && note === permissions.EXPIRED_UNANSWERED) status = "timed_out";
   db.run(
     c,
     "UPDATE push_answer_tokens SET status=?1 WHERE request_id=?2 AND host_id=?3 AND status IN ('pending','answering')",

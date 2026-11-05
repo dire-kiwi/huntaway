@@ -31,7 +31,7 @@ async function main() {
     case "gh-hook":
       return (await import("./mcp/gh_mcp.ts")).bash_hook();
     case "approval-hook": {
-      // bin/huntaway runs approval_rules/hook.ts directly; this is for a server started some other way.
+      // bin/huntaway runs approval_rules/hook_main.ts directly; this is for a server started some other way.
       const code = await (await import("./agent/approval_rules/hook.ts")).hook(rest[0]);
       process.exitCode = code;
       return;

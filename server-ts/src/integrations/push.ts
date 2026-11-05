@@ -8,8 +8,8 @@
 // browser subscribed with. Tapping one opens the task (app/public/sw.js).
 //
 // So are the assistant's routines' reports, as each is posted on its thread, and its replies, for the devices that choose
-// them, as the assistant's host says its turn ended (`REPLY_EVENT`). A reply says only "Replied"; a report its first
-// line.
+// them, as the assistant's host says its turn ended (`REPLY_EVENT`), except one to a message sent on Telegram, which goes
+// back there. A reply says only "Replied"; a report its first line.
 //
 // A permission prompt is pushed too (the assistant's, or any task's, as each device chooses), with a one-time token
 // (push_answers.ts) for its Allow and Deny actions, which answer it from the notification without the board's token.
@@ -759,7 +759,7 @@ function prompt_settled(s: AppState, host: string, m: any) {
     if (p.size === 0) s.push.prompts.delete(key);
   }
   try {
-    push_answers.settle(s.db(), host, request, status);
+    push_answers.settle(s.db(), host, request, status, data.note);
   } catch (e) {
     console.warn(`push: settling prompt ${request}'s tokens: ${err_str(e)}`);
   }
@@ -871,7 +871,7 @@ function observe_report(s: AppState, host: string, m: any) {
 /**
  * The event the assistant's host sends when the assistant finished a reply (its turn's `result`), with the assistant's
  * `task_id`, the result's `message_id`, and `telegram`: whether it answers a message sent to it on Telegram, which the
- * reply goes back to (see runner/output.ts's `announce_reply`).
+ * reply goes back to (see telegram.ts's `on_turn_end`). Only that host knows, as its bot is there.
  */
 export const REPLY_EVENT = "assistant_reply";
 

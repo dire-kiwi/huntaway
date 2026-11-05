@@ -377,13 +377,35 @@ export function unregister(s: AppState, conn: LinkConn) {
 }
 
 /**
+ * Why live connection `conn` can't stand in for the host this hub links under its id, if it can't: that host is a
+ * profile's assistant host, and `conn` didn't come the way it's linked (see `linked_via`), as when a host dials in under
+ * the id of one we dial. The user's messages to the assistant go through the proxy too, so they'd reach it. Any other
+ * host we dial may also dial in, and stands in for itself while the link we dial is down.
+ */
+export function misplaced(s: AppState, conn: LinkConn): string | null {
+  let link: Link | null = null;
+  let assistant = false;
+  try {
+    link = db.get_link(s.db(), conn.id);
+    assistant = !!link && db.list_profiles(s.db()).some((p) => p.assistant_host === conn.id);
+  } catch {}
+  if (!link || !assistant || linked_via(link, conn_via(conn))) return null;
+  return conn_via(conn) === "tunnel"
+    ? `${s.host_name} links assistant host ${link.name} itself, so a host that dials in under its id (${conn.id}) isn't taken for it`
+    : `${s.host_name} links assistant host ${link.name} as a host that dials in, and this connection didn't`;
+}
+
+/**
  * Count `conn` as connected, in place of any other connection to its host, except that a host that dials in while it's
  * already connected in is refused (two hosts with the same id would otherwise take each other's place for as long as
- * both run). Returns false when refused; else `unregister` it when it goes.
+ * both run), and so is one that dials in under the id of an assistant host we dial (see `misplaced`): it would take
+ * that host's place for the UI's requests (the proxy) and its name. Returns false when refused; else `unregister` it
+ * when it goes.
  */
 export function register(s: AppState, conn: LinkConn): boolean {
   const old = s.links.get(conn.id);
   if (conn.kind.type === "tunnel" && old?.kind.type === "tunnel") return false;
+  if (misplaced(s, conn) !== null) return false;
   s.links.set(conn.id, conn);
   changed(s);
   return true;

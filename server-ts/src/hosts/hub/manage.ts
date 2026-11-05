@@ -8,6 +8,7 @@ import * as admin from "../../update/admin.ts";
 import { VERSION } from "../proto.ts";
 import * as ssh from "../ssh.ts";
 import * as db from "../../db.ts";
+import * as devices from "../../devices.ts";
 import { changed, spawn_outbound } from "../hub.ts";
 
 /** Call any host's API (this one or a linked one). */
@@ -39,6 +40,7 @@ async function named(s: AppState, host_id: string, list: string, name: string): 
 
 /** Copy a Claude config's login and settings from one host to another, creating the config on the target if needed. */
 export async function copy_claude_config(s: AppState, r: Req) {
+  devices.board_only(r.device, "copy Claude logins between hosts");
   const b = r.body ?? {};
   for (const k of ["from_host", "to_host"]) {
     if (typeof b[k] !== "string") throw new ApiError(422, `Failed to deserialize the JSON body into the target type: missing field \`${k}\``);
@@ -106,6 +108,7 @@ export async function ssh_key(s: AppState) {
 
 /** Link a host over SSH: starts it on the target if needed, then keeps a tunnel to it. */
 export async function add_ssh_host(s: AppState, r: Req) {
+  devices.board_only(r.device, "link hosts");
   let t: ssh.Target;
   try {
     t = ssh.Target_from_json(r.body);
