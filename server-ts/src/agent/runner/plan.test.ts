@@ -13,8 +13,8 @@ import { path_str, sleep } from "../../util.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as checkpoints from "../../git/checkpoints.ts";
 import * as documents from "../documents.ts";
-import { finish } from "../runner.ts";
-import { PLAN_READY, settle } from "./plan.ts";
+import { finish, load_active } from "../runner.ts";
+import { PLAN_READY, settle, unsettled as plan_unsettled } from "./plan.ts";
 
 function sh(dir: string, args: string[]): string {
   const out = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
@@ -166,4 +166,71 @@ test("a_task_moved_or_run_again_meanwhile_is_left_alone", async () => {
   db.insert_run(s.db(), t.id, "prompt");
   await settle(s, { ...t, status: "in_progress" }, r, () => entered++);
   assert.deepEqual([db.get_task(s.db(), t.id)!.status, entered], ["in_progress", 0]);
+});
+
+/**
+ * A run of `task` that ended as `run`'s do, but with the server stopping once `finish` wrote it, before its column was
+ * settled: the task is left in "In progress" with no agent.
+ */
+async function run_cut_short(s: AppState, task: Task, work: (t: Task) => void): Promise<Run> {
+  const c = s.db();
+  const r: Run = db.insert_run(c, task.id, "prompt");
+  const m = db.insert_message(c, task.id, "user", { text: "Go on" });
+  db.run(c, "UPDATE runs SET status='running', turn_message_id=?1 WHERE id=?2", m.id, r.id);
+  s.update_task(task.id, [["status", "in_progress"], ["running", true], ["attention_reason", null]]);
+  await checkpoints.before_run(s, task, db.get_run(c, r.id)!);
+  await sleep(5);
+  work(db.get_task(c, task.id)!);
+  checkpoints.after_turn(s, r.id, "done");
+  documents.turn_ended(s, task.id);
+  await checkpoints.settled(s, task.id);
+  db.run(c, "UPDATE runs SET status='exited', ended_at=?1 WHERE id=?2", new Date().toISOString(), r.id);
+  s.update_task(task.id, [["running", false]]);
+  return db.get_run(c, r.id)!;
+}
+
+async function restart(s: AppState, task: Task): Promise<Task> {
+  load_active(s);
+  await checkpoints.settled(s, task.id);
+  for (let i = 0; i < 100 && db.get_task(s.db(), task.id)!.status === "in_progress"; i++) await sleep(10);
+  return db.get_task(s.db(), task.id)!;
+}
+
+test("a_restart_settles_a_column_it_left_unsettled", async () => {
+  const s = testing.state();
+  const task = await plan_task(s);
+  await run_cut_short(s, task, write_plan(s));
+  assert.deepEqual([db.get_task(s.db(), task.id)!.status, db.get_task(s.db(), task.id)!.running], ["in_progress", false]);
+  let t = await restart(s, task);
+  assert.deepEqual([t.status, t.attention_reason, t.running], ["needs_attention", PLAN_READY, false]);
+  // One that did the work goes to review.
+  await run_cut_short(s, t, (t) => {
+    write_plan(s)(t);
+    write(t.worktree_path!, "f.txt", "2\n");
+  });
+  t = await restart(s, t);
+  assert.deepEqual([t.status, t.attention_reason], ["in_review", null]);
+});
+
+test("a_restart_leaves_other_tasks_in_progress_alone", async () => {
+  const s = testing.state();
+  const task = await plan_task(s);
+  // Its latest run left the plan alone, so `finish` set its column: it was put back in this one since.
+  await run_cut_short(s, task, () => {});
+  assert.equal((await restart(s, task)).status, "in_progress");
+  // Waiting for its dependencies or a usage limit's reset, or for its queued message to be sent.
+  await run_cut_short(s, task, write_plan(s));
+  s.update_task(task.id, [["waiting", true]]);
+  assert.equal(plan_unsettled(s).length, 0);
+  s.update_task(task.id, [["waiting", false], ["queued_message", "And then"]]);
+  assert.equal(plan_unsettled(s).length, 0);
+  // A run that failed or asked for attention.
+  s.update_task(task.id, [["queued_message", null]]);
+  const r = db.get_run(s.db(), db.latest_run(s.db(), task.id, null)!)!;
+  db.run(s.db(), "UPDATE runs SET result_error='boom' WHERE id=?1", r.id);
+  assert.equal(plan_unsettled(s).length, 0);
+  db.run(s.db(), "UPDATE runs SET result_error=NULL, attention='Question' WHERE id=?1", r.id);
+  assert.equal(plan_unsettled(s).length, 0);
+  db.run(s.db(), "UPDATE runs SET attention=NULL WHERE id=?1", r.id);
+  assert.equal(plan_unsettled(s).length, 1);
 });

@@ -70,3 +70,29 @@ export async function settle(state: Shared, task: Task, run: Run, entered: (t: T
   });
   if (updated) entered(updated);
 }
+
+/**
+ * The tasks a restart left in "In progress" before their column was settled (HA-230): `finish` ends a `candidate`'s run
+ * leaving its column alone, for `settle`, which takes the checkpoints of its turns first. A server that stopped in
+ * between left the task in its column with no agent. They're the tasks there with no agent, nothing queued and nothing
+ * waited for, whose latest run is a prompt run that ended without a failure or a call for attention, and is a
+ * `candidate`; with that run.
+ */
+export function unsettled(state: Shared): Array<[Task, Run]> {
+  const c = state.db();
+  const ids = db.all<{ id: string }>(
+    c,
+    `SELECT id FROM tasks WHERE kind='task' AND status='in_progress' AND running=0 AND waiting=0 AND merging=0 AND remerge=0
+     AND (queued_message IS NULL OR TRIM(queued_message)='')`,
+  );
+  const out: Array<[Task, Run]> = [];
+  for (const { id } of ids) {
+    const task = db.get_task(c, id);
+    const run_id = db.latest_run(c, id, null);
+    const run = run_id ? db.get_run(c, run_id) : null;
+    if (!task || !run || db.is_assistants(task) || task.agent_wait != null) continue;
+    if (run.kind !== "prompt" || run.status !== "exited" || run.attention != null || run.result_error != null) continue;
+    if (candidate(state, task, run)) out.push([task, run]);
+  }
+  return out;
+}
