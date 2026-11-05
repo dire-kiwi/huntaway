@@ -385,8 +385,11 @@ export async function serve(args: ServeArgs) {
       if (ui) return serve_ui(ui, req, res);
       res.writeHead(404).end();
     } catch (e) {
-      if (!res.headersSent) send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
-      else res.destroy();
+      if (!res.headersSent) {
+        // A body over the limit, which isn't read to its end (see readBody): the connection goes after the answer.
+        if (e instanceof ApiError && e.status === 413) res.setHeader("connection", "close");
+        send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
+      } else res.destroy();
     }
   };
   // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
