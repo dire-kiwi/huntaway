@@ -18,7 +18,7 @@ export const taskLabels = (t: Omit<Labelled, "work_dir">): DocumentType[] =>
   t.kind !== "task" ? [] : t.labels ? LABELS.filter((l) => t.labels!.includes(l)) : isLabel(t.task_type) ? [t.task_type] : [];
 
 /** A task that makes only its documents, in its own folder, rather than changing code: a plan, artifact or diagram task
- *  from before they were labels (API 71), or on an older host. Not a scratch task or a profile's assistant (API 107),
+ *  from before they were labels (API 71), or on an older host. Not a scratch task or a profile's assistant (API 108),
  *  which work in a folder of their own too. */
 export const documentsOnly = (t: Labelled) =>
   t.kind === "task" && t.task_type !== "scratch" && t.task_type !== "assistant" && (t.labels ? !!t.work_dir : isLabel(t.task_type));

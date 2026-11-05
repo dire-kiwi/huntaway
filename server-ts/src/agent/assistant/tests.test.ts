@@ -176,13 +176,13 @@ test("no_project_can_have_the_assistants_key", async () => {
   assert.ok(v.error.includes("the assistant"), JSON.stringify(v));
 });
 
-test("a_database_at_version_87_frees_the_key_a", () => {
+test("a_database_at_version_88_frees_the_key_a", () => {
   const path = join(testing.temp_dir(), "huntaway.db");
   {
     const c = db.open(path);
     const p = db.insert_profile(c, "p", [], null);
     db.insert_project(c, { id: "apps", profile_id: p.id, name: "Apps", key: "A", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
-    c.exec("DROP INDEX tasks_one_assistant; PRAGMA user_version=87;");
+    c.exec("DROP INDEX tasks_one_assistant; PRAGMA user_version=88;");
     c.close();
   }
   const c = db.open(path);

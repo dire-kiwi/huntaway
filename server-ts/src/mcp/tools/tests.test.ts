@@ -14,6 +14,7 @@ import type { Task } from "../../db.ts";
 import type { Shared } from "../../state.ts";
 import * as api from "../../api.ts";
 import * as au from "../../integrations/automations.ts";
+import * as wf from "../../integrations/workflows.ts";
 import * as runner from "../../agent/runner.ts";
 import * as assistant from "../../agent/assistant.ts";
 import * as runs from "../../agent/runs.ts";
@@ -920,7 +921,7 @@ test("agents_read_and_change_a_projects_prompts", async () => {
 /** The next project change or deletion waiting for approval, once there is one. */
 async function approval_asked(s: Shared): Promise<any> {
   let a: any;
-  await until(() => (a = permissions.pending_approvals(s, true, true)[0]) !== undefined, "an approval to be asked");
+  await until(() => (a = permissions.pending_approvals(s, true, true, true)[0]) !== undefined, "an approval to be asked");
   return a;
 }
 
@@ -2341,4 +2342,117 @@ test("an_automation_approval_cut_short_by_a_restart_is_still_waited_for", async 
   assert.ok((await err(handle_mcp(s, mk("c3", webhook_args("Third"))))).includes("interrupted"));
   assert.equal(automations(s, "kiwicd").length, 1);
   assert.equal(asks(), 3);
+});
+
+// ---------- workflows (HA-173, ported by HA-189) ----------
+
+const MOVE_GRAPH = {
+  nodes: [
+    { id: "t", kind: "trigger", on: "manual" },
+    { id: "m", kind: "set_status", status: "backlog" },
+  ],
+  edges: [{ from: "t", port: "out", to: "m" }],
+};
+
+test("agents_create_change_run_and_delete_workflows_once_the_user_approves", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  project(s, p, "kiwicd", "KIW");
+  const caller = task(s, "kiwicd", "Caller");
+  const me = (call_id: string) => ctx(p, { task: caller, call_id });
+  const workflows = () => wf.list(s.db(), "kiwicd");
+  const args = { name: "Park", graph: MOVE_GRAPH, reason: "Park tasks" };
+
+  // Denied: nothing is made. The approval shows the workflow, and isn't shown to UIs from before workflows.
+  const shown = async (allow: boolean) => {
+    const x = await approval_asked(s);
+    assert.equal(permissions.pending_approvals(s, true, true).length, 0);
+    assert.equal(permissions.pending_approvals(s, true, true, true).length, 1);
+    await answer_approval(s, allow);
+    return x;
+  };
+  let [res, asked] = await Promise.all([settle(call(s, me("c1"), "create_workflow", args)), shown(false)]);
+  assert.ok(unwrap_err(res).includes('didn\'t approve creating the workflow "Park", so nothing was created'), unwrap_err(res));
+  assert.equal(workflows().length, 0);
+  assert.deepEqual([asked.kind, asked.tool_name, asked.input.op, asked.input.reason], ["automation", "create_workflow", "create", "Park tasks"]);
+  assert.deepEqual([asked.input.workflow.name, asked.input.workflow.graph.nodes.length], ["Park", 2]);
+  assert.equal(db.get_task(s.db(), caller.id)!.attention_reason, "Approve a workflow?");
+  // A graph that doesn't check out isn't asked about.
+  const looped = { nodes: MOVE_GRAPH.nodes, edges: [...MOVE_GRAPH.edges, { from: "m", port: "out", to: "m" }] };
+  assert.ok((await err(call(s, me("c2"), "create_workflow", { name: "Bad", graph: looped }))).includes("loop through m"));
+  // Approved: it's made as it was shown.
+  [res] = await Promise.all([settle(call(s, me("c3"), "create_workflow", args)), shown(true)]);
+  const made = unwrap(res);
+  assert.deepEqual([made.name, made.enabled, workflows().length], ["Park", true, 1]);
+  const list = await call(s, me("c4"), "list_workflows", {});
+  assert.deepEqual([list.project.key, list.workflows[0].id], ["KIW", made.id]);
+
+  // Turning it off or renaming it isn't asked about; turning it on is.
+  const off = await call(s, me("c5"), "update_workflow", { workflow_id: "park", enabled: false, name: "Parking" });
+  assert.deepEqual([off.enabled, off.name], [false, "Parking"]);
+  assert.equal(permissions.pending_approvals(s, true, true, true).length, 0);
+  assert.ok((await err(call(s, me("c6"), "update_workflow", { workflow_id: made.id, enabled: false }))).includes("nothing to change"));
+  [res, asked] = await Promise.all([settle(call(s, me("c7"), "update_workflow", { workflow_id: made.id, enabled: true })), answer_approval(s, false)]);
+  assert.ok(unwrap_err(res).includes('didn\'t approve changing the workflow "Parking"'));
+  assert.deepEqual(asked.input.changes, ["enabled"]);
+  assert.ok(!wf.get(s.db(), made.id)!.enabled);
+
+  // Run by hand on a task of its project, on or off.
+  const target = task(s, "kiwicd", "Target");
+  const run = await call(s, me("c8"), "run_workflow", { workflow_id: "Parking", task_id: `KIW-${target.number}` });
+  assert.deepEqual([run.state, run.workflow_name, run.source], ["done", "Parking", "manual"]);
+  assert.equal(db.get_task(s.db(), target.id)!.status, "backlog");
+  // get_task shows the task's latest runs.
+  const details = await call(s, me("c9"), "get_task", { task_id: `KIW-${target.number}` });
+  assert.deepEqual(details.workflows, [{ workflow: "Parking", state: "done", started_at: run.created_at, steps: [] }]);
+
+  // Deleted by the user while an agent asks to change it: the question goes, and the call says so.
+  const del = async () => {
+    await approval_asked(s);
+    wf.delete(s, made.id);
+  };
+  [res] = await Promise.all([settle(call(s, me("c10"), "update_workflow", { workflow_id: made.id, graph: { ...MOVE_GRAPH, nodes: [MOVE_GRAPH.nodes[0]], edges: [] } })), del()]);
+  assert.ok(unwrap_err(res).includes("was deleted meanwhile"), unwrap_err(res));
+  assert.equal(permissions.pending_approvals(s, true, true, true).length, 0);
+
+  // Deleting one is asked about too.
+  const again = wf.create(s, "kiwicd", { name: "Park", graph: MOVE_GRAPH });
+  [res, asked] = await Promise.all([settle(call(s, me("c11"), "delete_workflow", { workflow_id: again.id, reason: "Not needed" })), answer_approval(s, true)]);
+  assert.equal(unwrap(res).deleted, true);
+  assert.deepEqual([asked.input.op, asked.input.reason], ["delete", "Not needed"]);
+  assert.equal(workflows().length, 0);
+});
+
+test("agents_only_reach_workflows_on_boards_they_can_use", async () => {
+  const s = state();
+  const me_p = db.insert_profile(s.db(), "personal", [], null);
+  const work = db.insert_profile(s.db(), "work", [], null);
+  project(s, me_p, "kiwicd", "KIW");
+  project(s, work, "secret", "SEC");
+  const theirs = wf.create(s, "secret", { name: "Park", graph: MOVE_GRAPH });
+  const hidden = task(s, "secret", "Hidden");
+  const caller = task(s, "kiwicd", "Caller");
+  const c = ctx(me_p, { task: caller, call_id: "c1" });
+  const not_found = async (tool: string, args: any) => {
+    try {
+      const v = await local(s, c, tool, args);
+      assert.fail(`${tool}: ${JSON.stringify(v)}`);
+    } catch (e: any) {
+      assert.ok(e instanceof ToolError && e.kind === "NotFound", `${tool}: ${e?.message}`);
+    }
+  };
+  await not_found("list_workflows", { project_id: "SEC" });
+  await not_found("create_workflow", { project_id: "SEC", name: "x", graph: MOVE_GRAPH });
+  await not_found("update_workflow", { workflow_id: theirs.id, enabled: false });
+  await not_found("delete_workflow", { workflow_id: theirs.id });
+  await not_found("run_workflow", { workflow_id: theirs.id, task_id: hidden.id });
+  assert.ok(wf.get(s.db(), theirs.id)!.enabled);
+  assert.equal(db.get_task(s.db(), hidden.id)!.status, "todo");
+  // A workflow of this board's doesn't run on another project's task.
+  const mine = wf.create(s, "kiwicd", { name: "Mine", graph: MOVE_GRAPH });
+  grant(s, work, ["personal"]);
+  assert.ok((await err(call(s, c, "run_workflow", { workflow_id: mine.id, task_id: hidden.id }))).includes("isn't in KIW"));
+  // Older hosts aren't sent workflow calls.
+  assert.ok(too_old("laptop", 106, "list_workflows", {})?.includes("without workflows"));
+  assert.equal(too_old("laptop", 107, "list_workflows", {}), null);
 });

@@ -22,6 +22,8 @@ import {
   has_secret,
   resolve_automation,
 } from "./automations.ts";
+import { change_workflow, resolve_workflow, run_workflow, workflow_creation, workflow_deletion, workflow_json, workflow_update } from "./workflows.ts";
+import * as wf from "../../integrations/workflows.ts";
 
 /** A new task's fields, as `CreateTask::default()` has them. */
 function create_task_body(): any {
@@ -276,6 +278,34 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       const run = await au.run_now(s, a, { payload, event });
       return au.run_json(s.db(), run);
     }
+    case "list_workflows": {
+      const p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project);
+      return { project: { id: p.id, key: p.key, name: p.name }, workflows: wf.list(s.db(), p.id).map(workflow_json) };
+    }
+    case "create_workflow":
+    case "update_workflow":
+    case "delete_workflow": {
+      // A call retried after a restart carries on with the approval it asked for.
+      const saved = asked();
+      if (saved !== null) return change_workflow(s, ctx, saved);
+      let input: any;
+      if (tool === "create_workflow") {
+        const p = project_or_own(s, ctx, str_arg("project_id"), profile, own_project);
+        input = workflow_creation(s, ctx, p, args);
+      } else if (tool === "update_workflow") {
+        const [w, p] = resolve_workflow(s, ctx, args, profile, own_project);
+        const u = workflow_update(s, ctx, w, p, args);
+        // Nothing that needs asking: turning it off, or renaming it.
+        if ("apply" in u) return workflow_json(wf.update(s, w.id, u.apply));
+        input = u.ask;
+      } else {
+        const [w, p] = resolve_workflow(s, ctx, args, profile, own_project);
+        input = workflow_deletion(s, ctx, w, p, str_arg("reason"));
+      }
+      return change_workflow(s, ctx, input);
+    }
+    case "run_workflow":
+      return run_workflow(s, ctx, args, profile, own_project);
     default:
       throw ToolError.other(`unknown tool ${tool}`);
   }

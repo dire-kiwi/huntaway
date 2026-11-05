@@ -224,7 +224,7 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
-Each profile has an **assistant** (API 107): one long-lived conversation outside every project,
+Each profile has an **assistant** (API 108): one long-lived conversation outside every project,
 opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
 It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
 `{"text": …}` sends it a message), keyed `A-<n>` (no project can use the key `A`; one that had it

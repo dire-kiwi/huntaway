@@ -17,6 +17,7 @@ import { terminalApi } from "./terminal";
 import { approvalsApi } from "./approvals";
 import { automationsApi } from "./automations";
 import { serverApi } from "./server";
+import { workflowsApi } from "./workflows";
 import { assistantApi } from "./assistant";
 
 export { ApiError, type ClientAdapter, type Fetch, type FetchResponse, type KeyValueStorage } from "./http";
@@ -35,6 +36,7 @@ export * from "./terminal";
 export * from "./approvals";
 export * from "./automations";
 export * from "./server";
+export * from "./workflows";
 export * from "./assistant";
 
 /** A client for one board: its calls, and its token. An app with several boards makes one for each. */
@@ -64,6 +66,7 @@ export function createClient(adapter: ClientAdapter) {
     ...approvalsApi(http),
     ...automationsApi(http),
     ...serverApi(http),
+    ...workflowsApi(http),
     ...assistantApi(http),
   };
 }

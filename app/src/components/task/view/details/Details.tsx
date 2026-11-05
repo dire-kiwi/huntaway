@@ -6,6 +6,7 @@ import { isGroupTask, useProject, useStore } from "../../../../store";
 import { Dependencies } from "../../../board/Dependencies";
 import { useConfirmDone } from "../../../board/ConfirmDone";
 import { LinkedTasks, LINKS_API, usesAsana } from "../../ExternalLinks";
+import { useWorkflowRuns, WorkflowsList } from "../../Workflows";
 import { Button, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui";
 import { TitleSection } from "../Title";
 import type { Mode } from "../layout";
@@ -40,6 +41,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const { confirmDone, dialog: doneDialog } = useConfirmDone();
+  const workflows = useWorkflowRuns(task);
   const run = async (fn: () => Promise<unknown>) => {
     setWtBusy(true);
     setErr("worktree", null);
@@ -123,6 +125,12 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             }}
           />
           {errs.preview && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.preview}</div>}
+        </Section>
+      )}
+
+      {!!workflows?.workflows.length && (
+        <Section title="Workflows">
+          <WorkflowsList task={task} />
         </Section>
       )}
 

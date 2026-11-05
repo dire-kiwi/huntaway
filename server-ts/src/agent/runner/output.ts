@@ -15,6 +15,7 @@ import * as permissions from "../../mcp/permissions.ts";
 import * as checkpoints from "../../git/checkpoints.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as review from "../../review.ts";
+import * as workflows from "../../integrations/workflows.ts";
 import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
 import type { Outcome } from "../runner.ts";
@@ -380,7 +381,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     const id = task.id;
     worktree.keep_starts(state, id).catch((e: any) => console.error(`keeping the starts of tasks on ${id}: ${err_str(e)}`));
   }
-  if (run.kind === "review" && summary.is_summary(task)) summary.finished(state, task, run_id, outcome, run.attention);
+  if (run.kind === "review" && workflows.is_workflow(task)) workflows.finished(state, task, run_id, outcome, run.attention);
+  else if (run.kind === "review" && summary.is_summary(task)) summary.finished(state, task, run_id, outcome, run.attention);
   else if (run.kind === "review") review.finished(state, task, run_id, outcome, run.attention);
   if (run.kind === "compact") {
     if (outcome === "Cancelled") state.add_event(task_id, "warn", "Compacting stopped");
@@ -481,6 +483,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     worktree.find_pr(state, task);
   }
   if (updated && is_task && updated.status === "in_review" && status === "in_review") review.on_in_review(state, updated);
+  // The task's workflows that start when it enters the column its run ended in.
+  if (updated && is_task && status === updated.status && updated.status !== task.status) workflows.on_status(state, updated);
 }
 
 /** Rust's `s.lines().next()`. */

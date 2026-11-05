@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { ChevronLeft, ChevronRight, GitBranch, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, isSummaryThread, type Task } from "../../../api";
+import { api, isSummaryThread, isWorkflowThread, type Task } from "../../../api";
 import { navigate, openTask } from "../../../router";
 import { useProject, useStore } from "../../../store";
 import { AgentsPill } from "../../layout/AgentsPill";
@@ -13,6 +13,7 @@ import { PanelButtons, useWide, type Mode } from "./layout";
 import { Row, Section } from "./details/Section";
 
 const NO_REVIEW = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">No review has run yet.</div>;
+const NO_STEP = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">This step hasn't run yet.</div>;
 const NO_SUMMARY = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">No summary has been written yet.</div>;
 
 /** A review thread: the reviewer's conversation, beside the review it's working on. */
@@ -24,6 +25,8 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
   // Which of the task's reviewers this is, when it has several. A summary thread summarises its changes instead (API 84).
   const reviewer = parent?.review && reviewParts(parent.review).find((p) => p.thread_id === thread.id)?.label;
   const summary = isSummaryThread(thread);
+  // A workflow's step: its title names the step and the workflow (API 107).
+  const step = isWorkflowThread(thread);
   const back = () => (parent ? openTask(parent.id) : project ? navigate({ name: "board", projectId: project.id }) : history.back());
   const [stopErr, setStopErr] = useState<string | null>(null);
   useEffect(() => setStopErr(null), [thread.id]);
@@ -50,7 +53,9 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
           </>
         )}
         <h1 className="min-w-0 truncate text-[13.5px] font-medium">
-          {summary ? (
+          {step ? (
+            thread.title
+          ) : summary ? (
             "Summary"
           ) : (
             <>Review{reviewer && parent?.review?.reviewers && parent.review.reviewers.length > 1 && <span className="font-normal text-muted"> · {reviewer}</span>}</>
@@ -81,13 +86,13 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
             key={`${thread.host_id}:${thread.id}`}
             task={thread}
             cwd={parent?.worktree_path ?? project?.repo_path}
-            placeholder={summary ? "Ask about the changes…" : "Ask the reviewer about its findings…"}
-            empty={summary ? NO_SUMMARY : NO_REVIEW}
+            placeholder={step ? "Ask about its findings…" : summary ? "Ask about the changes…" : "Ask the reviewer about its findings…"}
+            empty={step ? NO_STEP : summary ? NO_SUMMARY : NO_REVIEW}
           />
         </main>
         {parent && wide && (
           <aside className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40">
-            <Section title={summary ? "Summarising" : "Reviewing"}>
+            <Section title={step ? "Working on" : summary ? "Summarising" : "Reviewing"}>
               <button className="text-left text-[13px] text-fg hover:underline" onClick={back}>
                 <span className="mr-1.5 font-mono text-[12px] text-faint">{key}</span>
                 {parent.title}
@@ -99,7 +104,7 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
                 </div>
               )}
             </Section>
-            {summary ? (
+            {step ? null : summary ? (
               <Section title="Latest summary">
                 <ChangeSummaryView task={parent} threadId={thread.id} />
               </Section>
@@ -108,7 +113,7 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
                 <ReviewSummary task={parent} threadId={thread.id} />
               </Section>
             )}
-            <Section title={summary ? "Summarizer" : "Reviewer"}>
+            <Section title={step ? "Agent" : summary ? "Summarizer" : "Reviewer"}>
               <Row label="Cost">{cost(thread.cost_usd) ?? "—"}</Row>
               <Row label="Session">{thread.session_id ? <span className="font-mono text-[11px]">{thread.session_id}</span> : "—"}</Row>
             </Section>

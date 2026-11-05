@@ -204,6 +204,8 @@ export const summariesOf = (t: Pick<Task, "summary" | "summaries">): ChangeSumma
 
 /** A review thread that summarises its task's changes rather than reviewing them (API 84): its type is "summary". */
 export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "summary";
+/** A workflow's agent step's thread (API 107), which is a review thread of the task. */
+export const isWorkflowThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "workflow";
 
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
@@ -246,7 +248,7 @@ export interface Task {
   group_name?: string | null;
   /** The task whose agent created this one (API 34). */
   created_by?: string | null;
-  /** What the task is, if not a code task: a scratch task (API 47), or the profile's assistant (API 107, see `isAssistant`).
+  /** What the task is, if not a code task: a scratch task (API 47), or the profile's assistant (API 108, see `isAssistant`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
   task_type?: TaskType | "assistant" | DocumentType | null;
@@ -474,7 +476,7 @@ export const tasksApi = ({ on, storage }: Http) => ({
     },
   ) => on(h).post<Task>(`/profiles/${enc(profileId)}/tasks`, b),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
-   *  assistant (API 107), which is off the board. */
+   *  assistant (API 108), which is off the board. */
   groupTasks: (h: string, profileId: string, assistant = false) =>
     on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${assistant ? "?include_assistant=true" : ""}`),
   createGroupTask: (
