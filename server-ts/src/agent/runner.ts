@@ -14,7 +14,7 @@ import * as documents from "./documents.ts";
 import * as permissions from "../mcp/permissions.ts";
 import { launch } from "./runner/launch.ts";
 import { requeue_ahead, check_not_archived, start_unblocked } from "./runner/send.ts";
-import { requeue_steers, set_writes_documents, write_steers, close_unless_taken_in, has_queued, send_queued } from "./runner/queue.ts";
+import { requeue_steers, set_writes_documents, write_steers, close_unless_taken_in, has_queued, send_queued, turn_ended } from "./runner/queue.ts";
 import { finish } from "./runner/output.ts";
 import { start_queued_merges } from "./runner/merge.ts";
 
@@ -247,6 +247,8 @@ function stop_run(state: Shared, task_id: string, kill: boolean): boolean {
     db.run(state.db(), "UPDATE runs SET stop_requested=1, stop_id=?2 WHERE id=?1", run_id, stop_id);
   } catch {}
   if (cancel && (cancel as () => boolean | void)() !== false) return true;
+  // Between turns, an agent kept going by its background tasks (see queue::turn_ended) has no turn to interrupt.
+  if (!kill && runs.background_tasks(state, run_id) > 0) kill = idle(state, run_id);
   if (!kill && interrupt(state, run_id, stop_id)) return true;
   runs.close_input(state, run_id);
   if (!runs.kill(state, run_id) && !runs.exists(state, run_id)) {
@@ -254,6 +256,17 @@ function stop_run(state: Shared, task_id: string, kill: boolean): boolean {
     finish(state, run_id, "Cancelled");
   }
   return true;
+}
+
+/** Whether the run is between turns, with no message sent to it waiting to start the next. */
+function idle(state: Shared, run_id: string): boolean {
+  try {
+    const run = db.get_run(state.db(), run_id);
+    if (!run?.between_turns) return false;
+    return !db.get_task(state.db(), run.task_id)?.steering.some((s) => s.run_id === run_id);
+  } catch {
+    return false;
+  }
 }
 
 /** Ask the agent to end its turn now, for the stop `stop_id`. Returns false if it doesn't take input any more. */
@@ -362,8 +375,8 @@ export function load_active(state: Shared) {
           console.error(`run ${run.id}: sending the agent the messages it was sent: ${err_str(e)}`);
         }
         const waiting = (t?.steering ?? []).filter((s) => s.run_id === run.id).map((s) => s.id);
-        if (!waiting.length) runs.close_input(state, run.id);
-        else close_unless_taken_in(state, run, waiting);
+        if (waiting.length) close_unless_taken_in(state, run, waiting);
+        else turn_ended(state, run);
       }
     } else {
       // We stopped while preparing (e.g. setting up the worktree), before claude started, or before ia-shim wrote its

@@ -19,7 +19,7 @@ import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
-import { has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended } from "./queue.ts";
+import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended } from "./queue.ts";
 
 const SUBAGENT_EVENTS = ["task_started", "task_progress", "task_updated", "task_notification"];
 
@@ -178,6 +178,9 @@ export function handle_line(state: Shared, run: Run, line: string) {
     // From `/compact`, or Claude Code compacting by itself when the context fills up.
     state.add_message(task_id, "claude", { type: "system", subtype: "compact_boundary", compact_metadata: v.compact_metadata ?? null });
     context.on_compacted(state, run, v.compact_metadata ?? null);
+  } else if (type === "system" && v.subtype === "background_tasks_changed") {
+    // The background tasks it has going, all of them: they keep it from exiting (see queue::turn_ended).
+    if (Array.isArray(v.tasks)) background_changed(state, run, v.tasks.length);
   } else if (type === "system" && typeof v.subtype === "string" && SUBAGENT_EVENTS.includes(v.subtype)) {
     // Subagent lifecycle (Agent/Task tool), keyed by the launching `tool_use_id`.
     delete v.output_file;
