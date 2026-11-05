@@ -340,12 +340,14 @@ export function apply_mode_to_pending(s: Shared, task: Task): void {
 }
 
 /** Prompts waiting for an answer, oldest first: all of this host's, or one task's. */
-export function pending(s: Shared, task_id: string | null): any[] {
+export function pending(s: Shared, task_id: string | null, profile_id: string | null = null): any[] {
   const rows = db.all<{ id: string; task_id: string; tool_name: string; input: string; created_at: string; expires_at: string | null; rule: string | null }>(
     s.db(),
     `SELECT id, task_id, tool_name, input, created_at, expires_at, rule FROM permission_requests
-     WHERE status='pending' AND (?1 IS NULL OR task_id=?1) ORDER BY created_at, rowid`,
+     WHERE status='pending' AND (?1 IS NULL OR task_id=?1)
+       AND (?2 IS NULL OR task_id IN (SELECT id FROM tasks WHERE profile_id=?2)) ORDER BY created_at, rowid`,
     task_id,
+    profile_id,
   );
   return rows.map((r) => {
     let input: any;

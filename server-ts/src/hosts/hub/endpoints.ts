@@ -7,6 +7,7 @@ import * as db from "../../db.ts";
 import { ApiError, Reply, type Req } from "../../http.ts";
 import type { AppState } from "../../state.ts";
 import * as api from "../../api.ts";
+import * as devices from "../../devices.ts";
 import { err_str } from "../../util.ts";
 import * as admin from "../../update/admin.ts";
 import * as runs from "../../agent/runs.ts";
@@ -23,6 +24,13 @@ function json_reply(status: number, body: any): Reply {
 
 /** `/api/h/{host_id}/{*rest}`: the UI's way of talking to any host. (Its websockets come to `proxy_ws`.) */
 export async function proxy(s: AppState, r: Req): Promise<Reply> {
+  // A paired device's request was checked on its path as sent (in api.auth), and is again on the one forwarded with our
+  // token, as the router decoded it.
+  const device = r.device ?? null;
+  if (device) {
+    const why = devices.refused_on_host(r.method, r.params.rest ?? "");
+    if (why) return json_reply(403, { error: why });
+  }
   const host_id = r.params.host_id;
   // The rest of the path as it came, not decoded: it's passed on as it is.
   const m = r.path.match(/^(?:\/api)?\/h\/[^/]+\/(.*)$/);
@@ -42,7 +50,7 @@ export async function proxy(s: AppState, r: Req): Promise<Reply> {
   let result: [number, any];
   try {
     if (host_id === s.host_id) {
-      result = await api.local_request(s, method, path, bytes.length ? bytes : null);
+      result = await api.local_request(s, method, path, bytes.length ? bytes : null, device);
     } else {
       const link = s.links.get(host_id);
       if (!link) {
@@ -94,7 +102,17 @@ function refuse(socket: Duplex, status: number, text: string, body: any) {
  * A websocket for a linked host (a terminal), relayed to it. (One for this host is handled by `main.ts`, by our own
  * routes.)
  */
-export async function proxy_ws(s: AppState, host_id: string, rest: string, query: string, req: IncomingMessage, socket: Duplex, head: Buffer, wss: WebSocketServer) {
+export async function proxy_ws(
+  s: AppState,
+  host_id: string,
+  rest: string,
+  query: string,
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+  wss: WebSocketServer,
+  device: devices.DeviceAuth | null = null,
+) {
   const path = host_path(rest, query);
   const link = s.links.get(host_id);
   if (!link) return refuse(socket, 503, "Service Unavailable", { error: "host is offline" });
@@ -106,7 +124,10 @@ export async function proxy_ws(s: AppState, host_id: string, rest: string, query
   } catch (e) {
     return refuse(socket, 502, "Bad Gateway", { error: err_str(e) });
   }
-  wss.handleUpgrade(req, socket, head, (ws) => relay.bridge(ws, pipe));
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    devices.until_revoked(s, device, ws);
+    relay.bridge(ws, pipe);
+  });
 }
 
 /** This host plus every linked host, with live status. */
@@ -155,6 +176,7 @@ export function list_hosts(s: AppState) {
 
 /** Link a host we can reach directly. */
 export async function add_host(s: AppState, r: Req) {
+  devices.board_only(r.device, "link hosts");
   const b = r.body ?? {};
   if (typeof b.url !== "string" || typeof b.token !== "string") throw new ApiError(422, "Failed to deserialize the JSON body into the target type: missing field `url` or `token`");
   const url = b.url.trim().replace(/\/+$/, "");
@@ -221,8 +243,9 @@ export function remove_host(s: AppState, r: Req) {
   return { ok: true };
 }
 
-/** What a host needs to dial in to this hub. */
+/** What a host needs to dial in to this hub: its tokens, which a paired device never gets (see devices.HUB). */
 export function join_info(s: AppState, r: Req) {
+  devices.board_only(r.device, "get the board's tokens");
   return {
     hub_token: s.hub_token,
     host_token: s.token,

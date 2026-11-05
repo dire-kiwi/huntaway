@@ -34,8 +34,11 @@ export const PROTOCOL = 1;
  *
  * API 117: the assistant's Telegram bot (`/profiles/{id}/telegram`, `/telegram/link` and `/telegram/owner`, see
  * integrations/telegram.ts), `telegram` events, and `telegram` as who answered in the action log.
+ *
+ * API 118: paired devices (devices.ts): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
+ * `GET /permissions?profile_id=`.
  */
-export const API_VERSION = 117;
+export const API_VERSION = 118;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;
