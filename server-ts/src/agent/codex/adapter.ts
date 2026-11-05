@@ -9,9 +9,6 @@ import { Channel, Responder, Rpc } from "./rpc.ts";
 import * as runner from "../runner.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as wait from "../../mcp/wait.ts";
-import * as permissions from "../../mcp/permissions.ts";
-import * as mcp from "../../mcp.ts";
-import * as agent_tools from "../agent_tools.ts";
 import * as approval_rules from "../approval_rules.ts";
 import * as google from "../assistant/google.ts";
 import { context, err_str, expand_tilde } from "../../util.ts";
@@ -80,9 +77,6 @@ export function mcp_server_config(name: string, c: any, approved: boolean, disab
   return out;
 }
 
-/** The board as a run's MCP helper reaches it. */
-export type Board = mcp.Ctx;
-
 /** `huntaway codex-run <run-dir>/codex.json`, with the prompt on stdin. Exits the process once it's done. */
 export async function run_adapter(spec_path: string): Promise<void> {
   let raw: string;
@@ -101,11 +95,12 @@ export async function run_adapter(spec_path: string): Promise<void> {
     throw context("reading mcp.json", e);
   }
   const mcp_json = JSON.parse(mcp_raw);
-  const board = mcp.Ctx_from_server(mcp_json?.mcpServers?.[runner.MCP_SERVER_NAME]);
   let rpc: Rpc | null = null;
   let children: ChildThreads | null = null;
   try {
     const input = spec.input ? read_input() : null;
+    // The app-server's requests the board hasn't answered yet (see Requests).
+    const requests = new Requests(spec.requests_on_output && input !== null);
     let prompt: string;
     if (input) {
       const first = await input.recv();
@@ -143,7 +138,7 @@ export async function run_adapter(spec_path: string): Promise<void> {
       params.excludeTurns = true;
       started = await rpc.request("thread/resume", params);
     } else {
-      started = await rpc.request("thread/start", params);
+      started = await start_thread(rpc, params, spec.board_tools);
     }
     const thread_id = str(started?.thread?.id);
     if (thread_id === null) throw new Error("no thread id");
@@ -172,7 +167,7 @@ export async function run_adapter(spec_path: string): Promise<void> {
         const msg = await rpc.incoming.recv();
         if (msg === null) break;
         const method = str(msg.method) ?? "";
-        if (on_incoming(board, reply, items, children, msg)) continue;
+        if (on_incoming(requests, reply, items, children, msg)) continue;
         if ((method === "turn/completed" || method === "thread/compacted") && own_thread(msg.params, thread_id)) return finish(rpc, children);
       }
       throw new Error("codex app-server exited before compacting the conversation");
@@ -206,7 +201,7 @@ export async function run_adapter(spec_path: string): Promise<void> {
         if (method === "item/started" && own_thread(msg.params, thread_id) && msg.params?.item?.type !== "userMessage") {
           for (const [id, text] of steered.splice(0)) replay(id, text);
         }
-        if (on_incoming(board, reply, items, children, msg)) continue;
+        if (on_incoming(requests, reply, items, children, msg)) continue;
         if (method === "turn/completed" && own_thread(msg.params, thread_id) && turn_id !== null && str(msg.params?.turn?.id) === turn_id) {
           turn_id = null;
           // Steered in too late to be acted on (or the turn was interrupted): they start
@@ -222,7 +217,10 @@ export async function run_adapter(spec_path: string): Promise<void> {
         const line: Input | null = got.v;
         if (line === null) {
           input_open = false;
+          requests.closed(reply);
           if (turn_id === null) break;
+        } else if (line.type === "response") {
+          requests.answered(reply, line);
         } else if (line.type === "user") {
           if (turn_id !== null) {
             const params = {
@@ -297,24 +295,100 @@ class Turn {
 }
 
 /**
- * Handle a notification or request from the app-server: answer requests (approvals) and write
- * the notifications worth keeping to stdout. Returns true for requests.
+ * Handle a notification or request from the app-server: requests (approvals, questions, the board's tools) go to the
+ * board (see Requests), and the notifications worth keeping to stdout. Returns true for requests.
  */
-function on_incoming(board: Board, reply: Responder, items: Map<string, any>, children: ChildThreads, msg: any): boolean {
+function on_incoming(requests: Requests, reply: Responder, items: Map<string, any>, children: ChildThreads, msg: any): boolean {
   children.observe(msg);
   const method = str(msg.method) ?? "";
   if ("id" in msg) {
     const item_id = str(msg.params?.itemId);
     const item = item_id !== null ? (items.get(item_id) ?? null) : null;
-    answer(board, reply, msg, item).catch((e) => console.error(`answering ${method}: ${err_str(e)}`));
+    requests.asked(reply, msg, item);
     return true;
   }
   if (method === "item/started") {
     const id = str(msg.params?.item?.id);
     if (id !== null) items.set(id, msg.params.item);
   }
-  if (KEEP.includes(method)) emit(msg);
+  if (method === "serverRequest/resolved") requests.resolved(msg);
+  else if (KEEP.includes(method)) emit(msg);
   return false;
+}
+
+/**
+ * The app-server's requests, answered by the board (with `Spec::requests_on_output`): each is written to stdout as it
+ * is (with the item it's about, which an approval only names, as `item`), and its answer comes back on stdin as a
+ * `codex_response` line, which is passed on. One the app-server stops waiting for (`serverRequest/resolved`: the turn
+ * was interrupted, say) is told to the board, unless the board answered it already. Without the board (a compaction,
+ * which takes no input), requests are declined here.
+ */
+class Requests {
+  private open = new Map<string, any>();
+  private board: boolean;
+  constructor(board: boolean) {
+    this.board = board;
+  }
+
+  asked(reply: Responder, msg: any, item: any | null) {
+    if (!this.board) return decline(reply, msg);
+    this.open.set(JSON.stringify(msg.id ?? null), msg);
+    emit(item !== null ? { ...msg, item } : msg);
+  }
+
+  /** The board can't answer any more (the run's input ended): what it hasn't answered is declined. */
+  closed(reply: Responder) {
+    this.board = false;
+    for (const msg of this.open.values()) decline(reply, msg);
+    this.open.clear();
+  }
+
+  /** The board's answer to request `r.id`. */
+  answered(reply: Responder, r: { id: any; result?: any; error?: any }) {
+    if (!this.open.delete(JSON.stringify(r.id ?? null))) return;
+    if (r.error !== undefined) reply.error(r.id, typeof r.error?.message === "string" ? r.error.message : "the board couldn't answer this");
+    else reply.result(r.id, r.result ?? null);
+  }
+
+  resolved(msg: any) {
+    if (this.open.delete(JSON.stringify(msg.params?.requestId ?? null))) emit(msg);
+  }
+}
+
+/** A request answered with no board to ask: approvals are declined, questions unanswered, the board's tools unavailable. */
+function decline(reply: Responder, msg: any) {
+  const id = g(msg.id);
+  const p = msg.params ?? {};
+  switch (str(msg.method) ?? "") {
+    case "item/commandExecution/requestApproval":
+    case "item/fileChange/requestApproval":
+      return reply.result(id, { decision: "decline" });
+    case "item/permissions/requestApproval":
+      return reply.result(id, { permissions: {}, scope: "turn" });
+    case "mcpServer/elicitation/request":
+      return reply.result(id, { action: "decline" });
+    case "item/tool/requestUserInput":
+      return reply.result(id, { answers: {} });
+    case "item/tool/call":
+      return reply.result(id, { contentItems: [{ type: "inputText", text: `The board's ${str(p.tool) ?? ""} tool isn't available in this run.` }], success: false });
+    default:
+      reply.error(id, `Method not supported by Huntaway: ${str(msg.method) ?? ""}`);
+  }
+}
+
+/**
+ * `thread/start`, with the board's tools as dynamic tools (`Spec::board_tools`). A Codex that doesn't take dynamic
+ * tools starts the thread without them, and says so.
+ */
+async function start_thread(rpc: Rpc, params: any, tools: any | null): Promise<any> {
+  if (tools === null) return rpc.request("thread/start", params);
+  try {
+    return await rpc.request("thread/start", { ...params, dynamicTools: [tools] });
+  } catch (e) {
+    if (!/dynamic.?tools|experimental|unknown field/i.test(err_str(e))) throw e;
+    emit({ method: "warning", params: { message: `This Codex doesn't take the board's tools (${err_str(e)}), so the agent hasn't them.` } });
+    return rpc.request("thread/start", params);
+  }
 }
 
 /**
@@ -350,7 +424,7 @@ class ChildThreads {
 }
 
 /** A line of the adapter's stream-json input. */
-type Input = { type: "user"; id: string; text: string } | { type: "interrupt" };
+type Input = { type: "user"; id: string; text: string } | { type: "interrupt" } | { type: "response"; id: any; result?: any; error?: any };
 
 /** Read stdin's stream-json lines until it ends. */
 function read_input(): Channel<Input> {
@@ -365,6 +439,7 @@ function read_input(): Channel<Input> {
     }
     if (v?.type === "user") ch.send({ type: "user", id: str(v.uuid) ?? "", text: user_text(v.message?.content) });
     else if (v?.type === "control_request" && v.request?.subtype === "interrupt") ch.send({ type: "interrupt" });
+    else if (v?.type === "codex_response" && "id" in v) ch.send({ type: "response", id: v.id, result: v.result, error: v.error });
   });
   lines.on("close", () => ch.close());
   return ch;
@@ -456,115 +531,4 @@ function shell_word(s: string): string | null {
 export function file_changes(item: any | null): any[] {
   const changes: any[] = Array.isArray(item?.changes) ? item.changes : [];
   return changes.map((c) => ({ path: g(c?.path), kind: g(c?.kind?.type), move_path: g(c?.kind?.move_path), diff: g(c?.diff) }));
-}
-
-/**
- * Answer one of the app-server's requests: approvals go to the board like Claude's
- * permission prompts, so the user approves them in the thread.
- */
-export async function answer(board: Board, reply: Responder, msg: any, item: any | null): Promise<void> {
-  const id = g(msg.id);
-  const p = msg.params ?? {};
-  const ask = async (tool: string, input: any): Promise<boolean> => {
-    const args = { tool_name: tool, input, tool_use_id: g(p.itemId) };
-    try {
-      const v = await board.call("permission_prompt", args);
-      return v?.behavior === "allow";
-    } catch (e) {
-      console.error(`permission prompt failed: ${err_str(e)}`);
-      return false;
-    }
-  };
-  const decision = (ok: boolean) => ({ decision: ok ? "accept" : "decline" });
-  const method = str(msg.method) ?? "";
-  switch (method) {
-    case "item/commandExecution/requestApproval": {
-      const command = typeof p.command === "string" ? display_command(p.command) : "";
-      const input: any = { command, cwd: g(p.cwd) };
-      if (typeof p.reason === "string") input.description = p.reason;
-      reply.result(id, decision(await ask("Bash", input)));
-      return;
-    }
-    case "item/fileChange/requestApproval": {
-      const input: any = { changes: file_changes(item) };
-      if (typeof p.reason === "string") input.reason = p.reason;
-      if (typeof p.grantRoot === "string") input.grant_root = p.grantRoot;
-      reply.result(id, decision(await ask("ApplyPatch", input)));
-      return;
-    }
-    case "item/permissions/requestApproval": {
-      const ok = await ask("Permissions", { permissions: g(p.permissions), reason: g(p.reason), cwd: g(p.cwd) });
-      reply.result(id, { permissions: ok ? g(p.permissions) : {}, scope: "turn" });
-      return;
-    }
-    case "mcpServer/elicitation/request": {
-      // Only forms that need nothing filled in (e.g. "allow this tool call?") can be accepted.
-      const props = p.requestedSchema?.properties;
-      const fields = is_obj(props) ? Object.keys(props).length : 0;
-      const server = str(p.serverName) ?? "mcp";
-      const message = str(p.message) ?? "";
-      // "Allow the x MCP server to run tool "y"?" asks about a tool call.
-      let tool = "elicitation";
-      const at = message.indexOf('tool "');
-      if (at >= 0) {
-        const r = message.slice(at + 6);
-        const q = r.indexOf('"');
-        if (q >= 0) tool = r.slice(0, q);
-      }
-      const board_server = runner.is_board_server(server);
-      const params = p._meta?.tool_params;
-      const cmd = typeof params?.command === "string" ? params.command.trim() : "";
-      const command = cmd !== "" ? cmd : null;
-      const answered = (ok: boolean) => reply.result(id, { action: ok ? "accept" : "decline", content: ok ? {} : null });
-      if (p.mode === "url" || fields > 0) {
-        reply.result(id, { action: "decline" });
-      } else if (board_server && tool === "wait" && (command !== null || !is_obj(params))) {
-        // A wait Codex's reviewer didn't take (see Spec::review_waits) is asked about as
-        // the command it runs, as the board would (or, without its arguments, as itself).
-        let ok: boolean;
-        if (command !== null) {
-          const reason = typeof params.reason === "string" ? `: ${params.reason}` : "";
-          ok = await ask("Bash", { command, description: `Run while waiting${reason}` });
-        } else {
-          ok = await ask(`${agent_tools.tool_prefix(server)}__wait`, { message });
-        }
-        answered(ok);
-      } else if (board_server) {
-        // The board's own tools never need approval.
-        reply.result(id, { action: "accept", content: {} });
-      } else {
-        // With what it's called with, when Codex says (for the user, and the action log).
-        const input: any = { message };
-        if (is_obj(params)) input.arguments = params;
-        answered(await ask(`${agent_tools.tool_prefix(server)}__${tool}`, input));
-      }
-      return;
-    }
-    // Its questions (in plan mode) are asked in the thread as Claude's AskUserQuestion is, and
-    // answered with the user's answers by question id. Unanswered, the agent carries on with its own judgement.
-    case "item/tool/requestUserInput": {
-      const questions = (Array.isArray(p.questions) ? p.questions : []).map((q: any) => ({
-        id: g(q?.id),
-        header: g(q?.header),
-        question: g(q?.question),
-        multiSelect: false,
-        options: Array.isArray(q?.options) ? q.options : [],
-        isOther: g(q?.isOther),
-        isSecret: g(q?.isSecret),
-      }));
-      const args = { tool_name: permissions.CODEX_QUESTIONS, input: { questions }, tool_use_id: g(p.itemId) };
-      let answers: any;
-      try {
-        const v = await board.call("permission_prompt", args);
-        answers = v?.behavior === "allow" ? g(v?.updatedInput?.answers) : {};
-      } catch (e) {
-        console.error(`asking the user failed: ${err_str(e)}`);
-        answers = {};
-      }
-      reply.result(id, { answers: is_obj(answers) ? answers : {} });
-      return;
-    }
-    default:
-      reply.error(id, `Method not supported by Huntaway: ${method}`);
-  }
 }

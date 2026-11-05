@@ -91,6 +91,9 @@ export function useThread(boardId: string, client: Client | undefined, host: str
       if (endsDelta(m)) setDelta(() => "");
       if (thread.data?.items) reloadSoon();
       else thread.setData((t) => ({ ...t, more: t?.more ?? false, subagents: t?.subagents ?? [], messages: withMessage(t?.messages ?? [], m) }));
+    } else if (ev.type === "thread_event" && ev.task_id === id && thread.data?.items && ev.event?.type !== "delta") {
+      // Written as items with no message (a Codex run's, see the server's agent/codex/driver.ts).
+      reloadSoon();
     } else if (ev.type === "thread_resync" && ev.task_id === id && thread.data?.items) {
       // Rebuilt: what's loaded may not be its thread now.
       reloadSoon();

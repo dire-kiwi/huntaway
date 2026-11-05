@@ -1286,9 +1286,10 @@ A thread whose config is a Codex one runs `huntaway codex-run` under ia-shim ins
 `claude -p`. That adapter starts `codex app-server`, starts (or resumes) the thread's Codex
 thread, sends the prompt, steers messages sent meanwhile into the turn (`turn/steer`), and exits
 when its input ends with no turn going. Codex's events are kept in the run's
-output as they are, and the server shows them like Claude's: commands as Bash calls, file
-changes as diffs, the plan as a todo list, MCP calls under their server's name. The board's MCP
-tools, the project's MCP servers and skills, `/compact`, steering, stopping (`turn/interrupt`), queued messages and
+output as they are, and the server writes them into the thread's items as they come (see
+[docs/threads.md](docs/threads.md), "Codex writes items directly"), shown like Claude's: commands as Bash calls, file
+changes as diffs, the plan as a todo list, MCP calls under their server's name. The board's
+tools (as Codex dynamic tools), the project's MCP servers and skills, `/compact`, steering, stopping (`turn/interrupt`), queued messages and
 reviews work the same.
 
 Codex's native subagents appear in the thread and **Agents** list with their own transcripts,
@@ -1298,7 +1299,9 @@ findings." [Current Codex releases enable subagents by default](https://learn.ch
 config's `agents.enabled` setting and concurrency limit. Subagents share the task's worktree
 and inherit its permissions and MCP servers.
 
-Codex asks for approval through the board, like Claude's permission prompts. Permission modes
+Codex asks for approval through the board, like Claude's permission prompts: the adapter writes the app-server's
+requests (approvals, questions, the board's tools' calls) to the run's output, and the board answers each on the run's
+input, so a request still open when the server restarts is asked again. Permission modes
 map onto Codex's approval policy and sandbox (writes stay in the working directory, the
 repository's git directory and package caches such as `~/.npm`, `~/.cargo/registry` and
 `~/.local/share/pnpm` (or where `CARGO_HOME`, `XDG_CACHE_HOME` and `XDG_DATA_HOME` put them),
@@ -1647,10 +1650,11 @@ skipped. Auto-compacting idle sessions is Claude-only.
     done`). It's approved like one of the agent's Bash calls (a permission prompt in the thread,
     unless the thread's mode or *Always allow* for Bash decides). In *Auto* mode the agent's
     own reviewer checks it instead: Claude runs there don't pre-approve `wait` as they do the
-    other board tools, and Codex runs set its `approval_mode` to `prompt`, so each wait call,
-    command included, goes through Claude's classifier or Codex's `auto_review` reviewer and
-    the board doesn't ask again. (If Codex leaves the call to the user, the adapter asks the
-    board about the command.) It runs in a process group of its
+    other board tools, and a Codex session from before the board's tools were dynamic tools has
+    its `approval_mode` set to `prompt`, so each wait call, command included, goes through
+    Claude's classifier or Codex's `auto_review` reviewer and the board doesn't ask again. (If
+    Codex leaves the call to the user, the board asks about the command.) Codex doesn't review
+    a dynamic tool's calls, so a newer session's wait command is asked about as in *Ask*. It runs in a process group of its
     own that's killed when it exits or the wait ends first, and starts again from the beginning
     when a server restart retries the call. A watchdog in its group kills it once the server
     that started it is gone, however it went (restarting, exiting or crashing), so a restart
@@ -2156,10 +2160,11 @@ skipped. Auto-compacting idle sessions is Claude-only.
   (`--permission-prompt-tool stdio`: a `can_use_tool` control request in the run's `out.jsonl`)
   and gets the answer on its input (`input.jsonl`); a prompt still open when the server restarts
   is asked again, and can be answered as before. A `/compact` run, which takes no input, asks
-  through the board's MCP server's `permission_prompt`, over HTTP, as Codex's approvals do. Codex's
-  approvals get the same card, which names the agent asking. Runs that ask on their output are
-  run format 3 (4 when they call the board's tools there too, see *Agent tools (MCP)*): an
-  older build that's rolled back to stops them (it couldn't answer them) rather than follow them.
+  through the board's MCP server's `permission_prompt`, over HTTP. Codex's approvals come on the
+  run's output too (the app-server's requests, which its adapter writes there) and get the same
+  card, which names the agent asking; a Codex `/compact` declines them. Runs that ask on their output are
+  run format 3 (4 when they call the board's tools there too, see *Agent tools (MCP)*, and 5 for
+  Codex's): an older build that's rolled back to stops them (it couldn't answer them) rather than follow them.
 - **Questions and plans** (API 64) are cards in the thread rather than approvals, and the task's
   card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
   Keys 1–9 pick an option in the latest one that's waiting, unless you're typing.
@@ -2237,12 +2242,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
 
 ### Agent tools (MCP)
 
-Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs
-and over HTTP for Codex runs and compactions (see *How runs reach the board's MCP servers* below):
+Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs,
+as dynamic tools (a `huntaway` namespace, answered on the run's input) for Codex sessions started
+since they were, and over HTTP for older Codex sessions (Codex can't give a session it resumes new
+dynamic tools) and compactions (see *How runs reach the board's MCP servers* below):
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
-*Waiting*), plus the internal `permission_prompt` (for Codex runs and compactions). Review threads
+*Waiting*), plus the internal `permission_prompt` (for compactions). Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
 `list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see
@@ -2350,14 +2357,13 @@ was interrupted) isn't answered: a `wait` ends, and an approval expires. Such ru
 which an older build that's rolled back to stops rather than follow, as it couldn't answer their
 calls. With `IA_MCP_STDIO=1` (below), Claude runs get the helpers instead.
 
-Codex runs and compactions reach the board's tools over MCP's streamable HTTP transport, and every
+Older Codex sessions and compactions reach the board's tools over MCP's streamable HTTP transport, and every
 run reaches the `gh` server that way, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on
 the host's internal address (`127.0.0.1:<port>`, the host that runs the agent). Each run's `mcp.json` has them as `http` servers with a bearer token of the
 run's own (an HMAC of the run's id with the host's token), which only acts as that run: the server
 says which run a call is for, not the agent, and the agent never holds the host's token. What the
 `gh` server needs of the run (its working directory and GitHub account) is in the run's folder
-(`mcp-run.json`), not in the request. A Codex run's adapter makes its own board calls (approvals)
-with the run's token too. Not through the broker. Claude Code gives an HTTP server's call 5 minutes
+(`mcp-run.json`), not in the request. Not through the broker. Claude Code gives an HTTP server's call 5 minutes
 without news before it aborts it, so the entries set `timeout` (a day for the board's, as
 `MCP_TOOL_TIMEOUT`, and 15 minutes for gh's).
 

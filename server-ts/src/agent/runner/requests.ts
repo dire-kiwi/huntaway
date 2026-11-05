@@ -32,6 +32,7 @@ import * as tools from "../../mcp/tools.ts";
 import * as permissions from "../../mcp/permissions.ts";
 import * as wait from "../../mcp/wait.ts";
 import { MCP_SERVER_NAME } from "../runner.ts";
+import { prompt_answer, respond as codex_respond, tool_answer, type CodexRequest } from "../codex/requests.ts";
 
 /** What `--permission-prompt-tool` is for a run that's asked on its output. */
 export const PROMPT_TOOL = "stdio";
@@ -74,22 +75,27 @@ export function is_initialized(v: any): boolean {
   return typeof id === "string" && id.startsWith(INIT_PREFIX);
 }
 
-/** What a request is asked with: the helper's `permission_prompt` arguments, and the request it answers. */
-interface Asked {
+/**
+ * What a request is asked with: the helper's `permission_prompt` arguments, and the request it answers (Claude's control
+ * request, or with `codex`, a Codex run's request, see agent/codex/requests.ts).
+ */
+export interface Asked {
   tool_name: string;
   input: any;
   tool_use_id: string | null;
   request_id: string;
+  codex?: CodexRequest;
 }
 
 /**
  * A board tool called through `mcp_message`, as its call is recorded (in `mcp_calls.args`): the tool's arguments, and
  * the request and the JSON-RPC id its answer goes back with.
  */
-interface Called {
+export interface Called {
   request_id: string;
   rpc_id: string | number;
   arguments: any;
+  codex?: CodexRequest;
 }
 
 /** The calls Claude no longer wants answered (see `on_control_cancel`), while their prompts settle. */
@@ -111,7 +117,7 @@ export function on_control_request(state: Shared, run: Run, v: any): void {
     tool_use_id: typeof req.tool_use_id === "string" ? req.tool_use_id : null,
     request_id,
   };
-  ask(state, run.id, control_call_id(run.id, request_id), asked);
+  ask_permission(state, run.id, control_call_id(run.id, request_id), asked);
 }
 
 /** A message for one of the run's in-process MCP servers: the board's is the only one. */
@@ -128,7 +134,7 @@ function on_mcp_message(state: Shared, run: Run, request_id: string, req: any): 
   if (typeof rpc_id !== "string" && typeof rpc_id !== "number") return answer({ jsonrpc: "2.0", id: 0, result: {} });
   if (msg.method === "tools/call") {
     const name = typeof msg.params?.name === "string" ? msg.params.name : "";
-    call(state, run.id, control_call_id(run.id, request_id), name, { request_id, rpc_id, arguments: msg.params?.arguments ?? null });
+    call_tool(state, run.id, control_call_id(run.id, request_id), name, { request_id, rpc_id, arguments: msg.params?.arguments ?? null });
     return;
   }
   // The handshake, and pings. It calls nothing.
@@ -154,7 +160,11 @@ function reviews(state: Shared, run: Run): boolean {
 export function on_control_cancel(state: Shared, run: Run, v: any): void {
   const request_id = v?.request_id;
   if (typeof request_id !== "string" || !request_id) return;
-  const call = control_call_id(run.id, request_id);
+  cancel_call(state, run, control_call_id(run.id, request_id));
+}
+
+/** The agent no longer wants call `call` answered (see `on_control_cancel`). */
+export function cancel_call(state: Shared, run: Run, call: string): void {
   // Unless it's been answered already.
   if (!state.calls_inflight.has(call)) return;
   cancelled.add(call);
@@ -191,33 +201,40 @@ export function resume_requests(state: Shared, run: Run): void {
     if (typeof saved?.request_id !== "string") continue;
     if (Object.hasOwn(saved, "rpc_id")) {
       console.log(`run ${run.id}: carrying on with board call ${saved.request_id} (${r.tool})`);
-      call(state, run.id, r.id, r.tool, saved);
+      call_tool(state, run.id, r.id, r.tool, saved);
     } else {
       console.log(`run ${run.id}: waiting again on permission prompt ${saved.request_id}`);
-      ask(state, run.id, r.id, saved);
+      ask_permission(state, run.id, r.id, saved);
     }
   }
 }
 
-function ask(state: Shared, run_id: string, call_id: string, asked: Asked): void {
+/** Permission prompt `asked`, call `call_id` of run `run_id`: asked by the board's policy, and answered on the run's input. */
+export function ask_permission(state: Shared, run_id: string, call_id: string, asked: Asked): void {
   const respond = (r: { ok: any } | { err: string }) => {
     if (cancelled.delete(call_id)) return;
     // An error is a denial that says what went wrong, as the helper's error result was.
     const response = "ok" in r ? r.ok : { behavior: "deny", message: r.err };
-    write(state, run_id, { subtype: "success", request_id: asked.request_id, response });
+    if (asked.codex) codex_respond(state, run_id, asked.codex.id, { result: prompt_answer(asked.codex, response) });
+    else write(state, run_id, { subtype: "success", request_id: asked.request_id, response });
   };
   const call = tools.handle_control(state, { run_id, call_id, tool: "permission_prompt", args: asked }, respond);
   background(`run ${run_id}: permission prompt ${asked.request_id}`, call.finally(() => cancelled.delete(call_id)));
 }
 
-/** Board tool `name`'s call, `c`: run at most once, answered with its result as the board's MCP server's response. */
-function call(state: Shared, run_id: string, call_id: string, name: string, c: Called): void {
+/**
+ * Board tool `name`'s call, `c`: run at most once, answered with its result as the board's MCP server's response (or,
+ * for a Codex run's dynamic tool, as its `item/tool/call`'s).
+ */
+export function call_tool(state: Shared, run_id: string, call_id: string, name: string, c: Called): void {
   const respond = (r: { ok: any } | { err: string }) => {
     if (cancelled.delete(call_id)) return;
+    if (c.codex) return codex_respond(state, run_id, c.codex.id, { result: tool_answer(r, name) });
     const mcp_response = { jsonrpc: "2.0", id: c.rpc_id, result: mcp.call_result(name, r) };
     write(state, run_id, { subtype: "success", request_id: c.request_id, response: { mcp_response } });
   };
   const saved: Called = { request_id: c.request_id, rpc_id: c.rpc_id, arguments: c.arguments };
+  if (c.codex) saved.codex = c.codex;
   const p = tools.handle_control(state, { run_id, call_id, tool: name, args: c.arguments, task_fields: true }, respond, saved);
   background(`run ${run_id}: board call ${name} (${c.request_id})`, p.finally(() => cancelled.delete(call_id)));
 }

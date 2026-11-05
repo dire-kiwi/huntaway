@@ -37,17 +37,21 @@ import { context, err_str, expand_tilde, sleep } from "../util.ts";
 import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
-export const RUN_FORMAT = 4;
+export const RUN_FORMAT = 5;
 /** The format from which a run's agent may ask for permission on its output. */
 const ASKS_FORMAT = 3;
 /** The format from which a run's agent may call the board's tools on its output. */
 const TOOLS_FORMAT = 4;
+/** The format of a Codex run whose adapter writes the app-server's requests to its output, for the board to answer on its input. */
+const CODEX_REQUESTS_FORMAT = 5;
 
 /**
  * Format 3 is a run whose agent asks for permission on its output and waits for the answer on its input (see
  * runner/requests.ts), and format 4 one whose agent calls the board's tools there too (an in-process MCP server, see
- * the same): a server that doesn't answer it there would leave it waiting for good, so each run is written with the
- * lowest format it needs, and a run that needs neither is still format 2, which older builds follow.
+ * the same); format 5 is a Codex run whose adapter writes the app-server's requests (approvals, questions, the board's
+ * tools) to its output, and waits for their answers on its input (agent/codex/requests.ts). A server that doesn't
+ * answer them there would leave it waiting for good, so each run is written with the lowest format it needs, and a run
+ * that needs none of that is still format 2, which older builds follow.
  */
 const UNASKED_FORMAT = 2;
 
@@ -76,6 +80,11 @@ export interface Launch {
    * names, see runner/requests.ts): its `mcp.json` has no board server, and the board's HTTP server refuses it.
    */
   tools_on_output?: boolean;
+  /**
+   * A Codex run whose session has the board's tools as dynamic tools (agent/codex/requests.ts): its `mcp.json` has no
+   * board server, and the board's HTTP server refuses it.
+   */
+  board_tools_dynamic?: boolean;
 }
 
 /** A value tests can set (Rust's thread-local `Cell`). */
@@ -223,7 +232,8 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   }
   await mkdir(dir, { recursive: true });
   // The boot tells whether its pids are still its own later (see `pid_reused`).
-  const run = { boot: boot_id(), format: l.tools_on_output ? TOOLS_FORMAT : l.asks_on_output ? ASKS_FORMAT : UNASKED_FORMAT, version: VERSION };
+  const format = l.codex?.requests_on_output ? CODEX_REQUESTS_FORMAT : l.tools_on_output ? TOOLS_FORMAT : l.asks_on_output ? ASKS_FORMAT : UNASKED_FORMAT;
+  const run = { boot: boot_id(), format, version: VERSION };
   await writeFile(join(dir, "run.json"), JSON.stringify(run));
   await writeFile(join(dir, "prompt"), l.prompt);
   if (l.input) await writeFile(join(dir, "input.jsonl"), "");
@@ -231,7 +241,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   // The board's tools, and GitHub through gh (outside the agent's sandbox; a server of the project's own by this name
   // replaces it). This server serves both over HTTP (see mcp/http.ts), with what they need of the run kept here; the URL
   // stays valid across restarts. A run that calls the board's tools on its output has only gh's here.
-  const in_process = !!l.tools_on_output;
+  const in_process = !!l.tools_on_output || !!l.board_tools_dynamic;
   await writeFile(
     join(dir, mcp_http.SETTINGS_FILE),
     mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }),
@@ -462,12 +472,17 @@ function read_json(path: string): any {
  * it needs its input for any turn it takes, as Claude Code denies or fails those unasked once it's closed.
  */
 export function asks_on_output(state: Shared, run_id: string): boolean {
-  return format(state, run_id) >= ASKS_FORMAT;
+  return format(state, run_id) >= ASKS_FORMAT && !is_codex_run(state, run_id);
 }
 
 /** Whether run `run_id`'s agent calls the board's tools on its output, an in-process MCP server (see runner/requests.ts). */
 export function tools_on_output(state: Shared, run_id: string): boolean {
-  return format(state, run_id) >= TOOLS_FORMAT;
+  return format(state, run_id) >= TOOLS_FORMAT && !is_codex_run(state, run_id);
+}
+
+/** Whether run `run_id` is Codex's (its adapter's `codex.json`). */
+function is_codex_run(state: Shared, run_id: string): boolean {
+  return existsSync(join(run_dir(state, run_id), "codex.json"));
 }
 
 /** Format of an existing run directory. */

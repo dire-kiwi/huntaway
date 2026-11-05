@@ -109,6 +109,21 @@ export function set_run_session(c: Conn, run_id: string, session: string): void 
   run(c, "UPDATE runs SET session_id=?1 WHERE id=?2", session, run_id);
 }
 
+/** Run `run_id` gives the Codex session it starts the board's tools as dynamic tools (see `session_board_tools`). */
+export function set_run_board_tools(c: Conn, run_id: string): void {
+  run(c, "UPDATE runs SET board_tools=1 WHERE id=?1", run_id);
+}
+
+/**
+ * Whether task `task_id`'s Codex session `session` has the board's tools as dynamic tools: its first run (the one that
+ * started it) gave them, and Codex keeps a session's dynamic tools as it started with them (thread/resume can't change
+ * them). A session from before that has the board's tools on its MCP server.
+ */
+export function session_board_tools(c: Conn, task_id: string, session: string): boolean {
+  const r = one(c, "SELECT board_tools FROM runs WHERE task_id=?1 AND session_id=?2 ORDER BY rowid LIMIT 1", task_id, session);
+  return r?.board_tools === 1;
+}
+
 /** The folder run `run_id`'s agent is started with (see `session_config_dir`): '' for the agent's default. */
 export function set_run_config_dir(c: Conn, run_id: string, dir: string | null): void {
   run(c, "UPDATE runs SET config_dir=?1 WHERE id=?2", dir ?? "", run_id);

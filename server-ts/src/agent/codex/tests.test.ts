@@ -1,12 +1,9 @@
 // Port of server/src/agent/codex/tests.rs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
-import * as mcp from "../../mcp.ts";
 import { MCP_SERVER_NAME } from "../runner.ts";
 import { REVIEW_PROFILE, Spec_default, is_claude_model, policy, thread_params, type Spec } from "../codex.ts";
-import { Responder, answer, display_command, mcp_server_config } from "./adapter.ts";
+import { display_command, mcp_server_config } from "./adapter.ts";
 import { tool_output, tool_use } from "./output.ts";
 import { limits, title_model, type Model } from "./queries.ts";
 
@@ -73,47 +70,6 @@ test("converts_mcp_servers", () => {
   assert.deepEqual([board.default_tools_approval_mode, board.tools], ["approve", { wait: { approval_mode: "prompt" } }]);
   assert.equal(mcp_server_config(MCP_SERVER_NAME, { command: "ia" }, false, [], false).tools, undefined);
   assert.equal(mcp_server_config("s", stdio, true, [], true).tools, undefined);
-});
-
-test("asks_about_a_wait_codex_leaves_to_the_user_as_its_command", async () => {
-  // A board that records the prompts it's asked and denies them.
-  const asked: any[] = [];
-  const server = createServer((req, res) => {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      if (req.url === "/api/internal/mcp") asked.push(JSON.parse(body).args);
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ result: { behavior: "deny" } }));
-    });
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  try {
-    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const board = new mcp.Ctx(url, "t", "r");
-    const elicit = async (tool: string, params: any) => {
-      const sent: string[] = [];
-      const message = `Allow the ${MCP_SERVER_NAME} MCP server to run tool "${tool}"?`;
-      const schema = { type: "object", properties: {} };
-      const p = { serverName: MCP_SERVER_NAME, mode: "form", message, requestedSchema: schema, _meta: { tool_params: params } };
-      await answer(board, new Responder((l) => sent.push(l)), { id: 1, method: "mcpServer/elicitation/request", params: p }, null);
-      return JSON.parse(sent[0]).result.action;
-    };
-
-    // Codex asks only if its reviewer didn't take the call (see Spec::review_waits).
-    assert.equal(await elicit("wait", { reason: "waiting for CI", command: " gh pr checks 1 " }), "decline");
-    const prompt = { command: "gh pr checks 1", description: "Run while waiting: waiting for CI" };
-    assert.deepEqual(asked, [{ tool_name: "Bash", input: prompt, tool_use_id: null }]);
-    // A wait without a command, and the board's other tools, need no approval.
-    assert.equal(await elicit("wait", { seconds: 60, command: "" }), "accept");
-    assert.equal(await elicit("get_task", { task: "IA-1" }), "accept");
-    assert.equal(asked.length, 1);
-    // Without its arguments, a wait is asked about as itself.
-    assert.equal(await elicit("wait", null), "decline");
-    assert.equal(asked[1].tool_name, `mcp__${MCP_SERVER_NAME}__wait`);
-  } finally {
-    server.close();
-  }
 });
 
 test("spots_claude_models", () => {

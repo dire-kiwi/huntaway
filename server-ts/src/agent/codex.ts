@@ -3,8 +3,9 @@
  * Codex agents. A thread whose config is for Codex (see db::AGENTS) runs `huntaway
  * codex-run` under ia-shim instead of `claude -p`. That adapter starts `codex app-server`,
  * speaks its JSON-RPC protocol (JSONL over stdio), and runs one turn: it starts or resumes the
- * thread, sends the prompt, answers approval requests by asking the board (the same
- * `permission_prompt` call the MCP helper makes for Claude), and exits once the turn ends.
+ * thread (a new one with the board's tools as dynamic tools), sends the prompt, passes the
+ * app-server's requests (approvals, questions, the board's tools' calls) to the board on its
+ * output and their answers back from its input (see codex/requests.ts), and exits once the turn ends.
  *
  * With `Spec::input`, its stdin takes the same stream-json input as Claude Code's (see
  * runner::steer): the prompt is the first user message, a message that arrives during the
@@ -14,9 +15,11 @@
  * ends with no turn going.
  *
  * It writes the app-server's notifications to stdout as they are (`out.jsonl`), and the server
- * turns them into thread messages shaped like Claude Code's stream-json (`handle_line`), so the
- * thread view shows both agents the same way. Like the rest of a run directory these lines are
- * a stable format: they're Codex's own protocol, which a newer server must keep reading.
+ * writes them into the task's thread (`handle_line`): straight into its items for a task whose
+ * items are its source (codex/driver.ts), or as messages shaped like Claude Code's stream-json for
+ * one still on messages, so the thread view shows both agents the same way. Like the rest of a run
+ * directory these lines are a stable format: they're Codex's own protocol, which a newer server
+ * must keep reading.
  *
  * `codex.json` in the run directory holds what the runner decided for the run (see `Spec`);
  * the MCP servers come from the same `mcp.json` Claude gets, converted to Codex's config.
@@ -68,6 +71,19 @@ export interface Spec {
    * board runs a wait's command without asking. A run from an older build pre-approved them.
    */
   review_waits: boolean;
+  /**
+   * The app-server's requests (approvals, questions, the board's tools) go to the run's output as they are, and their
+   * answers come back on its input (`{"type": "codex_response", "id", "result" | "error"}`), so the board answers them
+   * itself (agent/codex/requests.ts) and the adapter needs no board to call. Only with `input`: without, the adapter
+   * declines them. A run from before this was format 2, and asked the board over its MCP server.
+   */
+  requests_on_output: boolean;
+  /**
+   * The board's tools, as a `namespace` dynamic tool (agent/codex/requests.ts's `board_tools`), for a new thread: Codex
+   * keeps them with the session, and calls them with `item/tool/call` requests. Null to give none (resuming a thread,
+   * which keeps those it started with).
+   */
+  board_tools: any | null;
   /** Revert the thread to before this turn first (a rewind's, see checkpoints::Rewind). Left out when there's none. */
   revert_before_turn?: string;
   /** The user's approval rules, which its MCP servers' configs hold (see approval_rules.codex_server). Left out when there are none. */
@@ -94,6 +110,8 @@ export function Spec_default(fields: Partial<Spec> = {}): Spec {
     approved_mcp_servers: [],
     disabled_mcp_tools: {},
     review_waits: false,
+    requests_on_output: false,
+    board_tools: null,
     ...fields,
   };
 }
@@ -123,6 +141,8 @@ export function Spec_from_json(v: any): Spec | null {
     approved_mcp_servers: strs(v.approved_mcp_servers),
     disabled_mcp_tools: v.disabled_mcp_tools && typeof v.disabled_mcp_tools === "object" ? v.disabled_mcp_tools : {},
     review_waits: v.review_waits === true,
+    requests_on_output: v.requests_on_output === true,
+    board_tools: is_namespace(v.board_tools) ? v.board_tools : null,
   });
   if (typeof v.revert_before_turn === "string") spec.revert_before_turn = v.revert_before_turn;
   if (v.approval_rules != null) {
@@ -132,6 +152,10 @@ export function Spec_from_json(v: any): Spec | null {
     spec.approval_rules = rules;
   }
   return spec;
+}
+
+function is_namespace(v: any): boolean {
+  return v !== null && typeof v === "object" && v.type === "namespace" && typeof v.name === "string" && Array.isArray(v.tools);
 }
 
 /**

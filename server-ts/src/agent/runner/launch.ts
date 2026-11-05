@@ -39,6 +39,7 @@ import { as_told } from "./merge.ts";
 import { instructions, start_prompt, system_prompt, type Told } from "./prompt.ts";
 import { set_writes_documents, user_input, write_steers } from "./queue.ts";
 import { PROMPT_TOOL, initialize_line } from "./requests.ts";
+import * as codex_requests from "../codex/requests.ts";
 
 /** The nearest effort Claude has to one only Codex models offer. */
 export function claude_effort(e: string): string {
@@ -255,6 +256,11 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     const writable_roots: string[] = [...(git_dir != null ? [git_dir] : []), ...cache_dirs()];
     if (own_dir != null) writable_roots.push(own_dir);
     if (tmp != null) writable_roots.push(tmp);
+    // The board's tools are dynamic tools of a session that started with them (given to a new one); a session from
+    // before has them on the board's MCP server, since Codex can't give a session it resumes new dynamic tools. Its
+    // requests (approvals, questions, those tools' calls) are answered on its input, which every run but `/compact` has.
+    const fresh = task.session_id == null;
+    const dynamic = fresh ? input : db.session_board_tools(state.db(), task.id, task.session_id!);
     const spec: any = {
       cwd,
       thread_id: task.session_id,
@@ -272,7 +278,10 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
       skills_dir: tools.skills_dir != null ? `${tools.skills_dir}/.claude/skills` : null,
       approved_mcp_servers: Object.keys(tools.mcp_servers).filter((n) => tools.allowed.includes(agent_tools.tool_prefix(n))),
       disabled_mcp_tools,
-      review_waits: approvals_reviewer === "auto_review",
+      // Codex's reviewer reviews the board's waits on its MCP server; a dynamic tool's call is the board's to ask about.
+      review_waits: approvals_reviewer === "auto_review" && !dynamic,
+      requests_on_output: input,
+      board_tools: fresh && input ? codex_requests.board_tools(task.kind === "review") : null,
     };
     if (rewind?.before_turn != null) spec.revert_before_turn = rewind.before_turn;
     if (codex_rules) spec.approval_rules = codex_rules;
@@ -288,7 +297,9 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
       mcp_servers: tools.mcp_servers,
       github_account: account,
       codex: spec,
+      board_tools_dynamic: dynamic,
     };
+    if (spec.board_tools) db.set_run_board_tools(state.db(), run.id);
     console.log(`task ${task_id} run ${run.id}: starting codex (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);
     await started(state, run, l, check);
     automations.routines.mark_read(state, task_id, reports);

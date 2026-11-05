@@ -1,5 +1,9 @@
 // Port of server/src/agent/codex/output.rs.
-/** Codex's output turned into thread messages shaped like Claude Code's stream-json, subagents' included. */
+/**
+ * Codex's output turned into thread messages shaped like Claude Code's stream-json, subagents' included, for a task
+ * whose thread is still on messages; a task on items has its items written straight from the notifications
+ * (agent/codex/driver.ts), with the helpers here.
+ */
 import * as db from "../../db.ts";
 import type { Run } from "../../db.ts";
 import type { Shared } from "../../state.ts";
@@ -13,6 +17,9 @@ import * as documents from "../documents.ts";
 import * as usage from "../usage.ts";
 import * as runner from "../runner.ts";
 import * as history from "../../threads/history.ts";
+import * as thread_source from "../../threads/source.ts";
+import * as driver from "./driver.ts";
+import { on_request, on_resolved } from "./requests.ts";
 
 const g = (v: any) => (v === undefined ? null : v);
 const str = (v: any): string | null => (typeof v === "string" ? v : null);
@@ -34,7 +41,7 @@ function tool_result(id: string, content: string, is_error: boolean): any {
  * A child keeps the same row across spawn, wait, follow-up and resumed runs. Its messages can
  * arrive before the spawn call returns, so use its thread id rather than the spawn's item id.
  */
-function subagent_id(thread_id: string): string {
+export function subagent_id(thread_id: string): string {
   return `codex-agent-${thread_id}`;
 }
 
@@ -137,8 +144,12 @@ export function tool_use(item: any): [string, any] | null {
       return ["ApplyPatch", { changes: file_changes(item) }];
     case "mcpToolCall":
       return [`${agent_tools.tool_prefix(str(item.server) ?? "")}__${str(item.tool) ?? ""}`, g(item.arguments)];
-    case "dynamicToolCall":
-      return [str(item.tool) ?? "tool", g(item.arguments)];
+    case "dynamicToolCall": {
+      // The board's tools (agent/codex/requests.ts's board_tools) are named as its MCP server's are.
+      const ns = str(item.namespace);
+      const tool = str(item.tool) ?? "tool";
+      return [ns !== null && ns !== "" ? `${agent_tools.tool_prefix(ns)}__${tool}` : tool, g(item.arguments)];
+    }
     case "webSearch": {
       const url = str(item.action?.url);
       return url !== null ? ["WebFetch", { url }] : ["WebSearch", { query: g(item.query) }];
@@ -156,7 +167,7 @@ export function tool_use(item: any): [string, any] | null {
 }
 
 /** Items whose call is shown when they start; the others only once they're done. */
-function shown_at_start(kind: string): boolean {
+export function shown_at_start(kind: string): boolean {
   return ["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall"].includes(kind);
 }
 
@@ -196,8 +207,15 @@ export function tool_output(item: any): [string, boolean] {
   }
 }
 
-/** Apply one line of a Codex run's output (an app-server notification). */
+/**
+ * Apply one line of a Codex run's output: an app-server request (see agent/codex/requests.ts), or a notification, which
+ * for a task whose items are its source is mapped onto its items (agent/codex/driver.ts), and for one on messages made
+ * into messages shaped like Claude Code's (`thread_message`).
+ */
 export function handle_line(state: Shared, run: Run, v: any): void {
+  if ("id" in v) return on_request(state, run, v);
+  if (v.method === "serverRequest/resolved") return on_resolved(state, run, v.params?.requestId);
+  if (thread_source.of(state.db(), run.task_id) === "items") return driver.handle(state, run, v);
   const task_id = run.task_id;
   const p = v?.params ?? {};
   const session = db.get_task(state.db(), task_id)?.session_id ?? null;
@@ -319,7 +337,7 @@ export function handle_line(state: Shared, run: Run, v: any): void {
   }
 }
 
-function finish_turn(state: Shared, run: Run, turn: any) {
+export function finish_turn(state: Shared, run: Run, turn: any) {
   const status = str(turn.status) ?? "completed";
   const error =
     status === "completed" ? null : status === "interrupted" ? "The turn was interrupted" : (str(turn.error?.message) ?? `the turn ended as ${status}`);
