@@ -138,8 +138,8 @@ export function refresh(state: Shared, task_id: string): void {
           const input = refresh_input(task, r.replies, r.since ?? null, r.earlier);
           let reply = await run_model(state, task, REFRESH_PROMPT, input);
           // The model now and then explains itself instead; asked again, it answers.
-          if (new_title(reply) === null && !is_keep(reply)) reply = await run_model(state, task, REFRESH_PROMPT, input);
-          const title = new_title(reply);
+          if (new_title(reply, task.title) === null && !is_keep(reply, task.title)) reply = await run_model(state, task, REFRESH_PROMPT, input);
+          const title = new_title(reply, task.title);
           if (title !== null) result = [task, title];
         }
       }
@@ -164,15 +164,39 @@ function save(state: Shared, id: string, old: string | null, title: string): voi
   }
 }
 
-/** The title in a reply to `REFRESH_PROMPT`, if it gives one: not KEEP, and not so long that it's more of a summary than a title. */
-export function new_title(reply: string): string | null {
+/**
+ * The title in a reply to `REFRESH_PROMPT` for a task titled `current`, if it gives one: not KEEP (or a sentence saying
+ * to keep it, see `is_keep`), and not so long that it's more of a summary than a title.
+ */
+export function new_title(reply: string, current: string): string | null {
   const words = reply.split(/\s+/u).filter((w) => w !== "").length;
-  return !is_keep(reply) && words >= 1 && words <= MAX_WORDS ? reply : null;
+  return !is_keep(reply, current) && words >= 1 && words <= MAX_WORDS ? reply : null;
 }
 
-/** A reply (cleaned, see `clean`) that the title still fits. */
-function is_keep(reply: string): boolean {
-  return reply.replace(/[A-Z]/g, (c) => c.toLowerCase()) === "keep";
+/** `s` lowercased, with its quotes and punctuation as spaces and its spaces collapsed, to compare titles by. */
+function words_of(s: string): string {
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/** How a sentence that says to keep the title starts ("Keep the task's current title"), and may end ("… as is"), in `words_of`'s form. */
+const KEEP_HEAD = String.raw`keep(?: (?:the|its|this))?(?: (?:task s|task|current|existing|same|original|present))*`;
+const KEEP_TAIL = String.raw`(?: (?:as is|as it is|unchanged|the same))?`;
+const KEEP_SAYS = new RegExp(`^${KEEP_HEAD} (?:title|it)${KEEP_TAIL}$`, "u");
+const TITLE_FITS = /^(?:the )?(?:(?:task s|task|current|existing) )*title (?:still fits|still applies|is still accurate|is fine|stays|remains|is unchanged)\b/u;
+
+/**
+ * A reply (cleaned, see `clean`) that the title (`current`) still fits: KEEP, or KEEP with an explanation after it, or
+ * a sentence that says so instead (as Codex sometimes answers: "Keep the task title “Say hello”", "Keep the current
+ * title", "The title still fits"). A title that only starts with "Keep" ("Keep the title bar visible", "Keep dark mode
+ * in sync") is a title.
+ */
+function is_keep(reply: string, current: string): boolean {
+  if (/^KEEP(?![\p{L}\p{N}])/u.test(reply.trim())) return true;
+  const r = words_of(reply);
+  if (r === "keep" || KEEP_SAYS.test(r) || TITLE_FITS.test(r) || /^no change\b/u.test(r)) return true;
+  // Keep it, naming it: "Keep “Say hello”", "Keep the task title “Say hello” as is". (`words_of` leaves nothing to escape.)
+  const t = words_of(current);
+  return t !== "" && new RegExp(`^${KEEP_HEAD}(?: title)?(?: as)? ${t}${KEEP_TAIL}$`, "u").test(r);
 }
 
 /** Whether a message the user sent may say something about what the task is about: it has words besides links and attached files. */
@@ -262,7 +286,7 @@ export async function check(db_path: string, ids: string[], steps: boolean, show
     };
     if (!steps) {
       const reply = await ask(REFRESH_PROMPT, refresh_input(task, replies, since ?? null, 0));
-      console.log(`now: ${new_title(reply) ?? task.title} (replied ${reply})`);
+      console.log(`now: ${new_title(reply, task.title) ?? task.title} (replied ${reply})`);
       continue;
     }
     task.steering = [];
@@ -279,13 +303,13 @@ export async function check(db_path: string, ids: string[], steps: boolean, show
       }
       const input = refresh_input(task, replies.slice(0, n), null, 0);
       let reply = await ask(REFRESH_PROMPT, input);
-      if (new_title(reply) === null && !is_keep(reply)) {
+      if (new_title(reply, task.title) === null && !is_keep(reply, task.title)) {
         console.log(`(dropped reply, asking again: ${reply})`);
         reply = await ask(REFRESH_PROMPT, input);
       }
-      const title = new_title(reply);
+      const title = new_title(reply, task.title);
       if (title !== null) task.title = title;
-      else if (!is_keep(reply)) console.log(`(dropped reply: ${reply})`);
+      else if (!is_keep(reply, task.title)) console.log(`(dropped reply: ${reply})`);
       console.log(`message ${n} (${message}): ${task.title}`);
     }
   }
