@@ -128,6 +128,15 @@ const kill_group = (p: ChildProcess) => {
   } catch {}
 };
 
+/** Wait for `f` to hold, for up to 5s. */
+const until = async (f: () => boolean) => {
+  const deadline = Date.now() + 5000;
+  while (!f()) {
+    assert.ok(Date.now() < deadline, "timed out");
+    await sleep(20);
+  }
+};
+
 /** Let spawned work (title refreshes) finish. */
 const settle = async () => {
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
@@ -761,6 +770,89 @@ test("after_a_restart_messages_the_agent_wasnt_sent_are_sent", async () => {
   assert.ok(!input_closed(state, run));
   await sleep((STEER_GRACE * 3) / 2);
   assert.ok(input_closed(state, run));
+});
+
+/** Claude Code's list of the background tasks the agent has going (`n` of them). */
+const background = (n: number) => ({
+  type: "system",
+  subtype: "background_tasks_changed",
+  tasks: Array.from({ length: n }, (_, i) => ({ task_id: `b${i}`, task_type: "local_bash", description: "a server" })),
+});
+
+// HA-187: an agent that left a background shell going (a server for the user) doesn't exit when its input is closed,
+// and a message sent to it was queued until the shell ended, up to two hours later.
+test("a_message_sent_while_background_tasks_go_starts_a_turn", () => {
+  const [state, task, run] = running(true);
+  output(state, run, [background(1), result("success", 0.1)]);
+  assert.ok(!input_closed(state, run));
+  const t = send(state, task.id, "please read my comments");
+  assert.equal(t.queued_message, null);
+  const steer = t.steering[0];
+  assert.ok(steer.written);
+  assert.equal(input(state, run).at(-1).message.content, "please read my comments");
+  output(state, run, [replay(steer.id, "please read my comments"), result("success", 0.2)]);
+  assert.deepEqual(user_messages(state, task.id), [{ text: "please read my comments", steered: true }]);
+  // Still going: the next message can start a turn too.
+  assert.ok(!input_closed(state, run));
+  // Once they've ended, it takes a turn on them and exits.
+  output(state, run, [background(0)]);
+  assert.ok(input_closed(state, run));
+  assert.equal(runs.background_tasks(state, run.id), 0);
+});
+
+test("background_tasks_that_end_in_a_turn_leave_its_end_to_close_the_input", () => {
+  const [state, task, run] = running(true);
+  output(state, run, [background(2), result("success", 0.1)]);
+  const steer = send(state, task.id, "stop the server").steering[0];
+  output(state, run, [replay(steer.id, "stop the server"), background(1)]);
+  assert.ok(!input_closed(state, run));
+  output(state, run, [background(0)]);
+  // Mid-turn: the turn's end closes it.
+  assert.ok(!input_closed(state, run));
+  output(state, run, [result("success", 0.2)]);
+  assert.ok(input_closed(state, run));
+});
+
+test("a_stop_ends_a_run_kept_going_by_background_tasks", async () => {
+  // During a turn: the stop interrupts it, and its end ends the run.
+  {
+    const [state, task, run] = running(true);
+    const agent = agent_process("sleep", ["60"]);
+    writeFileSync(join(runs.run_dir(state, run.id), "pid"), `${agent.pid}`);
+    try {
+      output(state, run, [background(1)]);
+      stop(state, task.id);
+      assert.equal(input(state, run).at(-1).request.subtype, "interrupt");
+      output(state, run, [result("error_during_execution", 0.0)]);
+      assert.ok(input_closed(state, run));
+      await until(() => exited(agent));
+    } finally {
+      kill_group(agent);
+    }
+  }
+  // Between turns, there's no turn to interrupt.
+  {
+    const [state, task, run] = running(true);
+    const agent = agent_process("sleep", ["60"]);
+    writeFileSync(join(runs.run_dir(state, run.id), "pid"), `${agent.pid}`);
+    try {
+      output(state, run, [background(1), result("success", 0.1)]);
+      stop(state, task.id);
+      assert.ok(!input(state, run).some((l) => l.request?.subtype === "interrupt"));
+      assert.ok(input_closed(state, run));
+      await until(() => exited(agent));
+    } finally {
+      kill_group(agent);
+    }
+  }
+});
+
+test("after_a_restart_a_run_kept_going_by_background_tasks_still_takes_messages", () => {
+  const [state, task, run] = running(true);
+  output(state, run, [background(1), result("success", 0.1)]);
+  restart(state, task);
+  assert.ok(!input_closed(state, run));
+  assert.ok(send(state, task.id, "one more thing").steering[0].written);
 });
 
 test("a_turns_end_closes_the_input_even_if_it_cant_be_recorded", () => {

@@ -234,6 +234,31 @@ export function write_input(state: Shared, run_id: string, line: string): boolea
   return true;
 }
 
+/**
+ * How many background tasks (shells started with `run_in_background`, background subagents) Claude Code last said the
+ * run's agent has going, in its `background_tasks_changed` event. While it has any, closing its input doesn't make it
+ * exit: it stays until they end, then takes a turn on what they did, so its input is left open between turns to take
+ * the messages sent meanwhile (see queue::turn_ended). Kept in the run's folder, `background`, for a restarted server.
+ */
+export function background_tasks(state: Shared, run_id: string): number {
+  try {
+    const n = Number.parseInt(readFileSync(join(run_dir(state, run_id), "background"), "utf8"), 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function set_background_tasks(state: Shared, run_id: string, count: number): void {
+  const path = join(run_dir(state, run_id), "background");
+  try {
+    if (count > 0) writeFileSync(path, `${count}\n`);
+    else rmSync(path, { force: true });
+  } catch (e) {
+    log.error(`run=${run_id} recording the agent's background tasks: ${err_str(e)}`);
+  }
+}
+
 /** End the agent's input: it exits once it has dealt with what it was sent. */
 export function close_input(state: Shared, run_id: string): void {
   const dir = run_dir(state, run_id);
