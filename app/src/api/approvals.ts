@@ -155,5 +155,5 @@ export type Approval = ProjectApproval | ProjectCreationApproval | DeletionAppro
 export const approvalsApi = {
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
   /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
-  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true"),
+  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true&workflows=true"),
 };

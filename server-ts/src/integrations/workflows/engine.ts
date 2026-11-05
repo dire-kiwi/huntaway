@@ -40,8 +40,8 @@ import {
 import * as prompt from "./prompt.ts";
 import type { Work } from "./prompt.ts";
 
-/** Held while starting a run, so two can't start for one workflow on one task at once. */
-const STARTING = new AsyncMutex();
+/** Held while starting a run, so two can't start for one workflow on one task at once (made on first use: see PORTING.md). */
+let STARTING: AsyncMutex | null = null;
 
 /** (task, workflow) pairs whose move step is moving the task, so the move doesn't start the same workflow again. */
 const MOVING: Array<[string, string]> = [];
@@ -104,7 +104,7 @@ async function rev_parse(dir: string, rev: string): Promise<string | null> {
  * was nothing to do.
  */
 export async function start(s: Shared, workflow_id: string, task_id: string, manual: boolean): Promise<Run | null> {
-  const release = await STARTING.lock();
+  const release = await (STARTING ??= new AsyncMutex()).lock();
   try {
     return await start_locked(s, workflow_id, task_id, manual);
   } finally {

@@ -153,6 +153,7 @@ const taskName = (t: { key?: string; title: string }) => (t.key ? `${t.key} ${t.
 
 /** What an agent asks to do to an automation, e.g. "wants to add an automation to". */
 const AUTOMATION_ASKS = { create: "wants to add an automation to", update: "wants to change an automation in", delete: "wants to delete an automation in" };
+const WORKFLOW_ASKS = { create: "wants to add a workflow to", update: "wants to change a workflow in", delete: "wants to delete a workflow in" };
 
 /** The question an approval asks, e.g. "IA-12 wants to change Issue Agent" or "IA-12 wants to delete IA-3". */
 function Asker({ approval }: { approval: Approval }) {
@@ -164,7 +165,7 @@ function Asker({ approval }: { approval: Approval }) {
       <span className="text-fg">{who}</span>{" "}
       {approval.kind === "automation" ? (
         <>
-          {AUTOMATION_ASKS[approval.input.op]} the project{" "}
+          {(isWorkflowApproval(approval) ? WORKFLOW_ASKS : AUTOMATION_ASKS)[approval.input.op]} the project{" "}
           <span className="text-fg">
             {project?.name} ({project?.key})
           </span>

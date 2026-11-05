@@ -492,13 +492,17 @@ function late_answers(input: any, answers: string[][]): string {
  * `deletions` the tasks they're waiting to delete too, and with `automations` the automations they're waiting to create,
  * change or delete (older UIs only know project changes, or those and deletions).
  */
-export function pending_approvals(s: Shared, deletions: boolean, automations: boolean): any[] {
+export function pending_approvals(s: Shared, deletions: boolean, automations: boolean, workflows = false): any[] {
+  // Workflows' approvals are asked as automations' are, with `workflow` in place of `automation`: a UI from before them
+  // (API 107) isn't shown them.
   const rows = db.all<{ task_id: string; created_at: string; data: string }>(
     s.db(),
     `SELECT p.task_id, p.created_at, m.data FROM permission_requests p JOIN messages m ON m.id=p.message_id
-     WHERE (p.kind='project' OR (?1 AND p.kind='delete_task') OR (?2 AND p.kind='automation')) AND p.status='pending' ORDER BY p.created_at`,
+     WHERE (p.kind='project' OR (?1 AND p.kind='delete_task')
+            OR (?2 AND p.kind='automation' AND (?3 OR json_extract(p.input, '$.workflow') IS NULL))) AND p.status='pending' ORDER BY p.created_at`,
     deletions,
     automations,
+    workflows,
   );
   return rows.map((r) => {
     let v: any;

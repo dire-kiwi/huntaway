@@ -308,9 +308,10 @@ export async function resolve_permission(s: AppState, r: Req) {
 }
 
 /**
- * Project changes (and with `?all=true`, task deletions, and with `?automations=true`, automations) agents are waiting
- * for the user to approve (see permissions::approve). (`all` is API 58, which older hosts ignore; `automations` API 67.)
+ * Project changes (and with `?all=true`, task deletions, with `?automations=true`, automations, and with that and
+ * `?workflows=true`, workflows) agents are waiting for the user to approve (see permissions::approve). (`all` is API 58,
+ * which older hosts ignore; `automations` API 67; `workflows` API 107.)
  */
 export async function project_approvals(s: AppState, r: Req) {
-  return permissions.pending_approvals(s, query_bool(r, "all"), query_bool(r, "automations"));
+  return permissions.pending_approvals(s, query_bool(r, "all"), query_bool(r, "automations"), query_bool(r, "workflows"));
 }
