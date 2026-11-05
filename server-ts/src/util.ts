@@ -1,6 +1,6 @@
 // Port of server/src/util.rs.
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -179,4 +179,49 @@ export function reached(point: string) {
   if (!hooks.length) return;
   const i = hooks.findIndex(([p]) => p === point);
   if (i >= 0) hooks.splice(i, 1)[0][1]();
+}
+
+/**
+ * Make a data dir private to its user, at start: the folder `0700` and its databases (`*.db`, with their `-wal`, `-shm`
+ * and `-journal` files) `0600`, whatever the umask made them. Its tokens are made `0600` when they're written. Not a home
+ * folder given as the data dir, which other things may need to read. What can't be changed (a folder of another user's,
+ * say) is logged, and the server starts anyway. Unix only.
+ */
+export function make_private(data_dir: string): void {
+  if (process.platform === "win32") return;
+  const set = (path: string, mode: number) => {
+    let meta;
+    try {
+      meta = lstatSync(path);
+    } catch {
+      return;
+    }
+    // Not through a link in the folder, which could point anywhere.
+    if (meta.isSymbolicLink() || (meta.mode & 0o777) === mode) return;
+    try {
+      chmodSync(path, mode);
+    } catch (e) {
+      console.error(`making ${path} private: ${err_str(e)}`);
+    }
+  };
+  const canonical = (p: string): string | null => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const home_path = home_dir();
+  const home = home_path ? canonical(home_path) : null;
+  const dir = canonical(data_dir) ?? data_dir;
+  if (home !== dir && dir !== "/") set(dir, 0o700);
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if ([".db", ".db-wal", ".db-shm", ".db-journal"].some((ext) => name.endsWith(ext))) set(join(dir, name), 0o600);
+  }
 }

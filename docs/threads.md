@@ -164,7 +164,7 @@ say (a rebuild).
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
 | 3. Items written live, behind a setting | HA-216 | Not started |
-| 4. Thread API and live events | HA-215 | This change: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 112, `ia-api thread`. See [threads-api.md](threads-api.md). Live events start once step 3 writes items. |
+| 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). Live events start once step 3 writes items. |
 | 5. The UI on items | HA-218 | Not started |
 | 6. Readers on items | HA-217 | Not started |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |

@@ -6,7 +6,8 @@ import * as db from "./db.ts";
 import { Router, Reply, call, no_route_error, parseBody, parseQuery, type Answer, type Req } from "./http.ts";
 import type { AppState } from "./state.ts";
 import { home_dir, path_str, same_secret } from "./util.ts";
-import { API_COMPAT, API_VERSION, BUILD_ID, VERSION } from "./hosts/proto.ts";
+import { API_COMPAT, API_VERSION, BUILD_ID, ToolAnswer_from, VERSION } from "./hosts/proto.ts";
+import * as uplink from "./hosts/uplink.ts";
 import * as claude_configs from "./api/claude_configs.ts";
 import * as host from "./api/host.ts";
 import * as new_task from "./api/new_task.ts";
@@ -15,6 +16,8 @@ import * as projects from "./api/projects.ts";
 import * as tasks from "./api/tasks.ts";
 import * as thread from "./api/thread.ts";
 import * as memory from "./agent/assistant/memory.ts";
+import * as google from "./agent/assistant/google.ts";
+import * as brief from "./agent/assistant/brief.ts";
 import * as agent_tools from "./agent/agent_tools.ts";
 import * as prompts from "./agent/prompts.ts";
 import * as usage from "./agent/usage.ts";
@@ -56,7 +59,7 @@ export function router(s: AppState): Router {
   r.route("/hosts/ssh-key", { GET: hub.ssh_key });
   r.route("/hosts/ssh", { POST: hub.add_ssh_host });
   r.route("/hosts/copy-claude-config", { POST: hub.copy_claude_config });
-  r.route("/hosts/{id}", { PATCH: hub.rename_host, DELETE: hub.remove_host });
+  r.route("/hosts/{id}", { PATCH: hub.change_host, DELETE: hub.remove_host });
   r.route("/hosts/{id}/update", { POST: hub.update_host });
   r.route("/preview-status", { GET: tasks.preview_status });
   r.route("/push", { GET: push.info });
@@ -92,6 +95,9 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/assistant/memory/diff", { GET: memory.diff });
   r.route("/profiles/{id}/assistant/memory/restore", { POST: memory.restore });
   r.route("/profiles/{id}/assistant/memory/import", { POST: memory.import_ });
+  r.route("/profiles/{id}/assistant/google", { GET: google.get, POST: google.setup });
+  r.route("/profiles/{id}/assistant/brief", { POST: brief.create });
+  r.route("/profiles/{id}/assistant/brief/feedback", { POST: brief.feedback });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });
@@ -286,14 +292,47 @@ function info(s: AppState) {
   };
 }
 
-/** This host's events, for a hub that links to it. */
+/**
+ * This host's events, for a hub that links to it. A hub that says hello here takes our agents' board tool calls (see
+ * hosts/uplink.ts), while this lasts.
+ */
 function ws(s: AppState, _r: Req, socket: WebSocket) {
   socket.send(JSON.stringify({ type: "hello" }));
   const off = s.events.subscribe((v) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(v));
   });
-  socket.on("close", off);
-  socket.on("error", off);
+  let up: uplink.Registered | null = null;
+  const end = () => {
+    off();
+    up?.drop();
+    up = null;
+  };
+  socket.on("message", (data, binary) => {
+    if (binary) return;
+    let v: any;
+    try {
+      v = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
+    if (v?.type === "hub_hello") {
+      if (typeof v.hub_id === "string" && typeof v.name === "string" && v.hub_id !== s.host_id) {
+        up?.drop();
+        const [registered, calls] = uplink.register(s, v.hub_id, v.name);
+        calls.recv((c) => {
+          if (!c) return;
+          if (socket.readyState !== socket.OPEN) return void end();
+          socket.send(JSON.stringify(uplink.call_frame(c)));
+        });
+        up = registered;
+      }
+    } else if (v?.type === "hub_result") {
+      const a = ToolAnswer_from(v);
+      if (up && a) up.link.answer(a);
+    }
+  });
+  socket.on("close", end);
+  socket.on("error", end);
 }
 
 export { Reply };

@@ -77,12 +77,69 @@ test("refresh_input_has_the_users_messages_with_what_the_agent_asked", () => {
 });
 
 test("replies_keep_the_title_or_give_a_short_one", () => {
-  assert.equal(new_title("Add a logout button"), "Add a logout button");
-  assert.equal(new_title(clean("KEEP")), null);
-  assert.equal(new_title(clean("Keep.")), null);
-  assert.equal(new_title(clean("`KEEP`")), null);
-  assert.equal(new_title(""), null);
-  assert.equal(new_title("Agent-controlled project settings with approval gate, no delete and a sturdier update"), null);
+  assert.equal(new_title("Add a logout button", "Fix login"), "Add a logout button");
+  assert.equal(new_title(clean("KEEP"), "Fix login"), null);
+  assert.equal(new_title(clean("Keep."), "Fix login"), null);
+  assert.equal(new_title(clean("`KEEP`"), "Fix login"), null);
+  assert.equal(new_title("", "Fix login"), null);
+  assert.equal(new_title("Agent-controlled project settings with approval gate, no delete and a sturdier update", "Fix login"), null);
+});
+
+test("a_sentence_saying_to_keep_the_title_keeps_it", () => {
+  // HA-196: Codex answered with a sentence instead of KEEP, and the task was renamed to it.
+  assert.equal(clean("Keep the task title “Say hello”"), "Keep the task title “Say hello");
+  assert.equal(new_title(clean("Keep the task title “Say hello”."), "Say hello"), null);
+  assert.equal(new_title(clean("Keep the task title “Say hello”"), "Say hello"), null);
+  for (const r of [
+    "KEEP: the title still fits",
+    "KEEP — nothing changed",
+    "Keep the current title",
+    "Keep the task's title unchanged",
+    "Keep it as is",
+    "Keep “Say hello”",
+    "Keep the title as “Say hello”",
+    "Keep the existing title 'Say hello' unchanged",
+    "The title still fits",
+    "The current title is fine",
+    "No change",
+    "Keep “Say hello” as the title",
+    "Keep the title unchanged: “Say hello”",
+    "Keep the title as is: Say hello",
+    "The title “Say hello” still fits",
+    "Keep as is",
+    "Keep unchanged",
+    "Keep — nothing changed",
+    "Title unchanged",
+    "Unchanged",
+    "No changes",
+    "No changes needed",
+    "No title change",
+  ])
+    assert.equal(new_title(clean(r), "Say hello"), null, r);
+  // A title that starts with "Keep" is still a title, even one that mentions a title or the task's current one.
+  for (const [r, current] of [
+    ["Keep sessions alive after logout", "Fix login"],
+    ["Keep the title bar visible on scroll", "Fix the header"],
+    ["Keep the task title in sync with the branch", "Rename branches"],
+    ["Keep dark mode in sync across tabs", "Dark mode"],
+    ["Keep it simple", "Fix login"],
+    ["Keeper of the logs", "Fix login"],
+    ["Keep the task list sorted", "Say hello"],
+    ["Say hello in French", "Say hello"],
+  ])
+    assert.equal(new_title(clean(r), current), r);
+});
+
+test("a_codex_sentence_saying_to_keep_the_title_doesnt_retitle_the_task", async () => {
+  const s = testing.state();
+  const p = db.insert_profile(s.db(), "p", [], null);
+  const task = db.insert_task(s.db(), new_task(p.id, "Say hello", "Say hello", "in_review"));
+  s.add_message(task.id, "user", { text: "Say it again" });
+  reply("Keep the task title “Say hello”.");
+  refresh(s, task.id);
+  await settle();
+  // Taken for KEEP the first time, so it isn't asked again either.
+  assert.deepEqual([db.get_task(s.db(), task.id)!.title, asked().length], ["Say hello", 1]);
 });
 
 test("links_and_attachments_alone_dont_ask_for_a_title", () => {

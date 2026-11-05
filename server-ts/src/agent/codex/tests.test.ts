@@ -8,7 +8,7 @@ import { MCP_SERVER_NAME } from "../runner.ts";
 import { REVIEW_PROFILE, Spec_default, is_claude_model, policy, thread_params, type Spec } from "../codex.ts";
 import { Responder, answer, display_command, mcp_server_config } from "./adapter.ts";
 import { tool_output, tool_use } from "./output.ts";
-import { limits } from "./queries.ts";
+import { limits, title_model, type Model } from "./queries.ts";
 
 test("rate_limit_windows_go_by_their_length", () => {
   const ids = (rl: any) => limits(rl).map((l) => [l.id, l.label]);
@@ -137,4 +137,24 @@ test("shows_items_as_tools", () => {
   assert.equal(tool_use(mcp_call)![0], "mcp__huntaway__get_task");
   assert.deepEqual(tool_output(mcp_call), ["ok", false]);
   assert.equal(tool_use({ type: "userMessage" }), null);
+});
+
+test("titles_use_a_cheap_model_at_low_effort", () => {
+  const m = (id: string, description: string, is_default = false, efforts = ["low", "medium", "high"]): Model => ({
+    id, name: id, description, is_default, efforts, default_effort: "medium",
+  });
+  // HA-196: the config's default here is its biggest model.
+  const list = [
+    m("gpt-6.1-sol", "Most capable model for hard work.", true),
+    m("gpt-5.6-luna", "Older fast and efficient model."),
+    m("gpt-6-luna", "Fast and affordable model for easier tasks."),
+    m("gpt-6-codex-mini", "", false, ["medium", "high"]),
+  ];
+  assert.deepEqual(title_model(list), { model: "gpt-6-luna", effort: "low" });
+  // The default when it's a cheap one; by its name when it doesn't say; the least effort when it can't do low.
+  assert.deepEqual(title_model([list[3], m("gpt-6-luna", "Fast and affordable model.", true)]), { model: "gpt-6-luna", effort: "low" });
+  assert.deepEqual(title_model([list[0], list[3]]), { model: "gpt-6-codex-mini", effort: "medium" });
+  // None that's cheap: the config's default.
+  assert.deepEqual(title_model([list[0]]), { model: null, effort: "low" });
+  assert.deepEqual(title_model([]), { model: null, effort: "low" });
 });
