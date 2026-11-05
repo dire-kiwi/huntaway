@@ -29,7 +29,7 @@ function write(dir: string, path: string, text: string) {
 }
 
 /** A task with the plan label and a worktree of its own, in a repository with one commit. */
-async function plan_task(s: AppState): Promise<Task> {
+async function plan_task(s: AppState, fields: object = {}): Promise<Task> {
   const profile = db.insert_profile(s.db(), "p", [], null);
   const repo = testing.temp_dir();
   sh(repo, ["init", "-q", "-b", "master"]);
@@ -40,7 +40,7 @@ async function plan_task(s: AppState): Promise<Task> {
   sh(repo, ["commit", "-qm", "init"]);
   const b = { name: "x", repo_path: path_str(repo), key: "X", base_branch: "master", use_worktrees: null };
   const p = await api.create_project_inner(s, profile.id, b as any);
-  const t0 = api.create_task_inner(s, p.id, { title: "Plan it", labels: ["plan"] } as any);
+  const t0 = api.create_task_inner(s, p.id, { title: "Plan it", labels: ["plan"], ...fields } as any);
   return await worktree.setup(s, t0.id);
 }
 
@@ -233,4 +233,30 @@ test("a_restart_leaves_other_tasks_in_progress_alone", async () => {
   assert.equal(plan_unsettled(s).length, 0);
   db.run(s.db(), "UPDATE runs SET attention=NULL WHERE id=?1", r.id);
   assert.equal(plan_unsettled(s).length, 1);
+});
+
+test("a_restart_leaves_a_subproject_its_tasks_hold_in_progress_alone", async () => {
+  const s = testing.state();
+  const sp = await plan_task(s, { subproject: true });
+  const child = api.create_task_inner(s, sp.project_id!, { title: "Step 1", parent_id: sp.id } as any);
+  s.update_task(child.id, [["status", "in_progress"]]);
+  // Its run revised the plan and changed its worktree: it went to review, and its task in progress brought it back.
+  const t = await run(s, sp, (t) => {
+    write_plan(s)(t);
+    write(t.worktree_path!, "f.txt", "2\n");
+  });
+  assert.deepEqual([t.status, t.running], ["in_progress", false]);
+  assert.deepEqual(plan_unsettled(s), []);
+  // A restart doesn't move it to review only for its task to bring it back (running its status scripts twice).
+  const moves: string[] = [];
+  const update_task_if = s.update_task_if.bind(s);
+  s.update_task_if = (id, fields, cond) => {
+    const t = update_task_if(id, fields, cond);
+    if (t && id === sp.id) for (const [k, v] of fields) if (k === "status") moves.push(v);
+    return t;
+  };
+  load_active(s);
+  await checkpoints.settled(s, sp.id);
+  await sleep(50);
+  assert.deepEqual([moves, db.get_task(s.db(), sp.id)!.status], [[], "in_progress"]);
 });
