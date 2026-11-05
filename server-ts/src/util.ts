@@ -139,7 +139,6 @@ export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 /** Byte length of a string in UTF-8 (Rust's `str::len`). */
 export const byte_len = (s: string) => Buffer.byteLength(s);
 
-/** An error's message with its causes, as anyhow's `{:#}`. */
 /**
  * Run `p` in the background, as tokio::spawn runs a task: nothing waits for it, and what it throws is logged (as what
  * `what` was doing, with its stack) rather than left to reject with nothing to handle it (see crash.ts). Use it for every
@@ -149,6 +148,7 @@ export function background(what: string, p: Promise<unknown>): void {
   p.catch((e) => console.error(`${new Date().toISOString()} ERROR huntaway: ${what}:`, e));
 }
 
+/** An error's message with its causes, as anyhow's `{:#}`. */
 export function err_str(e: unknown): string {
   if (e instanceof Error) {
     let m = e.message;
