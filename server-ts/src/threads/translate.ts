@@ -36,8 +36,9 @@ import type {
  * cost and turns, a compaction's tokens after, a request's stored prompt or question and its message id, replaced in
  * place when it changes, a result's text that no message said, a subagent's description and prompt as its task_started
  * says them), subagents their `ended_at`, and a routine's report is a notice (`routine_report`).
+ * 5 (HA-257, for Telegram's readers): a turn_result's meta has `compact`, for a compaction's run.
  */
-export const CONVERTER_VERSION = 4;
+export const CONVERTER_VERSION = 5;
 
 /** How Claude Code's result for a call that was stopped starts. */
 const REJECTED = "The user doesn't want to proceed with this tool use.";
@@ -96,6 +97,8 @@ export interface ItemMeta {
   shown_tasks?: string[];
   /** Of a turn_result, the text its result gave (what the turn ended by saying, or its error): what the agent said last there. */
   result_text?: string;
+  /** Of a turn_result, it ended a compaction's run (the board's `compact` on its result), which answers nothing. */
+  compact?: boolean;
   /** Of an assistant_message, it's a result's text that no message of its turn said: its turn_result's `result_text` has it. */
   from_result?: boolean;
 }
@@ -985,8 +988,9 @@ export class Translator {
     if (typeof d.total_cost_usd === "number") metadata.total_cost_usd = d.total_cost_usd;
     if (Object.keys(metadata).length) item.metadata = metadata;
     this.add(item);
-    // What its result said, whichever way the turn went: the readers take it as what the agent said last there.
-    this.set_meta(id, { result_text: text });
+    // What its result said, whichever way the turn went: the readers take it as what the agent said last there. And
+    // whether it was a compaction's (Telegram's turn ends, threads/history.ts's last_turn_end).
+    this.set_meta(id, { result_text: text, compact: d.compact === true });
     return "converted";
   }
 }
