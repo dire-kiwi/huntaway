@@ -358,18 +358,20 @@ test("a_chat_links_with_the_boards_code_and_strangers_are_dropped", async (t) =>
   // A wrong code links nothing, and isn't answered.
   f.push(text_update(5, 5, "/start nottheone"));
   await until("the wrong code is dropped", () => dropped_count(s, p) === 2);
-  // Nor does the right one from a group.
+  // Nor does the right one from a group, which spends it (everyone there has seen it): a new one is needed.
   f.push({ message: { message_id: 2, from: user(7, "Pat"), chat: { id: -100, type: "group" }, text: `/start ${code}` } });
-  await until("the group is refused", () => f.sent_texts().some((t) => t.includes("private chat")));
+  await until("the group is refused", () => f.sent_texts().some((t) => t.includes("private chat") && t.includes("no longer works")));
   assert.equal(config(s.db(), p).owner, null);
+  assert.equal(config(s.db(), p).link, null);
+  const fresh = (await new_link(s, req({ id: p }))).code;
   // From a private chat, it links that chat, once.
-  f.push(text_update(7, 7, `/start ${code}`));
+  f.push(text_update(7, 7, `/start ${fresh}`));
   await until("linking", () => config(s.db(), p).owner !== null);
   const owner = config(s.db(), p).owner!;
   assert.deepEqual([owner.chat_id, owner.user_id, owner.name], [7, 7, "Pat"]);
   assert.equal(config(s.db(), p).link, null);
   await until("the linked reply", () => f.sent_texts().some((t) => t.includes("Linked to the personal profile's assistant")));
-  f.push(text_update(5, 5, `/start ${code}`));
+  f.push(text_update(5, 5, `/start ${fresh}`));
   await until("the reused code is dropped", () => dropped_count(s, p) === 3);
   assert.equal(config(s.db(), p).owner!.chat_id, 7);
   // The owner's messages go to the assistant; others' don't.
@@ -390,6 +392,24 @@ test("a_chat_links_with_the_boards_code_and_strangers_are_dropped", async (t) =>
     f.calls("sendMessage").every((b) => b.chat_id !== 5),
     JSON.stringify(f.sent_texts()),
   );
+});
+
+// HA-207 review: a code first seen in a group links nobody afterwards, whoever sends it privately (its owner included):
+// everyone in the group has seen it.
+test("a_code_seen_in_a_group_links_nobody", async (t) => {
+  const [s, f, p] = await board(t);
+  const code = (await new_link(s, req({ id: p }))).code;
+  f.push({ message: { message_id: 1, from: user(7, "Pat"), chat: { id: -100, type: "group" }, text: `/start ${code}` } });
+  await until("the group is refused", () => f.sent_texts().some((t) => t.includes("private chat")));
+  assert.equal(config(s.db(), p).link, null);
+  assert.equal((await get(s, req({ id: p }))).linking, null);
+  // Another member of the group, privately, then the one who sent it.
+  f.push(text_update(9, 9, `/start ${code}`));
+  await until("the other member's try is dropped", () => dropped_count(s, p) === 1);
+  f.push(text_update(7, 7, `/start ${code}`));
+  await until("the sender's own try is dropped", () => dropped_count(s, p) === 2);
+  assert.equal(config(s.db(), p).owner, null);
+  assert.ok(f.calls("sendMessage").every((b) => b.chat_id === -100), JSON.stringify(f.sent_texts()));
 });
 
 // HA-207: a code is for the profile that made it: another profile's bot doesn't take it, and it links nothing there.

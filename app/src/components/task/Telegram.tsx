@@ -103,7 +103,14 @@ export function TelegramSection({ task }: { task: Task }) {
     );
   }
 
-  const newCode = () => act.run(async () => setLink(await api.telegramLink(h, p)));
+  const newCode = () =>
+    act.run(async () => {
+      const l = await api.telegramLink(h, p);
+      setTg(await api.telegram(h, p));
+      setLink(l);
+    });
+  // The code only while the host still waits for it: one sent from a group is spent there (HA-207 review).
+  const code = link && tg.linking?.expires_at === link.expires_at ? link : null;
   const unlink = () =>
     ask({
       title: "Unlink Telegram?",
@@ -145,18 +152,18 @@ export function TelegramSection({ task }: { task: Task }) {
         {!tg.polling && <span className="text-st-attention"> Its host isn't reading its messages.</span>}
       </div>
 
-      {link ? (
+      {code ? (
         <div className="space-y-1.5 rounded-md border border-line bg-panel-2/60 p-2.5" aria-label="Linking code">
           <div>
-            Send this to {bot} from a private chat with it, within ten minutes (until {new Date(link.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}):
+            Send this to {bot} from a private chat with it, within ten minutes (until {new Date(code.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}):
           </div>
           <div className="flex items-center gap-1.5">
-            <code className="rounded bg-panel px-2 py-1 font-mono text-[12.5px] whitespace-nowrap text-fg select-all">{link.command}</code>
-            <IconButton title="Copy" onClick={() => copyText(link.command)}>
+            <code className="rounded bg-panel px-2 py-1 font-mono text-[12.5px] whitespace-nowrap text-fg select-all">{code.command}</code>
+            <IconButton title="Copy" onClick={() => copyText(code.command)}>
               <Copy size={13} />
             </IconButton>
-            {link.url && (
-              <a className="inline-flex items-center gap-1 text-accent hover:underline" href={link.url} target="_blank" rel="noreferrer">
+            {code.url && (
+              <a className="inline-flex items-center gap-1 text-accent hover:underline" href={code.url} target="_blank" rel="noreferrer">
                 Open in Telegram <ExternalLink size={12} />
               </a>
             )}

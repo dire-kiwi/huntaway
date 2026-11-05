@@ -758,10 +758,10 @@ async function link(s: Shared, profile_id: string, token: string, m: any, code: 
   try {
     ok = update_config(s, profile_id, (c) => {
       const ok = !!c.link && c.link.expires_at > now() && same_secret(c.link.code_hash, hash(code));
-      if (ok && is_private) {
-        c.link = null;
-        c.owner = owner;
-      }
+      // Spent either way: a code sent in a group has been seen by everyone there, any of whom could send it privately
+      // (HA-207 review).
+      if (ok) c.link = null;
+      if (ok && is_private) c.owner = owner;
       return ok;
     });
   } catch {
@@ -769,7 +769,15 @@ async function link(s: Shared, profile_id: string, token: string, m: any, code: 
   }
   if (!ok) return false;
   if (!is_private) {
-    await say(s, profile_id, token, chat_id, "Link your assistant from a private chat with this bot, not a group.");
+    console.warn(`telegram: a linking code was sent from a chat that isn't private, so it no longer works (profile ${profile_id}, chat ${chat_id})`);
+    changed(s, profile_id);
+    await say(
+      s,
+      profile_id,
+      token,
+      chat_id,
+      "Link your assistant from a private chat with this bot, not a group. That code no longer works: make a new one on the board and send it here privately.",
+    );
     return true;
   }
   console.info(`telegram: linked to ${owner.name} (profile ${profile_id}, chat ${chat_id})`);

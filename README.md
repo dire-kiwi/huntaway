@@ -976,8 +976,9 @@ port and keeps working while that host's link to the hub is down.
    a time.
 3. **Link your chat**: **Link a chat…** shows a one-time code that lasts ten minutes. Send
    `/start <code>` to the bot from a private chat with it (or tap **Open in Telegram**). That chat is
-   then the only one the bot listens to and writes to. Messages and button presses from anyone else
-   are dropped, logged and counted in the panel.
+   then the only one the bot listens to and writes to. A code sent from a group stops working (everyone
+   there has seen it): make a new one. Messages and button presses from anyone else are dropped,
+   logged and counted in the panel.
 
 What you send the bot (text, and photos, voice notes and files up to 10 MB, saved as attachments) goes
 to the assistant as your message, and its reply comes back, formatted for Telegram and split if it's
