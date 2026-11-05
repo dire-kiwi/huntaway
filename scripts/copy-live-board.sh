@@ -8,8 +8,8 @@
 # It only reads the live database (an online backup), and only into a server test-server.sh started
 # with --no-agents. The copy is scrubbed so the test server leaves the live board's things alone: no
 # runs to pick up, no repositories or worktrees (their paths are moved under /nonexistent), no
-# setup or status scripts, no Claude configs, no Asana tokens, no pending prompts and no linked hosts. Then the test
-# server restarts on it. IA_LIVE_DATA_DIR overrides where the live data is (~/.local/share/issue-agent).
+# setup or status scripts, no Claude configs, no Asana tokens, no Telegram bots, no pending prompts and no linked hosts.
+# Then the test server restarts on it. IA_LIVE_DATA_DIR overrides where the live data is (~/.local/share/issue-agent).
 #
 # The copy goes in under the name of the live board's file: `huntaway-2.db` from a server that's moved onto it (see
 # server-ts/src/db/file.ts), or `huntaway.db` (or `issue-agent.db`) from one before, which a test server started with
@@ -102,6 +102,9 @@ UPDATE automations SET enabled=0, secret=NULL;
 UPDATE projects SET done_when_merged=0;
 DELETE FROM pr_watches;
 DELETE FROM pr_states;
+-- Nor do the assistants' Telegram bots poll with the live board's tokens (reading the owner's messages before the
+-- live board does), or write to their chats: their tokens, owners, offsets and queued sends go.
+DELETE FROM settings WHERE key LIKE 'telegram%';
 SQL
 # Nor the profiles' Asana tokens (in databases from API 57 on).
 if [[ -n $(sqlite3 "$db" "SELECT 1 FROM pragma_table_info('profiles') WHERE name='asana_token'") ]]; then

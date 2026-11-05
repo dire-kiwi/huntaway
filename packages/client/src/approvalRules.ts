@@ -46,8 +46,8 @@ export type ApprovalAction = {
   rule: string;
   decision: "ask" | "never";
   outcome: "pending" | "allowed" | "denied" | "expired" | "blocked";
-  /** `user` (on the board), `push` (a notification), `expiry` (nobody, in time), `mode` (Don't ask), `rule`, or `ended` (its
-   *  run ended first). */
+  /** `user` (on the board), `push` (a notification), `telegram` (its buttons, API 117), `expiry` (nobody, in time), `mode`
+   *  (Don't ask), `rule`, or `ended` (its run ended first). */
   answered_by: string | null;
   created_at: string;
   decided_at: string | null;

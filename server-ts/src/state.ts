@@ -7,6 +7,8 @@ import type { Uplink } from "./hosts/uplink.ts";
 import type { ServerMeta, RestartJob, Deployed } from "./update/admin.ts";
 import { Releases } from "./update/release.ts";
 import { PushState } from "./integrations/push.ts";
+import { Devices } from "./devices.ts";
+import { TelegramState } from "./integrations/telegram.ts";
 import { Relocations } from "./git/relocate.ts";
 import * as worktree from "./git/worktree.ts";
 import * as status_script from "./integrations/status_script.ts";
@@ -141,6 +143,10 @@ export class AppState {
   deleting = new Map<string, number>();
   /** Web Push to devices (see integrations/push.ts). */
   push: PushState;
+  /** Pairing codes, and revocations of paired devices (see devices.ts). */
+  devices = new Devices();
+  /** The assistants' Telegram bots: their pollers and what they send (see integrations/telegram.ts). */
+  telegram: TelegramState;
   /** Run when the state goes (tests: removes its data dir). */
   cleanup: Array<() => void> = [];
 
@@ -157,6 +163,7 @@ export class AppState {
     this.release = new Releases();
     this.relocating = new Relocations();
     this.push = new PushState();
+    this.telegram = new TelegramState();
   }
 
   /** `new`, for a server whose binary is `exe`. */

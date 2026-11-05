@@ -337,12 +337,14 @@ export function apply_mode_to_pending(s: Shared, task: Task): void {
 }
 
 /** Prompts waiting for an answer, oldest first: all of this host's, or one task's. */
-export function pending(s: Shared, task_id: string | null): any[] {
+export function pending(s: Shared, task_id: string | null, profile_id: string | null = null): any[] {
   const rows = db.all<{ id: string; task_id: string; tool_name: string; input: string; created_at: string; expires_at: string | null; rule: string | null }>(
     s.db(),
     `SELECT id, task_id, tool_name, input, created_at, expires_at, rule FROM permission_requests
-     WHERE status='pending' AND (?1 IS NULL OR task_id=?1) ORDER BY created_at, rowid`,
+     WHERE status='pending' AND (?1 IS NULL OR task_id=?1)
+       AND (?2 IS NULL OR task_id IN (SELECT id FROM tasks WHERE profile_id=?2)) ORDER BY created_at, rowid`,
     task_id,
+    profile_id,
   );
   return rows.map((r) => {
     let input: any;
@@ -662,6 +664,17 @@ export function expire_for_task(s: Shared, task_id: string): void {
 /** Expire the unanswered prompts run `run_id` raised (a later run's on its thread stay). */
 export function expire_for_run(s: Shared, run_id: string): void {
   expire(s, "SELECT id, message_id FROM permission_requests WHERE status='pending' AND call_id IN (SELECT id FROM mcp_calls WHERE run_id=?1)", run_id);
+}
+
+/**
+ * Expire the unanswered prompt call `call_id` raised, which its agent no longer wants answered (see
+ * agent/runner/requests.ts): its thread is back to work if no other prompt is waiting.
+ */
+export function expire_for_call(s: Shared, call_id: string): void {
+  const task_id = db.value<string>(s.db(), "SELECT task_id FROM permission_requests WHERE call_id=?1 AND status='pending'", call_id);
+  if (task_id === undefined) return;
+  expire(s, "SELECT id, message_id FROM permission_requests WHERE call_id=?1 AND status='pending'", call_id);
+  back_to_work(s, task_id);
 }
 
 /**
