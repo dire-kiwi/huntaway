@@ -2,6 +2,7 @@
 // worktree, diff and terminal, and agents' permission prompts.
 import type { WebSocket } from "ws";
 import * as db from "../db.ts";
+import * as devices from "../devices.ts";
 import type { Project, Task } from "../db.ts";
 import { ApiError, Reply, type Req } from "../http.ts";
 import type { AppState } from "../state.ts";
@@ -365,6 +366,7 @@ function find_tool(s: AppState, id: string | null | undefined): any {
 }
 
 export async function terminal_status(s: AppState, r: Req) {
+  devices.board_only(r.device, "use terminals");
   const t = db.get_task(s.db(), r.params.id);
   if (!t) throw ApiError.not_found("task");
   const tool = find_tool(s, r.query.tool);
@@ -372,6 +374,7 @@ export async function terminal_status(s: AppState, r: Req) {
 }
 
 export async function kill_terminal(s: AppState, r: Req) {
+  devices.board_only(r.device, "use terminals");
   const id = r.params.id;
   if (!db.get_task(s.db(), id)) throw ApiError.not_found("task");
   // A tool that was removed from the settings can still be ended.
@@ -381,6 +384,7 @@ export async function kill_terminal(s: AppState, r: Req) {
 
 /** The board still has this tool open: keep its session (see `terminal::start_reaper`). */
 export async function terminal_keepalive(s: AppState, r: Req) {
+  devices.board_only(r.device, "use terminals");
   const id = r.params.id;
   const tool = r.query.tool;
   if (!tool) throw ApiError.bad("tool is required");
@@ -395,6 +399,7 @@ export async function terminal_keepalive(s: AppState, r: Req) {
  */
 /** The terminal websocket's checks, before the upgrade (a 404 or 503 answers the request, as in Rust). */
 export function terminal_ws_check(s: AppState, r: Req) {
+  devices.board_only(r.device, "open terminals");
   const t = db.get_task(s.db(), r.params.id);
   if (!t) throw ApiError.not_found("task");
   if (!terminal.available()) throw new ApiError(503, "tmux is not installed on this host");
@@ -421,9 +426,12 @@ export function terminal_ws(s: AppState, r: Req, ws: WebSocket) {
 
 // ---------- permissions ----------
 
-/** Pending permission prompts (`?task_id=` for one task's), so scripts can answer them. */
+/**
+ * Pending permission prompts (`?task_id=` for one task's, `?profile_id=` for a profile's, API 118: the mobile app's
+ * inbox), so scripts and the mobile app can answer them.
+ */
 export async function list_permissions(s: AppState, r: Req) {
-  return permissions.pending(s, r.query.task_id ?? null);
+  return permissions.pending(s, r.query.task_id ?? null, r.query.profile_id ?? null);
 }
 
 export async function resolve_permission(s: AppState, r: Req) {

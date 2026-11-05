@@ -233,7 +233,7 @@ test("start_run's writes are the thread's first: the start message flags the tas
     assert.deepEqual([first?.kind, first?.data.start], ["user", true]);
     const item = store.items(s.db(), t.id)[0];
     assert.deepEqual([item?.type, item?.id], ["user_message", `legacy:${first!.id}`]);
-    assert.deepEqual(store.item_meta(s.db(), t.id, item!.id), { auto: true });
+    assert.deepEqual(store.item_meta(s.db(), t.id, item!.id), { auto: true, start: true });
     assert.ok(seen.includes("message:false") && seen.includes("thread_event:false") && !seen.some((x) => x.endsWith(":true")), seen.join(" "));
     // runs.turn_message_id is the start message, as before.
     assert.equal(db.value(s.db(), "SELECT turn_message_id FROM runs WHERE task_id=?1", t.id), first!.id);

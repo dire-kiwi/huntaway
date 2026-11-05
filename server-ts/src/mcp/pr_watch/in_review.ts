@@ -16,6 +16,7 @@ import { by_maintainer, compare, summary, what, type Check, type Pr } from "./pr
 import { Watcher, told } from "./read.ts";
 import { load, store, Row_default } from "./seen.ts";
 import { failed_text, record_checks } from "./failed.ts";
+import * as history from "../../threads/history.ts";
 
 /**
  * What a project's `watch_pull_requests` can be: its tasks' pull requests aren't watched while they're in review, or
@@ -289,7 +290,7 @@ function news_to_wake(s: Shared, task_id: string, mode: string, key: string, rea
   if (row.comment_wakes > 0 && row.woke_at != null) {
     let wrote = false;
     try {
-      wrote = db.user_wrote_since(c, task_id, row.woke_at);
+      wrote = history.user_wrote_since(c, task_id, row.woke_at);
     } catch {}
     if (wrote) {
       row.comment_wakes = 0;

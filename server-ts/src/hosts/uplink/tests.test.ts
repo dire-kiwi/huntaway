@@ -10,6 +10,7 @@ import * as hub from "../hub.ts";
 import type { ToolCall } from "../proto.ts";
 import { handle_mcp, handle_up_call } from "../../mcp/tools.ts";
 import { hubs, register } from "../uplink.ts";
+import { tunnel_to } from "../hub/dial_out.ts";
 import { call_api as api, follow, link_by_url, node, on_end, serve, until } from "./testing.ts";
 
 // A run's launch fails rather than starting a real `claude`.
@@ -167,6 +168,12 @@ test("calls_up_a_link_run_once_and_never_go_back_down_or_up", async () => {
   // Nor are its lists asked of it again.
   const listed = await handle_up_call(hub_s, "host", call("list", "list_projects", {}));
   assert.ok(!JSON.stringify(listed).includes("LAP"), JSON.stringify(listed));
+  // Nor is it sent back down when it names the host (by the hub's name for it or its id), which the host doesn't know
+  // as its own (HA-241).
+  for (const h of ["homeserver", "host"]) {
+    e = err(await result(handle_up_call(hub_s, "host", call(`named-${h}`, "get_task", { task_id: "LAP-1", host: h }))));
+    assert.equal(e, `${h} is the host this call came up from (homeserver), and desktop doesn't pass calls back down: leave out host to use that host's own board`);
+  }
   // Nor does the hub pass it up a link of its own.
   assert.equal(hub_s.uplinks.size, 0);
   // Tools for the agent's own thread stay on its own host.
@@ -181,36 +188,55 @@ test("calls_up_a_link_run_once_and_never_go_back_down_or_up", async () => {
 
 // HA-204 review: a host that dials in is known only by the id in its hello, behind the hub token every such host shares.
 // One that took the id of the assistant host the hub dials had its calls run with that profile's access, and the
-// assistant's routed requests went to it.
+// assistant's routed requests went to it. HA-241: so did the UI's requests through the proxy (`/api/h/<host>`), and the
+// link took its name. It isn't let in at all now.
 test("a_host_that_dials_in_under_a_dialled_hosts_id_isnt_taken_for_it", async () => {
   const b = boards();
   const { hub: hub_s, host } = b;
   await link_by_url(hub_s, host);
   await let_in(hub_s, "host", true);
   const personal = db.list_profiles(hub_s.db()).find((p) => p.name === "personal")!;
+  const host_profile = db.list_profiles(host.db()).find((p) => p.name === "personal")!;
   // Another node, given the hub token, dials in claiming to be the assistant host, with a personal profile of its own.
   const impostor = node("host", "impostor");
   const theirs = db.insert_profile(impostor.db(), "personal", [], null);
   await serve(impostor);
-  on_end(hub.dial_out(impostor, await serve(hub_s), "hub-hub"));
-  const up = await until("the impostor's up-link", () => impostor.uplinks.get("hub"));
-  await until("the impostor's tunnel to stand in for the host", () => hub.find_link(hub_s, "host")?.kind.type === "tunnel");
+  const hub_url = await serve(hub_s);
+  // Taken, it stays open: give up on it after a while rather than wait for it.
+  let stop = () => {};
+  const tunnel = tunnel_to(impostor, hub_url, "hub-hub", (a) => (stop = a));
+  const taken = setTimeout(() => stop(), 5000);
+  on_end(() => (clearTimeout(taken), stop()));
+  await assert.rejects(tunnel, /refused: desktop links assistant host homeserver itself, so a host that dials in under its id \(host\) isn't taken for it/);
+  // The host is still the one the hub dials, under its own name, and it never told the impostor who the hub is.
+  assert.equal(hub.find_link(hub_s, "host")?.kind.type, "http");
+  assert.equal(db.get_link(hub_s.db(), "host")?.name, "homeserver");
+  assert.equal(impostor.uplinks.size, 0);
+  const [status, v] = await api(hub_s, "GET", "/api/h/host/info");
+  assert.equal(status, 200, JSON.stringify(v));
+  assert.equal(v.host_name, "homeserver", JSON.stringify(v));
+
+  // Calls that come another way than the host is linked aren't taken (the hub checks each, not just at register).
   const before = Number(db.value(hub_s.db(), "SELECT COUNT(*) FROM tasks"));
   for (const [tool, args] of [
     ["create_task", { project_id: "HUB", title: "Planted", start: true }],
     ["get_task", { task_id: "HUB-1" }],
     ["list_projects", {}],
   ] as const) {
-    const o = await up.call(`i-${tool}`, tool, "personal", args, true);
-    assert.equal(o.kind, "Off", `${tool}: ${JSON.stringify(o)}`);
-    assert.ok(o.kind === "Off" && o.why?.includes("this call came another way"), JSON.stringify(o));
+    const a = await hub.run_up_call(hub_s, "host", { id: 1, call_id: `i-${tool}`, tool, profile: "personal", args, task_fields: true }, "tunnel");
+    assert.ok(a.off && a.error?.includes("this call came another way"), `${tool}: ${JSON.stringify(a)}`);
   }
   assert.equal(Number(db.value(hub_s.db(), "SELECT COUNT(*) FROM tasks")), before);
-  assert.equal(Number(db.value(hub_s.db(), "SELECT COUNT(*) FROM tasks WHERE title='Planted'")), 0);
-  // Nor do the assistant's requests (the user's messages) go to it.
-  const [status, v] = await api(hub_s, "POST", `/api/profiles/${personal.id}/assistant`, { text: "my secrets" });
-  assert.equal(status, 503, JSON.stringify(v));
-  assert.ok(v.error.includes("isn't connected the way it's linked"), JSON.stringify(v));
+
+  // And a connection that's no longer how its host is linked (its link changed under it) gets neither the UI's requests
+  // nor the assistant's (the user's messages).
+  db.run(hub_s.db(), "UPDATE links SET mode='inbound' WHERE id='host'");
+  const [s1, v1] = await api(hub_s, "GET", `/api/h/host/profiles/${host_profile.id}/assistant`);
+  assert.equal(s1, 503, JSON.stringify(v1));
+  assert.ok(v1.error.includes("as a host that dials in, and this connection didn't"), JSON.stringify(v1));
+  const [s2, v2] = await api(hub_s, "POST", `/api/profiles/${personal.id}/assistant`, { text: "my secrets" });
+  assert.equal(s2, 503, JSON.stringify(v2));
+  assert.ok(v2.error.includes("isn't connected the way it's linked"), JSON.stringify(v2));
   assert.equal(db.assistant_task(impostor.db(), theirs.id), null);
 });
 

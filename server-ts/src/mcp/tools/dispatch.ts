@@ -69,6 +69,43 @@ async function handle_mcp_result(s: Shared, c: McpCall): Promise<CallResult> {
   return at_most_once(s, record, () => rerunnable(s, call), () => execute_mcp(s, call));
 }
 
+/**
+ * A call that comes in on the run's own output rather than from its MCP helper (a `can_use_tool` control request, see
+ * agent/runner/requests.ts), run at most once as handle_mcp runs a helper's. `respond` gets its result as soon as it has
+ * one, before it's recorded as done: so a call recorded done has been answered, and one recorded executing (cut short by
+ * a restart) is run again and answered then. A duplicate delivery (the line read again after a restart, while the call
+ * it found again runs) isn't answered twice, nor is a call already answered.
+ */
+export async function handle_control(s: Shared, c: McpCall, respond: (r: CallResult) => void): Promise<void> {
+  if (s.calls_inflight.has(c.call_id)) return;
+  const call: Required<McpCall> = { run_id: c.run_id, call_id: c.call_id, tool: c.tool, args: c.args ?? null, task_fields: c.task_fields === true };
+  let task_id = "";
+  try {
+    task_id = db.get_run(s.db(), call.run_id)?.task_id ?? "";
+  } catch {}
+  const record: Record = { id: call.call_id, run_id: call.run_id, task_id, tool: call.tool, args: call.args };
+  let ran = false;
+  const r = await at_most_once(s, record, () => rerunnable(s, call), async () => {
+    ran = true;
+    let v: any;
+    try {
+      v = await execute_mcp(s, call);
+    } catch (e) {
+      respond({ err: err_str(e) });
+      throw e;
+    }
+    respond({ ok: v });
+    return v;
+  });
+  if (ran) return;
+  // Not run: it had been (and answered), or the board couldn't record it, which the agent is told.
+  let status: string | undefined;
+  try {
+    status = db.value<string>(s.db(), "SELECT status FROM mcp_calls WHERE id=?1", call.call_id);
+  } catch {}
+  if (status !== "done") respond(r);
+}
+
 /** How a call is recorded in `mcp_calls`. */
 interface Record {
   id: string;
@@ -441,6 +478,10 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
   if (h) {
     if (h !== s.host_name && h !== s.host_id) {
       const link = hub.find_link(s, h);
+      // Never back down: the calling host's own board is its own to ask, not ours to pass it to.
+      if (link && ctx.from_host && link.id === ctx.from_host) {
+        throw fail(`${h} is the host this call came up from (${link.name}), and ${s.host_name} doesn't pass calls back down: leave out host to use that host's own board`);
+      }
       if (link) {
         const old = too_old(link.name, link.version.api_version, tool, args);
         if (old !== null) throw fail(old);

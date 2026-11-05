@@ -31,7 +31,7 @@ async function main() {
     case "gh-hook":
       return (await import("./mcp/gh_mcp.ts")).bash_hook();
     case "approval-hook": {
-      // bin/huntaway runs approval_rules/hook.ts directly; this is for a server started some other way.
+      // bin/huntaway runs approval_rules/hook_main.ts directly; this is for a server started some other way.
       const code = await (await import("./agent/approval_rules/hook.ts")).hook(rest[0]);
       process.exitCode = code;
       return;
@@ -66,6 +66,8 @@ async function main() {
     }
     case "threads-rebuild":
       return (await import("./threads/rebuild.ts")).main(rest);
+    case "threads-readers":
+      return (await import("./threads/readers.ts")).main(rest);
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
     case "--version":

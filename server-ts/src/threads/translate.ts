@@ -30,9 +30,10 @@ import type {
 /**
  * Changes when what the translator makes of the same messages does: threads built by it record it (`threads.converter`),
  * and `huntaway threads-rebuild` brings them up to date. 2: a merge-gate card settled as `replaced` is a cancel with a
- * message, without a warning; a prompt that's pending again reopens its request.
+ * message, without a warning; a prompt that's pending again reopens its request. 3: a user_message's meta has `start`,
+ * `routine` and `review_round` (for threads/history.ts's readers).
  */
-export const CONVERTER_VERSION = 2;
+export const CONVERTER_VERSION = 3;
 
 /** How Claude Code's result for a call that was stopped starts. */
 const REJECTED = "The user doesn't want to proceed with this tool use.";
@@ -75,6 +76,12 @@ export interface ItemMeta {
   from_agent?: boolean;
   /** Of a user_message sent along with other agents' messages, the user's own part. */
   user_text?: string;
+  /** Of a user_message, the board's start of the task (analytics counts it as a start, whatever its text). */
+  start?: boolean;
+  /** Of a user_message, an automation's routine run sent it (with nobody there to answer its prompts). */
+  routine?: boolean;
+  /** Of a user_message, the review round whose issues it asks the agent to fix. */
+  review_round?: number;
   /** Of a tool_call, the harness's id for the call where the item's isn't it (a thread with two calls with one id). */
   call_id?: string;
   /** Of a tool_call, the harness's session it was made in: calls with one id are told apart by it. */
@@ -454,7 +461,14 @@ export class Translator {
     const item: Item = { id, type: "user_message", text: typeof d.text === "string" ? d.text : "", created_at: m.created_at };
     if (d.steered === true) item.steered = true;
     this.add(item);
-    this.set_meta(id, { auto: d.auto === true, from_agent: d.from_agent === true, user_text: typeof d.user_text === "string" ? d.user_text : undefined });
+    this.set_meta(id, {
+      auto: d.auto === true,
+      from_agent: d.from_agent === true,
+      user_text: typeof d.user_text === "string" ? d.user_text : undefined,
+      start: d.start === true,
+      routine: d.routine === true,
+      review_round: uint(d.review_round),
+    });
     return "converted";
   }
 

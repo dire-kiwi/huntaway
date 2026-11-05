@@ -15,6 +15,7 @@ import * as runner from "../agent/runner.ts";
 import * as focus from "../agent/focus.ts";
 import * as approval_rules from "../agent/approval_rules.ts";
 import type { Rule } from "../agent/approval_rules.ts";
+import * as history from "../threads/history.ts";
 
 /** Why a request wasn't answered: its run ended or its thread was deleted first. */
 export const EXPIRED = "Request expired";
@@ -260,17 +261,13 @@ function expiry(s: Shared, task: Task, call_id: string): string | null {
  * (its message is marked `routine`, see runner.send_from_routine).
  */
 export function routine_call(c: db.Conn, call_id: string): boolean {
-  const data = db.value<string>(
+  const run = db.one<{ task_id: string; turn_message_id: number | null }>(
     c,
-    "SELECT m.data FROM mcp_calls k JOIN runs r ON r.id=k.run_id JOIN messages m ON m.id=r.turn_message_id WHERE k.id=?1",
+    "SELECT r.task_id, r.turn_message_id FROM mcp_calls k JOIN runs r ON r.id=k.run_id WHERE k.id=?1",
     call_id,
   );
-  if (data == null) return false;
-  try {
-    return JSON.parse(data)?.routine === true;
-  } catch {
-    return false;
-  }
+  if (run?.turn_message_id == null) return false;
+  return history.user_message(c, run.task_id, run.turn_message_id)?.routine === true;
 }
 
 /** Waits for the user to decide request `id`: null if they allowed it, else the reason. */
@@ -340,12 +337,14 @@ export function apply_mode_to_pending(s: Shared, task: Task): void {
 }
 
 /** Prompts waiting for an answer, oldest first: all of this host's, or one task's. */
-export function pending(s: Shared, task_id: string | null): any[] {
+export function pending(s: Shared, task_id: string | null, profile_id: string | null = null): any[] {
   const rows = db.all<{ id: string; task_id: string; tool_name: string; input: string; created_at: string; expires_at: string | null; rule: string | null }>(
     s.db(),
     `SELECT id, task_id, tool_name, input, created_at, expires_at, rule FROM permission_requests
-     WHERE status='pending' AND (?1 IS NULL OR task_id=?1) ORDER BY created_at, rowid`,
+     WHERE status='pending' AND (?1 IS NULL OR task_id=?1)
+       AND (?2 IS NULL OR task_id IN (SELECT id FROM tasks WHERE profile_id=?2)) ORDER BY created_at, rowid`,
     task_id,
+    profile_id,
   );
   return rows.map((r) => {
     let input: any;
@@ -525,7 +524,7 @@ function mode_after_plan(s: Shared, t: Task, picked: string | null): string | nu
  * agent after it (by the user, the board or another agent). A question or plan asked before then isn't answered any more.
  */
 export function moved_on(s: Shared, task_id: string, message_id: number): boolean {
-  return !!db.value<number>(s.db(), "SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND kind='user' AND id>?2)", task_id, message_id);
+  return history.moved_on(s.db(), task_id, message_id);
 }
 
 function set_mode(s: Shared, task_id: string, mode: string | null): void {
@@ -593,29 +592,38 @@ function late_answers(input: any, answers: string[][]): string {
  * `deletions` the tasks they're waiting to delete too, and with `automations` the automations they're waiting to create,
  * change or delete (older UIs only know project changes, or those and deletions).
  */
-export function pending_approvals(s: Shared, deletions: boolean, automations: boolean, workflows = false): any[] {
+export function pending_approvals(s: Shared, deletions: boolean, automations: boolean, workflows = false, mode: history.Mode = "auto"): any[] {
   // Workflows' approvals are asked as automations' are, with `workflow` in place of `automation`: a UI from before them
   // (API 107) isn't shown them.
-  const rows = db.all<{ task_id: string; created_at: string; data: string }>(
-    s.db(),
-    `SELECT p.task_id, p.created_at, m.data FROM permission_requests p JOIN messages m ON m.id=p.message_id
+  const c = s.db();
+  const rows = db.all<any>(
+    c,
+    `SELECT p.*, m.data, ${history.reads(mode, "items")} AS on_items FROM permission_requests p JOIN tasks t ON t.id=p.task_id
+       LEFT JOIN messages m ON m.id=p.message_id AND NOT ${history.reads(mode, "items")}
      WHERE (p.kind='project' OR (?1 AND p.kind='delete_task')
             OR (?2 AND p.kind='automation' AND (?3 OR json_extract(p.input, '$.workflow') IS NULL))) AND p.status='pending' ORDER BY p.created_at`,
     deletions,
     automations,
     workflows,
   );
-  return rows.map((r) => {
+  return rows.flatMap((r) => {
     let v: any;
-    try {
-      v = JSON.parse(r.data);
-    } catch {
-      v = {};
+    if (r.on_items) {
+      v = history.approval(c, r);
+      if (v === null) return [];
+    } else {
+      // The message, as an inner join had it.
+      if (r.data == null) return [];
+      try {
+        v = JSON.parse(r.data);
+      } catch {
+        v = {};
+      }
+      if (!v || typeof v !== "object" || Array.isArray(v)) v = {};
     }
-    if (!v || typeof v !== "object" || Array.isArray(v)) v = {};
     v.task_id = r.task_id;
     v.created_at = r.created_at;
-    return v;
+    return [v];
   });
 }
 
@@ -656,6 +664,17 @@ export function expire_for_task(s: Shared, task_id: string): void {
 /** Expire the unanswered prompts run `run_id` raised (a later run's on its thread stay). */
 export function expire_for_run(s: Shared, run_id: string): void {
   expire(s, "SELECT id, message_id FROM permission_requests WHERE status='pending' AND call_id IN (SELECT id FROM mcp_calls WHERE run_id=?1)", run_id);
+}
+
+/**
+ * Expire the unanswered prompt call `call_id` raised, which its agent no longer wants answered (see
+ * agent/runner/requests.ts): its thread is back to work if no other prompt is waiting.
+ */
+export function expire_for_call(s: Shared, call_id: string): void {
+  const task_id = db.value<string>(s.db(), "SELECT task_id FROM permission_requests WHERE call_id=?1 AND status='pending'", call_id);
+  if (task_id === undefined) return;
+  expire(s, "SELECT id, message_id FROM permission_requests WHERE call_id=?1 AND status='pending'", call_id);
+  back_to_work(s, task_id);
 }
 
 /**

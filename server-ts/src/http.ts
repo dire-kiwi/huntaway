@@ -3,6 +3,7 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import type { WebSocket } from "ws";
 import type { AppState } from "./state.ts";
+import type { DeviceAuth } from "./devices.ts";
 import { err_str } from "./util.ts";
 import { performance } from "node:perf_hooks";
 import * as lag from "./lag.ts";
@@ -53,6 +54,11 @@ export interface Req {
   pre?: any;
   /** The node request, for routes served over HTTP (absent for in-process requests). */
   incoming?: IncomingMessage;
+  /**
+   * A request made with a paired device's token (see devices.ts), or one the hub's proxy passes on for one: Rust's
+   * `Option<Extension<DeviceAuth>>`.
+   */
+  device?: DeviceAuth | null;
 }
 
 export type Handler = (s: AppState, r: Req) => any;

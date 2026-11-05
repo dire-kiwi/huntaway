@@ -47,13 +47,14 @@ fi
 # Agents' MCP helper runs once per agent: started straight from its module, it doesn't load the whole server.
 if [ "$1" = mcp ]; then
   shift
-  exec "$node" $flags "$src/mcp.$ext" "$@"
+  exec "$node" $flags "$src/mcp_main.$ext" "$@"
 fi
 # So does the approval rules' hook, which Claude Code runs before each tool call a rule may match (see
-# src/agent/approval_rules/hook.ts).
+# src/agent/approval_rules/hook_main.ts). Each runs an entry file of its own rather than a module that checks
+# import.meta.main, which Node before 24.2 doesn't set.
 if [ "$1" = approval-hook ]; then
   shift
-  exec "$node" $flags "$src/agent/approval_rules/hook.$ext" "$@"
+  exec "$node" $flags "$src/agent/approval_rules/hook_main.$ext" "$@"
 fi
 case "$1" in
   "" | serve) ;;
