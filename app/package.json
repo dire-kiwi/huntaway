@@ -12,8 +12,8 @@
   "desktopName": "huntaway-app.desktop",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "typecheck": "tsc -b",
+    "build": "tsrs -b && vite build",
+    "typecheck": "tsrs -b",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:ui": "npm run build && node --experimental-strip-types --test --test-concurrency=${IA_UI_TEST_JOBS:-8} ${IA_UI_TEST_SHARD:+--test-shard=$IA_UI_TEST_SHARD} --test-timeout=120000 tests/ui/*.test.mjs",
     "electron": "electron .",
@@ -47,7 +47,7 @@
     "electron-builder": "^26.18.0",
     "playwright-core": "^1.64.1",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2",
+    "tsrs": "0.22.0-ts7.1.0-beta",
     "vite": "^8.3.5"
   },
   "author": "Ivan Meredith",

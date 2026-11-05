@@ -141,7 +141,7 @@ Keep test servers fully separate from it:
 
 ## Checking UI changes
 
-`tsc` and a build don't show layout or behaviour, so look at UI changes in a browser before you
+A typecheck and a build don't show layout or behaviour, so look at UI changes in a browser before you
 finish, and click through what you changed: typechecked-only UI changes have shipped lost drafts,
 stale forms and broken reordering that one interaction would have shown. Run the test server with a
 fresh `npm run build` (it serves `app/dist`), then drive it with `scripts/ui-check.mjs`. It uses
@@ -207,7 +207,9 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   end, not `os.tmpdir()`: tests that left their folders there filled `/tmp`. `testing.state()` gives an `AppState` on
   an in-memory database. `IA_KEEP_TEST_DIRS=1` keeps the folders.
 - New worktrees have no `node_modules`. Run `npm ci` in `app/` and `server-ts/` first, then use the package
-  scripts (`npm run typecheck`, `npm test`, `npm run build`). `npx tsc` without them runs an
+  scripts (`npm run typecheck`, `npm test`, `npm run build`). The typecheck in both is
+  [tsrs](https://github.com/oxc-project/tsrs) (Cloudflare and VoidZero's Rust port of TypeScript 7, the `tsrs` dev
+  dependency, run as `tsrs`, with `tsc`'s flags), not `typescript`, which neither package has: `npx tsc` runs an
   unrelated package.
 - The code is formatted by hand, with lines of up to about 160 characters, and there's no
   Prettier, ESLint or rustfmt config. Don't run `prettier`, `eslint` or `cargo fmt`, because each

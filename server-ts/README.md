@@ -11,7 +11,7 @@ dependency.
 ```sh
 cd server-ts && npm ci
 bin/huntaway serve --port 7979 --data-dir /tmp/board-ts   # the same flags and subcommands as the Rust binary had
-npm run typecheck && npm test                              # tsc, and the unit tests
+npm run typecheck && npm test                              # tsrs (TypeScript 7, in Rust), and the unit tests
 ```
 
 It runs agents with the Rust `ia-shim` (`$IA_SHIM_BIN`, else the newer of `server/target/{release,debug}/ia-shim`, else
@@ -47,7 +47,7 @@ Crashes (HA-182): a panic in a Rust task ended that task, and the server carried
 nothing to handle it, or a throw in a timer or an event's listener, is logged to the server log with its stack and the
 server carries on (`src/crash.ts` says why uncaught exceptions are carried on from too). Every promise the server makes is
 awaited, `.catch`ed or run with `util.ts`'s `background`, which logs what it throws; `tests/floating_promises.test.ts`
-checks that with the TypeScript compiler (there's no ESLint). If node exits with an error anyway once it's up (or
+checks that with tsrs's checker API (there's no ESLint). If node exits with an error anyway once it's up (or
 aborts, as it does when it runs out of memory), `bin/huntaway` starts it again as the same process, after 1, 2, 4, 8 and
 16 seconds, then gives up (see its comments). `IA_DEBUG_FAULTS=1` adds `POST /api/debug/fault {"kind": "reject" |
 "throw" | "loop" | "exit"}`, which makes the server fail on purpose, to try that.
