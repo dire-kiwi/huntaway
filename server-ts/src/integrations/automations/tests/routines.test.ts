@@ -11,6 +11,7 @@ import * as api from "../../../api.ts";
 import type { Req } from "../../../http.ts";
 import type { Shared } from "../../../state.ts";
 import * as testing from "../../../testing.ts";
+import * as approval_rules from "../../../agent/approval_rules.ts";
 import * as assistant from "../../../agent/assistant.ts";
 import * as memory from "../../../agent/assistant/memory.ts";
 import * as documents from "../../../agent/documents.ts";
@@ -807,7 +808,8 @@ test("pruning_keeps_the_runs_that_count_toward_todays_budget", async () => {
     budget_usd: 1.0,
     action: { kind: "message_assistant", mode: "thread", message: "x" },
   });
-  const now = Date.now();
+  // Midday, so that the runs half an hour before it are today's too (Date.now() just after local midnight put them on yesterday).
+  const now = routines_day_start(Date.now()) + 12 * HOUR;
   const at = (m: number) => now - m * MINUTE;
   // A paid run, then one whose agent is still at work (no cost recorded yet, but its thread's counts).
   const paid = Run_new(a.id, "schedule", "ok", at(30));
@@ -834,7 +836,7 @@ test("pruning_keeps_the_runs_that_count_toward_todays_budget", async () => {
   assert.equal(get_run(s.db(), paid.id), null);
 });
 
-test("a_routines_messages_start_routine_runs", async () => {
+test("a_routines_messages_start_routine_runs_whose_prompts_expire", async () => {
   const s = testing.state();
   const p = profile(s);
   const the_assistant = assistant.get_or_create(s, p.id);
@@ -844,10 +846,11 @@ test("a_routines_messages_start_routine_runs", async () => {
   });
   const wake = (mode: string) => ({ name: mode, trigger: { kind: "cron", expr: "0 8 * * *" }, action: { kind: "message_assistant", message: "Inbox?", mode } });
   // Fresh: its thread's first message (waiting here, as no agent can start) is a routine's; so is a thread-mode
-  // routine's in the assistant's thread. (Slice 6's approval rules expire their prompts.)
+  // routine's in the assistant's thread. The approval rules, and expiry, hold in both.
   for (const mode of ["fresh", "thread"]) {
     const a = routine(s, p.id, wake(mode));
     const r = await run_now(s, a);
+    assert.ok(approval_rules.applies_to(s.db(), db.get_task(s.db(), r.task_id)!), mode);
     const queued = db.take_queued(s.db(), r.task_id)!;
     assert.ok(queued.routine, mode);
   }

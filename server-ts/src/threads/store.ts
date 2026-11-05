@@ -3,14 +3,14 @@
 // thread's id is its task's, and its rows are deleted with the task.
 //
 // Items and requests are kept as they are now, updated in place as events come: a snapshot is a read of them, and no
-// snapshot is stored. The events themselves are kept for a while (the last day, and at least the last KEEP_EVENTS of
-// each thread), for clients catching up after a gap; one further behind than that takes a fresh snapshot. Deltas aren't
-// saved. `thread.updated` events are logged but not kept as state: the thread's own state is its task's, which the
-// caller gives a snapshot.
+// snapshot is stored. The events themselves are kept for a day (KEEP_MS), for clients catching up after a gap; one
+// further behind than that takes a fresh snapshot. The thread's `threads` row keeps its last seq, so numbering goes on
+// when the log is empty. Deltas aren't saved. `thread.updated` events are logged but not kept as state: the thread's
+// own state is its task's, which the caller gives a snapshot.
 //
 // The useful parts of HA-128's server/src/threads/store.rs (agent-threads' `Store` on the board's database), without the
 // generic interface: this is the only store. Values are kept as the JSON they were given, so fields this build doesn't
-// know survive. Nothing calls it yet (see docs/threads.md).
+// know survive. threads/write.ts writes it, for tasks flagged `thread_items` (see docs/threads.md).
 import { all, one, run, tx, value, type Conn } from "../db.ts";
 import { now } from "../util.ts";
 import {
@@ -18,9 +18,11 @@ import {
   type Item, type ItemPage, type NewEvent, type SavedEvent, type Snapshot, type Thread, type ThreadRequest,
 } from "./protocol.ts";
 
-/** How many of a thread's latest events are kept whatever their age. */
-export const KEEP_EVENTS = 1000;
-/** How long events are kept beyond the latest KEEP_EVENTS. */
+/**
+ * How long a thread's saved events are kept. By age only: a client that has been away longer takes a fresh window,
+ * which is cheap, and a count kept for good would keep nearly every thread's whole log (HA-214's dry run: 761 MB of
+ * events beside 755 MB of items on the live board, for a count of 1,000).
+ */
 export const KEEP_MS = 24 * 60 * 60 * 1000;
 
 export interface AppendOptions {
@@ -28,6 +30,8 @@ export interface AppendOptions {
   message_id?: number;
   /** When it happened, as an RFC 3339 time: now by default. */
   at?: string;
+  /** False: apply them without saving them in the log (a rebuild, see threads/write.ts), and return none. */
+  log?: boolean;
 }
 
 /**
@@ -41,6 +45,14 @@ export function append(c: Conn, task_id: string, events: NewEvent[], o: AppendOp
   return tx(c, () => {
     let seq = last_seq(c, task_id);
     const saved: SavedEvent[] = [];
+    if (o.log === false) {
+      // Applied without saving them: the thread's seq still goes up, so clients from before it take a fresh window.
+      for (const e of events) {
+        if ((e.type as string) === "delta") throw new Error("deltas aren't saved");
+        apply(c, task_id, { ...e, thread_id: task_id, seq } as SavedEvent, at, o.message_id);
+      }
+      return saved;
+    }
     for (const e of events) {
       if ((e.type as string) === "delta") throw new Error("deltas aren't saved");
       // type, thread_id and seq first, as in the examples, whatever the event was given.
@@ -50,6 +62,7 @@ export function append(c: Conn, task_id: string, events: NewEvent[], o: AppendOp
       apply(c, task_id, event, at, o.message_id);
       saved.push(event);
     }
+    set_seq(c, task_id, seq, at);
     prune_thread(c, task_id, at);
     return saved;
   });
@@ -122,14 +135,27 @@ function add_origin(c: Conn, task_id: string, item_id: string, message_id: numbe
 
 // ---------- the log ----------
 
-/** The seq of the thread's last saved event; 0 for none. The latest events are always kept, so it never goes back. */
+/**
+ * The seq of the thread's last saved event; 0 for none. Its `threads` row keeps it when its events have been pruned
+ * (or a rebuild saved none), so it never goes back.
+ */
 export function last_seq(c: Conn, task_id: string): number {
-  return value<number>(c, "SELECT MAX(seq) FROM thread_events WHERE task_id=?1", task_id) ?? 0;
+  const kept = value<number>(c, "SELECT seq FROM threads WHERE task_id=?1", task_id) ?? 0;
+  const logged = value<number>(c, "SELECT MAX(seq) FROM thread_events WHERE task_id=?1", task_id) ?? 0;
+  return Math.max(kept, logged);
 }
 
-/** Whether the task has a thread kept as items: it has saved an event. */
+/** Records `seq` as the thread's last (making its `threads` row if it has none). */
+export function set_seq(c: Conn, task_id: string, seq: number, at = now()): void {
+  run(c, "INSERT INTO threads (task_id, seq, created_at) VALUES (?1, ?2, ?3) ON CONFLICT (task_id) DO UPDATE SET seq=MAX(seq, excluded.seq)", task_id, seq, at);
+}
+
+/**
+ * Whether the task has a thread kept as items: it has a `threads` row (threads/write.ts makes it with the task's first
+ * message, or `append` with the first events), and live writes haven't stopped on an error since its last rebuild.
+ */
 export function has_thread(c: Conn, task_id: string): boolean {
-  return !!one(c, "SELECT 1 FROM thread_events WHERE task_id=?1 LIMIT 1", task_id);
+  return !!one(c, "SELECT 1 FROM threads WHERE task_id=?1 AND error IS NULL", task_id);
 }
 
 /**
@@ -137,27 +163,38 @@ export function has_thread(c: Conn, task_id: string): boolean {
  * that far, so the client takes a fresh snapshot instead.
  */
 export function events_after(c: Conn, task_id: string, after: number, limit?: number): SavedEvent[] | null {
-  const range = one<{ first: number | null; last: number | null }>(c, "SELECT MIN(seq) AS first, MAX(seq) AS last FROM thread_events WHERE task_id=?1", task_id)!;
-  if (range.last === null || after >= range.last) return [];
-  if (after < range.first! - 1) return null;
+  const last = last_seq(c, task_id);
+  if (after >= last) return [];
+  const first = value<number>(c, "SELECT MIN(seq) FROM thread_events WHERE task_id=?1", task_id) ?? last + 1;
+  if (after < first - 1) return null;
   const rows = all<{ data: string }>(c, "SELECT data FROM thread_events WHERE task_id=?1 AND seq>?2 ORDER BY seq LIMIT ?3", task_id, after, limit ?? -1);
   return rows.map((r) => JSON.parse(r.data));
 }
 
-/** Removes the thread's events older than `keep_ms` before `at`, but for its last `keep`. */
-function prune_thread(c: Conn, task_id: string, at: string, keep = KEEP_EVENTS, keep_ms = KEEP_MS): void {
+/** Removes the thread's events older than `keep_ms` before `at`: none, without reading its log, if its oldest isn't. */
+function prune_thread(c: Conn, task_id: string, at: string, keep_ms = KEEP_MS): void {
   const before = new Date(Date.parse(at) - keep_ms).toISOString();
-  run(c, "DELETE FROM thread_events WHERE task_id=?1 AND seq<=?2 AND created_at<?3", task_id, last_seq(c, task_id) - keep, before);
+  const oldest = value<string>(c, "SELECT created_at FROM thread_events WHERE task_id=?1 ORDER BY seq LIMIT 1", task_id);
+  if (oldest === undefined || oldest >= before) return;
+  run(c, "DELETE FROM thread_events WHERE task_id=?1 AND created_at<?2", task_id, before);
 }
 
-/** Removes every thread's events older than `keep_ms` before `at`, but for each one's last `keep`. Returns how many went. */
-export function prune(c: Conn, at = now(), keep = KEEP_EVENTS, keep_ms = KEEP_MS): number {
+/** Removes every thread's events older than `keep_ms` before `at`. Returns how many went. */
+export function prune(c: Conn, at = now(), keep_ms = KEEP_MS): number {
   const before = new Date(Date.parse(at) - keep_ms).toISOString();
-  return run(
-    c,
-    "DELETE FROM thread_events WHERE created_at<?1 AND seq<=(SELECT MAX(e.seq) FROM thread_events e WHERE e.task_id=thread_events.task_id)-?2",
-    before, keep,
-  ).changes;
+  return run(c, "DELETE FROM thread_events WHERE created_at<?1", before).changes;
+}
+
+/**
+ * Empties the thread, for a rebuild: its items, requests, origins and saved events go, and its seq goes up by one, so
+ * a client from before it, even one that had every event, finds a gap and takes a fresh window. Its `threads` row stays.
+ */
+export function clear(c: Conn, task_id: string, at = now()): void {
+  tx(c, () => {
+    const seq = last_seq(c, task_id);
+    for (const t of ["thread_items", "thread_requests", "thread_item_origins", "thread_events"]) run(c, `DELETE FROM ${t} WHERE task_id=?1`, task_id);
+    set_seq(c, task_id, seq + 1, at);
+  });
 }
 
 // ---------- items, requests and snapshots ----------
@@ -335,4 +372,10 @@ export function set_item_meta(c: Conn, task_id: string, item_id: string, meta: o
 export function item_meta(c: Conn, task_id: string, item_id: string): any {
   const r = one<{ meta: string | null }>(c, "SELECT meta FROM thread_items WHERE task_id=?1 AND id=?2", task_id, item_id);
   return r?.meta ? JSON.parse(r.meta) : null;
+}
+
+/** Every item's meta that has one, by item id. */
+export function metas(c: Conn, task_id: string): Map<string, any> {
+  const rows = all<{ id: string; meta: string }>(c, "SELECT id, meta FROM thread_items WHERE task_id=?1 AND meta IS NOT NULL", task_id);
+  return new Map(rows.map((r) => [r.id, JSON.parse(r.meta)]));
 }

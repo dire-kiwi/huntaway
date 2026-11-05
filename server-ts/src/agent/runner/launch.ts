@@ -21,15 +21,16 @@ import * as review from "../../review.ts";
 import * as attachments from "../../attachments.ts";
 import * as assistant from "../assistant.ts";
 import * as automations from "../../integrations/automations.ts";
+import * as approval_rules from "../approval_rules.ts";
 import { Cancelled, MCP_SERVER_NAME, load } from "../runner.ts";
 import {
   board_tools_allowed,
   cache_dirs,
   codex_run_effort,
   gh_allowed,
-  gh_hook_settings,
   git_common_dir,
   github_account,
+  hook_settings,
   ignored_dirs,
   review_filesystem,
   uses_gh_server,
@@ -221,7 +222,10 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     const codex_effort = config ? await codex_run_effort(config, codex_model, effort) : effort;
     check();
     record_effort(state, run.id, codex_effort);
-    const [approval_policy, approvals_reviewer, sandbox] = codex.policy(permission_mode, task.kind === "review");
+    // The user's approval rules (see agent/approval_rules.ts) may have Codex ask more, or keep it from running.
+    const rules = approval_rules.for_task(state.db(), task);
+    const codex_rules = rules ? approval_rules.for_mode(rules, permission_mode) : null;
+    const [approval_policy, approvals_reviewer, sandbox] = approval_rules.codex_policy(codex_rules, codex.policy(permission_mode, task.kind === "review"));
     const gh_tools = uses_gh_server(tools);
     const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
     const profiles = db.list_profiles(state.db());
@@ -270,6 +274,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
       review_waits: approvals_reviewer === "auto_review",
     };
     if (rewind?.before_turn != null) spec.revert_before_turn = rewind.before_turn;
+    if (codex_rules) spec.approval_rules = codex_rules;
     const l: runs.Launch = {
       run_id: run.id,
       cwd,
@@ -310,8 +315,15 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   check();
   args.push("--append-system-prompt-file", path_str(prompt_file));
   args.push("--permission-mode", permission_mode);
-  if (permission_mode !== "bypassPermissions") args.push("--permission-prompt-tool", `mcp__${MCP_SERVER_NAME}__permission_prompt`);
-  if (gh_tools) args.push("--settings", gh_hook_settings(state.exe));
+  // The user's approval rules (see agent/approval_rules.ts): a hook's ask goes to the permission prompt even in Bypass,
+  // which otherwise has none.
+  const all_rules = approval_rules.for_task(state.db(), task);
+  const rules = all_rules ? approval_rules.for_mode(all_rules, permission_mode) : null;
+  if (permission_mode !== "bypassPermissions" || (rules && approval_rules.needs_prompt_tool(rules))) {
+    args.push("--permission-prompt-tool", `mcp__${MCP_SERVER_NAME}__permission_prompt`);
+  }
+  const rules_hook = rules ? approval_rules.claude_hook(state.exe, rules) : null;
+  if (gh_tools || rules_hook) args.push("--settings", hook_settings(gh_tools ? state.exe : null, rules_hook));
   // Our board tools never need approval, nor do some of the gh server's (see gh_allowed).
   args.push("--allowedTools");
   args.push(...board_tools_allowed(permission_mode, task.kind === "review"));
@@ -319,7 +331,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const gh_tool = (t: string) => `mcp__${gh_mcp.SERVER_NAME}__${t}`;
   if (!own_gh) args.push(...gh_allowed(task).map(gh_tool));
   args.push(...tools.allowed);
-  const disallowed = [...tools.disallowed];
+  const disallowed = [...tools.disallowed, ...(rules ? approval_rules.claude_disallowed(rules) : [])];
   if (task.kind === "review") {
     // Reviewers read and report; they don't change the work.
     args.push(...review.ALLOWED_TOOLS);
@@ -378,6 +390,8 @@ async function started(state: Shared, run: Run, l: runs.Launch, check: () => voi
   const task_id = run.task_id;
   // Not if it was stopped meanwhile: an agent started now would work unseen.
   check();
+  // Where its conversation is kept, if it starts one (see db.task_config_dir).
+  db.set_run_config_dir(state.db(), run.id, l.config_dir);
   await runs.start(state, l);
   // Stopped while ia-shim started: the launch's end reaps it (see runner::launch_ended).
   check();

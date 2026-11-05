@@ -8,6 +8,7 @@ import type { AppState } from "../state.ts";
 import { err_str } from "../util.ts";
 import * as runner from "../agent/runner.ts";
 import * as assistant from "../agent/assistant.ts";
+import * as approval_rules from "../agent/approval_rules.ts";
 import * as focus from "../agent/focus.ts";
 import * as worktree from "../git/worktree.ts";
 import * as terminal from "../hosts/terminal.ts";
@@ -19,6 +20,7 @@ import * as workflows from "../integrations/workflows.ts";
 import * as summary from "../review/summary.ts";
 import { def_str, json_map, opt_str, query_bool, query_int, query_opt_bool, req_str, body_rejection, def_bool } from "./extract.ts";
 import { create_task_inner } from "./new_task.ts";
+import * as live from "../threads/live.ts";
 
 /**
  * A thread's messages: all of them as a list, or with any of `before`, `after` (message ids) and `limit`, one page of
@@ -37,6 +39,42 @@ export async function list_messages(s: AppState, r: Req) {
   return { messages, more, subagents };
 }
 
+// ---------- the thread kept as items (API 114, docs/threads-api.md) ----------
+
+/**
+ * `GET /tasks/{id}/thread[?limit=N]`: the task's thread kept as items, as a Snapshot `{thread, items, requests, seq}`
+ * with the text streamed so far, or with `limit` a window of its last N items (with `start` and `context`). A 404 for
+ * a task without items.
+ */
+export async function get_thread(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  const limit = query_int(r, "limit", 0);
+  return live.window(s, task, limit ?? undefined);
+}
+
+/** `GET /tasks/{id}/thread/items?before=I[&limit=N]`: an ItemPage of the thread's items before index I (100 of them unless `limit` says). */
+export async function thread_items(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  const before = query_int(r, "before", 0);
+  if (before === null) throw ApiError.bad("before is required: the index of the window's start");
+  return live.page(s, task, before, query_int(r, "limit", 0) ?? live.PAGE_ITEMS);
+}
+
+/**
+ * `GET /tasks/{id}/thread/events?after=SEQ[&limit=N]`: `{events, more, seq}`, the thread's saved events after SEQ (0
+ * unless given), at most N and 1000; with `resync: true` instead when the log no longer goes back that far.
+ */
+export async function thread_events(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  return live.events(s, task, query_int(r, "after", 0) ?? 0, query_int(r, "limit", 1) ?? live.MAX_EVENTS);
+}
+
+/** `POST /tasks/{id}/thread/commands`: a protocol Command for the task's thread (see threads/live.ts's command). */
+export async function thread_command(s: AppState, r: Req) {
+  const task = live.open(s, r.params.id);
+  return await live.command(s, task, r.body);
+}
+
 export async function send_message(s: AppState, r: Req) {
   const id = r.params.id;
   const text = def_str(json_map(r), "text");
@@ -49,17 +87,102 @@ export async function send_message(s: AppState, r: Req) {
   return t;
 }
 
-/** `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's asked for. */
+/**
+ * `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's
+ * asked for. API 112: with its `host_id`, which is the profile's assistant host's when it has one, where the request goes
+ * (see assistant::on_its_host), unless `local` is set: a hub that routed the request here sets it, and it's this host's
+ * then, whatever its profile's `assistant_host`.
+ */
 export async function get_assistant(s: AppState, r: Req) {
-  return assistant.get_or_create(s, r.params.id);
+  if (r.query.local === undefined) {
+    const t = await assistant.on_its_host(s, r.params.id, "GET");
+    if (t !== null) return t;
+  }
+  return assistant.with_host(s, assistant.get_or_create(s, r.params.id));
 }
 
 /**
  * `POST /profiles/{id}/assistant` (API 109): send the user's message to the profile's assistant, as `POST
- * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
+ * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task, on its assistant host if it
+ * has one, as `GET` does (API 112).
  */
 export async function send_to_assistant(s: AppState, r: Req) {
-  return assistant.send(s, r.params.id, def_str(json_map(r), "text"));
+  const text = def_str(json_map(r), "text");
+  if (r.query.local === undefined) {
+    const t = await assistant.on_its_host(s, r.params.id, "POST", { text });
+    if (t !== null) return t;
+  }
+  return assistant.with_host(s, assistant.send(s, r.params.id, text));
+}
+
+/** A profile's approval rules as the UI shows them: the ones in force, whether they're the defaults, and the defaults to go back to. */
+function rules_view(c: db.Conn, profile_id: string): any {
+  const saved = approval_rules.saved(c, profile_id);
+  const defaults = approval_rules.Rules_default();
+  return {
+    rules: (saved ?? defaults).rules,
+    expiry_minutes: (saved ?? defaults).expiry_minutes,
+    is_default: saved === null,
+    defaults,
+    board_server: runner.MCP_SERVER_NAME,
+    google_server: approval_rules.GOOGLE_SERVER,
+    create_task_tools: approval_rules.CREATE_TASK_TOOLS,
+  };
+}
+
+/**
+ * `GET /profiles/{id}/approval-rules` (API 115): what the profile's assistant may do outside the board, asks first or
+ * never does (see agent/approval_rules.ts).
+ */
+export async function get_approval_rules(s: AppState, r: Req) {
+  const c = s.db();
+  if (!db.get_profile(c, r.params.id)) throw ApiError.not_found("profile");
+  return rules_view(c, r.params.id);
+}
+
+/**
+ * `POST /profiles/{id}/approval-rules` (API 115) with `{rules, expiry_minutes}` (either may be left out, keeping it as it
+ * is), or `{reset: true}` for the defaults. They hold from the next run on.
+ */
+export async function set_approval_rules(s: AppState, r: Req) {
+  const b = json_map(r);
+  let rules: approval_rules.Rule[] | null = null;
+  if (b.rules != null) {
+    rules = approval_rules.parse_rule_list(b.rules);
+    if (rules === null) throw body_rejection("rules: invalid type, expected a sequence of {tool, decision} with decision allow, ask or never");
+  }
+  const e = b.expiry_minutes;
+  if (e != null && !(Number.isInteger(e) && e >= 0 && e <= 0xffffffff)) throw body_rejection("expiry_minutes: invalid value, expected u32");
+  const reset = def_bool(b, "reset");
+  const c = s.db();
+  const id = r.params.id;
+  if (!db.get_profile(c, id)) throw ApiError.not_found("profile");
+  if (reset) {
+    approval_rules.set(c, id, null);
+  } else {
+    const current = approval_rules.get(c, id);
+    let checked: approval_rules.Rules;
+    try {
+      checked = approval_rules.checked({ rules: rules ?? current.rules, expiry_minutes: e ?? current.expiry_minutes });
+    } catch (err) {
+      throw ApiError.bad(err_str(err));
+    }
+    approval_rules.set(c, id, checked);
+  }
+  const view = rules_view(c, id);
+  s.emit({ type: "approval_rules", profile_id: id });
+  return view;
+}
+
+/**
+ * `GET /profiles/{id}/approval-log` (API 115): the calls the profile's rules asked about or turned away, newest first (see
+ * approval_rules.Action).
+ */
+export async function approval_log(s: AppState, r: Req) {
+  const limit = query_int(r, "limit");
+  const c = s.db();
+  if (!db.get_profile(c, r.params.id)) throw ApiError.not_found("profile");
+  return approval_rules.list(c, r.params.id, limit ?? 200);
 }
 
 /** Answer a question an agent asked with request_user_input, from its card (API 64): the answer is sent as the user's message. */
@@ -317,7 +440,9 @@ export async function resolve_permission(s: AppState, r: Req) {
   if (decision === "allow" || decision === "allow_always") allow = true;
   else if (decision === "deny") allow = false;
   else throw ApiError.bad("decision must be allow, allow_always or deny");
-  const status = permissions.answer(s, r.params.id, allow, decision === "allow_always", message, reply);
+  // `push` for an answer from a notification, which the hub passes on (API 115), for the action log.
+  const by = opt_str(b, "via") === "push" ? "push" : "user";
+  const status = permissions.answer_by(s, r.params.id, allow, decision === "allow_always", message, reply, by);
   return { ok: true, status };
 }
 

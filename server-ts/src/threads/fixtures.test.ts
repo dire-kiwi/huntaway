@@ -2,7 +2,8 @@
 // the board would store it and then translated: every raw line Claude wrote goes through agent/runner/output.ts's
 // handle_line (its slimming, into `messages`), the board's own rows are written as it writes them (the user's messages,
 // and the permission prompts, which it asks through its MCP tool rather than can_use_tool), and the translator's items
-// must be the ones the fixture's expected.jsonl folds into, but for what `messages` doesn't keep (see `normalize`).
+// must be the ones the fixture's expected.jsonl folds into, but for what `messages` doesn't keep (see `normalize`). The
+// task keeps its thread as items (the setting is on), so the items written live as the rows were must be a rebuild's.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -12,6 +13,8 @@ import * as testing from "../testing.ts";
 import { handle_line } from "../agent/runner/output.ts";
 import { apply_events, initial_state, type Item, type ThreadEvent, type ThreadRequest } from "./protocol.ts";
 import { ASK_USER, EXIT_PLAN, Translator, convert, fold, type Conversion } from "./translate.ts";
+import * as store from "./store.ts";
+import * as write from "./write.ts";
 
 const DIR = join(import.meta.dirname, "fixtures", "claude");
 
@@ -25,8 +28,9 @@ const jsonl = (path: string): any[] =>
  * The fixture's session as the board stores it: its task's messages, and its writes in the order they happened (each
  * row as it was inserted, and a permission prompt's again as each update left it), as the live path will see them.
  */
-function stored(scenario: string): { messages: db.Message[]; writes: db.Message[] } {
+function stored(scenario: string): { messages: db.Message[]; writes: db.Message[]; live: { items: Item[]; requests: ThreadRequest[]; differences: string[] } } {
   const s = testing.state();
+  db.set_setting(s.db(), write.SETTING, "true");
   const profile = db.insert_profile(s.db(), "p", [], null);
   const task = db.insert_task(s.db(), {
     profile_id: profile.id,
@@ -89,7 +93,9 @@ function stored(scenario: string): { messages: db.Message[]; writes: db.Message[
     }
   }
   inserted();
-  return { messages: db.list_messages(s.db(), task.id), writes };
+  assert.equal(db.value(s.db(), "SELECT thread_items FROM tasks WHERE id=?1", task.id), 1);
+  const live = { items: store.items(s.db(), task.id), requests: store.requests(s.db(), task.id), differences: write.compare(s.db(), task.id) };
+  return { messages: db.list_messages(s.db(), task.id), writes, live };
 }
 
 /** The items and requests the fixture's expected events fold into. */
@@ -154,8 +160,11 @@ test("there_are_22_claude_fixtures", () => {
 
 for (const scenario of scenarios) {
   test(`claude_fixture_${scenario}`, () => {
-    const { messages, writes } = stored(scenario);
+    const { messages, writes, live: written } = stored(scenario);
     const c: Conversion = convert(messages, { finished: false });
+    // Written live, as the board wrote the rows: a rebuild's.
+    assert.deepEqual(written.differences, []);
+    assert.deepEqual({ items: written.items, requests: written.requests }, { items: c.items, requests: c.requests });
     // Fed as the board wrote them, prompts pending first, it ends where the final rows do.
     assert.equal(writes.length, messages.length + messages.filter((m) => m.kind === "permission").length, "each prompt is written, then answered");
     const t = new Translator();

@@ -4,6 +4,7 @@ import * as db from "../../db.ts";
 import { ApiError, Reply, type Req } from "../../http.ts";
 import * as api from "../../api.ts";
 import * as runner from "../../agent/runner.ts";
+import { status_line as google_status_line } from "../../agent/assistant/google.ts";
 import type { Shared } from "../../state.ts";
 import { background, err_str, now as util_now, same_secret } from "../../util.ts";
 import {
@@ -69,7 +70,10 @@ export async function run_action(s: Shared, a: Automation, run_id: string, sourc
   let result: RunResult;
   try {
     const precheck = await guards(s, a, source, now);
-    const vars: Vars = { automation: a, source, delivery, count, now, precheck };
+    // Where Google stands for a routine that asks (see assistant/google.ts), as it starts.
+    const google =
+      a.action.kind === "message_assistant" && is_routine(a) && a.action.message.includes("{{google}}") ? google_status_line(s, a.profile_id) : null;
+    const vars: Vars = { automation: a, source, delivery, count, now, precheck, google };
     result = act(s, a, run_id, vars, ev);
   } catch (e) {
     result = is_outcome(e) ? e : { err: [null, message(e)] };
@@ -409,6 +413,19 @@ function claim_due(s: Shared, now: number, tz: Tz): Array<[Automation, Run, InFl
     } catch {}
   }
   const out: Array<[Automation, Run, InFlight]> = [];
+  try {
+    claim_each(s, now, tz, due, out);
+  } catch (e) {
+    // Rust gave up the claims taken so far when `out` was dropped, so an error doesn't hold those automations back.
+    for (const [, , f] of out) f.drop();
+    throw e;
+  }
+  return out;
+}
+
+/** `claim_due`'s loop: claims each of `due` that's due, adding those to run to `out` (which keeps their claims). */
+function claim_each(s: Shared, now: number, tz: Tz, due: Array<[Automation, boolean]>, out: Array<[Automation, Run, InFlight]>) {
+  const c = s.db();
   for (const [a, archived] of due) {
     const due_at = parse_time(a.next_run_at);
     if (due_at === null || due_at > now) continue;
@@ -468,7 +485,6 @@ function claim_due(s: Shared, now: number, tz: Tz): Array<[Automation, Run, InFl
     }
     out.push([a, claimed, in_flight]);
   }
-  return out;
 }
 
 /**

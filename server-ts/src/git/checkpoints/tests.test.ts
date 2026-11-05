@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as api from "../../api.ts";
 import * as db from "../../db.ts";
@@ -162,6 +162,31 @@ test("a_checkpoint_leaves_the_index_branch_and_stashes_alone", async () => {
   [run] = start(s, t.id, "again");
   await before_run(s, t, run);
   assert.equal(list(s.db(), t.id).length, 1);
+});
+
+test("a_file_rewritten_in_the_second_the_index_was_written_is_a_change", async () => {
+  // HA-237: f.txt is rewritten at the same size and time as the index's entry for it, in the second the worktree's
+  // index was written (as the agent's first edit after the checkout can be). Git reads such a file again rather than
+  // trust the entry, which it can only tell from the index's own time. The ctime, which can't be set, is left out.
+  const s = testing.state();
+  const [t, wt] = await task_repo(s, false);
+  sh(wt, ["config", "core.trustctime", "false"]);
+  const second = Math.floor(Date.now() / 1000) - 100;
+  utimesSync(join(wt, "f.txt"), second, second);
+  sh(wt, ["update-index", "-q", "--refresh"]);
+  const index = sh(wt, ["rev-parse", "--path-format=absolute", "--git-path", "index"]).trim();
+  utimesSync(index, second, second);
+  const before = read(wt, "f.txt")!;
+  const after = before.replace("1\n", "x\n");
+  assert.equal(after.length, before.length);
+  await turn(s, t.id, "go", () => {
+    write(wt, "f.txt", after);
+    utimesSync(join(wt, "f.txt"), second, second);
+  });
+  const cp = list(s.db(), t.id).at(-1)!;
+  assert.equal(cp.kind, "turn");
+  assert.equal(cp.stats?.files, 1);
+  assert.equal(sh(wt, ["show", `${cp.sha}:f.txt`]), after);
 });
 
 test("turns_show_their_own_changes_and_rewind_restores_the_files", async () => {

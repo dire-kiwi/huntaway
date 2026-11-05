@@ -31,12 +31,12 @@ Each module is a file named after its feature (`worktree.ts`, `hub.ts`, `review.
 
 | Folder | Modules |
 |---|---|
-| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, tokens, prompts, documents, agent_tools |
+| `agent/` | runner, runs, codex, context, title, task_tmp, window, usage, tokens, prompts, documents, agent_tools, approval_rules |
 | `mcp/` | (`mcp.ts`, the stdio server) tools, gh_mcp, wait, pr_watch, permissions, questions |
 | `git/` | worktree, worktree_files, checkpoints, git_view, changes, relocate |
-| `hosts/` | hub, broker, proto, relay, ssh, terminal, pty |
+| `hosts/` | hub, broker, proto, relay, ssh, terminal, pty, uplink (board tools up a link) |
 | `update/` | admin, release, staging |
-| `integrations/` | github, asana, push, automations, status_script |
+| `integrations/` | github, asana, push, push_answers, automations, status_script |
 | `review/` | (`review.ts`, automatic review) summary, merged, merge_gate, fanout, stats |
 
 `main`, `serve`, `state`, `util`, `http`, `proc`, `db`, `api`, `testing`, `demo`, `analytics`, `disk`, `backup` and
@@ -116,7 +116,7 @@ Helpers several features use stay in `app/src/` (`store.ts`, `router.ts`, `threa
 | Folder | What's in it |
 |---|---|
 | `board/` | the board and its views (TaskBoard, TaskCard, BoardControls, Graph and Triage views, PendingPrompts, Fanout, Dependencies, ConfirmDone), `boardQuery.ts`, `taskOrder.ts` |
-| `task/` | the task panel (TaskView, and `view/` for its title, tabs and Details column), the thread (Thread, and `thread/` for its markdown, tool calls, subagents, items and the composer), Approvals, Questions, Review, Reviewers, Context, Rewind, Reminders, ExternalLinks, Attachments, Document, Terminal, WorktreeSetup, SkillMenu; `turns.ts`, `planTheme.ts`, `planAnswers.ts`, `openingTab.ts`, `htmlFrame.ts`, `mermaid.ts` |
+| `task/` | the task panel (TaskView, and `view/` for its title, tabs and Details column), the thread (Thread, and `thread/` for its markdown, tool calls, subagents, items and the composer), Approvals, Questions, Review, Reviewers, Context, Rewind, Reminders, ExternalLinks, Attachments, Document, Terminal, WorktreeSetup, SkillMenu, ApprovalRules, ActionLog; `turns.ts`, `planTheme.ts`, `planAnswers.ts`, `openingTab.ts`, `htmlFrame.ts`, `mermaid.ts` |
 | `changes/` | the Changes tab (Changes, and `git/` for its parts), DiffLines, Compare; `changes.ts`, `lineComments.ts`, `highlight.ts` and its worker |
 | `settings/` | the settings page and its sections (Server, Hosts, HostPage, ClaudeConfigs, AgentTools, Automations, GithubRepos, Usage, DiskUsage, Analytics, chart), NewProjectModal, DirPicker, ArchivedProjects, Onboarding, TokenScreen, and `project/` for project settings, a file per tab; `disk.ts`, `githubRepos.ts`, `versions.ts`, `uiVersion.ts` |
 | `layout/` | Sidebar, Notifications, NewTaskModal (and `newTask/`, its hooks and sections), TitleModal, UnhandledErrors, AgentsPill; `harnesses.ts`, `taskTokens.ts` |

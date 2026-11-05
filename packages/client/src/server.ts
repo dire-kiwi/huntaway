@@ -136,7 +136,15 @@ export interface HostSettings {
   release_prereleases?: boolean;
   /** Hours a task can go without activity in Now before it goes back to Later (API 97): 0 for never, null for the default of a day. */
   now_expiry_hours?: number | null;
+  /**
+   * Keep threads as items (API 116): tasks whose first message comes while it's on keep their threads as items as well
+   * as messages (docs/threads.md), and stay so. Off by default.
+   */
+  thread_items?: boolean;
 }
+
+/** The host API that has the thread_items setting. */
+export const THREAD_ITEMS_API = 116;
 
 export const serverApi = ({ on }: Http) => ({
   settings: (h: string) => on(h).get<HostSettings>("/settings"),

@@ -219,6 +219,8 @@ export function handle_line(state: Shared, run: Run, v: any): void {
         subagent_started(state, task_id, session, id, sender, { prompt: g(thread.preview), description: g(thread.agentNickname), subagent_type: role });
       } else if (subagent === undefined && session !== id) {
         state.update_task(task_id, [["session_id", id]]);
+        // The run that started the thread, which says where it's kept (see db.task_config_dir).
+        db.set_run_session(state.db(), run.id, id);
       }
     }
   } else if (method === "turn/started" && !own) {
@@ -227,10 +229,10 @@ export function handle_line(state: Shared, run: Run, v: any): void {
     // Where a rewind to before this turn takes the thread back to (see checkpoints::Rewind).
     const turn = str(p.turn?.id);
     if (turn !== null) db.run(state.db(), "UPDATE runs SET agent_at=?1 WHERE id=?2", turn, run.id);
-    state.emit({ type: "delta_reset", task_id });
+    state.emit_delta_reset(task_id);
   } else if (method === "item/agentMessage/delta" && own) {
     const t = str(p.delta);
-    if (t !== null) state.emit({ type: "delta", task_id, text: t });
+    if (t !== null) state.emit_delta(task_id, t);
   } else if (method === "item/started") {
     const item = p.item ?? {};
     const kind = str(item.type) ?? "";
@@ -239,7 +241,7 @@ export function handle_line(state: Shared, run: Run, v: any): void {
     const tu = tool_use(item);
     if (own && (kind === "collabAgentToolCall" || (tu !== null && !wait.is_wait_tool(tu[0])))) wait.resumed(state, task_id, run.id);
     if (kind === "agentMessage" && own) {
-      state.emit({ type: "delta_reset", task_id });
+      state.emit_delta_reset(task_id);
     } else if (shown_at_start(kind) && !(kind === "collabAgentToolCall" && item.tool === "spawnAgent")) {
       const id = str(item.id);
       if (id !== null && tu !== null) thread_message(state, task_id, parent, assistant([{ type: "tool_use", id, name: tu[0], input: tu[1] }]));
@@ -250,7 +252,7 @@ export function handle_line(state: Shared, run: Run, v: any): void {
     const id = str(item.id) ?? "";
     subagent_item(state, run, session, p);
     if (kind === "agentMessage" || kind === "plan") {
-      if (own) state.emit({ type: "delta_reset", task_id });
+      if (own) state.emit_delta_reset(task_id);
       const text = str(item.text);
       if (text !== null && text.trim() !== "") thread_message(state, task_id, parent, assistant([{ type: "text", text }]));
     } else if (kind === "reasoning") {

@@ -29,7 +29,8 @@ passes both packages' typechecks. There's no code generation and no JSON Schema.
 - **Events**, each with the thread's id and a `seq`: `thread.updated`, `turn.started`, `turn.completed`, `item.added`
   (or replaced in place, for an id the thread has), `item.updated` (a patch), `items.removed` (a rewind),
   `request.opened`, `request.resolved`, and `delta` (streamed text). Every event but `delta` is saved, and a thread's
-  saved events are numbered 1, 2, 3... with no gaps. A delta has the seq of the last saved event, and an `offset`.
+  saved events are numbered 1, 2, 3... with no gaps (but for one a rebuild leaves, so clients from before it take a
+  fresh window). A delta has the seq of the last saved event, and an `offset`.
 - **Commands** from the UI: `send`, `interrupt`, `respond`, `set_options`, `rewind`, `new_session`, `compact`.
 - **Snapshots**, `{thread, items, requests, seq}`: what applying the thread's saved events in order to the empty state
   gives. `apply_event` is that fold, a pure reducer: an event changes only what it's about, keeping the identity of the
@@ -52,14 +53,22 @@ message and its items can be written in one transaction:
 | --- | --- |
 | `thread_items` | Each item as it is now (JSON), updated in place. `pos` orders them; an item's index is the number of items before it, so removing items leaves gaps that windows don't see. `live` marks a subagent call whose subagent is still running. `meta` is what the board knows that the item doesn't say (who sent a message). |
 | `thread_requests` | Requests, open or resolved (JSON), in order. |
-| `thread_events` | The saved events (JSON), kept for a day, and at least the last 1,000 of each thread whatever their age. |
+| `thread_events` | The saved events (JSON), kept for a day. |
 | `thread_item_origins` | Which message(s) each item came from: `(task_id, item_id, message_id)`. |
+| `threads` | Each thread's own row (migration 95): its last `seq` (kept when its events have been pruned), the `converter` version that wrote it, a `writes` count, and the `error` that stopped its live writes, if one did. |
 
-Every table is keyed by `task_id`, and its rows are deleted with the task (`ON DELETE CASCADE`).
+Every table is keyed by `task_id`, and its rows are deleted with the task (`ON DELETE CASCADE`). `tasks.thread_items`
+says which tasks have a thread kept as items.
 
 - `append(c, task, events, {message_id})` numbers events after the thread's last, logs them, applies each to the items
   and requests in place, records the message as the origin of the items they touch, and prunes the thread's log. It's
-  all or nothing, within the caller's transaction too.
+  all or nothing, within the caller's transaction too. With `log: false` (a rebuild) it applies them without logging.
+- The log is kept by age only (a day, `KEEP_MS`), and `threads.seq` keeps the numbering going when it's empty. A
+  client further behind than the log takes a fresh window. Step 2's dry run found that a count kept for good (the
+  last 1,000 of each thread) kept nearly every thread's whole log: 761 MB of events beside 755 MB of items. Each
+  `append` prunes its own thread, and the runs pruner (hourly) prunes the quiet ones.
+- `clear` empties a thread for a rebuild, and moves its seq on by one, so a client from before the rebuild, even one
+  that had every event, sees a gap and takes a fresh window.
 - A snapshot is a read of the items and requests, with the seq of the last event. No snapshot is stored.
 - `window` and `page` read a window or a page from the tables, without reading the whole thread, and give the same as
   `snapshot_window` and `item_page` of the whole snapshot.
@@ -92,10 +101,12 @@ made a fold, so the live path (step 3) and batch rebuilds (step 7) can share it:
   rebuilt in between, it's as if its call never came. On the live board's copy that changed nothing (below).
 - A permission or question message fed again after its status changed (the board updates them in place) resolves the
   request it opened with what its status says now, even if it was resolved before: a question or plan whose run ended is
-  expired (cancelled) and can still be answered late. A pending one stays open.
+  expired (cancelled) and can still be answered late. A pending one stays open, and one that's pending again (answerable
+  again after its answer couldn't be sent) is opened again, with no resolution.
 - `finish()` ends a history nothing will add to (an import): calls with no result are cancelled, subagents that never
   ended are stopped, open requests are cancelled, and what waited for a call that never came is warned about.
-- `CONVERTER_VERSION` (1) changes when what it makes of the same messages does: a fix means rebuilding the tasks.
+- `CONVERTER_VERSION` (2) changes when what it makes of the same messages does: a fix means rebuilding the tasks
+  (`huntaway threads-rebuild`, below), and `threads.converter` says which version wrote each.
 
 Where agent-threads' recorded sessions showed it, it follows agent-threads rather than HA-128: `mcp__app__*` calls are
 `app` calls; AskUserQuestion's questions are told apart by their text, with `allow_other`; a `/compact` turn ends with a
@@ -149,14 +160,80 @@ its events at all (a client catching up from before it takes a snapshot), and th
 to what a reconnecting client misses (a few hundred) or go by age only. With no log, items beside messages come to
 about 1.9 times today's `messages` (1.7 GB on this board).
 
+## The API
+
+[threads-api.md](threads-api.md) has the routes (a snapshot or window, pages of earlier items, the events after a
+seq, and commands), and the live events. What writes a thread's items sends its events to clients with
+`threads/live.ts`'s `send_events` once they're committed, streamed text with `send_delta` (which keeps the text so far
+in memory, so a window taken mid-message has it), and `send_resync` when it changes a thread in a way its log doesn't
+say (a rebuild).
+
+## Writing items live
+
+`server-ts/src/threads/write.ts`, step 3 (plan decisions D3 and D4).
+
+- **The switch:** the host setting *Keep threads as items* (`thread_items` in `/api/settings`, API 116; Settings, a
+  host's Agent defaults), off by default. A task whose first message is written while it's on is flagged
+  (`tasks.thread_items`), in the same transaction, and keeps its items written from then on, so a flagged task's
+  items have no gaps. Turning it off flags no more tasks, and those already flagged carry on. With it off, and for
+  unflagged tasks, nothing new is written (the only extra work is reading the flag, from the `UPDATE tasks` that
+  insert_message already made).
+- **The write points:** every message write goes through db/messages.ts's `insert_message`, `update_message_data`
+  and `update_pending_message` (the `status='pending'`-guarded update that mcp/questions.ts and review/merge_gate.ts
+  used raw SQL for). Each calls `write.written` inside its own transaction (a savepoint within the caller's), which
+  for a flagged task translates the message and appends its events, so the message and its items are committed
+  together or not at all: `AppState.add_message` and `add_event`, start_run's prompt, start message and compact
+  event (in start_run's own transaction), steered messages, and the permission, question and merge-gate updates.
+  Messages stay the source.
+- **Events:** the events are kept with the returned message object (`write.events_of`), and AppState's
+  `emit_message` and `emit_message_updated` send them with step 4's `live.send_events` (`thread_event`, see
+  [threads-api.md](threads-api.md)) after the message's own event, once committed (start_run sends its messages after
+  its commit, as before). A write rolled back sends nothing. They go out in the order they were written: a question's
+  answer sends its events before the reply it starts is written (mcp/questions.ts).
+- **Deltas:** streamed text (the board's `delta` events, which still go out) is also sent as a `delta` thread event,
+  for flagged tasks. Huntaway streams into a message before it's saved, so the delta names a preview item the thread
+  doesn't have, `stream:<server>:<n>`: a new one for each text block (Claude's `content_block_start`, or a `delta_reset`),
+  ended when the agent's message is saved. See protocol.ts's `DeltaEvent`.
+- **The translator in memory:** each server keeps the Translator of the threads it last wrote (64 of them), with the
+  `threads.writes` count it's in step with. A count that doesn't match (a write rolled back, a rebuild by another
+  process, a server that restarted) gets one rebuilt from the store (`Translator.from`), which loses only what was
+  waiting for its call (see the translator above).
+- **Failures:** if translating or storing a message throws, the message is still written (the items' part is rolled
+  back to its savepoint), the error is logged and kept in `threads.error`, and the thread gets no more live writes
+  (and `store.has_thread` is false, so the thread API leaves it alone) until it's rebuilt.
+- **A request reopening:** a question whose answer couldn't be sent goes back to `pending` (mcp/questions.ts's
+  "answerable again"), and the translator opens its request again with no resolution (`request.opened`), as a
+  rebuild from the message has it. Merge-gate cards settled as `replaced` are a cancel with a message (converter 2).
+
+### `huntaway threads-rebuild`
+
+`huntaway threads-rebuild [--db <file or data dir>] (<task id or key>... | --all) [--check] [--json]` derives threads
+from their messages again, one transaction a task, so a translator fix only needs a rebuild. `--all` is every flagged
+task; a task named is flagged too, and gets its whole history. A rebuild logs no events: the thread's seq moves on
+by one, so clients take a fresh window. `--check` writes nothing and prints how each thread differs from a rebuild
+(it rebuilds in a savepoint and rolls it back). It runs on the board's database while the server runs (the data
+dir's by default, at this build's version), and the server's translators notice through `threads.writes`.
+
+What was checked (HA-239): every Claude fixture and Codex case of step 2, written live through the real write points
+with the setting on, gives a rebuild's items, requests, metas and origins; so do unit tests of every message kind and
+update, a question reopened, start_run's writes, a rollback, a throw and a process exit between a message and its
+items (neither is left), a translator failure and a rebuild from another connection. On a test server with
+`--fake-claude`: a task started with `ia-api start` (its auto start message is its first message and flagged it),
+sent a message while idle, steered mid-turn, run with a subagent and streamed text, compacted by hand and by the idle
+auto-compact: `threads-rebuild --all --check` finds no differences, and a task started before the setting was turned on
+has nothing written. Six flagged tasks streaming at once kept the event loop's p99 at 10.3–10.6 ms and its max under
+24 ms (the same as with the setting off), with no stalls, and each task's saved events came gapless over `/api/ws`.
+With haiku on Claude (a `request_user_input` question, a prompt allowed and one denied) and on a Codex config (an
+approval), the threads were a rebuild's too.
+
 ## Status
 
 | Step | Task | State |
 | --- | --- | --- |
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
-| 2. The translator, and a dry run on a copy of the board | HA-214 | This change: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
-| 3. Items written live, behind a setting | HA-216 | Not started |
-| 4. Thread API and live events | HA-215 | Not started |
+| 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
+| 3. Items written live, behind a setting | HA-239 (was HA-216) | This change: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
+| 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
 | 5. The UI on items | HA-218 | Not started |
 | 6. Readers on items | HA-217 | Not started |
 | 7. Every task gets items, the setting on by default | HA-220 | Not started |
@@ -169,10 +246,10 @@ about 1.9 times today's `messages` (1.7 GB on this board).
 
 Left for later steps:
 
-- Live snapshots that include streamed text: the store doesn't apply deltas, so a client that connects mid-message gets
-  the text so far only from the server's memory (step 4).
-- Rebuilding a thread's items from its messages, keeping its seq going up (step 3).
-- A periodic `prune` of every thread's log: `append` prunes each thread as it writes (step 3).
-- How much of the event log to keep, and a rebuild that doesn't log (steps 3 and 7: see the dry run's sizes above).
-- Calling the translator from `add_message` and `update_message_data` (a permission or question's status), in the same
-  transaction (step 3).
+- Live snapshots that include streamed text: step 3's deltas name a preview item the thread doesn't have yet (see
+  "Writing items live"), and `live.send_delta` only takes items the thread has, so a window taken mid-message doesn't
+  have the preview's text so far (step 5, with the UI that shows it).
+- Routines' `report` messages are kept only in messages (the translator retains them as `unknown_kind`): the UI on
+  items needs an item for them (step 5).
+- Saving `thread.updated` when the task's state changes: until then, a thread's state is read from its task (step 5).
+- Rebuilding every task, and a rebuild from Settings, which would also send `thread_resync` (step 7).

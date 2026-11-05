@@ -5,6 +5,7 @@ import {
   agentInfo,
   agentOf,
   api,
+  ASSISTANT_HOST_API,
   canRunAgents,
   EFFORTS,
   hostCompat,
@@ -16,6 +17,7 @@ import {
   PERMISSION_MODES,
   MULTI_SUMMARIZER_API,
   PROFILE_REVIEWERS_API,
+  THREAD_ITEMS_API,
   type ClaudeConfig,
   type Compat,
   type GithubAccount,
@@ -278,6 +280,7 @@ function HostRow({ host }: { host: Host }) {
         </div>
         <HostVersion host={host} />
         {rename.error && <div className="mt-1 text-xs text-red-400">Couldn't rename it: {rename.error}</div>}
+        <UplinkToggle host={host} />
       </div>
       <Button size="sm" onClick={() => navigate({ name: "host", hostId: host.id })}>
         Configure
@@ -483,6 +486,32 @@ function CopyLine({ value, secret }: { value: string; secret?: boolean }) {
 
 // ---------- profiles (per host, merged by name) ----------
 
+/**
+ * Whether a linked host's agents can use this board's tools, up the link (API 112). Off by default: an assistant host's agents
+ * can then create and message tasks on this board's projects, with the access their profile has here.
+ */
+function UplinkToggle({ host }: { host: Host }) {
+  const action = useAsyncAction();
+  if (host.local || !(host.uplink || (host.connected && hostSupports(host, ASSISTANT_HOST_API)))) return null;
+  return (
+    <div className="mt-2 space-y-1">
+      <Toggle
+        checked={!!host.uplink}
+        onChange={(on) => void action.run(() => api.setHostUplink(host.id, on).then(() => useStore.getState().loadAll()))}
+        label="Let this host's agents use this board"
+      />
+      <div className="text-[11.5px] text-faint">
+        {host.uplink
+          ? `Agents on ${host.name}, in the profiles whose assistant runs there, can list, read, create and change this board's projects and tasks (and its other hosts'), with the access that profile has here.`
+          : `Agents on ${host.name} only see their own host's board and the hosts it links.`}
+        {host.mode === "inbound" &&
+          ` ${host.name} dials in to this board, which knows it only by the id it gives with the hub token: any host given that token could claim to be it. A host linked over SSH or by URL can't be stood in for.`}
+      </div>
+      {action.error && <div className="text-xs text-red-400">{action.error}</div>}
+    </div>
+  );
+}
+
 export function ProfilesPanel() {
   const profiles = useStore((s) => s.profiles);
   const hosts = useStore((s) => s.hosts);
@@ -521,6 +550,7 @@ export function ProfilesPanel() {
                     {p.github_account ? ` · GitHub: ${p.github_account}` : ""}
                     {p.clone_dir ? ` · clones into ${p.clone_dir}` : ""}
                     {!usesAsana(p) ? " · Asana off" : p.asana_user ? ` · Asana: ${p.asana_user}` : ""}
+                    {p.assistant_host ? ` · assistant on ${hostName(p.assistant_host)}` : ""}
                     {p.agent_access?.length ? ` · agents from ${p.agent_access.includes("*") ? "every profile" : p.agent_access.join(", ")} can use it` : ""}
                   </div>
                   {/* Hosts with separate configs copy logins from Claude configs. */}
@@ -604,6 +634,7 @@ export function ProfileForm({
   const [summarizers, setSummarizers] = useState<Reviewer[]>(initial?.summarizers?.length ? initial.summarizers : [initial?.summarizer ?? DEFAULT_REVIEWER]);
   const [mergeApproval, setMergeApproval] = useState(!!initial?.merge_approval);
   const [prApproval, setPrApproval] = useState(!!initial?.require_pr_approval);
+  const [assistantHost, setAssistantHost] = useState(initial?.assistant_host ?? "");
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
   const { busy, error: err, run } = useAsyncAction();
@@ -618,6 +649,10 @@ export function ProfileForm({
   const severalSummarizers = hostSupports(hosts.find((h) => h.id === host), MULTI_SUMMARIZER_API);
   const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
   const gating = hostSupports(hosts.find((h) => h.id === host), PR_APPROVAL_API);
+  // This board's own profiles can run their assistants on a linked host (API 112).
+  const assistantHosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
+  const onBoardHost = useStore((s) => !!s.hosts.find((h) => h.id === host)?.local);
+  const placing = onBoardHost && (assistantHosts.length > 0 || !!initial?.assistant_host);
   const hostConfigs = useStore(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)));
   const reviewExtras = useReviewerExtras(host);
   // With no configs on the host yet, the directory typed here becomes the first.
@@ -638,6 +673,7 @@ export function ProfileForm({
         ...(reviewing ? (severalSummarizers ? { reviewers, summarizers } : { reviewers, summarizer: summarizers[0] ?? DEFAULT_REVIEWER }) : {}),
         ...(approving ? { merge_approval: mergeApproval } : {}),
         ...(gating ? { require_pr_approval: prApproval } : {}),
+        ...(placing ? { assistant_host: assistantHost || null } : {}),
       };
       if (initial) await api.updateProfile(initial.host_id, initial.id, body);
       else {
@@ -766,6 +802,14 @@ export function ProfileForm({
           </span>
         </div>
       )}
+      {placing && (
+        <Field
+          label="Assistant host"
+          hint="Where the profile's assistant runs: another machine linked over SSH keeps its credentials, and its agents, off this one. That host needs a profile of the same name. Let its agents use this board in Settings → Hosts, so it can create and message tasks here."
+        >
+          <AssistantHostSelect value={assistantHost} onChange={setAssistantHost} />
+        </Field>
+      )}
       {sharing && (
         <Field
           label="Agents from other profiles"
@@ -788,6 +832,24 @@ export function ProfileForm({
         </div>
       </ModalFooter>
     </div>
+  );
+}
+
+/** This board's host, or a linked host with assistants, for a profile's assistant to run on. */
+function AssistantHostSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const local = useStore((s) => s.hosts.find((h) => h.local));
+  const hosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
+  const picked = useStore((s) => s.hosts.find((h) => h.id === value));
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+      <option value="">This host{local ? ` (${local.name})` : ""}</option>
+      {hosts.map((h) => (
+        <option key={h.id} value={h.id}>
+          {h.name}
+        </option>
+      ))}
+      {value && !hosts.some((h) => h.id === value) && <option value={value}>{picked ? `${picked.name} (offline)` : "A host that's gone"}</option>}
+    </select>
   );
 }
 
@@ -1087,6 +1149,15 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           />
           hours without activity <span className="text-faint">(0 keeps them there until you move them)</span>
         </label>
+      )}
+      {hostSupports(host, THREAD_ITEMS_API) && (
+        <div className="mt-3">
+          <Toggle checked={!!settings.thread_items} onChange={(on) => save({ thread_items: on })} label="Keep threads as items" />
+          <p className="mt-1 text-[12px] text-faint">
+            Tasks started from now on also keep their threads in the new thread model, written as their messages are. It changes nothing you see yet,
+            and turning it off leaves those tasks as they are.
+          </p>
+        </div>
       )}
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
     </div>

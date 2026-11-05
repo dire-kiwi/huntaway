@@ -47,8 +47,6 @@ export interface TaskReport {
   events: number;
   /** The events' size as JSON, as thread_events keeps them (numbered). */
   event_bytes: number;
-  /** Of those, the last store.KEEP_EVENTS': what a thread's log keeps once its events are a day old. */
-  kept_event_bytes: number;
   items: Record<string, number>;
   /** The items' size as JSON, with their metas. */
   item_bytes: number;
@@ -100,7 +98,6 @@ export function task_report(c: Conn, task: db.Task, key: string): { report: Task
     message_bytes: rows.reduce((n, r) => n + r.bytes, 0),
     events: 0,
     event_bytes: 0,
-    kept_event_bytes: 0,
     items: {},
     item_bytes: 0,
     requests: 0,
@@ -149,7 +146,6 @@ export function task_report(c: Conn, task: db.Task, key: string): { report: Task
     }
     report.events = sizes.length;
     report.event_bytes = sizes.reduce((n, b) => n + b, 0);
-    report.kept_event_bytes = sizes.slice(-store.KEEP_EVENTS).reduce((n, b) => n + b, 0);
     for (const item of state.items) {
       report.items[item.type] = (report.items[item.type] ?? 0) + 1;
       report.item_bytes += Buffer.byteLength(JSON.stringify(item));
@@ -324,7 +320,7 @@ export function summary(reports: TaskReport[], seconds: number, examples: number
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${n(v)} ${k}`);
   lines.push(`Items: ${list.join(", ")} (${mb(sum((r) => r.item_bytes))}); ${n(sum((r) => r.requests))} requests (${mb(sum((r) => r.request_bytes))}); ${n(sum((r) => r.origins))} origins.`);
-  lines.push(`Events: ${n(sum((r) => r.events))} (${mb(sum((r) => r.event_bytes))}), of which each thread's last ${n(store.KEEP_EVENTS)} are ${mb(sum((r) => r.kept_event_bytes))}.`);
+  lines.push(`Events: ${n(sum((r) => r.events))} (${mb(sum((r) => r.event_bytes))}), kept for a day.`);
   const slowest = [...reports].sort((a, b) => b.ms - a.ms).slice(0, examples);
   lines.push(`Slowest: ${slowest.map((r) => `${r.key} (${n(r.messages)} messages) ${r.ms.toFixed(0)} ms`).join(", ")}.`);
   if (written) {
