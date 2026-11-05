@@ -257,6 +257,7 @@ function claude_result(state: Shared, run: Run, v: any) {
   context.on_result(state, task_id, v);
   // Before the turn's end closes its input (see `turn_ended`).
   context.request(state, run);
+  const dud = never_answered(state, run, v);
   // A running total for the session, which goes on over its turns and the runs that resume it.
   let cost = 0.0;
   if (typeof v.total_cost_usd === "number") {
@@ -266,8 +267,10 @@ function claude_result(state: Shared, run: Run, v: any) {
   const t = db.get_task(state.db(), task_id);
   if (t) {
     const fields: Array<[string, any]> = [["cost_usd", t.cost_usd + cost]];
-    if (typeof v.session_id === "string") fields.push(["session_id", v.session_id]);
+    if (dud) fields.push(["session_id", null]);
+    else if (typeof v.session_id === "string") fields.push(["session_id", v.session_id]);
     state.update_task(task_id, fields);
+    if (dud) console.log(`task ${task_id} run ${run.id}: session ${v.session_id} was never answered, so the next run starts a new one`);
   }
   let result_error: string | null = null;
   if (v.is_error === true || (typeof v.subtype === "string" && v.subtype !== "success")) {
@@ -285,6 +288,22 @@ function claude_result(state: Shared, run: Run, v: any) {
     total_cost_usd: cost,
   };
   record_turn_end(state, run, result_error, slimmed);
+}
+
+/**
+ * Whether Claude Code's result `v` ends a conversation that this run started and the model never answered: it failed
+ * before reaching the API (not logged in, say), with nothing spent in it. Kept, such a session would be resumed by
+ * the next run, which is started again from the task's description instead; and in another config folder (one that has
+ * the login, if this one had none) the agent couldn't find it ("No conversation found with session ID").
+ */
+function never_answered(state: Shared, run: Run, v: any): boolean {
+  if (v.is_error !== true || typeof v.session_id !== "string") return false;
+  if (v.duration_api_ms !== 0 || (v.total_cost_usd ?? 0) !== 0) return false;
+  const c = state.db();
+  const first = db.value<string>(c, "SELECT id FROM runs WHERE task_id=?1 AND session_id=?2 ORDER BY rowid LIMIT 1", run.task_id, v.session_id);
+  if (first !== run.id) return false;
+  // Nor in an earlier turn of this run.
+  return (db.value<number>(c, "SELECT cost_usd FROM runs WHERE id=?1", run.id) ?? 0) === 0;
 }
 
 /**
