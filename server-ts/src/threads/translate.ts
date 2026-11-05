@@ -18,9 +18,9 @@
 // The port of HA-128's server/src/threads/import.rs (on origin/ia/ha-128-implement-agent-threads-from-feasibility, at
 // its converter version 6), which read a whole task's messages at once and looked ahead: a result, a prompt or a
 // subagent's messages stored before their call were matched to it by an index of every call first. Here they wait for
-// it instead (see `Pending`): a result is held until its call comes, a prompt names the call by its id (which the
-// call's item will have) or is linked when a call with its id and input comes, and an item names its parent by the
-// parent's tool_use id, which is its call's item's. What's held is in memory only: a Translator rebuilt in between
+// it instead (`early`, `waiting_prompts`, `missing_parents`): a result is held until its call comes, a prompt names the
+// call by its id (which the call's item will have) or is linked when a call with its id and input comes, and an item
+// names its parent by the parent's tool_use id, which is its call's item's. What's held is in memory only: a Translator rebuilt in between
 // warns about them as if they never came (see `from`). `finish` says what a history that has ended leaves undone.
 
 import type {
