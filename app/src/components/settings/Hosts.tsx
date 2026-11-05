@@ -503,6 +503,8 @@ function UplinkToggle({ host }: { host: Host }) {
         {host.uplink
           ? `Agents on ${host.name}, in the profiles whose assistant runs there, can list, read, create and change this board's projects and tasks (and its other hosts'), with the access that profile has here.`
           : `Agents on ${host.name} only see their own host's board and the hosts it links.`}
+        {host.mode === "inbound" &&
+          ` ${host.name} dials in to this board, which knows it only by the id it gives with the hub token: any host given that token could claim to be it. A host linked over SSH or by URL can't be stood in for.`}
       </div>
       {action.error && <div className="text-xs text-red-400">{action.error}</div>}
     </div>

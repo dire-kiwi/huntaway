@@ -695,7 +695,11 @@ one that dials in). The hub takes it only from an agent in one of its profiles w
 is that host (see *An assistant host*): the host names the caller's profile, and whoever controls it
 could name any. It runs with that profile's access (its board, and those that let that profile in),
 looking on its other linked hosts too, but never back on the calling host or further up, and at most
-once per call id. If the link drops after a call went up, the agent is told it may have taken effect.
+once per call id, and only if it came the way the hub links that host: a host that dials in under the
+id of one the hub dials (by URL or over SSH) isn't taken for it, for calls or for the assistant's
+requests. A host that dials in is known only by the id it gives with the hub token, which every such
+host shares, so any host given that token could claim to be it: link an assistant host over SSH or by
+URL. If the link drops after a call went up, the agent is told it may have taken effect.
 Changes that need the user's approval (`update_project`, `delete_task`, automations) are refused there,
 since the agent's thread isn't on the hub, and `wait` only watches tasks on the agent's own host. Calls
 with `host` set to the hub's name (or one of its hosts') go there.

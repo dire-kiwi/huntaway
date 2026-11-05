@@ -110,6 +110,11 @@ export async function on_its_host(s: Shared, profile_id: string, method: string,
   const name = db.get_link(s.db(), host)?.name ?? host;
   const link = s.links.get(host);
   if (!link) throw new ApiError(503, `${p.name}'s assistant runs on ${name}, which is offline`);
+  // A host that dialled in under the id of one we dial isn't it: the user's messages don't go there.
+  const stored = db.get_link(s.db(), host);
+  if (stored && !hub.linked_via(stored, hub.conn_via(link))) {
+    throw new ApiError(503, `${p.name}'s assistant runs on ${name}, which isn't connected the way it's linked (another host dialled in under its id)`);
+  }
   if (link.version.api_version < ASSISTANT_HOST_API) {
     throw ApiError.conflict(`${p.name}'s assistant runs on ${name}, which runs an older build that can't be an assistant host; update it`);
   }

@@ -179,6 +179,41 @@ test("calls_up_a_link_run_once_and_never_go_back_down_or_up", async () => {
   assert.ok(err(await result(handle_up_call(hub_s, "host", stranger))).startsWith("not found"));
 });
 
+// HA-204 review: a host that dials in is known only by the id in its hello, behind the hub token every such host shares.
+// One that took the id of the assistant host the hub dials had its calls run with that profile's access, and the
+// assistant's routed requests went to it.
+test("a_host_that_dials_in_under_a_dialled_hosts_id_isnt_taken_for_it", async () => {
+  const b = boards();
+  const { hub: hub_s, host } = b;
+  await link_by_url(hub_s, host);
+  await let_in(hub_s, "host", true);
+  const personal = db.list_profiles(hub_s.db()).find((p) => p.name === "personal")!;
+  // Another node, given the hub token, dials in claiming to be the assistant host, with a personal profile of its own.
+  const impostor = node("host", "impostor");
+  const theirs = db.insert_profile(impostor.db(), "personal", [], null);
+  await serve(impostor);
+  on_end(hub.dial_out(impostor, await serve(hub_s), "hub-hub"));
+  const up = await until("the impostor's up-link", () => impostor.uplinks.get("hub"));
+  await until("the impostor's tunnel to stand in for the host", () => hub.find_link(hub_s, "host")?.kind.type === "tunnel");
+  const before = Number(db.value(hub_s.db(), "SELECT COUNT(*) FROM tasks"));
+  for (const [tool, args] of [
+    ["create_task", { project_id: "HUB", title: "Planted", start: true }],
+    ["get_task", { task_id: "HUB-1" }],
+    ["list_projects", {}],
+  ] as const) {
+    const o = await up.call(`i-${tool}`, tool, "personal", args, true);
+    assert.equal(o.kind, "Off", `${tool}: ${JSON.stringify(o)}`);
+    assert.ok(o.kind === "Off" && o.why?.includes("this call came another way"), JSON.stringify(o));
+  }
+  assert.equal(Number(db.value(hub_s.db(), "SELECT COUNT(*) FROM tasks")), before);
+  assert.equal(Number(db.value(hub_s.db(), "SELECT COUNT(*) FROM tasks WHERE title='Planted'")), 0);
+  // Nor do the assistant's requests (the user's messages) go to it.
+  const [status, v] = await api(hub_s, "POST", `/api/profiles/${personal.id}/assistant`, { text: "my secrets" });
+  assert.equal(status, 503, JSON.stringify(v));
+  assert.ok(v.error.includes("isn't connected the way it's linked"), JSON.stringify(v));
+  assert.equal(db.assistant_task(impostor.db(), theirs.id), null);
+});
+
 test("a_host_that_dials_in_takes_the_hub_as_an_up_link_too", async () => {
   const b = boards();
   const { hub: hub_s, host, run } = b;

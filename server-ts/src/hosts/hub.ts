@@ -307,19 +307,40 @@ export async function call_tool(_s: AppState, link: LinkConn, tool: string, prof
   throw new Error(typeof body?.error === "string" ? body.error : JSON.stringify(body));
 }
 
+/** How a linked host's connection reached us: we dialled it (by URL or over SSH), or it dialled in (`--hub`). */
+export type Via = "dialled" | "tunnel";
+
 /**
- * A board tool call that linked host `host_id` passed up its link (see hosts/uplink.ts): run only if the user lets that
- * host's agents use this board, and only for the profiles whose assistants run there. The host says which profile its
- * caller is in, and whoever controls it can say any: a profile of this board's whose assistant isn't there would let it
- * act with that profile's access.
+ * Whether a connection that came `via` is how `link` is linked. A host that dials in is known only by the id in its
+ * hello, behind the hub token every such host shares, so a tunnel can claim the id of a host we dial: it isn't that
+ * host for anything that acts for one of its profiles (up-calls, the assistant's routed requests).
  */
-export async function run_up_call(s: AppState, host_id: string, c: ToolCall): Promise<ToolAnswer> {
+export function linked_via(link: Link, via: Via): boolean {
+  return via === "tunnel" ? link.mode === "inbound" : link.mode === "outbound" || link.mode === "ssh";
+}
+
+/** How live connection `conn` reached us. */
+export function conn_via(conn: LinkConn): Via {
+  return conn.kind.type === "tunnel" ? "tunnel" : "dialled";
+}
+
+/**
+ * A board tool call that linked host `host_id` passed up its link (see hosts/uplink.ts), over a connection that came
+ * `via`: run only if the user lets that host's agents use this board, only if it came the way that host is linked (a
+ * tunnel that took a dialled host's id isn't it), and only for the profiles whose assistants run there. The host says
+ * which profile its caller is in, and whoever controls it can say any: a profile of this board's whose assistant isn't
+ * there would let it act with that profile's access.
+ */
+export async function run_up_call(s: AppState, host_id: string, c: ToolCall, via: Via): Promise<ToolAnswer> {
   const off = (why: string | null): ToolAnswer => ({ id: c.id, result: null, error: why, off: true });
   let link: Link | null = null;
   try {
     link = db.get_link(s.db(), host_id);
   } catch {}
   if (!link?.uplink) return off(null);
+  if (!linked_via(link, via)) {
+    return off(`${s.host_name} links ${link.name} ${link.mode === "inbound" ? "as a host that dials in" : "itself"}, and this call came another way, so it isn't taken`);
+  }
   let placed = false;
   try {
     placed = db.list_profiles(s.db()).some((p) => p.name === c.profile && p.assistant_host === host_id);
@@ -487,7 +508,7 @@ export async function run_outbound(s: AppState, link: Link, mode: string, on_abo
     if (ev?.type === "hub_call") {
       const c = ToolCall_from(ev);
       if (c) {
-        background("answering a host's board tool call", run_up_call(s, link.id, c).then((a) => {
+        background("answering a host's board tool call", run_up_call(s, link.id, c, "dialled").then((a) => {
           if (!finished && ws.readyState === ws.OPEN) ws.send(JSON.stringify(uplink.answer_frame(a)));
         }));
       }
