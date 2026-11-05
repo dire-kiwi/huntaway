@@ -40,6 +40,32 @@ const log = {
   warn: (...a: any[]) => console.error(new Date().toISOString(), " WARN huntaway:", ...a),
 };
 
+const STAMPED = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/;
+
+/**
+ * `write` (console.log's or console.error's), with the time in front of what it writes, as the modules' own `log`s and
+ * the Rust server's log lines have it: the many plain console lines ("task … starting claude", "connected to host …")
+ * had none, which made a server's log hard to read around an update or an outage (HA-185). A line that starts with a
+ * time already, and `IA_READY`, which the desktop app and the test scripts read, are left as they are.
+ */
+export function stamped(write: (...a: any[]) => void, now: () => Date = () => new Date()): (...a: any[]) => void {
+  return (...a: any[]) => {
+    const first = a[0];
+    if (typeof first === "string" && (STAMPED.test(first) || first.startsWith("IA_READY"))) return write(...a);
+    // In the first string, which is where console takes a format (`%s`) from.
+    if (typeof first === "string") write(`${now().toISOString()} ${first}`, ...a.slice(1));
+    else write(now().toISOString(), ...a);
+  };
+}
+
+/** Put the time in front of every line `huntaway serve` logs with console (see `stamped`). Only for `serve`. */
+function stamp_console() {
+  console.log = stamped(console.log.bind(console));
+  console.info = stamped(console.info.bind(console));
+  console.warn = stamped(console.warn.bind(console));
+  console.error = stamped(console.error.bind(console));
+}
+
 export interface ServeArgs {
   host: string;
   port: number;
@@ -284,6 +310,7 @@ export function open_token(token: string, loopback_only: boolean): (headers: Rec
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*", vary: "origin" };
 
 export async function serve(args: ServeArgs) {
+  stamp_console();
   // A bug in a background job is logged rather than ending the server (see crash.ts). What serve itself throws while
   // starting isn't unhandled: main.ts logs it and exits.
   crash.install();
