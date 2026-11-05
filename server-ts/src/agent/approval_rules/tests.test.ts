@@ -450,3 +450,71 @@ test("the_hook_runs_without_import_meta_main", () => {
   const mcp = spawnSync(BIN, ["mcp"], { input: "", encoding: "utf8", env: env_without });
   assert.deepEqual([mcp.status, mcp.stderr.trim()], [1, "Error: IA_URL not set"]);
 });
+
+// ---------- hook_main.ts when hook.ts can't be loaded, and `huntaway approval-hook` through main.ts (HA-254) ----------
+
+const SRC = fileURLToPath(new URL("../../", import.meta.url));
+
+/** node's arguments for a preload that makes approval_rules/hook.ts fail to load, as a broken install would. */
+function broken_hook_ts(): string[] {
+  const preload = join(testing.temp_dir(), "broken_hook.mjs");
+  writeFileSync(
+    preload,
+    `import { registerHooks } from "node:module";
+registerHooks({
+  load(url, context, next) {
+    const r = next(url, context);
+    if (url.endsWith("/agent/approval_rules/hook.ts")) r.source = 'throw new Error("hook.ts is broken");';
+    return r;
+  },
+});
+`,
+  );
+  return ["--import", pathToFileURL(preload).href];
+}
+
+const node_run = (args: string[], input: string) =>
+  spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", ...args], { input, encoding: "utf8" });
+
+test("hook_main_refuses_calls_with_hook_faileds_message_when_hook_ts_cant_be_loaded", () => {
+  const broken = broken_hook_ts();
+  for (const entry of [[join(SRC, "agent/approval_rules/hook_main.ts")], [join(SRC, "main.ts"), "approval-hook"]]) {
+    const out = node_run([...broken, ...entry, STRICT], hook_call("mcp__google__get_mail"));
+    assert.equal(out.status, 2, `${entry.join(" ")}: ${out.stderr}`);
+    // hook_main.ts's FALLBACK, a hand-kept copy of HOOK_FAILED (hook.ts isn't loaded before its handlers are on): the
+    // same but for saying the hook failed to start.
+    assert.equal(out.stderr.trim().replace("(their hook failed to start)", "(their hook failed)"), HOOK_FAILED, entry.join(" "));
+  }
+});
+
+// A server not started through bin/huntaway runs the hook through main.ts: whatever fails refuses the call with exit
+// code 2, as from hook_main.ts, rather than 1, which lets it through.
+test("the_hook_through_main_ts_decides_and_refuses_as_through_bin_huntaway", () => {
+  const main = (args: string[], input: string) => node_run([join(SRC, "main.ts"), "approval-hook", ...args], input);
+  for (const [tool, want] of [["mcp__google__send_mail", "ask"], ["mcp__google__delete_mail", "deny"], ["mcp__google__get_mail", null]] as const) {
+    const out = main([STRICT], hook_call(tool));
+    assert.deepEqual([out.status, hook_out(out)], [0, want], `${tool}: ${out.stderr}`);
+  }
+  for (const [args, input] of [[[STRICT], "not json"], [[STRICT], "{}"], [["not rules"], hook_call("mcp__google__get_mail")], [[], hook_call("x")]] as const) {
+    const out = main([...args], input);
+    assert.equal(out.status, 2, `${args.join(" ")} ${input}`);
+    assert.equal(out.stderr.trim(), HOOK_FAILED);
+  }
+});
+
+// The command's fallback refuses the call when the hook can't run, and says why unless the hook refused it itself (exit
+// code 2), having said so already.
+test("a_hook_that_refuses_isnt_explained_twice", () => {
+  const dir = testing.temp_dir();
+  const run = (code: number) => {
+    const exe = join(dir, `hook_${code}`);
+    writeFileSync(exe, `#!/bin/sh\necho refused by the hook >&2\nexit ${code}\n`);
+    chmodSync(exe, 0o755);
+    const command: string = claude_hook(exe, rules([["mcp__g__send*", "ask"]])).hooks[0].command;
+    const out = spawnSync("sh", ["-c", command], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+    return [out.status, out.stderr.trim()];
+  };
+  assert.deepEqual(run(2), [2, "refused by the hook"]);
+  assert.deepEqual(run(1), [2, `refused by the hook\n${HOOK_FAILED}`]);
+  assert.deepEqual(run(0), [0, "refused by the hook"]);
+});
