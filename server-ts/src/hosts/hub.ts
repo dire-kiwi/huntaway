@@ -14,7 +14,7 @@ import * as db from "../db.ts";
 import type { Link } from "../db.ts";
 import type { AppState } from "../state.ts";
 import * as api from "../api.ts";
-import { context, err_str } from "../util.ts";
+import { background, context, err_str } from "../util.ts";
 import * as relay from "./relay.ts";
 import { Chan, type Frame, type Pipe } from "./relay.ts";
 import * as broker from "./broker.ts";
@@ -351,7 +351,7 @@ export function spawn_outbound(s: AppState, link: Link) {
       stopped = true;
       abort?.();
     };
-    (async () => {
+    background("keeping a link to another host open", (async () => {
       let backoff = 1;
       while (!stopped) {
         try {
@@ -372,7 +372,7 @@ export function spawn_outbound(s: AppState, link: Link) {
         abort = null;
         backoff = Math.min(backoff * 2, 30);
       }
-    })();
+    })());
   }
   const old = s.link_tasks.get(id);
   s.link_tasks.set(id, stop);

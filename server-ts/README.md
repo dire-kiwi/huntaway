@@ -37,6 +37,15 @@ Node can't, so `bin/huntaway` (a shell) runs `node` as its child for `serve`: to
 to the file the wrapper named in `IA_RESTART_FILE` and exits with 75, and the wrapper execs it as the same process (see
 `update/admin.ts`'s `exec`). TERM, INT and HUP to the wrapper stop node; node stops by itself if the wrapper is killed.
 
+Crashes (HA-182): a panic in a Rust task ended that task, and the server carried on. Here, a promise that rejects with
+nothing to handle it, or a throw in a timer or an event's listener, is logged to the server log with its stack and the
+server carries on (`src/crash.ts` says why uncaught exceptions are carried on from too). Every promise the server makes is
+awaited, `.catch`ed or run with `util.ts`'s `background`, which logs what it throws; `tests/floating_promises.test.ts`
+checks that with the TypeScript compiler (there's no ESLint). If node exits with an error anyway once it's up (or
+aborts, as it does when it runs out of memory), `bin/huntaway` starts it again as the same process, after 1, 2, 4, 8 and
+16 seconds, then gives up (see its comments). `IA_DEBUG_FAULTS=1` adds `POST /api/debug/fault {"kind": "reject" |
+"throw" | "loop" | "exit"}`, which makes the server fail on purpose, to try that.
+
 Tests: every Rust test that applies is ported (737 TS tests: `src/**/*.test.ts` beside their modules, and
 `tests/` for `server/tests/`). Not ported: `state.rs`'s two tests of the database lock, which the TS server doesn't have,
 and `testing.rs`'s tests of the cargo test harness. All 220 browser checks in `app/tests/ui/` pass against it. The broker
