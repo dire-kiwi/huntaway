@@ -1,0 +1,6 @@
+#!/bin/sh
+# `issue-agent`: the board's command before it was renamed to Huntaway. It runs the `huntaway` beside it with the same
+# arguments, as the Rust build's `issue-agent` binary does, so things that still start `…/issue-agent` keep working: SSH
+# hosts' `authorized_keys` commands and desktop configs that name it. A release's package has it too (a copy, as a
+# package has no symbolic links), beside its `huntaway`.
+exec "$(dirname "$(readlink -f "$0")")/huntaway" "$@"

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { sleep } from "../util.ts";
 import * as testing from "../testing.ts";
 import type { AppState } from "../state.ts";
-import { check_deployed, pick_bundle_commit, status } from "./admin.ts";
+import { builds_shim, check_deployed, pick_bundle_commit, status } from "./admin.ts";
 
 const servers: Array<() => void> = [];
 after(() => servers.forEach((f) => f()));
@@ -216,3 +216,17 @@ function children(pid: number): number[] {
     return [];
   }
 }
+
+test("a_rebuild_without_cargo_keeps_a_prebuilt_ia_shim", () => {
+  const ts = testing.temp_dir();
+  const cargo_dir = testing.temp_dir();
+  writeFileSync(join(cargo_dir, "cargo"), "", { mode: 0o755 });
+  const empty = testing.temp_dir();
+  // No prebuilt shim: cargo builds it (and the step fails without cargo, saying so).
+  assert.equal(builds_shim(empty, ts), true);
+  mkdirSync(join(ts, "bin"));
+  writeFileSync(join(ts, "bin/ia-shim"), "", { mode: 0o755 });
+  assert.equal(builds_shim(empty, ts), false, "no cargo: the release's shim is kept");
+  assert.equal(builds_shim(undefined, ts), false);
+  assert.equal(builds_shim(`${empty}:${cargo_dir}`, ts), true, "with cargo, the checkout's own shim is built");
+});

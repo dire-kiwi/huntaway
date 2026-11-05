@@ -1,7 +1,7 @@
 // Electron shell for Huntaway.
 //
 // Local mode (default): reuse a server already listening on the configured port,
-// or spawn the Rust `huntaway` binary and stop it on quit. The window loads
+// or spawn the `huntaway` server and stop it on quit. The window loads
 // the UI from the server itself, so the desktop app and remote browsers share
 // one code path.
 //
@@ -143,10 +143,12 @@ function findServerBinary(skip = []) {
     const choice = versions.chooseServer({ appDir: releaseDir(), bundled, minVersion: app.getVersion(), exe: EXE, skip });
     if (choice.version || fs.existsSync(bundled)) return { ...choice, bundled: !choice.version };
   }
-  const bin = [
-    path.join(__dirname, "..", "..", "server", "target", "release", EXE),
-    path.join(__dirname, "..", "..", "server", "target", "debug", EXE),
-  ].find((p) => fs.existsSync(p));
+  // A checkout: the TypeScript server, once its dependencies are installed. A checkout that hasn't run `npm ci` in
+  // server-ts/ since the server moved there (an install whose Rust server rebuilt it) runs its Rust build until then.
+  const root = path.join(__dirname, "..", "..");
+  const ts = path.join(root, "server-ts", "bin", "huntaway");
+  if (fs.existsSync(path.join(root, "server-ts", "node_modules", "ws", "package.json"))) return { bin: ts, version: null };
+  const bin = [path.join(root, "server", "target", "release", EXE), path.join(root, "server", "target", "debug", EXE)].find((p) => fs.existsSync(p));
   return bin ? { bin, version: null } : null;
 }
 
@@ -247,7 +249,7 @@ async function startServer(win) {
   const started = versions.startWithFallback({
     choose: (skip) => {
       const choice = findServerBinary(skip);
-      if (!choice) throw new Error("Could not find the huntaway server binary. Build it with `cargo build --release` in server/.");
+      if (!choice) throw new Error("Could not find the huntaway server. Run `npm ci` in server-ts/, and `cargo build --release -p ia-shim` in server/.");
       return choice;
     },
     start: (choice) =>
