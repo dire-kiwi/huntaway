@@ -131,7 +131,13 @@ export function steered(state: Shared, run: Run, id: string) {
   if (updated) state.emit_task(updated);
 }
 
-/** The agent ended a turn. Unless it has messages waiting, which start its next turn, its input is closed so it exits and the run ends. */
+/**
+ * The agent ended a turn. Unless it has messages waiting, which start its next turn, its input is closed so it exits and
+ * the run ends. An agent with background tasks going doesn't exit until they end (see runs::background_tasks), so its
+ * input stays open and what's sent to it meanwhile starts a turn at once, rather than being queued until they end
+ * (HA-187); once they have, it's closed (see `background_changed`). A stopped turn's run is ended instead: the stop was
+ * for all of it.
+ */
 export function turn_ended(state: Shared, run: Run) {
   let task: Task | null = null;
   try {
@@ -139,10 +145,34 @@ export function turn_ended(state: Shared, run: Run) {
   } catch {}
   const waiting = (task?.steering ?? []).filter((s) => s.run_id === run.id).map((s) => s.id);
   if (!waiting.length) {
+    if (runs.background_tasks(state, run.id) > 0) {
+      let stopped = false;
+      try {
+        stopped = !!db.value<number>(state.db(), "SELECT stop_requested FROM runs WHERE id=?1", run.id);
+      } catch {}
+      if (!stopped) return;
+      runs.close_input(state, run.id);
+      runs.kill(state, run.id);
+      return;
+    }
     runs.close_input(state, run.id);
     return;
   }
   close_unless_taken_in(state, run, waiting);
+}
+
+/**
+ * Claude Code said how many background tasks the agent has going. Once none are left, between turns, its input is
+ * closed as at the end of a turn without them: Claude Code still takes the turn it does on their outcome, then exits.
+ */
+export function background_changed(state: Shared, run: Run, count: number) {
+  runs.set_background_tasks(state, run.id, count);
+  if (count > 0) return;
+  let between = false;
+  try {
+    between = !!db.value<number>(state.db(), "SELECT between_turns FROM runs WHERE id=?1 AND status != 'exited'", run.id);
+  } catch {}
+  if (between) turn_ended(state, run);
 }
 
 /**
