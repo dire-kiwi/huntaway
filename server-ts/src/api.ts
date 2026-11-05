@@ -33,6 +33,7 @@ import * as fanout from "./review/fanout.ts";
 import * as automations from "./integrations/automations.ts";
 import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
+import * as push_answers from "./integrations/push_answers.ts";
 import * as hub from "./hosts/hub.ts";
 import * as admin from "./update/admin.ts";
 
@@ -53,6 +54,8 @@ export function router(s: AppState): Router {
   r.ws("/hub/connect", hub.accept, { auth: false, pre: hub.accept_check });
   // Without the board's token: the token in its path reaches only its own automation.
   r.route("/hooks/{id}/{token}", { POST: automations.webhook }, { auth: false, limit: automations.MAX_BODY ?? 1 << 20 });
+  // Without the board's token: the token in its body answers only its own prompt, once (from a notification).
+  r.route("/permissions/{id}/push-answer", { POST: push_answers.answer }, { auth: false });
   host_routes(r);
   r.route("/hosts", { GET: hub.list_hosts, POST: hub.add_host });
   r.route("/hosts/join", { GET: hub.join_info });
@@ -98,6 +101,8 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/assistant/google", { GET: google.get, POST: google.setup });
   r.route("/profiles/{id}/assistant/brief", { POST: brief.create });
   r.route("/profiles/{id}/assistant/brief/feedback", { POST: brief.feedback });
+  r.route("/profiles/{id}/approval-rules", { GET: thread.get_approval_rules, POST: thread.set_approval_rules });
+  r.route("/profiles/{id}/approval-log", { GET: thread.approval_log });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });

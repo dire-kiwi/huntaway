@@ -269,6 +269,55 @@ reaches files in that profile's assistant's workspace: paths with `..`, in `.git
 symlink are refused, and so is a workspace (or `assistants` folder) that's been replaced by a
 symlink, whose memory isn't loaded or committed either.
 
+**Approval rules** (API 115) say what the assistant may do outside the board (*allow*), asks you
+first each time (*ask*) or never does (*never*), whatever its thread's permission mode. Edit them
+under *Rules* in its details, or with `GET`/`POST /api/profiles/<id>/approval-rules` (`{"rules":
+[{"tool", "decision"}], "expiry_minutes"}`, or `{"reset": true}`). A rule names a tool
+(`mcp__google__send_gmail_message`, `Bash`), an MCP server for all its tools (`mcp__google`), or a
+pattern with `*` (`mcp__google__*delete*`), without regard to case; when several match, never beats
+ask and ask beats allow. A tool or pattern can have only one rule. They hold for the assistant and
+the threads under it, from their next run. A profile starts with rules for a Google Workspace MCP
+server named `google`: reading, searching and drafting are allowed; sending mail, making, changing
+or deleting events, sharing files or handing them over, changing files, mail filters and labels, and
+anything `manage_*` ask; deleting or trashing mail and files is never. A switch adds an *ask* on the
+board's `create_task`.
+
+- **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`, `server-ts/src/agent/approval_rules/hook.ts`) that
+  allows, asks or denies the calls a rule matches. Its *ask* goes to the board's permission prompt in every mode,
+  Bypass included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool too; in
+  *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are left out of the run
+  (`--disallowedTools`). The hook is only installed when a rule is for a tool other than the board's, and only
+  matches `mcp__.*` unless a rule names another tool; `bin/huntaway` starts it straight from its own module, without
+  loading the server. It fails closed: while any rule asks or refuses, a call it can't check (its rules or input
+  unreadable, the hook failing, or its binary missing) is refused. A rule on `Bash` holds for a `wait`'s command
+  too, even in *Auto*, where Claude's classifier reviews the wait.
+- **Codex** can't hold an *ask* with a hook (its PreToolUse `ask` fails open, checked with Codex
+  0.166), so an MCP server a rule may match asks the board about each of its calls
+  (`default_tools_approval_mode = "prompt"`), and the board answers by the rules. In *Auto* its own
+  reviewer would answer, so the assistant's Codex runs in Auto have you answer instead, as in *Ask*.
+  In *Bypass* and *Don't ask* Codex can't ask at all: what a rule asks about is refused, as is a tool
+  only a pattern allows. Its own tools (`Bash`, `ApplyPatch`) can't be stopped before they run: an
+  *ask* rule on them launches it with the approval policy `untrusted` (and never full access), so it
+  asks about every command and file change in any mode, except commands it takes as safe (reading,
+  listing), which it runs without asking; a *never* rule on them (or `*`) can't hold, so the run is
+  refused, saying so.
+- **The board's own tools**, `wait` included, are held by the board as it runs them, for both, under
+  the server's current name or an older one (`mcp__issue_agent__…`). Deleting tasks, adding projects
+  and changing automations always ask you with their own card, so an *ask* rule doesn't ask about
+  them again: their own card is the rule's asking, and goes in the action log (a *never* rule still
+  refuses them).
+
+A prompt raised in the assistant or a thread under it by a **routine run** (one a routine started,
+in a thread of its own or with a message to the assistant, with nobody there: its message is marked
+`routine`, which a message that waits in the queue keeps, unless something of yours is queued with
+it) is denied if nobody answers it within the profile's expiry (30 minutes by default;
+`expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts raised before
+this, ones the user's own turns raise, and project tasks' (even ones an automation started) wait as
+they always did. Each call a rule asked about or blocked goes in the assistant's **Actions** tab
+(`GET /api/profiles/<id>/approval-log`): what it was called with, the rule, how it ended (allowed,
+denied, expired or blocked) and who answered (you on the board, a notification, nobody in time, the
+mode, the rule, or its run ending first).
+
 #### Google for the assistant
 
 The assistant reaches Gmail, Calendar and Drive (API 113) through a Google Workspace MCP server on
@@ -543,6 +592,27 @@ on the board you use (a hub, for several machines). `IA_PUSH_SUBJECT` sets the c
 push services (a `mailto:` or `https:` URL; the default is this project's page). The installed app
 is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, so it always loads
 the board's current UI.
+
+**Permission prompts** (API 115) are pushed too, with **Allow** and **Deny** on the notification, so
+you can answer one from the lock screen. Each device picks whose: *None*, *The assistant's* (the
+default) or *Every task's*. A device that gets a task's prompt isn't also told the task needs
+attention. Questions, plans and approvals of changes to the board (projects, deletions,
+automations) are pushed without the buttons: tapping opens the thread. A push carries the task's
+key and title and the tool's name, but never the tool's input, as it passes through the push
+service. Android's Chrome shows the buttons; iOS doesn't show buttons on web notifications, so
+there you tap through to the board.
+
+The buttons don't use the board's token. Each push about a prompt carries a one-time token that
+answers only that prompt: the service worker posts it to `POST /api/permissions/{id}/push-answer`
+(`{"token", "decision": "allow" | "deny"}`, no `Authorization`), and shows what came of it in
+the notification's place (`result` is `allowed` or `denied`, or `answered`, `expired`, `closed`,
+`invalid`, `offline` or `failed`, with a `message`). The board that sends the push mints the
+token and keeps only its hash (`push_answer_tokens`, see `server-ts/src/integrations/push_answers.ts`), so that's
+where it's checked; a prompt on a linked host is then answered through the link, as the UI's
+`/api/h/<host>/permissions/{id}` is. The first answer settles it: a token stops working once its prompt has been
+answered (from a notification, the board or anywhere else) or has expired with its run, or at its `expires_at` (a
+routine run's, see the assistant's approval rules) even if the hub hasn't heard yet. If the host is offline the
+token still works later, and the notification keeps its buttons.
 
 ### Desktop config
 

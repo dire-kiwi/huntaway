@@ -12,6 +12,7 @@ import * as wait from "../../mcp/wait.ts";
 import * as permissions from "../../mcp/permissions.ts";
 import * as mcp from "../../mcp.ts";
 import * as agent_tools from "../agent_tools.ts";
+import * as approval_rules from "../approval_rules.ts";
 import * as google from "../assistant/google.ts";
 import { context, err_str, expand_tilde } from "../../util.ts";
 
@@ -119,7 +120,9 @@ export async function run_adapter(spec_path: string): Promise<void> {
     for (const name of Object.keys(all).sort()) {
       const disabled = spec.disabled_mcp_tools[name] ?? [];
       const cfg = mcp_server_config(name, all[name], spec.approved_mcp_servers.includes(name), disabled, spec.review_waits);
-      if (cfg) servers[name] = cfg;
+      // The user's approval rules (see agent/approval_rules.ts) may ask about its calls, or turn it off.
+      const on = spec.approval_rules && is_obj(cfg) ? approval_rules.codex_server(spec.approval_rules, name, cfg) : true;
+      if (cfg && on) servers[name] = cfg;
     }
     const cwd = expand_tilde(spec.cwd);
     // CODEX_HOME comes from the shim's environment, if the config has its own.
@@ -530,7 +533,10 @@ export async function answer(board: Board, reply: Responder, msg: any, item: any
         // The board's own tools never need approval.
         reply.result(id, { action: "accept", content: {} });
       } else {
-        answered(await ask(`${agent_tools.tool_prefix(server)}__${tool}`, { message }));
+        // With what it's called with, when Codex says (for the user, and the action log).
+        const input: any = { message };
+        if (is_obj(params)) input.arguments = params;
+        answered(await ask(`${agent_tools.tool_prefix(server)}__${tool}`, input));
       }
       return;
     }
