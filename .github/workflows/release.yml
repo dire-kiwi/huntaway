@@ -302,14 +302,14 @@ jobs:
       # Firebase's config for push through FCM (Expo's push service hands Android pushes to it), from the optional
       # secret GOOGLE_SERVICES_JSON (the google-services.json of a Firebase app for nz.net.ivan.huntaway). It isn't
       # committed, so app.json names it only here, where it exists: prebuild fails on a missing file. Without it the
-      # app builds and runs, but won't be able to register for push on Android once it has push (HA-209).
+      # app builds and runs, but can't register for push on Android.
       - name: google-services.json
         working-directory: mobile
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then
-            echo "::warning::No GOOGLE_SERVICES_JSON secret: this APK won't be able to register for push once the app has it (HA-209)"
+            echo "::warning::No GOOGLE_SERVICES_JSON secret: this APK can't register for push notifications"
             exit 0
           fi
           printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
