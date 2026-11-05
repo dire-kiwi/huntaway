@@ -193,6 +193,31 @@ test("a_due_schedule_runs_once_even_across_a_restart", async () => {
   assert.equal(t.length, 2);
 });
 
+test("a_db_error_partway_through_the_schedules_doesnt_hold_back_those_claimed_before_it", async () => {
+  const [s, p] = setup();
+  const action = { kind: "create_task", title: "Run" };
+  const first = new_(s, p.id, { name: "First", trigger: { kind: "interval", every_minutes: 60 }, action });
+  const broken = new_(s, p.id, { name: "Broken", trigger: { kind: "interval", every_minutes: 60 }, action });
+  const now = Date.now();
+  set_next(s, first, now - 1000);
+  set_next(s, broken, now - 1000);
+  const order = db.all(s.db(), "SELECT id FROM automations WHERE enabled=1 AND next_run_at IS NOT NULL").map((r: any) => r.id);
+  assert.deepEqual(order, [first.id, broken.id], "the first is claimed first");
+  // Claiming the second one fails, after the first has been claimed.
+  s.db().exec(`CREATE TRIGGER broken BEFORE UPDATE OF next_run_at ON automations WHEN OLD.id='${broken.id}' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+  await tick(s, now);
+  // (The first's run was recorded before the error, and is left as under way until a restart marks it interrupted.)
+  assert.equal(tasks(s).length, 0, "the error stopped the tick before anything ran");
+
+  // Once the database is well again, both run when they're next due: the first isn't still marked as under way.
+  s.db().exec("DROP TRIGGER broken");
+  set_next(s, first, now);
+  await tick(s, now + 1000);
+  assert.equal(tasks(s).length, 2);
+  assert.deepEqual(statuses(s, first), ["running", "ok"]);
+  assert.deepEqual(statuses(s, broken), ["ok"]);
+});
+
 async function update(s: Shared, id: string, b: any): Promise<any> {
   return await update_handler(s, req({ id }, b));
 }

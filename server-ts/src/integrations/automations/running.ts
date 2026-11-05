@@ -413,6 +413,19 @@ function claim_due(s: Shared, now: number, tz: Tz): Array<[Automation, Run, InFl
     } catch {}
   }
   const out: Array<[Automation, Run, InFlight]> = [];
+  try {
+    claim_each(s, now, tz, due, out);
+  } catch (e) {
+    // Rust gave up the claims taken so far when `out` was dropped, so an error doesn't hold those automations back.
+    for (const [, , f] of out) f.drop();
+    throw e;
+  }
+  return out;
+}
+
+/** `claim_due`'s loop: claims each of `due` that's due, adding those to run to `out` (which keeps their claims). */
+function claim_each(s: Shared, now: number, tz: Tz, due: Array<[Automation, boolean]>, out: Array<[Automation, Run, InFlight]>) {
+  const c = s.db();
   for (const [a, archived] of due) {
     const due_at = parse_time(a.next_run_at);
     if (due_at === null || due_at > now) continue;
@@ -472,7 +485,6 @@ function claim_due(s: Shared, now: number, tz: Tz): Array<[Automation, Run, InFl
     }
     out.push([a, claimed, in_flight]);
   }
-  return out;
 }
 
 /**
