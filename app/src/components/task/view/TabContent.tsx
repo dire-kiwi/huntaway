@@ -8,6 +8,8 @@ import { Details } from "./details/Details";
 import type { Mode, Tab } from "./layout";
 
 const ChangesView = lazy(() => import("../../changes/Changes").then((m) => ({ default: m.ChangesView })));
+const MemoryView = lazy(() => import("../Memory").then((m) => ({ default: m.MemoryView })));
+const Routines = lazy(() => import("../Routines").then((m) => ({ default: m.Routines })));
 
 // What empty threads show. The same elements every time, so the (memoized) thread doesn't redraw for them.
 const NOT_STARTED = (
@@ -54,6 +56,10 @@ export function TabContent({
     />
   ) : docShown ? (
     <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />
+  ) : shown === "memory" ? (
+    <Suspense fallback={null}>
+      <MemoryView key={`${task.host_id}:${task.id}`} task={task} onShowThread={onShowThread} />
+    </Suspense>
   ) : tab === "changes" ? (
     <Suspense fallback={null}>
       <ChangesView task={task} />
@@ -76,6 +82,10 @@ export function TabContent({
         <WorkflowTabView task={task} label={shown.slice(3)} />
       </div>
     </div>
+  ) : shown === "routines" ? (
+    <Suspense fallback={null}>
+      <Routines assistant={task} />
+    </Suspense>
   ) : shown === "details" ? (
     <Details key={task.id} task={task} mode={mode} className="h-full overflow-y-auto" />
   ) : null;

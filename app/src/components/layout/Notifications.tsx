@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { Bell, Smartphone, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { api, type PushDevice, type PushEvents } from "../../api";
+import { api, ASSISTANT_PUSH_EVENTS, type PushDevice, type PushEvents } from "../../api";
 import {
   NOTIFY_EVENTS,
   NOTIFY_MODES,
@@ -246,8 +246,10 @@ function PushPanel() {
   );
 }
 
-/** The events a device gets by push. */
+/** The events a device gets by push: the board's, and the assistant's replies and reports. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
+  // The assistant's events the board has (each in its devices' events).
+  const assistant = ASSISTANT_PUSH_EVENTS.filter((e) => typeof device.events[e.id] === "boolean");
   return (
     <div className={clsx(compact ? "flex flex-wrap gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>
       {NOTIFY_EVENTS.map((e) => (
@@ -256,6 +258,20 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
             type="checkbox"
             className="mt-0.5 accent-accent"
             checked={device.events[e.id]}
+            onChange={(ev) => onChange({ ...device.events, [e.id]: ev.target.checked })}
+          />
+          <span>
+            <span className="text-fg">{e.label}</span>
+            {!compact && <span className="text-faint"> · {e.hint}</span>}
+          </span>
+        </label>
+      ))}
+      {assistant.map((e) => (
+        <label key={e.id} className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            checked={!!device.events[e.id]}
             onChange={(ev) => onChange({ ...device.events, [e.id]: ev.target.checked })}
           />
           <span>

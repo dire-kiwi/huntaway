@@ -325,11 +325,25 @@ export interface Steer {
   run_id: string;
   /** Written to the run's input. Until then it's waiting for the run to start. */
   written: boolean;
+  /** The automation runs whose messages it carries (see Queued.routine_runs). Left out when there are none. */
+  routine_runs?: string[];
+  /** A routine's (see Queued.routine): a project automation's carries its runs, but isn't. Left out when false. */
+  routine?: boolean;
 }
 
 export function Steer_from_json(v: any): Steer {
   obj(v, "Steer");
-  return { id: de_str(v, "id"), text: de_str(v, "text"), from_agent: de_def_bool(v, "from_agent"), run_id: de_str(v, "run_id"), written: de_def_bool(v, "written") };
+  const s: Steer = { id: de_str(v, "id"), text: de_str(v, "text"), from_agent: de_def_bool(v, "from_agent"), run_id: de_str(v, "run_id"), written: de_def_bool(v, "written") };
+  return Steer_with(s, Array.isArray(v.routine_runs) ? v.routine_runs.filter((x: any) => typeof x === "string") : [], v.routine === true);
+}
+
+/** `s` with its automation runs and routine marker, as serde writes them (skipped when empty or false). */
+export function Steer_with(s: Steer, routine_runs: string[], routine: boolean): Steer {
+  const { id, text, from_agent, run_id, written } = s;
+  const out: Steer = { id, text, from_agent, run_id, written };
+  if (routine_runs.length) out.routine_runs = [...routine_runs];
+  if (routine) out.routine = true;
+  return out;
 }
 
 /** One of a project's reviewers: the agent that reviews, in a review thread of its own. */

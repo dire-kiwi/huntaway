@@ -6,6 +6,10 @@
 // it wants. This board watches the task events of every host on it (as the UI does), and sends each subscription the
 // ones it wants, encrypted for it (RFC 8291) and signed with the board's VAPID key (RFC 8292), whose public half the
 // browser subscribed with. Tapping one opens the task (app/public/sw.js).
+//
+// So are the assistant's routines' reports, as each is posted on its thread, and its replies, for the devices that choose
+// them, as the assistant's host says its turn ended (`REPLY_EVENT`). A reply says only "Replied"; a report its first
+// line.
 import { createCipheriv, createECDH, createHash, createPrivateKey, hkdfSync, randomBytes, sign, type ECDH, type KeyObject } from "node:crypto";
 import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
@@ -167,32 +171,54 @@ export function authorization(v: Vapid, endpoint: string, sub: string, now: numb
 
 // ---------- subscriptions ----------
 
-/** Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults. */
+/** Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults, and the assistant's replies and its routines' reports. */
 export interface Events {
   attention: boolean;
   review: boolean;
   merge: boolean;
   done: boolean;
+  /** The assistant finished a reply. Off unless chosen, also for the subscriptions from before there was a choice. */
+  replies: boolean;
+  /**
+   * The reports the assistant's routines post in its thread. On for a new subscription, unless it says otherwise; off for
+   * one stored before it could choose (HA-162), so a device that never chose isn't suddenly sent them.
+   */
+  reports: boolean;
 }
 
 export function Events_default(): Events {
-  return { attention: true, review: true, merge: false, done: false };
+  return { attention: true, review: true, merge: false, done: false, replies: false, reports: true };
 }
 
-/** Events from JSON, missing fields defaulted; null for something that isn't events. */
+/** What serde takes for an event a stored or given value leaves out (not Events_default: see `reports`). */
+const MISSING: Events = { attention: true, review: true, merge: false, done: false, replies: false, reports: false };
+
+/** Events from JSON, missing fields defaulted (as serde reads them); null for something that isn't events. */
 function events_from(v: any): Events | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
-  const d = Events_default();
   const out: any = {};
-  for (const k of Object.keys(d) as Array<keyof Events>) {
-    if (v[k] === undefined) out[k] = d[k];
+  for (const k of Object.keys(MISSING) as Array<keyof Events>) {
+    if (v[k] === undefined) out[k] = MISSING[k];
     else if (typeof v[k] === "boolean") out[k] = v[k];
     else return null;
   }
   return out;
 }
 
+/**
+ * Events `patch` (an object of some of them) over `old`: what it leaves out stays as it was. A page from before an event
+ * was added sends the others without it, which mustn't turn it off.
+ */
+function merged_events(old: Events, patch: any): Events {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw ApiError.bad("events must be an object");
+  const e = events_from({ ...old, ...patch });
+  if (!e) throw ApiError.bad("events: invalid type, expected a boolean");
+  return e;
+}
+
 function wants(ev: Events, e: Event): boolean {
+  if (e === "reply") return ev.replies;
+  if (e === "report") return ev.reports;
   return ev[e];
 }
 
@@ -340,12 +366,15 @@ async function deliver(s: AppState, sub: Subscription, msg: Message, urgent: boo
 
 // ---------- events ----------
 
-/** HA-8's events (`NotifyEvent` in app/src/notifications.ts). */
-export type Event = "attention" | "review" | "merge" | "done";
+/**
+ * HA-8's events (`NotifyEvent` in app/src/notifications.ts), and `reply` (the assistant finished a reply, see
+ * `observe_reply`) and `report` (a routine posted a report in the assistant's thread, see `observe_report`).
+ */
+export type Event = "attention" | "review" | "merge" | "done" | "reply" | "report";
 
-/** The column it's about, where a move the user made doesn't notify (see `PushState.moved`). */
+/** The column it's about, where a move the user made doesn't notify (see `PushState.moved`). Not a column for a reply or report. */
 function event_status(e: Event): string {
-  return { attention: "needs_attention", review: "in_review", merge: "ready_for_merge", done: "done" }[e];
+  return { attention: "needs_attention", review: "in_review", merge: "ready_for_merge", done: "done", reply: "", report: "" }[e];
 }
 
 /** What the server says when the user stopped the run: their own doing, so it doesn't notify. */
@@ -391,6 +420,10 @@ export function notification_text(e: Event, t: any, key: string): [string, strin
     body = t?.review?.state === "passed" ? "Ready to review: its review passed" : "Ready to review";
   } else if (e === "merge") {
     body = "Ready for merge";
+  } else if (e === "reply") {
+    body = "Replied";
+  } else if (e === "report") {
+    body = "Posted a report";
   } else {
     const r = typeof t?.resolution === "string" ? t.resolution : "done";
     body = r === "not_done" ? "Closed: not done" : r === "wont_fix" ? "Closed: won't fix" : "Done";
@@ -400,7 +433,10 @@ export function notification_text(e: Event, t: any, key: string): [string, strin
   return [`${key} ${typeof t?.title === "string" ? t.title : ""}`, body];
 }
 
-/** What goes before a task's number (`keyPrefix`): its project's key, `G` for a group task, `S` for a scratch task, `A` for a profile's assistant. */
+/**
+ * What goes before a task's number (`keyPrefix`): its project's key, `G` for a group task, `S` for a scratch task, `A`
+ * for a profile's assistant and its routines' threads.
+ */
 async function task_key(s: AppState, host_id: string, t: any): Promise<string> {
   let prefix: string | null = null;
   if (typeof t?.project_id === "string") {
@@ -413,7 +449,8 @@ async function task_key(s: AppState, host_id: string, t: any): Promise<string> {
     }
   } else if (typeof t?.group_name === "string") prefix = "G";
   else if (t?.task_type === "scratch") prefix = "S";
-  else if (t?.task_type === "assistant") prefix = "A";
+  // The assistant's thread and its routines' (`isAssistants`).
+  else if (t?.task_type === "assistant" || t?.task_type === "routine") prefix = db.ASSISTANT_TASK_KEY;
   return `${prefix ?? "T"}-${JSON.stringify(t?.number ?? null)}`;
 }
 
@@ -487,6 +524,10 @@ export function start(s: AppState) {
       case "task_deleted":
         if (typeof ev.id === "string") s.push.tasks.delete(`${host}:${ev.id}`);
         return;
+      case "message":
+        return observe_report(s, host, ev.message);
+      case REPLY_EVENT:
+        return observe_reply(s, host, ev);
       case "resync":
         return await sync_host(s, host);
       case "hosts_changed": {
@@ -599,7 +640,114 @@ async function notify(s: AppState, host: string, t: any, e: Event) {
   const [title, body] = notification_text(e, t, await task_key(s, host, t));
   const id = typeof t?.id === "string" ? t.id : "";
   const msg: Message = { title, body, url: `/t/${id}`, tag: `${host}:${id}`, task_id: id, event: e };
-  for (const sub of subs) await send(s, sub, msg, e === "attention").catch(() => {});
+  await send_all(s, subs, msg, e === "attention");
+}
+
+/** Sends `msg` to each of `subs`, whatever happens to the others. */
+async function send_all(s: AppState, subs: Subscription[], msg: Message, urgent: boolean) {
+  for (const sub of subs) await send(s, sub, msg, urgent).catch(() => {});
+}
+
+/** Task `id` on `host` as it is now (as push has it, or asked for). */
+async function find_task(s: AppState, host: string, id: string): Promise<any> {
+  const t = s.push.tasks.get(`${host}:${id}`);
+  if (t !== undefined) return t;
+  if (host === s.host_id) {
+    try {
+      const local = db.get_task(s.db(), id);
+      return local ? JSON.parse(JSON.stringify(local)) : null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const v = await hub.host_request(s, host, "GET", `/api/tasks/${id}`);
+    return v?.task && typeof v.task === "object" && !Array.isArray(v.task) ? v.task : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- routines' reports ----------
+
+/** What a routine's report notification says: its routine, and the report's first line (or why it failed). */
+export function report_text(data: any): [string, string] | null {
+  const text = typeof data?.text === "string" ? data.text : "";
+  const first =
+    text
+      .split("\n")
+      .map((l: string) => l.trim().replace(/^[#*\- ]+/, ""))
+      .find((l: string) => l !== "") ?? "";
+  let body: string;
+  if (data?.outcome === "reported") body = first !== "" ? first : "Posted a report";
+  else if (data?.outcome === "failed") body = `Failed: ${first}`;
+  else return null;
+  const chars = Array.from(body);
+  if (chars.length > 200) body = `${chars.slice(0, 199).join("")}…`;
+  const name = typeof data?.automation === "string" && data.automation !== "" ? data.automation : "A routine";
+  return [name, body];
+}
+
+/**
+ * A thread message as it is now: a routine's report that's just been posted on the assistant's thread (one per run)
+ * goes to the devices that want reports. A routine waiting on the user is pushed as its attention instead.
+ */
+function observe_report(s: AppState, host: string, m: any) {
+  if (m?.kind !== "report") return;
+  // Tapping it opens the routine's thread (its run, with what it posted), or the assistant's for a report without one.
+  const task_id = typeof m.data?.task_id === "string" && m.data.task_id !== "" ? m.data.task_id : typeof m.task_id === "string" ? m.task_id : null;
+  if (task_id === null) return;
+  const text = report_text(m.data);
+  if (!text) return;
+  const [title, body] = text;
+  const tag = JSON.stringify(m.id ?? null);
+  (async () => {
+    let subs: Subscription[];
+    try {
+      subs = list(s.db()).filter((x) => wants(x.events, "report"));
+    } catch (e) {
+      return void console.warn(`push: reading the subscriptions: ${err_str(e)}`);
+    }
+    const msg: Message = { title, body, url: `/t/${task_id}`, tag: `${host}:${task_id}:report:${tag}`, task_id, event: "report" };
+    await send_all(s, subs, msg, false);
+  })().catch((e) => console.error(`push: ${err_str(e)}`));
+}
+
+// ---------- the assistant's replies ----------
+
+/**
+ * The event the assistant's host sends when the assistant finished a reply (its turn's `result`), with the assistant's
+ * `task_id`, the result's `message_id`, and `telegram`: whether it answers a message sent to it on Telegram, which the
+ * reply goes back to (see runner/output.ts's `announce_reply`).
+ */
+export const REPLY_EVENT = "assistant_reply";
+
+/** An `assistant_reply` event: the reply is pushed to the devices that want replies, unless it went back to Telegram. */
+function observe_reply(s: AppState, host: string, ev: any) {
+  if (ev?.telegram === true) return;
+  if (typeof ev?.task_id !== "string") return;
+  notify_reply(s, host, ev.task_id).catch((e) => console.error(`push: ${err_str(e)}`));
+}
+
+/**
+ * Pushes that the assistant (task `task_id` on `host`) replied, to the devices that want it. Not what it said: that's
+ * read in the thread (pushes pass through push services).
+ */
+async function notify_reply(s: AppState, host: string, task_id: string) {
+  let subs: Subscription[];
+  try {
+    subs = list(s.db()).filter((x) => wants(x.events, "reply"));
+  } catch (e) {
+    return void console.warn(`push: reading the subscriptions: ${err_str(e)}`);
+  }
+  if (!subs.length) return;
+  const t = await find_task(s, host, task_id);
+  if (!t || t.task_type !== "assistant") return;
+  const [title, body] = notification_text("reply", t, await task_key(s, host, t));
+  // The assistant's page (the board sends /t/ of an assistant there). Its own tag, so a reply doesn't take the place of
+  // an attention notification.
+  const msg: Message = { title, body, url: `/t/${task_id}`, tag: `${host}:${task_id}:reply`, task_id, event: "reply" };
+  await send_all(s, subs, msg, false);
 }
 
 // ---------- API ----------
@@ -619,8 +767,9 @@ export function subscribe(s: AppState, r: Req) {
   if (!b.keys || typeof b.keys !== "object") throw missing("keys");
   if (typeof b.keys.p256dh !== "string") throw missing("p256dh");
   if (typeof b.keys.auth !== "string") throw missing("auth");
-  const events = b.events === undefined || b.events === null ? null : events_from(b.events);
-  if (b.events !== undefined && b.events !== null && events === null) throw new ApiError(422, "Failed to deserialize the JSON body into the target type: events: invalid type");
+  if (b.events !== undefined && b.events !== null && (typeof b.events !== "object" || Array.isArray(b.events))) {
+    throw ApiError.bad("events must be an object");
+  }
   check_endpoint(b.endpoint);
   const valid = (k: Buffer) => {
     if (k.length !== 65) return false;
@@ -643,6 +792,8 @@ export function subscribe(s: AppState, r: Req) {
   const old = db.value<string>(c, "SELECT id FROM push_subscriptions WHERE endpoint=?1", b.endpoint);
   let id: string;
   if (old !== undefined) {
+    // Its events (see `merged_events`) over what it had.
+    const events = b.events == null ? null : merged_events(get(c, old)?.events ?? Events_default(), b.events);
     db.run(
       c,
       "UPDATE push_subscriptions SET p256dh=?1, auth=?2, name=?3, events=COALESCE(?4, events), last_error=NULL WHERE id=?5",
@@ -651,10 +802,11 @@ export function subscribe(s: AppState, r: Req) {
     id = old;
   } else {
     id = new_id();
+    const events = b.events == null ? Events_default() : merged_events(Events_default(), b.events);
     db.run(
       c,
       "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-      id, b.endpoint, b64(p256dh), b64(auth), name, JSON.stringify(events ?? Events_default()), now(),
+      id, b.endpoint, b64(p256dh), b64(auth), name, JSON.stringify(events), now(),
     );
   }
   const sub = get(c, id);
@@ -667,13 +819,14 @@ export function update(s: AppState, r: Req) {
   const id = r.params.id;
   const b = r.body ?? {};
   const c = s.db();
-  if (!get(c, id)) throw ApiError.not_found("subscription");
+  const sub0 = get(c, id);
+  if (!sub0) throw ApiError.not_found("subscription");
   if (typeof b.name === "string") {
     db.run(c, "UPDATE push_subscriptions SET name=?1 WHERE id=?2", Array.from(b.name.trim()).slice(0, 100).join(""), id);
   }
   if (b.events !== undefined && b.events !== null) {
-    const events = events_from(b.events);
-    if (!events) throw new ApiError(422, "Failed to deserialize the JSON body into the target type: events: invalid type");
+    // Some of its events, changed (see `merged_events`).
+    const events = merged_events(sub0.events, b.events);
     db.run(c, "UPDATE push_subscriptions SET events=?1 WHERE id=?2", JSON.stringify(events), id);
   }
   const sub = get(c, id);
