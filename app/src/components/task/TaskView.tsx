@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
+import { api, canRunAgents, dependencyQueued, documentsOnly, isAssistant, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
 import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
@@ -20,6 +20,7 @@ import { Button, IconButton } from "../ui";
 import { Details } from "./view/details/Details";
 import { useSubproject } from "./view/hooks";
 import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout";
+import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowTabs } from "./Workflows";
 import { ReviewThreadView } from "./view/ReviewThreadView";
 import { TabContent } from "./view/TabContent";
 import { TitleEditor } from "./view/Title";
@@ -116,6 +117,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   useEffect(() => setMarkErr(null), [taskId]);
   // A subagent's thread stays shown while the task is open: closing it (or opening another) goes back to the main thread.
   useEffect(() => () => useSubagentView.getState().show(taskId, null), [taskId]);
+  const workflows = useWorkflowRuns(task);
   const [tab, setTab] = useState<Tab>(() => openingTab(task));
   // Terminals are mounted from their first visit on, so switching tabs keeps the connection.
   const [mounted, setMounted] = useState<Tab[]>([]);
@@ -161,25 +163,30 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // that makes only its documents. Each of a task's labels has a tab for its document, first.
   const group = isGroupTask(task) ? task.group_name! : undefined;
   const scratch = isScratch(task);
+  // The profile's assistant: no repository either, and it opens on a page of its own.
+  const assistant = isAssistant(task);
   // One in no project is on its profile's board (a scratch task can be in a project since API 51).
   const profileScratch = scratch && !task.project_id;
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
-  const tabs: Tab[] = [...labels, ...(group || scratch || docsOnly ? ["thread"] : ["thread", "changes"])];
-  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch;
+  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || docsOnly ? ["thread"] : ["thread", "changes"])];
+  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant;
   if (reviews) tabs.push("review");
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
   if (summaries) tabs.push("summary");
+  // A tab for each the task's workflow steps show their output in (API 107).
+  const wfTabs = task.kind === "task" ? workflowTabs(workflows).map(workflowTab) : [];
+  tabs.push(...wfTabs);
   if (hostSupports(host, 7)) tabs.push("terminal");
   if (!wide) tabs.push("details");
   // Until the effect above drops it, a details tab while wide shows the thread beside the column.
   // A label taken off shows the thread instead.
-  const shown = (wide && tab === "details") || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
+  const shown = (wide && tab === "details") || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isWorkflowTab(tab) && !wfTabs.includes(tab)) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
   const docShown = labels.find((l) => l === shown);
   const key = `${keyPrefix(task, project)}-${task.number}`;
   // Stopping the task also stops its review (API 33), so it can be stopped while only that runs.
-  const reviewing = task.review?.state === "running" && hostSupports(host, 33);
+  const reviewing = (task.review?.state === "running" && hostSupports(host, 33)) || workflowRunning(workflows);
   // A terminal needs the room: from the side panel it expands into the dialog.
   const selectTab = (t: Tab) => {
     if (isTerminalTab(t) && mode === "panel") setPanelExpanded(true);
@@ -199,6 +206,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const toProject = () => {
     if (group) navigate(mode === "page" ? href({ name: "group", hostId: task.host_id, group }) : groupTaskUrl(task.host_id, group, task.id));
     else if (profileScratch && profileName) navigate(mode === "page" ? href({ name: "profile", profile: profileName }) : profileTaskUrl(profileName, task.id));
+    else if (assistant && profileName) navigate({ name: "profile", profile: profileName });
     else if (project) navigate(mode === "page" ? href({ name: "board", projectId: project.id }) : boardTaskUrl(project.id, task.id));
   };
 
@@ -214,7 +222,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
   const run =
     task.running || reviewing ? (
-      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review"}>
+      <Button size="sm" onClick={stop} title={task.running ? stopTitle(task, runningAgentSteers(host, task)) : "Stop the review and the task's workflows"}>
         <Square size={11} fill="currentColor" /> Stop
       </Button>
     ) : dependencyQueued(task) ? (
@@ -223,7 +231,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       </span>
     ) : (
       !task.session_id &&
-      agents && (
+      agents &&
+      !assistant && (
         <Button
           size="sm"
           variant="primary"
@@ -261,7 +270,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5", shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
           >
             {t === "review" && <ReviewDot task={task} />}
-            {t}
+            {isWorkflowTab(t) ? (
+              <span className="flex items-center gap-1 normal-case" title="A workflow's tab">
+                <WorkflowIcon size={11} className="text-faint" />
+                {t.slice(3)}
+              </span>
+            ) : (
+              t
+            )}
           </button>
         ))}
       </div>
@@ -295,7 +311,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         ? navigate({ name: "board", projectId: project.id })
         : group
           ? navigate({ name: "group", hostId: task.host_id, group })
-          : profileScratch && profileName
+          : (profileScratch || assistant) && profileName
             ? navigate({ name: "profile", profile: profileName })
             : history.back();
 
@@ -315,6 +331,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               </span>
             ) : profileScratch ? (
               <span title="A scratch task: in no project, on its profile's board">{profileName}</span>
+            ) : assistant ? (
+              <span title="The profile's assistant: in no project, and off the board">{profileName}</span>
             ) : (
               project?.name
             )}

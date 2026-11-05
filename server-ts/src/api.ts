@@ -27,6 +27,7 @@ import * as git_view from "./git/git_view.ts";
 import * as checkpoints from "./git/checkpoints.ts";
 import * as fanout from "./review/fanout.ts";
 import * as automations from "./integrations/automations.ts";
+import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
 import * as hub from "./hosts/hub.ts";
 import * as admin from "./update/admin.ts";
@@ -83,6 +84,7 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/tasks", { GET: tasks.list_profile_tasks, POST: new_task.create_scratch_task });
   // Scratch chats, of which there are none since they became scratch tasks (for older boards).
   r.route("/profiles/{id}/scratch", { GET: tasks.list_profile_scratch });
+  r.route("/profiles/{id}/assistant", { GET: thread.get_assistant, POST: thread.send_to_assistant });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });
@@ -99,6 +101,11 @@ function host_routes(r: Router) {
   r.route("/automations/{id}", { GET: automations.get_handler, PATCH: automations.update_handler, DELETE: automations.delete_handler });
   r.route("/automations/{id}/run", { POST: automations.run_handler });
   r.route("/automations/{id}/runs", { GET: automations.runs_handler });
+  r.route("/projects/{id}/workflows", { GET: workflows.list_handler, POST: workflows.create_handler });
+  r.route("/workflows/{id}", { GET: workflows.get_handler, PATCH: workflows.update_handler, DELETE: workflows.delete_handler });
+  r.route("/workflows/{id}/run", { POST: workflows.run_handler });
+  r.route("/tasks/{id}/workflow-runs", { GET: workflows.task_runs_handler });
+  r.route("/workflow-runs/{id}/stop", { POST: workflows.stop_run_handler });
   r.route("/agent-tools", { GET: agent_tools.get_global });
   r.route("/agent-tools/switches", { POST: agent_tools.set_switch });
   r.route("/agent-tools/skill-sources", { POST: agent_tools.add_source });
@@ -167,10 +174,12 @@ function host_routes(r: Router) {
   r.route("/fs/dirs", { GET: host.fs_dirs });
   r.route("/admin/server", { GET: host.server_status });
   r.route("/admin/restart", { POST: host.restart_server });
-  r.route("/admin/update", { POST: host.update_from_hub });
+  // A hub's bundle of its branch: older hubs send all of it, several MB.
+  r.route("/admin/update", { POST: host.update_from_hub }, { limit: 256 << 20 });
   r.route("/admin/release/check", { POST: host.check_releases });
   r.route("/admin/release/update", { POST: host.update_to_release });
   r.route("/admin/release/rollback", { POST: host.roll_back_release });
+  r.route("/admin/database/recopy", { POST: host.recopy_database });
   r.ws("/host/ws", ws);
 }
 

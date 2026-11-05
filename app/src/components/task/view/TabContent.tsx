@@ -1,8 +1,9 @@
 import { lazy, Suspense } from "react";
-import { ownWorkDir, type DocumentType, type Project, type Task } from "../../../api";
+import { isAssistant, ownWorkDir, type DocumentType, type Project, type Task } from "../../../api";
 import { DocumentView } from "../Document";
 import { ChangeSummaryView, ReviewSummary } from "../Review";
 import { Thread } from "../Thread";
+import { isWorkflowTab, WorkflowTabView } from "../Workflows";
 import { Details } from "./details/Details";
 import type { Mode, Tab } from "./layout";
 
@@ -13,6 +14,12 @@ const NOT_STARTED = (
   <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
     No agent has worked on this yet. Press <span className="text-fg">Start</span> or send instructions below; the task description is included
     automatically.
+  </div>
+);
+
+const ASSISTANT_EMPTY = (
+  <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
+    This is your assistant: one conversation that lasts, outside every project. Ask it anything; it hands code work to project tasks.
   </div>
 );
 
@@ -42,7 +49,8 @@ export function TabContent({
       key={`${task.host_id}:${task.id}`}
       task={task}
       cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
-      empty={NOT_STARTED}
+      empty={isAssistant(task) ? ASSISTANT_EMPTY : NOT_STARTED}
+      placeholder={isAssistant(task) ? "Message your assistant…" : undefined}
     />
   ) : docShown ? (
     <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />
@@ -60,6 +68,12 @@ export function TabContent({
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-5 py-5">
         <ChangeSummaryView task={task} />
+      </div>
+    </div>
+  ) : isWorkflowTab(shown) ? (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-3xl px-5 py-5">
+        <WorkflowTabView task={task} label={shown.slice(3)} />
       </div>
     </div>
   ) : shown === "details" ? (

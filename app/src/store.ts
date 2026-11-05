@@ -9,6 +9,8 @@ import {
   hostCompat,
   hostSupports,
   isScratch,
+  isAssistant,
+  hasAssistant,
   wsUrl,
   type ClaudeConfig,
   type Host,
@@ -349,6 +351,8 @@ export const useStore = create<State>((set, get) => ({
     const reviews = hostSupports(get().hosts.find((x) => x.id === h), 12);
     const groups = hostSupports(get().hosts.find((x) => x.id === h), 34);
     const archiving = hostSupports(get().hosts.find((x) => x.id === h), 46);
+    // The profile's assistant too, for the sidebar and its page: the boards leave it out.
+    const assistants = hasAssistant(get().hosts.find((x) => x.id === h));
     let projects: Project[] = [];
     let archived: Project[] = [];
     let tasks: Task[] = [];
@@ -362,7 +366,7 @@ export const useStore = create<State>((set, get) => ({
           // Group and scratch tasks are in no project.
           const [ps, projectless, gone] = await Promise.all([
             api.projects(h, profile.id),
-            groups ? api.groupTasks(h, profile.id) : [],
+            groups ? api.groupTasks(h, profile.id, assistants) : [],
             archiving ? api.projects(h, profile.id, true) : [],
           ]);
           // A project deleted since it was listed has no tasks (and its project_deleted event follows).
@@ -732,6 +736,16 @@ export function onCheckpoints(fn: CheckpointListener) {
 
 const automationListeners = new Set<AutomationListener>();
 
+/** Told when a project's workflows change (`projectId`), or a task's workflow runs do (`taskId`), API 107. */
+type WorkflowListener = (hostId: string, change: { projectId?: string; taskId?: string }) => void;
+const workflowListeners = new Set<WorkflowListener>();
+export function onWorkflowsChanged(fn: WorkflowListener) {
+  workflowListeners.add(fn);
+  return () => {
+    workflowListeners.delete(fn);
+  };
+}
+
 /** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
 export function onAutomationsChanged(fn: AutomationListener) {
   automationListeners.add(fn);
@@ -791,6 +805,12 @@ export function handleEvent(ev: any) {
       break;
     case "automations_changed":
       for (const fn of automationListeners) fn(h, ev.project_id, ev.automation_id);
+      break;
+    case "workflows_changed":
+      for (const fn of workflowListeners) fn(h, { projectId: ev.project_id });
+      break;
+    case "workflow_runs_changed":
+      for (const fn of workflowListeners) fn(h, { taskId: ev.task_id });
       break;
     case "checkpoints":
       for (const fn of checkpointListeners) fn(h, ev.task_id);
@@ -876,7 +896,8 @@ export function taskKey(t: Task, projects: Project[]) {
 }
 
 /** What goes before a task's number: its project's key, `G` for a group task, or `S` for a scratch task. */
-export const keyPrefix = (t: Task, project?: Project) => project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : "T");
+export const keyPrefix = (t: Task, project?: Project) =>
+  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistant(t) ? "A" : "T");
 
 /** A group task: in no project, it plans the work of its group's projects. */
 export const isGroupTask = (t: Task) => t.kind === "task" && !t.project_id && !!t.group_name;

@@ -16,6 +16,7 @@ import * as context from "../context.ts";
 import * as title from "../title.ts";
 import * as usage from "../usage.ts";
 import * as agent_tools from "../agent_tools.ts";
+import * as assistant from "../assistant.ts";
 import * as prompts from "../prompts.ts";
 import * as analytics from "../../analytics.ts";
 import * as api from "../../api.ts";
@@ -1187,6 +1188,22 @@ test("a_group_task_is_told_its_groups_projects", () => {
   assert.ok(start_prompt(task, null, "").startsWith("# G-1: Plan it\n"));
 });
 
+test("the_assistant_is_told_what_it_is", () => {
+  const s = testing.state();
+  const p = db.insert_profile(s.db(), "p", [], null);
+  const task = assistant.get_or_create(s, p.id);
+  const text = system_prompt(task, null, null, [], [], null, true);
+  assert.ok(text.includes(`thread A-1 (id ${task.id})`), text);
+  assert.ok(text.includes("personal assistant") && text.includes("aren't a coding agent"), text);
+  assert.ok(text.includes(`(assistants/${task.id} in the board's data dir)`), text);
+  assert.ok(text.includes("`create_task`") && text.includes("list_projects") && text.includes("request_user_input"), text);
+  assert.ok(!text.includes('In review".'), text);
+  assert_paragraphs(text);
+  // Its first prompt is the user's message, not a task to start on.
+  assert.equal(start_prompt(task, null, " What's on today?\n"), "What's on today?");
+  assert.ok(!start_prompt(task, null, "Hi").includes(prompts.DEFAULT_START));
+});
+
 test("previews_what_a_new_thread_in_a_project_is_told", async () => {
   const state = testing.state();
   const repo = testing.temp_dir();
@@ -1242,6 +1259,22 @@ test("previews_what_a_new_thread_in_a_project_is_told", async () => {
 
   for (const bad of [{ type: "review" }, { labels: "nope" }, { runtime: "gpt" }, { permission_mode: "yolo" }]) {
     await assert.rejects(preview(state, project, bad), (e: any) => e instanceof ApiError && e.status === 400);
+  }
+});
+
+test("agents_are_told_to_ask_rather_than_leave_a_question_in_their_summary", () => {
+  // HA-198: a question left in a summary puts the task in "In review", where it looks finished.
+  const c = db.open(":memory:");
+  const p = db.insert_profile(c, "p", [], null);
+  const project = new_project(c, { profile_id: p.id, name: "Web", key: "WEB", repo_path: "/src/web" });
+  const task = new_task(c, { profile_id: p.id, project_id: "pr", title: "Fix it" });
+  const scratch = { ...task, task_type: "scratch", project_id: null };
+  const group = { ...task, project_id: null, group_name: "Shop" };
+  for (const [t, pr] of [[task, project], [scratch, null], [group, null]] as const) {
+    const text = system_prompt(t, pr, null, [], [], null, true);
+    assert.ok(text.includes("You must call `request_user_input` before you end a turn whose last message needs something from the user"), text);
+    assert.ok(text.includes("The one exception is an offer of something extra once everything the user asked for is done"), text);
+    assert_paragraphs(text);
   }
 });
 

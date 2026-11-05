@@ -62,6 +62,7 @@ test("the_helpers_constants_match_their_modules", async () => {
   const wait = await import("./mcp/wait.ts");
   const pr_watch = await import("./mcp/pr_watch.ts");
   const automations = await import("./integrations/automations.ts");
+  const workflows = await import("./integrations/workflows.ts");
   const tools = await import("./mcp/tools.ts");
   assert.deepEqual(mcp.STATUSES, db.STATUSES);
   assert.deepEqual(mcp.PERMISSION_MODES, db.PERMISSION_MODES);
@@ -75,6 +76,7 @@ test("the_helpers_constants_match_their_modules", async () => {
   assert.equal(mcp.WAIT_UNWATCHED_MAX_SECS, (wait as any).UNWATCHED_MAX_SECS);
   assert.deepEqual(mcp.PR_EVENTS, pr_watch.EVENTS);
   assert.equal(mcp.MIN_INTERVAL_MINUTES, automations.MIN_INTERVAL_MINUTES);
+  assert.equal(mcp.WORKFLOW_MAX_ROUNDS, workflows.MAX_ROUNDS);
   assert.equal(mcp.TASK_FIELD_DEFAULT_LIMIT, tools.TASK_FIELD_DEFAULT_LIMIT);
   assert.equal(mcp.TASK_FIELD_MAX_LIMIT, tools.TASK_FIELD_MAX_LIMIT);
 });

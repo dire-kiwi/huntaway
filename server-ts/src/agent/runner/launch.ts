@@ -182,9 +182,8 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
 
   const config = db.task_claude_config(state.db(), task);
   const is_codex = config != null && db.is_codex(config);
-  const tools: agent_tools.RunTools = project
-    ? agent_tools.for_run(state, project.id, task.kind === "review" ? task_id : null)
-    : agent_tools.RunTools_default();
+  // The project's own skills and MCP servers, and the ones it turns off (for the assistant, its profile's).
+  const tools: agent_tools.RunTools = agent_tools.for_task_run(state, task, project);
   if (is_codex) {
     // Claude's models don't run on Codex; a thread's own pick is used as given.
     const inherited = [project?.model ?? null, profile.default_model, db.get_setting(state.db(), "default_model")];

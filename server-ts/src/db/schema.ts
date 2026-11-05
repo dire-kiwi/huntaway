@@ -6,7 +6,7 @@ import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
 import { path_str } from "../util.ts";
 import { config_for_dir } from "./profiles.ts";
-import { SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
+import { ASSISTANT_TASK_KEY, SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
 
 /** Whether `table` has a column `column`. */
 const has_column = (c: Conn, table: string, column: string): boolean =>
@@ -663,6 +663,22 @@ export function open(path: string): Conn {
     }
     batch("PRAGMA user_version=87; COMMIT;");
   }
+  if (version < 88) {
+    // Projects' workflows and their runs on tasks (see integrations/workflows.ts).
+    batch(`BEGIN; ${SCHEMA_V88} PRAGMA user_version=88; COMMIT;`);
+  }
+  if (version < 89) {
+    // Tasks' threads as items, requests and a short log of numbered events (see threads/store.ts and docs/threads.md).
+    // Nothing writes them yet.
+    batch(`BEGIN; ${SCHEMA_V89} PRAGMA user_version=89; COMMIT;`);
+  }
+  if (version < 90) {
+    // Each profile's assistant (see is_assistant): one at most, keyed A-<n>, so a project with the key A moves to a free
+    // one.
+    batch("BEGIN;");
+    free_task_key(conn, ASSISTANT_TASK_KEY, "AP");
+    batch("CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_assistant ON tasks(profile_id) WHERE task_type='assistant'; PRAGMA user_version=90; COMMIT;");
+  }
   return conn;
 }
 
@@ -673,7 +689,7 @@ function parent_dir(path: string): string {
 }
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 87;
+export const VERSION = 90;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what
@@ -983,6 +999,101 @@ CREATE TABLE IF NOT EXISTS review_thread_skills (
   task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
   skills TEXT NOT NULL DEFAULT '[]'
 );
+`;
+
+/**
+ * Workflows, graphs of steps that act on a project's tasks, and their runs: each run keeps the graph it started with,
+ * what each node did (`nodes`) and the rounds its sends have used (see integrations/workflows.ts).
+ */
+const SCHEMA_V88 = `
+CREATE TABLE IF NOT EXISTS workflows (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  graph TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workflows_project ON workflows(project_id);
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  state TEXT NOT NULL,
+  head TEXT,
+  task_run TEXT,
+  graph TEXT NOT NULL,
+  nodes TEXT NOT NULL DEFAULT '{}',
+  rounds TEXT NOT NULL DEFAULT '{}',
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS workflow_runs_task ON workflow_runs(task_id, workflow_id);
+CREATE INDEX IF NOT EXISTS workflow_runs_state ON workflow_runs(state);
+`;
+
+/**
+ * A task's thread as items (see threads/protocol.ts), kept beside its messages (see threads/store.ts):
+ *
+ * - `thread_items`: each item as it is now, as JSON, updated in place. `pos` orders them (an item's index is the number
+ *   before it: removing items leaves gaps), and `live` marks a subagent's call whose subagent hasn't finished, which a
+ *   window brings along. `meta` is what the board knows about an item that the item doesn't say (who sent a message).
+ * - `thread_requests`: its permission prompts, questions and plans, open (`open`) or resolved, as JSON, in order.
+ * - `thread_events`: the numbered events, as JSON, kept for a day or the last few per thread, for clients catching up.
+ * - `thread_item_origins`: the messages each item came from.
+ *
+ * The thread's id is its task's, and its rows go with the task.
+ */
+const SCHEMA_V89 = `
+CREATE TABLE IF NOT EXISTS thread_items (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  pos INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  parent_id TEXT,
+  turn_id TEXT,
+  live INTEGER NOT NULL DEFAULT 0,
+  data TEXT NOT NULL,
+  meta TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (task_id, id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS thread_items_pos ON thread_items(task_id, pos);
+CREATE INDEX IF NOT EXISTS thread_items_live ON thread_items(task_id, pos) WHERE live=1;
+CREATE TABLE IF NOT EXISTS thread_requests (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  pos INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  tool_call_id TEXT,
+  turn_id TEXT,
+  open INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (task_id, id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS thread_requests_pos ON thread_requests(task_id, pos);
+CREATE TABLE IF NOT EXISTS thread_events (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, seq)
+);
+CREATE TABLE IF NOT EXISTS thread_item_origins (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  message_id INTEGER NOT NULL,
+  PRIMARY KEY (task_id, item_id, message_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS thread_item_origins_message ON thread_item_origins(task_id, message_id);
 `;
 
 /**

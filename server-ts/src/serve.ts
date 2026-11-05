@@ -7,9 +7,10 @@ import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
 import type { Duplex } from "node:stream";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import * as db from "./db.ts";
+import * as db_file from "./db/file.ts";
 import * as api from "./api.ts";
 import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
@@ -31,6 +32,7 @@ import * as broker from "./hosts/broker.ts";
 import * as broker_proto from "./hosts/broker/proto.ts";
 import * as attachments from "./attachments.ts";
 import * as automations from "./integrations/automations.ts";
+import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
 import * as merged from "./review/merged.ts";
 import * as relocate from "./git/relocate.ts";
@@ -39,6 +41,32 @@ const log = {
   info: (...a: any[]) => console.error(new Date().toISOString(), " INFO huntaway:", ...a),
   warn: (...a: any[]) => console.error(new Date().toISOString(), " WARN huntaway:", ...a),
 };
+
+const STAMPED = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/;
+
+/**
+ * `write` (console.log's or console.error's), with the time in front of what it writes, as the modules' own `log`s and
+ * the Rust server's log lines have it: the many plain console lines ("task … starting claude", "connected to host …")
+ * had none, which made a server's log hard to read around an update or an outage (HA-185). A line that starts with a
+ * time already, and `IA_READY`, which the desktop app and the test scripts read, are left as they are.
+ */
+export function stamped(write: (...a: any[]) => void, now: () => Date = () => new Date()): (...a: any[]) => void {
+  return (...a: any[]) => {
+    const first = a[0];
+    if (typeof first === "string" && (STAMPED.test(first) || first.startsWith("IA_READY"))) return write(...a);
+    // In the first string, which is where console takes a format (`%s`) from.
+    if (typeof first === "string") write(`${now().toISOString()} ${first}`, ...a.slice(1));
+    else write(now().toISOString(), ...a);
+  };
+}
+
+/** Put the time in front of every line `huntaway serve` logs with console (see `stamped`). Only for `serve`. */
+function stamp_console() {
+  console.log = stamped(console.log.bind(console));
+  console.info = stamped(console.info.bind(console));
+  console.warn = stamped(console.warn.bind(console));
+  console.error = stamped(console.error.bind(console));
+}
 
 export interface ServeArgs {
   host: string;
@@ -57,6 +85,8 @@ export interface ServeArgs {
   access_token: string | null;
   demo: boolean;
   open_token: boolean;
+  /** Copy the older builds' database into `huntaway-2.db` again (see db/file.ts), for this start only. */
+  recopy_db: boolean;
   profiles: Array<[string, string] | null>;
 }
 
@@ -92,6 +122,7 @@ export function parse_serve_args(argv: string[]): ServeArgs {
     access_token: env("IA_TOKEN") ?? null,
     demo: truthy(env("IA_DEMO")),
     open_token: truthy(env("IA_OPEN_TOKEN")),
+    recopy_db: truthy(env("IA_RECOPY_DB")),
     profiles: [],
   };
   let hubs: string[] | null = null;
@@ -126,6 +157,7 @@ export function parse_serve_args(argv: string[]): ServeArgs {
       case "--token": a.access_token = next(); break;
       case "--demo": a.demo = true; break;
       case "--open-token": a.open_token = true; break;
+      case "--recopy-db": a.recopy_db = true; break;
       case "--profile": (profiles ??= []).push(...next().split(",").map(parse_profile)); break;
       default: throw new Error(`unexpected argument '${argv[i]}'`);
     }
@@ -150,8 +182,16 @@ const isDir = (p: string) => {
   }
 };
 
-/** The database in a data dir: `huntaway.db`, or `issue-agent.db` from before the rename. */
+/**
+ * The database in a data dir: `huntaway-2.db` with the new database file on (see db/file.ts), else `huntaway.db`, or
+ * `issue-agent.db` from before the rename.
+ */
 export function db_path(data_dir: string): string {
+  return db_file.enabled() ? join(data_dir, db_file.FILE) : older_db_path(data_dir);
+}
+
+/** The database older builds use in a data dir: `huntaway.db`, or `issue-agent.db` from before the rename. */
+export function older_db_path(data_dir: string): string {
   const d = join(data_dir, "huntaway.db"), legacy = join(data_dir, "issue-agent.db");
   let legacyFile = false;
   try {
@@ -284,6 +324,7 @@ export function open_token(token: string, loopback_only: boolean): (headers: Rec
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*", vary: "origin" };
 
 export async function serve(args: ServeArgs) {
+  stamp_console();
   // A bug in a background job is logged rather than ending the server (see crash.ts). What serve itself throws while
   // starting isn't unhandled: main.ts logs it and exits.
   crash.install();
@@ -308,9 +349,24 @@ export async function serve(args: ServeArgs) {
       host_name = (process.env.HOSTNAME ?? "host").trim();
     }
   }
-  // Another version (or the Rust server) ran on this data dir last: keep a copy of the database before opening it.
-  backup.on_start(data_dir, db_path(data_dir), VERSION);
-  const conn = db.open(db_path(data_dir));
+  // Another version (or the Rust server) ran on this data dir last: keep a copy of the database before opening it. With
+  // the new database file (see db/file.ts) that's huntaway-2.db; before it's made, nothing: making it only reads the
+  // older builds' file, which stays as it was.
+  const new_file = db_file.enabled();
+  if (args.recopy_db && !new_file) log.warn(`--recopy-db does nothing: this server uses ${basename(db_path(data_dir))}, not ${db_file.FILE} (${db_file.ENV} turns that on)`);
+  try {
+    backup.on_start(data_dir, db_path(data_dir), VERSION, db.VERSION);
+  } catch (e) {
+    // Machine-readable, for the Electron shell: its error page says why and offers to start without a backup.
+    if (e instanceof backup.BackupFailed) console.log(`IA_BACKUP_FAILED ${JSON.stringify({ reason: e.reason, why: e.why, dir: e.dir })}`);
+    throw e;
+  }
+  // "Start without a backup" was for this start: a restart onto another release makes one again. So is copying the
+  // database again, which nothing this server starts (agents, and test servers of theirs) should see either.
+  delete process.env[backup.SKIP_ONCE_ENV];
+  delete process.env.IA_RECOPY_DB;
+  // Before serving: on the first start with the new file, it copies the older builds' database, which takes a while for a big one.
+  const conn = new_file ? db_file.open(data_dir, args.recopy_db).conn : db.open(db_path(data_dir));
   backup.record_version(data_dir, VERSION);
 
   const server = createServer();
@@ -386,8 +442,11 @@ export async function serve(args: ServeArgs) {
       if (ui) return serve_ui(ui, req, res);
       res.writeHead(404).end();
     } catch (e) {
-      if (!res.headersSent) send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
-      else res.destroy();
+      if (!res.headersSent) {
+        // A body over the limit, which isn't read to its end (see readBody): the connection goes after the answer.
+        if (e instanceof ApiError && e.status === 413) res.setHeader("connection", "close");
+        send(res, errorAnswer(e instanceof ApiError ? e : new ApiError(500, err_str(e))));
+      } else res.destroy();
     }
   };
   // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
@@ -465,6 +524,7 @@ export async function serve(args: ServeArgs) {
   runs.start_pruner(state);
   task_tmp.start_sweeper(state);
   automations.start(state);
+  workflows.resume(state);
   merged.start(state);
   relocate.start_recording(state);
   admin.start_update_check(state);
@@ -517,4 +577,6 @@ export async function serve(args: ServeArgs) {
   // Machine-readable line for the Electron shell.
   console.log(`IA_READY ${JSON.stringify({ port, token: token_from_env ? null : token })}`);
   admin.supervisor_started();
+  // The backups this start or an earlier one made are gzipped (see backup.ts), now that the board is up.
+  void backup.compress_later(data_dir).catch((e) => log.warn(`compressing the database's backups: ${err_str(e)}`));
 }

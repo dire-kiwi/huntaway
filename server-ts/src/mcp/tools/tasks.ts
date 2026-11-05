@@ -10,6 +10,7 @@ import { path_str } from "../../util.ts";
 import { ToolError, type Ctx } from "../tools.ts";
 import { TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./dispatch.ts";
 import { boards, project_key } from "./resolve.ts";
+import { task_workflows } from "./workflows.ts";
 
 /** Unicode characters (Rust's `chars()`). */
 const chars = (s: string) => Array.from(s);
@@ -32,6 +33,9 @@ export function task_details(s: Shared, ctx: Ctx, t: Task): any {
   const readable = boards(s, ctx);
   const created = db.created_tasks(s.db(), t.id).filter((c) => readable.some((b) => b.id === c.profile_id));
   if (created.length) out.created_tasks = created.map((c) => summary(s, c));
+  // What its workflows' latest runs did (see integrations/workflows.rs).
+  const workflows = task_workflows(s, t.id);
+  if (workflows.length) out.workflows = workflows;
   return out;
 }
 
@@ -146,6 +150,7 @@ export function summarize(s: Shared, t: Task): any {
     v.documents = files;
   }
   if (db.is_scratch(t)) v.type = db.SCRATCH;
+  if (db.is_assistant(t)) v.type = db.ASSISTANT;
   if (t.parent_id && t.kind === "task") {
     let sp: Task | null = null;
     try {

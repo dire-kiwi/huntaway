@@ -160,8 +160,10 @@ export function resolve_task(s: Shared, ctx: Ctx, r: string, profile: string | n
   const [prefix, id] = split_ref(s, r);
   const bs = pick_boards(s, ctx, prefix ?? profile);
   // Not a review thread, as by its key: an agent's tools only reach tasks.
+  // A profile's assistant is its own: other profiles' agents can't reach it (see agent/assistant.ts).
+  const reaches = (t: Task) => t.kind === "task" && bs.some((b) => b.id === t.profile_id && (!db.is_assistant(t) || is_own(ctx, b)));
   const byId = db.get_task(s.db(), id);
-  if (byId && byId.kind === "task" && bs.some((b) => b.id === byId.profile_id)) return byId;
+  if (byId && reaches(byId)) return byId;
   const found: Array<[db.Profile, Task]> = [];
   const dash = id.lastIndexOf("-");
   const [k, ns] = dash < 0 ? ["", ""] : [id.slice(0, dash), id.slice(dash + 1)];
@@ -169,7 +171,7 @@ export function resolve_task(s: Shared, ctx: Ctx, r: string, profile: string | n
   if (dash >= 0 && /^[+-]?\d+$/.test(ns)) {
     const n = Number(ns);
     for (const b of bs) {
-      // No project has the group or scratch tasks' keys (see db::free_task_key).
+      // No project has the group, scratch or assistant tasks' keys (see db::free_task_key).
       if (eq_ic(k, runner.GROUP_TASK_KEY)) {
         const t = db.group_task_by_number(s.db(), b.id, n);
         if (t) found.push([b, t]);
@@ -177,6 +179,11 @@ export function resolve_task(s: Shared, ctx: Ctx, r: string, profile: string | n
       }
       if (eq_ic(k, db.SCRATCH_TASK_KEY)) {
         const t = db.scratch_task_by_number(s.db(), b.id, n);
+        if (t) found.push([b, t]);
+        continue;
+      }
+      if (eq_ic(k, db.ASSISTANT_TASK_KEY)) {
+        const t = is_own(ctx, b) ? db.assistant_task_by_number(s.db(), b.id, n) : null;
         if (t) found.push([b, t]);
         continue;
       }

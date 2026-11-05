@@ -7,6 +7,7 @@ import { ApiError, Reply, type Req } from "../http.ts";
 import type { AppState } from "../state.ts";
 import { err_str } from "../util.ts";
 import * as runner from "../agent/runner.ts";
+import * as assistant from "../agent/assistant.ts";
 import * as focus from "../agent/focus.ts";
 import * as worktree from "../git/worktree.ts";
 import * as terminal from "../hosts/terminal.ts";
@@ -14,6 +15,7 @@ import * as permissions from "../mcp/permissions.ts";
 import * as questions from "../mcp/questions.ts";
 import * as pr_watch from "../mcp/pr_watch.ts";
 import * as review from "../review.ts";
+import * as workflows from "../integrations/workflows.ts";
 import * as summary from "../review/summary.ts";
 import { def_str, json_map, opt_str, query_bool, query_int, query_opt_bool, req_str, body_rejection, def_bool } from "./extract.ts";
 import { create_task_inner } from "./new_task.ts";
@@ -47,6 +49,19 @@ export async function send_message(s: AppState, r: Req) {
   return t;
 }
 
+/** `GET /profiles/{id}/assistant` (API 109): the profile's assistant (see agent/assistant.ts), made the first time it's asked for. */
+export async function get_assistant(s: AppState, r: Req) {
+  return assistant.get_or_create(s, r.params.id);
+}
+
+/**
+ * `POST /profiles/{id}/assistant` (API 109): send the user's message to the profile's assistant, as `POST
+ * /tasks/{id}/messages` does to its thread, making it first if it has none. Returns the task.
+ */
+export async function send_to_assistant(s: AppState, r: Req) {
+  return assistant.send(s, r.params.id, def_str(json_map(r), "text"));
+}
+
 /** Answer a question an agent asked with request_user_input, from its card (API 64): the answer is sent as the user's message. */
 export async function answer_question(s: AppState, r: Req) {
   const message_id = r.params.message_id;
@@ -71,7 +86,8 @@ export async function stop_task(s: AppState, r: Req) {
   const agent = runner.stop(s, id);
   const reviewing = review.stop(s, id);
   const summarising = summary.stop(s, id);
-  return { stopped: agent || reviewing || summarising };
+  const workflow_runs = workflows.stop(s, id);
+  return { stopped: agent || reviewing || summarising || workflow_runs };
 }
 
 /** Summarise the task's changes now (see review/summary.rs). */
@@ -306,9 +322,10 @@ export async function resolve_permission(s: AppState, r: Req) {
 }
 
 /**
- * Project changes (and with `?all=true`, task deletions, and with `?automations=true`, automations) agents are waiting
- * for the user to approve (see permissions::approve). (`all` is API 58, which older hosts ignore; `automations` API 67.)
+ * Project changes (and with `?all=true`, task deletions, with `?automations=true`, automations, and with that and
+ * `?workflows=true`, workflows) agents are waiting for the user to approve (see permissions::approve). (`all` is API 58,
+ * which older hosts ignore; `automations` API 67; `workflows` API 107.)
  */
 export async function project_approvals(s: AppState, r: Req) {
-  return permissions.pending_approvals(s, query_bool(r, "all"), query_bool(r, "automations"));
+  return permissions.pending_approvals(s, query_bool(r, "all"), query_bool(r, "automations"), query_bool(r, "workflows"));
 }

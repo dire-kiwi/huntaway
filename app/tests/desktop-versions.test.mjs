@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { chooseServer, compareVersions, installKind, markBad, readState, releaseEnv, startWithFallback, writeState } = require("../electron/versions.cjs");
+const { chooseServer, compareVersions, installKind, markBad, noteRustServer, readState, releaseEnv, startWithFallback, writeState } = require("../electron/versions.cjs");
 
 const dirs = [];
 afterEach(() => {
@@ -149,7 +149,8 @@ function fallback({ order, servers, failed = new Set(), portTaken = () => false,
       const what = servers[version ?? "bundled"];
       after(version);
       if (what === "ok") return `token-${version}`;
-      throw Object.assign(new Error(what), { early: what === "exit" });
+      // "backup": it exited as it couldn't back up the database.
+      throw Object.assign(new Error(what), { early: what === "exit" || what === "backup", backup: what === "backup" ? { reason: "space" } : null });
     },
     portTaken: async () => portTaken(),
     failed,
@@ -203,6 +204,25 @@ test("a slow start, or one stopped by quitting, isn't a bad version and isn't fa
   const quit = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "exit", "0.2.0": "ok" }, stopping: () => true });
   await assert.rejects(quit.run, /exit/);
   assert.deepEqual([quit.started, quit.saved], [["0.3.0"], []]);
+});
+
+/** HA-184: the next server would need the backup too (or, a Rust release, not make one), and none is to blame. */
+test("a server that couldn't back up the database isn't fallen back from, and nothing is marked bad", async () => {
+  const f = fallback({ order: ["0.4.1", "0.4.0"], servers: { "0.4.1": "backup", "0.4.0": "ok", bundled: "ok" }, failed: new Set(["0.5.0"]) });
+  await assert.rejects(f.run, (e) => e.backup?.reason === "space");
+  assert.deepEqual([f.started, f.saved, f.failed.size], [["0.4.1"], [], 0]);
+});
+
+test("a rust release is recorded in server_version before it starts, as it doesn't record itself", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ia-data-"));
+  dirs.push(dir);
+  const file = path.join(dir, "server_version");
+  fs.writeFileSync(file, "0.4.1\n");
+  for (const v of ["0.4.0", "0.5.0", "not-a-version"]) assert.equal(noteRustServer(dir, v), false);
+  assert.equal(fs.readFileSync(file, "utf8"), "0.4.1\n");
+  assert.equal(noteRustServer(dir, "0.3.1"), true);
+  assert.equal(fs.readFileSync(file, "utf8"), "0.3.1\n");
+  assert.equal(noteRustServer(path.join(dir, "missing"), "0.3.1"), false);
 });
 
 test("versions that exit after the wait timed out, one after another, reach the bundled server and are all marked bad", async () => {

@@ -41,6 +41,8 @@ export const WAIT_UNWATCHED_MAX_SECS = 30;
 export const PR_EVENTS = ["checks_failed", "checks_passed", "comments", "conflicts"];
 /** integrations::automations::MIN_INTERVAL_MINUTES */
 export const MIN_INTERVAL_MINUTES = 5;
+/** integrations::workflows::MAX_ROUNDS */
+export const WORKFLOW_MAX_ROUNDS = 20;
 /** mcp::tools::TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT */
 export const TASK_FIELD_DEFAULT_LIMIT = 2000;
 export const TASK_FIELD_MAX_LIMIT = 4000;
@@ -189,7 +191,7 @@ export function for_reviewers(tool: string): boolean {
  * (create_task with start, send_to_task, run_automation) or change anything. The server checks it (tools::execute_mcp):
  * a run's tool list stays as it started while its mode changes.
  */
-const FOR_PLANNING = ["list_projects", "list_tasks", "get_task", "get_task_field", "get_project", "list_automations", "wait", "request_user_input", "submit_review"];
+const FOR_PLANNING = ["list_projects", "list_tasks", "get_task", "get_task_field", "get_project", "list_automations", "list_workflows", "wait", "request_user_input", "submit_review"];
 
 /** Whether a thread in plan mode may call `tool`. */
 export function for_planning(tool: string): boolean {
@@ -197,7 +199,7 @@ export function for_planning(tool: string): boolean {
 }
 
 /** The board's tools, and for a review thread only those `for_reviewers`, with `submit_review`. */
-function tools(review: boolean): any[] {
+export function tools(review: boolean): any[] {
   let list = board_tools();
   if (review) {
     list.push(submit_review_tool());
@@ -362,6 +364,7 @@ function board_tools(): any[] {
           profile,
           status: { type: "string", enum: status_enum },
           subproject: { type: "string", description: "Only the tasks of this subproject (task id or key), 'none' for top-level tasks only, or 'all'" },
+          include_assistant: { type: "boolean", description: "Also list your profile's assistant (key A-<n>), which is left out otherwise" },
         },
       },
     },
@@ -634,7 +637,137 @@ function board_tools(): any[] {
     };
   }
   list.push(...automation_tools(profile, project_one));
+  list.push(...workflow_tools(profile, project_one));
   return list;
+}
+
+/** The tools for a project's workflows (see integrations/workflows.rs). */
+function workflow_tools(profile: any, project_one: string): any[] {
+  const workflow_ref = { type: "string", description: "The workflow's id, or its name in project_id (see list_workflows)" };
+  const graph = {
+    type: "object",
+    description:
+      "The workflow's nodes and the edges between them. A run starts at its one trigger node and follows edges out of the port each node ends on. " +
+      "A node runs once every node with an edge into it has finished and one of those edges was taken (join 'any', the default) or all of them (join 'all'); " +
+      "otherwise it's skipped. No loops: to go round again, send to the task's agent (its next finished run triggers the workflow again). Node kinds and their ports: " +
+      "{kind: 'trigger', on: 'status', status} (the task entering that column) or {kind: 'trigger', on: 'manual'} (only run_workflow, or Run on the board) → out; " +
+      "{kind: 'condition', check: 'changed'|'has_commits'|'has_pr'|'task_type'|'label', value} → yes, no ('changed': its commit or its agent's work changed since this workflow last finished on it; " +
+      "value is the type, code or scratch, or the label, plan, artifact or diagram); " +
+      "{kind: 'agent', name, prompt, output: 'text'|'verdict', claude_config_id, model, effort, skills, tab} runs an agent read-only in the task's worktree, in a thread of its own: " +
+      "output 'text' → done, failed (its last message is the output); 'verdict' → pass, issues, failed (it reports with submit_review, as a reviewer does). " +
+      "With tab, its output shows in a tab of that name in the task's panel (steps can share one). prompt says what to do (empty: the project's In review prompt for a verdict); " +
+      "prompts and messages take {{task.key}}, {{task.title}}, {{task.description}}, {{branch}}, {{commit}}, {{workflow}}, {{issues}} and {{<node id>.text}}, {{<node id>.issues}}; " +
+      "{kind: 'send_to_task', message, max_rounds} sends the message (empty: the issues the run's verdict steps found) to the task's agent, ending the run, " +
+      "at most max_rounds runs in a row (default 2), then → exhausted (with nothing after it, the task goes to needs_attention); " +
+      "{kind: 'set_status', status} moves the task → out. Each node has an id (letters, digits, - and _), and x and y for where the editor draws it.",
+    properties: {
+      nodes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            kind: { type: "string", enum: ["trigger", "condition", "agent", "send_to_task", "set_status"] },
+            on: { type: "string", enum: ["status", "manual"] },
+            status: { type: "string", enum: STATUSES },
+            check: { type: "string", enum: ["changed", "has_commits", "has_pr", "task_type", "label"] },
+            value: { type: "string" },
+            name: { type: "string" },
+            prompt: { type: "string" },
+            output: { type: "string", enum: ["text", "verdict"] },
+            claude_config_id: { type: "string" },
+            model: { type: "string" },
+            effort: { type: "string", enum: THREAD_EFFORTS },
+            skills: { type: "array", items: { type: "string" } },
+            tab: { type: "string" },
+            message: { type: "string" },
+            max_rounds: { type: "integer", minimum: 0, maximum: WORKFLOW_MAX_ROUNDS },
+            join: { type: "string", enum: ["any", "all"] },
+            x: { type: "number" },
+            y: { type: "number" },
+          },
+          required: ["id", "kind"],
+        },
+      },
+      edges: {
+        type: "array",
+        items: { type: "object", properties: { from: { type: "string" }, port: { type: "string" }, to: { type: "string" } }, required: ["from", "port", "to"] },
+      },
+    },
+    required: ["nodes", "edges"],
+  };
+  const asks = "It asks the user to approve it first (say why in reason): the call waits for their answer, and if they don't approve it nothing changes.";
+  const reason = { type: "string", description: "Why, shown to the user when they're asked to approve it" };
+  return [
+    {
+      name: "list_workflows",
+      description:
+        "List a project's workflows: graphs of steps (conditions, agent steps that review or report on a task's work, messages to the task's agent, moves) that run on its tasks when they enter a column, or by hand. Each comes with its graph.",
+      inputSchema: { type: "object", properties: { project_id: { type: "string", description: project_one }, profile } },
+    },
+    {
+      name: "create_workflow",
+      description: `Add a workflow to a project, such as a review that sends the issues it finds back to the task's agent, or a summary shown in a tab of the task. Only when the user asks for one. ${asks}`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: project_one },
+          profile,
+          name: { type: "string" },
+          graph,
+          enabled: { type: "boolean", description: "On straight away (default true)" },
+          reason,
+        },
+        required: ["name", "graph"],
+      },
+    },
+    {
+      name: "update_workflow",
+      description: `Change a project's workflow; leave out what to keep (graph replaces the whole graph). Turning it off or renaming it is done straight away; any other change, including turning it on, asks the user. ${asks} Runs in progress go on with the graph they started with.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          workflow_id: workflow_ref,
+          project_id: { type: "string", description: project_one },
+          profile,
+          name: { type: "string" },
+          graph,
+          enabled: { type: "boolean" },
+          reason,
+        },
+        required: ["workflow_id"],
+      },
+    },
+    {
+      name: "delete_workflow",
+      description: `Delete a project's workflow, stopping its runs in progress (their threads stay with their tasks). Only when the user asks for it. ${asks}`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          workflow_id: workflow_ref,
+          project_id: { type: "string", description: project_one },
+          profile,
+          reason: { type: "string", description: "Why, shown to the user when they're asked to confirm" },
+        },
+        required: ["workflow_id"],
+      },
+    },
+    {
+      name: "run_workflow",
+      description:
+        "Run a workflow on one of its project's tasks now, on or off and whatever its trigger, with fresh rounds. Returns the run as it is once its first steps started: its state and each node's (get_task shows the task's latest runs later).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workflow_id: workflow_ref,
+          task_id: { type: "string", description: "The task to run it on: an id or key of a task in the workflow's project" },
+          project_id: { type: "string", description: project_one },
+          profile,
+        },
+        required: ["workflow_id", "task_id"],
+      },
+    },
+  ];
 }
 
 /** The tools for a project's automations (see integrations/automations.rs). */

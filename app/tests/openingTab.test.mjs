@@ -60,3 +60,9 @@ test("a task whose review passed opens on the summary of its changes", () => {
   // A labelled task's document comes first.
   assert.equal(openingTab(t({ labels: ["plan"], document_at: at })), "plan");
 });
+
+// HA-202: the profile's assistant is back in To do after each reply, and on a phone a task in To do opens on its details.
+test("the profile's assistant opens on its thread, in To do too", () => {
+  for (const status of ["todo", "needs_attention", "in_progress"]) assert.equal(openingTab(task({ task_type: "assistant", status })), "thread", status);
+  assert.equal(openingTab(task({ task_type: "scratch", status: "todo" })), "details");
+});

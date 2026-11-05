@@ -105,7 +105,7 @@ export function ReloadButton() {
 export function ServerPanel() {
   const host = useStore((s) => s.localHostId);
   const { status, setStatus, refresh } = useServerStatus(15_000);
-  const [open, setOpen] = useState<"restart" | "update" | "release" | "rollback" | null>(null);
+  const [open, setOpen] = useState<"restart" | "update" | "release" | "rollback" | "recopy" | null>(null);
   const deployed = status?.deployed;
   const ahead = status?.deployed_commits?.length ?? 0;
   const release = status?.release;
@@ -187,6 +187,7 @@ export function ServerPanel() {
                 {deployed?.error && <div className="mt-1 font-mono text-[11.5px] text-red-300">{deployed.error}</div>}
               </div>
             )}
+            <DatabaseLine status={status} onRecopy={() => setOpen("recopy")} />
           </>
         ) : (
           <div>Loading…</div>
@@ -199,10 +200,52 @@ export function ServerPanel() {
           status={status}
           update={open === "update"}
           release={open === "release" ? "update" : open === "rollback" ? "rollback" : undefined}
+          recopy={open === "recopy"}
           onClose={() => setOpen(null)}
         />
       )}
     </section>
+  );
+}
+
+/** Which file the database is in (API 108, on a server that keeps the board in `huntaway-2.db`), and when an older build has
+ * changed the one it was copied from since, a warning with Copy again. */
+export function DatabaseLine({ status, onRecopy }: { status: ServerStatus; onRecopy: () => void }) {
+  const db = status.database;
+  if (!db) return null;
+  return (
+    <>
+      <div>
+        Database <span className="font-mono">{db.file}</span>
+        {db.copied_from && (
+          <>
+            , copied from <span className="font-mono">{db.copied_from.source}</span> {timeAgo(db.copied_from.copied_at)}
+          </>
+        )}
+      </div>
+      {db.older_changed && (
+        <div className="pt-1">
+          <Warning>
+            <span className="font-mono">{db.older_changed}</span> has changed since{" "}
+            {db.copied_from ? (
+              <>
+                it was copied into <span className="font-mono">{db.file}</span>
+              </>
+            ) : (
+              <>
+                <span className="font-mono">{db.file}</span> was made
+              </>
+            )}
+            : an older version of Huntaway has used this data dir since, and what it did isn't in this version's database.
+            <div className="mt-2">
+              <Button size="sm" onClick={onRecopy}>
+                <Copy size={13} /> Copy again…
+              </Button>
+            </div>
+          </Warning>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -466,6 +509,7 @@ function ShellProgress({ progress: p, kind }: { progress: ShellUpdateProgress; k
 /**
  * Rebuild and restart, or with `update` first fast-forward the checkout to the commit its `--update-from` deployment runs.
  * With `release`, restart onto the staged release (`"update"`) or the one before this one (`"rollback"`) instead.
+ * With `recopy`, restart copying the older builds' database again (see DatabaseLine).
  * With a `hostId`, a linked host's server: it asks the same way, then closes once the restart (or release update or
  * rollback) has started, calling `onStarted`, and the host's page follows its progress.
  */
@@ -473,6 +517,7 @@ export function RestartModal({
   status,
   update,
   release,
+  recopy,
   hostId,
   onStarted,
   onClose,
@@ -480,6 +525,7 @@ export function RestartModal({
   status: ServerStatus;
   update?: boolean;
   release?: "update" | "rollback";
+  recopy?: boolean;
   hostId?: string;
   onStarted?: () => void;
   onClose: () => void;
@@ -488,12 +534,13 @@ export function RestartModal({
   const remote = !!hostId && hostId !== localHost;
   // The websocket's restart events are the local host's.
   const live = useStore((s) => (remote ? null : s.restart));
-  const [rebuild, setRebuild] = useState(!!status.source_dir);
+  // A copy restarts without rebuilding.
+  const [rebuild, setRebuild] = useState(!!status.source_dir && !recopy);
   const [err, setErr] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [waiting, setWaiting] = useState(false);
   // The commit to update to, kept from when the modal opened.
-  const [target] = useState(!release && update && status.deployed_commits?.length ? (status.deployed?.commit ?? null) : null);
+  const [target] = useState(!release && !recopy && update && status.deployed_commits?.length ? (status.deployed?.commit ?? null) : null);
   // The release to update to, or what a rollback goes back to, also kept from when the modal opened.
   const [version] = useState(release === "update" ? stagedRelease(status) : release === "rollback" ? (status.release?.rollback_to ?? null) : null);
   const running = status.release?.running;
@@ -546,7 +593,8 @@ export function RestartModal({
     if (remote) {
       setStarting(true);
       try {
-        if (release === "update") await api.updateRelease(hostId, version!);
+        if (recopy) await api.recopyDatabase(hostId);
+        else if (release === "update") await api.updateRelease(hostId, version!);
         else if (release === "rollback") await api.rollbackRelease(hostId);
         else await api.restartServer(hostId, { rebuild });
         onStarted?.();
@@ -561,7 +609,8 @@ export function RestartModal({
     useStore.setState({ restart: { phase: "starting", error: null, log: [] } });
     try {
       const host = useStore.getState().localHostId!;
-      if (release === "update") await api.updateRelease(host, version!);
+      if (recopy) await api.recopyDatabase(host);
+      else if (release === "update") await api.updateRelease(host, version!);
       else if (release === "rollback") await api.rollbackRelease(host);
       else if (target) {
         if ((await api.updateServer(host, target)).up_to_date) {
@@ -575,11 +624,27 @@ export function RestartModal({
     }
   };
 
-  const commits = (release ? [] : target ? status.deployed_commits : status.new_commits) ?? [];
+  const commits = (release || recopy ? [] : target ? status.deployed_commits : status.new_commits) ?? [];
   const rollbackTo = version === "bundled" ? "the bundled version" : `v${version}`;
-  const action =
-    release === "rollback" ? `Roll back to ${rollbackTo}` : release || target ? "Update & restart" : rebuild ? "Rebuild & restart" : "Restart";
-  const title = release === "update" ? "Update Huntaway" : release === "rollback" ? "Roll back Huntaway" : target ? "Update server" : "Rebuild & restart server";
+  const action = recopy
+    ? "Copy again & restart"
+    : release === "rollback"
+      ? `Roll back to ${rollbackTo}`
+      : release || target
+        ? "Update & restart"
+        : rebuild
+          ? "Rebuild & restart"
+          : "Restart";
+  const title = recopy
+    ? "Copy the database again"
+    : release === "update"
+      ? "Update Huntaway"
+      : release === "rollback"
+        ? "Roll back Huntaway"
+        : target
+          ? "Update server"
+          : "Rebuild & restart server";
+  const db = status.database;
   return (
     <Modal title={title} onClose={inProgress ? () => {} : onClose} width="max-w-2xl">
       <div className="space-y-4 text-[13px]">
@@ -600,12 +665,31 @@ export function RestartModal({
             </p>
             <Warning>
               v{running} may have migrated the database, and an older version might not work with it. Roll back only when v{running} doesn't work.
+              {db?.copied_from && (
+                <>
+                  {" "}
+                  A version from before <span className="font-mono">{db.file}</span> goes back to <span className="font-mono">{db.copied_from.source}</span> as
+                  it was {timeAgo(db.copied_from.copied_at)}, without what's been done since.
+                </>
+              )}
+            </Warning>
+          </>
+        )}
+        {!job && recopy && db && (
+          <>
+            <p className="text-muted">
+              Restarts the server, copying <span className="font-mono text-fg">{db.older_changed}</span>, which an older version of Huntaway has used since,
+              into <span className="font-mono text-fg">{db.file}</span> again first. {remote ? "This page follows it until it's back." : "The board reloads once it's back."}
+            </p>
+            <Warning>
+              What's been done on this version since then (tasks, messages, runs) is discarded. It's kept in{" "}
+              <span className="font-mono">{db.file}.replaced</span> in the data dir until the next copy.
             </Warning>
           </>
         )}
         {!job && (
           <>
-            {!release && <p className="text-muted">
+            {!release && !recopy && <p className="text-muted">
               {target ? (
                 <>
                   Fetches <span className="font-mono text-fg">{short(target)}</span>, which {status.update_from} runs, from origin and fast-forwards{" "}
@@ -643,18 +727,18 @@ export function RestartModal({
                 picks them back up.
               </p>
             )}
-            {!release && status.dirty &&
+            {!release && !recopy && status.dirty &&
               (target ? (
                 <Warning>The source checkout has uncommitted changes, so it can't be updated. Commit or discard them first.</Warning>
               ) : (
                 <Warning>The source checkout has uncommitted changes, and they'll be included in the build.</Warning>
               ))}
-            {!release && status.source_branch && status.source_branch !== "master" && status.source_branch !== "main" && (
+            {!release && !recopy && status.source_branch && status.source_branch !== "master" && status.source_branch !== "main" && (
               <Warning>
                 The source checkout is on <span className="font-mono">{status.source_branch}</span>, not master.
               </Warning>
             )}
-            {status.source_dir && !target && !release && <Toggle checked={rebuild} onChange={setRebuild} label="Rebuild before restarting" />}
+            {status.source_dir && !target && !release && !recopy && <Toggle checked={rebuild} onChange={setRebuild} label="Rebuild before restarting" />}
           </>
         )}
 
@@ -674,7 +758,9 @@ export function RestartModal({
               </pre>
             )}
             {job.phase === "failed" && (
-              <p className="text-[12px] text-muted">The server is still running {release ? `v${running}` : "the previous build"}.</p>
+              <p className="text-[12px] text-muted">
+                The server is still running {release ? `v${running}` : recopy ? `on ${db?.file ?? "its database"} as it was` : "the previous build"}.
+              </p>
             )}
           </div>
         )}
@@ -689,7 +775,7 @@ export function RestartModal({
             )}
             {(!job || job.phase === "failed") && (
               <Button
-                variant={release === "rollback" && !inherited ? "danger" : "primary"}
+                variant={(release === "rollback" || recopy) && !inherited ? "danger" : "primary"}
                 disabled={starting || (!!release && !version)}
                 onClick={inherited ? () => setWatched(false) : start}
               >

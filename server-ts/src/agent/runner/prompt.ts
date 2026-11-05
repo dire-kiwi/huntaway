@@ -13,6 +13,7 @@ import * as task_tmp from "../task_tmp.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as summary from "../../review/summary.ts";
+import * as workflows from "../../integrations/workflows.ts";
 import { MCP_SERVER_NAME } from "../runner.ts";
 import { gh_note, github_account, uses_gh_server } from "./access.ts";
 
@@ -164,11 +165,15 @@ export async function preview(state: Shared, project: Project, o: PreviewOptions
 /** The key a group task's number goes with, in place of a project's key. */
 export const GROUP_TASK_KEY = "G";
 
-/** What goes before a task's number in its key: its project's key, for a group task `G`, or for a scratch task `S`. */
+/**
+ * What goes before a task's number in its key: its project's key, for a group task `G`, for a scratch task `S`, or for a
+ * profile's assistant `A`.
+ */
 export function key_prefix(task: Task, project: Project | null | undefined): string {
   if (project) return project.key;
   if (task.group_name != null) return GROUP_TASK_KEY;
   if (db.is_scratch(task)) return db.SCRATCH_TASK_KEY;
+  if (db.is_assistant(task)) return db.ASSISTANT_TASK_KEY;
   return "T";
 }
 
@@ -180,6 +185,8 @@ export function key_prefix(task: Task, project: Project | null | undefined): str
 export function start_prompt(task: Task, project: Project | null | undefined, text: string): string {
   const key = key_prefix(task, project);
   text = text.trim();
+  // The assistant is a conversation, not a task to start on: its first prompt is the user's message.
+  if (db.is_assistant(task)) return text;
   let p = "";
   if (is_slash_command(text)) p += `${text}\n\n`;
   p += `# ${key}-${task.number}: ${task.title}\n`;
@@ -225,13 +232,24 @@ export function profiles_note(profiles: Profile[], own: Profile): string {
   return s;
 }
 
-/** How an agent asks the user for input, then how it finishes: with a summary of `done`. */
+/**
+ * How an agent asks the user for input, then how it finishes: with a summary of `done`. The last paragraph is the
+ * wording that made agents ask most often when they should, and least when they shouldn't, of those tried on the ends
+ * of real turns (HA-198, see scripts/ask-eval): without it they left their questions in their summaries, and the tasks
+ * went to "In review" as if they were finished.
+ */
 function ask_and_finish(done: string): string {
   return (
     "If you are blocked or need a decision or information from the user, call `request_user_input` with your question " +
     '(and its `options`, when the choices are known), then end your turn. The task is flagged "Needs attention", and ' +
     "the user's reply resumes this conversation.\n\n" +
-    `When you finish, end with a concise summary of ${done}; the task then moves to "In review".`
+    `When you finish, end with a concise summary of ${done}; the task then moves to "In review".\n\n` +
+    "You must call `request_user_input` before you end a turn whose last message needs something from the user before the " +
+    "task can go on: a question or choice for them, a plan or design to approve, whether to go ahead with a step (a merge, " +
+    "a deletion, a release), or something only they can do or give you (a credential, a setting, a command run as them). " +
+    "This holds wherever it is in the message, even in the middle of a report of what you did. The one exception is an offer " +
+    'of something extra once everything the user asked for is done ("I can also…", "want me to add…?"), which they can ' +
+    "take up or ignore: leave that in the summary."
   );
 }
 
@@ -267,7 +285,26 @@ export function system_prompt(
     "- While they work, wait for them with `wait` (listing them in `tasks`) rather than ending your turn.\n" +
     "- Run tasks that build on each other one after the other, and independent ones in parallel.";
   let s: string;
-  if (task.kind === "task" && db.is_scratch(task)) {
+  if (task.kind === "task" && db.is_assistant(task)) {
+    const dir = task.work_dir ?? "its own folder";
+    s =
+      "You are the personal assistant of this Huntaway profile: one long-lasting conversation with the user, " +
+      `thread A-${task.number} (id ${task.id}) on the Huntaway board, which is a kanban board where each task is worked by its own ` +
+      "Claude agent, grouped into projects. You aren't a coding agent and you aren't in a project or a repository: " +
+      "you help the user with whatever they ask, such as answering questions, looking things up, keeping track " +
+      "of things, and planning and following their work across the board.\n\n" +
+      `Your working directory is your own workspace folder (${dir} in the board's data dir), which lasts ` +
+      "between conversations. Keep notes there that you'll want later.\n\n" +
+      "You can use the skills and MCP servers set up for this profile (beyond any project), and the board's tools.\n\n" +
+      `${tools}\n\n` +
+      "Hand code work to project tasks rather than doing it yourself: find the project with `list_projects`, " +
+      "then `create_task` there (with start=true to start its agent, when the user wants that), and follow it " +
+      "with `get_task` or `wait`. Don't change repositories, commit, push or open pull requests yourself. Tasks " +
+      "you create are recorded as yours.\n\n" +
+      "If you need a decision or information from the user before you can go on, call `request_user_input` " +
+      "with your question (and its `options`, when the choices are known), then end your turn. Otherwise just " +
+      "reply: this thread stays open and never goes to review or merge, so don't move it to another status.";
+  } else if (task.kind === "task" && db.is_scratch(task)) {
     // One from a scratch chat works in the chat's folder, which may be shared.
     const dir =
       task.work_dir != null
@@ -309,12 +346,17 @@ export function system_prompt(
     const key = p?.key ?? "T";
     const [number, title] = parent ? [parent.number, parent.title] : [0, "?"];
     const is_summary = summary.is_summary(task);
-    const role = is_summary ? "You summarise the changes made" : "You are the code reviewer";
+    const workflow = workflows.is_workflow(task);
+    const role = workflow ? "You run a step of a workflow" : is_summary ? "You summarise the changes made" : "You are the code reviewer";
     s = `${role} for task ${key}-${number} ("${title}") on the Huntaway board, a kanban board where each task is worked by its own Claude agent.`;
     if (parent && parent.worktree_state === "ready") {
       s += ` Your working directory is that task's git worktree at ${parent.worktree_path ?? "?"}${parent.branch != null ? ` on branch \`${parent.branch}\`` : ""}.`;
     }
-    s += is_summary
+    s += workflow
+      ? "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
+        "board. Don't call `request_user_input`. Each message says what the step is to do and how to report: call " +
+        "`submit_review` only when it asks for a verdict."
+      : is_summary
       ? "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
         "board. Don't call `request_user_input` or `submit_review`. Your last message is the summary of the changes " +
         "the user reads before merging them."

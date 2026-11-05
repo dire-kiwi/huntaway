@@ -1,27 +1,29 @@
 // HA-182: the server's promises are awaited or handled. One that rejects with nothing to handle it is logged rather than
 // ending the server (see src/crash.ts), but whatever it was doing stops there, so each one is handled where it's made:
 // awaited, `.catch`ed, or run with util.ts's `background`, which logs what it throws. There's no ESLint here, so this is
-// typescript-eslint's no-floating-promises and no-misused-promises (the void-return case), with the TypeScript compiler.
+// typescript-eslint's no-floating-promises and no-misused-promises (the void-return case), with tsrs's checker API (its
+// `tsrs/sync`, the TypeScript 7 API, which runs the checker in a tsrs process and asks it over a pipe).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, relative } from "node:path";
-import ts from "typescript";
+import * as ts from "tsrs/ast";
+import { API, TypeFlags, type Type } from "tsrs/sync";
 
 const ROOT = dirname(fileURLToPath(new URL("../tsconfig.json", import.meta.url)));
 
 /** Where in the server's own sources (not its tests) a promise is left unhandled, as `file:line what`. */
 export function floating_promises(root = ROOT): string[] {
-  const cfg = ts.getParsedCommandLineOfConfigFile(`${root}/tsconfig.json`, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} })!;
+  using api = new API({ cwd: root });
+  const cfg = api.parseConfigFile(`${root}/tsconfig.json`);
   const files = cfg.fileNames.filter((f) => f.startsWith(`${root}/src/`) && !f.endsWith(".test.ts"));
-  const program = ts.createProgram(files, cfg.options);
-  const tc = program.getTypeChecker();
-  const is_promise = (t: ts.Type): boolean => {
+  const program = api.createProgram(files, cfg.options);
+  const tc = program.getProject().checker;
+  const is_promise = (t: Type): boolean => {
     t = tc.getNonNullableType(t);
-    if (t.isUnion()) return t.types.some(is_promise);
+    if (t.isUnionType()) return t.getTypes().some(is_promise);
     const then = t.getProperty("then");
-    const decl = then?.valueDeclaration ?? then?.declarations?.[0];
-    return !!then && !!decl && tc.getTypeOfSymbolAtLocation(then, decl).getCallSignatures().length > 0;
+    return !!then && (!!then.valueDeclaration || then.declarations.length > 0) && tc.getTypeOfSymbol(then).getCallSignatures().length > 0;
   };
   /** `p.catch(…)` or `p.then(…, …)`: what `p` rejects with is handled. */
   const handled_call = (e: ts.Expression): boolean => {
@@ -33,14 +35,14 @@ export function floating_promises(root = ROOT): string[] {
   /** A function whose body is one handled call (`() => p.catch(…)`), so calling it leaves nothing to handle. */
   const handled_fn = (n: ts.Node): boolean => {
     if (ts.isIdentifier(n)) {
-      const d = tc.getSymbolAtLocation(n)?.valueDeclaration;
+      const d = tc.getSymbolAtLocation(n)?.valueDeclaration?.resolve();
       return !!d && ts.isVariableDeclaration(d) && !!d.initializer && handled_fn(d.initializer);
     }
     return (ts.isArrowFunction(n) && !ts.isBlock(n.body) && handled_call(n.body)) || (ts.isParenthesizedExpression(n) && handled_fn(n.expression));
   };
   const found: string[] = [];
-  for (const sf of program.getSourceFiles()) {
-    if (!files.includes(sf.fileName)) continue;
+  for (const file of files) {
+    const sf = program.getSourceFile(file)!;
     const at = (n: ts.Node) => `${relative(root, sf.fileName)}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
     const visit = (n: ts.Node) => {
       // A promise made and dropped (`void p` too: it says the result doesn't matter, but a rejection still does).
@@ -62,11 +64,11 @@ export function floating_promises(root = ROOT): string[] {
         if (own.length && own.every((sig) => is_promise(tc.getReturnTypeOfSignature(sig)))) {
           const ctx = tc.getContextualType(n as ts.Expression);
           const want = ctx ? tc.getNonNullableType(ctx).getCallSignatures().map((sig) => tc.getReturnTypeOfSignature(sig)) : [];
-          if (want.length && want.every((t) => !!(t.flags & ts.TypeFlags.Void)))
+          if (want.length && want.every((t) => !!(t.flags & TypeFlags.Void)))
             found.push(`${at(n)} async function where its promise is dropped: ${(as_arg ? (parent as ts.CallExpression).expression : parent!).getText().split("\n")[0].slice(0, 80)}`);
         }
       }
-      ts.forEachChild(n, visit);
+      n.forEachChild(visit);
     };
     visit(sf);
   }

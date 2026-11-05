@@ -169,6 +169,12 @@ export async function roll_back_release(s: AppState) {
   return { ok: true };
 }
 
+/** Copy the older builds' database into this build's again, as a restart job (API 108; see db/file.ts). */
+export async function recopy_database(s: AppState) {
+  admin.recopy_database(s);
+  return { ok: true };
+}
+
 /** A hub asking this host to update to its commit, or a release install to its version. */
 export async function update_from_hub(s: AppState, r: Req) {
   const b = json_map(r);

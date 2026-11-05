@@ -12,6 +12,8 @@ server-ts/     the server, in TypeScript on Node 24+ (node:sqlite): API, events,
 server/shim/   ia-shim (Rust): tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker (Rust): public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
+packages/client/ the board's API client, plain TypeScript with no DOM, shared by app/ (which links it, file:) and the
+               mobile app: createClient() makes a client for one board, from an adapter for its address and token
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
                fake-claude: stub `claude` for test servers (test-server.sh --fake-claude)
@@ -222,6 +224,21 @@ marks it done. Scratch tasks replace the scratch chats of earlier versions:
 those became done scratch tasks (in no project, whichever project they were in) that keep
 working in their old folder, so their conversations carry on.
 
+Each profile has an **assistant** (API 109): one long-lived conversation outside every project,
+opened with **Assistant** in the sidebar (above *Projects*), full width at `/assistant/<profile>`.
+It's made the first time it's opened (`GET /api/profiles/<id>/assistant`; `POST` with
+`{"text": …}` sends it a message), keyed `A-<n>` (no project can use the key `A`; one that had it
+moves to `AP`), and its agent works in `<data dir>/assistants/<task id>`, which it can write without
+asking and which lasts between conversations. It's told it's a personal assistant rather than a
+coding agent: it has the global skills and MCP servers its profile switches on (its skills are written
+to `<data dir>/profiles/<profile id>/agent`), on Claude Code and Codex alike, and the board tools, and
+hands code work to project tasks with `create_task`. Your messages go to it as they are, with no
+"start working on this task" around the first. It never goes to review or
+merge: after each reply it's back in *To do*, and it can't be moved to *In review*, *Ready for
+merge*, *Done* or *Backlog*. It's off the boards, and out of `list_tasks` and the profile's task
+lists unless they're asked for it (`include_assistant`). Other profiles' agents can't reach it,
+whatever access their profile has.
+
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
 servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
 `/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
@@ -249,6 +266,8 @@ servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server
 | `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
 | `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
 | `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
+| `IA_NEW_DB_FILE` | off | `1` keeps the board in `huntaway-2.db`, copied from `huntaway.db` on the first start (see *The database file*). For tests until the release that needs it turns it on |
+| `--recopy-db` / `IA_RECOPY_DB` | off | With `IA_NEW_DB_FILE`: copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see *The database file*). Only for the start it's given to: a restart, Update or Roll back from the board leaves it out |
 | `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
 
 ### Agents survive restarts
@@ -279,6 +298,39 @@ up new code.
 One caveat under `systemd`: by default a service restart kills its whole process group,
 shims (and the tmux server behind terminals) included. Use `KillMode=process` (or run the shims in their own scope) to keep agents
 alive across service restarts.
+
+### The database file
+
+The board's database is `<data dir>/huntaway.db` (or `issue-agent.db`, from before the rename to
+Huntaway). A release whose database an older build can't read correctly once it has migrated it (the
+one that moves task threads onto items, HA-222) will keep the board in a file of its own,
+`huntaway-2.db`, so that going back to an older build is safe. Until then that's off, and only
+`IA_NEW_DB_FILE=1` turns it on, for tests (`IA_NEW_DB_FILE=1 scripts/test-server.sh`, whose restarts
+keep it). With it on:
+
+- The first time the server starts on a data dir, it copies the older file into `huntaway-2.db` (with
+  what's still in its write-ahead log, as `VACUUM INTO` to `huntaway-2.db.partial`, then a rename),
+  migrates the copy, and uses that from then on. That's before it serves anything, so the first start
+  takes longer on a big board (a few seconds for a gigabyte). It only reads the older file, which stays as
+  it was: a start that stops part-way leaves it in use and copies it again next time. A fresh data dir
+  gets only `huntaway-2.db`.
+- **Going back** to an older build (Roll back, an older package or a checkout from before) opens the
+  older file as it was at the switch. What was done in between is only in `huntaway-2.db`. Agents that
+  were running at the switch carry on, as over any restart.
+- **Coming forward again** after an older build has run for a while: `huntaway-2.db` hasn't got what
+  the older build did. The server notices that the older file has changed since it was copied (its size
+  or modification time, or its log's), logs a warning and shows it in Settings → Server (and a linked
+  host's page). **Copy again** there (or starting it with `--recopy-db`) copies the older file again,
+  discarding what's been done in `huntaway-2.db` since; that's kept in `huntaway-2.db.replaced` until
+  the next copy. Nothing is copied again without asking. A copy that fails (the older file isn't a
+  database, or the disk is full) is logged, and the server carries on with `huntaway-2.db` as it was.
+- **Backups** around updates (see *Release builds*) are of `huntaway-2.db` once it's there. The first
+  start needs none, since the older file isn't written: it is the backup.
+- Each machine copies its own: linked hosts and a hub each have their own data dir.
+- The copy takes as much disk space again as the older file, which isn't removed: delete `huntaway.db`
+  (with its `-wal` and `-shm`) once you won't go back to an older build.
+- `scripts/copy-live-board.sh` copies the file the live server has open (after a Roll back, both files
+  are there and the older one is in use).
 
 ### Restarting after a merge
 
@@ -399,8 +451,12 @@ the board's current UI.
 ```json
 { "port": 7878, "dataDir": "~/.local/share/huntaway", "host": "127.0.0.1",
   "serverBin": "/path/to/huntaway",
-  "serverUrl": "http://other-machine:7878", "token": "…" }
+  "serverUrl": "http://other-machine:7878", "token": "…",
+  "skipDbBackup": false }
 ```
+
+`skipDbBackup` starts the server without the database backup it makes when its version changes, when
+that backup can't be made (see *Release builds*).
 
 Setting `serverUrl` makes the desktop app a client of a remote server instead of starting one.
 An `http:` one counts as a secure page in the app, so it can show notifications.
@@ -462,13 +518,26 @@ can return to a Rust release, which the backup below makes safe. Checkouts run t
 
 Whichever server starts on a data dir that another version last ran on (`<data dir>/server_version`;
 the Rust server doesn't write it) first copies the database to
-`<data dir>/backups/huntaway-<from>-to-<to>-<time>.db`, before opening and migrating it, and the
-TypeScript server makes one before Update or Roll back restarts it onto another release too. The
-newest five are kept. Without a backup nothing goes ahead: an Update or Roll back that can't make one
-fails and leaves the running server as it is, and a server that can't make one at startup doesn't
-start, so the update onto it is never settled and the version before it starts again (it's marked
-bad). `IA_SKIP_DB_BACKUP=1` goes ahead without a backup. To go back to one: stop the server, move `huntaway.db` (with any
-`huntaway.db-wal` and `huntaway.db-shm`) aside, and copy the backup to `huntaway.db`.
+`<data dir>/backups/huntaway-<from>-to-<to>-<time>.db`, before opening and migrating it, unless both
+are TypeScript releases (0.4.0 on) and the database's schema is already the new one's, so that opening
+it changes nothing the version before can't read. Before a Roll back to a Rust release (or to a server
+of unknown version), the server makes the copy itself, as that one won't, and records that version in
+`server_version`, so the TypeScript server that starts after it backs up again, even if it's the same
+version as before; an Update or Roll back onto a TypeScript release only checks there's room for the
+copy that one makes. Once the server is up, it gzips the copy (`.db.gz`, about a quarter of the size),
+and keeps the newest two, and the newest from before a major change (another major version, or minor
+before 1.0, or from the Rust server). Settings → Disk shows what they take up.
+
+Without a backup nothing goes ahead: an Update or Roll back that can't make one (or for which the disk
+hasn't room) fails and leaves the running server as it is, and a server that can't make one at startup
+doesn't start, so the update onto it is never settled and the version before it starts again (it's
+marked bad). The error says why (a full disk, or no permission to write to `backups/`).
+`IA_SKIP_DB_BACKUP=1` goes ahead without a backup; in the desktop app, the error page's **Start without
+a backup** does that once, and `"skipDbBackup": true` in `desktop.json` always. To go back to a
+backup: stop the server, move `huntaway.db` (with any `huntaway.db-wal` and `huntaway.db-shm`) aside,
+and `gunzip -c` the backup to `huntaway.db` (or copy it there, if it isn't gzipped yet). A server that
+keeps the board in `huntaway-2.db` (see *The database file*) backs that up instead, so its backups go
+back to `huntaway-2.db`.
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started
@@ -1418,6 +1487,15 @@ skipped. Auto-compacting idle sessions is Claude-only.
   deletes another's (a test server's, say). Nothing is deleted unless that folder is a real
   folder (not a link) of the server's user that no one else can write to, and only folders in it
   named after a task are. Files written straight to `/tmp` by name don't go with it.
+  Before a task's folder or worktree goes, what its agents left running there is stopped (TS
+  server, `server-ts/src/agent/leftovers.ts`): test servers whose `--data-dir` is in the folder,
+  or that run the worktree's build or were started in it (unless their data is in another task's
+  folder), the ia-shim runs in their data dirs, the folder or by the worktree's ia-shim, the
+  agents under those shims, and what the servers started. The sweep also stops those whose task
+  is done or deleted and whose folder went already. They're found from `/proc` (`ps` and `lsof`
+  on macOS) by their command line, executable and working directory, and stopped by pid (TERM,
+  then KILL after 5 seconds if it's still the same process); never the board itself, a server on
+  its data dir, or a shim of the board's own runs.
 - **Notifications**: Settings → Notifications picks how the browser tells you about tasks on
   every board it shows (other profiles' and other hosts' too): *Off* (the default),
   *Notifications* (the system's), *Sound* (a chime) or *Both*, and for which events: a task that

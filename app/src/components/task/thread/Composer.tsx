@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { ArrowUp, Clock, Loader2, MessageSquare, Square, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, dependencyQueued, limitQueued, hostSupports, runningAgentSteers, stopTitle, type RewindResult, type Task } from "../../../api";
+import { api, dependencyQueued, isAssistant, limitQueued, hostSupports, runningAgentSteers, stopTitle, type RewindResult, type Task } from "../../../api";
 import { useHost } from "../../../store";
 import { splitAttachments, withAttachments, type AttachmentRef } from "../../../attachments";
 import { lineRange, removeComments, reviewMessage, useReview, withComments, type LineComment } from "../../changes/lineComments";
@@ -259,7 +259,8 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
     }
   };
 
-  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running;
+  // The assistant has nothing to start on but the user's message.
+  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running && !isAssistant(task);
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">

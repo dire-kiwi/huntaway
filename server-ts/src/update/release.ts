@@ -683,10 +683,12 @@ async function restart_onto(st: AppState, v: string) {
   const dir = staging.version_dir(app, v);
   if (dir === null) throw new Error("not a version");
   const exe = join(dir, "huntaway");
-  // Before anything changes: without a backup, the Update fails and this server carries on.
+  // Before anything changes: without a backup (or, for a TypeScript release, room for the one it makes when it starts),
+  // the Update fails and this server carries on.
   await backup.before_switch(st.data_dir, st.db(), VERSION, v);
   const old = staging.change(st, (s) => (s.trying = v));
   const err = await admin.restart_into(st, exe, bundled_env(st));
+  backup.record_version(st.data_dir, VERSION);
   staging.change(st, (s) => {
     if (s.trying === v) s.trying = old.trying;
   });
@@ -751,9 +753,12 @@ export function rollback(state: AppState) {
     const [exe, previous] = target;
     admin.log_line(st, `Rolling back from ${current} to ${previous ?? "the app's own server"}`);
     // Before anything changes: without a backup, the Roll back fails and this server carries on.
-    await backup.before_switch(st.data_dir, st.db(), VERSION, previous ?? "bundled");
+    // The app's own server is the app's version (unknown for one an Update passed on as IA_BUNDLED_SERVER).
+    await backup.before_switch(st.data_dir, st.db(), VERSION, previous ?? (st.meta.release?.desktop_version?.trim().replace(/^v+/, "") || null));
     const old = staging.change(st, (s) => rolled_back(s, current, previous));
     const err = await admin.restart_into(st, exe, []);
+    // It's still this server that runs (before_switch may have recorded the one it was switching to).
+    backup.record_version(st.data_dir, VERSION);
     // Only what the rollback changed is put back: a download may have staged a version meanwhile.
     staging.change(st, (s) => not_rolled_back(s, old, current, previous));
     throw err;
