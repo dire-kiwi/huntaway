@@ -80,7 +80,8 @@ Keep test servers fully separate from it:
     a fresh `cargo build` is picked up), flags and environment. Agent runs carry on, as they do
     over a real restart. A **Restart** from the test server's board binds a new port instead.
   - `scripts/test-server.sh stop` kills the server and its agent runs by PID and removes the data
-    dir. Without a data dir, `restart` and `stop` use `$IA_TEST_DATA_DIR`, then the latest
+    dir. Servers you leave running are stopped with their agents once the task is done (or its
+    worktree removed), but stop them when you're finished with them. Without a data dir, `restart` and `stop` use `$IA_TEST_DATA_DIR`, then the latest
     server started from this worktree (`.ia-test-env` links to its env file).
 - Use `scripts/ia-api` for the API rather than curl and python. It finds the server from
   `$IA_TEST_ENV` (or `--env <file>`, or `.ia-test-env`), prints JSON, exits 1 with the error on
