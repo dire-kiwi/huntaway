@@ -176,7 +176,9 @@ function FileEditor({
   onSaved: () => void;
 }) {
   const key = draftKey(task, path);
-  const [base, setBase] = useState<string | null>();
+  // A draft's base too, from the first render: until the effect below sets it, a Ctrl+S on the file just opened again would
+  // find no base and save nothing (HA-240).
+  const [base, setBase] = useState<string | null | undefined>(() => drafts.get(key)?.base);
   const [content, setContent] = useState(() => drafts.get(key)?.content ?? "");
   const [error, setError] = useState<string>();
   // Whether it's being saved, or a save was refused (see `saving`), re-read when the file's editors are told.
