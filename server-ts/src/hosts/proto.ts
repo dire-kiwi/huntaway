@@ -12,8 +12,11 @@ export const PROTOCOL = 1;
  * triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, `report` messages, and push's
  * `replies` and `reports` events.
  * API 111: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
+ * API 112: Google and the morning brief: `/profiles/{id}/assistant/google` (the Google card, and adding the Google server),
+ * `/profiles/{id}/assistant/brief` (the routine template) and `/brief/feedback` (ratings into MEMORY.md), the assistant's
+ * `brief` document (with its `items`), and `{{google}}` in routines. (Push's `reports` event came with routines, API 110.)
  */
-export const API_VERSION = 111;
+export const API_VERSION = 112;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

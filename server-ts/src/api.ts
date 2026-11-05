@@ -15,6 +15,8 @@ import * as projects from "./api/projects.ts";
 import * as tasks from "./api/tasks.ts";
 import * as thread from "./api/thread.ts";
 import * as memory from "./agent/assistant/memory.ts";
+import * as google from "./agent/assistant/google.ts";
+import * as brief from "./agent/assistant/brief.ts";
 import * as agent_tools from "./agent/agent_tools.ts";
 import * as prompts from "./agent/prompts.ts";
 import * as usage from "./agent/usage.ts";
@@ -92,6 +94,9 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/assistant/memory/diff", { GET: memory.diff });
   r.route("/profiles/{id}/assistant/memory/restore", { POST: memory.restore });
   r.route("/profiles/{id}/assistant/memory/import", { POST: memory.import_ });
+  r.route("/profiles/{id}/assistant/google", { GET: google.get, POST: google.setup });
+  r.route("/profiles/{id}/assistant/brief", { POST: brief.create });
+  r.route("/profiles/{id}/assistant/brief/feedback", { POST: brief.feedback });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });

@@ -44,6 +44,7 @@ import { run_cmd } from "../../proc.ts";
 import * as automations from "../../integrations/automations.ts";
 import { json_map, req_str, opt_str, def_bool, query_rejection } from "../../api/extract.ts";
 import { get_or_create, send, work_dir } from "../assistant.ts";
+import * as brief from "./brief.ts";
 
 export const USER_FILE = "USER.md";
 export const MEMORY_FILE = "MEMORY.md";
@@ -463,6 +464,8 @@ async function stage(dir: string, who: Who): Promise<void> {
   const listed = await git_ok(dir, who, ["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard"]);
   // Not a repository in the workspace (`--others` gives it as `clone/`), which `add` would make a gitlink.
   let paths = [...new Set(listed.split("\0").filter((p) => p !== "" && !p.endsWith("/")))].sort();
+  // The morning brief and its items (brief.ts) are written over each day and kept as the assistant's documents, one version a day.
+  paths = paths.filter((p) => p !== brief.FILE && p !== brief.ITEMS_FILE);
   // A name that isn't UTF-8 (which reads back as another, with U+FFFD in it) would fail the whole `add`.
   const big = paths.filter((p) => p.includes("�") || too_big(dir, p));
   paths = paths.filter((p) => !big.includes(p));
@@ -799,6 +802,8 @@ export function list(dir: string, today: NaiveDate): any[] {
       const rel = prefix ? `${prefix}/${name}` : name;
       walked++;
       if (walked > MAX_WALKED && kind(rel) !== "user" && kind(rel) !== "memory") continue;
+      // The morning brief is the assistant's document (its Brief tab), not memory.
+      if (prefix === "" && (name === brief.FILE || name === brief.ITEMS_FILE)) continue;
       const meta = lstat(join(d, name));
       if (!meta) continue;
       if (meta.isDirectory()) {
@@ -826,6 +831,18 @@ export function list(dir: string, today: NaiveDate): any[] {
 }
 
 // ---------- the API ----------
+
+/**
+ * A profile whose assistant runs on another host (its `assistant_host`) keeps its memory there: asked here, it's a 409
+ * rather than a second assistant made on this host. (The board asks the assistant's host, by its task's host and profile.)
+ */
+export function elsewhere(s: Shared, profile_id: string): void {
+  const p = db.get_profile(s.db(), profile_id);
+  if (!p) throw ApiError.not_found("profile");
+  // (`assistant_host` is HA-204's, API 111: a profile from before it has none.)
+  const h: unknown = (p as any).assistant_host;
+  if (typeof h === "string" && h !== "" && h !== s.host_id) throw ApiError.conflict(`${p.name}'s assistant runs on another host (${h}): its memory is there`);
+}
 
 /** The profile's assistant and its workspace, made ready. */
 export async function open(s: Shared, profile_id: string): Promise<[Task, string]> {
@@ -930,6 +947,22 @@ async function put(dir: string, path: string, rel: string, content: string, seen
     }
     write_file(dir, path, rel, content);
     return commit_file_locked(dir, "User", rel, message);
+  });
+}
+
+/**
+ * Change file `rel` (at `path`) with `edit`, given what it says now ("" if it isn't there), and commit it as the user's,
+ * with the workspace's lock held from the read to the commit, so nothing written meanwhile through the board is lost. As
+ * in `put`, what it says now is committed first, as the assistant's, if that isn't. Returns what it says, and the commit.
+ */
+export async function change(dir: string, path: string, rel: string, message: string, edit: (now: string) => string): Promise<[string, string | null]> {
+  return locked(dir, async () => {
+    const now = lstat(path) ? read_text(path, rel) : null;
+    if (now != null) await commit_file_locked(dir, "Assistant", rel, `Update ${rel}`);
+    const content = edit(now ?? "");
+    write_file(dir, path, rel, content);
+    const commit = await commit_file_locked(dir, "User", rel, message);
+    return [content, commit];
   });
 }
 
