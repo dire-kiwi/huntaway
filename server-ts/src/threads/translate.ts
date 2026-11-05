@@ -27,8 +27,12 @@ import type {
   Item, NewEvent, PermissionMode, PermissionRequest, Question, QuestionRequest, Resolution, Snapshot, SubagentState, SubagentStatus, ThreadRequest, ToolCall, ToolKind, ToolStatus,
 } from "./protocol.ts";
 
-/** Changes when what the translator makes of the same messages does: threads built by it record it. */
-export const CONVERTER_VERSION = 1;
+/**
+ * Changes when what the translator makes of the same messages does: threads built by it record it (`threads.converter`),
+ * and `huntaway threads-rebuild` brings them up to date. 2: a merge-gate card settled as `replaced` is a cancel with a
+ * message, without a warning; a prompt that's pending again reopens its request.
+ */
+export const CONVERTER_VERSION = 2;
 
 /** How Claude Code's result for a call that was stopped starts. */
 const REJECTED = "The user doesn't want to proceed with this tool use.";
@@ -379,7 +383,7 @@ export class Translator {
     this.step.meta.set(id, next);
   }
 
-  /** Opens `request`, or replaces the one with its id in place (keeping its resolution if it isn't given one). */
+  /** Opens `request`, or replaces the one with its id in place (with `request`'s resolution, so none reopens it). */
   private open(request: ThreadRequest): void {
     this.requests.set(request.id, request);
     this.touch(request.id);
@@ -482,6 +486,9 @@ export class Translator {
         return with_note("deny");
       case "expired":
         return { outcome: "cancel", message: "Expired: its run ended before it was answered" };
+      case "replaced":
+        // A merge-gate card (review/merge_gate.ts's settle).
+        return { outcome: "cancel", message: "No longer asked: its merge was left, or a newer question replaced it" };
       case "pending":
         return undefined;
       default:
@@ -493,12 +500,19 @@ export class Translator {
   /**
    * Opens `request` with `resolution`, or for a message seen before (its status changed since), resolves the request it
    * made with what its status says now: a question or plan whose run ended (expired, so cancelled) can still be answered
-   * late (mcp/permissions.ts's `answer`), and the stored status is the truth. Redundant if that changes nothing.
+   * late (mcp/permissions.ts's `answer`), and the stored status is the truth. One that's waiting again (a question whose
+   * answer couldn't be sent is answerable again, see mcp/questions.ts) is opened again, with no resolution, as a rebuild
+   * from the message would have it. Redundant if that changes nothing.
    */
   private request(request: ThreadRequest, resolution: Resolution | undefined): Disposition {
     const was = this.requests.get(request.id);
     if (was) {
-      if (!resolution || same_json(was.resolution, resolution)) return "redundant";
+      if (!resolution) {
+        if (!was.resolution) return "redundant";
+        this.open(request);
+        return "converted";
+      }
+      if (same_json(was.resolution, resolution)) return "redundant";
       this.resolve(request.id, resolution);
       return "converted";
     }

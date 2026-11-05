@@ -21,6 +21,7 @@ import * as automations from "../../integrations/automations.ts";
 import * as push from "../../integrations/push.ts";
 import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
+import * as threads from "../../threads/write.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
 import * as plan from "./plan.ts";
@@ -205,9 +206,11 @@ export function handle_line(state: Shared, run: Run, line: string) {
     if (v.parent_tool_use_id != null) return;
     const ev = v.event;
     if (ev?.type === "content_block_delta" && ev?.delta?.type === "text_delta") {
-      if (typeof ev.delta.text === "string") state.emit({ type: "delta", task_id, text: ev.delta.text });
-    } else if (ev?.type === "message_start") {
-      state.emit({ type: "delta_reset", task_id });
+      if (typeof ev.delta.text === "string") state.emit_delta(task_id, ev.delta.text);
+    } else if (ev?.type === "message_start" || ev?.type === "content_block_start") {
+      // Each text block is a message (an item) of its own when it's saved.
+      if (ev.type === "message_start") state.emit_delta_reset(task_id);
+      else threads.stream_reset(state, task_id);
     }
   } else if (type === "assistant" || type === "user") {
     // Claude Code's message for a turn refused for the usage limit says when it resets.
@@ -392,7 +395,7 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   // What a stopped or failed run had written of its document.
   documents.turn_ended(state, task_id);
   memory.turn_ended(state, task_id);
-  state.emit({ type: "delta_reset", task_id });
+  state.emit_delta_reset(task_id);
   let task: Task | null = null;
   try {
     task = db.get_task(state.db(), task_id);

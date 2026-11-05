@@ -107,8 +107,8 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
   if (picked > 1 && asked.multi_select !== true) throw ApiError.bad("this question takes one answer");
   const answered = { ...asked, status: "answered", answer: { choices, text } };
   // In one statement, so of two answers at once only one is sent.
-  const taken = db.run(s.db(), "UPDATE messages SET data=?1 WHERE id=?2 AND json_extract(data, '$.status')='pending'", JSON.stringify(answered), message_id).changes;
-  if (taken === 0) throw ApiError.conflict("this question has been answered already");
+  const taken = db.update_pending_message(s.db(), message_id, answered);
+  if (!taken) throw ApiError.conflict("this question has been answered already");
   // The board's own question, whether to merge (see review/merge_gate.rs): the answer is the board's to act on.
   const merge_approval = asked.merge_approval === true;
   let task: Task;
@@ -117,16 +117,18 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
       ? merge_gate.decide(s, task_id, choices.includes(merge_gate.APPROVE))
       : runner.send(s, task_id, reply_text(typeof asked.question === "string" ? asked.question : "", choices, text));
   } catch (e) {
-    // Answerable again.
+    // Answerable again (and its request in the thread kept as items, open again).
     try {
-      db.run(s.db(), "UPDATE messages SET data=?1 WHERE id=?2", data, message_id);
+      s.emit_thread_events(taken);
+      const back = db.update_message_data(s.db(), message_id, JSON.parse(data));
+      if (back) s.emit_message_updated(back);
     } catch {}
     throw e;
   }
   // The user's answer is a prompt to the agent: it puts the task in "now" like a message does (not the board's own
   // merge decision).
   if (!merge_approval) task = focus.put_in_now(s, task_id) ?? task;
-  emit(s, message_id);
+  emit(s, message_id, taken);
   // Any other question it was waiting on is settled by this reply.
   replied(s, task_id);
   return task;
@@ -166,15 +168,20 @@ export function replied(s: Shared, task_id: string): void {
     if (!v || typeof v !== "object" || Array.isArray(v)) v = {};
     v.status = "replied";
     // Unless it's been answered since.
-    let n = 0;
+    let m: db.Message | null = null;
     try {
-      n = db.run(s.db(), "UPDATE messages SET data=?1 WHERE id=?2 AND json_extract(data, '$.status')='pending'", JSON.stringify(v), id).changes;
+      m = db.update_pending_message(s.db(), id, v);
     } catch {}
-    if (n > 0) emit(s, id);
+    if (m) emit(s, id, m);
   }
 }
 
-export function emit(s: Shared, message_id: number): void {
+/**
+ * Tells clients message `message_id` changed: `message_updated` with it as it is now, and the thread events written
+ * when it was changed to `written` (the update's Message, see db.update_message_data).
+ */
+export function emit(s: Shared, message_id: number, written: db.Message): void {
+  s.emit_thread_events(written);
   let m: db.Message | undefined;
   try {
     const row = db.one(s.db(), "SELECT * FROM messages WHERE id=?1", message_id);

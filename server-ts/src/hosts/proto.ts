@@ -12,8 +12,10 @@ export const PROTOCOL = 1;
  * triggers, `active_hours`, `precheck` and `budget_usd`, runs' `outcome` and `cost_usd`, `report` messages, and push's
  * `replies` and `reports` events.
  * API 111: the assistant's memory (`/profiles/{id}/assistant/memory`: its files, their history, restore and import).
+ * API 112: the host setting `thread_items` (Keep threads as items: new tasks' threads are written as items too, see
+ * docs/threads.md), and `thread_event` events on `/api/ws` for those tasks.
  */
-export const API_VERSION = 111;
+export const API_VERSION = 112;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

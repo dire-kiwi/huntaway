@@ -700,6 +700,11 @@ export function open(path: string): Conn {
              PRAGMA user_version=91; COMMIT; PRAGMA foreign_keys=ON;`,
     );
   }
+  if (version < 92) {
+    // Threads kept as items, written live (threads/write.ts): which tasks have them, and each thread's own state.
+    const add = has_column(conn, "tasks", "thread_items") ? "" : "ALTER TABLE tasks ADD COLUMN thread_items INTEGER NOT NULL DEFAULT 0;";
+    batch(`BEGIN; ${add} ${SCHEMA_V92} PRAGMA user_version=92; COMMIT;`);
+  }
   return conn;
 }
 
@@ -710,7 +715,7 @@ function parent_dir(path: string): string {
 }
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 91;
+export const VERSION = 92;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what
@@ -1115,6 +1120,24 @@ CREATE TABLE IF NOT EXISTS thread_item_origins (
   PRIMARY KEY (task_id, item_id, message_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS thread_item_origins_message ON thread_item_origins(task_id, message_id);
+`;
+
+/**
+ * A thread kept as items (version 92), for a task whose `thread_items` is set (see threads/write.ts): `seq` is its last
+ * saved event's, kept when its events have been pruned (or a rebuild logged none); `converter` the translator's
+ * CONVERTER_VERSION that wrote its items; `writes` how many times its items have been written, which the server's
+ * translator in memory checks it's still in step with; `error` why live writes stopped, until a rebuild.
+ */
+const SCHEMA_V92 = `
+CREATE TABLE IF NOT EXISTS threads (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL DEFAULT 0,
+  converter INTEGER,
+  writes INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  rebuilt_at TEXT,
+  created_at TEXT NOT NULL
+);
 `;
 
 /**
