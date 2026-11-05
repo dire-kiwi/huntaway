@@ -957,6 +957,41 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
    there in the profiles whose assistant runs on it then act on your boards with that profile's access
    (see *Hosts* above); other profiles on that host stay out. The assistant's Details panel
    shows the host it runs on and whether it can use this board.
+6. **Google and Telegram** are set up on the assistant host only (see *Google for the assistant*
+   above, and [Telegram](#telegram) below).
+
+### Telegram
+
+You can talk to a profile's assistant from Telegram (API 116), and it can reach you there. Its bot
+runs on the host the assistant runs on, which long-polls Telegram for messages, so it needs no open
+port and keeps working while that host's link to the hub is down.
+
+1. **Make a bot**: message [@BotFather](https://t.me/BotFather) with `/newbot`, and copy the token it
+   gives you (`123456789:AAH…`).
+2. **Give it to the assistant**: open the assistant, and in its Details panel under **Telegram**,
+   paste the token and **Save token**. The host checks it with Telegram and keeps it in its settings;
+   the board never shows it again. One bot serves one profile's assistant, and one host reads it at
+   a time.
+3. **Link your chat**: **Link a chat…** shows a one-time code that lasts ten minutes. Send
+   `/start <code>` to the bot from a private chat with it (or tap **Open in Telegram**). That chat is
+   then the only one the bot listens to and writes to. Messages and button presses from anyone else
+   are dropped, logged and counted in the panel.
+
+What you send the bot (text, and photos, voice notes and files up to 10 MB, saved as attachments) goes
+to the assistant as your message, and its reply comes back, formatted for Telegram and split if it's
+long; replies to what you send there aren't pushed. Besides those, its prompts (with **Allow** and
+**Deny** buttons) and questions (answered by replying), word that it needs attention, its routines'
+reports and its replies to what you send from the board go by push (to the devices that chose them in
+Settings → Notifications) and, as you choose for each, Telegram too. A prompt answered from Telegram
+is answered as the board's buttons answer it (the approval rules and a routine's expiry hold the same,
+and the action log says *on Telegram*), and its message is edited to say how it ended, however it
+did. What can't be sent while Telegram is unreachable is kept and tried again, across restarts.
+Moving the assistant to another host removes its bot from the host it left (if that host is online):
+set it up again on the new one. Deleting the profile removes its bot.
+
+Tests and test servers talk to a fake Bot API instead: `IA_TELEGRAM_API=http://127.0.0.1:<port>` in the
+server's environment (`scripts/test-server.sh` keeps it over a `restart`, and `copy-live-board.sh`
+drops the live board's bots from its copy).
 
 ### Reaching a host from anywhere
 

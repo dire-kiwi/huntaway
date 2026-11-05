@@ -34,6 +34,7 @@ import * as automations from "./integrations/automations.ts";
 import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
 import * as push_answers from "./integrations/push_answers.ts";
+import * as telegram from "./integrations/telegram.ts";
 import * as hub from "./hosts/hub.ts";
 import * as admin from "./update/admin.ts";
 
@@ -103,6 +104,9 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/assistant/brief/feedback", { POST: brief.feedback });
   r.route("/profiles/{id}/approval-rules", { GET: thread.get_approval_rules, POST: thread.set_approval_rules });
   r.route("/profiles/{id}/approval-log", { GET: thread.approval_log });
+  r.route("/profiles/{id}/telegram", { GET: telegram.get, PATCH: telegram.update });
+  r.route("/profiles/{id}/telegram/link", { POST: telegram.new_link });
+  r.route("/profiles/{id}/telegram/owner", { DELETE: telegram.unlink });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });

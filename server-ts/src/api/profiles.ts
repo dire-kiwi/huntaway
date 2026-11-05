@@ -13,6 +13,7 @@ import * as asana from "../integrations/asana.ts";
 import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as review from "../review.ts";
 import * as assistant from "../agent/assistant.ts";
+import * as telegram from "../integrations/telegram.ts";
 import { char_count, def_bool, def_value, json_map, opt_str, opt_strings, opt_value, req_str } from "./extract.ts";
 import { ascii_lower } from "./new_task.ts";
 
@@ -141,6 +142,12 @@ export async function update_profile(s: AppState, r: Req) {
   }
   const p = db.update_profile(c, id, fields);
   if (!p) throw ApiError.not_found("profile");
+  // The assistant moved: its Telegram bot stops on the host it left.
+  const here = (h: string | null | undefined) => (h && h !== s.host_id ? h : null);
+  const left = here(current.assistant_host);
+  if (left !== here(p.assistant_host)) {
+    telegram.assistant_moved(s, current.name, id, left).catch((e) => console.warn(`telegram: ${err_str(e)}`));
+  }
   s.emit({ type: "profiles_changed" });
   return p;
 }

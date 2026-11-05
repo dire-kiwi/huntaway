@@ -12,6 +12,7 @@ import * as codex from "../agent/codex.ts";
 import { def_bool, def_str, json_map, opt_str, req_str } from "./extract.ts";
 import { delete_one } from "./tasks.ts";
 import { delete_project_inner, remove_unused_dir } from "./projects.ts";
+import * as telegram from "../integrations/telegram.ts";
 
 export async function list_claude_configs(s: AppState) {
   return db.list_claude_configs(s.db());
@@ -155,6 +156,7 @@ export async function delete_profile(s: AppState, r: Req) {
     await delete_one(s, t, false);
   }
   db.run(s.db(), "DELETE FROM profiles WHERE id=?1", id);
+  telegram.forget_profile(s, id);
   remove_unused_dir(s, join(s.data_dir, "profiles", id), "profile");
   s.emit({ type: "profiles_changed" });
   return { ok: true };
