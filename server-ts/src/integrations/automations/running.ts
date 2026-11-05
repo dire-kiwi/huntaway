@@ -321,7 +321,7 @@ export async function receive(s: Shared, a: Automation, delivery: Delivery, raw:
   }
   changed(s, a);
   if (raw) {
-    void spawn_action(s, a, run.id, source, delivery, 1);
+    background("an automation's run", spawn_action(s, a, run.id, source, delivery, 1));
     return run;
   }
   return (await run_action_detached(s, a, run.id, source, delivery, 1)) ?? run;
