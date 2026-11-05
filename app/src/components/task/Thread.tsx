@@ -71,7 +71,7 @@ function MessagesThread(props: ThreadProps) {
     }),
     [messages, pages?.more, pages?.loading, oldest, loadOlderMessages, task.id],
   );
-  return <ThreadView {...props} model={model} paging={paging} />;
+  return <ThreadView {...props} model={model} paging={paging} source="messages" />;
 }
 
 const NO_SNAPSHOT: Pick<Snapshot, "items" | "requests"> = { items: [], requests: [] };
@@ -111,12 +111,13 @@ function ItemsThread(props: ThreadProps) {
   );
   return (
     <PromptAnswers.Provider value={answerer}>
-      <ThreadView {...props} model={model} paging={paging} />
+      <ThreadView {...props} model={model} paging={paging} source="items" />
     </PromptAnswers.Provider>
   );
 }
 
-function ThreadView({ task, cwd, placeholder, empty, model, paging }: ThreadProps & { model: ThreadModel; paging: Paging }) {
+/** The thread, drawn from `model` (`source` says which way, in `data-thread`, for tests). */
+function ThreadView({ task, cwd, placeholder, empty, model, paging, source }: ThreadProps & { model: ThreadModel; paging: Paging; source: "items" | "messages" }) {
   const [olderFailed, setOlderFailed] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -144,9 +145,9 @@ function ThreadView({ task, cwd, placeholder, empty, model, paging }: ThreadProp
     [model, task.running, cwd, task.host_id, task.id, follow],
   );
   // Rows that redraw now read the new model as they do; the others are told once it's shown.
-  const [source] = useState(() => new ThreadSource(data));
-  source.data = data;
-  useLayoutEffect(() => source.publish(), [source, data]);
+  const [threadSource] = useState(() => new ThreadSource(data));
+  threadSource.data = data;
+  useLayoutEffect(() => threadSource.publish(), [threadSource, data]);
   // A subagent's own thread, shown in place of the main one (kept mounted, so it comes back as it was).
   const viewId = useSubagentView((s) => s.open[task.id]);
   const show = useSubagentView((s) => s.show);
@@ -226,8 +227,8 @@ function ThreadView({ task, cwd, placeholder, empty, model, paging }: ThreadProp
   }, [viewed, show, task.id]);
 
   return (
-    <ThreadCtx.Provider value={source}>
-      <div className="flex h-full min-h-0 flex-col">
+    <ThreadCtx.Provider value={threadSource}>
+      <div className="flex h-full min-h-0 flex-col" data-thread={paging.loaded ? source : undefined}>
         {viewed && <SubagentBar sub={viewed} />}
         <div
           ref={scroller}
