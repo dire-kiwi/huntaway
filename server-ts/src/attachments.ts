@@ -89,6 +89,15 @@ export async function upload(s: AppState, r: Req) {
   } catch {
     throw ApiError.bad("data must be base64");
   }
+  const [id, name, path] = await save(s, name_given, data);
+  return { id, name, path: path_str(path), size: data.length, mime: mime(name) };
+}
+
+/**
+ * Saves `data` as an attachment called `name` (made safe): its id, name and path, which a message lists after `HEADER`
+ * (see `listed`). Files from elsewhere (Telegram's, say) are saved this way too.
+ */
+export async function save(s: AppState, name_given: string, data: Uint8Array): Promise<[string, string, string]> {
   if (data.length > MAX_BYTES) throw ApiError.bad(`${name_given} is larger than ${MAX_BYTES >> 20} MB`);
   const id = randomUUID().replaceAll("-", "");
   const name = clean_name(name_given);
@@ -100,7 +109,14 @@ export async function upload(s: AppState, r: Req) {
   } catch (e) {
     throw ApiError.bad(`saving ${name}: ${err_str(e)}`);
   }
-  return { id, name, path: path_str(path), size: data.length, mime: mime(name) };
+  return [id, name, path];
+}
+
+/** `text` with the files at `paths` listed after it, as the UI sends them (app/src/attachments.ts). */
+export function listed(text: string, paths: string[]): string {
+  if (!paths.length) return text;
+  const list = `${HEADER}\n${paths.map((p) => `- ${path_str(p)}`).join("\n")}`;
+  return text.trim() === "" ? list : `${text.trimEnd()}\n\n${list}`;
 }
 
 /** `GET /attachments/{id}/{name}`: a saved file, base64. */

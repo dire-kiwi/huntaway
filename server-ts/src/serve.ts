@@ -33,6 +33,7 @@ import * as broker from "./hosts/broker.ts";
 import * as broker_proto from "./hosts/broker/proto.ts";
 import * as attachments from "./attachments.ts";
 import * as automations from "./integrations/automations.ts";
+import * as telegram from "./integrations/telegram.ts";
 import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
 import * as merged from "./review/merged.ts";
@@ -528,6 +529,7 @@ export async function serve(args: ServeArgs) {
   task_tmp.start_sweeper(state);
   permissions.start_sweeper(state);
   automations.start(state);
+  telegram.start(state);
   workflows.resume(state);
   merged.start(state);
   relocate.start_recording(state);

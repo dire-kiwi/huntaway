@@ -19,7 +19,6 @@ import * as worktree from "../../git/worktree.ts";
 import * as review from "../../review.ts";
 import * as workflows from "../../integrations/workflows.ts";
 import * as automations from "../../integrations/automations.ts";
-import * as push from "../../integrations/push.ts";
 import * as summary from "../../review/summary.ts";
 import * as merge_gate from "../../review/merge_gate.ts";
 import * as threads from "../../threads/write.ts";
@@ -351,7 +350,7 @@ function record_turn_end(state: Shared, run: Run, error: string | null, result: 
   }
   db.run(state.db(), "UPDATE runs SET saw_result=1, between_turns=1, result_error=?1 WHERE id=?2", error, run.id);
   const status = stopping === 1 ? "stopped" : error != null ? "failed" : "done";
-  // A compaction's end isn't a reply (see `announce_reply`), though it's recorded as a turn's.
+  // A compaction's end isn't a reply (see telegram.ts's `on_turn_end`), though it's recorded as a turn's.
   if (run.kind === "compact") result.compact = true;
   checkpoints.after_turn(state, run.id, status);
   // A turn that ended isn't waiting any more, even if the agent gave up on the call.
@@ -359,22 +358,7 @@ function record_turn_end(state: Shared, run: Run, error: string | null, result: 
   documents.turn_ended(state, run.task_id);
   memory.turn_ended(state, run.task_id);
   context.record_turn(state, run, typeof result.total_cost_usd === "number" ? result.total_cost_usd : null);
-  const m = state.add_message(run.task_id, "claude", result);
-  if (run.kind !== "compact") announce_reply(state, run.task_id, m.id);
-}
-
-/**
- * Tells the board (its push, push.REPLY_EVENT) that the assistant replied. On the HA-117 branch Telegram's `on_turn_end`
- * says so, with whether the reply answers a message sent on Telegram (which goes back there instead): until Telegram is
- * ported, every reply is the board's.
- */
-function announce_reply(state: Shared, task_id: string, message_id: number) {
-  let task: Task | null = null;
-  try {
-    task = db.get_task(state.db(), task_id);
-  } catch {}
-  if (!task || !db.is_assistant(task)) return;
-  state.emit({ type: push.REPLY_EVENT, task_id: task.id, profile_id: task.profile_id, message_id, telegram: false });
+  state.add_message(run.task_id, "claude", result);
 }
 
 /** Forget a run whose row is gone (its task was deleted while it ran). */

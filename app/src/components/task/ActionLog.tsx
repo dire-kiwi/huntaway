@@ -16,6 +16,7 @@ const OUTCOME_STYLE: Record<ApprovalAction["outcome"], string> = {
 const BY: Record<string, string> = {
   user: "you, on the board",
   push: "you, from a notification",
+  telegram: "you, on Telegram",
   mode: "Don't ask mode",
   rule: "a never rule",
 };
