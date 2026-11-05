@@ -25,11 +25,12 @@ spawn(process.execPath, ["-e", helper + " /* fake:" + tag + "-agent */"], { stdi
 setInterval(() => {}, 1e9);
 `;
 
-/** A fake server that, on TERM, starts another (`--late-exe`, with `--late-data` as its data dir) and exits half a second later. */
+/** A fake server that, on TERM, starts another (`--late-exe`, with data dir `--late-data` and tag `--late-name`) and exits half a second later. */
 const STARTS_ONE = `const { spawn } = require("node:child_process");
 const arg = (n) => process.argv[process.argv.indexOf(n) + 1];
 process.on("SIGTERM", () => {
-  spawn(process.execPath, [arg("--late-exe"), "serve", "--data-dir", arg("--late-data"), "--name", "late-b"], { stdio: "ignore", detached: true }).unref();
+  const args = [arg("--late-exe"), "serve", "--data-dir", arg("--late-data"), "--name", arg("--late-name")];
+  spawn(process.execPath, args, { stdio: "ignore", detached: true }).unref();
   setTimeout(() => process.exit(0), 500);
 });
 setInterval(() => {}, 1e9);
@@ -40,13 +41,20 @@ function write(path: string, text: string) {
   writeFileSync(path, text);
 }
 
-/** The fake processes running now, by their tags. */
+/**
+ * Tags are given to fakes with this prefix (`mark`), so another copy of these tests running at the same time (another
+ * task's `npm test`) neither sees this one's fakes nor has its own seen, or stopped, here (HA-235).
+ */
+const RUN = `${process.pid}.`;
+const mark = (tag: string) => RUN + tag;
+
+/** This run's fake processes running now, by their tags (without the prefix). */
 async function fakes(): Promise<Map<string, Proc>> {
   const out = new Map<string, Proc>();
   for (const p of (await list()) ?? []) {
     // An agent's command line has its helper's tag in it too, before its own.
     const tag = [...p.cmd.matchAll(/\/\* fake:(\S+) \*\//g)].pop()?.[1] ?? /--name (\S+)|-- agent (\S+)$/.exec(p.cmd)?.slice(1).find((t) => t);
-    if (tag && p.cmd.includes(process.execPath)) out.set(tag, p);
+    if (tag?.startsWith(RUN) && p.cmd.includes(process.execPath)) out.set(tag.slice(RUN.length), p);
   }
   return out;
 }
@@ -99,8 +107,8 @@ test("a_tasks_servers_shims_and_agents_are_stopped_and_nothing_else", async () =
   write(join(wt, "server", "target", "debug", "ia-shim"), SHIM);
   write(join(elsewhere, "ia-shim"), SHIM);
   const main = (d: string) => join(d, "server-ts", "src", "main.js");
-  const serve = (exe: string, data: string, tag: string) => [exe, "serve", "--host", "127.0.0.1", "--port", "0", "--data-dir", data, "--name", tag];
-  const shim = (exe: string, run: string, tag: string) => [exe, run, "--", "agent", tag];
+  const serve = (exe: string, data: string, tag: string) => [exe, "serve", "--host", "127.0.0.1", "--port", "0", "--data-dir", data, "--name", mark(tag)];
+  const shim = (exe: string, run: string, tag: string) => [exe, run, "--", "agent", mark(tag)];
 
   const stopped = ["by-tmp", "by-link", "by-wt", "relative", "shim-of-dead", "shim-by-wt"];
   const kept = ["their-tmp", "their-wt", "board", "board-shim", "their-shim"];
@@ -175,9 +183,9 @@ test("a_done_tasks_test_server_is_stopped_with_its_folder_or_once_its_folder_has
   for (const t of [a, b, open]) mkdirSync(data(t), { recursive: true });
   const tags = ["done-a", "gone-b", "open"];
   await with_fakes(tags, async () => {
-    start([exe, "serve", "--data-dir", data(a), "--name", "done-a"]);
-    start([exe, "serve", "--data-dir", data(b), "--name", "gone-b"]);
-    start([exe, "serve", "--data-dir", data(open), "--name", "open"]);
+    start([exe, "serve", "--data-dir", data(a), "--name", mark("done-a")]);
+    start([exe, "serve", "--data-dir", data(b), "--name", mark("gone-b")]);
+    start([exe, "serve", "--data-dir", data(open), "--name", mark("open")]);
     await running(tags);
     assert.deepEqual([...folders_in((await list())!, [root(s)])].sort(), [a, b, open].map((t) => folder(t.id)).sort());
 
@@ -211,7 +219,7 @@ test("a_server_started_in_the_folder_with_a_relative_data_dir_is_stopped_with_it
   const dir = join(root(s), folder(a.id));
   mkdirSync(join(dir, "ia-test-rel"), { recursive: true });
   await with_fakes(["rel-a"], async () => {
-    start([exe, "serve", "--data-dir", "ia-test-rel", "--name", "rel-a"], dir);
+    start([exe, "serve", "--data-dir", "ia-test-rel", "--name", mark("rel-a")], dir);
     await running(["rel-a", "rel-a-child"]);
     db.update_task(c, a.id, [["status", "done"]]);
     assert.ok(await remove(s, folder(a.id)));
@@ -229,7 +237,7 @@ test("a_done_tasks_test_server_is_stopped_once_the_whole_root_has_gone", async (
   const data = join(root(s), folder(a.id), "ia-test-x");
   mkdirSync(data, { recursive: true });
   await with_fakes(["rootless"], async () => {
-    start([exe, "serve", "--data-dir", data, "--name", "rootless"]);
+    start([exe, "serve", "--data-dir", data, "--name", mark("rootless")]);
     await running(["rootless", "rootless-child"]);
     db.update_task(c, a.id, [["status", "done"]]);
     rmSync(root(s), { recursive: true });
@@ -254,9 +262,9 @@ test("each_gone_folders_processes_are_listed_afresh", async () => {
   const tags = ["first-a", "first-b", "late-b"];
   await with_fakes(tags, async () => {
     // A's first, so its folder is come to first (processes are listed by pid).
-    start([exe_a, "serve", "--data-dir", data(a), "--name", "first-a", "--late-exe", exe, "--late-data", data(b)]);
+    start([exe_a, "serve", "--data-dir", data(a), "--name", mark("first-a"), "--late-exe", exe, "--late-data", data(b), "--late-name", mark("late-b")]);
     await running(["first-a"]);
-    start([exe, "serve", "--data-dir", data(b), "--name", "first-b"]);
+    start([exe, "serve", "--data-dir", data(b), "--name", mark("first-b")]);
     await running(["first-b", "first-b-child"]);
     for (const t of [a, b]) {
       db.update_task(c, t.id, [["status", "done"]]);
