@@ -15,6 +15,8 @@
 // removal: RUST_BIN can be a Rust release's huntaway (0.3.x, with its ia-shim beside it), or a release build of the
 // commit before HA-179 (`git worktree add <dir> HA-179^` and `cargo build --release` in <dir>/server). The TS server runs on the node on PATH (NODE_OPTIONS such as --max-old-space-size pass through), under
 // server-ts/bin/huntaway, a shell that keeps the server's process id across restarts: the node under it is measured.
+// That runs the .ts from this checkout; TS_BIN=<dir>/huntaway measures a release's package instead (what
+// scripts/package-server.sh <dir> puts together: the server precompiled to .js, with its own node).
 import { execFileSync, spawn } from "node:child_process";
 import { readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,7 +36,7 @@ const tmp = process.env.TMPDIR || tmpdir();
 const newer = (paths) => paths.filter((p) => { try { return statSync(p).isFile(); } catch { return false; } }).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 const rustBin = process.env.RUST_BIN || newer([join(root, "server/target/release/huntaway"), join(root, "server/target/debug/huntaway")]);
 if (!rustBin) throw new Error("no Rust server: set RUST_BIN to a Rust release's huntaway (see the top of this script)");
-const tsBin = join(root, "server-ts/bin/huntaway");
+const tsBin = process.env.TS_BIN || join(root, "server-ts/bin/huntaway");
 
 function start(name, bin) {
   const env = { ...process.env, IA_TEST_BIN: bin, IA_TEST_OPEN_TOKEN: "0" };
@@ -120,6 +122,9 @@ try {
   for (const ws of sockets) ws.close();
   await sleep(10000);
   note("10 s later, sockets closed");
+  // V8's memory reducer shrinks an idle heap some 30 s after the load stops.
+  await sleep(50000);
+  note("a minute later");
   console.log(`data: ${live ? "a copy of the live board" : "--demo"}; messages loaded per round: ${JSON.stringify(counts)}`);
   console.log(`rust: ${rustBin}\nts:   node ${process.version} ${tsBin}\n`);
   const mb = (k) => (Number.isNaN(k) ? "?" : `${(k / 1024).toFixed(1)} MB`);
