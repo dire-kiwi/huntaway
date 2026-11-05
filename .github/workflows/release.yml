@@ -1,5 +1,7 @@
 # Builds the desktop app (app/package.json's `build`) and the server for Linux and macOS when a GitHub release is
-# published, and attaches them to that release. The release's tag is the version (v1.2.3 → 1.2.3), so it must be
+# published, and attaches them to that release. The server is the TypeScript one (server-ts/, HA-174), packaged with the
+# Node that runs it and the Rust ia-shim by scripts/package-server.sh; a host on an earlier (Rust) release updates onto
+# it as onto any release, and the server backs up its database as it starts on a new version (server-ts/src/backup.ts). The release's tag is the version (v1.2.3 → 1.2.3), so it must be
 # semver with an optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing
 # release's tag again and replaces its files. A pull request that changes the packaging builds it too, as an
 # artifact of the run, without a release. Only the attach job, which pull requests don't run, can write to the repository.
@@ -19,6 +21,10 @@ on:
       - app/package.json
       - app/package-lock.json
       - app/electron/**
+      - scripts/package-server.sh
+      - server-ts/bin/**
+      - server-ts/package.json
+      - server-ts/package-lock.json
 
 permissions:
   contents: read
@@ -63,7 +69,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: |
+            app/package-lock.json
+            server-ts/package-lock.json
 
       # fpm writes the Arch package's .MTREE with bsdtar.
       - name: bsdtar
@@ -95,10 +103,42 @@ jobs:
         working-directory: app
         run: npm run build && (cd ../server && IA_BUILD_COMMIT=$(git rev-parse HEAD) cargo build --release --locked)
 
+      # The server the desktop app and the server tarball carry: the TypeScript server, the Node this job runs on (the
+      # runner's own os and arch), ia-shim and the UI, in release-server/ (see the script).
+      - name: Package the TypeScript server
+        run: IA_BUILD_COMMIT=$(git rev-parse HEAD) scripts/package-server.sh release-server "$(command -v node)"
+
+      # It answers --version with the release's version (what a host installing it checks), and starts and serves.
+      - name: Check the packaged server
+        run: |
+          out=$(release-server/huntaway --version)
+          echo "$out"
+          [ "$out" = "huntaway $VERSION" ] || { echo "expected huntaway $VERSION"; exit 1; }
+          data=$(mktemp -d)
+          IA_CLAUDE_BIN=/bin/false IA_CODEX_BIN=/bin/false release-server/huntaway serve --host 127.0.0.1 --port 0 --data-dir "$data" --demo > "$data/out" 2> "$data/log" &
+          pid=$!
+          for _ in $(seq 60); do grep -q '^IA_READY' "$data/out" && break; sleep 1; done
+          port=$(sed -n 's/^IA_READY {"port":\([0-9]*\).*/\1/p' "$data/out")
+          [ -n "$port" ] || { cat "$data/log"; exit 1; }
+          curl -fsS "http://127.0.0.1:$port/api/health"
+          curl -fsS "http://127.0.0.1:$port/" | grep -q '<html'
+          curl -fsS -H "Authorization: Bearer $(cat "$data/auth_token")" "http://127.0.0.1:$port/api/info"
+          kill "$pid"
+          wait "$pid" || true
+
       # Linux: an AppImage and an Arch package. macOS: a dmg and a zip, ad-hoc signed (there's no Developer ID).
       - name: Package the desktop app
         working-directory: app
         run: npx electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
+
+      # The server the packaged app starts from its resources.
+      - name: Check the desktop app's server
+        working-directory: app
+        run: |
+          if [ "${{ matrix.os }}" = mac ]; then res=$(echo release/mac*/Huntaway.app/Contents/Resources); else res=release/linux-unpacked/resources; fi
+          ls "$res"
+          [ "$("$res/huntaway" --version)" = "huntaway $VERSION" ]
+          [ -f "$res/server-ts/node_modules/ws/package.json" ] && [ -x "$res/ia-shim" ] && [ -f "$res/ui/index.html" ]
 
       # What an installed app reads to update itself: the version, and the shell stamp (the frame stamp of
       # app/electron/stamp.cjs: boot.cjs and Electron) of the desktop app, which says whether the update needs a new
@@ -120,15 +160,15 @@ jobs:
             console.error(`the packaged app has stamp ${process.argv[2]}, the manifest ${m.shell}`); process.exit(1) }' \
             "./release/huntaway-$VERSION-release.json" "$packaged"
 
-      # The server on its own, for hosts: huntaway and ia-shim with the UI in ui/ beside them, where the server looks.
+      # The server on its own, for hosts: release-server/ (huntaway, which runs the TypeScript server in server-ts/ with
+      # the Node in node/, ia-shim, and the UI in ui/ beside them, where the server looks).
       # electron/ is the desktop shell of this release, which an installed app loads once it has updated to it
       # (app/electron/boot.cjs); shell.json says which Electron it was written for and which boot.cjs it needs.
       - name: Package the server
         run: |
           name="huntaway-server-$VERSION-${{ matrix.os }}-${{ matrix.arch }}"
-          mkdir -p "app/release/$name"
-          cp server/target/release/huntaway server/target/release/ia-shim "app/release/$name/"
-          cp -R app/dist "app/release/$name/ui"
+          mkdir -p app/release
+          cp -R release-server "app/release/$name"
           mkdir "app/release/$name/electron"
           cp app/electron/*.cjs "app/release/$name/electron/"
           node -e 'const electron = require("./app/node_modules/electron/package.json").version;

@@ -103,6 +103,46 @@ jobs:
         working-directory: app
         run: npm test
 
+  # The TypeScript port of the server (server-ts/, HA-174), kept for comparing memory use: its typecheck and unit tests.
+  server-ts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server-ts/package-lock.json
+
+      - name: npm ci
+        working-directory: server-ts
+        run: npm ci --no-audit --no-fund
+
+      # The broker tests run the Rust broker (its test_broker example, see server-ts/src/hosts/broker/test_broker.ts).
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: server
+          key: server-ts
+
+      - name: Build the test broker
+        working-directory: server
+        env:
+          SCCACHE_DISABLE: "1"
+        run: cargo build --locked -p huntaway-broker --example test_broker
+
+      - name: Typecheck
+        working-directory: server-ts
+        run: npm run typecheck
+
+      - name: npm test
+        working-directory: server-ts
+        run: npm test
+
   # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against a debug server, and
   # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time on a GitHub-hosted one
   # (it has 4 CPUs, and Chromium keeps them busy: more at once only made each check slower) and 2 on a self-hosted one

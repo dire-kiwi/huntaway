@@ -11,6 +11,7 @@ server/src/    the huntaway binary's modules, grouped in agent/, mcp/, git/, hos
                integrations/ and review/ (see docs/structure.md)
 server/shim/   ia-shim: tiny per-run supervisor that keeps agents alive across restarts
 server/broker/ huntaway-broker: public connection setup with managed tunnels, or a legacy relay
+server-ts/     a TypeScript port of the server, for comparing memory use (not used by the app; see server-ts/README.md)
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 scripts/       test-server.sh: scratch server on a free port for testing a worktree build
                ia-api: calls to a test server's API (polling, approving prompts); ia-api-test.py
@@ -19,6 +20,7 @@ scripts/       test-server.sh: scratch server on a free port for testing a workt
                clean-worktree.sh: remove a done task's worktree build output
                ui-profile.mjs: the UI's main-thread time on loads and live events, to compare builds
                copy-live-board.sh: a scrubbed copy of the live board's database for a test server
+               ram-compare.mjs: memory use of the Rust server and its TypeScript port on the same data
                install.sh: install the desktop app from source (Linux, macOS)
 docs/          notes; structure.md: where code goes and how big modules are split
 ```
@@ -431,10 +433,26 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`.
 | `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
-| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` and `ia-shim`, with the UI in `ui/` |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`) and `ia-shim`, with the UI in `ui/` |
 | `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
+
+Releases carry the TypeScript server (`server-ts/`, see its README), not the Rust one in `server/`:
+`scripts/package-server.sh` puts it together with the Node that runs it (the release job's own, so
+hosts don't need Node installed), `ia-shim` and the UI, and both the tarball and the desktop app
+carry that. A host on an earlier, Rust, release updates onto it like onto any release, and Roll back
+returns to the Rust release before it. Checkouts still build and run the Rust server.
+
+Whichever server starts on a data dir that another version last ran on (`<data dir>/server_version`;
+the Rust server doesn't write it) first copies the database to
+`<data dir>/backups/huntaway-<from>-to-<to>-<time>.db`, before opening and migrating it, and the
+TypeScript server makes one before Update or Roll back restarts it onto another release too. The
+newest five are kept. Without a backup nothing goes ahead: an Update or Roll back that can't make one
+fails and leaves the running server as it is, and a server that can't make one at startup doesn't
+start, so the update onto it is never settled and the version before it starts again (it's marked
+bad). `IA_SKIP_DB_BACKUP=1` goes ahead without a backup. To go back to one: stop the server, move `huntaway.db` (with any
+`huntaway.db-wal` and `huntaway.db-shm`) aside, and copy the backup to `huntaway.db`.
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes
 `PATH` from your login shell, so it finds `claude`, `codex`, `git` and `gh` when it's started

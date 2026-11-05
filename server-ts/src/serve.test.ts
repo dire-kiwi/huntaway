@@ -1,0 +1,33 @@
+// Port of server/src/main.rs's tests: what they test is in serve.ts (main.ts runs the command line when it's loaded).
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { temp_dir } from "./testing.ts";
+import { db_path, loopback_host, parse_serve_args } from "./serve.ts";
+
+test("loopback_host_only_accepts_local_names", () => {
+  const host = (h: string) => loopback_host({ host: h });
+  assert.ok(host("127.0.0.1:7878") && host("localhost:80") && host("LOCALHOST") && host("[::1]:9"));
+  assert.ok(!host("attacker.example:7878") && !host("127.0.0.1.evil.test") && !host("localhost.evil.test:1"));
+  assert.ok(!loopback_host({}));
+});
+
+test("db_path_keeps_the_database_from_before_the_rename", () => {
+  const dir = temp_dir();
+  assert.equal(db_path(dir), join(dir, "huntaway.db"));
+  writeFileSync(join(dir, "issue-agent.db"), "");
+  assert.equal(db_path(dir), join(dir, "issue-agent.db"));
+  writeFileSync(join(dir, "huntaway.db"), "");
+  assert.equal(db_path(dir), join(dir, "huntaway.db"));
+});
+
+test("profile_flags_take_name_dir_pairs", () => {
+  const args = parse_serve_args(["--profile", "personal=/claude/personal", "--profile", "a = ~/.a,b=/b=c,"]);
+  assert.deepEqual(args.profiles, [["personal", "/claude/personal"], ["a", "~/.a"], ["b", "/b=c"], null]);
+  // As from an empty IA_PROFILES.
+  assert.deepEqual(parse_serve_args(["--profile", ""]).profiles, [null]);
+  for (const bad of ["personal", "=/claude", "personal=", "personal=/a,b"]) {
+    assert.throws(() => parse_serve_args(["--profile", bad]), Error, bad);
+  }
+});
