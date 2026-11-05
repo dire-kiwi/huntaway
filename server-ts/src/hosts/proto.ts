@@ -28,8 +28,11 @@ export const PROTOCOL = 1;
  * agent/approval_rules.ts, and their `approval_rules` and `approval_log` events), prompts' `expires_at` and `rule`, `via`
  * on a prompt's answer, and answering prompts from a notification (push's `prompts` event setting, a prompt's push with
  * `request_id` and `answer`, and `POST /permissions/{id}/push-answer`, see integrations/push_answers.ts).
+ *
+ * API 116: paired devices (devices.ts): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
+ * `GET /permissions?profile_id=`.
  */
-export const API_VERSION = 115;
+export const API_VERSION = 116;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

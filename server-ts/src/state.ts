@@ -7,6 +7,7 @@ import type { Uplink } from "./hosts/uplink.ts";
 import type { ServerMeta, RestartJob, Deployed } from "./update/admin.ts";
 import { Releases } from "./update/release.ts";
 import { PushState } from "./integrations/push.ts";
+import { Devices } from "./devices.ts";
 import { Relocations } from "./git/relocate.ts";
 import * as worktree from "./git/worktree.ts";
 import * as status_script from "./integrations/status_script.ts";
@@ -139,6 +140,8 @@ export class AppState {
   deleting = new Map<string, number>();
   /** Web Push to devices (see integrations/push.ts). */
   push: PushState;
+  /** Pairing codes, and revocations of paired devices (see devices.ts). */
+  devices = new Devices();
   /** Run when the state goes (tests: removes its data dir). */
   cleanup: Array<() => void> = [];
 
