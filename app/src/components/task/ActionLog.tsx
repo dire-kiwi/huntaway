@@ -16,16 +16,22 @@ const OUTCOME_STYLE: Record<ApprovalAction["outcome"], string> = {
 const BY: Record<string, string> = {
   user: "you, on the board",
   push: "you, from a notification",
-  expiry: "nobody, in time",
+  telegram: "you, on Telegram",
   mode: "Don't ask mode",
   rule: "a never rule",
-  ended: "its run ended first",
+};
+
+/** Why a prompt expired, by what settled it (not someone who answered it, so not "Expired by …"). */
+const EXPIRED_BY: Record<string, string> = {
+  expiry: "Expired: nobody answered it in time",
+  ended: "Expired: its run ended first",
 };
 
 /** What an entry came to, in words. */
 function outcomeText(a: ApprovalAction) {
   if (a.outcome === "pending") return "Waiting for your answer";
   if (a.outcome === "blocked") return "Blocked by a never rule";
+  if (a.outcome === "expired") return (a.answered_by && EXPIRED_BY[a.answered_by]) || "Expired";
   return a.answered_by ? `${a.outcome[0].toUpperCase()}${a.outcome.slice(1)} by ${BY[a.answered_by] ?? a.answered_by}` : a.outcome;
 }
 

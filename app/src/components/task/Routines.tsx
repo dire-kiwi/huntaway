@@ -5,7 +5,8 @@ import { ChevronDown, ChevronRight, Clock, Play, Plus, Trash2, Webhook } from "l
 import { useCallback, useEffect, useState } from "react";
 import { api, type Automation, type Task } from "../../api";
 import { openTask } from "../../router";
-import { onAutomationsChanged } from "../../store";
+import { useShallow } from "zustand/react/shallow";
+import { onAutomationsChanged, useStore } from "../../store";
 import { activeText, AutomationEditor, localTime, RunHistory, RunStatus, timeUntil, triggerText, usd, type TimeZone } from "../settings/Automations";
 import { Button, timeAgo, Toggle, useConfirm } from "../ui";
 
@@ -80,6 +81,7 @@ export function Routines({ assistant }: { assistant: Task }) {
             ))}
           </div>
         )}
+        <LeftBehind assistant={assistant} />
         {list && !list.length && <div className="text-[12px] text-faint">No routines yet. Try asking the assistant: "Every weekday at 8, check my inbox."</div>}
         {err && <div className="text-xs text-red-400">{err}</div>}
         {confirm.dialog}
@@ -87,6 +89,76 @@ export function Routines({ assistant }: { assistant: Task }) {
           <AutomationEditor owner={{ hostId, profileId }} automation={editing === "new" ? null : editing} tz={tz} onSaved={reload} onClose={() => setEditing(null)} />
         )}
       </div>
+    </div>
+  );
+}
+
+/** The routines this board's own host still has for the profile, which don't run while its assistant is on another host
+ *  (`assistant_host`, HA-241): that host's routines are its own, here. Each can be deleted from here, since the board no
+ *  longer opens the assistant they'd wake. */
+function LeftBehind({ assistant }: { assistant: Task }) {
+  const { host_id: hostId, profile_id: profileId } = assistant;
+  // The board's own profile of the assistant's name, if it sends its assistant to this host.
+  const [boardHost, boardHostName, boardProfile, hostName] = useStore(
+    useShallow((s) => {
+      const local = s.hosts.find((h) => h.local);
+      const name = s.profiles.find((p) => p.host_id === hostId && p.id === profileId)?.name;
+      const p = local && local.id !== hostId ? s.profiles.find((p) => p.host_id === local.id && p.name === name && p.assistant_host === hostId) : undefined;
+      return [local?.id, local?.name, p?.id, s.hosts.find((h) => h.id === hostId)?.name ?? hostId];
+    }),
+  );
+  const [list, setList] = useState<Automation[]>([]);
+  const [tz, setTz] = useState<TimeZone | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const reload = useCallback(() => {
+    if (!boardHost || !boardProfile) return void setList([]);
+    api.routines(boardHost, boardProfile).then(
+      (r) => (setList(r.automations), setTz(r.time_zone)),
+      () => setList([]),
+    );
+  }, [boardHost, boardProfile]);
+  useEffect(() => {
+    reload();
+    return onAutomationsChanged((h, projectId, _id, profile) => {
+      if (h === boardHost && !projectId && (!profile || profile === boardProfile)) reload();
+    });
+  }, [reload, boardHost, boardProfile]);
+  const confirm = useConfirm();
+  if (!boardHost || !list.length) return null;
+  return (
+    <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2" data-testid="routines-left-behind">
+      <p className="text-[12px] text-muted">
+        {list.length === 1 ? "This routine stays" : `These ${list.length} routines stay`} on {boardHostName}, where your assistant ran before, and{" "}
+        {list.length === 1 ? "doesn't" : "don't"} run while it's on {hostName}. Add the ones you want again here, and delete them there.
+      </p>
+      {list.map((a) => (
+        <div key={a.id} className="flex items-center gap-3 text-[12.5px]" data-testid="routine-left-behind">
+          <span className="min-w-0 flex-1 truncate">
+            <span className="font-medium">{a.name}</span> <span className="text-faint">· {triggerText(a.trigger, tz)}</span>
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            title={`Delete it on ${boardHostName}`}
+            onClick={() =>
+              confirm.ask({
+                title: `Delete routine ${a.name}`,
+                body: `Delete the routine "${a.name}" on ${boardHostName}? Its run history goes with it.`,
+                action: "Delete routine",
+                danger: true,
+                onConfirm: () =>
+                  api.deleteAutomation(boardHost, a.id).then(reload, (e: Error) => {
+                    setErr(e.message);
+                  }),
+              })
+            }
+          >
+            <Trash2 size={13} />
+          </Button>
+        </div>
+      ))}
+      {err && <div className="text-xs text-red-400">{err}</div>}
+      {confirm.dialog}
     </div>
   );
 }

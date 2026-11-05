@@ -34,7 +34,9 @@ import * as automations from "./integrations/automations.ts";
 import * as workflows from "./integrations/workflows.ts";
 import * as push from "./integrations/push.ts";
 import * as push_answers from "./integrations/push_answers.ts";
+import * as telegram from "./integrations/telegram.ts";
 import * as hub from "./hosts/hub.ts";
+import * as devices from "./devices.ts";
 import * as admin from "./update/admin.ts";
 
 export * from "./api/new_task.ts";
@@ -56,6 +58,8 @@ export function router(s: AppState): Router {
   r.route("/hooks/{id}/{token}", { POST: automations.webhook }, { auth: false, limit: automations.MAX_BODY ?? 1 << 20 });
   // Without the board's token: the token in its body answers only its own prompt, once (from a notification).
   r.route("/permissions/{id}/push-answer", { POST: push_answers.answer }, { auth: false });
+  // Without the board's token: the one-time code from Settings → Phones is swapped for a device's own.
+  r.route("/devices/pair", { POST: devices.pair }, { auth: false });
   host_routes(r);
   r.route("/hosts", { GET: hub.list_hosts, POST: hub.add_host });
   r.route("/hosts/join", { GET: hub.join_info });
@@ -69,6 +73,9 @@ export function router(s: AppState): Router {
   r.route("/push/subscriptions", { POST: push.subscribe });
   r.route("/push/subscriptions/{id}", { PATCH: push.update, DELETE: push.unsubscribe });
   r.route("/push/subscriptions/{id}/test", { POST: push.test });
+  r.route("/devices", { GET: devices.list_handler });
+  r.route("/devices/pairing", { POST: devices.new_code });
+  r.route("/devices/{id}", { PATCH: devices.rename, DELETE: devices.revoke });
   r.route("/h/{host_id}/{*rest}", { ANY: hub.proxy }, { limit: 300 << 20 });
   r.ws("/ws", hub.ws);
   s.local_router = r;
@@ -103,6 +110,9 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/assistant/brief/feedback", { POST: brief.feedback });
   r.route("/profiles/{id}/approval-rules", { GET: thread.get_approval_rules, POST: thread.set_approval_rules });
   r.route("/profiles/{id}/approval-log", { GET: thread.approval_log });
+  r.route("/profiles/{id}/telegram", { GET: telegram.get, PATCH: telegram.update });
+  r.route("/profiles/{id}/telegram/link", { POST: telegram.new_link });
+  r.route("/profiles/{id}/telegram/owner", { DELETE: telegram.unlink });
   r.route("/profiles/{id}/group-tasks", { GET: tasks.list_group_tasks, POST: new_task.create_group_task });
   r.route("/profiles/{id}/analytics", { GET: analytics.get });
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });
@@ -206,12 +216,35 @@ function host_routes(r: Router) {
   r.ws("/host/ws", ws);
 }
 
+/** The tokens a request carries: its bearer token, then each `?token=`. */
+function tokens(headers: Record<string, any>, query_string: string): string[] {
+  const auth = headers["authorization"];
+  const bearer = typeof auth === "string" && auth.startsWith("Bearer ") ? [auth.slice(7)] : [];
+  return [...bearer, ...query_string.split("&").filter((kv) => kv.startsWith("token=")).map((kv) => decodeURIComponentSafe(kv.slice(6)))];
+}
+
 /** Whether a request carries the board's token, in its Authorization header or as `?token=`. */
 export function authorized(s: AppState, headers: Record<string, any>, query_string: string): boolean {
-  const auth = headers["authorization"];
-  const header_ok = typeof auth === "string" && auth.startsWith("Bearer ") && same_secret(auth.slice(7), s.token);
-  const query_ok = query_string.split("&").some((kv) => kv.startsWith("token=") && same_secret(decodeURIComponentSafe(kv.slice(6)), s.token));
-  return header_ok || query_ok;
+  return tokens(headers, query_string).some((t) => same_secret(t, s.token));
+}
+
+/**
+ * Rust's `auth` middleware: lets in requests with the board's token, or a paired device's (see devices.ts), as a bearer
+ * token or `?token=`. `path` is the whole path as the client sent it (`/api/...`), which a device's request is checked
+ * on. What it returns: `{ok: true, device}` (`device` null for the board's token), or the status and error to answer.
+ * A device's request carries its `DeviceAuth` (`Req.device`), which its websockets use to close when it's revoked.
+ */
+export function auth(s: AppState, method: string, path: string, headers: Record<string, any>, query_string: string): { ok: true; device: devices.DeviceAuth | null } | { ok: false; status: number; error: string } {
+  const ts = tokens(headers, query_string);
+  if (ts.some((t) => same_secret(t, s.token))) return { ok: true, device: null };
+  for (const t of ts) {
+    const device = devices.authenticate(s, t);
+    if (!device) continue;
+    const why = devices.refused(method, path);
+    if (why) return { ok: false, status: 403, error: why };
+    return { ok: true, device };
+  }
+  return { ok: false, status: 401, error: "unauthorized" };
 }
 
 const decodeURIComponentSafe = (v: string) => {
@@ -244,8 +277,11 @@ export async function dispatch(s: AppState, req: Req, trusted = false): Promise<
   const sub = req.path.replace(/^\/api/, "");
   const found = r.find(sub);
   if (!found) return { status: 404, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(no_route_error(req.method, req.path))) };
-  if (found.route.auth && !trusted && !authorized(s, req.headers, req.query_string)) {
-    return { status: 401, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify({ error: "unauthorized" })) };
+  if (found.route.auth && !trusted) {
+    const a = auth(s, req.method, req.path, req.headers, req.query_string);
+    if (!a.ok) return { status: a.status, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify({ error: a.error })) };
+    // (A request with the board's token may carry a device already: one the hub's proxy passes on, see `local_request`.)
+    if (a.device) req.device = a.device;
   }
   const h = found.route.methods.get(req.method) ?? found.route.methods.get("ANY") ?? (req.method === "HEAD" ? found.route.methods.get("GET") : undefined);
   if (!h) return { status: 405, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(no_route_error(req.method, req.path))) };
@@ -257,9 +293,14 @@ export async function dispatch(s: AppState, req: Req, trusted = false): Promise<
   return call(h, s, req, `${req.method} /${found.route.segs.join("/")}`);
 }
 
-/** Run a request against this node's own host API, as an authenticated caller: (status, JSON body or its text). */
-export async function local_request(s: AppState, method: string, path: string, body: Buffer | null): Promise<[number, any]> {
+/**
+ * Run a request against this node's own host API, as an authenticated caller: (status, JSON body or its text). `device`
+ * is Rust's `local_request_as` (hosts/hub/dial_out.rs): a paired device's request through the hub's proxy, which carries
+ * the device along, so the handlers that never serve one (`devices.board_only`) know it's one.
+ */
+export async function local_request(s: AppState, method: string, path: string, body: Buffer | null, device: devices.DeviceAuth | null = null): Promise<[number, any]> {
   const req = makeReq(method, path, { authorization: `Bearer ${s.token}`, "content-type": "application/json" }, body ?? Buffer.alloc(0));
+  req.device = device;
   const a = await dispatch(s, req, true);
   const text = a.body.toString("utf8");
   try {
@@ -271,7 +312,8 @@ export async function local_request(s: AppState, method: string, path: string, b
 
 /** Unauthenticated: with the commit it runs, for hosts that follow it with `--update-from`. */
 function health(s: AppState) {
-  return { ok: true, commit: s.meta.running_commit };
+  // API 118: and its API version, which the mobile app checks before pairing.
+  return { ok: true, commit: s.meta.running_commit, api_version: API_VERSION };
 }
 
 function info(s: AppState) {

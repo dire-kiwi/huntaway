@@ -478,6 +478,10 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
   if (h) {
     if (h !== s.host_name && h !== s.host_id) {
       const link = hub.find_link(s, h);
+      // Never back down: the calling host's own board is its own to ask, not ours to pass it to.
+      if (link && ctx.from_host && link.id === ctx.from_host) {
+        throw fail(`${h} is the host this call came up from (${link.name}), and ${s.host_name} doesn't pass calls back down: leave out host to use that host's own board`);
+      }
       if (link) {
         const old = too_old(link.name, link.version.api_version, tool, args);
         if (old !== null) throw fail(old);

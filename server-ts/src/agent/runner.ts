@@ -26,7 +26,7 @@ import {
   send_queued,
   turn_ended,
 } from "./runner/queue.ts";
-import { finish } from "./runner/output.ts";
+import { finish, settle_plans } from "./runner/output.ts";
 import { resume_requests } from "./runner/requests.ts";
 import { start_queued_merges } from "./runner/merge.ts";
 
@@ -371,6 +371,8 @@ export function work_dir(state: Shared, task: Task): string {
 /** Startup: resume following runs that were active when the server stopped. */
 export function load_active(state: Shared) {
   runs.resume_reaping(state);
+  // Before the runs carry on and end: their own ends settle theirs.
+  settle_plans(state);
   const active = db.active_runs(state.db());
   for (const run of active) {
     state.runs.set(run.task_id, { run_id: run.id, cancel: null });

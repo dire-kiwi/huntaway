@@ -805,7 +805,7 @@ export function ProfileForm({
       {placing && (
         <Field
           label="Assistant host"
-          hint="Where the profile's assistant runs: another machine linked over SSH keeps its credentials, and its agents, off this one. That host needs a profile of the same name. Let its agents use this board in Settings → Hosts, so it can create and message tasks here."
+          hint="Where the profile's assistant runs: another machine linked over SSH keeps its credentials, and its agents, off this one. That host needs a profile of the same name. Let its agents use this board in Settings → Hosts, so it can create and message tasks here. Its routines are that host's too: those made on this one don't run while it's there."
         >
           <AssistantHostSelect value={assistantHost} onChange={setAssistantHost} />
         </Field>

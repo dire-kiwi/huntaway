@@ -31,8 +31,14 @@ export const PROTOCOL = 1;
  *
  * API 116: the host setting `thread_items` (Keep threads as items: new tasks' threads are written as items too, live,
  * see docs/threads.md), so tasks have threads for API 114's routes and events.
+ *
+ * API 117: the assistant's Telegram bot (`/profiles/{id}/telegram`, `/telegram/link` and `/telegram/owner`, see
+ * integrations/telegram.ts), `telegram` events, and `telegram` as who answered in the action log.
+ *
+ * API 118: paired devices (devices.ts): `/devices`, `POST /api/devices/pair`, `api_version` in `/api/health`, and
+ * `GET /permissions?profile_id=`.
  */
-export const API_VERSION = 116;
+export const API_VERSION = 118;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;
