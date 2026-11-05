@@ -21,9 +21,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from variants import TOOL_VARIANTS, VARIANTS  # noqa: E402
 
-# The paragraph variants replace: the current wording (since the board's agents were told to use request_user_input).
+# The paragraphs variants replace: how agents ask and finish, since they were told to use request_user_input, with
+# HA-198's rule after them in prompts from since then.
 ASK_RE = re.compile(r"If you are blocked or need a decision or information from the user, call `request_user_input`.*?"
-                    r"When you finish, end with a concise summary of (?P<done>.*?); the task then moves to \"In review\"\.", re.S)
+                    r"When you finish, end with a concise summary of (?P<done>.*?); the task then moves to \"In review\"\."
+                    r"(\n\nYou must call `request_user_input` before you end a turn.*?leave that in the summary\.)?", re.S)
 ASKING = {"should_ask"}
 NOT_ASKING = {"optional", "done"}
 
