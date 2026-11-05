@@ -22,6 +22,8 @@ on:
       - app/package-lock.json
       - app/electron/**
       - scripts/package-server.sh
+      - scripts/desktop-app-check.mjs
+      - scripts/fake-claude
       - server-ts/bin/**
       - server-ts/package.json
       - server-ts/package-lock.json
@@ -141,6 +143,47 @@ jobs:
           ls "$res"
           [ "$("$res/huntaway" --version)" = "huntaway $VERSION" ]
           [ -f "$res/server-ts/node_modules/ws/package.json" ] && [ -x "$res/ia-shim" ] && [ -x "$res/issue-agent" ] && [ -f "$res/ui/index.html" ]
+
+      # The packaged app, started as a user starts it (HA-185): its window loads the board from the server it starts
+      # from its resources, with their Node; an agent runs a turn under their ia-shim, and the MCP helper answers.
+      - name: Start the desktop app
+        run: |
+          if [ "${{ matrix.os }}" = mac ]; then exe=$(echo app/release/mac*/Huntaway.app/Contents/MacOS/Huntaway); else exe=app/release/linux-unpacked/huntaway-desktop; fi
+          node scripts/desktop-app-check.mjs "$exe" --version "$VERSION"
+
+      # How macOS sees the app: electron-builder signs every binary in it ad hoc (identity "-", no hardened runtime),
+      # node and ia-shim included, and nothing is notarized, so Gatekeeper rejects a downloaded copy until the user
+      # allows it (System Settings → Privacy & Security → Open Anyway, or `xattr -dr com.apple.quarantine`). The
+      # server tarball's node keeps the signature it came with. For the log: nothing here fails the build.
+      - name: Signatures and Gatekeeper (macOS)
+        if: matrix.os == 'mac'
+        run: |
+          app=$(echo app/release/mac*/Huntaway.app)
+          sw_vers
+          spctl --status || true
+          for f in "$app" "$app/Contents/Resources/node/bin/node" "$app/Contents/Resources/ia-shim" release-server/node/bin/node release-server/ia-shim; do
+            echo "== $f"
+            codesign -dv --verbose=2 "$f" 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|Signature|Authority|TeamIdentifier|Runtime)' || true
+          done
+          echo "== codesign --verify --deep --strict"
+          codesign --verify --deep --strict --verbose=2 "$app" 2>&1 || true
+          echo "== spctl --assess (Gatekeeper's verdict on a downloaded copy)"
+          spctl --assess --type execute -vv "$app" 2>&1 || true
+
+      # The same check on a copy marked as downloaded by a browser (com.apple.quarantine on every file), as the dmg or
+      # zip unpacks it. A runner may have Gatekeeper's assessments switched off (spctl --status above), and nobody is
+      # there to click Open Anyway, so this shows what it can and doesn't fail the build.
+      - name: Start a quarantined copy of the desktop app (macOS)
+        if: matrix.os == 'mac'
+        continue-on-error: true
+        run: |
+          dl="$RUNNER_TEMP/downloaded"
+          mkdir -p "$dl"
+          ditto -x -k app/release/*-mac-*.zip "$dl"
+          q="0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)"
+          find "$dl/Huntaway.app" -exec xattr -w com.apple.quarantine "$q" {} +
+          xattr -p com.apple.quarantine "$dl/Huntaway.app/Contents/Resources/node/bin/node"
+          node scripts/desktop-app-check.mjs "$dl/Huntaway.app/Contents/MacOS/Huntaway" --version "$VERSION"
 
       # What an installed app reads to update itself: the version, and the shell stamp (the frame stamp of
       # app/electron/stamp.cjs: boot.cjs and Electron) of the desktop app, which says whether the update needs a new
