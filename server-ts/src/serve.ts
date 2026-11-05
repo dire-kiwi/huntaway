@@ -1,6 +1,7 @@
 // Port of `serve` in server/src/main.rs (main.ts has the command line, and loads this only for `serve`).
 import * as backup from "./backup.ts";
 import * as crash from "./crash.ts";
+import * as lag from "./lag.ts";
 import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
@@ -286,6 +287,7 @@ export async function serve(args: ServeArgs) {
   // A bug in a background job is logged rather than ending the server (see crash.ts). What serve itself throws while
   // starting isn't unhandled: main.ts logs it and exits.
   crash.install();
+  lag.start();
   // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
   admin.take_supervisor();
   admin.reap_inherited();
@@ -353,6 +355,7 @@ export async function serve(args: ServeArgs) {
   }
   api.router(state);
   crash.debug_route(state.local_router!);
+  lag.debug_route(state.local_router!);
   const ui = find_ui_dir(args.ui_dir, from_app, admin.current_exe());
   if (ui) log.info(`serving UI from ${ui}`);
   else log.warn("no UI build found; API only (build app/ or pass --ui-dir)");

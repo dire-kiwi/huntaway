@@ -88,13 +88,7 @@ export function on_compacted(state: Shared, run: Run, meta: any): void {
  */
 function compaction_source(c: Conn, run: Run, trigger: string): string {
   if (trigger === "auto") return "auto";
-  const prompted = db.value<number>(
-    c,
-    // `+kind`: see db/messages.ts.
-    "SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND +kind='user' AND created_at>=?2)",
-    run.task_id,
-    run.created_at,
-  );
+  const prompted = db.user_messaged_since(c, run.task_id, run.created_at);
   return run.kind === "compact" && !prompted ? "idle" : "user";
 }
 
