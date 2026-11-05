@@ -481,7 +481,7 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     worktree.find_pr(state, task);
   }
   if (updated && is_task && plan_check) {
-    void plan.settle(state, updated, run, (t) => review.on_in_review(state, t));
+    plan.settle(state, updated, run, (t) => review.on_in_review(state, t)).catch((e) => console.error(`task ${task_id}: settling its column: ${err_str(e)}`));
   } else if (updated && is_task && updated.status === "in_review" && status === "in_review") review.on_in_review(state, updated);
 }
 

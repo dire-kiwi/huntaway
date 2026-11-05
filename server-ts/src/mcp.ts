@@ -197,7 +197,7 @@ export function for_planning(tool: string): boolean {
 }
 
 /** The board's tools, and for a review thread only those `for_reviewers`, with `submit_review`. */
-function tools(review: boolean): any[] {
+export function tools(review: boolean): any[] {
   let list = board_tools();
   if (review) {
     list.push(submit_review_tool());
