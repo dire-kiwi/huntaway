@@ -1,23 +1,27 @@
-# server-ts: the server in TypeScript (HA-174)
+# server-ts: the server (HA-174)
 
-A port of the `huntaway` server (`server/src/`, Rust) to TypeScript, made to compare their memory use. Releases carry
-it in place of the Rust server (see *Release builds* in the top README): `scripts/package-server.sh` packages it with
-the Node that runs it, `ia-shim` and the UI, for the server tarball and the desktop app. Checkouts, the install script and
-test servers still run the Rust server unless told otherwise (`IA_TEST_BIN`). It runs on Node 24+ straight from the `.ts` files (Node strips the
-types; there's no build step), with `node:sqlite` for the database and `ws` for websockets as its only dependency.
+The `huntaway` server, in TypeScript: a port of the Rust server (`server/src/`, which is being removed: make server
+changes here). Releases carry it (see *Release builds* in the top README): `scripts/package-server.sh` packages it with
+the Node that runs it, `ia-shim` and the UI, for the server tarball and the desktop app. Checkouts run it too: test
+servers (`scripts/test-server.sh`), the install script, the desktop app (`npm run electron`) and Rebuild & restart. It
+runs on Node 24+ straight from the `.ts` files (Node strips the types; there's no build step), with `node:sqlite` for
+the database and `ws` for websockets as its only dependency.
 
 ```sh
 cd server-ts && npm ci
 bin/huntaway serve --port 7979 --data-dir /tmp/board-ts   # the same flags and subcommands as the Rust binary
-npm run typecheck && npm test                              # tsc, and the unit tests ported from the Rust ones
+npm run typecheck && npm test                              # tsc, and the unit tests
 ```
 
-It runs agents with the Rust `ia-shim` (`$IA_SHIM_BIN`, else `server/target/{release,debug}/ia-shim`), so build that with
-`cargo build` in `server/` first. Any script that runs the Rust server takes it through `IA_TEST_BIN`:
+It runs agents with the Rust `ia-shim` (`$IA_SHIM_BIN`, else the newer of `server/target/{release,debug}/ia-shim`, else
+`ia-shim` beside `bin/huntaway`), so build that with `cargo build -p ia-shim` in `server/` first. `bin/issue-agent` is
+the same command under the board's name from before the rename (see the top README), and release packages have it too.
+`scripts/test-server.sh` runs `bin/huntaway`, and `IA_TEST_BIN` runs another build instead (as `scripts/ram-compare.mjs`
+does for the Rust server):
 
 ```sh
-IA_TEST_BIN=$PWD/server-ts/bin/huntaway scripts/test-server.sh --demo > $TMPDIR/ts-env
-cd app && IA_TEST_BIN=$PWD/../server-ts/bin/huntaway npm run test:ui     # the browser checks, against the TS server
+scripts/test-server.sh --demo > $TMPDIR/ts-env
+cd app && npm run test:ui                                   # the browser checks
 ```
 
 ## Scope

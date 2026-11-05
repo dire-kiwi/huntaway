@@ -114,6 +114,8 @@ jobs:
           out=$(release-server/huntaway --version)
           echo "$out"
           [ "$out" = "huntaway $VERSION" ] || { echo "expected huntaway $VERSION"; exit 1; }
+          # issue-agent, the name from before the rename, runs it too.
+          [ "$(release-server/issue-agent --version)" = "huntaway $VERSION" ] || { echo "issue-agent doesn't run huntaway"; exit 1; }
           data=$(mktemp -d)
           IA_CLAUDE_BIN=/bin/false IA_CODEX_BIN=/bin/false release-server/huntaway serve --host 127.0.0.1 --port 0 --data-dir "$data" --demo > "$data/out" 2> "$data/log" &
           pid=$!
@@ -138,7 +140,7 @@ jobs:
           if [ "${{ matrix.os }}" = mac ]; then res=$(echo release/mac*/Huntaway.app/Contents/Resources); else res=release/linux-unpacked/resources; fi
           ls "$res"
           [ "$("$res/huntaway" --version)" = "huntaway $VERSION" ]
-          [ -f "$res/server-ts/node_modules/ws/package.json" ] && [ -x "$res/ia-shim" ] && [ -f "$res/ui/index.html" ]
+          [ -f "$res/server-ts/node_modules/ws/package.json" ] && [ -x "$res/ia-shim" ] && [ -x "$res/issue-agent" ] && [ -f "$res/ui/index.html" ]
 
       # What an installed app reads to update itself: the version, and the shell stamp (the frame stamp of
       # app/electron/stamp.cjs: boot.cjs and Electron) of the desktop app, which says whether the update needs a new
