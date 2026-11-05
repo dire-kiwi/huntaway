@@ -1,13 +1,14 @@
 // Port of server/src/mcp/gh_mcp.rs.
 //
-// `huntaway gh-mcp`: a stdio MCP server that runs the GitHub CLI for agents. Claude Code can sandbox Bash, and there
-// `gh` (and `git push`) often can't reach GitHub or the user's stored login. MCP servers run outside the sandbox, so
-// going through these tools works either way. Every run gets it as the `gh` server (see `runs::start`), working in the
-// run's directory.
+// The `gh` MCP server, which runs the GitHub CLI for agents. Claude Code can sandbox Bash, and there `gh` (and
+// `git push`) often can't reach GitHub or the user's stored login. MCP servers run outside the sandbox, so going through
+// these tools works either way. Every run gets it as the `gh` server, working in the run's directory: the board serves
+// it over HTTP (see mcp/http.ts, and `GhRun`); `huntaway gh-mcp` is the stdio server runs from before that started.
 //
 // A profile (on each host) can pick the GitHub account its agents act as, and a project can pick its own
-// (`github_account`). The run passes it as `IA_GH_ACCOUNT`, and each call then runs with that account's token from gh's
-// own logins (`gh auth token --user`), whichever account is active in gh, and with no other credentials (see `GhEnv`).
+// (`github_account`). The run's launch records it (`IA_GH_ACCOUNT` for `huntaway gh-mcp`), and each call then runs with
+// that account's token from gh's own logins (`gh auth token --user`), whichever account is active in gh, and with no
+// other credentials (see `GhEnv`).
 // Claude runs also get `huntaway gh-hook`, which turns away `gh` in Bash in favour of these tools.
 //
 // `gh-mcp`, `gh-hook` and `gh-run` run as processes of their own, many times over: this module and its parts import
@@ -36,6 +37,24 @@ const INSTRUCTIONS =
 
 /** The environment variable a run's account comes in (see `Account`). */
 export const ACCOUNT_ENV = "IA_GH_ACCOUNT";
+
+/**
+ * The run a gh server is for: where its calls run, the account they act as, and the board's say on merging. The board
+ * serves it over HTTP for runs it starts (see mcp/http.ts), with what the run's launch recorded; `huntaway gh-mcp`, the
+ * stdio server of runs from before that, has them in its environment (`GhRun_from_env`).
+ */
+export interface GhRun {
+  /** The run's directory, where calls without a `dir` run. */
+  cwd: string | null;
+  account: Account | null;
+  /** Why the board won't let this run merge, if it won't (see review/merge_gate.rs). */
+  merge_gate(): Promise<string | null>;
+}
+
+/** `huntaway gh-mcp`'s run, from its environment (`IA_CWD`, `IA_GH_ACCOUNT` and the board's `BOARD_ENV`). */
+export function GhRun_from_env(): GhRun {
+  return { cwd: process.env.IA_CWD ?? null, account: Account.from_env(), merge_gate: env_merge_gate };
+}
 
 /**
  * `huntaway gh-hook`: Claude Code's PreToolUse hook for Bash in runs that have this server. Turns away commands that run
@@ -441,7 +460,7 @@ export function pr_from_url(url: string): [string, string] | null {
 }
 
 /** pr_merge's arguments with `pr` and `repo` resolved to the PR's number and repository. */
-async function resolve_pr(a: any): Promise<any> {
+async function resolve_pr(a: any, r: GhRun): Promise<any> {
   const args = ["pr", "view"];
   const pr = typeof a?.pr === "string" ? a.pr.trim() : "";
   if (pr) {
@@ -450,7 +469,7 @@ async function resolve_pr(a: any): Promise<any> {
   }
   args.push("--json=url", "--jq=.url");
   const repo = typeof a?.repo === "string" && a.repo.trim() ? a.repo.trim() : null;
-  const [text, failed] = await exec({ program: "gh", args, ok_codes: [0], repo }, a);
+  const [text, failed] = await exec({ program: "gh", args, ok_codes: [0], repo }, a, r);
   if (failed) throw new Error(`couldn't find the pull request: ${text}`);
   const found = pr_from_url(text);
   if (!found) throw new Error(`unexpected pull request URL ${text}`);
@@ -458,8 +477,8 @@ async function resolve_pr(a: any): Promise<any> {
 }
 
 /** Where a call runs: its `dir`, or the run's directory. */
-function work_dir(a: any): string | null {
-  const d = typeof a?.dir === "string" && a.dir.trim() ? a.dir : (process.env.IA_CWD ?? null);
+function work_dir(a: any, r: GhRun): string | null {
+  const d = typeof a?.dir === "string" && a.dir.trim() ? a.dir : r.cwd;
   return d === null ? null : expand_tilde(d);
 }
 
@@ -478,13 +497,13 @@ export function clip(s: string): string {
 }
 
 /** Run a tool call: its output, and whether it failed. */
-export async function run(tool: string, a: any): Promise<[string, boolean]> {
+export async function run(tool: string, a: any, r: GhRun = GhRun_from_env()): Promise<[string, boolean]> {
   if (merges(tool, a)) {
-    const why = await merge_gate();
+    const why = await r.merge_gate();
     if (why !== null) return [why, true];
   }
-  const args = tool === "pr_merge" ? await resolve_pr(a) : a;
-  return exec(command(tool, args), args);
+  const args = tool === "pr_merge" ? await resolve_pr(a, r) : a;
+  return exec(command(tool, args), args, r);
 }
 
 /** The board's line to the run this server is for, which the commands it runs don't get. */
@@ -522,10 +541,10 @@ function mentions_merge(call: string): boolean {
 }
 
 /**
- * Why the board won't let this run merge, if it won't (see review/merge_gate.rs). A server started without the board's
- * address (by hand, say) has no say from it.
+ * Why the board won't let this run merge, if it won't (see review/merge_gate.rs), asked over HTTP by `huntaway gh-mcp`.
+ * A server started without the board's address (by hand, say) has no say from it.
  */
-async function merge_gate(): Promise<string | null> {
+async function env_merge_gate(): Promise<string | null> {
   const board = TEST_BOARD.get() ?? BOARD_ENV.map((k) => process.env[k]);
   const [url, token, run_id] = board;
   if (url === undefined || token === undefined || run_id === undefined) return null;
@@ -542,14 +561,14 @@ async function merge_gate(): Promise<string | null> {
 }
 
 /** Run a command where call `a` runs, as the run's account if it has one: its output, and whether it failed. */
-async function exec(c: Command, a: any): Promise<[string, boolean]> {
+async function exec(c: Command, a: any, r: GhRun): Promise<[string, boolean]> {
   const program = c.program === "gh" ? gh_program() : c.program;
   const env: NodeJS.ProcessEnv = { ...process.env };
   const pre: string[] = [];
   // Kept until gh is done with it.
   let gh_env: { drop(): void } | null = null;
   try {
-    const account = Account.from_env();
+    const account = r.account;
     if (account) {
       if (c.program === "git") {
         // To another host, the push would go as whoever git's credentials (or SSH keys) there are. So it's to a
@@ -557,13 +576,13 @@ async function exec(c: Command, a: any): Promise<[string, boolean]> {
         // be rewritten when pushing.
         const u = c.args.indexOf("-u");
         const remote = u >= 0 && c.args[u + 1] !== undefined ? c.args[u + 1] : "origin";
-        const urls = await push_urls(work_dir(a), remote);
+        const urls = await push_urls(work_dir(a, r), remote);
         if (!urls) {
           throw new Error(`there's no remote named ${remote}: with a GitHub account set, git_push takes a remote's name (add one with git remote add)`);
         }
         account.check_git_urls(urls);
         const token = await account.token();
-        pre.push(...(await extra_header_resets(work_dir(a))), ...account.git_config());
+        pre.push(...(await extra_header_resets(work_dir(a, r))), ...account.git_config());
         env.IA_GH_GIT_TOKEN = token;
       } else {
         account.check_targets(c.args, c.repo);
@@ -577,7 +596,7 @@ async function exec(c: Command, a: any): Promise<[string, boolean]> {
     // Only the call's own repository, which was checked.
     delete env.GH_REPO;
     if (c.repo !== null) env.GH_REPO = c.repo;
-    const d = work_dir(a);
+    const d = work_dir(a, r);
     if (d !== null && !is_dir(d)) throw new Error(`${d} is not a directory`);
     let out: CmdOutput;
     try {
@@ -609,7 +628,7 @@ function is_dir(p: string): boolean {
   }
 }
 
-export async function handle(req: any): Promise<any | null> {
+export async function handle(req: any, r: GhRun = GhRun_from_env()): Promise<any | null> {
   if (req === null || typeof req !== "object" || !("id" in req)) return null; // notifications get no response
   const id = req.id;
   const method = typeof req.method === "string" ? req.method : "";
@@ -617,7 +636,7 @@ export async function handle(req: any): Promise<any | null> {
   let error: any = null;
   switch (method) {
     case "initialize": {
-      const a = Account.from_env();
+      const a = r.account;
       result = {
         capabilities: { tools: {} },
         instructions: a ? `${INSTRUCTIONS} They act as the GitHub account ${a}.` : INSTRUCTIONS,
@@ -635,7 +654,7 @@ export async function handle(req: any): Promise<any | null> {
     case "tools/call": {
       const name = typeof req.params?.name === "string" ? req.params.name : "";
       try {
-        const [text, failed] = await run(name, req.params?.arguments ?? null);
+        const [text, failed] = await run(name, req.params?.arguments ?? null, r);
         result = { content: [{ text, type: "text" }], isError: failed };
       } catch (e) {
         result = { content: [{ text: `Error: ${err_str(e)}`, type: "text" }], isError: true };
@@ -649,6 +668,7 @@ export async function handle(req: any): Promise<any | null> {
 }
 
 export async function serve_stdio(): Promise<void> {
+  const r = GhRun_from_env();
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   // Calls run concurrently, and the ones still running when stdin closes get to finish.
   const calls: Promise<void>[] = [];
@@ -660,7 +680,7 @@ export async function serve_stdio(): Promise<void> {
       continue;
     }
     calls.push(
-      handle(req)
+      handle(req, r)
         .then((resp) => {
           if (resp !== null) process.stdout.write(`${JSON.stringify(resp)}\n`);
         })

@@ -55,8 +55,8 @@ JSON):
 | After loading every thread once | 279 MB | 310 MB (peak 347 MB) |
 | After 5 rounds of that | 421 MB | 322 MB (peak 414 MB) |
 | 10 s later, websockets closed | 421 MB | 321 MB |
-| Each agent's `huntaway mcp` helper | 9 MB | 87 MB |
-| Each agent's `huntaway gh-mcp` helper | 7 MB | 90 MB |
+| Each agent's `huntaway mcp` helper | 9 MB | 87 MB (none since HA-180) |
+| Each agent's `huntaway gh-mcp` helper | 7 MB | 90 MB (none since HA-180) |
 
 On the `--demo` data, idle is 20 MB against 128 MB, and loading the board keeps them at about 26 MB and 133 MB.
 
@@ -66,3 +66,19 @@ On the `--demo` data, idle is 20 MB against 128 MB, and loading the board keeps 
   server's single thread isn't affected: 322 MB).
 - Each agent run starts its own `mcp` and `gh-mcp` helpers, so the TS port also costs about 160 MB more per running
   agent: with ten agents at work, that's 1.6 GB more than the Rust helpers' 160 MB.
+- Since HA-180 runs have no helpers: the server serves both MCP servers itself, over HTTP (see `src/mcp/http.ts` and
+  *How runs reach the board's MCP servers* in the top README). Measured before choosing (Node 26.8, one helper after
+  `initialize` and `tools/list`, RSS / private memory):
+
+  | | RSS | Private |
+  |---|---|---|
+  | `mcp.ts` as it ran (type stripping) | 89 MB | 37 MB |
+  | the same, precompiled to `.js` | 59 MB | 16 MB |
+  | `.js` with `--jitless --max-semi-space-size=1 --max-old-space-size=32` | 52 MB | 12 MB |
+  | `--lite-mode` | 51 MB | – |
+  | Node's floor (`node -e` reading stdin, `--jitless`) | 45 MB | 9 MB |
+
+  So lighter Node helpers would still have cost 90–100 MB of RSS per agent. With five agents at once on a test server,
+  each agent's processes came to 424 MB RSS (242 MB PSS, of which its helpers were 187 MB RSS and 87 MB PSS) before and
+  239 MB RSS (159 MB PSS) after; the server's own RSS stayed about the same (145 MB before, 123 MB after, with their
+  five calls open).

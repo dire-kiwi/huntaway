@@ -47,7 +47,8 @@ What Huntaway would gain:
   full token in its environment, and it says which run it is by a `run_id` in the request body, which the server
   trusts (`runs.rs:91`, `tools.rs:218`). agent-threads serves app tools in process (Claude's sdk MCP server over the
   control channel; Codex's `dynamicTools` or a loopback MCP server with a random token). A tool call then knows its
-  thread without that trust.
+  thread without that trust. (Since HA-180 the TypeScript server serves the board's MCP servers to its runs over HTTP,
+  with a token of the run's own, so new runs have neither the helper nor this trust: see `server-ts/src/mcp/http.ts`.)
 - **`can_use_tool` permissions over stdio** instead of `--permission-prompt-tool mcp__huntaway__permission_prompt`,
   without the `MCP_TOOL_TIMEOUT=86400000` workaround.
 - **Deltas per item** rather than one streamed string per task (`app/src/deltas.ts`), so a client that misses some

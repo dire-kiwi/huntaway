@@ -21,6 +21,7 @@ import * as focus from "./agent/focus.ts";
 import * as runs from "./agent/runs.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
 import * as pr_watch from "./mcp/pr_watch.ts";
+import * as mcp_http from "./mcp/http.ts";
 import * as terminal from "./hosts/terminal.ts";
 import * as hub from "./hosts/hub.ts";
 import * as broker from "./hosts/broker.ts";
@@ -361,6 +362,8 @@ export async function serve(args: ServeArgs) {
         return;
       }
       if (path === "/api/open-token" && args.open_token && req.method === "GET") return send(res, open_token(token, loopback_only)(req.headers));
+      // Runs' MCP servers, which answer on event streams (see mcp/http.ts).
+      if (path.startsWith(mcp_http.PREFIX)) return await mcp_http.serve(state, req, res);
       if (path === "/api" || path.startsWith("/api/")) {
         for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
         const found = state.local_router!.find(path.slice(4));
