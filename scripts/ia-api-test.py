@@ -222,5 +222,77 @@ class OnlyTestServers(unittest.TestCase):
         self.assertIn("Name or service not known (is the server running?)", err)
 
 
+class Thread(unittest.TestCase):
+    """thread: a task's thread kept as items, its pages and its events."""
+
+    class Api(ia_api.Api):
+        def __init__(self, events=()):
+            super().__init__({"IA_TEST_URL": "http://127.0.0.1:1", "IA_TEST_TOKEN": "t"})
+            self.events, self.asked = list(events), []
+
+        def call(self, method, path, body=None, **_):
+            self.asked.append(path)
+            if "/thread/events?after=" in path:
+                after = int(path.rsplit("=", 1)[1])
+                # Known events up to the page's end, and the unknown ones (no "type") skipped past.
+                rest = [e for e in self.events if e["seq"] > after]
+                page = rest[:2]
+                end = page[-1]["seq"] if len(rest) > 2 else (rest[-1]["seq"] if rest else after)
+                return {"events": [e for e in page if "type" in e], "more": len(rest) > 2, "seq": end}
+            if "/thread/items" in path:
+                return {"thread_id": "th", "start": 1, "context": [], "seq": 3, "items": [{"id": "a1", "type": "assistant_message", "text": "hi"}],
+                        "requests": []}
+            return {"thread": {"id": "th", "status": "idle"}, "seq": 3, "start": 5, "context": [1],
+                    "items": [{"id": "sub", "type": "tool_call", "kind": "subagent", "status": "running", "title": "Look around"},
+                              {"id": "a2", "type": "assistant_message", "text": "Found  it\nthere", "parent_id": "sub"}],
+                    "requests": [{"id": "q1", "type": "question", "questions": [{"question": "Which?"}]}]}
+
+    def run_thread(self, api, *args):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            ia_api.thread(api, "8b1f0e4c-task", list(args))
+        return out.getvalue()
+
+    def test_events_are_read_page_by_page(self):
+        api = self.Api([{"seq": n, "type": "turn.started", "turn_id": f"t{n}"} for n in range(1, 6)])
+        out = self.run_thread(api, "--events", "--after", "0", "--brief")
+        self.assertEqual(out.splitlines(), [f"{n} turn.started t{n}" for n in range(1, 6)])
+        self.assertEqual([p.split("?")[1] for p in api.asked], ["after=0", "after=2", "after=4"])
+
+    def test_a_page_of_only_unknown_events_is_gone_past(self):
+        events = [{"seq": n} if n in (2, 3) else {"seq": n, "type": "turn.started", "turn_id": f"t{n}"} for n in range(1, 7)]
+        api = self.Api(events)
+        out = self.run_thread(api, "--events", "--brief")
+        self.assertEqual(out.splitlines(), [f"{n} turn.started t{n}" for n in (1, 4, 5, 6)])
+        self.assertEqual([p.split("?")[1] for p in api.asked], ["after=0", "after=2", "after=4"])
+
+    def test_a_window_is_shown_with_each_items_index(self):
+        api = self.Api()
+        out = self.run_thread(api, "--limit", "8", "--brief")
+        self.assertEqual(api.asked, ["/tasks/8b1f0e4c-task/thread?limit=8"])
+        self.assertEqual(out.splitlines(), ["thread th idle seq 3", "   1 tool_call sub: subagent running: Look around",
+                                            "   5 assistant_message a2 (in sub): Found it there", "request question q1 [open]: Which?"])
+
+    def test_a_page_before_an_index(self):
+        api = self.Api()
+        self.assertIn('"start": 1', self.run_thread(api, "--before", "5", "--limit", "3"))
+        self.assertEqual(api.asked, ["/tasks/8b1f0e4c-task/thread/items?before=5&limit=3"])
+
+    def test_events_past_the_log_say_so(self):
+        api = self.Api()
+        api.call = lambda method, path, body=None, **_: {"events": [], "more": False, "seq": 1200, "resync": True}
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as e:
+            self.run_thread(api, "--events", "--after", "5")
+        self.assertEqual(e.exception.code, 3)
+        self.assertIn("doesn't go back to seq 5 (its last is 1200)", err.getvalue())
+
+    def test_wrong_arguments_are_refused(self):
+        for args in (["--events", "--limit", "3"], ["--after", "3"], ["extra"]):
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as e:
+                self.run_thread(self.Api(), *args)
+            self.assertEqual(e.exception.code, 2, args)
+
+
 if __name__ == "__main__":
     unittest.main()

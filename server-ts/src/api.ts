@@ -136,6 +136,10 @@ function host_routes(r: Router) {
   r.route("/projects/{id}/agent-tools/mcp-servers/{server}", { PATCH: agent_tools.update_mcp_server, DELETE: agent_tools.delete_mcp_server });
   r.route("/tasks/{id}", { GET: tasks.get_task, PATCH: tasks.update_task, DELETE: tasks.delete_task });
   r.route("/tasks/{id}/messages", { GET: thread.list_messages, POST: thread.send_message });
+  r.route("/tasks/{id}/thread", { GET: thread.get_thread });
+  r.route("/tasks/{id}/thread/items", { GET: thread.thread_items });
+  r.route("/tasks/{id}/thread/events", { GET: thread.thread_events });
+  r.route("/tasks/{id}/thread/commands", { POST: thread.thread_command });
   r.route("/tasks/{id}/questions/{message_id}", { POST: thread.answer_question });
   r.route("/tasks/{id}/stop", { POST: thread.stop_task });
   r.route("/tasks/{id}/queue", { DELETE: thread.unqueue_message });

@@ -20,8 +20,11 @@ export const PROTOCOL = 1;
  * API 113: Google and the morning brief: `/profiles/{id}/assistant/google` (the Google card, and adding the Google server),
  * `/profiles/{id}/assistant/brief` (the routine template) and `/brief/feedback` (ratings into MEMORY.md), the assistant's
  * `brief` document (with its `items`), and `{{google}}` in routines. (Push's `reports` event came with routines, API 110.)
+ *
+ * API 114: a task's thread kept as items (`/tasks/{id}/thread`, its items, events and commands, and the `thread_event`
+ * and `thread_resync` events: see docs/threads-api.md).
  */
-export const API_VERSION = 113;
+export const API_VERSION = 114;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;
