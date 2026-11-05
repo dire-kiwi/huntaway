@@ -50,13 +50,7 @@ function thread_message(state: Shared, task_id: string, parent: string | null, m
 function subagent_started(state: Shared, task_id: string, session: string | null, thread: string, sender: string | null, meta: any) {
   if (thread === session) return;
   const id = subagent_id(thread);
-  const exists = db.value<number>(
-    state.db(),
-    `SELECT EXISTS(SELECT 1 FROM messages WHERE task_id=?1 AND kind='claude'
-     AND json_extract(data,'$.type')='assistant' AND json_extract(data,'$.message.content[0].id')=?2)`,
-    task_id,
-    id,
-  );
+  const exists = db.has_assistant_block(state.db(), task_id, id);
   const parent = sender !== null && sender !== session ? subagent_id(sender) : null;
   const prompt = str(meta.prompt) ?? "";
   const description = truncate(prompt === "" ? (str(meta.description) ?? "") : prompt, 200);
