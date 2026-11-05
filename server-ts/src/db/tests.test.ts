@@ -374,16 +374,16 @@ test("a_database_from_version_85_gets_review_thread_skills", () => {
   c.close();
 });
 
-test("a_database_from_version_87_gets_the_thread_tables", () => {
+test("a_database_from_version_88_gets_the_thread_tables", () => {
   const path = db_path();
   const tables = ["thread_items", "thread_requests", "thread_events", "thread_item_origins"];
-  prepare_at(path, `${tables.map((t) => `DROP TABLE ${t};`).join(" ")} PRAGMA user_version=87;`);
+  prepare_at(path, `${tables.map((t) => `DROP TABLE ${t};`).join(" ")} PRAGMA user_version=88;`);
   const c = open(path);
   assert.equal(user_version(c), VERSION);
   for (const t of tables) assert.ok(Number(db.value(c, "SELECT COUNT(*) FROM pragma_table_info(?1)", t)) > 0, t);
   c.close();
   // Again from 87 with the tables there (another build took the version): it goes on.
-  prepare_at(path, "PRAGMA user_version=87;");
+  prepare_at(path, "PRAGMA user_version=88;");
   const again = open(path);
   assert.equal(user_version(again), VERSION);
   again.close();

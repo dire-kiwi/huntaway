@@ -45,7 +45,7 @@ modes. Names are the server's snake_case: `apply_event`, `snapshot_window`, `ite
 
 ## The storage
 
-`server-ts/src/threads/store.ts`, on tables of the board's own database (migration 88), on the same connection, so a
+`server-ts/src/threads/store.ts`, on tables of the board's own database (migration 89), on the same connection, so a
 message and its items can be written in one transaction:
 
 | Table | What |
@@ -71,7 +71,7 @@ Every table is keyed by `task_id`, and its rows are deleted with the task (`ON D
 
 | Step | Task | State |
 | --- | --- | --- |
-| 1. The model and its store, dormant | HA-212 | This change: `protocol.ts`, `store.ts`, migration 88. Nothing calls them, and nothing writes the tables. |
+| 1. The model and its store, dormant | HA-212 | This change: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Not started |
 | 3. Items written live, behind a setting | HA-216 | Not started |
 | 4. Thread API and live events | HA-215 | Not started |

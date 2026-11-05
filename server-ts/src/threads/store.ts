@@ -1,5 +1,5 @@
 // A task's thread as items (threads/protocol.ts), on the board's own database and connection, so a message and the
-// items made from it can be written in one transaction (the `thread_*` tables, see SCHEMA_V88 in db/schema.ts). The
+// items made from it can be written in one transaction (the `thread_*` tables, see SCHEMA_V89 in db/schema.ts). The
 // thread's id is its task's, and its rows are deleted with the task.
 //
 // Items and requests are kept as they are now, updated in place as events come: a snapshot is a read of them, and no

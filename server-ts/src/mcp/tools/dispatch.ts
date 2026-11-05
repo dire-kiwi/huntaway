@@ -7,6 +7,7 @@ import * as api from "../../api.ts";
 import * as hub from "../../hosts/hub.ts";
 import * as runner from "../../agent/runner.ts";
 import * as review from "../../review.ts";
+import * as workflows from "../../integrations/workflows.ts";
 import * as mcp from "../../mcp.ts";
 import * as permissions from "../permissions.ts";
 import * as questions from "../questions.ts";
@@ -41,7 +42,7 @@ const fail = (m: string) => new Error(m);
  * record what they're given, or pick up where they left off (`wait` and `permission_prompt`, by their call id). A call to
  * another tool that was cut short may have taken effect, so it isn't run again.
  */
-const RERUNNABLE = ["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations"];
+const RERUNNABLE = ["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations", "list_workflows"];
 
 type CallResult = { ok: any } | { err: string };
 
@@ -164,6 +165,7 @@ function rerunnable(s: Shared, c: Required<McpCall>): boolean {
   if (c.tool === "update_project" || c.tool === "create_project") kind = "project";
   else if (c.tool === "delete_task") kind = "delete_task";
   else if (["create_automation", "update_automation", "delete_automation"].includes(c.tool)) kind = "automation";
+  else if (["create_workflow", "update_workflow", "delete_workflow"].includes(c.tool)) kind = "automation";
   else return false;
   try {
     const status = db.value<string>(s.db(), "SELECT status FROM permission_requests WHERE call_id=?1 AND kind=?2", c.call_id, kind);
@@ -221,6 +223,7 @@ async function execute_mcp(s: Shared, c: Required<McpCall>): Promise<any> {
       return { ok: true, note };
     }
     case "submit_review":
+      if (workflows.is_workflow(task)) return workflows.submit(s, task, run.id, args);
       return review.submit(s, task, run.id, args);
     case "wait":
       return wait_tool(s, c, args, run, task, profile);
@@ -408,6 +411,11 @@ const AUTOMATIONS_API = 67;
 
 const AUTOMATION_TOOLS = ["list_automations", "create_automation", "update_automation", "delete_automation", "run_automation"];
 
+/** The API version from which hosts have workflows (HA-173). */
+const WORKFLOWS_API = 107;
+
+const WORKFLOW_TOOLS = ["list_workflows", "create_workflow", "update_workflow", "delete_workflow", "run_workflow"];
+
 export const TASK_FIELD_DEFAULT_LIMIT = 2000;
 export const TASK_FIELD_MAX_LIMIT = 4000;
 
@@ -446,6 +454,7 @@ export function too_old(host: string, api_version: number, tool: string, args: a
   if (AUTOMATION_TOOLS.includes(tool) && api_version < AUTOMATIONS_API) {
     return `${host} runs an older build without the automation tools; ask the user to update it, or to set it up in the project's settings`;
   }
+  if (WORKFLOW_TOOLS.includes(tool) && api_version < WORKFLOWS_API) return `${host} runs an older build without workflows; ask the user to update it`;
   if ((needs_project_settings_api(tool, args) && api_version < PROJECT_SETTINGS_API) || (move_repo && api_version < MOVE_REPO_API)) {
     return `${host} runs an older build that can't do this with ${tool}; ask the user to update it, or to make the change in the project's settings`;
   }

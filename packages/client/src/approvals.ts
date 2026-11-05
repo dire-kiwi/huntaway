@@ -1,6 +1,7 @@
 import type { AutomationAction, AutomationTrigger } from "./automations";
 import { type Http } from "./http";
 import type { Status } from "./tasks";
+import type { WorkflowGraph } from "./workflows";
 
 /** What an agent asked to change about a project, shown to the user to approve (API 44). */
 export interface ProjectChange {
@@ -117,11 +118,43 @@ export interface AutomationApproval extends ApprovalRequest {
   input: AutomationChange;
 }
 
+/** A workflow as its approval shows it, with its agent steps' configs by name (API 107). */
+export interface WorkflowView {
+  id: string;
+  name: string;
+  enabled: boolean;
+  graph: WorkflowGraph;
+  configs: { node: string; id: string; name: string; agent: string }[];
+}
+
+/** A workflow an agent asked to create, change or delete, shown to the user to approve: an automation's approval, with
+ *  `workflow` in place of `automation` (API 107). */
+export interface WorkflowChange {
+  op: "create" | "update" | "delete";
+  project: { id: string; key: string; name: string; host?: string };
+  task: { id: string; key?: string; title: string } | null;
+  workflow: WorkflowView;
+  before?: WorkflowView;
+  /** For a change, what it changes: name, graph or enabled. */
+  changes?: string[];
+  reason?: string | null;
+}
+
+export interface WorkflowApproval extends ApprovalRequest {
+  kind: "automation";
+  tool_name: "create_workflow" | "update_workflow" | "delete_workflow";
+  input: WorkflowChange;
+}
+
+export const isWorkflowApproval = (a: { kind: string; input: unknown }): a is WorkflowApproval =>
+  a.kind === "automation" && !!a.input && typeof a.input === "object" && "workflow" in a.input;
+
 /** What only the user decides for an agent, whatever its thread's permission mode. */
-export type Approval = ProjectApproval | ProjectCreationApproval | DeletionApproval | AutomationApproval;
+export type Approval = ProjectApproval | ProjectCreationApproval | DeletionApproval | AutomationApproval | WorkflowApproval;
 
 export const approvalsApi = ({ on }: Http) => ({
   /** Project changes agents are waiting for the user to approve, oldest first (API 44). */
   /** Older hosts ignore `all` and `automations` and list project changes only (or those and deletions). */
-  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true"),
+  /** Workflows' approvals (API 107) only with `workflows`, so a UI from before them isn't shown them. */
+  projectApprovals: (h: string) => on(h).get<Approval[]>("/project-approvals?all=true&automations=true&workflows=true"),
 });

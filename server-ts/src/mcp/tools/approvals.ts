@@ -28,6 +28,11 @@ export async function resume_approval(s: Shared, ctx: Ctx, saved: any): Promise<
 function approval_what(tool: string, input: any): string {
   if (tool === "create_project") return `adding ${typeof input?.repo_path === "string" ? input.repo_path : "the folder"} as a project`;
   if (tool === "delete_task") return `deleting ${typeof input?.delete?.key === "string" ? input.delete.key : "the task"}`;
+  if (tool.endsWith("_workflow")) {
+    const op = tool.slice(0, -"_workflow".length);
+    const verb = op === "create" ? "creating" : op === "update" ? "changing" : "deleting";
+    return `${verb} the workflow "${typeof input?.workflow?.name === "string" ? input.workflow.name : ""}"`;
+  }
   if (tool.endsWith("_automation")) {
     const op = tool.slice(0, -"_automation".length);
     const verb = op === "create" ? "creating" : op === "update" ? "changing" : "deleting";
@@ -49,6 +54,10 @@ export async function ask_user(s: Shared, ctx: Ctx, tool: string, input: any): P
   else if (tool === "create_automation") [kind, of, instead, nothing] = ["automation", "project", "ask the user to add it in the project's settings (Automations)", "created"];
   else if (tool === "update_automation" || tool === "delete_automation")
     [kind, of, instead, nothing] = ["automation", "project", "ask the user to do it in the project's settings (Automations)", "changed"];
+  // Workflow changes are asked as automations are (the board shows them by their `workflow`).
+  else if (tool === "create_workflow") [kind, of, instead, nothing] = ["automation", "project", "ask the user to add it in the project's settings (Workflows)", "created"];
+  else if (tool === "update_workflow" || tool === "delete_workflow")
+    [kind, of, instead, nothing] = ["automation", "project", "ask the user to do it in the project's settings (Workflows)", "changed"];
   else if (tool === "create_project") [kind, of, instead, nothing] = ["project", "board", "ask the user to add it on the board", "added"];
   if (!ctx.task || ctx.call_id === null) {
     // Agents on other hosts have no thread here to ask in.
