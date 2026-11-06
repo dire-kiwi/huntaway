@@ -92,6 +92,10 @@ const messageOf = (id: string): number | undefined => {
   return m ? Number(m[1]) : undefined;
 };
 
+/** A tool call's tool's name as the harness gave it, as the web's itemModel.ts has it: an MCP tool's item has its server's
+ *  name apart, and the board's own tools (kind `app`) are on its `app` server. */
+const toolName = (it: Any): string => (it.kind === "mcp" && it.server ? `mcp__${it.server}__${it.name}` : it.kind === "app" ? `mcp__app__${it.name}` : it.name);
+
 /** A request (a prompt or a question) as a row: a question the board asked (request_user_input, a merge card), or a prompt. */
 function requestItem(r: Any): ThreadItem {
   const { message_id: n, ...md } = (r.metadata ?? {}) as Any;
@@ -127,7 +131,7 @@ export function itemThreadItems(items: Any[], requests: Any[], context = 0): Thr
     if (it.type === "user_message") out.push({ type: "user", key: it.id, text: it.text ?? "", auto: md.auto });
     else if (it.type === "assistant_message" && !md.from_result && it.text?.trim()) out.push({ type: "text", key: it.id, text: it.text });
     else if (it.type === "tool_call") {
-      const name = it.server ? `mcp__${it.server}__${it.name}` : it.name;
+      const name = toolName(it);
       const done = it.status !== "running" && it.status !== "pending";
       out.push({ type: "tool", key: it.id, id: it.id, name, input: it.input, failed: done ? it.status !== "completed" : undefined, done });
       for (const { r } of asked) if (r.tool_call_id === it.id) put(r);
@@ -141,6 +145,8 @@ export function itemThreadItems(items: Any[], requests: Any[], context = 0): Thr
         taskId: typeof md.task_id === "string" ? md.task_id : undefined,
         taskKey: typeof md.key === "string" ? md.key : undefined,
       });
+    } else if (it.type === "notice" && it.code === "interrupted") {
+      // Claude Code's "[Request interrupted…]", which its messages draw nothing for.
     } else if (it.type === "notice" && it.level === "error" && it.code) out.push({ type: "text", key: it.id, text: it.text ?? "" });
     else if (it.type === "notice") out.push({ type: "event", key: it.id, level: it.level ?? "info", text: it.text ?? "" });
     else if (it.type === "turn_result" && !it.ok && !it.interrupted)

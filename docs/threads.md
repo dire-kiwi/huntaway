@@ -13,9 +13,10 @@ what Huntaway uses, into its own code, noting the commit they came from (`main` 
 
 ## The model
 
-`apps/server/src/threads/protocol.ts` is one plain TypeScript file that the server and the app share. The app imports it
-by relative path (`apps/web/src/threads.ts` re-exports it), so it has no imports and nothing that's only Node's, and it
-passes both packages' typechecks. There's no code generation and no JSON Schema.
+`apps/server/src/threads/protocol.ts` is one plain TypeScript file that the server and the clients share. The shared
+client re-exports it by relative path (`@huntaway/client/protocol`, `packages/client/src/protocol.ts`), which the app
+(`apps/web/src/threads.ts`) and the phone app import, so it has no imports and nothing that's only Node's, and it passes
+every package's typecheck. There's no code generation and no JSON Schema.
 
 - **Thread**: a task has one thread, and its id is the task's. Its own state (`status`, `model`, `session_id`,
   `usage`...) is the task's, so it isn't stored with the items.
@@ -474,10 +475,11 @@ tasks stay on their messages.
 **The app** draws a task on items from its items whatever the host's _Keep threads as items_ setting (which is only
 for tasks still on messages now), and so do the board card's pending prompts (`PendingPrompts`) and a document's last
 reply, which read messages before. **The mobile app** (`apps/mobile/src/threadView.tsx`, `thread.ts`'s `itemThreadItems`)
-draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, loaded
-again as its messages' events come, and its Inbox finds an open question in the thread's requests
-(`openItemQuestion`); paired devices may read those two routes (devices.ts). A phone app from before this release reads
-an items task's messages, so it shows its thread as it was at the move: it needs this release's build.
+draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, with
+its `thread_event`s folded in by `apply_event` (it loads the window again after a gap or a `thread_resync`), and its
+Inbox finds an open question in the thread's requests (`openItemQuestion`); paired devices may read those two routes
+(devices.ts). A phone app from before this release reads an items task's messages, so it shows its thread as it was at
+the move: it needs this release's build.
 
 **The tests** default to items, as a server does (`testing.state()`; `IA_TEST_ITEMS_SOURCE=0` runs them with tasks on
 messages, and both pass), and read what was written with `testing.messages`, which for a task on items is a journal of
@@ -578,8 +580,8 @@ run reaches the board.
 - **A write that fails** (the database, or a bug in `map`) writes nothing of the notification's items, and is logged; its
   other effects still happen, so a turn's end still records the run's result and a subagent's end still ends the wait
   for it (HA-261).
-- **The phone app** reloads a thread drawn from its items on its `thread_event`s too (the driver's writes send no
-  `message` event).
+- **The phone app** follows a thread drawn from its items by its `thread_event`s, not its messages' events (the
+  driver's writes send no `message` event).
 
 ### Every difference from what the messages path made
 
