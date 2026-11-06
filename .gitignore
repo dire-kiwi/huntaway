@@ -9,3 +9,4 @@ __pycache__/
 /app/release
 /release-server
 /server-ts/bin/ia-shim
+/target
