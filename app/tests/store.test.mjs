@@ -11,7 +11,7 @@ const hook = `export async function resolve(spec, ctx, next) {
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
-const { handleEvent, retainThread, useStore } = await import("../src/store.ts");
+const { connectEvents, handleEvent, retainThread, SILENCE_MS, useStore } = await import("../src/store.ts");
 const { flushDeltas, useDeltas, watchDelta } = await import("../src/deltas.ts");
 const { api } = await import("../src/api/index.ts");
 // Some tests stub it out.
@@ -359,5 +359,63 @@ test("a load of everything queued behind a slow one starts anyway, and the slow 
     assert.deepEqual(useStore.getState().hosts.map((h) => h.id), ["local", "remote"]);
   } finally {
     mock.timers.reset();
+  }
+});
+
+// HA-262: a connection that died without a close (a laptop's sleep, a network change) looked connected for ever.
+test("the events socket is opened again after a minute with nothing once it has had ticks, but not one with no ticks", () => {
+  const sockets = [];
+  class FakeSocket {
+    closed = false;
+    constructor(url) {
+      this.url = url;
+      sockets.push(this);
+    }
+    close() {
+      this.closed = true;
+    }
+  }
+  const saved = { WebSocket: globalThis.WebSocket, window: globalThis.window, document: globalThis.document };
+  Object.assign(globalThis, {
+    WebSocket: FakeSocket,
+    window: { addEventListener() {}, location: { protocol: "http:", host: "board" } },
+    document: { addEventListener() {}, visibilityState: "visible" },
+  });
+  const { loadAll } = useStore.getState();
+  let loads = 0;
+  useStore.setState({ authed: true, loadAll: async () => void loads++ });
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const send = (ws, ev) => ws.onmessage({ data: JSON.stringify(ev) });
+  try {
+    connectEvents();
+    sockets[0].onopen();
+    assert.equal(useStore.getState().connected, true);
+    // A server from before ticks: however quiet, it stays.
+    mock.timers.tick(10 * SILENCE_MS);
+    assert.equal(sockets.length, 1);
+    // Ticks, and events between them, keep it.
+    send(sockets[0], { type: "tick" });
+    for (let i = 0; i < 4; i++) {
+      mock.timers.tick(SILENCE_MS / 2);
+      send(sockets[0], { type: "anything" });
+    }
+    mock.timers.tick(SILENCE_MS - 1);
+    assert.equal(sockets.length, 1);
+    assert.equal(sockets[0].closed, false);
+    // Nothing for a minute: it's closed, shown as offline, and another is opened after the backoff, which loads again.
+    mock.timers.tick(1);
+    assert.equal(sockets[0].closed, true);
+    assert.equal(useStore.getState().connected, false);
+    mock.timers.tick(1000);
+    assert.equal(sockets.length, 2);
+    sockets[1].onopen();
+    assert.equal(loads, 2);
+    // The new one, with no ticks, isn't watched.
+    mock.timers.tick(10 * SILENCE_MS);
+    assert.equal(sockets.length, 2);
+  } finally {
+    mock.timers.reset();
+    Object.assign(globalThis, saved);
+    useStore.setState({ loadAll });
   }
 });

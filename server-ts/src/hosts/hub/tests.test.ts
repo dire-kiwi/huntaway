@@ -19,7 +19,7 @@ import { API_VERSION, VERSION } from "../proto.ts";
 import { read_jsonl } from "../../threads/examples.ts";
 import * as store from "../../threads/store.ts";
 import * as live from "../../threads/live.ts";
-import { dial_out, find_link, host_request, hub_url, link_http, list_hosts, spawn_outbound, tunnel_to, type LinkConn } from "../hub.ts";
+import { dial_out, find_link, host_request, hub_url, link_http, list_hosts, spawn_outbound, TICK_MS, tunnel_to, ws, type LinkConn } from "../hub.ts";
 
 relay.test_timing();
 
@@ -70,6 +70,32 @@ function old_host(ui: boolean) {
     res.writeHead(405).end();
   };
 }
+
+test("the_uis_events_socket_is_sent_a_tick_that_isnt_an_event", (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const s = testing.state();
+  const seen: any[] = [];
+  s.events.subscribe((v) => seen.push(v));
+  s.hub_events.subscribe((v) => seen.push(v));
+  const sent: string[] = [];
+  const on: Record<string, () => void> = {};
+  const socket = { OPEN: 1, readyState: 1, bufferedAmount: 0, send: (m: string) => sent.push(m), on: (ev: string, f: () => void) => (on[ev] = f) };
+  ws(s, {} as any, socket as any);
+  const types = () => sent.map((m) => JSON.parse(m).type);
+  assert.deepEqual(types(), ["hello"]);
+  t.mock.timers.tick(TICK_MS - 1);
+  assert.deepEqual(types(), ["hello"]);
+  t.mock.timers.tick(1);
+  s.hub_events.send({ type: "task", task: {} });
+  t.mock.timers.tick(TICK_MS);
+  assert.deepEqual(types(), ["hello", "tick", "task", "tick"]);
+  // It's the socket's own: nothing else that follows the events (push, Telegram, the event log) has it.
+  assert.deepEqual(seen.map((v) => v.type), ["task"]);
+  // Closed: no more.
+  on.close!();
+  t.mock.timers.tick(TICK_MS * 3);
+  assert.equal(sent.length, 4);
+});
 
 test("older_hosts_unknown_routes_are_json_404s_through_the_proxy", async () => {
   const s = testing.state();
