@@ -55,6 +55,19 @@ export function linksInNewTabs() {
   };
 }
 
+/**
+ * Takes WebRTC away from the page before its own scripts run: Chromium doesn't hold RTCPeerConnection to the frame's
+ * policy, so a page could send data to a STUN or TURN server of its choosing, in its hostname or a TURN username
+ * (HA-269). A frame in the page is of another origin (the sandbox gives each document an opaque origin of its own), so
+ * the page can't take the constructor back from one; but a srcdoc frame of the page's own runs scripts of its own before
+ * anything can take it away there. The board's <ia-html> frames run this first (planTheme.ts), and the desktop app takes
+ * it away in every frame (electron/preload.cjs). Workers have no RTCPeerConnection. It runs in a document's frame, as
+ * source.
+ */
+export function noWebRtc() {
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection"]) delete (window as unknown as Record<string, unknown>)[name];
+}
+
 /** When the user last used the board itself, rather than a frame in it: a pointer down or key press in its document. */
 let boardInput = -Infinity;
 let tracking = false;
@@ -98,9 +111,11 @@ const CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpk
  * and blob: URLs. So a page an agent wrote (say, prompted by a poisoned issue) can't send what's in it, or the answers
  * typed into it, out with remote images, fetch, frames or form posts. The frame's own navigations are held by the
  * board's frame-src (index.html), and its links by `linksInNewTabs`. An <ia-html>'s frame (srcdoc) inherits it.
- * Two ways out remain, both through a hostname of the page's choosing (HA-269): WebRTC, which Chromium doesn't hold to
- * CSP (a STUN or TURN server), and, in browsers but not Electron, a frame load the policy refuses (an <iframe>, or a
- * frame navigating itself), for which Chromium still looks the host up and connects to it, TLS SNI included.
+ * WebRTC isn't held to CSP, so `noWebRtc` takes it away. What's left is in browsers, not the desktop app (HA-269): a
+ * srcdoc frame the page makes itself can use WebRTC, and for a frame load the policy refuses (an <iframe>, or a frame
+ * navigating itself) Chrome still looks the host up and connects to it, TLS SNI included, unless its "Preload pages"
+ * setting is off. Both send data out in a hostname of the page's choosing. Nothing the board sets changes the second:
+ * the frame served with the policy as a header, the iframe's `csp` attribute, COOP and COEP were tried.
  */
 export const FRAME_CSP = [
   "default-src 'none'",
@@ -118,8 +133,8 @@ export const FRAME_CSP = [
 
 /**
  * A document's HTML with its policy (FRAME_CSP) before anything in it, and the script that keeps its place (`keepPlace`)
- * (with `linksInNewTabs`) after. The policy comes first of all, with a doctype of its own (the page's, after it, is ignored), rather than after
+ * (with `linksInNewTabs`) after. The policy comes first of all, then `noWebRtc`, with a doctype of its own (the page's, after it, is ignored), rather than after
  * the page's doctype or comments: finding where those end as the browser does isn't worth the risk of a script before it.
  */
 export const frameDoc = (html: string, y: number, inset: number) =>
-  `<!doctype html><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">\n${html}\n<script>(${keepPlace})(${y},${inset});(${linksInNewTabs})()</script>`;
+  `<!doctype html><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><script>(${noWebRtc})()</script>\n${html}\n<script>(${keepPlace})(${y},${inset});(${linksInNewTabs})()</script>`;

