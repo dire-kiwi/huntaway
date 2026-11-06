@@ -1,9 +1,11 @@
+import { linksInNewTabs } from "./htmlFrame";
+
 /**
  * Sizes an <ia-html>'s frame to its content (not the window, which the frame sets): it reports the
  * body's extent, overflow included, to the plan's frame (iaHtmlHeight). Chromium doesn't update the
  * rendering of an offscreen frame of another origin, so observers of size don't fire there until it's
  * scrolled to: it also reports when the page has loaded and when the DOM changes. It runs in the
- * component's frame, as source.
+ * component's frame, as source (in the board with linksInNewTabs, as frames in a plan's frame can't load other pages).
  */
 function fitFrame() {
   let last = -1;
@@ -32,10 +34,11 @@ function fitFrame() {
  * Turns each <ia-html>'s <template> into a page of its own: a sandboxed frame (srcdoc) sized to fit
  * its content, with the theme's colours and fonts. So its HTML, CSS and scripts work as in any page
  * (scripts share a scope, run in order, see DOMContentLoaded and load, inline handlers work), and
- * neither its styles nor its scripts touch the plan. It runs in the plan's frame, as source (so it
- * can't use anything from outside).
+ * neither its styles nor its scripts touch the plan. `popups`: whether its frame may open them (in a downloaded plan;
+ * in the board its links ask the board, see linksInNewTabs). It runs in the plan's frame, as source (so it can't use
+ * anything from outside).
  */
-function iaHtml(fit: string) {
+function iaHtml(fit: string, popups: boolean) {
   const vars = ["--bg", "--panel", "--panel-2", "--raised", "--line", "--line-strong", "--fg", "--heading", "--muted", "--faint", "--accent", "--accent-bg"];
   vars.push(...["--ok", "--ok-bg", "--warn", "--warn-bg", "--danger", "--danger-bg", "--info", "--info-bg", "--font-sans", "--font-mono"]);
   const style = getComputedStyle(document.documentElement);
@@ -55,7 +58,8 @@ function iaHtml(fit: string) {
       const template = host.querySelector(":scope > template");
       if (!(template instanceof HTMLTemplateElement)) continue;
       const frame = document.createElement("iframe");
-      frame.sandbox.add("allow-scripts", "allow-popups", "allow-popups-to-escape-sandbox", "allow-forms");
+      frame.sandbox.add("allow-scripts", "allow-forms");
+      if (popups) frame.sandbox.add("allow-popups", "allow-popups-to-escape-sandbox");
       frame.title = host.getAttribute("title") ?? "";
       frame.srcdoc = head + template.innerHTML;
       template.replaceWith(frame);
@@ -319,18 +323,19 @@ export const isWholePage = (html: string) => /^\s*(<!--[\s\S]*?-->\s*)*<(!doctyp
 
 /**
  * A plan's content (not a whole page) as a page in the plan theme (planTheme.css), with the
- * components' scripts. `form` is what its questions start with (see iaForm).
+ * components' scripts. `form` is what its questions start with (see iaForm), and `board` is set for
+ * the board's frame (HtmlFrame), where an <ia-html>'s links ask the board to open them.
  */
 export function themedPlan(
   html: string,
   css: string,
-  form: { answers?: Record<string, { v: string[]; o?: string }>; readOnly?: boolean; key?: string } = {},
+  form: { answers?: Record<string, { v: string[]; o?: string }>; readOnly?: boolean; key?: string; board?: boolean } = {},
 ): string {
   // Inside a <script>, so what the user typed mustn't close it.
   const answers = JSON.stringify(form.answers ?? {}).replace(/</g, "\\u003c");
   return (
     `<!doctype html><meta charset="utf-8"><style>${css}</style>\n${html}\n` +
     `<script>(${iaForm})(${answers}, ${!!form.readOnly}, ${JSON.stringify(form.key ?? null).replace(/</g, "\\u003c")})</script>\n` +
-    `<script>(${iaHtml})(${JSON.stringify(`(${fitFrame})()`)})</script>\n<script>(${iaDiagrams})()</script>`
+    `<script>(${iaHtml})(${JSON.stringify(form.board ? `(${fitFrame})();(${linksInNewTabs})()` : `(${fitFrame})()`)}, ${!form.board})</script>\n<script>(${iaDiagrams})()</script>`
   );
 }
