@@ -21,7 +21,11 @@ Settings → Hosts offers three ways to link a host:
   `ssh-host` starts `huntaway serve --host 127.0.0.1` through the login shell if nothing answers on
   that port, and gives the hub the token from its data dir; add `--data-dir '<data dir>'` to the
   command if the host's isn't the default (`scripts/install-release-host.sh` prints the whole
-  command). The host never listens beyond localhost or needs to reach the hub. The first connection
+  command). Before starting one it waits 15 seconds for a host that's restarting (a Restart or an
+  Update leaves the port closed for a moment), so it doesn't start a second server that takes the
+  port from the release being started. With `--no-start` it never starts one, for a host that's kept
+  running some other way (a desktop app or a service manager): while it's down, the hub's
+  connection fails and retries. The host never listens beyond localhost or needs to reach the hub. The first connection
   trusts the machine's SSH host key, and a changed one is refused later. If the tunnel drops, agents
   keep running and the hub reconnects. The hub needs `ssh` and `ssh-keygen`.
 
