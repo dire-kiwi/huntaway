@@ -192,8 +192,8 @@ export function of_task(c: Conn, task_id: string): Set<string> {
 const THREAD_TABLES = ["messages", "thread_items", "thread_requests"];
 
 /**
- * Attachments referred to by any task: in threads' messages too, which tasks from before they moved onto items still
- * have (until HA-226 deletes them).
+ * Attachments referred to by any task: in threads' messages too, which a task still on them has (until it moves onto
+ * items, which deletes them: step 14 of docs/threads.md).
  */
 export function referenced(c: Conn): Set<string> {
   const ids = new Set<string>();
