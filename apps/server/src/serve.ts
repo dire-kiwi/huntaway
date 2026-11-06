@@ -312,12 +312,6 @@ const statOr = (p: string) => {
   }
 };
 
-/**
- * `--open-token`'s route: the token for whoever asks, but not through a broker (where whoever asks could be anyone).
- *
- * On a loopback-only server (`--host 127.0.0.1`) it also needs a loopback `Host`, so a page on another site that rebinds
- * its name to 127.0.0.1 can't read the token.
- */
 /** `decodeURIComponent`, or the text as it is where it isn't valid. */
 function safe_decode(v: string): string {
   try {
@@ -327,6 +321,12 @@ function safe_decode(v: string): string {
   }
 }
 
+/**
+ * `--open-token`'s route: the token for whoever asks, but not through a broker (where whoever asks could be anyone).
+ *
+ * On a loopback-only server (`--host 127.0.0.1`) it also needs a loopback `Host`, so a page on another site that rebinds
+ * its name to 127.0.0.1 can't read the token.
+ */
 export function open_token(token: string, loopback_only: boolean): (headers: Record<string, any>) => Answer {
   return (headers) => {
     const json = (status: number, v: any): Answer => ({ status, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(v)) });

@@ -20,7 +20,6 @@ import type { Shared } from "../../state.ts";
 import * as mcp from "../../mcp.ts";
 import * as runs from "../runs.ts";
 import * as permissions from "../../mcp/permissions.ts";
-import * as store from "../../threads/store.ts";
 import * as agent_tools from "../agent_tools.ts";
 import { MCP_SERVER_NAME, is_board_server } from "../runner.ts";
 import { ask_permission, call_tool, cancel_call, control_call_id } from "../runner/requests.ts";
@@ -72,12 +71,9 @@ export function on_request(state: Shared, run: Run, v: any): void {
       return ask("Bash", input);
     }
     case "item/fileChange/requestApproval": {
-      // The changes are the item's, which the adapter sends with it (or the thread has).
-      let item = v.item ?? null;
-      if (!item && typeof p.itemId === "string") {
-        const it: any = store.get_item(state.db(), run.task_id, p.itemId);
-        if (Array.isArray(it?.input?.changes)) item = { changes: it.input.changes.map((c: any) => ({ ...c, kind: { type: c?.kind, move_path: c?.move_path } })) };
-      }
+      // The changes are the item's, which the adapter sends with it: it has every item of the run that's started, and
+      // the thread's are from the same notifications.
+      const item = v.item ?? null;
       const input: any = { changes: file_changes(item) };
       if (typeof p.reason === "string") input.reason = p.reason;
       if (typeof p.grantRoot === "string") input.grant_root = p.grantRoot;

@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import * as testing from "../../testing.ts";
 import { Spec_default } from "../codex.ts";
+import { MCP_SERVER_NAME } from "../runner.ts";
+import { BOARD_TOOLS } from "./output.ts";
 import { board_tools } from "./requests.ts";
 
 const MAIN = join(import.meta.dirname, "..", "..", "main.ts");
@@ -30,6 +32,8 @@ rl.on("line", (line) => {
   const m = JSON.parse(line);
   log(m);
   if (m.method === "initialize") return send({ id: m.id, result: {} });
+  if (m.method === "thread/start" && m.params.dynamicTools && process.env.FAKE_NO_DYNAMIC_TOOLS)
+    return send({ id: m.id, error: { code: -32600, message: "thread/start.dynamicTools requires experimentalApi capability" } });
   if (m.method === "thread/start") return send({ id: m.id, result: { thread: { id: "th1" }, model: "gpt-x" } });
   if (m.method === "thread/compact/start") {
     send({ id: m.id, result: {} });
@@ -67,18 +71,24 @@ interface Ran {
   sent: any[];
 }
 
-/** Runs the adapter with `spec`, answering each request on its output with `answer` (with input), until it exits. */
-function adapter(fields: Partial<ReturnType<typeof Spec_default>>, answer: (req: any) => any): Promise<Ran> {
+/** The board's MCP server, as launch.ts leaves it in a new session's `mcp.json`. */
+const BOARD_SERVER = { type: "http", url: "http://127.0.0.1:1/mcp/run/huntaway", headers: { Authorization: "Bearer x" } };
+
+/**
+ * Runs the adapter with `spec`, answering each request on its output with `answer` (with input), until it exits.
+ * `no_dynamic_tools`: the fake is a Codex that won't take dynamic tools.
+ */
+function adapter(fields: Partial<ReturnType<typeof Spec_default>>, answer: (req: any) => any, no_dynamic_tools = false): Promise<Ran> {
   const dir = testing.temp_dir();
   const fake = join(dir, "fake-codex.cjs");
   writeFileSync(fake, `#!/usr/bin/env node\n${FAKE}`, { mode: 0o755 });
   const spec = Spec_default({ cwd: dir, approval_policy: "untrusted", approvals_reviewer: "user", sandbox: "workspace-write", ...fields });
   writeFileSync(join(dir, "codex.json"), JSON.stringify(spec));
-  writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: {} }));
+  writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: { [MCP_SERVER_NAME]: BOARD_SERVER } }));
   const log = join(dir, "sent.jsonl");
   writeFileSync(log, "");
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", MAIN, "codex-run", join(dir, "codex.json")], {
-    env: { ...process.env, IA_CODEX_BIN: fake, FAKE_LOG: log },
+    env: { ...process.env, IA_CODEX_BIN: fake, FAKE_LOG: log, ...(no_dynamic_tools ? { FAKE_NO_DYNAMIC_TOOLS: "1" } : {}) },
     stdio: ["pipe", "pipe", "inherit"],
   });
   const out: any[] = [];
@@ -110,9 +120,11 @@ test("requests_go_to_the_output_and_their_answers_come_back_on_the_input", async
   const { out, sent } = await adapter({ input: true, requests_on_output: true, board_tools: tools }, (req) =>
     req.method === "item/tool/call" ? { result: { contentItems: [{ type: "inputText", text: "task" }], success: true } } : { result: { decision: "accept" } },
   );
-  // The board's tools, on the new thread.
+  // The board's tools, on the new thread, and not its MCP server.
   const start = sent.find((m) => m.method === "thread/start");
   assert.deepEqual(start.params.dynamicTools, [tools]);
+  assert.equal(start.params.config.mcp_servers[MCP_SERVER_NAME], undefined);
+  assert.ok(!out.some((v) => v.method === BOARD_TOOLS));
   // Each request on the output, an approval with the item it's about.
   const requests = out.filter((v) => "id" in v && v.method);
   assert.deepEqual(requests.map((r) => r.id), [10, 11, 12]);
@@ -131,7 +143,26 @@ test("requests_go_to_the_output_and_their_answers_come_back_on_the_input", async
 test("a_resumed_thread_gets_no_dynamic_tools", async () => {
   // thread/resume can't change them: the fake starts a thread, which is what's checked here.
   const { sent } = await adapter({ input: true, requests_on_output: true, board_tools: null }, () => ({ result: { decision: "accept" } }));
-  assert.equal(sent.find((m) => m.method === "thread/start").params.dynamicTools, undefined);
+  const start = sent.find((m) => m.method === "thread/start");
+  assert.equal(start.params.dynamicTools, undefined);
+  // The board's MCP server instead.
+  assert.ok(start.params.config.mcp_servers[MCP_SERVER_NAME]);
+});
+
+test("a_codex_that_wont_take_dynamic_tools_gets_the_boards_mcp_server_and_says_so", async () => {
+  const tools = board_tools(false);
+  const { out, sent } = await adapter({ input: true, requests_on_output: true, board_tools: tools }, () => ({ result: { decision: "accept" } }), true);
+  const starts = sent.filter((m) => m.method === "thread/start");
+  assert.equal(starts.length, 2);
+  assert.deepEqual(starts[0].params.dynamicTools, [tools]);
+  assert.equal(starts[0].params.config.mcp_servers[MCP_SERVER_NAME], undefined);
+  // Started again without them, with the board's server.
+  assert.equal(starts[1].params.dynamicTools, undefined);
+  assert.equal(starts[1].params.config.mcp_servers[MCP_SERVER_NAME].url, BOARD_SERVER.url);
+  // It says so: a warning, and the notification the server records it from.
+  assert.match(out.find((v) => v.method === "warning").params.message, /doesn't take the board's tools as dynamic tools .* on the board's MCP server instead/);
+  assert.deepEqual(out.find((v) => v.method === BOARD_TOOLS).params, { dynamic: false });
+  assert.ok(out.some((v) => v.method === "turn/completed"));
 });
 
 test("with_no_input_requests_are_declined", async () => {

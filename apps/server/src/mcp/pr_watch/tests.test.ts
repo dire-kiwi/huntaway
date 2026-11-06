@@ -207,9 +207,13 @@ function in_review(s: Shared, mode: string): [Task, { v: any }] {
   return [t, gh];
 }
 
-/** Sweep the tasks in review as though `polls` reads' time had gone by since `start`. */
+/**
+ * Sweep the tasks in review as though `polls` reads' time had gone by since `start`. From a whole number of ms: a read
+ * at `start + REVIEW_POLL * n` makes the next due at that `+ REVIEW_POLL`, which for a fractional `start` (as
+ * `performance.now()` is) can round to just after `start + REVIEW_POLL * (n + 1)`, so that sweep wouldn't read it.
+ */
 function sweep_at(s: Shared, watched: Map<string, Watched>, start: number, polls: number) {
-  return sweep(s, watched, start + REVIEW_POLL * polls);
+  return sweep(s, watched, Math.floor(start) + REVIEW_POLL * polls);
 }
 
 /** The messages the board sent the agent of `id` to wake it. */
@@ -364,7 +368,8 @@ test("comments_alone_wake_it_ten_times_in_a_row_until_the_user_writes", () =>
   can_run(async () => {
     const s = testing.state();
     const [t, gh] = in_review(s, "all");
-    const start = performance.now(), watched = new Map<string, Watched>();
+    // A start whose reads at 31 and 32 were a rounding apart (see sweep_at), so the last one wasn't due.
+    const start = 968.5255631372014, watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 0);
     await sweep_at(s, watched, start, 1);
     const list: any[] = [];

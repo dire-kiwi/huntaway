@@ -480,7 +480,12 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
           throw bad(`agent step ${id}'s claude_config_id ${cid} isn't one of the project's (or profile's) agent configs`);
         }
         set_opt(n, "model", trimmed(n.model));
+        // Given to the agent's command line as it is (see agent/runner/launch.ts): a name, not an option.
+        if (n.model !== undefined && (chars(n.model) > 100 || n.model.startsWith("-") || /[\s\p{Cc}]/u.test(n.model))) {
+          throw bad(`agent step ${id}'s model must be a model's name of up to 100 characters, without spaces`);
+        }
         set_opt(n, "effort", trimmed(n.effort));
+        if (n.effort !== undefined && !db.THREAD_EFFORTS.includes(n.effort)) throw bad(`agent step ${id}'s effort must be one of ${db.THREAD_EFFORTS.join(", ")}`);
         const skills = (n.skills ?? []).filter((s) => s.trim()).map((s) => s.trim().replace(/^[/$]+/, ""));
         if (skills.length > 10) throw bad(`agent step ${id} has more than 10 skills`);
         if (skills.length) n.skills = skills;

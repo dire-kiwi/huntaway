@@ -1026,6 +1026,8 @@ export function prompt_text(data: any): string {
       return "Delete a task?";
     case "automation":
       return "Approve an automation?";
+    case "workflow":
+      return "Approve a workflow?";
   }
   if (permissions.is_question(tool)) return "The agent has questions for you";
   if (tool === permissions.EXIT_PLAN) return "Plan ready for approval";

@@ -47,22 +47,25 @@ own profile's board and those that let them in (see *Agents across profiles*).
 
 A linked host's agents can use the hub's board too, once the hub lets them: switch on **Let this
 host's agents use this board** for it under Settings → Hosts (off by default; hub and host need API
-112). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
-up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the tunnel for
-one that dials in). The hub takes it only from an agent in one of its profiles whose **Assistant host**
-is that host (see *An assistant host*): the host names the caller's profile, and whoever controls it
-could name any. It runs with that profile's access (its board, and those that let that profile in),
-looking on its other linked hosts too, but never back on the calling host or further up, and at most
-once per call id, and only if it came the way the hub links that host: a host that dials in under the
-id of an assistant host the hub dials (by URL or over SSH) is refused, so it gets none of that host's
-calls, the assistant's requests or the board's requests through `/api/h/<host_id>`. (Another host the
-hub dials may dial in too, and stands in for itself while the hub's link to it is down.) A call that names the
-calling host with `host` isn't sent back down to it either. A host that dials in is known only by the id it gives with the hub token, which every such
-host shares, so any host given that token could claim to be it: link an assistant host over SSH or by
-URL. If the link drops after a call went up, the agent is told it may have taken effect.
-Changes that need the user's approval (`update_project`, `delete_task`, automations) are refused there,
-since the agent's thread isn't on the hub, and `wait` only watches tasks on the agent's own host. Calls
-with `host` set to the hub's name (or one of its hosts') go there.
+112). A board tool call the host can't resolve on its own board or the hosts it links itself then
+goes up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the
+tunnel for one that dials in). The hub takes it only from an agent in one of its profiles whose
+**Assistant host** is that host (see *An assistant host*): the host names the caller's profile, and
+whoever controls it could name any. It runs with that profile's access (its board, and those that
+let that profile in), looking on its other linked hosts too, but never back on the calling host or
+further up, and at most once per call id, and only if it came the way the hub links that host: a
+host that dials in under the id of an assistant host the hub dials (by URL or over SSH) is refused,
+so it gets none of that host's calls, the assistant's requests or the board's requests through
+`/api/h/<host_id>`. (Another host the hub dials may dial in too, and stands in for itself while the
+hub's link to it is down.) One that dialled in under a host's id before the host became an assistant
+host is dropped when a profile picks it, and the hub dials the host again. A call that names the
+calling host with `host` isn't sent back down to it either. A host that dials in is known only by
+the id it gives with the hub token, which every such host shares, so any host given that token could
+claim to be it: link an assistant host over SSH or by URL. If the link drops after a call went up,
+the agent is told it may have taken effect. Changes that need the user's approval (`update_project`,
+`delete_task`, automations) are refused there, since the agent's thread isn't on the hub, and `wait`
+only watches tasks on the agent's own host. Calls with `host` set to the hub's name (or one of its
+hosts') go there.
 
 A hub that can't run agents itself (no `claude` or `ia-shim`, e.g. a board-only deployment)
 sends new scratch tasks to a linked host. Pick which one under Settings → Hosts →

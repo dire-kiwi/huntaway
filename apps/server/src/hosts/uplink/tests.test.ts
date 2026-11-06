@@ -240,6 +240,38 @@ test("a_host_that_dials_in_under_a_dialled_hosts_id_isnt_taken_for_it", async ()
   assert.equal(db.assistant_task(impostor.db(), theirs.id), null);
 });
 
+// HA-255: one that dialled in before the host became an assistant host took its place then, and kept it (the proxy
+// answered 503 for it) until it went and the hub dialled again. Picking the host as a profile's assistant host drops it.
+test("a_host_that_dialled_in_under_a_hosts_id_is_dropped_when_it_becomes_an_assistant_host", async () => {
+  const [hub_s, host] = [node("hub", "desktop"), node("host", "homeserver")];
+  const personal = db.insert_profile(hub_s.db(), "personal", [], null);
+  await link_by_url(hub_s, host);
+  const impostor = node("host", "impostor");
+  await serve(impostor);
+  const hub_url = await serve(hub_s);
+  let stop = () => {};
+  const tunnel = result(tunnel_to(impostor, hub_url, "hub-hub", (a) => (stop = a)));
+  // Left in its place, it stays open: give up on it after a while rather than wait for it.
+  const kept = setTimeout(() => stop(), 5000);
+  on_end(() => (clearTimeout(kept), stop()));
+  // The host isn't an assistant host yet, so the one that dials in under its id takes its place.
+  await until("the impostor's tunnel", () => hub.find_link(hub_s, "host")?.kind.type === "tunnel");
+  const [status, p] = await api(hub_s, "PATCH", `/api/profiles/${personal.id}`, { assistant_host: "host" });
+  assert.equal(status, 200, JSON.stringify(p));
+  const why = err(await tunnel);
+  // (It renamed the link when it dialled in, as any host that dials in does, so the reason has its name.)
+  assert.match(why, /^refused: desktop links assistant host impostor itself, so a host that dials in under its id \(host\) isn't taken for it/);
+  // The hub dials the host again, and the proxy reaches it.
+  await until("the dialled link", () => hub.find_link(hub_s, "host")?.kind.type === "http");
+  const [s1, v] = await api(hub_s, "GET", "/api/h/host/info");
+  assert.equal(s1, 200, JSON.stringify(v));
+  assert.equal(v.host_name, "homeserver", JSON.stringify(v));
+  // Saving the profile again leaves the dialled link alone.
+  const live = hub_s.links.get("host");
+  assert.equal((await api(hub_s, "PATCH", `/api/profiles/${personal.id}`, { assistant_host: "host" }))[0], 200);
+  assert.equal(hub_s.links.get("host"), live);
+});
+
 test("a_host_that_dials_in_takes_the_hub_as_an_up_link_too", async () => {
   const b = boards();
   const { hub: hub_s, host, run } = b;

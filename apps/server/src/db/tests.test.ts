@@ -1554,3 +1554,33 @@ test("a_database_from_version_93_keeps_its_prompts_waiting_without_an_expiry", (
   assert.equal(db.value(c2, "SELECT COUNT(*) FROM approval_log"), 0);
   c2.close();
 });
+
+test("a_database_from_version_99_has_its_workflows_approvals_say_workflow", () => {
+  const path = db_path();
+  let task = "";
+  prepare_at(path, (c) => {
+    const p = insert_profile(c, "p", [], null);
+    task = insert_task(c, nt(p.id, {})).id;
+    const ask = (kind: string, input: any) =>
+      db.run(c, "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'permission', ?2, '1')", task, JSON.stringify({ kind, tool_name: "t", input, status: "allowed" }));
+    ask("automation", { op: "create", workflow: { name: "W" } });
+    ask("automation", { op: "create", automation: { name: "A" } });
+    ask("project", { workflow: "not one" });
+    const request = (id: string, kind: string, input: any) =>
+      db.run(
+        c,
+        "INSERT INTO thread_requests (task_id, id, pos, type, open, data, created_at, updated_at) VALUES (?1, ?2, ?3, 'permission', 0, ?4, '1', '1')",
+        task, id, id === "r1" ? 1 : 2, JSON.stringify({ id, type: "permission", input, metadata: { kind, tool_name: "t", status: "allowed" } }),
+      );
+    request("r1", "automation", { op: "delete", workflow: { name: "W" } });
+    request("r2", "automation", { op: "delete", automation: { name: "A" } });
+    c.exec("PRAGMA user_version=99;");
+  });
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  const kinds = db.all(c, "SELECT json_extract(data, '$.kind') AS k FROM messages WHERE task_id=?1 ORDER BY id", task).map((r: any) => r.k);
+  assert.deepEqual(kinds, ["workflow", "automation", "project"]);
+  const requests = db.all(c, "SELECT json_extract(data, '$.metadata.kind') AS k FROM thread_requests WHERE task_id=?1 ORDER BY pos", task).map((r: any) => r.k);
+  assert.deepEqual(requests, ["workflow", "automation"]);
+  c.close();
+});
