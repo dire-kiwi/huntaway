@@ -2,13 +2,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import * as api from "../api.ts";
 import * as worktree from "../git/worktree.ts";
 import * as workflows from "../integrations/workflows.ts";
+import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as pr_watch from "../mcp/pr_watch.ts";
 import * as testing from "../testing.ts";
 import type { AppState } from "../state.ts";
@@ -237,6 +238,41 @@ test("reads_each_accounts_pull_requests_together_as_that_account", async () => {
   const statuses = [a, b, b2, c, d].map((t) => task(s, t.id).status);
   assert.deepEqual(statuses, ["in_review", "done", "done", "in_review", "in_review"]);
   set_fake(null);
+});
+
+// HA-262: each read left gh's config for the account, which holds its token, on disk (a folder every POLL).
+test("reading_as_an_account_leaves_no_copy_of_its_token", async () => {
+  const s = testing.state();
+  const profile = db.insert_profile(s.db(), "p", [], null);
+  db.run(s.db(), "UPDATE profiles SET github_account='alice' WHERE id=?1", profile.id);
+  const [, , t] = await task_in_review(s, profile.id, "https://github.com/o/r/pull/7");
+  // gh signed in as alice, and GitHub with the pull request open.
+  const root = testing.temp_dir();
+  const gh = join(root, "gh");
+  const answer = JSON.stringify({ data: { pr0: { pullRequest: { state: "OPEN" } } } });
+  writeFileSync(gh, `#!/bin/sh\ncase "$1" in\n  auth) echo token ;;\n  api) echo '${answer}' ;;\nesac\n`);
+  chmodSync(gh, 0o755);
+  const cache = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = join(root, "cache");
+  gh_mcp.TEST_GH_PROGRAM.set(gh);
+  // Kept from the garbage collector, which removes their folders too: only drop() does here.
+  const made: gh_mcp.GhEnv[] = [];
+  const env = gh_mcp.Account.prototype.env;
+  gh_mcp.Account.prototype.env = function (token: string) {
+    made.push(env.call(this, token));
+    return made[made.length - 1];
+  };
+  try {
+    await check(s, new Map());
+    assert.equal(task(s, t.id).status, "in_review");
+    assert.equal(made.length, 1);
+    assert.deepEqual(readdirSync(join(root, "cache", "huntaway", "gh-account")), []);
+  } finally {
+    gh_mcp.Account.prototype.env = env;
+    gh_mcp.TEST_GH_PROGRAM.set(null);
+    if (cache === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = cache;
+  }
 });
 
 test("builds_one_query_and_reads_its_answer", () => {
