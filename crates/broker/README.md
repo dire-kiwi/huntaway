@@ -15,7 +15,7 @@ This follows [T3 Connect's split](https://github.com/pingdotgg/t3code/blob/main/
 broker manages endpoints, while normal HTTP and websocket traffic uses a separate tunnel service. Cloudflare
 still carries that traffic for the session; this isn't peer-to-peer NAT traversal.
 
-Build the broker (`cd server && cargo build --release -p huntaway-broker`), serve it behind HTTPS, and configure:
+Build the broker (`cargo build --release -p huntaway-broker` at the repository's root), serve it behind HTTPS, and configure:
 
 ```sh
 export BROKER_TOKEN='<secret shared only with your hosts, at least 16 characters>'
@@ -77,7 +77,7 @@ per reconnect. Keep the host's data dir (`host_id` and `broker_key`) to retain i
 ## Legacy relay
 
 ```sh
-cd server && cargo build --release -p huntaway-broker
+cargo build --release -p huntaway-broker
 BROKER_TOKEN=$(openssl rand -hex 32) target/release/huntaway-broker --port 8080 --state /var/lib/huntaway-broker/state.json [--default-host desktop]
 ```
 

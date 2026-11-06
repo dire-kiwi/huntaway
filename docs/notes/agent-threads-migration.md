@@ -60,7 +60,7 @@ One row can produce several items/events. Preserve `created_at` and a mapping fr
 | Permission/question cards and their stored answers | Request events where equivalent, otherwise Huntaway history cards | Historical cards must not become actionable live approvals; see below |
 | `task_started/progress/updated/notification` | Subagent state where supported, otherwise notices plus retained source | Background completion and Skill-forked agents need explicit handling beyond `parent_tool_use_id` |
 
-The existing UI already proves the basic data is present: `app/src/threadModel.ts` extracts text/thinking/calls,
+The existing UI already proves the basic data is present: `apps/web/src/threadModel.ts` extracts text/thinking/calls,
 joins results by `tool_use_id`, groups child messages, and renders compactions and outcomes from those rows. We can
 perform that normalization once on the server and save it, rather than keeping it as renderer-only logic.
 

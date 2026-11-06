@@ -31,7 +31,7 @@ vite.config.ts       Vite+'s settings for the whole workspace (the linter's)
 ```
 
 The web app's package keeps the name `huntaway-app`: Electron names the desktop app's storage folder after it when it
-runs from a checkout. The release packages keep their own layout (`server-ts/` beside `huntaway`, see
+runs from a checkout. The release packages keep their own layout (`apps/server/` beside `huntaway`, see
 `scripts/package-server.sh`), which installed desktop apps and hosts look for.
 
 ## Server modules

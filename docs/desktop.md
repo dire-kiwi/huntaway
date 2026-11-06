@@ -63,7 +63,7 @@ workflow builds an existing release's tag again and replaces its files.
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
 | `huntaway-<version>.apk` | The mobile app for Android, once its signing key is set (see [The mobile app](mobile.md#the-mobile-app)) |
-| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `apps/server/` with the Node in `node/`, and `issue-agent`, which runs it under its old name) and `ia-shim`, with the UI in `ui/` |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`, and `issue-agent`, which runs it under its old name) and `ia-shim`, with the UI in `ui/` |
 | `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
@@ -104,7 +104,7 @@ from the Dock or an app launcher. A release build isn't a checkout, so it has no
 restart**: it updates from GitHub's releases instead (see below). The Mac build is ad-hoc signed,
 not signed with a Developer ID, so macOS blocks a downloaded copy until you run
 `xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
-run `npm run dist` in `app/`, which puts them in `apps/web/release/`. To build an existing release
+run `npm run dist` in `apps/web/`, which puts them in `apps/web/release/`. To build an existing release
 again, use Actions → Release → Run workflow with its tag, which replaces its files.
 
 ## Updating the desktop app
@@ -197,4 +197,4 @@ Both name the data dir (`--data-dir`, or the default it found), so the host keep
 checkout, serves them from a fake GitHub on 127.0.0.1, and runs the packaged app headless through
 background downloads, Update with an agent running, a broken version, Roll back, prereleases and
 the AppImage replacing itself (`--pacman` adds the Arch package, in a docker container). It needs
-`npm ci` in `app/` and about 2 GB in `~/.cache/huntaway-release-e2e`.
+`npm ci` at the root and about 2 GB in `~/.cache/huntaway-release-e2e`.

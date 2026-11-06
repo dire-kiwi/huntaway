@@ -2,8 +2,8 @@
 
 Detail behind [huntaway-features.md](huntaway-features.md), the Huntaway inventory.
 
-Source: `app/src` (React 19 + Vite + Tailwind 4 + zustand, xterm.js, Mermaid, react-markdown) and
-`app/electron/main.cjs`, at commit `90bb99b`. Paths below are relative to `app/src` unless they start
+Source: `apps/web/src` (React 19 + Vite + Tailwind 4 + zustand, xterm.js, Mermaid, react-markdown) and
+`apps/web/electron/main.cjs`, at commit `90bb99b`. Paths below are relative to `apps/web/src` unless they start
 with `app/`, and are updated to the feature folders since HA-103 (see `docs/structure.md`). "(README)"
 marks something the README already describes; those get one line. Many features are gated per host by
 API version (`hostSupports(host, N)`): on an older linked host they're simply hidden.
@@ -442,12 +442,12 @@ and last project per destination, "Add another"; plan answers per task; open ter
 Add-project tab; usage panel open; Analytics tab, range, calendar mode and rules. None of this syncs
 between browsers or machines.
 
-## 17. Electron shell (`app/electron/main.cjs`)
+## 17. Electron shell (`apps/web/electron/main.cjs`)
 
 - One `BrowserWindow` (1440×900, min 900×600, dark background, auto-hidden menu bar, sandboxed, context
   isolation) that loads the UI **from the server** with `?token=` (README covers local/remote modes).
 - Local mode: reuses a healthy server on the port (reading the token from the data dir) or spawns
-  `huntaway serve` (from `IA_SERVER_BIN`, `serverBin`, the packaged resources, or `server/target/{release,debug}`),
+  `huntaway serve` (from `IA_SERVER_BIN`, `serverBin`, the packaged resources, or `target/{release,debug}`),
   waits up to 15s for its `IA_READY` line, and SIGTERMs it on quit (agents survive under `ia-shim`).
 - Links that open new windows go to the system browser. A failure shows an error page naming the
   config file. Keeps the old "Issue Agent" user-data folder and config path after the rename.

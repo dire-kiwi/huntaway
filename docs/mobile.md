@@ -1,6 +1,6 @@
 # The mobile app
 
-`mobile/` is an Expo app for Android and iOS (API 118) that follows and drives your tasks on several
+`apps/mobile/` is an Expo app for Android and iOS (API 118) that follows and drives your tasks on several
 boards at once, a work hub and a personal board say. Its home tab is the **Assistant** (from API
 120): the selected board's assistant for its picked profile, on the host the profile's assistant is
 on (an assistant host of its own, perhaps, which the tab says is offline when it is), with the
@@ -160,7 +160,7 @@ The app's push on Android goes through Firebase Cloud Messaging, which Expo's pu
 service hands it to, so the APK needs a Firebase app's config: in the
 [Firebase console](https://console.firebase.google.com), make a project and add an Android app with the package `nz.net.ivan.huntaway`, download its
 `google-services.json`, and keep it as the repository secret `GOOGLE_SERVICES_JSON` (`gh secret
-set GOOGLE_SERVICES_JSON < google-services.json`). The `android` job writes it into `mobile/` and
+set GOOGLE_SERVICES_JSON < google-services.json`). The `android` job writes it into `apps/mobile/` and
 names it in `app.json` (`android.googleServicesFile`) for that build only, since it isn't
 committed. Then give Expo the project's FCM V1 key, so it can send: Firebase → Project settings →
 Service accounts → **Generate new private key**, and `npx eas-cli credentials --platform android`
@@ -176,10 +176,11 @@ them yet.
 `preview` (a release build for phones registered with `eas device:create`, and an APK on Android).
 EAS counts the iOS build numbers itself (`appVersionSource: "remote"`).
 
-**Developing** (Node 22.13 or later):
+**Developing** (Node 24+, as for the rest of the workspace):
 
 ```sh
-cd mobile && npm ci
+npm ci -w @huntaway/mobile   # at the repository's root (or npm ci for the whole workspace)
+cd apps/mobile
 npx expo start --web          # in a browser, to try it against a board (CORS is open)
 npx expo run:android          # a dev build on an emulator or a phone (needs the Android SDK)
 npx eas-cli build --profile development --platform ios   # or android: a dev build from EAS

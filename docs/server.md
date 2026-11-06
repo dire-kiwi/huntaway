@@ -96,9 +96,9 @@ as by default:
 
 When the source checkout has commits the running server doesn't (for example, a task branch
 merged to `master`), the sidebar shows **N new commits · Restart**. The same action is under
-Settings → Server. It runs `npm install --no-save` and `npm run build` in `app/`, `npm ci` in `apps/server/`
-when its lockfile changed, and `cargo build --release -p ia-shim` in `server/` (skipped when there's no cargo and a
-prebuilt `apps/server/bin/ia-shim`, as `scripts/install.sh` leaves without Rust), streaming the log, then re-execs
+Settings → Server. It runs `npm install --no-save` at the checkout's root for the UI and the server (`-w huntaway-app
+-w @huntaway/server`, not the phone app), `npm run build -w huntaway-app`, and `cargo build --release -p ia-shim`
+(skipped when there's no cargo and a prebuilt `apps/server/bin/ia-shim`, as `scripts/install.sh` leaves without Rust), streaming the log, then re-execs
 `apps/server/bin/huntaway` with the same arguments, so the PID stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
 

@@ -1,7 +1,7 @@
 # Huntaway: feature inventory
 
 What Huntaway does, area by area, written to be read next to the T3 Code inventory
-([t3code-overview.md](t3code-overview.md)). Gathered from `README.md`, `app/src`, `app/electron` and
+([t3code-overview.md](t3code-overview.md)). Gathered from `README.md`, `apps/web/src`, `apps/web/electron` and
 `server/src` at commit `90bb99b` (host API version 61, database schema 53). Paths are relative to the
 repository root. More detail is in [huntaway-ui-details.md](huntaway-ui-details.md) (every page, card
 badge, menu and shortcut) and [huntaway-server-details.md](huntaway-server-details.md) (CLI, API routes,
@@ -15,9 +15,9 @@ data model, how runs are launched).
   opens the thread, its changes, its review, a terminal and its details.
 - **Self-hosted**: one Rust binary (`huntaway serve`: axum, SQLite, the agent runner, worktrees, the
   MCP helpers and the hub) serves a React + Vite UI on port 7878. An Electron shell
-  (`app/electron/main.cjs`) wraps the same UI and starts the server if none is running. There's no
+  (`apps/web/electron/main.cjs`) wraps the same UI and starts the server if none is running. There's no
   hosted service, account system or telemetry.
-- **Agents outlive the server.** Each run is started under `ia-shim` (`server/shim`), a tiny supervisor
+- **Agents outlive the server.** Each run is started under `ia-shim` (`crates/shim`), a tiny supervisor
   that detaches the agent and writes its output, pid and exit status to `<data dir>/runs/<run id>/`.
   The server only follows those files, so stopping, crashing, rebuilding or updating the server
   doesn't interrupt agents: the new process picks every unfinished run back up from where it had read.

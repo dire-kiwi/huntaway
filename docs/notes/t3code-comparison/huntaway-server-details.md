@@ -116,7 +116,7 @@ Enumerations (`src/db.rs`):
 
 - **Statuses** (`STATUSES`): `backlog`, `todo`, `in_progress`, `needs_attention`, `in_review`,
   `ready_for_merge`, `done`. Backlog is a real column (first, starts collapsed per the demo text in
-  `src/demo.rs`; `app/src/api/tasks.ts` labels it), which the README only names in the status-script list.
+  `src/demo.rs`; `apps/web/src/api/tasks.ts` labels it), which the README only names in the status-script list.
 - **Resolutions** (`RESOLUTIONS`, only while done): `done`, `not_done`, `wont_fix`.
 - **Task types** (`TASK_TYPES`): `plan`, `artifact`, `diagram`, `scratch`; `subproject` is accepted on
   creation but stored as the `subproject` flag. Thread `kind`: `task` or `review`.
@@ -257,7 +257,7 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
   `permitopen="127.0.0.1:7878"`. The hub runs that command (which starts a host on 127.0.0.1 through the
   login shell if needed, logging to `serve.log`), then keeps an SSH tunnel to it (`BatchMode`,
   keep-alives, trust-on-first-use known_hosts, tunnels die with the hub via `PR_SET_PDEATHSIG`). So the
-  host needs no open port and never reaches the hub. The UI has this (`app/src/api/hosts.ts`: `sshKey`,
+  host needs no open port and never reaches the hub. The UI has this (`apps/web/src/api/hosts.ts`: `sshKey`,
   `addSshHost`).
 - The hub's proxy (`/api/h/{host}/…`) is JSON in, JSON out (bodies up to 64 MB); an offline host gives a
   503 "host … is offline". Board tools fall back to linked hosts via `POST /api/tools/{tool}`, with
@@ -294,7 +294,7 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
   classes `sub`, `callout` (with tones `ok|warn|bad|info`), `pill`, `grid2`/`grid3` of `card`s, `ol.steps`,
   `meta` and `td.n`, plus `<ia-diagram>` (Mermaid source inside a `<pre>`, rendered by the board) and
   `<ia-question>` (README). The older `<ia-lede>`, `<ia-callout>`, `<ia-steps>`, `<ia-cards>`, `<ia-columns>`
-  and `<ia-badge>` elements are retired but still styled. The plan theme (`app/src/components/task/planTheme.css`) styles
+  and `<ia-badge>` elements are retired but still styled. The plan theme (`apps/web/src/components/task/planTheme.css`) styles
   plain HTML; a whole page (with `<html>`) is shown as is.
 - A document file is capped at 5 MB (`MAX_SIZE`); a version stays `open` while the turn that writes it
   goes on, so the UI shows it as it's written. (Versions: README.)
@@ -384,8 +384,8 @@ Appended to Claude's system prompt (Codex: developer instructions), varying by t
 - **Auth and security**: one shared bearer token per host (plus a hub-dial-in token); no user accounts,
   roles, per-user audit, OAuth or token rotation endpoint; plain HTTP with permissive CORS; `--open-token`
   hands the token to any browser (`src/api.rs`, `src/main.rs`).
-- **Clients**: the server serves one web UI (`app/dist`), wrapped by Electron (`app/electron/main.cjs`); there
-  is no native mobile app in the repository and no PWA manifest in `app/public` (only `icon.svg`).
+- **Clients**: the server serves one web UI (`apps/web/dist`), wrapped by Electron (`apps/web/electron/main.cjs`); there
+  is no native mobile app in the repository and no PWA manifest in `apps/web/public` (only `icon.svg`).
 - **Forges**: GitHub only, through the `gh` CLI. The "open a PR before finishing" instruction is only given
   when the push remote is on `github.com` (`is_github_com` in `src/git/worktree.rs`); GitHub Enterprise works
   for gh tools via `HOST/LOGIN` accounts but doesn't get that instruction. No GitLab, Bitbucket or Gitea.
