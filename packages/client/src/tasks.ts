@@ -1,8 +1,10 @@
+import { isAssistants } from "./assistant";
 import type { DocumentType } from "./labels";
 import type { Effort } from "./claudeConfigs";
 import { canRunAgents, type Host, hostSupports } from "./hosts";
 import { enc, type Http, type KeyValueStorage } from "./http";
 import type { Client } from "./index";
+import type { Project } from "./projects";
 import type { ContextSummary, PendingRewind } from "./thread";
 
 export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
@@ -220,6 +222,17 @@ export const isSummaryThread = (t: Pick<Task, "kind" | "task_type">) => t.kind =
 export const isWorkflowThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "review" && (t.task_type as string | null | undefined) === "workflow";
 
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
+
+/** What goes before a task's number: its project's key, `G` for a group task, `S` for a scratch task, or `A` for its
+ *  profile's assistant and its routines' threads. */
+export const keyPrefix = (t: Task, project?: Pick<Project, "key">) =>
+  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistants(t) ? "A" : "T");
+
+export const taskKey = (t: Task, projects: Pick<Project, "id" | "key">[]) =>
+  `${keyPrefix(
+    t,
+    projects.find((x) => x.id === t.project_id),
+  )}-${t.number}`;
 
 /** Where the task's agent works, if not where its kind and project say and the folder is one to show: one in the host's
  *  data dir (a task that makes only documents) is given relative to it. */

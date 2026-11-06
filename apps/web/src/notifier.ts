@@ -1,4 +1,4 @@
-import { isOpenBoard, movedHere, type Task } from "./api";
+import { isOpenBoard, movedHere, taskKey, type Task } from "./api";
 import {
   attentionCount,
   EVENT_STATUS,
@@ -12,7 +12,7 @@ import {
   type NotifyEvent,
 } from "./notifications";
 import { onNavigate, openTask, parse } from "./router";
-import { liveTaskChanges, taskKey, useStore } from "./store";
+import { liveTaskChanges, useStore } from "./store";
 
 /**
  * Tells the user of task changes on every board the UI shows (see notifications.ts for which): with system

@@ -14,6 +14,7 @@ import {
   isAssistant,
   isRoutine,
   isScratch,
+  keyPrefix,
   LABELS,
   taskLabels,
   type DocumentType,
@@ -23,7 +24,7 @@ import {
   type TerminalTool,
 } from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
-import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
+import { isGroupTask, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
 import { useOpenTools } from "../../terminalTools";
 import { openingTab } from "./openingTab";

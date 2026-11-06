@@ -8,8 +8,6 @@ import {
   canRunAgents,
   hostCompat,
   hostSupports,
-  isScratch,
-  isAssistants,
   hasAssistant,
   wsUrl,
   type ClaudeConfig,
@@ -1058,17 +1056,6 @@ export function useProject(id: string | null | undefined) {
 export function useHost(id: string | null | undefined) {
   return useStore((s) => s.hosts.find((h) => h.id === id));
 }
-
-export function taskKey(t: Task, projects: Project[]) {
-  return `${keyPrefix(
-    t,
-    projects.find((x) => x.id === t.project_id),
-  )}-${t.number}`;
-}
-
-/** What goes before a task's number: its project's key, `G` for a group task, or `S` for a scratch task. */
-export const keyPrefix = (t: Task, project?: Project) =>
-  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistants(t) ? "A" : "T");
 
 /** A group task: in no project, it plans the work of its group's projects. */
 export const isGroupTask = (t: Task) => t.kind === "task" && !t.project_id && !!t.group_name;

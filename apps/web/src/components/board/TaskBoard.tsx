@@ -21,6 +21,7 @@ import {
   hostSupports,
   isArchived,
   isAssistants,
+  keyPrefix,
   moveTask,
   STATUSES,
   taskLabels,
@@ -46,7 +47,7 @@ import {
   type TaskKind,
 } from "./boardQuery";
 import { FilterBar, FilterMenu, SearchBox, SortMenu, type FilterOption } from "./BoardControls";
-import { isGroupTask, keyPrefix, useStore } from "../../store";
+import { isGroupTask, useStore } from "../../store";
 import { useConfirmDone } from "./ConfirmDone";
 import { COMPARE_API } from "./Fanout";
 import { openCompare } from "../../router";
