@@ -28,7 +28,7 @@ import * as db from "../../db.ts";
 import type { Conn } from "../../db.ts";
 import { ApiError, type Req } from "../../http.ts";
 import { AsyncMutex, type AppState, type Shared } from "../../state.ts";
-import { err_str, new_id, now } from "../../util.ts";
+import { err_str, new_id, now, remove_dir_all } from "../../util.ts";
 import { check_skill, forget_board_skill, Skill_from_row, type Skill } from "../agent_tools.ts";
 
 /** One source operation at a time: they clone, swap folders and write skills, and two at once for the same source would race. (Runs only read the clones.) */
@@ -375,13 +375,13 @@ async function fetch(state: Shared, id: string, url: string, git_ref: string | n
   const root = sources_root(state);
   mkdirSync(root, { recursive: true });
   const dir = join(root, `${id}.new`);
-  rmSync(dir, { recursive: true, force: true });
+  remove_dir_all(dir);
   try {
     const commit = await clone(url, git_ref, dir);
     const [found, notes] = discover(dir);
     return { dir, commit, found, notes };
   } catch (e) {
-    rmSync(dir, { recursive: true, force: true });
+    remove_dir_all(dir);
     throw e;
   }
 }
@@ -389,7 +389,7 @@ async function fetch(state: Shared, id: string, url: string, git_ref: string | n
 /** Puts a fetched clone where the source's is, in place of the one before. */
 function install(state: Shared, id: string, fetched: Fetched): void {
   const live = join(sources_root(state), id), old = join(sources_root(state), `${id}.old`);
-  rmSync(old, { recursive: true, force: true });
+  remove_dir_all(old);
   if (existsSync(live)) renameSync(live, old);
   try {
     renameSync(fetched.dir, live);
@@ -399,7 +399,7 @@ function install(state: Shared, id: string, fetched: Fetched): void {
     } catch {}
     throw e;
   }
-  rmSync(old, { recursive: true, force: true });
+  remove_dir_all(old);
 }
 
 /**
@@ -519,7 +519,7 @@ export async function add_source(s: AppState, r: Req): Promise<any> {
     if (skills_of(c, id).length === 0) {
       // Nothing in it could be added: it isn't a source.
       db.run(c, "DELETE FROM skill_sources WHERE id=?1", id);
-      rmSync(join(sources_root(s), id), { recursive: true, force: true });
+      remove_dir_all(join(sources_root(s), id));
       const why = notes.length ? ` (${notes.join("; ")})` : "";
       throw ApiError.bad(`no skills found in ${url}: a skill is a folder with a SKILL.md${why}`);
     }
@@ -573,7 +573,7 @@ export async function delete_source(s: AppState, r: Req): Promise<any> {
     db.run(c, "DELETE FROM agent_skills WHERE source_id=?1", id);
     db.run(c, "DELETE FROM skill_sources WHERE id=?1", id);
     for (const skill of skills) forget_board_skill(c, null, skill.name);
-    rmSync(join(sources_root(s), id), { recursive: true, force: true });
+    remove_dir_all(join(sources_root(s), id));
     return { ok: true };
   } finally {
     release();

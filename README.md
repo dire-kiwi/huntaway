@@ -298,9 +298,11 @@ board's `create_task`.
   allows, asks or denies the calls a rule matches. Its *ask* goes to the board's permission prompt in every mode,
   Bypass included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool too; in
   *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are left out of the run
-  (`--disallowedTools`). The hook is only installed when a rule is for a tool other than the board's, and only
-  matches `mcp__.*` unless a rule names another tool; `bin/huntaway` starts it straight from its own module, without
-  loading the server. It fails closed: while any rule asks or refuses, a call it can't check (its rules or input
+  (`--disallowedTools`). The hook is only installed when a rule is for a tool other than the board's, and its
+  matcher only matches the MCP servers the rules name (an anchored, case-insensitive regular expression, see
+  `claude_matcher` in `server-ts/src/agent/approval_rules.ts`), or every tool when a rule names one that isn't an MCP
+  server's; `bin/huntaway` starts it from its own entry file (`server-ts/src/agent/approval_rules/hook_main.ts`),
+  without loading the server. It fails closed: while any rule asks or refuses, a call it can't check (its rules or input
   unreadable, the hook failing, or its binary missing) is refused. A rule on `Bash` holds for a `wait`'s command
   too, even in *Auto*, where Claude's classifier reviews the wait.
 - **Codex** can't hold an *ask* with a hook (its PreToolUse `ask` fails open, checked with Codex
@@ -1069,22 +1071,25 @@ own profile's board and those that let them in (see *Agents across profiles*).
 
 A linked host's agents can use the hub's board too, once the hub lets them: switch on **Let this
 host's agents use this board** for it under Settings → Hosts (off by default; hub and host need API
-112). A board tool call the host can't resolve on its own board or the hosts it links itself then goes
-up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the tunnel for
-one that dials in). The hub takes it only from an agent in one of its profiles whose **Assistant host**
-is that host (see *An assistant host*): the host names the caller's profile, and whoever controls it
-could name any. It runs with that profile's access (its board, and those that let that profile in),
-looking on its other linked hosts too, but never back on the calling host or further up, and at most
-once per call id, and only if it came the way the hub links that host: a host that dials in under the
-id of an assistant host the hub dials (by URL or over SSH) is refused, so it gets none of that host's
-calls, the assistant's requests or the board's requests through `/api/h/<host_id>`. (Another host the
-hub dials may dial in too, and stands in for itself while the hub's link to it is down.) A call that names the
-calling host with `host` isn't sent back down to it either. A host that dials in is known only by the id it gives with the hub token, which every such
-host shares, so any host given that token could claim to be it: link an assistant host over SSH or by
-URL. If the link drops after a call went up, the agent is told it may have taken effect.
-Changes that need the user's approval (`update_project`, `delete_task`, automations) are refused there,
-since the agent's thread isn't on the hub, and `wait` only watches tasks on the agent's own host. Calls
-with `host` set to the hub's name (or one of its hosts') go there.
+112). A board tool call the host can't resolve on its own board or the hosts it links itself then
+goes up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the
+tunnel for one that dials in). The hub takes it only from an agent in one of its profiles whose
+**Assistant host** is that host (see *An assistant host*): the host names the caller's profile, and
+whoever controls it could name any. It runs with that profile's access (its board, and those that
+let that profile in), looking on its other linked hosts too, but never back on the calling host or
+further up, and at most once per call id, and only if it came the way the hub links that host: a
+host that dials in under the id of an assistant host the hub dials (by URL or over SSH) is refused,
+so it gets none of that host's calls, the assistant's requests or the board's requests through
+`/api/h/<host_id>`. (Another host the hub dials may dial in too, and stands in for itself while the
+hub's link to it is down.) One that dialled in under a host's id before the host became an assistant
+host is dropped when a profile picks it, and the hub dials the host again. A call that names the
+calling host with `host` isn't sent back down to it either. A host that dials in is known only by
+the id it gives with the hub token, which every such host shares, so any host given that token could
+claim to be it: link an assistant host over SSH or by URL. If the link drops after a call went up,
+the agent is told it may have taken effect. Changes that need the user's approval (`update_project`,
+`delete_task`, automations) are refused there, since the agent's thread isn't on the hub, and `wait`
+only watches tasks on the agent's own host. Calls with `host` set to the hub's name (or one of its
+hosts') go there.
 
 A hub that can't run agents itself (no `claude` or `ia-shim`, e.g. a board-only deployment)
 sends new scratch tasks to a linked host. Pick which one under Settings → Hosts →
@@ -2352,8 +2357,12 @@ only `gh` there). After a restart the run's output is followed from its saved of
 already read, so those still going (a `wait`, an approval that `delete_task` or `update_project`
 asked for) are taken up again from `mcp_calls` and answered when they're done: a `wait` keeps its
 deadline and what it watches. A call that may have taken effect before the restart cut it short
-(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code cancels (its turn
-was interrupted) isn't answered: a `wait` ends, and an approval expires. Such runs are run format 4,
+(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code gives up on (its
+turn was interrupted, or a tool call beside it failed) isn't answered: a `wait` ends, and an approval
+that `delete_task` or `update_project` asked for expires, so it can't be given once the agent has
+moved on. Claude Code says so with a `notifications/cancelled` MCP message (`mcp_message`) naming the
+call's JSON-RPC id, which the board finds among the run's open calls in `mcp_calls`; a permission
+prompt it gives up on is a `control_cancel_request` instead. Such runs are run format 4,
 which an older build that's rolled back to stops rather than follow, as it couldn't answer their
 calls. With `IA_MCP_STDIO=1` (below), Claude runs get the helpers instead.
 

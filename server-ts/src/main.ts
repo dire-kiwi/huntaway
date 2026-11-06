@@ -31,9 +31,17 @@ async function main() {
     case "gh-hook":
       return (await import("./mcp/gh_mcp.ts")).bash_hook();
     case "approval-hook": {
-      // bin/huntaway runs approval_rules/hook_main.ts directly; this is for a server started some other way.
-      const code = await (await import("./agent/approval_rules/hook.ts")).hook(rest[0]);
-      process.exitCode = code;
+      // bin/huntaway runs approval_rules/hook_main.ts directly; this is for a server started some other way. It runs
+      // that file too, which reads its rules from argv[2] and refuses the call (exit 2) whatever fails, loading hook.ts
+      // too: an error here would exit 1, which lets the call through (HA-254).
+      process.argv.splice(2, 1);
+      try {
+        await import("./agent/approval_rules/hook_main.ts");
+      } catch (e) {
+        // hook_main.ts itself couldn't be loaded.
+        process.stderr.write(`The user's approval rules couldn't be checked for this call (their hook failed to start: ${err_str(e)}), so it was refused.\n`);
+        process.exit(2);
+      }
       return;
     }
     case "gh-run":

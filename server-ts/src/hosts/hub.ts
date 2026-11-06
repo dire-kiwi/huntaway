@@ -109,6 +109,8 @@ export class LinkConn {
   /** When we last heard anything from the host (a pong counts), in Unix milliseconds. */
   private heard_at: number;
   kind: Kind;
+  /** Ends the connection, telling the host why where it can (see `drop_misplaced`); set by the loop that runs it. */
+  drop: (reason: string) => void = () => {};
 
   constructor(id: string, name: string, mode: string, version: Version, kind: Kind) {
     this.id = id;
@@ -411,6 +413,26 @@ export function register(s: AppState, conn: LinkConn): boolean {
   return true;
 }
 
+/**
+ * Drop the live connection to `host_id` if `misplaced` gives a reason, and dial the host again if it's one we dial, so its
+ * link takes its place at once. For when a host becomes a profile's assistant host: a host that dialled in under its id
+ * before then took its place, as `register` lets one while the host isn't an assistant host, and kept it.
+ */
+export function drop_misplaced(s: AppState, host_id: string) {
+  const conn = s.links.get(host_id);
+  const why = conn ? misplaced(s, conn) : null;
+  if (!conn || why === null) return;
+  console.error(`dropping host ${conn.name}'s connection: ${why}`);
+  conn.drop(why);
+  unregister(s, conn);
+  let link: Link | null = null;
+  try {
+    link = db.get_link(s.db(), host_id);
+  } catch {}
+  // The connection it displaced may still be open, but it isn't kept: a new one replaces it.
+  if (link && (link.mode === "outbound" || link.mode === "ssh")) spawn_outbound(s, link);
+}
+
 export function forward_event(s: AppState, host_id: string, ev: any) {
   if (ev && typeof ev === "object" && !Array.isArray(ev)) ev = { ...ev, host_id };
   s.hub_events.send(ev);
@@ -496,6 +518,7 @@ export async function run_outbound(s: AppState, link: Link, mode: string, on_abo
     ended();
   };
   on_abort(finish);
+  conn.drop = finish;
   const silence = () =>
     setTimeout(() => {
       console.error(`nothing from host ${link.name} for ${relay.SILENCE / 1000}s`);

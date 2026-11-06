@@ -7,7 +7,7 @@
  * with exit code 2, as `hook` does when it fails (any other exit code lets the call through).
  */
 
-/** approval_rules/hook.ts's HOOK_FAILED, for when it couldn't be loaded. */
+/** approval_rules/hook.ts's HOOK_FAILED, for when it couldn't be loaded (tests.test.ts checks they say the same). */
 const FALLBACK =
   "The user's approval rules couldn't be checked for this call (their hook failed to start), so it was refused. " +
   "Don't try another way to do the same thing: tell the user the rules' hook isn't working.";
