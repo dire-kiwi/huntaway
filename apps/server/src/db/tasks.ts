@@ -928,17 +928,17 @@ export function end_position(c: Conn, project_id: string | null, status: string,
 /** Adds a thread. In a savepoint, so one that fails doesn't use up its project's next key number (and it works within a transaction as well). */
 export function insert_task(c: Conn, t: NewTask): Task {
   c.exec("SAVEPOINT insert_task");
-  let created: Task;
   try {
-    created = insert_task_now(c, t);
+    const created = insert_task_now(c, t);
+    // As the transaction's COMMIT when there's no other: one that fails leaves the savepoint, to roll back.
+    c.exec("RELEASE insert_task");
+    return created;
   } catch (e) {
     try {
       c.exec("ROLLBACK TO insert_task; RELEASE insert_task");
     } catch {}
     throw e;
   }
-  c.exec("RELEASE insert_task");
-  return created;
 }
 
 function insert_task_now(c: Conn, t: NewTask): Task {
