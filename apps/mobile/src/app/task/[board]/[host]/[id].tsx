@@ -49,7 +49,8 @@ export default function TaskScreen() {
       setMoving(false);
       if (!task) return;
       const on = (await client.hosts()).find((h) => h.id === host);
-      detail.setData(await moveTask(client, task, status, on));
+      // The API's task has no host_id (the web board's store adds it): this screen's host is the route's.
+      detail.setData(await moveTask(client, { ...task, host_id: host }, status, on));
     });
 
   const headerRight = () =>

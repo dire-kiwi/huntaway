@@ -21,7 +21,8 @@ jest.mock("../src/secrets", () => {
     },
   };
 });
-// The thread and the composer aren't what's tested: the task is shown as loaded.
+// The thread and the composer aren't what's tested: the task is shown as loaded. It has no host_id, as the API's tasks don't: the
+// screen's host is the route's.
 let mockTask: Record<string, unknown> = {};
 const mockSetData = jest.fn();
 jest.mock("../src/threadView", () => ({
@@ -51,7 +52,7 @@ const moveTo = async (status: string) => {
 };
 
 test("a fresh task moved into In progress starts its agent", async () => {
-  mockTask = { id: "t1", host_id: "h", title: "Fresh", status: "todo", session_id: null, running: false };
+  mockTask = { id: "t1", title: "Fresh", status: "todo", session_id: null, running: false };
   await moveTo("In progress");
   expect(mockClient.updateTask).toHaveBeenCalledWith("h", "t1", { status: "in_progress" });
   expect(mockClient.send).toHaveBeenCalledWith("h", "t1", "");
@@ -59,7 +60,7 @@ test("a fresh task moved into In progress starts its agent", async () => {
 });
 
 test("one that has run before only moves", async () => {
-  mockTask = { id: "t1", host_id: "h", title: "Ran", status: "in_review", session_id: "s", running: false };
+  mockTask = { id: "t1", title: "Ran", status: "in_review", session_id: "s", running: false };
   await moveTo("In progress");
   expect(mockClient.updateTask).toHaveBeenCalledWith("h", "t1", { status: "in_progress" });
   expect(mockClient.send).not.toHaveBeenCalled();
