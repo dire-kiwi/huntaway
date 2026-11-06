@@ -17,12 +17,13 @@ export const colors = {
   blue: "#60a5fa",
 };
 
+/** The board's status colours (index.css's --color-st-*). */
 export const STATUS_COLOR: Record<Status, string> = {
-  backlog: "#6e6e80",
-  todo: "#a0a0b0",
+  backlog: "#5f5f6e",
+  todo: "#8b8b9c",
   in_progress: "#60a5fa",
-  needs_attention: "#fbbf24",
+  needs_attention: "#f59e0b",
   in_review: "#a78bfa",
-  ready_for_merge: "#34d399",
-  done: "#4ade80",
+  ready_for_merge: "#f472b6",
+  done: "#34d399",
 };
