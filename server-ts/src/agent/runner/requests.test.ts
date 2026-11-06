@@ -447,17 +447,56 @@ test("a_wait_carries_on_over_a_restart", async () => {
   await quiet(state, run, 1);
 });
 
+/** Claude Code gives up on the board call it sent with JSON-RPC id `rpc_id`, as it does: a notification to the server. */
+const cancelled = (request_id: string, rpc_id: number | string) =>
+  mcp_message(request_id, { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: rpc_id, reason: "AbortError: remote-cancel" } });
+
 test("a_board_call_claude_cancels_ends_unanswered", async () => {
   const [state, task, run] = running();
   output(state, run, [tool_call("w1", 3, "wait", { seconds: 20, reason: "CI" })]);
   for (let i = 0; i < 100 && !reload(state, task.id).agent_wait; i++) await sleep(5);
   assert.equal(reload(state, task.id).agent_wait?.call_id, control_call_id(run.id, "w1"));
-  output(state, run, [{ type: "control_cancel_request", request_id: "w1" }]);
+  // A cancel of another id (or the same id as a string) leaves it waiting; the notifications themselves are answered.
+  output(state, run, [cancelled("n1", 4), cancelled("n2", "3")]);
+  assert.equal(reload(state, task.id).agent_wait?.call_id, control_call_id(run.id, "w1"));
+  assert.deepEqual((await answered(state, run, 2)).map((r) => [r.request_id, r.response.mcp_response.result]), [["n1", {}], ["n2", {}]]);
+  output(state, run, [cancelled("n3", 3)]);
   assert.equal(reload(state, task.id).agent_wait, null);
-  await quiet(state, run, 0);
+  await answered(state, run, 3);
+  // The wait itself isn't answered.
+  await quiet(state, run, 3);
   for (let i = 0; i < 200 && call_status(state, run, "w1") !== "done"; i++) await sleep(5);
   assert.equal(call_status(state, run, "w1"), "done");
-  await quiet(state, run, 0);
+  await quiet(state, run, 3);
+});
+
+test("an_approval_claude_cancels_can_no_longer_be_given", async () => {
+  const [state, task, run] = running();
+  const project_id = "kiwicd";
+  db.insert_project(state.db(), {
+    id: project_id,
+    profile_id: task.profile_id,
+    name: project_id,
+    key: "KIW",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  });
+  db.run(state.db(), "UPDATE tasks SET project_id=?1, number=1 WHERE id=?2", project_id, task.id);
+  const doomed = db.insert_task(state.db(), { profile_id: task.profile_id, project_id, kind: "task", title: "Doomed", description: "", status: "backlog", use_worktree: false });
+  output(state, run, [tool_call("d1", 5, "delete_task", { task_id: doomed.id, reason: "A duplicate" })]);
+  for (let i = 0; i < 200 && request_of(state, run, "d1")?.status !== "pending"; i++) await sleep(5);
+  assert.equal(request_of(state, run, "d1")?.status, "pending");
+  output(state, run, [cancelled("n1", 5)]);
+  assert.equal(request_of(state, run, "d1")!.status, "expired");
+  assert.throws(() => permissions.decide(state, request_of(state, run, "d1")!.id, true, false, null), /no longer pending/);
+  for (let i = 0; i < 200 && call_status(state, run, "d1") !== "done"; i++) await sleep(5);
+  assert.notEqual(db.get_task(state.db(), doomed.id), null);
+  // Only the notification was answered.
+  assert.deepEqual((await answered(state, run, 1)).map((r) => r.request_id), ["n1"]);
+  await quiet(state, run, 1);
 });
 
 test("claude_codes_answer_to_the_initialize_isnt_taken_for_another", async () => {

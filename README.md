@@ -2355,8 +2355,12 @@ only `gh` there). After a restart the run's output is followed from its saved of
 already read, so those still going (a `wait`, an approval that `delete_task` or `update_project`
 asked for) are taken up again from `mcp_calls` and answered when they're done: a `wait` keeps its
 deadline and what it watches. A call that may have taken effect before the restart cut it short
-(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code cancels (its turn
-was interrupted) isn't answered: a `wait` ends, and an approval expires. Such runs are run format 4,
+(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code gives up on (its
+turn was interrupted, or a tool call beside it failed) isn't answered: a `wait` ends, and an approval
+that `delete_task` or `update_project` asked for expires, so it can't be given once the agent has
+moved on. Claude Code says so with a `notifications/cancelled` MCP message (`mcp_message`) naming the
+call's JSON-RPC id, which the board finds among the run's open calls in `mcp_calls`; a permission
+prompt it gives up on is a `control_cancel_request` instead. Such runs are run format 4,
 which an older build that's rolled back to stops rather than follow, as it couldn't answer their
 calls. With `IA_MCP_STDIO=1` (below), Claude runs get the helpers instead.
 

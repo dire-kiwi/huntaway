@@ -475,11 +475,6 @@ export function asks_on_output(state: Shared, run_id: string): boolean {
   return format(state, run_id) >= ASKS_FORMAT && !is_codex_run(state, run_id);
 }
 
-/** Whether run `run_id`'s agent calls the board's tools on its output, an in-process MCP server (see runner/requests.ts). */
-export function tools_on_output(state: Shared, run_id: string): boolean {
-  return format(state, run_id) >= TOOLS_FORMAT && !is_codex_run(state, run_id);
-}
-
 /** Whether run `run_id` is Codex's (its adapter's `codex.json`). */
 function is_codex_run(state: Shared, run_id: string): boolean {
   return existsSync(join(run_dir(state, run_id), "codex.json"));
