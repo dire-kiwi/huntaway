@@ -2,7 +2,8 @@
 // (nodeIntegrationInSubFrames), before the frame's own scripts: in the board's, it adds that; in the others, where the
 // plans and artifacts agents write are drawn, it takes WebRTC away (RTCPeerConnection, which Chromium doesn't hold to
 // their Content-Security-Policy), so that a page can't send data to a STUN or TURN server of its choosing (HA-269).
-// Taken away in each frame, including the srcdoc frames a page makes itself, it can't be got back from another.
+// Taken away in each frame, including the srcdoc frames a page makes itself, it can't be got back from another. A
+// javascript: URL frame's document gets no preload, but the frame's policy (FRAME_CSP's Trusted Types) refuses those.
 const { contextBridge, ipcRenderer } = require("electron");
 
 if (!process.isMainFrame) {

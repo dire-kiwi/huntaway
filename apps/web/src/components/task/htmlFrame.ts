@@ -59,13 +59,19 @@ export function linksInNewTabs() {
  * Takes WebRTC away from the page before its own scripts run: Chromium doesn't hold RTCPeerConnection to the frame's
  * policy, so a page could send data to a STUN or TURN server of its choosing, in its hostname or a TURN username
  * (HA-269). A frame in the page is of another origin (the sandbox gives each document an opaque origin of its own), so
- * the page can't take the constructor back from one; but a srcdoc frame of the page's own runs scripts of its own before
- * anything can take it away there. The board's <ia-html> frames run this first (planTheme.ts), and the desktop app takes
- * it away in every frame (electron/preload.cjs). Workers have no RTCPeerConnection. It runs in a document's frame, as
- * source.
+ * the page can't take the constructor back from one, but a new document in it would have it: a srcdoc frame's scripts,
+ * or a javascript: URL's (`<iframe src="javascript:…">`, which frame-src doesn't hold). For those, FRAME_CSP requires
+ * Trusted Types, and this makes the default policy, which lets everything through: the page's innerHTML, eval and the
+ * like work as before, but a new frame has no default policy, so it can't run a javascript: URL. A srcdoc frame of the
+ * page's own still runs its scripts before anything can take WebRTC away there (in a browser: the desktop app takes it
+ * away in every frame, see electron/preload.cjs). The board's <ia-html> frames run this first (planTheme.ts). Workers
+ * have no RTCPeerConnection. It runs in a document's frame, as source.
  */
 export function noWebRtc() {
   for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection"]) delete (window as unknown as Record<string, unknown>)[name];
+  const pass = (s: string) => s;
+  type Policies = { createPolicy: (name: string, rules: Record<string, (s: string) => string>) => unknown };
+  (window as unknown as { trustedTypes?: Policies }).trustedTypes?.createPolicy("default", { createHTML: pass, createScript: pass, createScriptURL: pass });
 }
 
 /** When the user last used the board itself, rather than a frame in it: a pointer down or key press in its document. */
@@ -111,13 +117,15 @@ const CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpk
  * and blob: URLs. So a page an agent wrote (say, prompted by a poisoned issue) can't send what's in it, or the answers
  * typed into it, out with remote images, fetch, frames or form posts. The frame's own navigations are held by the
  * board's frame-src (index.html), and its links by `linksInNewTabs`. An <ia-html>'s frame (srcdoc) inherits it.
- * WebRTC isn't held to CSP, so `noWebRtc` takes it away. What's left is in browsers, not the desktop app (HA-269): a
- * srcdoc frame the page makes itself can use WebRTC, and unless Chrome's "Preload pages" setting is off, it still looks
- * up and connects to (TLS SNI included) the host of a frame load the policy refuses (an <iframe>, or a frame navigating
- * itself) and of a <link rel=preconnect>, in the page's HTML or added by its script. Each sends data out in a hostname
- * of the page's choosing. Nothing the board sets changes the last two: the frame served with the policy as a header,
- * the iframe's `csp` attribute, COOP and COEP were tried, and `x-dns-prefetch-control: off` doesn't hold preconnect
- * (dns-prefetch links and links' hosts aren't looked up in the frame, even with it on).
+ * WebRTC isn't held to CSP, so `noWebRtc` takes it away, and Trusted Types (with its default policy) keep a javascript:
+ * URL frame from getting it back. What's left is in browsers, not the desktop app (HA-269): a srcdoc frame the page
+ * makes itself can use WebRTC (it has no default policy, so its own innerHTML and the like with strings fail), and
+ * unless Chrome's "Preload pages" setting is off, it still looks up and connects to (TLS SNI included) the host of a
+ * frame load the policy refuses (an <iframe>, or a frame navigating itself) and of a <link rel=preconnect>, in the
+ * page's HTML or added by its script. Each sends data out in a hostname of the page's choosing. Nothing the board sets
+ * changes the last two: the frame served with the policy as a header, the iframe's `csp` attribute, COOP and COEP were
+ * tried, and `x-dns-prefetch-control: off` doesn't hold preconnect (dns-prefetch links and links' hosts aren't looked
+ * up in the frame, even with it on).
  */
 export const FRAME_CSP = [
   "default-src 'none'",
@@ -131,6 +139,7 @@ export const FRAME_CSP = [
   "frame-src 'none'",
   "form-action 'none'",
   "base-uri 'none'",
+  "require-trusted-types-for 'script'",
 ].join("; ");
 
 /**

