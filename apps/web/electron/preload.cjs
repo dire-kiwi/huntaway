@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("huntawayDesktop", {
   /** The number on the dock or taskbar icon: the tasks that need attention. */
   setBadgeCount: (n) => ipcRenderer.send("huntaway:badge", n),
+  /** The board may show web pages in a <webview> (main.cjs's will-attach-webview), for its browser pane (HA-275). */
+  browserPane: true,
   /** Brings the window to the front, as clicking a notification does. */
   focus: () => ipcRenderer.send("huntaway:focus"),
   /** How the app can install its own package: "appimage", "pacman", or null where it can't (HA-68). */

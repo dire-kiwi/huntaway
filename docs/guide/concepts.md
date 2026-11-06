@@ -831,6 +831,17 @@
   ends tool sessions that nobody is attached to and nobody has renewed for 90 seconds.
   Reloading the page keeps them. **Close** ends one straight away. If a tool exits with an
   error, the message stays on screen until you press Enter (API 13).
+- **Browser pane:** in the desktop app, the globe button in a task's header opens a browser beside
+  its thread (HA-275), to look at the app the agent is building: an address bar (a bare port such
+  as `5173` opens `localhost:5173`), back, forward, reload, the page's DevTools, and _Open in your
+  browser_. Drag the bar between them to resize it (double-click for half and half). Each task
+  remembers the page it was last on, or opens on its PR preview; closing the pane keeps the page
+  loaded until another task is opened. It shows only `http:` and `https:` pages, in a session of
+  their own (`persist:huntaway-browser`: cookies and storage apart from the board's), with no
+  access to the app and no permissions beyond the clipboard and full screen; a link that opens a
+  new window opens in the pane. A browser's board has no pane, since its frames hold only the
+  board's own pages (`frame-src 'self'`, for agent-written documents' sake, HA-266), and
+  `localhost` is the machine the app runs on, not a linked host's.
 - **Permissions:** in _Ask_ mode, Claude's permission prompts are routed to an approval card in
   the thread: Allow, Always allow (for that thread), or Deny. Claude asks on its own output
   (`--permission-prompt-tool stdio`: a `can_use_tool` control request in the run's `out.jsonl`)

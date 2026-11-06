@@ -29,6 +29,8 @@ declare global {
       shellUpdateKind?: () => ShellUpdateKind | null;
       /** Installs the latest release's app package and relaunches, reporting progress. Rejects with why not. */
       updateShell?: (onProgress?: (p: ShellUpdateProgress) => void) => Promise<unknown>;
+      /** Whether the app lets the board show web pages in a <webview>, for the browser pane (HA-275). Older apps lack it. */
+      browserPane?: boolean;
     };
   }
 }
