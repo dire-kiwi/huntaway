@@ -1,14 +1,14 @@
 // Port of server/src/main.rs's tests: what they test is in serve.ts (main.ts runs the command line when it's loaded).
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, request } from "node:http";
-import { join } from "node:path";
-import { test } from "node:test";
+import { join, relative } from "node:path";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { temp_dir } from "./testing.ts";
 import { sleep } from "./util.ts";
-import { db_path, loopback_host, older_db_path, parse_serve_args, stamped } from "./serve.ts";
+import { db_path, loopback_host, older_db_path, parse_serve_args, serve_ui, stamped } from "./serve.ts";
 
 const TOKEN = "serve-test-token";
 
@@ -161,4 +161,50 @@ test("serves_console_lines_get_the_time_except_ia_ready_and_stamped_ones", () =>
     ["2026-11-05T00:15:57.000Z", " INFO huntaway:", "listening"],
     ["2026-11-05T00:15:57.481Z", { not: "a string" }],
   ]);
+});
+
+const INDEX = "<!doctype html><title>board</title>\n";
+
+/** A UI build in `dir`: index.html and assets/app.js. */
+function ui_build(dir: string): string {
+  mkdirSync(join(dir, "assets"), { recursive: true });
+  writeFileSync(join(dir, "index.html"), INDEX);
+  writeFileSync(join(dir, "assets", "app.js"), "app();\n");
+  return dir;
+}
+
+/** GET `path` (sent as it is, not made into a URL first) of a server serving the UI in `ui`: its type and body. */
+async function get_ui(t: TestContext, ui: string, path: string): Promise<[string, string]> {
+  const srv = createServer((req, res) => serve_ui(ui, req, res));
+  t.after(() => {
+    srv.closeAllConnections();
+    srv.close();
+  });
+  await new Promise<void>((ok) => srv.listen(0, "127.0.0.1", ok));
+  return await new Promise((ok, fail) => {
+    const req = request({ host: "127.0.0.1", port: (srv.address() as any).port, path }, (res) => {
+      let body = "";
+      res.on("data", (d) => (body += d));
+      res.on("end", () => ok([String(res.headers["content-type"]), body]));
+    });
+    req.on("error", fail);
+    req.end();
+  });
+}
+
+// HA-262: a relative --ui-dir served index.html for every file of the build, its JS too.
+test("a_relative_ui_dir_serves_its_files", async (t) => {
+  const ui = relative(process.cwd(), ui_build(temp_dir()));
+  assert.deepEqual(await get_ui(t, ui, "/assets/app.js"), ["text/javascript; charset=utf-8", "app();\n"]);
+  assert.deepEqual(await get_ui(t, ui, "/some/route"), ["text/html; charset=utf-8", INDEX]);
+});
+
+// HA-262: what keeps a request (which needs no token) for `/..%2F…` in the UI's folder, away from the data dir's token.
+test("the_ui_serves_nothing_from_outside_its_folder", async (t) => {
+  const dir = temp_dir();
+  writeFileSync(join(dir, "auth_token"), "secret");
+  const ui = ui_build(join(dir, "ui"));
+  for (const path of ["/..%2Fauth_token", "/assets/..%2F..%2Fauth_token", `/..%2F..%2F..%2F..%2F..%2F..%2F..%2F..${encodeURIComponent(dir)}%2Fauth_token`, "/../auth_token"]) {
+    assert.deepEqual(await get_ui(t, ui, path), ["text/html; charset=utf-8", INDEX], path);
+  }
 });

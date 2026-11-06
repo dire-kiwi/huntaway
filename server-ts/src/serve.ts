@@ -7,7 +7,7 @@ import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
 import type { Duplex } from "node:stream";
-import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import * as db from "./db.ts";
 import * as db_file from "./db/file.ts";
@@ -232,7 +232,7 @@ function find_ui_dir(explicit: string | null, from_app: boolean, exe: string): s
     return own;
   }
   if (explicit) return explicit;
-  const here = dirname(new URL(import.meta.url).pathname);
+  const here = import.meta.dirname;
   return [own, join(here, "../../ui"), join(here, "../../app/dist")].find((p) => existsSync(join(p, "index.html"))) ?? null;
 }
 
@@ -270,8 +270,11 @@ const TYPES: Record<string, string> = {
   ".map": "application/json",
 };
 
-/** Serve a file of the UI build, or index.html (the SPA fallback), as ServeDir with a ServeFile fallback does. */
-function serve_ui(ui: string, req: IncomingMessage, res: ServerResponse) {
+/**
+ * Serve a file of the UI build, or index.html (the SPA fallback), as ServeDir with a ServeFile fallback does. Never one
+ * outside `ui` (for a `/..%2F…` path): anyone who can reach the server can ask for one, with no token.
+ */
+export function serve_ui(ui: string, req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? "/", "http://x");
   let rel: string;
   try {
@@ -279,16 +282,17 @@ function serve_ui(ui: string, req: IncomingMessage, res: ServerResponse) {
   } catch {
     rel = url.pathname;
   }
-  let file = normalize(join(ui, rel));
+  // Absolute, as the file is: a relative `--ui-dir` served index.html for every file.
   const root = resolve(ui);
-  if (!file.startsWith(root + sep) && file !== root) file = join(ui, "index.html");
+  let file = join(root, rel);
+  if (!file.startsWith(root + sep) && file !== root) file = join(root, "index.html");
   let st = statOr(file);
   if (st?.isDirectory()) {
     file = join(file, "index.html");
     st = statOr(file);
   }
   if (!st?.isFile()) {
-    file = join(ui, "index.html");
+    file = join(root, "index.html");
     st = statOr(file);
   }
   if (!st) {
