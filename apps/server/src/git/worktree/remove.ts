@@ -166,9 +166,15 @@ async function no_strays(wt: string): Promise<void> {
 
 /**
  * Run the teardown script and remove the worktree. Refuses when the worktree has uncommitted changes or commits on no
- * branch unless `force` is set.
+ * branch unless `force` is set. Holds the task's setup lock, so a setup started meanwhile (a run's) waits, then sets the
+ * worktree up again, rather than taking over the folder being removed.
  */
 export async function teardown(state: AppState, task_id: string, force: boolean, delete_branch: boolean): Promise<Task> {
+  return locked(task_id, () => teardown_locked(state, task_id, force, delete_branch));
+}
+
+/** `teardown` while holding the task's setup lock. */
+async function teardown_locked(state: AppState, task_id: string, force: boolean, delete_branch: boolean): Promise<Task> {
   const [task, project] = load(state, task_id);
   const repo = project.repo_path;
   const wt = task.worktree_path;
@@ -334,7 +340,7 @@ export async function remove_if_merged(state: AppState, task_id: string, do_fetc
         null,
       );
       // Not forced, so teardown checks again just before removing it.
-      await teardown(state, task_id, false, false);
+      await teardown_locked(state, task_id, false, false);
       return { Removed: found };
     } finally {
       if ("ok" in gh_env) gh_env.ok?.drop();

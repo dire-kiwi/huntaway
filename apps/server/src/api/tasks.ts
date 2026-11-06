@@ -525,7 +525,9 @@ export async function delete_one(s: AppState, t: Task, delete_branch: boolean) {
   await terminal.kill_all(s, t.id);
   const files = new Set<string>(attachments.of_task(s.db(), t.id));
   for (const r of reviews) for (const f of attachments.of_task(s.db(), r.id)) files.add(f);
-  if (t.worktree_path != null) {
+  // Read again once a setup under way is done: it may have made the worktree since.
+  const wt = await worktree.locked(t.id, async () => db.get_task(s.db(), t.id)?.worktree_path ?? null);
+  if (wt != null) {
     try {
       await worktree.teardown(s, t.id, true, delete_branch);
     } catch (e) {
