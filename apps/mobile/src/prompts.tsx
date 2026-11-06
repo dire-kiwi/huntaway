@@ -1,6 +1,6 @@
 // Answering what an agent waits on, in place: a permission prompt (Allow or Deny; the questions of Claude's
 // AskUserQuestion and of Codex, which come as a request_user_input prompt, by picking or typing answers) and a question asked with request_user_input (pick options or type an answer).
-import type { Client, PermissionReply } from "@huntaway/client";
+import { takesTypedAnswer, type Client, type PermissionReply } from "@huntaway/client";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { colors } from "./theme";
@@ -52,7 +52,7 @@ export function askedQuestions(tool: string, input: Any): Asked[] {
         header: typeof q.header === "string" && q.header ? q.header : undefined,
         options,
         multiSelect: q.multiSelect === true,
-        takesText: !codex || q.isOther !== false || !options.length,
+        takesText: takesTypedAnswer(codex, { isOther: q.isOther, options }),
         secret: q.isSecret === true,
       };
     });
