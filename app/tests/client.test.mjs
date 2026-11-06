@@ -10,7 +10,7 @@ const hook = `export async function resolve(spec, ctx, next) {
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
-const { ApiError, assistantHome, createClient } = await import("@huntaway/client");
+const { ApiError, assistantHome, createClient, moveTask } = await import("@huntaway/client");
 
 /** A board at `baseUrl` whose requests are recorded, answering `answer(url, init)` (200 with `{}` by default). */
 function board(baseUrl, { token = "", answer, wsBase } = {}) {
@@ -172,4 +172,27 @@ test("a profile's assistant is on its assistant host, or else the board's own ho
   // Another host's setting doesn't count, nor does one naming the board's own host.
   assert.deepEqual(assistantHome([profile("hub", "ph"), profile("laptop", "pl", { assistant_host: "home" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });
   assert.deepEqual(assistantHome([profile("hub", "ph", { assistant_host: "hub" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });
+});
+
+// HA-262: moving a card to In progress on the phone didn't start its agent. Every move goes through moveTask, which
+// sends the empty message that starts a fresh task's agent, as dragging its card on the board does.
+test("a fresh task moved into In progress starts its agent, where one can run", async () => {
+  const desk = { id: "h", local: true, connected: true };
+  const moves = async (task, status, host = desk) => {
+    const { client, requests } = board("http://board");
+    await moveTask(client, { id: "t1", host_id: "h", status: "todo", session_id: null, running: false, ...task }, status, host, { position: 2 });
+    return requests.map((r) => [r.method, r.url, JSON.parse(r.body)]);
+  };
+  assert.deepEqual(await moves({}, "in_progress"), [
+    ["PATCH", "http://board/api/h/h/tasks/t1", { position: 2, status: "in_progress" }],
+    ["POST", "http://board/api/h/h/tasks/t1/messages", { text: "" }],
+  ]);
+  const patch = [["PATCH", "http://board/api/h/h/tasks/t1", { position: 2, status: "in_progress" }]];
+  // Not a fresh task, already in progress, or on a host that can't run agents: just the move.
+  assert.deepEqual(await moves({ session_id: "s" }, "in_progress"), patch);
+  assert.deepEqual(await moves({ running: true }, "in_progress"), patch);
+  assert.deepEqual(await moves({ status: "in_progress" }, "in_progress"), patch);
+  assert.deepEqual(await moves({}, "in_progress", { id: "h", local: true, connected: false }), patch);
+  assert.deepEqual(await moves({}, "in_progress", { id: "h", local: true, connected: true, agents: false }), patch);
+  assert.deepEqual(await moves({}, "in_review"), [["PATCH", "http://board/api/h/h/tasks/t1", { position: 2, status: "in_review" }]]);
 });

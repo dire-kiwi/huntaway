@@ -1,7 +1,8 @@
 import type { DocumentType } from "./labels";
 import type { Effort } from "./claudeConfigs";
-import { type Host, hostSupports } from "./hosts";
+import { canRunAgents, type Host, hostSupports } from "./hosts";
 import { enc, type Http, type KeyValueStorage } from "./http";
+import type { Client } from "./index";
 import type { ContextSummary, PendingRewind } from "./thread";
 
 export { documentsOnly, LABELS, taskLabels, type DocumentType } from "./labels";
@@ -87,6 +88,17 @@ export const isArchived = (t: Task, now: number) => {
  * reviewed (the project doesn't review automatically, it has no code changes, or it isn't in a
  * project). One being reviewed, or whose review found issues or didn't finish, isn't ready yet. */
 export const readyToCheck = (t: Task) => t.status === "in_review" && !t.running && (!t.review || t.review.state === "passed");
+
+/**
+ * Moves a task to `status` (with `fields`), as dragging its card does: a fresh task (no session, no agent running) moved
+ * into In progress also gets the empty message that starts its agent, on a host that can run one. Returns the task as
+ * the last call left it.
+ */
+export async function moveTask(api: Pick<Client, "updateTask" | "send">, task: Task, status: Status, host: Host | undefined, fields: Partial<Task> = {}) {
+  const moved = await api.updateTask(task.host_id, task.id, { ...fields, status });
+  const starts = status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host);
+  return starts ? api.send(task.host_id, task.id, "") : moved;
+}
 
 /** Whether a message sent to the task's running agent goes to it straight away (see runner::steer)
  *  rather than being queued for when its run ends. Hosts before API 30 don't say, and from API 28

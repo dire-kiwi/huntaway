@@ -26,3 +26,17 @@ test("In progress from a task's Details starts its agent", async () => {
   const log = `${server.dataDir}/fake-claude.log`;
   assert.ok(existsSync(log) && readFileSync(log, "utf8").includes("Say hello."), "the agent was started with the task");
 });
+
+// HA-262: the board's drop and the phone's Move go through moveTask (packages/client), as Details does.
+test("a fresh task dropped into In progress on the board starts its agent", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Drop me", description: "Say hi from the drop." });
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}`, "wait Drop me"]);
+    const column = page.locator("section", { has: page.locator(`span:text-is("In progress")`) });
+    await page.locator("[data-task]", { hasText: "Drop me" }).dragTo(column);
+    const log = `${server.dataDir}/fake-claude.log`;
+    for (const end = Date.now() + 5000; Date.now() < end && !(existsSync(log) && readFileSync(log, "utf8").includes("Say hi from the drop.")); ) await page.waitForTimeout(100);
+    assert.ok(existsSync(log) && readFileSync(log, "utf8").includes("Say hi from the drop."), "the agent was started with the task");
+  });
+});
