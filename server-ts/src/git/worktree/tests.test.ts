@@ -460,6 +460,22 @@ test("a_task_with_commits_its_base_lacks_is_unmerged", async () => {
   assert.ok(!(await unmerged(s, t)));
 });
 
+// HA-262: the worktree was read with plain `git status`, so with status.showUntrackedFiles=no the agent's new files
+// didn't count, and Ready for merge marked the task done with them unmerged.
+test("new_files_are_work_to_merge_whatever_git_status_is_told_to_show", async () => {
+  const s = testing.state();
+  const repo = testing.temp_dir();
+  sh(repo, ["init", "-q", "-b", "master"]);
+  sh(repo, ["commit", "-q", "--allow-empty", "-m", "init"]);
+  sh(repo, ["config", "status.showUntrackedFiles", "no"]);
+  const p = await project_on(s, repo);
+  let t = api.create_task_inner(s, p.id, ct("Do it"));
+  t = await setup(s, t.id);
+  assert.ok(!(await has_work_to_merge(s, t)));
+  writeFileSync(join(t.worktree_path!, "notes"), "1");
+  assert.ok(await has_work_to_merge(s, t));
+});
+
 function log_texts(s: AppState, task_id: string): string[] {
   return testing
     .messages(s.db(), task_id)

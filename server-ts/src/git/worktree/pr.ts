@@ -6,7 +6,7 @@ import * as runner from "../../agent/runner.ts";
 import type * as gh_mcp from "../../mcp/gh_mcp.ts";
 import type { AppState } from "../../state.ts";
 import { err_str } from "../../util.ts";
-import { commit, current_branch, git, github, is_git_repo, output, remote_base, upstream } from "../worktree.ts";
+import { commit, current_branch, git, github, is_git_repo, output, remote_base, uncommitted, upstream } from "../worktree.ts";
 
 /** Hooks for tests (Rust's `#[cfg(test)]` thread-locals). */
 export const pr_testing = {
@@ -37,10 +37,10 @@ export async function has_work_to_merge(state: AppState, task: Task): Promise<bo
     if (!all_scratch) return true;
   }
   const base = db.task_base(state.db(), task, project) ?? null;
+  // Whatever the repository's settings hide from git status (see uncommitted).
   const dirty = async (dir: string) => {
     try {
-      const o = await git(dir, ["status", "--porcelain"]);
-      return !o.ok || o.stdout.trim() !== "";
+      return (await uncommitted(dir)) !== "";
     } catch {
       return true;
     }
