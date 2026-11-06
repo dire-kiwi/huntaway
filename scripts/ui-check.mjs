@@ -12,7 +12,7 @@
 //   --timeout <ms>          for each step, default 5000
 //   --allow-error <regex>   don't fail on page and console errors that match (repeatable)
 //   --chromium <path>       default $CHROMIUM, else /usr/bin/chromium, else Playwright's own browser
-//                           (`npx playwright-core install --no-shell chromium` in app/, as CI does)
+//                           (`pnpm exec playwright-core install --no-shell chromium` in apps/web, as CI does)
 //
 // Steps (a <target> is a CSS or Playwright selector if it starts with # . [ // or css= text= role= and so on,
 // or tag[...]; anything else is text, matched case-insensitively against what's shown, then against
@@ -33,7 +33,7 @@
 // It prints page errors and console errors as they happen, and exits non-zero on a failed step (after
 // saving a screenshot of the page to <tmp>/ui-check-<pid>-failed.png) or on any error that wasn't allowed.
 //
-// The same thing is a module for scripted checks (see app/tests/ui):
+// The same thing is a module for scripted checks (see apps/web/tests/ui):
 //   const ui = await open({ url, token }); await ui.run(["goto /settings", "wait Profiles"]); ui.page...; await ui.close();
 
 import fs from "node:fs";
@@ -42,13 +42,13 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const appDir = fileURLToPath(new URL("../app/", import.meta.url));
+const appDir = fileURLToPath(new URL("../apps/web/", import.meta.url));
 
 function playwright() {
   try {
     return createRequire(appDir)("playwright-core");
   } catch {
-    throw new Error(`playwright-core isn't installed; run \`npm ci\` in ${appDir}`);
+    throw new Error(`playwright-core isn't installed; run \`pnpm install\` in ${fileURLToPath(new URL("..", import.meta.url))}`);
   }
 }
 
@@ -75,7 +75,8 @@ export function readEnv(where) {
 }
 
 // CSS (#id, .class, [attr], tag[...], tag.class, tag:has(...), tag > ...), XPath, or a Playwright engine (css=, role=, ...).
-const TAGS = "a|button|input|textarea|select|option|label|form|div|span|p|li|ul|ol|nav|main|aside|header|footer|section|article|dialog|h[1-6]|img|iframe|svg|table|tr|td|th";
+const TAGS =
+  "a|button|input|textarea|select|option|label|form|div|span|p|li|ul|ol|nav|main|aside|header|footer|section|article|dialog|h[1-6]|img|iframe|svg|table|tr|td|th";
 const SELECTOR = new RegExp(`^(#|\\.|\\[|//|[a-z][\\w-]*=|(${TAGS})([#.[]|:[a-z]| *>))`, "i");
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const escapeCss = (s) => s.replace(/["\\]/g, "\\$&");
@@ -125,7 +126,18 @@ export const launch = (chromium = defaultChromium()) => playwright().chromium.la
  * log (function), browser (one from `launch` to open a context of its own in, which `close` closes instead of the browser),
  * onMiss (an async function run each time a way of matching a target finds nothing, for ui-check's own tests).
  */
-export async function open({ url, token = "", size = "1900x1000", touch = false, timeout = 5000, allowErrors = [], chromium = defaultChromium(), log = console.log, browser: shared, onMiss } = {}) {
+export async function open({
+  url,
+  token = "",
+  size = "1900x1000",
+  touch = false,
+  timeout = 5000,
+  allowErrors = [],
+  chromium = defaultChromium(),
+  log = console.log,
+  browser: shared,
+  onMiss,
+} = {}) {
   if (!url) throw new Error("no server URL: pass --env <file|data dir>, or --url and --token (variables set with `. <env file>` aren't exported)");
   const base = url.replace(/\/+$/, "");
   const [width, height] = parseSize(size);
@@ -188,7 +200,8 @@ export async function open({ url, token = "", size = "1900x1000", touch = false,
             break;
           }
         }
-        if (n > 1 && !quiet) log(`  note: ${n} shown elements match ${JSON.stringify(target)}; using the first (a selector, or "text=… >> nth=1", picks another)`);
+        if (n > 1 && !quiet)
+          log(`  note: ${n} shown elements match ${JSON.stringify(target)}; using the first (a selector, or "text=… >> nth=1", picks another)`);
         match = shown.first();
         break;
       }
@@ -218,7 +231,9 @@ export async function open({ url, token = "", size = "1900x1000", touch = false,
       case "type": {
         const focused = await page.evaluate(() => {
           const el = document.activeElement;
-          return !!el && el !== document.body && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.getAttribute("role") === "textbox");
+          return (
+            !!el && el !== document.body && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.getAttribute("role") === "textbox")
+          );
         });
         if (!focused) throw new Error("nothing to type into is focused; click the field first");
         await page.keyboard.type(rest);
@@ -254,7 +269,10 @@ export async function open({ url, token = "", size = "1900x1000", touch = false,
       }
       case "shot": {
         const fullPage = /(^|\s)--full(\s|$)/.test(rest);
-        const m = rest.replace(/(^|\s)--full(?=\s|$)/, "").trim().match(/^(\S+)(?:\s+--crop\s+(.+))?$/);
+        const m = rest
+          .replace(/(^|\s)--full(?=\s|$)/, "")
+          .trim()
+          .match(/^(\S+)(?:\s+--crop\s+(.+))?$/);
         if (!m) throw new Error("usage: shot <file> [--crop <target>] [--full]");
         const [, file, crop] = m;
         fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
@@ -349,7 +367,15 @@ async function main() {
   if (o.help || !o.steps.length) {
     const src = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
     const lines = src.split("\n").slice(1);
-    console.log(lines.slice(0, lines.findIndex((l) => !l.startsWith("//"))).map((l) => l.slice(3)).join("\n"));
+    console.log(
+      lines
+        .slice(
+          0,
+          lines.findIndex((l) => !l.startsWith("//")),
+        )
+        .map((l) => l.slice(3))
+        .join("\n"),
+    );
     process.exit(o.help ? 0 : 2);
   }
   let ui;

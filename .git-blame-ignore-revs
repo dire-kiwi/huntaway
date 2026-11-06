@@ -1,0 +1,5 @@
+# Commits that only reformatted code, for `git blame --ignore-revs-file .git-blame-ignore-revs` (GitHub reads
+# this file by name). `git config blame.ignoreRevsFile .git-blame-ignore-revs` makes it the default in a clone.
+
+# HA-263: format with Oxfmt
+3cf95a367b11ed851a2d0d83cab54a3aa0b03818

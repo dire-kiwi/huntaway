@@ -1,9 +1,4 @@
 #!/bin/sh
-# `issue-agent`: the board's command before it was renamed to Huntaway. It runs the `huntaway` beside it with the same
-# arguments, as the Rust build's `issue-agent` binary does, so things that still start `…/issue-agent` keep working: SSH
-# hosts' `authorized_keys` commands and desktop configs that name it. A release's package has it too (a copy, as a
-# package has no symbolic links), beside its `huntaway`.
-# Its folder, through a symbolic link to it: with `readlink -f` (macOS has it since 12.3), else the folder `$0` names.
-here=$(dirname "$(readlink -f "$0" 2>/dev/null)" 2>/dev/null)
-[ -x "$here/huntaway" ] || here=$(cd -P "$(dirname "$0")" && pwd) || exit 127
-exec "$here/huntaway" "$@"
+# HA-263 moved the server to apps/server. Commands that name this path (SSH hosts' and desktop configs, and a server
+# from before the move restarting after its Update) run the server from there (see scripts/legacy-update.sh).
+exec "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/../../apps/server/bin/issue-agent" "$@"

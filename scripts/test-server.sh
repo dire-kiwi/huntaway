@@ -14,8 +14,8 @@
 #                  Codex runs fail
 #   --no-agents    no agent runs at all (claude and codex are /bin/false)
 #
-# The server keeps the board in huntaway-2.db (see server-ts/src/db/file.ts); IA_NEW_DB_FILE=0 in its environment starts
-# it on huntaway.db instead, where threads stay on their messages (server-ts/src/threads/source.ts), as do its restarts; `restart` leaves out IA_RECOPY_DB, which is for one start (pass --recopy-db to `huntaway serve` for that).
+# The server keeps the board in huntaway-2.db (see apps/server/src/db/file.ts); IA_NEW_DB_FILE=0 in its environment starts
+# it on huntaway.db instead, where threads stay on their messages (apps/server/src/threads/source.ts), as do its restarts; `restart` leaves out IA_RECOPY_DB, which is for one start (pass --recopy-db to `huntaway serve` for that).
 #
 # `start` prints shell assignments (IA_TEST_URL, IA_TEST_TOKEN, IA_TEST_PID, IA_TEST_DATA_DIR,
 # IA_TEST_ENV, and with --seed IA_TEST_PROFILE, IA_TEST_PROJECT, IA_TEST_REPO), so
@@ -26,8 +26,8 @@
 # and environment; agent runs carry on, as they do over a real restart.
 # `stop` kills the server and any agent runs it started, then removes the data dir.
 # Without a data dir, `restart` and `stop` use $IA_TEST_DATA_DIR, then .ia-test-env's.
-# Runs the server, server-ts/bin/huntaway (needs `npm ci` in server-ts/, and an ia-shim: `cargo build -p ia-shim` in
-# server/, or $IA_SHIM_BIN). IA_TEST_BIN runs another build instead, such as a release package's huntaway.
+# Runs the server, apps/server/bin/huntaway (needs `pnpm install`, and an ia-shim: `cargo build -p ia-shim`, both at the
+# top of the checkout, or $IA_SHIM_BIN). IA_TEST_BIN runs another build instead, such as a release package's huntaway.
 # A restart from the board binds a new free port (use `restart` here instead).
 set -euo pipefail
 
@@ -157,21 +157,21 @@ start() {
     esac
   done
   # --open-token: a board that hands out its token never shows system notifications (see notifyPermission in
-  # app/src/notifier.ts), so a test server opened in the user's browser doesn't pop up on their desktop.
+  # apps/web/src/notifier.ts), so a test server opened in the user's browser doesn't pop up on their desktop.
   # IA_TEST_OPEN_TOKEN=0 starts a normal board instead (the browser tests do, to test a normal board's notifications).
   if [[ ${IA_TEST_OPEN_TOKEN:-1} != 0 && " ${serve[*]} " != *" --open-token "* ]]; then serve+=(--open-token); fi
   if [[ -z $bin ]]; then
-    bin="$root/server-ts/bin/huntaway"
-    [[ -f $root/server-ts/node_modules/ws/package.json ]] ||
-      { echo "server-ts/ has no node_modules; run npm ci in $root/server-ts first" >&2; exit 1; }
-    # Where the TS server looks for ia-shim (shim_path in server-ts/src/agent/runs.ts), save beside a release's huntaway.
+    bin="$root/apps/server/bin/huntaway"
+    [[ -f $root/apps/server/node_modules/ws/package.json ]] ||
+      { echo "apps/server has no node_modules; run pnpm install in $root first" >&2; exit 1; }
+    # Where the TS server looks for ia-shim (shim_path in apps/server/src/agent/runs.ts), save beside a release's huntaway.
     local shim=${IA_SHIM_BIN:-}
     if [[ -z $shim ]]; then
-      for s in "$root/server/target/release/ia-shim" "$root/server/target/debug/ia-shim" "$root/server-ts/bin/ia-shim"; do
+      for s in "$root/target/release/ia-shim" "$root/target/debug/ia-shim" "$root/apps/server/bin/ia-shim"; do
         [[ -x $s ]] && { shim=$s; break; }
       done
     fi
-    [[ -n $shim && -x $shim ]] || { echo "no ia-shim build in $root/server/target; run cargo build -p ia-shim in $root/server first" >&2; exit 1; }
+    [[ -n $shim && -x $shim ]] || { echo "no ia-shim build in $root/target; run cargo build -p ia-shim in $root first" >&2; exit 1; }
   fi
   [[ -n $bin && -x $bin ]] || { echo "IA_TEST_BIN=$bin isn't an executable" >&2; exit 1; }
   if [[ -n $do_seed ]]; then
@@ -191,7 +191,7 @@ start() {
     for v in IA_CLAUDE_BIN IA_CODEX_BIN IA_TELEGRAM_API $(compgen -e IA_FAKE_CLAUDE_ || true); do
       [[ -n ${!v+x} ]] && printf 'export %s=%q\n' "$v" "${!v}"
     done
-    # The new database file (huntaway-2.db, see server-ts/src/db/file.ts) stays as the start had it, on or off.
+    # The new database file (huntaway-2.db, see apps/server/src/db/file.ts) stays as the start had it, on or off.
     printf 'export IA_NEW_DB_FILE=%q\n' "${IA_NEW_DB_FILE:-}"
   } > "$dir/launch"
 

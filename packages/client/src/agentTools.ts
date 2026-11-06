@@ -132,8 +132,10 @@ export const agentToolsApi = ({ on }: Http) => ({
     on(h).patch<ProjectMcpServer>(`/agent-tools/mcp-servers/${enc(id)}`, b),
   deleteGlobalMcpServer: (h: string, id: string) => on(h).del(`/agent-tools/mcp-servers/${enc(id)}`),
   /** Switch a global skill or server on or off for a profile (its default) or a project; null clears it. */
-  setAgentToolSwitch: (h: string, b: { scope: "profile" | "project"; scope_id: string; enabled: boolean | null } & ({ item_id: string } | { source_id: string })) =>
-    on(h).post("/agent-tools/switches", b),
+  setAgentToolSwitch: (
+    h: string,
+    b: { scope: "profile" | "project"; scope_id: string; enabled: boolean | null } & ({ item_id: string } | { source_id: string }),
+  ) => on(h).post("/agent-tools/switches", b),
   /** Clone a git repository (a URL, or `owner/repo` for GitHub) and add its skills, off until switched on (API 104). */
   addSkillSource: (h: string, b: { url: string; ref?: string }) => on(h).post<{ source: SkillSource; skills: ProjectSkill[] }>("/agent-tools/skill-sources", b),
   /** Clone it again and bring its skills up to date. */

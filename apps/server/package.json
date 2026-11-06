@@ -1,0 +1,24 @@
+{
+  "name": "huntaway-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The huntaway server, in TypeScript (ported from the Rust server, removed in HA-179). Runs on Node 24+ with no build step.",
+  "type": "module",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/main.ts serve",
+    "typecheck": "vp check --no-fmt --no-lint",
+    "test": "vp test"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.0",
+    "tsrs": "0.22.0-ts7.1.0-beta",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
