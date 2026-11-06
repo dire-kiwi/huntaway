@@ -33,7 +33,7 @@ import type { Spec } from "./codex.ts";
 import * as codex from "./codex.ts";
 import type { Shared } from "../state.ts";
 import { VERSION } from "../hosts/proto.ts";
-import { context, err_str, expand_tilde, sleep } from "../util.ts";
+import { context, err_str, expand_tilde, remove_dir_all, sleep } from "../util.ts";
 import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
@@ -243,8 +243,10 @@ export async function start(state: Shared, l: Launch): Promise<void> {
 
   // The board's tools, and GitHub through gh (outside the agent's sandbox; a server of the project's own by this name
   // replaces it). This server serves both over HTTP (see mcp/http.ts), with what they need of the run kept here; the URL
-  // stays valid across restarts. A run that calls the board's tools on its output has only gh's here.
-  const in_process = !!l.tools_on_output || !!l.board_tools_dynamic;
+  // stays valid across restarts. A run that calls the board's tools on its output has only gh's here, but for one
+  // that gives a new Codex session them as dynamic tools: the adapter gives it the board's server only if Codex won't
+  // take them (agent/codex/adapter.ts's start_thread).
+  const in_process = !!l.tools_on_output || (!!l.board_tools_dynamic && !l.codex?.board_tools);
   await writeFile(
     join(dir, mcp_http.SETTINGS_FILE),
     mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }),
@@ -476,11 +478,6 @@ function read_json(path: string): any {
  */
 export function asks_on_output(state: Shared, run_id: string): boolean {
   return format(state, run_id) >= ASKS_FORMAT && !is_codex_run(state, run_id);
-}
-
-/** Whether run `run_id`'s agent calls the board's tools on its output, an in-process MCP server (see runner/requests.ts). */
-export function tools_on_output(state: Shared, run_id: string): boolean {
-  return format(state, run_id) >= TOOLS_FORMAT && !is_codex_run(state, run_id);
 }
 
 /** Whether run `run_id` is Codex's (its adapter's `codex.json`). */
@@ -778,7 +775,7 @@ export function prune(state: Shared, now: Date): Pruned {
     else remove = finished(dir);
     if (remove) {
       try {
-        rmSync(dir, { recursive: true });
+        remove_dir_all(dir);
         pruned.runs++;
       } catch (e) {
         log.warn(`run=${id} removing the run's folder: ${err_str(e)}`);
@@ -819,7 +816,7 @@ export function remove_finished(state: Shared, run_ids: string[]): void {
     const dir = run_dir(state, id);
     if (existsSync(join(dir, "exit")) && !existsSync(join(dir, "orphan"))) {
       try {
-        rmSync(dir, { recursive: true });
+        remove_dir_all(dir);
       } catch (e) {
         log.warn(`run=${id} removing the run's folder: ${err_str(e)}`);
       }

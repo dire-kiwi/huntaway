@@ -428,7 +428,8 @@ function useDecide(hostId: string, requestId: string) {
 }
 
 /** Whether an approval is to delete something (a task, or an automation). */
-const isDeletion = (a: Pick<Approval, "kind" | "input">) => a.kind === "delete_task" || (a.kind === "automation" && (a.input as AutomationChange).op === "delete");
+const isDeletion = (a: Pick<Approval, "kind" | "input">) =>
+  a.kind === "delete_task" || ((a.kind === "automation" || a.kind === "workflow") && (a.input as AutomationChange).op === "delete");
 
 const TITLES = { project: "Approve a project change?", delete_task: "Delete a task?" };
 

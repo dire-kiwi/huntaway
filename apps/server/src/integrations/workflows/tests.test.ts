@@ -32,7 +32,7 @@ import {
   type Run,
   type Workflow,
 } from "../workflows.ts";
-import { advance, plan, step_ended } from "./engine.ts";
+import { advance, MAX_CHAIN, plan, step_ended } from "./engine.ts";
 import * as prompt from "./prompt.ts";
 
 // As in Rust's tests, there's no ia-shim: this host can't run agents unless a test says it can (runs::TEST_CAN_RUN).
@@ -480,3 +480,104 @@ test("runs_carry_their_rounds_and_api_json_leaves_out_task_run", async () => {
   assert.ok(!("task_run" in v), "serde skips task_run");
   assert.deepEqual(Object.keys(v.nodes), ["m", "t"], "nodes are kept in order, as a BTreeMap");
 });
+
+// ---------- HA-229's ----------
+
+test("a_restart_fails_agent_steps_whose_agent_never_started_and_leaves_those_running", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  const w = make(s, project, {
+    nodes: [
+      { id: "t", kind: "trigger", on: "manual" },
+      { id: "a", kind: "agent", name: "A", output: "text" },
+      { id: "b", kind: "agent", name: "B", output: "text" },
+      { id: "c", kind: "agent", name: "C", output: "text" },
+    ],
+    edges: [
+      { from: "t", port: "out", to: "a" },
+      { from: "t", port: "out", to: "b" },
+      { from: "t", port: "out", to: "c" },
+    ],
+  });
+  const thread = (title: string) =>
+    db.insert_task(s.db(), { profile_id: task.profile_id, project_id: project.id, kind: "review", title, description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null });
+  const working = thread("working");
+  const idle = thread("idle");
+  // `a` was marked running, but the server stopped while it read the task's git, before it had a thread; `b`'s thread
+  // never got its run; `c`'s agent is working (runner.load_active has it), and carries on.
+  const run = bare_run(w.graph, task.id, null);
+  Object.assign(run, { id: "run1", workflow_id: w.id });
+  run.nodes = {
+    t: { state: "done", port: "out" },
+    a: { state: "running" },
+    b: { state: "running", thread_id: idle.id, after_run: "" },
+    c: { state: "running", thread_id: working.id, after_run: "" },
+  };
+  insert_run(s.db(), run);
+  s.runs.set(working.id, { run_id: "x", cancel: null } as any);
+  resume(s);
+  await sleep(50);
+  const r = get_run(s.db(), "run1")!;
+  assert.equal(r.state, "running", "c's agent is still working");
+  assert.deepEqual([run_node(r, "a").state, run_node(r, "b").state, run_node(r, "c").state], ["failed", "failed", "running"]);
+  assert.match(run_node(r, "a").text ?? "", /Interrupted/);
+  // Once c's agent is gone too (a second restart), the run ends.
+  s.runs.delete(working.id);
+  resume(s);
+  await until(() => get_run(s.db(), "run1")!.state !== "running");
+  assert.equal(get_run(s.db(), "run1")!.state, "done");
+});
+
+test("workflows_that_move_a_task_into_each_others_columns_stop_after_a_few_runs_in_a_row", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  const mover = (from: string, to: string) =>
+    make(s, project, {
+      nodes: [
+        { id: "t", kind: "trigger", on: "status", status: from },
+        { id: "m", kind: "set_status", status: to },
+      ],
+      edges: [{ from: "t", port: "out", to: "m" }],
+    });
+  const there = mover("in_review", "todo");
+  const back = mover("todo", "in_review");
+  const count = () => Number(db.value(s.db(), "SELECT COUNT(*) FROM workflow_runs WHERE task_id=?1", task.id));
+  const warned = () => testing.messages(s.db(), task.id).some((m: any) => m.kind === "event" && /moved the task \d+ times in a row/.test(m.data?.text ?? ""));
+  on_status(s, task);
+  await until(warned, 5000);
+  assert.ok(warned(), "it says why it stopped");
+  await sleep(200);
+  assert.equal(count(), MAX_CHAIN, "runs in a row, counting the first");
+  assert.ok([there, back].every((w) => latest_run(s.db(), w.id, task.id)!.state === "done"));
+  // Moving the task by hand starts a chain of its own.
+  const status = db.get_task(s.db(), task.id)!.status;
+  await api.update_task_inner(s, task.id, { status: status === "todo" ? "in_review" : "todo" });
+  await until(() => count() === 2 * MAX_CHAIN, 5000);
+  await sleep(200);
+  assert.equal(count(), 2 * MAX_CHAIN);
+});
+
+test("an_agent_steps_effort_and_model_are_checked", () => {
+  const s = testing.state();
+  const [project] = setup(s);
+  const graph = (o: any) => ({
+    nodes: [
+      { id: "t", kind: "trigger", on: "manual" },
+      { id: "a", kind: "agent", name: "A", output: "text", ...o },
+    ],
+    edges: [{ from: "t", port: "out", to: "a" }],
+  });
+  for (const bad of [{ effort: "extreme" }, { model: "--dangerously-skip-permissions" }, { model: "opus plus" }, { model: "x".repeat(101) }]) {
+    assert.throws(() => check_graph(s.db(), project, graph(bad)), ApiErrorLike, JSON.stringify(bad));
+  }
+  const g = check_graph(s.db(), project, graph({ effort: " high ", model: " claude-opus-5-5[1m] " }));
+  const a: any = g.nodes.find((n) => n.id === "a");
+  assert.deepEqual([a.effort, a.model], ["high", "claude-opus-5-5[1m]"]);
+  const blank: any = check_graph(s.db(), project, graph({ effort: " ", model: "" })).nodes.find((n) => n.id === "a");
+  assert.ok(!("effort" in blank) && !("model" in blank));
+});
+
+/** An ApiError (400) thrown by check_graph. */
+function ApiErrorLike(e: any): boolean {
+  return e?.status === 400;
+}

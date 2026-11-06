@@ -554,11 +554,11 @@ export interface Submitted {
 }
 
 /**
- * Every `submit_review` call in review threads (not summaries'), but those the board refused (its result says there was
- * nothing to submit: a round that had ended), oldest first in each thread.
+ * Every `submit_review` call in review threads (not summaries' or workflows' steps'), but those the board refused (its
+ * result says there was nothing to submit: a round that had ended), oldest first in each thread.
  */
 export function submissions(c: Conn, mode: Mode = "auto"): Submitted[] {
-  const reviews = "t.kind='review' AND COALESCE(t.task_type, '') != 'summary' AND t.parent_id IS NOT NULL";
+  const reviews = "t.kind='review' AND COALESCE(t.task_type, '') NOT IN ('summary', 'workflow') AND t.parent_id IS NOT NULL";
   const out: Submitted[] = [];
   const rows = db.all<{ task_id: string; parent_id: string; created_at: string; data: string }>(
     c,

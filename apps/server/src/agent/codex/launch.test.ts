@@ -1,6 +1,7 @@
 // How a Codex run is launched (agent/runner/launch.ts) since its requests go to its output (agent/codex/requests.ts): a
-// new session gets the board's tools as dynamic tools and no board MCP server; one that started with them keeps them;
-// one from before keeps the board's MCP server. A fake ia-shim takes the run (its folder written) and starts nothing.
+// new session gets the board's tools as dynamic tools (and the board's MCP server only if its Codex won't take them);
+// one that started with them keeps them; one from before, or whose Codex wouldn't take them, has the board's MCP
+// server. A fake ia-shim takes the run (its folder written) and starts nothing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -12,6 +13,8 @@ import { sleep } from "../../util.ts";
 import * as runs from "../runs.ts";
 import { MCP_SERVER_NAME, stop } from "../runner.ts";
 import { send } from "../runner/queue.ts";
+import * as mcp_http from "../../mcp/http.ts";
+import { BOARD_TOOLS, handle_line } from "./output.ts";
 import { set_test_models } from "./queries.ts";
 
 const shim = join(testing.temp_dir(), "ia-shim");
@@ -73,10 +76,29 @@ test("a_new_session_gets_the_boards_tools_as_dynamic_tools", async () => {
   assert.equal(l.format, 5);
   assert.equal(l.spec.requests_on_output, true);
   assert.deepEqual([l.spec.board_tools.type, l.spec.board_tools.name], ["namespace", MCP_SERVER_NAME]);
-  // No board server: the board's HTTP server refuses the run's calls, and gh's stays.
-  assert.equal(l.servers[MCP_SERVER_NAME], undefined);
+  // The board's server stays in mcp.json, for the adapter to give the thread only if Codex won't take the dynamic
+  // tools (adapter.test.ts), and gh's.
+  assert.ok(l.servers[MCP_SERVER_NAME]);
   assert.ok(l.servers.gh);
+  assert.equal(JSON.parse(readFileSync(join(runs.run_dir(state, l.run_id), mcp_http.SETTINGS_FILE), "utf8")).in_process, false);
   assert.equal(db.value(state.db(), "SELECT board_tools FROM runs WHERE id=?1", l.run_id), 1);
+});
+
+test("a_session_whose_codex_wouldnt_take_them_has_the_mcp_server_in_its_later_runs", async () => {
+  const state = testing.state();
+  const task = codex_task(state);
+  // Its first run was to give the session them, and the adapter says Codex wouldn't take them (adapter.ts's
+  // start_thread) before the thread starts.
+  const first = db.insert_run(state.db(), task, "prompt");
+  db.set_run_board_tools(state.db(), first.id);
+  handle_line(state, first, { method: BOARD_TOOLS, params: { dynamic: false } });
+  handle_line(state, first, { method: "thread/started", params: { thread: { id: "s1" } } });
+  assert.equal(db.value(state.db(), "SELECT board_tools FROM runs WHERE id=?1", first.id), 0);
+  db.run(state.db(), "UPDATE runs SET status='exited' WHERE id=?1", first.id);
+  const next = await launched(state, task);
+  assert.deepEqual([next.spec.thread_id, next.spec.board_tools], ["s1", null]);
+  assert.ok(next.servers[MCP_SERVER_NAME]);
+  assert.equal(JSON.parse(readFileSync(join(runs.run_dir(state, next.run_id), mcp_http.SETTINGS_FILE), "utf8")).in_process, false);
 });
 
 test("a_session_that_started_with_them_keeps_them_and_one_from_before_keeps_the_mcp_server", async () => {

@@ -781,12 +781,22 @@ export function open(path: string): Conn {
     batch("PRAGMA user_version=99; COMMIT;");
   }
   if (version < 100) {
+    // Workflows' approvals' thread messages say `workflow` rather than `automation` (see mcp/permissions.ts's approve):
+    // those asked before, as messages or as their threads' requests, too.
+    batch(`BEGIN;
+      UPDATE messages SET data=json_set(data, '$.kind', 'workflow') WHERE kind='permission'
+        AND json_extract(data, '$.kind')='automation' AND json_extract(data, '$.input.workflow') IS NOT NULL;
+      UPDATE thread_requests SET data=json_set(data, '$.metadata.kind', 'workflow') WHERE type='permission'
+        AND json_extract(data, '$.metadata.kind')='automation' AND json_extract(data, '$.input.workflow') IS NOT NULL;
+      PRAGMA user_version=100; COMMIT;`);
+  }
+  if (version < 101) {
     // Prompt analytics' user messages in a time range, from items (threads/history.ts's user_messages_between), as
     // messages_kind_time finds them in messages: without it, every item of the profile's tasks is read. User messages
     // only, so no other type's queries of one task's items take it over (thread_items_pos), as db/messages.ts says of
     // kind; the one of those for user messages and a time writes `+type`.
     batch(`BEGIN; CREATE INDEX IF NOT EXISTS thread_items_user_time ON thread_items(type, created_at) WHERE type='user_message';
-           PRAGMA user_version=100; COMMIT;`);
+           PRAGMA user_version=101; COMMIT;`);
   }
   return conn;
 }
@@ -833,7 +843,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 100;
+export const VERSION = 101;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

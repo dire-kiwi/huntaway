@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import * as worktree from "../git/worktree.ts";
 import * as gh_mcp from "../mcp/gh_mcp.ts";
 import { AsyncMutex } from "../state.ts";
-import { err_str } from "../util.ts";
+import { err_str, remove_dir_all } from "../util.ts";
 
 /**
  * How many pages of 100 of the repositories the account owns or collaborates on are listed, most
@@ -456,7 +456,7 @@ export async function create(gh: string, account: string | null, given_dir: stri
   }
   const undo = (inited: boolean) => {
     if (created.length) {
-      rmSync(created[0], { recursive: true, force: true });
+      remove_dir_all(created[0]);
       for (const f of created.slice(1)) {
         try {
           rmdirSync(f);
@@ -464,7 +464,7 @@ export async function create(gh: string, account: string | null, given_dir: stri
           break;
         }
       }
-    } else if (inited) rmSync(join(dir, ".git"), { recursive: true, force: true });
+    } else if (inited) remove_dir_all(join(dir, ".git"));
   };
   const fail = (inited: boolean, msg: string): never => {
     undo(inited);
@@ -579,7 +579,7 @@ async function checked_out(dir: string): Promise<boolean> {
 /** Takes away the clone a failed `gh repo clone` left in `dest`: the folder, or what's in it if it was there (empty) before. */
 function remove_clone(dest: string, existed: boolean) {
   if (!existed) {
-    rmSync(dest, { recursive: true, force: true });
+    remove_dir_all(dest);
     return;
   }
   let entries;
@@ -591,7 +591,8 @@ function remove_clone(dest: string, existed: boolean) {
   for (const e of entries) {
     // A symlink goes itself, rather than what it points to.
     try {
-      rmSync(join(dest, e.name), { recursive: e.isDirectory(), force: true });
+      if (e.isDirectory()) remove_dir_all(join(dest, e.name));
+      else rmSync(join(dest, e.name), { force: true });
     } catch {}
   }
 }

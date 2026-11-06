@@ -3,7 +3,9 @@
 Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs,
 as dynamic tools (a `huntaway` namespace, answered on the run's input) for Codex sessions started
 since they were, and over HTTP for older Codex sessions (Codex can't give a session it resumes new
-dynamic tools) and compactions (see *How runs reach the board's MCP servers* below):
+dynamic tools), sessions whose Codex wouldn't take dynamic tools, and compactions (see *How runs reach the board's MCP
+servers* below). A newer Codex session's subagents don't have them (Codex doesn't pass a thread's dynamic tools on to the
+threads it spawns): their parent does. The tools:
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
@@ -110,8 +112,12 @@ only `gh` there). After a restart the run's output is followed from its saved of
 already read, so those still going (a `wait`, an approval that `delete_task` or `update_project`
 asked for) are taken up again from `mcp_calls` and answered when they're done: a `wait` keeps its
 deadline and what it watches. A call that may have taken effect before the restart cut it short
-(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code cancels (its turn
-was interrupted) isn't answered: a `wait` ends, and an approval expires. Such runs are run format 4,
+(`create_task`, say) isn't run again, and the agent is told so. A call Claude Code gives up on (its
+turn was interrupted, or a tool call beside it failed) isn't answered: a `wait` ends, and an approval
+that `delete_task` or `update_project` asked for expires, so it can't be given once the agent has
+moved on. Claude Code says so with a `notifications/cancelled` MCP message (`mcp_message`) naming the
+call's JSON-RPC id, which the board finds among the run's open calls in `mcp_calls`; a permission
+prompt it gives up on is a `control_cancel_request` instead. Such runs are run format 4,
 which an older build that's rolled back to stops rather than follow, as it couldn't answer their
 calls. With `IA_MCP_STDIO=1` (below), Claude runs get the helpers instead.
 

@@ -2389,11 +2389,14 @@ test("agents_create_change_run_and_delete_workflows_once_the_user_approves", asy
   const workflows = () => wf.list(s.db(), "kiwicd");
   const args = { name: "Park", graph: MOVE_GRAPH, reason: "Park tasks" };
 
-  // Denied: nothing is made. The approval shows the workflow, and isn't shown to UIs from before workflows.
+  // Denied: nothing is made. The approval shows the workflow, and isn't shown to UIs from before workflows: its thread
+  // message says `workflow`, which they draw as a tool's prompt (they'd draw an `automation` as one, and crash on it).
   const shown = async (allow: boolean) => {
     const x = await approval_asked(s);
     assert.equal(permissions.pending_approvals(s, true, true).length, 0);
     assert.equal(permissions.pending_approvals(s, true, true, true).length, 1);
+    const asking = testing.messages(s.db(), caller.id).filter((m: any) => m.kind === "permission").at(-1) as any;
+    assert.deepEqual([asking.data.kind, asking.data.request_id], ["workflow", x.request_id]);
     await answer_approval(s, allow);
     return x;
   };
