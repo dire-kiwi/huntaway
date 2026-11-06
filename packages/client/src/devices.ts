@@ -1,9 +1,7 @@
 import { enc, type Http } from "./http";
 
-/** Devices paired with a board, such as the mobile app, each with a token of its own (API 118). */
-export const DEVICES_API = 118;
-
-/** A paired device (see server-ts/src/devices.ts). Its token is only ever given to it, when it pairs. */
+/** A device paired with a board, such as the mobile app, with a token of its own (API 118; see server-ts/src/devices.ts).
+ *  Its token is only ever given to it, when it pairs. */
 export interface PairedDevice {
   id: string;
   name: string;

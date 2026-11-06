@@ -21,7 +21,6 @@ export const SCRATCH = "scratch";
 
 export const MIN = 60_000;
 export const HOUR = 60 * MIN;
-export const DAY = 24 * HOUR;
 
 export interface Rules {
   /** A gap between prompts longer than this is a break. */
