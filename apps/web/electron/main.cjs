@@ -469,8 +469,11 @@ async function createWindow() {
     backgroundColor: "#0b0b0e",
     autoHideMenuBar: true,
     title: "Huntaway",
-    webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, "preload.cjs") },
+    // The preload runs in frames too, to take WebRTC away from the pages agents write (see preload.cjs).
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegrationInSubFrames: true, preload: path.join(__dirname, "preload.cjs") },
   });
+  // And should that miss a frame, WebRTC there sends no UDP (STUN, TURN over UDP) that isn't proxied (HA-269).
+  win.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
   // The board reloads once a rebuild has restarted the server. If that changed the app itself, start the new one.
   win.webContents.on("did-finish-load", () => {
     const why = shellChange({ boot: globalThis.huntawayBoot, stampNow: mainStamp, startStamp });
