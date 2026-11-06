@@ -5,7 +5,8 @@ what it drew (`apps/web/src/threadModel.ts`). The agent-threads migration (HA-19
 **items**, built from the same messages, and served as numbered **events**; since step 10 the items are the source, and
 a task's messages stop being written once it has moved onto them (see "Items are the source"), and since step 11 a
 Codex run writes them straight from its notifications (see "Codex writes items directly"). Since step 13 every task is
-on items and nothing reads the messages but a rebuild (see "The messages path removed"). This file describes the model
+on items and nothing reads the messages but a rebuild (see "The messages path removed"), and since step 14 a task's
+rows are deleted once it's on items (see "The old rows deleted"). This file describes the model
 and how it's stored, and its status section says how far the migration has got. Each step updates it.
 
 The ideas come from [agent-threads](https://github.com/dire-kiwi/agent-threads) (`~/personal/agent-threads`), whose
@@ -655,7 +656,7 @@ no data is deleted (that's step 14).
   app's pending approvals.
 - **Kept, for the hub's older hosts and clients** until 2026-11-20 (a follow-up removes them): the message routes
   (`GET /tasks/{id}/messages`, its pages and subagents, api/thread.ts) and the `message`/`message_updated` events. For
-  a task on items, the routes have only its messages from before it moved. The mobile app (step 10) still draws a
+  a task on items, the routes have none of its messages since step 14. The mobile app (step 10) still draws a
   task's thread from its messages if it's on them, which no task is.
 
 What still reads `messages` (`grep -rn -E "FROM messages|JOIN messages|UPDATE messages" apps/server/src`, without the
@@ -697,6 +698,39 @@ What was checked:
 Not checked: a real linked host on API 119–121 with _Keep threads as items_ off (the app's notice for a 404), the
 mobile app, and Codex threads in the browser beyond the UI tests' fixtures.
 
+## The old rows deleted
+
+Step 14 (HA-226). A task on items reads and writes its items only, and its `messages` rows from before it moved can't
+rebuild them (write.ts's `rebuild_rows` refuses), so they go:
+
+- **Migration 102** deletes the rows of every task on items written up to when it moved (`threads.flipped_at`). Rows
+  written since (a message whose items couldn't be written, kept so it isn't lost) stay. If any rows went, it then
+  compacts the file (`VACUUM`, and a checkpoint that truncates the WAL, which VACUUM fills with the whole file).
+- **`source.flip`** deletes a task's rows as it moves, in the same transaction as its rebuild: a board upgraded from
+  before step 10, or a task whose rebuild had failed.
+- Both clear `threads.flipped_writes`, so `threads-rebuild --back` of a build from before step 13 takes the task as one
+  that started on items and won't move it back onto rows it no longer has.
+- What goes with them: the message routes kept for older hosts and clients (until 2026-11-20) have nothing for a task
+  on items, and `huntaway threads-import`'s dry run has nothing to read for one.
+
+The table stays, for now: `source.next_id` takes message ids from its `sqlite_sequence` row (which `DROP TABLE`
+removes, so ids would start again and collide with items' `legacy:<id>`), a task still on messages writes its rows
+there until it moves, a rebuild of one reads them, and the message routes read it until 2026-11-20. The attachment
+scan still reads it, for those rows.
+
+Checked on a scrubbed copy of the live board (2,061 tasks, all on items; 323,194 rows, 800 MB of JSON, none written
+after their task moved):
+
+- `attachments.referenced` was the same 42 ids before the delete, after it, and from the migrated server, so the next
+  prune removes nothing it wouldn't have (29 of the 31 folders are referenced; the other 2 are unreferenced either way).
+- Opening the copy (the delete, then VACUUM) took 4.4 s, blocking the start; the file went from 1,968 MB to 995 MB
+  (973 MB freed; `thread_items` is 833 MB of what's left). The id sequence stayed at 351,256. A thread read through the
+  API after.
+- Upgrading the live board's older file (`issue-agent.db`, 1,936 tasks, all on messages): copied into `huntaway-2.db`,
+  then all 1,936 moved onto items at the start in 12.9 s (1,893 rebuilt first), none failed, and no `messages` row was
+  left; `attachments.referenced` was the same 42 ids as from the older file, and the longest thread (1,674 items) read
+  through the API.
+
 ## Status
 
 | Step                                                    | Task                | State                                                                                                                                                                                                                             |
@@ -716,7 +750,7 @@ mobile app, and Codex threads in the browser beyond the UI tests' fixtures.
 | 12. Soak                                                | HA-224              | Done                                                                                                                                                                                                                              |
 | 13a. Every task onto items                              | HA-225              | Done: `source.flip_all` rebuilds done tasks too, and a question waiting no longer holds a task back. See "Every task onto items".                                                                                                 |
 | 13. Remove the legacy code                              | HA-225              | This change: the readers, Codex and the app on items only, no `permission_prompt` tool or MCP helpers. See "The messages path removed".                                                                                           |
-| 14. Delete old message rows                             | HA-226              | Not started                                                                                                                                                                                                                       |
+| 14. Delete old message rows                             | HA-226              | This change: migration 102, `source.flip` deletes a task's rows. See "The old rows deleted".                                                                                                                                      |
 
 Left for later steps:
 
@@ -730,4 +764,4 @@ Left for later steps:
 - A task that hasn't started has no thread (its thread API answers 404 until its first message moves it onto items),
   so the app draws it empty without asking; giving a new task an empty thread would drop that check
   (threadView.ts's `hasThread`).
-- Step 14 (HA-226): deleting the old `messages` rows, and with them the writer's rows for a task not yet on items.
+- Dropping the `messages` table, once nothing writes or reads it (see "The old rows deleted").

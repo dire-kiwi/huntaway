@@ -549,6 +549,39 @@ test("a_database_from_version_94_gets_threads_kept_as_items", () => {
   again.close();
 });
 
+// HA-226: step 14 of docs/threads.md deletes the rows of tasks on items from before they moved.
+test("a_database_from_version_101_loses_the_message_rows_of_tasks_on_items", () => {
+  const path = db_path();
+  const c0 = open(path);
+  const p = db.insert_profile(c0, "p", [], null);
+  const task = (title: string) =>
+    db.insert_task(c0, { profile_id: p.id, project_id: null, kind: "task", title, description: "", status: "todo", use_worktree: false }).id;
+  const moved = task("moved");
+  const stays = task("on messages");
+  const row = (task_id: string, at: string) =>
+    db.run(c0, "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'user', '{}', ?2)", task_id, at).lastInsertRowid;
+  row(moved, "2026-11-01T00:00:00.000Z");
+  row(moved, "2026-11-02T00:00:00.000Z");
+  // Kept after it moved, as a message whose items couldn't be written is.
+  const late = row(moved, "2026-11-03T00:00:01.000Z");
+  const other = row(stays, "2026-11-01T00:00:00.000Z");
+  for (const id of [moved, stays]) db.run(c0, "INSERT INTO threads (task_id, converter, created_at, writes) VALUES (?1, 5, ?2, 2)", id, "2026-11-01");
+  db.run(c0, "UPDATE tasks SET thread_source='items', thread_items=1 WHERE id=?1", moved);
+  db.run(c0, "UPDATE threads SET flipped_at='2026-11-03T00:00:00.000Z', flipped_writes=2 WHERE task_id=?1", moved);
+  c0.close();
+  prepare_at(path, "PRAGMA user_version=101;");
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  assert.deepEqual(
+    db.all(c, "SELECT id FROM messages ORDER BY id").map((r) => r.id),
+    [late, other],
+  );
+  assert.equal(db.value(c, "SELECT flipped_writes FROM threads WHERE task_id=?1", moved), null);
+  // The ids go on from where they were (threads/source.ts's next_id).
+  assert.equal(db.value(c, "SELECT seq FROM sqlite_sequence WHERE name='messages'"), other);
+  c.close();
+});
+
 test("a_database_from_version_54_gets_automations", () => {
   const path = db_path();
   prepare_at(path, "DROP TABLE automation_runs; DROP TABLE automations; PRAGMA user_version=54;");

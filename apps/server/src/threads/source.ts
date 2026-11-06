@@ -18,7 +18,8 @@
 // Tasks move onto items one at a time (`flip`), when they're quiet: no run going (a task mid-turn waits for its run to
 // end) and no prompt waiting for an answer (a question may be). Their items must be complete and this build's, so one that
 // isn't (never rebuilt, an older converter's, live writes stopped on an error) is rebuilt from its messages first, in
-// the same transaction. It happens at the server's start (`flip_all`), when a run ends (`settled`), and before any
+// the same transaction, and its rows are deleted (step 14: nothing reads them once it's on items, and migration 102
+// deleted those of tasks that had moved before). It happens at the server's start (`flip_all`), when a run ends (`settled`), and before any
 // message is written to a quiet task that's still on messages (insert_message, start_run): a new task moves with its
 // first message, so its thread starts on items.
 //
@@ -108,7 +109,8 @@ const rebuilt_at = (c: Conn, task_id: string) => db.value<string | null>(c, "SEL
 
 /**
  * Moves task `task_id` onto items if it's quiet (`busy`) and this board moves tasks (`flips`), in one transaction (the
- * caller's, if it has one): its items are rebuilt from its messages first unless they're complete and this build's.
+ * caller's, if it has one): its items are rebuilt from its messages first unless they're complete and this build's, and
+ * its messages rows are deleted.
  * A task with no messages yet (a new one) just starts its thread. What it did (see Flip). A rebuild that fails (a
  * translator or store bug on its history) is logged and leaves the task on messages, as it was, so the write it's
  * called from goes on as a row, as before this step; it isn't tried again until the thread is rebuilt (see `unbuilt`).
@@ -147,7 +149,12 @@ export function flip(c: Conn, task_id: string): Flip {
       }
     }
     db.run(c, "UPDATE tasks SET thread_source='items', thread_items=1 WHERE id=?1", task_id);
-    db.run(c, "UPDATE threads SET flipped_at=?2, flipped_writes=writes WHERE task_id=?1", task_id, now());
+    // Its messages rows go (step 14): nothing reads them once it's on items. flipped_writes is null, as for a thread that
+    // started on items, so a build from before step 13 (`threads-rebuild --back`) doesn't move it back onto no rows.
+    const kept = journals.get(c);
+    if (kept) for (const m of db.list_messages(c, task_id)) kept.set(m.id, m);
+    db.run(c, "DELETE FROM messages WHERE task_id=?1", task_id);
+    db.run(c, "UPDATE threads SET flipped_at=?2, flipped_writes=NULL WHERE task_id=?1", task_id, now());
     // Moved, but not yet committed: a crash here leaves the task on messages, as it was.
     reached("threads:flipped");
     return rebuilt ? "rebuilt" : "moved";
@@ -155,8 +162,8 @@ export function flip(c: Conn, task_id: string): Flip {
 }
 
 /**
- * For the tests (testing.ts's `messages`): what an items task's messages were written as, which they compare with what
- * a task on messages has in its rows. Off (and nothing kept) unless a test's state turns it on.
+ * For the tests (testing.ts's `messages`): what an items task's messages were written as (its rows from before it moved
+ * too, which `flip` deletes), which they compare with what a task on messages has in its rows. Off (and nothing kept) unless a test's state turns it on.
  */
 const journals = new WeakMap<Conn, Map<number, Message>>();
 
@@ -274,7 +281,7 @@ export function kept(c: Conn, task_id: string, id: number): Message | null {
   }
   const item = store.get_item(c, task_id, `legacy:${id}`);
   if (item?.type === "notice" && item.code === "routine_report")
-    return { id, task_id, kind: "report", data: { ...(item.metadata ?? {}) }, created_at: item.created_at ?? "" };
+    return { id, task_id, kind: "report", data: { ...item.metadata }, created_at: item.created_at ?? "" };
   return null;
 }
 
