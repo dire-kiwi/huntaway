@@ -810,6 +810,26 @@ test("a_pull_request_step_pushes_the_branch_and_opens_it", async () => {
     const none = (await start(s, w.id, task.id, true))!;
     assert.equal(run_node(none, "pr").port, "failed");
     assert.ok((run_node(none, "pr").text ?? "").includes("no commits of its own"), run_node(none, "pr").text);
+    // Moved to Needs attention, the task says why.
+    const graph = {
+      nodes: [
+        { id: "t", kind: "trigger", on: "manual" },
+        { id: "pr", kind: "open_pr" },
+        { id: "m", kind: "set_status", status: "needs_attention" },
+      ],
+      edges: [
+        { from: "t", port: "out", to: "pr" },
+        { from: "pr", port: "failed", to: "m" },
+      ],
+    };
+    update(s, w.id, { graph });
+    await start(s, w.id, task.id, true);
+    const flagged = db.get_task(s.db(), task.id)!;
+    assert.equal(flagged.status, "needs_attention");
+    assert.ok(
+      (flagged.attention_reason ?? "").startsWith('The workflow "Review" failed at Open a pull request: the task\'s branch has no commits'),
+      flagged.attention_reason ?? "",
+    );
   } finally {
     gh_mcp.TEST_GH_PROGRAM.set(null);
     engine_testing.GITHUB = null;

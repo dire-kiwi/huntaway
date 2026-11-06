@@ -701,6 +701,19 @@ async function move_task(s: Shared, run: Run, status: string): Promise<Done> {
   MOVING.push(key);
   try {
     await api.update_task_inner(s, run.task_id, { status });
+    // Why it needs attention: the steps of the run that failed, or else that the workflow moved it there.
+    if (status === "needs_attention") {
+      let name = "";
+      try {
+        name = get(s.db(), run.workflow_id)?.name ?? "";
+      } catch {}
+      const current = get_run(s.db(), run.id) ?? run;
+      const failed = current.graph.nodes
+        .filter((n) => run_node(current, n.id).state === "failed")
+        .map((n) => `${node_name(n)}: ${run_node(current, n.id).text ?? ""}`);
+      const reason = failed.length ? `The workflow "${name}" failed at ${failed[0].split("\n")[0]}` : `The workflow "${name}" moved it here`;
+      s.update_task_if(run.task_id, [["attention_reason", reason]], (c) => db.get_task(c, run.task_id)?.status === "needs_attention");
+    }
     return Done_port("out");
   } catch (e) {
     return Done_failed(msg(e));

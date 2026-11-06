@@ -12,8 +12,10 @@ import {
   type Project,
   type Reviewer,
   type WatchPullRequests,
+  type Workflow,
 } from "../../../api";
-import { useStore } from "../../../store";
+import { onWorkflowsChanged, useStore } from "../../../store";
+import { WORKFLOWS_API } from "../../task/Workflows";
 import {
   DEFAULT_REVIEWER,
   InheritPicker,
@@ -30,6 +32,7 @@ import { Field, Input, Toggle } from "../../ui";
 export function ReviewTab({ form, host, set }: { form: Project; host: Host | undefined; set: <K extends keyof Project>(k: K, v: Project[K]) => void }) {
   return (
     <>
+      <WorkflowsNote project={form} host={host} />
       {form.auto_review !== undefined && (
         <>
           <div className="space-y-1.5">
@@ -297,4 +300,49 @@ function useProjectSkillNames(project: Project, on: boolean): string[] {
     };
   }, [on, project.host_id, project.id]);
   return names;
+}
+
+/**
+ * Which of the project's workflows (HA-276) take over from these settings: those that start when a task moves to In
+ * review, or when its agent finishes (which then keeps the task out of In review until the workflow moves it there).
+ */
+function WorkflowsNote({ project, host }: { project: Project; host: Host | undefined }) {
+  const [list, setList] = useState<Workflow[]>([]);
+  const supported = hostSupports(host, WORKFLOWS_API);
+  useEffect(() => {
+    if (!supported) return;
+    const load = () =>
+      api.workflows(project.host_id, project.id).then(
+        (r) => setList(r.workflows),
+        () => setList([]),
+      );
+    load();
+    return onWorkflowsChanged((h, { projectId }) => {
+      if (h === project.host_id && projectId === project.id) load();
+    });
+  }, [supported, project.host_id, project.id]);
+  const trigger = (w: Workflow) => {
+    const t = w.graph.nodes.find((n) => n.kind === "trigger");
+    return t?.kind === "trigger" ? t : null;
+  };
+  const review = list.filter((w) => w.enabled && trigger(w)?.on === "status" && trigger(w)?.status === "in_review");
+  const finished = list.filter((w) => w.enabled && trigger(w)?.on === "finished");
+  if (!review.length && !finished.length) return null;
+  const names = (ws: Workflow[]) => ws.map((w) => `"${w.name}"`).join(", ");
+  return (
+    <div className="space-y-1 rounded-md border border-line/70 bg-raised/40 p-2.5 text-[12px] text-muted" data-testid="review-workflows-note">
+      {finished.length > 0 && (
+        <p>
+          {finished.length === 1 ? "The workflow" : "The workflows"} {names(finished)} take{finished.length === 1 ? "s" : ""} a task on when its agent finishes:
+          it stays in In progress until a workflow moves it, so reviews here start only once one moves it to In review.
+        </p>
+      )}
+      {review.length > 0 && (
+        <p>
+          {review.length === 1 ? "The workflow" : "The workflows"} {names(review)} also run{review.length === 1 ? "s" : ""} when a task moves to In review. If{" "}
+          {review.length === 1 ? "it reviews or summarises" : "they review or summarise"}, turn those off here, or tasks get both.
+        </p>
+      )}
+    </div>
+  );
 }

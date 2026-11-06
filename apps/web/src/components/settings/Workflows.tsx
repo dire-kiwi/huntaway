@@ -1,9 +1,11 @@
 import clsx from "clsx";
-import { ArrowRightLeft, Bot, Flag, GitFork, Play, Plus, Send, Trash2, Workflow as WorkflowIcon } from "lucide-react";
+import { ArrowRightLeft, Bot, Flag, GitFork, GitPullRequest, Play, Plus, Send, Trash2, Workflow as WorkflowIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
+  FINISHED_WORKFLOWS_API,
   hostStatuses,
+  hostSupports,
   LABELS,
   STATUSES,
   WORKFLOW_CHECKS,
@@ -18,6 +20,7 @@ import {
   type WorkflowNodeKindName,
 } from "../../api";
 import { onWorkflowsChanged, useAvailableConfigs, useHost } from "../../store";
+import type { Reviewer } from "../../api";
 import { ReviewerRow } from "../task/Reviewers";
 import { Button, Field, Input, Modal, Textarea, Toggle, useConfirm } from "../ui";
 
@@ -45,6 +48,8 @@ export function ProjectWorkflows({ project }: { project: Project }) {
     });
   }, [reload, hostId, project.id]);
   const confirm = useConfirm();
+  const host = useHost(hostId);
+  const presets = PRESETS.filter((p) => !p.api || hostSupports(host, p.api));
   const act = async (fn: () => Promise<unknown>) => {
     setErr(null);
     try {
@@ -57,13 +62,20 @@ export function ProjectWorkflows({ project }: { project: Project }) {
   return (
     <div className="space-y-3" data-testid="workflows">
       <p className="text-[12.5px] text-muted">
-        A workflow starts when a task enters a column (or when you run it from the task), and runs its steps in order: checks, agents that read the work in
-        threads of their own and write their output to a tab of the task, messages to the task's agent, and moves to another column. The review and summary in
-        the Review tab can be set up as one: start from <i>Review and summarise</i>.
+        A workflow starts when a task enters a column, when the task's agent finishes its work (the task then stays in In progress until the workflow moves it),
+        or when you run it from the task. It runs its steps in order: checks, agents that read the work in threads of their own (or process what the steps
+        before them wrote, with a skill, in a fresh context) and write their output to a tab of the task, pull requests, messages to the task's agent, and moves
+        to another column. The review and summary in the Review tab can be set up as one: start from <i>Review and summarise</i>, or <i>From the Review tab</i>{" "}
+        for its reviewers and summarizers, and turn them off there.
       </p>
       <div className="flex flex-wrap gap-2">
-        {PRESETS.map((p) => (
-          <Button key={p.name} size="sm" onClick={() => setEditing({ workflow: null, name: p.name === "Blank" ? "" : p.name, graph: p.graph() })}>
+        {presets.map((p) => (
+          <Button
+            key={p.name}
+            size="sm"
+            title={p.hint}
+            onClick={() => setEditing({ workflow: null, name: p.name === "Blank" ? "" : (p.title ?? p.name), graph: p.graph(project) })}
+          >
             <Plus size={13} /> {p.name === "Blank" ? "New workflow" : p.name}
           </Button>
         ))}
@@ -133,9 +145,16 @@ const CHECK_LABELS: Record<WorkflowCheck, string> = {
 /** What a workflow does, in a line: its trigger and steps. */
 export function graphText(g: WorkflowGraph) {
   const t = g.nodes.find((n) => n.kind === "trigger");
-  const when = t?.kind === "trigger" && t.on === "status" ? `When a task moves to ${statusLabel(t.status)}` : "Run by hand";
-  const agents = g.nodes.filter((n) => n.kind === "agent").map((n) => (n.kind === "agent" ? n.name : ""));
-  return [when, agents.length ? agents.join(", ") : "no agent steps"].join(" · ");
+  const when = t?.kind === "trigger" ? triggerText(t) : "Run by hand";
+  const steps = g.nodes.flatMap((n) => (n.kind === "agent" ? [n.name] : n.kind === "open_pr" ? ["pull request"] : []));
+  return [when, steps.length ? steps.join(", ") : "no agent steps"].join(" · ");
+}
+
+/** When a workflow starts. */
+function triggerText(t: Extract<WorkflowNode, { kind: "trigger" }>) {
+  if (t.on === "status") return `When a task moves to ${statusLabel(t.status)}`;
+  if (t.on === "finished") return "When the task's agent finishes";
+  return "When run by hand";
 }
 
 /** A node's title on the canvas. */
@@ -151,6 +170,8 @@ export function nodeTitle(n: WorkflowNode) {
       return "Send to the task's agent";
     case "set_status":
       return "Move the task";
+    case "open_pr":
+      return "Open a pull request";
   }
 }
 
@@ -158,15 +179,17 @@ export function nodeTitle(n: WorkflowNode) {
 export function nodeText(n: WorkflowNode) {
   switch (n.kind) {
     case "trigger":
-      return n.on === "status" ? `When a task moves to ${statusLabel(n.status)}` : "When run by hand";
+      return triggerText(n);
     case "condition":
       return n.check === "task_type" || n.check === "label" ? `${CHECK_LABELS[n.check]}: ${n.value ?? "?"}` : CHECK_LABELS[n.check];
     case "agent":
-      return `${n.output === "verdict" ? "Pass or issues" : "Writes text"}${n.tab ? ` · ${n.tab} tab` : ""}`;
+      return `${n.output === "verdict" ? "Pass or issues" : "Writes text"}${n.input_only ? " · from the steps before" : ""}${n.skills?.length ? ` · /${n.skills[0]}` : ""}${n.tab ? ` · ${n.tab} tab` : ""}`;
     case "send_to_task":
       return `${n.message.trim() ? "Its own message" : "The issues found"} · up to ${n.max_rounds} round${n.max_rounds === 1 ? "" : "s"}`;
     case "set_status":
       return `To ${statusLabel(n.status)}`;
+    case "open_pr":
+      return `${n.draft ? "A draft · " : ""}Pushes the branch`;
   }
 }
 
@@ -176,6 +199,7 @@ export const KIND_STYLE: Record<WorkflowNodeKindName, { icon: ReactNode; tone: s
   agent: { icon: <Bot size={12} />, tone: "text-accent" },
   send_to_task: { icon: <Send size={12} />, tone: "text-sky-400" },
   set_status: { icon: <ArrowRightLeft size={12} />, tone: "text-violet-400" },
+  open_pr: { icon: <GitPullRequest size={12} />, tone: "text-teal-400" },
 };
 
 export const PORT_LABELS: Record<string, string> = {
@@ -187,10 +211,123 @@ export const PORT_LABELS: Record<string, string> = {
   pass: "pass",
   issues: "issues",
   exhausted: "out of rounds",
+  opened: "opened",
+  exists: "had one",
 };
 
-/** Starting points for a new workflow. */
-const PRESETS: { name: string; graph: () => WorkflowGraph }[] = [
+const SUMMARY_PROMPT =
+  "Summarise what the work on {{task.key}} changed, for someone deciding whether to merge it: what it does and how, what was tested, and anything to check or decide before it's merged. Keep it short, with headings and lists where they help.";
+
+/** The Review tab's reviews and summaries, as a workflow: its reviewers, fix rounds and summarizers. */
+function fromReviewSettings(p: Project): WorkflowGraph {
+  const reviewers: Reviewer[] = p.reviewers?.length ? p.reviewers : [{ claude_config_id: null, model: null, effort: null }];
+  const agent = (r: Reviewer) => ({
+    ...(r.claude_config_id ? { claude_config_id: r.claude_config_id } : {}),
+    ...(r.model ? { model: r.model } : {}),
+    ...(r.effort ? { effort: r.effort } : {}),
+    skills: r.skills ?? [],
+  });
+  const nodes: WorkflowNode[] = [
+    { id: "start", kind: "trigger", on: "status", status: "in_review", x: 20, y: 120 },
+    { id: "changed", kind: "condition", check: "changed", x: 220, y: 120 },
+  ];
+  const edges: WorkflowEdge[] = [{ from: "start", port: "out", to: "changed" }];
+  reviewers.forEach((r, i) => {
+    const id = reviewers.length > 1 ? `reviewer${i + 1}` : "reviewer";
+    nodes.push({
+      id,
+      kind: "agent",
+      name: reviewers.length > 1 ? `Reviewer ${i + 1}` : "Reviewer",
+      prompt: r.prompt ?? "",
+      output: "verdict",
+      tab: "Review",
+      ...agent(r),
+      x: 420,
+      y: 40 + i * 120,
+    });
+    edges.push({ from: "changed", port: "yes", to: id }, { from: id, port: "issues", to: "fix" });
+  });
+  nodes.push({ id: "fix", kind: "send_to_task", message: "", max_rounds: Math.max(1, p.review_rounds ?? 2), x: 640, y: 30 });
+  if (p.auto_summary) {
+    const summarizers: Reviewer[] = p.summarizers?.length ? p.summarizers : [{ claude_config_id: null, model: null, effort: null }];
+    summarizers.forEach((r, i) => {
+      const id = summarizers.length > 1 ? `summary${i + 1}` : "summary";
+      nodes.push({
+        id,
+        kind: "agent",
+        name: r.name || "Summary",
+        prompt: r.prompt || SUMMARY_PROMPT,
+        output: "text",
+        tab: "Summary",
+        ...agent(r),
+        x: 640,
+        y: 190 + i * 110,
+        ...(reviewers.length > 1 ? { join: "all" as const } : {}),
+      });
+      reviewers.forEach((_, k) => edges.push({ from: reviewers.length > 1 ? `reviewer${k + 1}` : "reviewer", port: "pass", to: id }));
+    });
+  }
+  return { nodes, edges };
+}
+
+/** Starting points for a new workflow: `api` is the host's API version they need, `title` the new workflow's name. */
+const PRESETS: { name: string; title?: string; hint?: string; api?: number; graph: (p: Project) => WorkflowGraph }[] = [
+  {
+    name: "Open a PR when done",
+    title: "Open a pull request, then review",
+    hint: "When the task's agent finishes, open a pull request for its branch (if it has commits of its own) and move the task to In review.",
+    api: FINISHED_WORKFLOWS_API,
+    graph: () => ({
+      nodes: [
+        { id: "start", kind: "trigger", on: "finished", x: 20, y: 120 },
+        { id: "commits", kind: "condition", check: "has_commits", x: 220, y: 120 },
+        { id: "pr", kind: "open_pr", title: "", body: "", x: 420, y: 40 },
+        { id: "review", kind: "set_status", status: "in_review", x: 650, y: 20 },
+        { id: "attention", kind: "set_status", status: "needs_attention", x: 650, y: 150 },
+      ],
+      edges: [
+        { from: "start", port: "out", to: "commits" },
+        { from: "commits", port: "yes", to: "pr" },
+        { from: "commits", port: "no", to: "review" },
+        { from: "pr", port: "opened", to: "review" },
+        { from: "pr", port: "exists", to: "review" },
+        { from: "pr", port: "failed", to: "attention" },
+      ],
+    }),
+  },
+  {
+    name: "Summarise, then a skill",
+    hint: "When a task moves to In review, summarise its changes, then have another agent process that summary with a skill, in a fresh context.",
+    api: FINISHED_WORKFLOWS_API,
+    graph: () => ({
+      nodes: [
+        { id: "start", kind: "trigger", on: "status", status: "in_review", x: 20, y: 120 },
+        { id: "summary", kind: "agent", name: "Summary", prompt: SUMMARY_PROMPT, output: "text", tab: "Summary", skills: [], x: 220, y: 120 },
+        {
+          id: "skill",
+          kind: "agent",
+          name: "Skill",
+          prompt: "Process the summary above with your skill.",
+          output: "text",
+          tab: "Skill",
+          skills: [],
+          input_only: true,
+          x: 440,
+          y: 120,
+        },
+      ],
+      edges: [
+        { from: "start", port: "out", to: "summary" },
+        { from: "summary", port: "done", to: "skill" },
+      ],
+    }),
+  },
+  {
+    name: "From the Review tab",
+    title: "Review and summarise",
+    hint: "The reviewers, fix rounds and summarizers of this project's Review tab, as a workflow. Turn its reviews and summaries off there once this is on.",
+    graph: fromReviewSettings,
+  },
   {
     name: "Review and summarise",
     graph: () => ({
@@ -203,8 +340,7 @@ const PRESETS: { name: string; graph: () => WorkflowGraph }[] = [
           id: "summary",
           kind: "agent",
           name: "Summary",
-          prompt:
-            "Summarise what the work on {{task.key}} changed, for someone deciding whether to merge it: what it does and how, what was tested, and anything to check or decide before it's merged. Keep it short, with headings and lists where they help.",
+          prompt: SUMMARY_PROMPT,
           output: "text",
           tab: "Summary",
           skills: [],
@@ -271,9 +407,38 @@ function freeSpot(g: WorkflowGraph, h: number, view: HTMLElement | null) {
   return { x: 20, y: Math.max(0, ...g.nodes.map((n) => n.y + nodeH(n))) + 30 };
 }
 
-const NEW_NODES: { kind: Exclude<WorkflowNodeKindName, "trigger">; label: string; base: string; make: () => Partial<WorkflowNode> }[] = [
+/** The steps the editor adds: `api` is the host's API version they need. */
+const NEW_NODES: { kind: Exclude<WorkflowNodeKindName, "trigger">; label: string; base: string; api?: number; make: () => Partial<WorkflowNode> }[] = [
   { kind: "condition", label: "Check", base: "check", make: () => ({ kind: "condition", check: "changed" }) },
   { kind: "agent", label: "Agent", base: "agent", make: () => ({ kind: "agent", name: "Agent", prompt: "", output: "text", tab: null, skills: [] }) },
+  {
+    kind: "agent",
+    label: "Review",
+    base: "review",
+    make: () => ({ kind: "agent", name: "Reviewer", prompt: "", output: "verdict", tab: "Review", skills: [] }),
+  },
+  {
+    kind: "agent",
+    label: "Summary",
+    base: "summary",
+    make: () => ({ kind: "agent", name: "Summary", prompt: SUMMARY_PROMPT, output: "text", tab: "Summary", skills: [] }),
+  },
+  {
+    kind: "agent",
+    label: "Skill on its input",
+    base: "skill",
+    api: FINISHED_WORKFLOWS_API,
+    make: () => ({
+      kind: "agent",
+      name: "Skill",
+      prompt: "Process what the steps before you wrote with your skill.",
+      output: "text",
+      tab: null,
+      skills: [],
+      input_only: true,
+    }),
+  },
+  { kind: "open_pr", label: "Open a PR", base: "pr", api: FINISHED_WORKFLOWS_API, make: () => ({ kind: "open_pr", title: "", body: "" }) },
   { kind: "send_to_task", label: "Send to task", base: "send", make: () => ({ kind: "send_to_task", message: "", max_rounds: 2 }) },
   { kind: "set_status", label: "Move task", base: "move", make: () => ({ kind: "set_status", status: "needs_attention" }) },
 ];
@@ -297,6 +462,8 @@ function WorkflowEditor({
   onClose: () => void;
 }) {
   const hostId = project.host_id;
+  const host = useHost(hostId);
+  const newNodes = NEW_NODES.filter((s) => !s.api || hostSupports(host, s.api));
   const [name, setName] = useState(initialName);
   const [enabled, setEnabled] = useState(workflow?.enabled ?? true);
   const [graph, setGraph] = useState<WorkflowGraph>(() => structuredClone(initialGraph));
@@ -423,8 +590,8 @@ function WorkflowEditor({
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[12px] text-faint">Add a step:</span>
-          {NEW_NODES.map((s) => (
-            <Button key={s.kind} size="sm" variant="ghost" disabled={graph.nodes.length >= 40} onClick={() => addNode(s)}>
+          {newNodes.map((s) => (
+            <Button key={s.label} size="sm" variant="ghost" disabled={graph.nodes.length >= 40} onClick={() => addNode(s)}>
               <span className={KIND_STYLE[s.kind].tone}>{KIND_STYLE[s.kind].icon}</span> {s.label}
             </Button>
           ))}
@@ -559,8 +726,9 @@ function WorkflowEditor({
                   come is skipped.
                 </p>
                 <p>
-                  <b>Send to the task's agent</b> ends the run. Once the agent's turn ends and the task enters the start's column again, the workflow runs
-                  again; after its rounds, its <i>out of rounds</i> outcome runs instead, or the task moves to Needs attention.
+                  <b>Send to the task's agent</b> ends the run. Once the agent's turn ends and the task enters the start's column again (or, for a start on the
+                  agent finishing, once it finishes), the workflow runs again; after its rounds, its <i>out of rounds</i> outcome runs instead, or the task
+                  moves to Needs attention.
                 </p>
               </div>
             )}
@@ -581,6 +749,8 @@ function WorkflowEditor({
   );
 }
 
+/** The trigger select's value for a start on the agent finishing. */
+const FINISHED = "__finished";
 const selectClass = "h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none";
 const TEMPLATES =
   "{{task.key}}, {{task.title}}, {{task.description}}, {{branch}}, {{commit}}, {{workflow}}, {{issues}}, and {{<step id>.text}} or {{<step id>.issues}}";
@@ -631,10 +801,19 @@ function NodeInspector({
           <Field label="Starts">
             <select
               className={selectClass}
-              value={n.on === "status" ? n.status : ""}
-              onChange={(e) => onChange(e.target.value ? { on: "status", status: e.target.value as Status } : { on: "manual", status: null })}
+              value={n.on === "status" ? n.status : n.on === "finished" ? FINISHED : ""}
+              onChange={(e) =>
+                onChange(
+                  e.target.value === FINISHED
+                    ? { on: "finished", status: null }
+                    : e.target.value
+                      ? { on: "status", status: e.target.value as Status }
+                      : { on: "manual", status: null },
+                )
+              }
             >
               <option value="">Only when run by hand</option>
+              {(n.on === "finished" || hostSupports(host, FINISHED_WORKFLOWS_API)) && <option value={FINISHED}>When the task's agent finishes its work</option>}
               {statuses.map((s) => (
                 <option key={s.id} value={s.id}>
                   When a task moves to {s.label}
@@ -642,6 +821,12 @@ function NodeInspector({
               ))}
             </select>
           </Field>
+          {n.on === "finished" && (
+            <p className="text-[11.5px] text-faint">
+              The task then stays in In progress rather than moving to In review: move it on with a <i>Move task</i> step. A message that sends the agent back
+              to work runs this again once it finishes.
+            </p>
+          )}
           <p className="text-[11.5px] text-faint">Any workflow can be run on a task by hand too, from the task's details.</p>
         </>
       )}
@@ -740,7 +925,13 @@ function NodeInspector({
               }}
             />
           </Field>
-          <p className="text-[11.5px] text-faint">It runs in a thread of its own on the task's worktree, with read-only tools.</p>
+          {(n.input_only || hostSupports(host, FINISHED_WORKFLOWS_API)) && (
+            <Toggle checked={!!n.input_only} onChange={(v) => onChange({ input_only: v || undefined })} label="Work only on what the steps before it wrote" />
+          )}
+          <p className="text-[11.5px] text-faint">
+            It runs in a thread of its own on the task's worktree, with read-only tools, in a fresh conversation each run. It's given the output of the agent
+            steps before it{n.input_only ? ", and isn't told where the task's work is" : ""}.
+          </p>
         </>
       )}
       {n.kind === "send_to_task" && (
@@ -769,6 +960,28 @@ function NodeInspector({
               />
             </div>
           </Field>
+        </>
+      )}
+      {n.kind === "open_pr" && (
+        <>
+          <Field
+            label="Title"
+            hint={
+              <>
+                Blank is the task's key and title. Templates: <code className="text-[11px]">{TEMPLATES}</code>.
+              </>
+            }
+          >
+            <Input className="h-7" value={n.title} placeholder="{{task.key}}: {{task.title}}" onChange={(e) => onChange({ title: e.target.value })} />
+          </Field>
+          <Field label="Body" hint="Blank is the task's agent's last message. An agent step before it can write one: {{<step id>.text}}.">
+            <Textarea rows={5} className="text-[12.5px]" value={n.body} onChange={(e) => onChange({ body: e.target.value })} />
+          </Field>
+          <Toggle checked={!!n.draft} onChange={(v) => onChange({ draft: v || undefined })} label="Open it as a draft" />
+          <p className="text-[11.5px] text-faint">
+            The board pushes the task's branch and opens its pull request into the branch it started from, as the project's GitHub account. <i>Had one</i> when
+            the task has a pull request already; <i>failed</i> when its branch has no commits of its own, or GitHub refused.
+          </p>
         </>
       )}
       {n.kind === "set_status" && (

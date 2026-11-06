@@ -205,3 +205,31 @@ also takes `rotate_token: true`; a blank `secret` removes it), `POST /automation
 `{kind: "create_task", title, description, task_type, claude_config_id, model, effort, status,
 start}` or `{kind: "send_to_task", task_id, message}`. Changes and runs are broadcast as
 `automations_changed` events.
+
+## Workflows
+
+A project's workflows (API 107, in its settings under _Workflows_; agents' tools `list_workflows`,
+`create_workflow`, `update_workflow`, `delete_workflow` and `run_workflow`) are graphs of steps that
+run on its tasks. The editor draws them as nodes: drag from a step's outcome to the next step.
+
+- **Start.** When a task moves into a column; when the task's **agent finishes its work** (API 123:
+  the task then stays in _In progress_ rather than going to _In review_, and the workflow moves it
+  on with a _Move task_ step, so with one of these on, what happens after the agent is done is the
+  workflow's to decide); or only when run by hand from the task.
+- **Steps.** A _check_ (has the work changed, has it commits or a pull request, its type or a
+  label); an _agent_ in a thread of its own, read-only in the task's worktree, in a fresh
+  conversation each run, that writes text (shown in a tab of the task) or a verdict (pass, or the
+  serious issues it found); _open a pull request_ (API 123: the board pushes the task's branch and
+  opens it with the gh tools, as the project's GitHub account, with a title and body that can come
+  from an agent step before it, `{{<step id>.text}}`); _send to the task's agent_ (the issues
+  found, or a message of its own, for up to so many rounds); and _move the task_.
+- **Pipelines.** An agent step is given the output of the agent steps before it in the graph. With
+  _Work only on what the steps before it wrote_ (`input_only`) it isn't told where the task's work
+  is either, so a summary can be passed to another agent that processes it with a skill, in a
+  fresh context (the _Summarise, then a skill_ preset).
+- **Presets.** _Open a PR when done_ (start when the agent finishes, open its pull request if the
+  branch has commits, move it to _In review_, or to _Needs attention_ if that fails), _Summarise,
+  then a skill_, _Review and summarise_, and _From the Review tab_ (the project's reviewers, fix
+  rounds and summarizers as a workflow). The Review tab's own reviews, summaries and pull request
+  instructions still work alongside them: it says which workflows take tasks on, so the same review
+  isn't run twice.

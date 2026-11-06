@@ -99,7 +99,7 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     label: "Workflows",
     icon: <Workflow size={14} />,
     description:
-      "Steps that run on the project's tasks when they enter a column: checks, agents that review or report on the work in tabs of the task, messages to the task's agent, and moves. Saved as you change them.",
+      "Steps that run on the project's tasks when they enter a column or their agent finishes: checks, agents that review or report on the work in tabs of the task, pull requests, messages to the task's agent, and moves. Saved as you change them.",
     fields: [],
   },
 ];

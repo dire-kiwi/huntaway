@@ -1,8 +1,17 @@
 import { enc, type Http } from "./http";
 import type { Status } from "./tasks";
 
-/** What starts a workflow's run on a task: the task entering a column, or only a run by hand (API 107). */
-export type WorkflowTrigger = { kind: "trigger"; on: "status"; status: Status } | { kind: "trigger"; on: "manual"; status?: null };
+/**
+ * What starts a workflow's run on a task: the task entering a column, or only a run by hand (API 107), or its agent
+ * finishing its work, which leaves the task in its column for the workflow to move on (API 123, `FINISHED_WORKFLOWS_API`).
+ */
+export type WorkflowTrigger =
+  | { kind: "trigger"; on: "status"; status: Status }
+  | { kind: "trigger"; on: "finished"; status?: null }
+  | { kind: "trigger"; on: "manual"; status?: null };
+
+/** The finished trigger, open_pr steps and agent steps' input_only. */
+export const FINISHED_WORKFLOWS_API = 123;
 
 export const WORKFLOW_CHECKS = ["changed", "has_commits", "has_pr", "task_type", "label"] as const;
 export type WorkflowCheck = (typeof WORKFLOW_CHECKS)[number];
@@ -23,9 +32,13 @@ export type WorkflowNodeKind =
       skills?: string[];
       /** The task panel tab its output shows in. */
       tab?: string | null;
+      /** It's given only the output of the steps before it and its prompt, not where the task's work is (API 123). */
+      input_only?: boolean;
     }
   | { kind: "send_to_task"; message: string; max_rounds: number }
-  | { kind: "set_status"; status: Status };
+  | { kind: "set_status"; status: Status }
+  /** Pushes the task's branch and opens its pull request: title and body are templates (empty: the defaults). API 123. */
+  | { kind: "open_pr"; title: string; body: string; draft?: boolean };
 
 export type WorkflowNodeKindName = WorkflowNodeKind["kind"];
 
@@ -75,7 +88,7 @@ export interface WorkflowRun {
   /** Null once the workflow is deleted. */
   workflow_name: string | null;
   task_id: string;
-  source: "status" | "manual";
+  source: "status" | "finished" | "manual";
   state: "running" | "done" | "stopped";
   head: string | null;
   graph: WorkflowGraph;
@@ -99,6 +112,8 @@ export function workflowPorts(n: WorkflowNodeKind): string[] {
       return n.output === "verdict" ? ["pass", "issues", "failed"] : ["done", "failed"];
     case "send_to_task":
       return ["exhausted"];
+    case "open_pr":
+      return ["opened", "exists", "failed"];
   }
 }
 
