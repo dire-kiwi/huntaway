@@ -33,7 +33,7 @@ import type { Spec } from "./codex.ts";
 import * as codex from "./codex.ts";
 import type { Shared } from "../state.ts";
 import { VERSION } from "../hosts/proto.ts";
-import { context, err_str, expand_tilde, sleep } from "../util.ts";
+import { context, err_str, expand_tilde, remove_dir_all, sleep } from "../util.ts";
 import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
@@ -770,7 +770,7 @@ export function prune(state: Shared, now: Date): Pruned {
     else remove = finished(dir);
     if (remove) {
       try {
-        rmSync(dir, { recursive: true });
+        remove_dir_all(dir);
         pruned.runs++;
       } catch (e) {
         log.warn(`run=${id} removing the run's folder: ${err_str(e)}`);
@@ -811,7 +811,7 @@ export function remove_finished(state: Shared, run_ids: string[]): void {
     const dir = run_dir(state, id);
     if (existsSync(join(dir, "exit")) && !existsSync(join(dir, "orphan"))) {
       try {
-        rmSync(dir, { recursive: true });
+        remove_dir_all(dir);
       } catch (e) {
         log.warn(`run=${id} removing the run's folder: ${err_str(e)}`);
       }

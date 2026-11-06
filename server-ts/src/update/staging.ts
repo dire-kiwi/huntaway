@@ -17,7 +17,7 @@ import { mkdir, open, rm } from "node:fs/promises";
 import { constants as os_constants } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { AppState } from "../state.ts";
-import { err_str, new_id } from "../util.ts";
+import { err_str, new_id, remove_dir_all, remove_dir_all_async } from "../util.ts";
 import { VERSION } from "../hosts/proto.ts";
 import * as release from "./release.ts";
 import { compare, parse_version, type Semver } from "./release.ts";
@@ -198,7 +198,7 @@ export function unstage_unless(state: AppState, keep: (v: Semver) => boolean) {
   const dir = version_dir(app, v);
   if (dir !== null && existsSync(dir)) {
     try {
-      rmSync(dir, { recursive: true });
+      remove_dir_all(dir);
     } catch (e) {
       log.warn(`removing ${dir}: ${err_str(e)}`);
     }
@@ -330,7 +330,8 @@ export function prune(app: string, s: Installed) {
     if (!is_dir && !(name.startsWith("state.json.") && name.endsWith(".tmp"))) continue;
     log.info(`removing ${path}`);
     try {
-      rmSync(path, { recursive: is_dir });
+      if (is_dir) remove_dir_all(path);
+      else rmSync(path);
     } catch (err) {
       log.warn(`removing ${path}: ${err_str(err)}`);
     }
@@ -426,7 +427,7 @@ async function stage(state: AppState, version: string, asset: Asset): Promise<()
   } catch (e) {
     const msg = err_str(e);
     log.warn(`staging release ${version}: ${msg}`);
-    await rm(partial, { recursive: true, force: true }).catch(() => {});
+    await remove_dir_all_async(partial).catch(() => {});
     return () => {
       state.release.download.send_modify((d) => {
         if (d) {
@@ -457,7 +458,7 @@ async function stage_into(state: AppState, app: string, partial: string, version
   try {
     entries = readdirSync(app);
   } catch {}
-  for (const e of entries.filter((e) => e.endsWith(".partial"))) await rm(join(app, e), { recursive: true, force: true }).catch(() => {});
+  for (const e of entries.filter((e) => e.endsWith(".partial"))) await remove_dir_all_async(join(app, e)).catch(() => {});
   try {
     await mkdir(partial, { recursive: true });
   } catch (e) {
@@ -490,7 +491,7 @@ async function stage_into(state: AppState, app: string, partial: string, version
   {
     if (existsSync(dest)) {
       try {
-        rmSync(dest, { recursive: true });
+        remove_dir_all(dest);
       } catch (e) {
         throw new Error(`removing ${dest}`, { cause: e });
       }
@@ -510,7 +511,7 @@ async function stage_into(state: AppState, app: string, partial: string, version
   const dir = replaced === null ? null : version_dir(app, replaced);
   if (dir !== null) {
     log.info(`removing ${dir}, which ${version} replaces`);
-    await rm(dir, { recursive: true }).catch((e) => log.warn(`removing ${dir}: ${err_str(e)}`));
+    await remove_dir_all_async(dir).catch((e) => log.warn(`removing ${dir}: ${err_str(e)}`));
   }
 }
 
