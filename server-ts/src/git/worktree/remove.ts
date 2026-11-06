@@ -1,7 +1,7 @@
 // Port of server/src/git/worktree/remove.rs.
 /** Removing a task's worktree: `teardown`, and removing it once its work is merged (`remove_if_merged`, `remove_merged`). */
 import { existsSync, statSync } from "node:fs";
-import { lstat, rm } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { basename } from "node:path";
 import * as db from "../../db.ts";
 import type { Project, Task } from "../../db.ts";
@@ -11,7 +11,7 @@ import * as task_tmp from "../../agent/task_tmp.ts";
 import * as checkpoints from "../checkpoints.ts";
 import * as terminal from "../../hosts/terminal.ts";
 import type { AppState } from "../../state.ts";
-import { context, err_str, path_str, truncate } from "../../util.ts";
+import { context, err_str, path_str, remove_dir_all_async, truncate } from "../../util.ts";
 import {
   canonicalize,
   fetch,
@@ -184,7 +184,7 @@ export async function teardown(state: AppState, task_id: string, force: boolean,
     if (force) {
       const o = await git(repo, ["worktree", "remove", "--force", wt_s]);
       if (!o.ok && existsSync(wt)) {
-        if (await removable_by_hand(project, repo, wt)) await rm(wt, { recursive: true, force: true }).catch(() => {});
+        if (await removable_by_hand(project, repo, wt)) await remove_dir_all_async(wt).catch(() => {});
         else {
           const text = `Left ${wt} in place: git won't remove it as a worktree (${o.stderr.trim()}) and it isn't in the project's worktrees folder`;
           state.add_event(task_id, "warn", text, null);

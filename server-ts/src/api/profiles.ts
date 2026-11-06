@@ -13,6 +13,7 @@ import * as asana from "../integrations/asana.ts";
 import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as review from "../review.ts";
 import * as assistant from "../agent/assistant.ts";
+import * as hub from "../hosts/hub.ts";
 import * as telegram from "../integrations/telegram.ts";
 import { char_count, def_bool, def_value, json_map, opt_str, opt_strings, opt_value, req_str } from "./extract.ts";
 import { ascii_lower } from "./new_task.ts";
@@ -75,6 +76,7 @@ export async function create_profile(s: AppState, r: Req) {
   const updated = db.update_profile(c, p.id, fields);
   if (!updated) throw ApiError.not_found("profile");
   p = updated;
+  if (p.assistant_host) hub.drop_misplaced(s, p.assistant_host);
   try {
     mkdirSync(s.profile_scratch_dir(p.id), { recursive: true });
   } catch {}
@@ -148,6 +150,8 @@ export async function update_profile(s: AppState, r: Req) {
   if (left !== here(p.assistant_host)) {
     telegram.assistant_moved(s, current.name, id, left).catch((e) => console.warn(`telegram: ${err_str(e)}`));
   }
+  // A host that dialled in under its id may have taken its place before it was one.
+  if (p.assistant_host) hub.drop_misplaced(s, p.assistant_host);
   s.emit({ type: "profiles_changed" });
   return p;
 }

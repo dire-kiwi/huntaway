@@ -11,13 +11,13 @@
  * only the document. Those tasks have their type as their label now, and keep working in their folder (see
  * documents_only).
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import * as db from "../db.ts";
 import type { Project, Task } from "../db.ts";
 import { ApiError, type Req } from "../http.ts";
 import type { AppState, Shared } from "../state.ts";
-import { err_str, expand_tilde, now, path_str } from "../util.ts";
+import { err_str, expand_tilde, now, path_str, remove_dir_all } from "../util.ts";
 import * as brief from "./assistant/brief.ts";
 
 /** A bigger file isn't kept, so a runaway agent can't fill the database. */
@@ -126,7 +126,7 @@ export function remove(state: Shared, task_id: string): void {
   const d = dir(state, task_id);
   if (existsSync(d)) {
     try {
-      rmSync(d, { recursive: true });
+      remove_dir_all(d);
     } catch (e) {
       console.warn(`task ${task_id}: removing the task's document folder failed: ${err_str(e)}`);
     }
