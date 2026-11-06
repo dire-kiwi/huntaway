@@ -1,7 +1,7 @@
 // A task's thread: its messages (the agent's as markdown, with its reply streaming in), the prompts and questions it
 // waits on, and the composer, with photos from the camera or library as attachments. Start, stop and move are in the
 // header. Diffs, commits and the terminal are on the web board.
-import { STATUSES, type Status } from "@huntaway/client";
+import { moveTask, STATUSES, type Status } from "@huntaway/client";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, Text, View } from "react-native";
@@ -43,10 +43,13 @@ export default function TaskScreen() {
       detail.setData(await client.send(host, id, ""));
     });
   const stop = () => act(() => client.stop(host, id));
+  // As the web board's move: a fresh task moved into In progress starts its agent.
   const move = (status: Status) =>
     act(async () => {
       setMoving(false);
-      detail.setData(await client.updateTask(host, id, { status }));
+      if (!task) return;
+      const on = (await client.hosts()).find((h) => h.id === host);
+      detail.setData(await moveTask(client, task, status, on));
     });
 
   const headerRight = () =>

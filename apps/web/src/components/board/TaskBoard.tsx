@@ -17,11 +17,11 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import {
   api,
-  canRunAgents,
   hostStatuses,
   hostSupports,
   isArchived,
   isAssistants,
+  moveTask,
   STATUSES,
   taskLabels,
   type Host,
@@ -441,12 +441,12 @@ export function TaskBoard({
     const target = dropTarget;
     setDropTarget(null);
     const task = useStore.getState().tasks[e.dataTransfer.getData("text/task-id")];
-    if (task) moveTask(task, status, target?.before ?? null);
+    if (task) dropTask(task, status, target?.before ?? null);
   };
   const drops: Drops = { onDragOver, onDrop, onLeave: () => setDropTarget(null) };
 
   /** Moves `task` into column `status` before task `before`, or after its last task shown: as dropping it there does. */
-  const moveTask = async (task: Task, status: Status, before: string | null) => {
+  const dropTask = async (task: Task, status: Status, before: string | null) => {
     const id = task.id;
     // Dropped on its own top half (the drop line shows above it): it stays where it is.
     if (before === id) return;
@@ -473,13 +473,9 @@ export function TaskBoard({
     setDropErr(null);
     try {
       await Promise.all([
-        api.updateTask(task.host_id, id, { status, position, ...(unarchive && hostSupports(host, 53) && { done_at: done_at! }) }),
+        moveTask(api, task, status, host, { position, ...(unarchive && hostSupports(host, 53) && { done_at: done_at! }) }),
         ...moved.map((m) => api.updateTask(m.before.host_id, m.before.id, { position: m.position })),
       ]);
-      // Dragging a fresh task into "In progress" kicks off its agent (on a host that can run one).
-      if (status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host)) {
-        await api.send(task.host_id, id, "");
-      }
     } catch (e) {
       upsertTask(task);
       for (const m of moved) upsertTask(m.before);
@@ -542,7 +538,7 @@ export function TaskBoard({
           </span>
         ),
         checked: task.status === s.id && !isArchived(task, Date.now()),
-        onSelect: () => (task.status !== s.id || isArchived(task, Date.now())) && moveTask(task, s.id, null),
+        onSelect: () => (task.status !== s.id || isArchived(task, Date.now())) && dropTask(task, s.id, null),
       }));
   const canAdd = !!project || !!scratch;
 
