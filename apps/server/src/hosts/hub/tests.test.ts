@@ -19,6 +19,7 @@ import { API_VERSION, VERSION } from "../proto.ts";
 import { read_jsonl } from "../../threads/examples.ts";
 import * as store from "../../threads/store.ts";
 import * as live from "../../threads/live.ts";
+import * as write from "../../threads/write.ts";
 import { dial_out, find_link, host_request, hub_url, link_http, list_hosts, spawn_outbound, TICK_MS, tunnel_to, ws, type LinkConn } from "../hub.ts";
 
 relay.test_timing();
@@ -489,7 +490,7 @@ test("a_linked_hosts_thread_and_its_events_are_relayed", async () => {
     });
     const saved = store.append(host.db(), t.id, [{ type: "item.added", item: { id: "a9", type: "assistant_message", text: "" } }]);
     live.send_events(host, t.id, saved);
-    live.send_delta(host, t.id, "a9", "text", "Hi");
+    write.stream_text(host, t.id, "Hi");
     live.send_resync(host, t.id);
     await until(`${kind}: the events at the hub`, () => got.length >= 3);
     off();

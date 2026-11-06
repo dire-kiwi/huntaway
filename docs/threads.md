@@ -169,9 +169,9 @@ about 1.9 times today's `messages` (1.7 GB on this board).
 
 [threads-api.md](threads-api.md) has the routes (a snapshot or window, pages of earlier items, the events after a
 seq, and commands), and the live events. What writes a thread's items sends its events to clients with
-`threads/live.ts`'s `send_events` once they're committed, streamed text with `send_delta` (which keeps the text so far
-in memory, so a window taken mid-message has it), and `send_resync` when it changes a thread in a way its log doesn't
-say (a rebuild).
+`threads/live.ts`'s `send_events` once they're committed, and `send_resync` when it changes a thread in a way its log
+doesn't say (a rebuild). Streamed text goes as deltas for a preview item the thread doesn't have (`threads/write.ts`'s
+`stream_text`, see "Writing items live"), which no window has.
 
 ## Writing items live
 
@@ -641,8 +641,8 @@ which the agent didn't remember it and its file was gone. The thread view drew e
 Left for later steps:
 
 - Live snapshots that include streamed text: step 3's deltas name a preview item the thread doesn't have yet (see
-  "Writing items live"), and `live.send_delta` only takes items the thread has, so a window taken mid-message doesn't
-  have the preview's text so far. The view shows the rest as it streams, as it did from messages.
+  "Writing items live"), so a window taken mid-message doesn't have the preview's text so far. The view shows the rest
+  as it streams, as it did from messages.
 - Saving `thread.updated` when the task's state changes: the view reads a thread's state from its task, whose `task`
   events it has anyway, so nothing needs it yet.
 - Done tasks that are never opened have no items, and stay on messages (step 10 keeps the readers' fallback to
