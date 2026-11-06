@@ -200,7 +200,6 @@ function host_routes(r: Router) {
   r.route("/permissions/{id}", { POST: thread.resolve_permission });
   r.route("/project-approvals", { GET: thread.project_approvals });
   // Its handler checks the token: a run may use its own (see mcp/http.ts).
-  r.route("/internal/mcp", { POST: host.internal_mcp }, { auth: false });
   r.route("/internal/merge-gate/{run_id}", { GET: host.internal_merge_gate });
   r.route("/tools/{tool}", { POST: host.remote_tool });
   r.route("/usage", { GET: usage.list });

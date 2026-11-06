@@ -135,7 +135,7 @@ jobs:
           [ -f "$res/server-ts/node_modules/ws/package.json" ] && [ -x "$res/ia-shim" ] && [ -x "$res/issue-agent" ] && [ -f "$res/ui/index.html" ]
 
       # The packaged app, started as a user starts it (HA-185): its window loads the board from the server it starts
-      # from its resources, with their Node; an agent runs a turn under their ia-shim, and the MCP helper answers.
+      # from its resources, with their Node; an agent runs a turn under their ia-shim, given the board's tools.
       - name: Start the desktop app
         run: |
           if [ "${{ matrix.os }}" = mac ]; then exe=$(echo apps/web/release/mac*/Huntaway.app/Contents/MacOS/Huntaway); else exe=apps/web/release/linux-unpacked/huntaway-desktop; fi

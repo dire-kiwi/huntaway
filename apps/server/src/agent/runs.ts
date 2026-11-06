@@ -26,7 +26,6 @@ import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as db from "../db.ts";
 import * as runner from "./runner.ts";
-import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as mcp_http from "../mcp/http.ts";
 import * as tokens from "./tokens.ts";
 import type { Spec } from "./codex.ts";
@@ -175,33 +174,6 @@ function sort_keys(v: any): any {
 }
 
 /**
- * The board's servers as stdio helper processes (`huntaway mcp` and `huntaway gh-mcp`), as runs had them before HA-180,
- * for `IA_MCP_STDIO=1`. Each costs a process per run (about 90 MB under Node), which calls back into this server.
- */
-function stdio_servers(state: Shared, l: Launch): Record<string, any> {
-  const servers: Record<string, any> = {
-    [runner.MCP_SERVER_NAME]: {
-      type: "stdio",
-      command: state.exe,
-      args: ["mcp"],
-      env: { IA_URL: state.internal_url, IA_TOKEN: state.token, IA_RUN_ID: l.run_id } as Record<string, string>,
-    },
-    // It asks this server whether the run may merge (see review/merge_gate.rs).
-    [gh_mcp.SERVER_NAME]: {
-      type: "stdio",
-      command: state.exe,
-      args: ["gh-mcp"],
-      env: { IA_CWD: l.cwd, IA_URL: state.internal_url, IA_TOKEN: state.token, IA_RUN_ID: l.run_id } as Record<string, string>,
-    },
-  };
-  if (l.review) servers[runner.MCP_SERVER_NAME].env.IA_REVIEW = "1";
-  if (l.github_account != null) servers[gh_mcp.SERVER_NAME].env[gh_mcp.ACCOUNT_ENV] = l.github_account;
-  // Claude Code gives a stdio server's call 30 minutes without news (a permission prompt, say) unless told otherwise.
-  servers[runner.MCP_SERVER_NAME].timeout = mcp_http.BOARD_TIMEOUT_MS;
-  return servers;
-}
-
-/**
  * The settings `huntaway serve` takes from its environment (see serve.ts's `parse_serve_args`, and update/release.ts),
  * which a service manager or the desktop app may have given this server. Agents' runs don't get them (HA-185): a
  * server an agent starts itself (`huntaway serve` in a checkout, say) would otherwise use this one's data dir, port,
@@ -267,7 +239,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   // take them (agent/codex/adapter.ts's start_thread).
   const in_process = !!l.tools_on_output || (!!l.board_tools_dynamic && !l.codex?.board_tools);
   await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }));
-  const servers: Record<string, any> = process.env.IA_MCP_STDIO === "1" ? stdio_servers(state, l) : mcp_http.servers(state, l.run_id);
+  const servers: Record<string, any> = mcp_http.servers(state, l.run_id);
   if (in_process) delete servers[runner.MCP_SERVER_NAME];
   for (const [name, server] of Object.entries(l.mcp_servers ?? {})) {
     if (name !== runner.MCP_SERVER_NAME) servers[name] = server;

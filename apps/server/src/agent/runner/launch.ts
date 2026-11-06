@@ -22,7 +22,7 @@ import * as attachments from "../../attachments.ts";
 import * as assistant from "../assistant.ts";
 import * as automations from "../../integrations/automations.ts";
 import * as approval_rules from "../approval_rules.ts";
-import { Cancelled, MCP_SERVER_NAME, load } from "../runner.ts";
+import { Cancelled, load } from "../runner.ts";
 import {
   board_tools_allowed,
   cache_dirs,
@@ -312,8 +312,8 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   if (input) args.push("--input-format", "stream-json", "--replay-user-messages");
   // The board's tools are an in-process MCP server, called on the run's output and answered on its input (see
   // requests.ts), which the `initialize` its input starts with registers. A compaction, which takes no input, calls them
-  // over HTTP (mcp/http.ts), as Codex runs and runs with the old helpers (`IA_MCP_STDIO`) do.
-  const tools_on_output = input && process.env.IA_MCP_STDIO !== "1";
+  // over HTTP (mcp/http.ts), as Codex runs from before step 11 do.
+  const tools_on_output = input;
   if (tools_on_output) prompt = `${initialize_line(run.id, task.kind === "review")}\n${prompt}`;
   // The project's own skills and MCP servers, and the ones it turns off.
   const gh_tools = uses_gh_server(tools);
@@ -336,10 +336,10 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   // which otherwise has none.
   const all_rules = approval_rules.for_task(state.db(), task);
   const rules = all_rules ? approval_rules.for_mode(all_rules, permission_mode) : null;
-  // Asked on the run's output and answered on its input (see requests.ts), or by the MCP helper for a compaction, which
-  // has no input.
-  const asks = permission_mode !== "bypassPermissions" || (rules && approval_rules.needs_prompt_tool(rules));
-  if (asks) args.push("--permission-prompt-tool", input ? PROMPT_TOOL : `mcp__${MCP_SERVER_NAME}__permission_prompt`);
+  // Asked on the run's output and answered on its input (see requests.ts). A compaction, which has no input, calls no
+  // tools, so it has no prompt tool: Claude Code refuses what would need one.
+  const asks = input && (permission_mode !== "bypassPermissions" || (rules && approval_rules.needs_prompt_tool(rules)));
+  if (asks) args.push("--permission-prompt-tool", PROMPT_TOOL);
   const rules_hook = rules ? approval_rules.claude_hook(state.exe, rules) : null;
   if (gh_tools || rules_hook) args.push("--settings", hook_settings(gh_tools ? state.exe : null, rules_hook));
   // Our board tools never need approval, nor do some of the gh server's (see gh_allowed).
@@ -384,7 +384,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     mcp_servers: tools.mcp_servers,
     github_account: account,
     codex: null,
-    asks_on_output: !!asks && input,
+    asks_on_output: !!asks,
     tools_on_output,
   };
   console.log(`task ${task_id} run ${run.id}: starting claude (${run.kind}) in ${cwd}, resume=${task.session_id != null}`);

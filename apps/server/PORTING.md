@@ -86,8 +86,8 @@ for the server, see `update/admin.ts`'s `exec`).
 
 ## Notes
 
-- `AppState.exe` is `apps/server/bin/huntaway` (the command agents' MCP helpers run with `IA_MCP_STDIO=1`: `huntaway
-  mcp`). The Rust `ia-shim` is found by `runs.ts`'s `shim_path`: `$IA_SHIM_BIN`, else
+- `AppState.exe` is `apps/server/bin/huntaway` (the command agents' hooks run: `huntaway gh-hook` and `approval-hook`).
+  The Rust `ia-shim` is found by `runs.ts`'s `shim_path`: `$IA_SHIM_BIN`, else
   `target/{release,debug}/ia-shim` in this checkout (the newer one), else `ia-shim` beside `bin/huntaway`.
 - Server code must not import `testing.ts` (it registers Vitest hooks as it loads, which only work under Vitest). The race
   hooks `when`/`reached` are in `util.ts` (`testing.ts` re-exports them for tests).

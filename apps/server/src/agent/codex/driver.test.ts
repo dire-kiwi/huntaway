@@ -1,6 +1,7 @@
-// The Codex driver (driver.ts): a run's notifications written straight into a task's items, compared with what the
-// messages path (output.ts's messages shaped like Claude Code's, translated) makes of the same run, case by case: every
-// difference is named here, and in docs/threads.md ("Codex writes items directly").
+// The Codex driver (driver.ts): a run's notifications written straight into a task's items, case by case. Until step 13
+// each case was compared with what the messages path (output.ts's messages shaped like Claude Code's, translated) made
+// of the same run, which these expectations were checked against: docs/threads.md ("Codex writes items directly") names
+// every difference there was.
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../../db.ts";
@@ -15,9 +16,9 @@ import * as write from "../../threads/write.ts";
 import { handle_line } from "./output.ts";
 import { map, type View } from "./driver.ts";
 
-/** A task with a Codex run going, its thread on `on`, and its session `main`. */
-function running(on: "items" | "messages"): [Shared, Run] {
-  const state = testing.on_items(testing.state(), on === "items");
+/** A task with a Codex run going, its thread on items, and its session `main`. */
+function running(): [Shared, Run] {
+  const state = testing.on_items(testing.state());
   db.set_setting(state.db(), write.SETTING, "true");
   const profile = db.insert_profile(state.db(), "p", [], null);
   const task = db.insert_task(state.db(), {
@@ -32,7 +33,7 @@ function running(on: "items" | "messages"): [Shared, Run] {
     effort: null,
     claude_config_id: null,
   });
-  if (on === "items") source.flip(state.db(), task.id);
+  source.flip(state.db(), task.id);
   const run = db.insert_run(state.db(), task.id, "prompt");
   handle_line(state, run, { method: "thread/started", params: { thread: { id: "main" } } });
   return [state, run];
@@ -63,13 +64,19 @@ function feed(state: Shared, run: Run): Feed {
   return f;
 }
 
-interface Both {
+interface Ran {
   native: { items: Item[]; requests: ThreadRequest[]; state: Shared; run: Run };
-  legacy: { items: Item[]; requests: ThreadRequest[] };
-  differences: string[];
 }
 
-/** An item in detail: all of it but its id (not a tool call's: those are Codex's either way) and times. */
+/** Case `run_case` on a task whose items are its source: what the driver wrote. */
+function both(run_case: (f: Feed) => void): Ran {
+  const [ns, nr] = running();
+  run_case(feed(ns, nr));
+  assert.equal(source.of(ns.db(), nr.task_id), "items");
+  return { native: { items: store.items(ns.db(), nr.task_id), requests: store.requests(ns.db(), nr.task_id), state: ns, run: nr } };
+}
+
+/** An item in detail: all of it but its id (not a tool call's: those are Codex's) and times. */
 function detail(i: any): any {
   const { created_at: _c, ...out } = i;
   if (out.type !== "tool_call") delete out.id;
@@ -77,28 +84,10 @@ function detail(i: any): any {
   return out;
 }
 
-/** Case `run` on both paths, and how the driver's items differ from the messages path's (beyond ids and times). */
-function both(run_case: (f: Feed) => void): Both {
-  const [ns, nr] = running("items");
-  run_case(feed(ns, nr));
-  const [ls, lr] = running("messages");
-  run_case(feed(ls, lr));
-  assert.equal(source.of(ns.db(), nr.task_id), "items");
-  assert.equal(source.of(ls.db(), lr.task_id), "messages");
-  const native = { items: store.items(ns.db(), nr.task_id), requests: store.requests(ns.db(), nr.task_id), state: ns, run: nr };
-  const legacy = { items: store.items(ls.db(), lr.task_id), requests: store.requests(ls.db(), lr.task_id) };
-  const differences: string[] = [];
-  const [a, b] = [native.items.map(detail), legacy.items.map(detail)];
-  for (let n = 0; n < Math.max(a.length, b.length); n++) {
-    if (JSON.stringify(a[n]) !== JSON.stringify(b[n])) differences.push(`${n}: native ${JSON.stringify(a[n])}, messages ${JSON.stringify(b[n])}`);
-  }
-  return { native, legacy, differences };
-}
-
 const by_id = (items: Item[]): Record<string, any> => Object.fromEntries(items.map((i) => [i.id, i]));
 
 test("each_kind_of_item_as_the_messages_path_makes_it", () => {
-  const { native, differences } = both((f) => {
+  const { native } = both((f) => {
     f.user("Go");
     f.item("main", { type: "reasoning", id: "r", summary: ["Thinking it over"] });
     f.item("main", {
@@ -155,9 +144,7 @@ test("each_kind_of_item_as_the_messages_path_makes_it", () => {
     f.item("main", { type: "contextCompaction", id: "squash" });
     f.event("turn/completed", "main", { turn: { id: "t1", status: "completed", durationMs: 1500 } });
   });
-  // Shell commands' results have their exit codes; nothing else differs.
-  assert.deepEqual(differences.length, 2);
-  for (const d of differences) assert.match(d, /"exit_code":[01]/);
+  // Shell commands' results have their exit codes.
   const items = by_id(native.items);
   assert.deepEqual(
     [items.sh.result, items.bad.result],
@@ -175,7 +162,7 @@ test("each_kind_of_item_as_the_messages_path_makes_it", () => {
 });
 
 test("a_plan_is_one_call_a_turn_updated_as_it_goes", () => {
-  const { native, differences } = both((f) => {
+  const { native } = both((f) => {
     f.event("turn/plan/updated", "main", {
       turnId: "t1",
       plan: [
@@ -205,13 +192,10 @@ test("a_plan_is_one_call_a_turn_updated_as_it_goes", () => {
       ],
     ],
   );
-  // The messages path made a call of each update.
-  assert.equal(differences.length, 2);
-  assert.match(differences[1], /^1: native undefined, messages .*"TodoWrite"/);
 });
 
 test("approvals_are_for_their_calls_and_a_declined_call_is_denied", () => {
-  const { native, legacy, differences } = both((f) => {
+  const { native } = both((f) => {
     f.event("item/started", "main", { item: { type: "commandExecution", id: "rm", command: "rm -rf x", cwd: "/w" } });
     f.ask("rm", "Bash", { command: "rm -rf x", cwd: "/w", description: "Clean up" }, "denied");
     f.event("item/completed", "main", { item: { type: "commandExecution", id: "rm", command: "rm -rf x", status: "declined" } });
@@ -227,17 +211,15 @@ test("approvals_are_for_their_calls_and_a_declined_call_is_denied", () => {
   assert.deepEqual([r["r-fc"].tool_call_id, r["r-fc"].title], ["fc", "/w/a"]);
   const items = by_id(native.items);
   assert.deepEqual([items.rm.status, items.fc.status, items.auto.status], ["denied", "completed", "denied"]);
-  // The messages path took a declined call the board hadn't asked about as failed.
-  assert.equal(differences.length, 1);
-  assert.match(differences[0], /"id":"auto".*"status":"denied".*messages .*"status":"failed"/);
+  // (The messages path took a declined call the board hadn't asked about as failed.)
   assert.deepEqual(
-    native.requests.map((x: any) => x.resolution),
-    legacy.requests.map((x: any) => x.resolution),
+    native.requests.map((x: any) => x.resolution?.outcome),
+    ["deny", "allow"],
   );
 });
 
 test("subagents_keep_the_main_session_turn_and_stream_separate", () => {
-  const { native, differences } = both((f) => {
+  const { native } = both((f) => {
     for (const thread of [
       { id: "child", parentThreadId: "main", preview: "Inspect config", agentRole: "explorer" },
       { id: "nested", source: { subAgent: { thread_spawn: { parent_thread_id: "child" } } }, preview: "Check env" },
@@ -261,7 +243,6 @@ test("subagents_keep_the_main_session_turn_and_stream_separate", () => {
     f.item("nested", { type: "reasoning", id: "think", summary: ["Check environment"] });
     f.event("turn/completed", "child", { turn: { id: "child-turn", status: "completed" } });
   });
-  assert.deepEqual(differences, []);
   const items = by_id(native.items);
   const child = items["codex-agent-child"];
   assert.deepEqual([child.name, child.kind, child.title, child.status], ["Agent", "subagent", "Inspect config", "completed"]);
@@ -274,7 +255,7 @@ test("subagents_keep_the_main_session_turn_and_stream_separate", () => {
   );
 });
 
-test("collab_actions_hosted_activity_and_failures_as_the_messages_path_has_them", () => {
+test("collab_actions_hosted_activity_and_failures", () => {
   const collab = both((f) => {
     const steps: Array<[number, string, string]> = [
       [1, "spawnAgent", "running"],
@@ -299,7 +280,6 @@ test("collab_actions_hosted_activity_and_failures_as_the_messages_path_has_them"
       });
     }
   });
-  assert.deepEqual(collab.differences, []);
   const { ended_at: _e, ...s } = by_id(collab.native.items)["codex-agent-child"].subagent;
   assert.deepEqual(s, { status: "stopped", background: true, model: "gpt-6.1-sol", summary: "Child report" });
 
@@ -310,7 +290,11 @@ test("collab_actions_hosted_activity_and_failures_as_the_messages_path_has_them"
     f.item("main", { type: "subAgentActivity", id: "hosted3", kind: "completed", agentThreadId: "hosted" });
     f.item("hosted", { type: "subAgentActivity", id: "hosted4", kind: "interrupted", agentThreadId: "nested" });
   });
-  assert.deepEqual(hosted.differences, []);
+  const h = by_id(hosted.native.items);
+  assert.deepEqual(
+    [h["codex-agent-hosted"].subagent.status, h["codex-agent-hosted"].metadata, h["codex-agent-nested"].subagent.status, h["codex-agent-nested"].parent_id],
+    ["completed", { description: "Find tests", prompt: "Find tests" }, "stopped", "codex-agent-hosted"],
+  );
 
   const failed = both((f) => {
     f.item("main", {
@@ -325,19 +309,25 @@ test("collab_actions_hosted_activity_and_failures_as_the_messages_path_has_them"
     f.event("turn/completed", "child", { turn: { id: "child-turn", status: "failed", error: { message: "Child failed" } } });
     f.event("turn/completed", "main", { turn: { id: "main-turn", status: "completed" } });
   });
-  assert.deepEqual(failed.differences, []);
+  // A failed spawn is a call of its own, and no subagent; a review's thread and a child's failed turn make nothing.
+  assert.deepEqual(
+    failed.native.items.map((i: any) => [i.type, i.name, i.status ?? i.ok]),
+    [
+      ["tool_call", "spawnAgent", "failed"],
+      ["turn_result", undefined, true],
+    ],
+  );
 });
 
-test("a_long_result_is_cut_short_as_the_messages_path_stores_it", () => {
+test("a_long_result_is_cut_short", () => {
   const out = `${"x".repeat(40_000)}\n`;
-  const { native, differences } = both((f) =>
+  const { native } = both((f) =>
     f.item("main", { type: "commandExecution", id: "big", command: "cat big", status: "completed", aggregatedOutput: out, exitCode: 0 }),
   );
   const big = by_id(native.items).big;
   assert.equal(big.result.truncated, true);
   assert.match(big.result.content, /\n… \[truncated \d+ bytes\]$/);
-  assert.deepEqual(differences.length, 1);
-  assert.match(differences[0], /"exit_code":0/);
+  assert.equal(big.result.exit_code, 0);
 });
 
 test("a_restarted_server_and_a_notification_read_again_go_on_from_the_store", () => {
@@ -355,9 +345,9 @@ test("a_restarted_server_and_a_notification_read_again_go_on_from_the_store", ()
     f.event("item/completed", "main", { item: { type: "agentMessage", id: "m", text: "Built." } });
     f.event("turn/completed", "main", { turn: { id: "t1", status: "completed" } });
   };
-  const [a, ar] = running("items");
+  const [a, ar] = running();
   case_(feed(a, ar), () => {});
-  const [b, br] = running("items");
+  const [b, br] = running();
   // What the server had in memory (its translators) is gone.
   case_(feed(b, br), () => write.forget(b.db(), br.task_id));
   const strip = (items: Item[]) => items.map(detail);
@@ -390,7 +380,7 @@ test("a_subagents_prompt_is_for_its_call_and_names_its_subagent", () => {
 });
 
 test("a_subagent_that_ends_ends_the_wait_for_it", () => {
-  const [state, run] = running("items");
+  const [state, run] = running();
   const f = feed(state, run);
   f.line({ method: "thread/started", params: { thread: { id: "child", parentThreadId: "main", preview: "Look" } } });
   // The agent is waiting (the board's wait tool).
@@ -429,7 +419,7 @@ test("map_is_pure_and_reads_the_thread_through_its_view", () => {
 });
 
 test("a_failed_write_at_a_turns_end_still_records_the_runs_result", () => {
-  const [state, run] = running("items");
+  const [state, run] = running();
   const f = feed(state, run);
   f.line({ method: "thread/started", params: { thread: { id: "child", parentThreadId: "main", preview: "Look" } } });
   f.event("item/started", "main", { item: { type: "commandExecution", id: "sh", command: "make", cwd: "/w" } });

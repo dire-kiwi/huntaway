@@ -3,18 +3,17 @@
 // The `gh` MCP server, which runs the GitHub CLI for agents. Claude Code can sandbox Bash, and there `gh` (and
 // `git push`) often can't reach GitHub or the user's stored login. MCP servers run outside the sandbox, so going through
 // these tools works either way. Every run gets it as the `gh` server, working in the run's directory: the board serves
-// it over HTTP (see mcp/http.ts, and `GhRun`); `huntaway gh-mcp` is the stdio server runs from before that started.
+// it over HTTP (see mcp/http.ts, and `GhRun`).
 //
 // A profile (on each host) can pick the GitHub account its agents act as, and a project can pick its own
-// (`github_account`). The run's launch records it (`IA_GH_ACCOUNT` for `huntaway gh-mcp`), and each call then runs with
+// (`github_account`). The run's launch records it, and each call then runs with
 // that account's token from gh's own logins (`gh auth token --user`), whichever account is active in gh, and with no
 // other credentials (see `GhEnv`).
 // Claude runs also get `huntaway gh-hook`, which turns away `gh` in Bash in favour of these tools.
 //
-// `gh-mcp`, `gh-hook` and `gh-run` run as processes of their own, many times over: this module and its parts import
+// `gh-hook` and `gh-run` run as processes of their own, many times over: this module and its parts import
 // only light modules (util.ts, hosts/proto.ts), and load anything else when they need it.
 import { readFileSync, statSync } from "node:fs";
-import { createInterface } from "node:readline";
 import { expand_tilde, err_str, context } from "../util.ts";
 import { VERSION } from "../hosts/proto.ts";
 import { Account } from "./gh_mcp/account.ts";
@@ -41,8 +40,8 @@ export const ACCOUNT_ENV = "IA_GH_ACCOUNT";
 
 /**
  * The run a gh server is for: where its calls run, the account they act as, and the board's say on merging. The board
- * serves it over HTTP for runs it starts (see mcp/http.ts), with what the run's launch recorded; `huntaway gh-mcp`, the
- * stdio server of runs from before that, has them in its environment (`GhRun_from_env`).
+ * serves it over HTTP for runs it starts (see mcp/http.ts), with what the run's launch recorded; one from the
+ * environment (`GhRun_from_env`) is for the tests and `huntaway gh-run`.
  */
 export interface GhRun {
   /** The run's directory, where calls without a `dir` run. */
@@ -52,7 +51,7 @@ export interface GhRun {
   merge_gate(): Promise<string | null>;
 }
 
-/** `huntaway gh-mcp`'s run, from its environment (`IA_CWD`, `IA_GH_ACCOUNT` and the board's `BOARD_ENV`). */
+/** A run from the environment (`IA_CWD`, `IA_GH_ACCOUNT` and the board's `BOARD_ENV`). */
 export function GhRun_from_env(): GhRun {
   return { cwd: process.env.IA_CWD ?? null, account: Account.from_env(), merge_gate: env_merge_gate };
 }
@@ -607,7 +606,7 @@ function mentions_merge(call: string): boolean {
 }
 
 /**
- * Why the board won't let this run merge, if it won't (see review/merge_gate.rs), asked over HTTP by `huntaway gh-mcp`.
+ * Why the board won't let this run merge, if it won't (see review/merge_gate.rs), asked over HTTP.
  * A server started without the board's address (by hand, say) has no say from it.
  */
 async function env_merge_gate(): Promise<string | null> {
@@ -733,27 +732,4 @@ export async function handle(req: any, r: GhRun = GhRun_from_env()): Promise<any
       error = { code: -32601, message: `method not found: ${method}` };
   }
   return error !== null ? { error, id, jsonrpc: "2.0" } : { id, jsonrpc: "2.0", result };
-}
-
-export async function serve_stdio(): Promise<void> {
-  const r = GhRun_from_env();
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  // Calls run concurrently, and the ones still running when stdin closes get to finish.
-  const calls: Promise<void>[] = [];
-  for await (const line of lines) {
-    let req: any;
-    try {
-      req = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    calls.push(
-      handle(req, r)
-        .then((resp) => {
-          if (resp !== null) process.stdout.write(`${JSON.stringify(resp)}\n`);
-        })
-        .catch((e) => console.error("gh-mcp:", err_str(e))),
-    );
-  }
-  await Promise.all(calls);
 }

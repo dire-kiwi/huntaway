@@ -16,6 +16,9 @@ import * as store from "./store.ts";
 import * as write from "./write.ts";
 import { CONVERTER_VERSION } from "./translate.ts";
 
+/** Whether the task's items are its thread as they are, as the readers read it (threads/history.ts's `on_items`). */
+const reads_items = (c: db.Conn, id: string) => !!db.one(c, `SELECT 1 FROM tasks t WHERE t.id=?1 AND ${history.on_items()}`, id);
+
 process.env.IA_SHIM_BIN = "/nonexistent/ia-shim";
 process.env.IA_CLAUDE_BIN = "/nonexistent/claude";
 process.env.IA_CODEX_BIN = "/nonexistent/codex";
@@ -124,7 +127,7 @@ test("the batch covers the tasks that aren't done without this build's items, an
   assert.deepEqual(batch.pending(c), []);
   for (const id of [backlog, running, review, old, broken]) {
     assert.equal(flagged(s, id!), true);
-    assert.equal(history.reads_items(c, id!), true, id);
+    assert.equal(reads_items(c, id!), true, id);
     assert.deepEqual(write.compare(c, id!), [], id);
     // Clients are told: the task, flagged, and a resync for its thread.
     assert.ok(events.some((e) => e.type === "task" && e.task.id === id && e.task.thread_items));
@@ -254,18 +257,20 @@ test("a done task gets its items when it's opened, or read, with the setting on"
     ["user_message", "tool_call", "assistant_message"],
   );
   // A reader.
-  assert.equal(history.source(c, by_reader!), "items");
+  assert.equal(history.last_assistant_text(c, by_reader!), "done 3");
+  assert.equal(reads_items(c, by_reader!), true);
   assert.equal(flagged(s, by_reader!), true);
   // Opening it again changes nothing.
   const once = dump(s, by_task!);
   await call(s, "GET", `/api/tasks/${by_task}`);
   assert.equal(dump(s, by_task!), once);
-  // With the setting off, nothing is built: it's read and drawn from its messages, as before.
+  // With the setting off, nothing is built (and its readers find nothing, until it moves onto items).
   db.set_setting(c, write.SETTING, "false");
   await call(s, "GET", `/api/tasks/${off}`);
   await call(s, "GET", `/api/tasks/${off}/messages?limit=100`);
   assert.equal((await call(s, "GET", `/api/tasks/${off}/thread`))[0], 404);
-  assert.equal(history.source(c, off!), "messages");
+  assert.equal(history.last_assistant_text(c, off!), null);
+  assert.equal(reads_items(c, off!), false);
   assert.equal(count(s, "threads", off!), 0);
   assert.equal(flagged(s, off!), false);
 });
@@ -284,7 +289,7 @@ test("a task with no messages isn't in the batch or rebuilt when it's opened: it
   assert.deepEqual([flagged(s, empty.id), count(s, "threads", empty.id)], [false, 0]);
   s.add_message(empty.id, "user", { text: "first" });
   assert.equal(flagged(s, empty.id), true);
-  assert.equal(history.reads_items(c, empty.id), true);
+  assert.equal(reads_items(c, empty.id), true);
 });
 
 test("a task's items written by an older converter are rebuilt when it's opened; a broken one is left alone", async () => {
@@ -293,11 +298,13 @@ test("a task's items written by an older converter are rebuilt when it's opened;
   const [old, broken] = tasks.map((t) => t.id);
   write.rebuild(c, old!);
   db.run(c, "UPDATE threads SET converter=?2 WHERE task_id=?1", old, CONVERTER_VERSION - 1);
-  assert.equal(history.source(c, old!), "items");
+  history.last_assistant_text(c, old!);
+  assert.equal(reads_items(c, old!), true);
   assert.equal(db.value(c, "SELECT converter FROM threads WHERE task_id=?1", old), CONVERTER_VERSION);
   write.rebuild(c, broken!);
   db.run(c, "UPDATE threads SET error='boom' WHERE task_id=?1", broken);
-  assert.equal(history.source(c, broken!), "messages");
+  history.last_assistant_text(c, broken!);
+  assert.equal(reads_items(c, broken!), false);
   assert.equal(db.value(c, "SELECT error FROM threads WHERE task_id=?1", broken), "boom");
 });
 
@@ -311,13 +318,14 @@ test("a rebuild that fails when a task's opened changes nothing, and isn't tried
   assert.equal(write.ensure(c, id), false);
   assert.equal(count(s, "threads", id), 0);
   assert.equal(flagged(s, id), false);
-  // The hook has gone, so another try would work: it isn't made.
-  assert.equal(history.source(c, id), "messages");
-  assert.equal(history.last_assistant_text(c, id), "done 0");
+  // The hook has gone, so another try would work: it isn't made, and its readers find nothing.
+  assert.equal(history.last_assistant_text(c, id), null);
+  assert.equal(reads_items(c, id), false);
   assert.equal(flagged(s, id), false);
   // The batch and the command line still rebuild it.
   rebuild_cli.run(rebuild_cli.parse_args([id]), c, () => {});
-  assert.equal(history.source(c, id), "items");
+  assert.equal(reads_items(c, id), true);
+  assert.equal(history.last_assistant_text(c, id), "done 0");
 });
 
 test("the command line's batch rebuilds the pending tasks beside a server, and shows its progress", () => {

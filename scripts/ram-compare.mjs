@@ -17,7 +17,7 @@
 // apps/server/bin/huntaway, a shell that keeps the server's process id across restarts: the node under it is measured.
 // That runs the .ts from this checkout; TS_BIN=<dir>/huntaway measures a release's package instead (what
 // scripts/package-server.sh <dir> puts together: the server precompiled to .js, with its own node).
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -143,23 +143,7 @@ try {
   for (const r of rows) console.log(line([r.phase, r.server, mb(r.rss), mb(r.hwm), mb(r.pss), r.threads]));
   const ts = servers.find((s) => s.name === "ts");
   if (serving(ts.pid) !== ts.pid) console.log(line(["(bin/huntaway's shell, besides)", "ts", mb(mem(ts.pid).rss), "", mb(mem(ts.pid).pss), ""]));
-  // Every agent run starts its own `huntaway mcp` (the board's tools) and `huntaway gh-mcp` (GitHub) helpers.
-  console.log("\nper-agent helpers, idle (each agent run starts one of each):");
-  for (const sub of ["mcp", "gh-mcp"]) {
-    for (const s of servers) {
-      const child = spawn(s.bin, [sub], {
-        stdio: ["pipe", "ignore", "ignore"],
-        env: { ...process.env, IA_URL: s.url, IA_TOKEN: s.token, IA_RUN_ID: "ram-compare" },
-      });
-      await sleep(1500);
-      let m = { rss: NaN, pss: NaN };
-      try {
-        m = mem(child.pid);
-      } catch {}
-      child.kill();
-      console.log(line([`huntaway ${sub}`, s.name, mb(m.rss), "", mb(m.pss), ""]));
-    }
-  }
+  // (Agent runs started `huntaway mcp` and `huntaway gh-mcp` helpers before HA-180; HA-225 removed them.)
 } finally {
   if (keep) console.log(`\nkept: ${servers.map((s) => s.file).join(" ")}`);
   else for (const s of servers) execFileSync(join(root, "scripts/test-server.sh"), ["stop", s.dataDir], { stdio: "ignore" });

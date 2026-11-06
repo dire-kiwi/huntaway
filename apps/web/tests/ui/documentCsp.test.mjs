@@ -328,6 +328,39 @@ test("a plan can't open a link without the user's click in it: the board asks in
     const opened = [];
     page.context().on("page", (p) => opened.push(p.url()));
     await page.context().route(/^https:\/\/example\.com\//, (route) => route.fulfill({ contentType: "text/html", body: "elsewhere" }));
+    // What the board sees, as it happens: each link the frame asks it to open (and whether the board had the user's
+    // activation then), each window.open of its own, and the user's last pointer down in it.
+    await page.addInitScript(() => {
+      if (window !== top) return;
+      const seen = (window.iaCheck = { asks: [], opens: [], input: -Infinity });
+      addEventListener("message", (e) => {
+        if (typeof e.data?.iaOpen === "string") seen.asks.push({ at: performance.now(), active: navigator.userActivation.isActive });
+      });
+      const open = window.open;
+      window.open = function (url, ...rest) {
+        seen.opens.push({ url: String(url), at: performance.now() });
+        return open.call(this, url, ...rest);
+      };
+      addEventListener("pointerdown", (e) => e.isTrusted && (seen.input = performance.now()), true);
+    });
+    // Playwright's queries (evaluate, locators, waitFor) run as a user gesture, which activates the board without any
+    // input in it, so while the frame has the focus they'd let its next ask open (HA-272). Reads in the board until the
+    // user's input in it go through CDP instead, which doesn't.
+    const cdp = await page.context().newCDPSession(page);
+    const peek = async (expression) => {
+      const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, returnByValue: true });
+      if (exceptionDetails) throw new Error(`${expression}: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
+      return result.value;
+    };
+    const until = async (expression, what) => {
+      const deadline = Date.now() + 20000;
+      for (;;) {
+        const value = await peek(expression);
+        if (value) return value;
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}: ${JSON.stringify(await peek("iaCheck"))}`);
+        await page.waitForTimeout(100);
+      }
+    };
     const content = `<h1>Leaky</h1><a id="blank" href="https://example.com/blank?d=secret" target="_blank">blank</a><input id="steal">
 <script>
   // The browser's window.open (the board's comes after the page's scripts), and a fresh frame's, as it loads.
@@ -354,26 +387,37 @@ test("a plan can't open a link without the user's click in it: the board asks in
       }),
     );
     await ui.run([`goto /p/${project.id}?task=${plan.id}`, "wait css=iframe"]);
-    // Playwright's queries count as the user's activation (they run as a gesture): let that run out, untouched.
-    await page.waitForTimeout(6500);
+    // Let the activation from the queries above run out, untouched (the frame's asks until then may open), and the
+    // frame take the focus.
+    const quiet = await until("!navigator.userActivation.isActive && performance.now()", "the board's activation to run out");
+    await until(`iaCheck.asks.filter((a) => a.at > ${quiet}).length >= 3 && document.activeElement?.tagName === "IFRAME"`, "the frame's asks");
     assert.deepEqual(
       opened.filter((u) => !u.includes("/later")),
       [],
       "the frame opened nothing itself",
     );
-    opened.length = 0;
-    await page.waitForTimeout(1000);
-    assert.deepEqual(opened, [], "the board opened nothing without the user's input");
-    assert.equal(await page.getByText("opens a link").count(), 0, "nor asked");
-    // The user types in the composer: the frame takes the focus, while the board has the user's activation.
-    await page.getByPlaceholder("Ask for changes to the plan…").click();
+    assert.deepEqual(await peek(`iaCheck.opens.filter((o) => o.at > ${quiet})`), [], "the board opened nothing without the user's input");
+    assert.equal(await peek(`document.body.innerText.includes("opens a link")`), false, "nor asked");
+    // The user clicks the composer and types: the frame takes the focus back, while the board has the user's activation.
+    const { x, y } = await peek(`(() => {
+      const r = document.querySelector('[placeholder="Ask for changes to the plan…"]').getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+    await page.mouse.click(x, y);
     await page.keyboard.type("hello");
-    await page.waitForTimeout(1000);
-    assert.deepEqual(opened, [], "nothing opened after the user's input in the board");
-    assert.equal(await page.evaluate(() => document.activeElement?.tagName), "IFRAME", "the frame took the focus");
+    const input = await peek("iaCheck.input");
+    assert.ok(input > quiet, "the click reached the board");
+    await until(`iaCheck.asks.filter((a) => a.at > ${input}).length >= 3`, "the frame's asks after the user's input");
+    assert.deepEqual(await peek(`iaCheck.opens.filter((o) => o.at > ${quiet})`), [], "nothing opened after the user's input in the board");
+    assert.ok(await peek(`iaCheck.asks.some((a) => a.at > ${input} && a.active)`), "the board had the user's activation as the frame asked");
+    assert.equal(await peek("document.activeElement?.tagName"), "IFRAME", "the frame took the focus");
     // The board asks, showing the link, and opens it only from its own button.
-    await page.getByText("opens a link").waitFor();
-    assert.equal(await page.locator("[role=alert] code").innerText(), "https://example.com/later?d=secret");
-    assert.deepEqual(opened, []);
+    await until(`document.body.innerText.includes("opens a link")`, "the board to ask");
+    assert.equal(await peek(`document.querySelector("[role=alert] code")?.innerText`), "https://example.com/later?d=secret");
+    assert.deepEqual(await peek(`iaCheck.opens.filter((o) => o.at > ${quiet})`), []);
+    assert.deepEqual(
+      opened.filter((u) => !u.includes("/later")),
+      [],
+    );
   });
 });

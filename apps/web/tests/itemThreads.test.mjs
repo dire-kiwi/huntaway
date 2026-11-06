@@ -1,4 +1,4 @@
-// itemThreads.ts: a thread drawn from its items follows its thread_events, catching up after a gap, taking a fresh
+// itemThreads.ts: a thread follows its thread_events, catching up after a gap, taking a fresh
 // window on a resync, paging back, and streaming its preview text.
 import assert from "node:assert/strict";
 import { register } from "node:module";
@@ -120,7 +120,7 @@ test("streamed text shows from its delta events, from its offset, until the mess
   delta("stream:1", 3, "lo");
   // Sent again (from before a reconnect, say): what it has already is skipped.
   delta("stream:1", 0, "Hello");
-  // The board's own delta events for it aren't drawn as well.
+  // The board's own delta events (for older clients) aren't drawn as well.
   handleEvent({ type: "delta", task_id: "e", text: "Hello" });
   flushDeltas();
   assert.equal(useDeltas.getState().deltas.e, "Hello");
@@ -135,7 +135,7 @@ test("streamed text shows from its delta events, from its offset, until the mess
   release();
 });
 
-test("a thread the host has no items for is drawn from its messages, until it's rebuilt", async () => {
+test("a thread the host has no items for is missing, until it's rebuilt", async () => {
   setup("f");
   api.thread = async () => {
     throw new ApiError(404, "task f has no thread kept as items");
@@ -143,14 +143,13 @@ test("a thread the host has no items for is drawn from its messages, until it's 
   const release = it.retainItemThread("local", "f");
   await tick();
   assert.equal(it.useItemThreads.getState().missing.f, true);
-  assert.equal(it.followsItems("f"), false);
   release();
   // Rebuilt: it has items now.
   api.thread = async () => ({ thread: thread("f"), items: [text("w", "one")], requests: [], seq: 1 });
   handleEvent({ type: "thread_resync", task_id: "f" });
   await tick();
   assert.equal(it.useItemThreads.getState().missing.f, undefined);
-  assert.equal(it.followsItems("f"), true);
+  assert.deepEqual(texts("f"), ["one"]);
 });
 
 test("another host's events, and other threads', leave a thread be", async () => {

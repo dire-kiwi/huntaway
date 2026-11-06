@@ -643,11 +643,6 @@ test("the_hook_runs_without_import_meta_main", () => {
   }
   const out = run(["approval-hook", STRICT], hook_call("mcp__google__delete_mail"));
   assert.deepEqual([out.status, hook_out(out)], [0, "deny"], out.stderr);
-  // The agents' MCP helper starts too: here, to say it has no board to talk to, rather than exiting 0 with nothing said.
-  const env_without = { ...env };
-  for (const k of ["IA_URL", "IA_TOKEN", "IA_RUN_ID"]) delete env_without[k];
-  const mcp = spawnSync(BIN, ["mcp"], { input: "", encoding: "utf8", env: env_without });
-  assert.deepEqual([mcp.status, mcp.stderr.trim()], [1, "Error: IA_URL not set"]);
 });
 
 // ---------- hook_main.ts when hook.ts can't be loaded, and `huntaway approval-hook` through main.ts (HA-254) ----------

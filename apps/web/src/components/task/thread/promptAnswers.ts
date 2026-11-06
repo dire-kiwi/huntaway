@@ -2,8 +2,8 @@ import { createContext, useContext } from "react";
 import type { Resolution } from "../../../threads";
 
 /**
- * How the prompt cards of a thread drawn from its items answer: with the thread's `respond` command (see threadView.ts).
- * Without one (a thread drawn from its messages, the board's lists of prompts), they use the board's own routes.
+ * How the prompt cards in a thread answer: with the thread's `respond` command (see threadView.ts). Without one (the
+ * board's lists of prompts), they use the board's own routes.
  */
 export interface PromptAnswerer {
   respond: (request_id: string, resolution: Resolution) => Promise<unknown>;

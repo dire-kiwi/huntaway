@@ -1,54 +1,31 @@
-// Which way a task's thread is drawn: from its items (itemThreads.ts and itemModel.ts, for a task whose items are its
-// thread's source, and one kept as items on a host from API 119 with its Keep threads as items setting on) or from its
-// messages (threadModel.ts, for every other task and older hosts), and what the composer and the prompt cards send for it: thread commands for one
-// drawn from its items (docs/threads-api.md), the board's own routes otherwise.
+// How a task's thread is drawn: from its items (itemThreads.ts and itemModel.ts), on a host that serves them (API 119;
+// an older host's threads aren't drawn here), and what the prompt cards send for it: thread commands
+// (docs/threads-api.md). The composer sends with the board's own routes (HA-268).
 
 import { useEffect } from "react";
-import { api, hostSupports, THREAD_VIEW_API, type Message, type PermissionMode as BoardMode, type Task } from "./api";
-import { useStore, useThreadMessages } from "./store";
+import { api, hostSupports, THREAD_VIEW_API, type PermissionMode as BoardMode, type Task } from "./api";
+import { useStore } from "./store";
 import { itemModel } from "./itemModel";
 import { retainItemThread, useItemThreads, type ItemThread } from "./itemThreads";
-import { threadModel, type ThreadModel } from "./threadModel";
+import type { ThreadModel } from "./threadModel";
 import type { PermissionMode, Resolution } from "./threads";
 
-type Settings = ReturnType<typeof useStore.getState>["hostSettings"][string] | undefined;
+/** Whether the task's host serves its thread as items (API 119), which is the only way it's drawn here. */
+export function useServesItems(task: Pick<Task, "host_id">): boolean {
+  return useStore((s) =>
+    hostSupports(
+      s.hosts.find((h) => h.id === task.host_id),
+      THREAD_VIEW_API,
+    ),
+  );
+}
 
 /**
- * Whether a thread is drawn from its items: its items are its source (API 122: it has no messages since it moved onto
- * them), or it's kept as items, its host serves the view (API 119), and its setting is on there (turning it off goes
- * back to messages, which are still written for a task on them). Until the host's settings have loaded, a flagged task
- * is taken to have it on.
+ * Whether the task has a thread to load: its items are its source (API 122), it's kept as items (API 119), or it has
+ * run, so it has messages, which its host moves onto items when it's opened (API 121). A new task has none until its
+ * first message (a 404 from its host), and is drawn as an empty thread.
  */
-function draws(task: Task, supports: boolean, settings: Settings, missing: boolean): boolean {
-  if (task.thread_source === "items") return supports;
-  return !!task.thread_items && supports && !(settings && !settings.thread_items) && !missing;
-}
-
-export function useDrawsItems(task: Task): boolean {
-  const supports = useStore((s) =>
-    hostSupports(
-      s.hosts.find((h) => h.id === task.host_id),
-      THREAD_VIEW_API,
-    ),
-  );
-  const settings = useStore((s) => s.hostSettings[task.host_id]);
-  const missing = useItemThreads((s) => !!s.missing[task.id]);
-  return draws(task, supports, settings, missing);
-}
-
-/** useDrawsItems, as things are now (outside a component). */
-export function drawsItems(task: Task): boolean {
-  const s = useStore.getState();
-  return draws(
-    task,
-    hostSupports(
-      s.hosts.find((h) => h.id === task.host_id),
-      THREAD_VIEW_API,
-    ),
-    s.hostSettings[task.host_id],
-    !!useItemThreads.getState().missing[task.id],
-  );
-}
+export const hasThread = (t: Pick<Task, "thread_source" | "thread_items" | "session_id">) => t.thread_source === "items" || !!t.thread_items || !!t.session_id;
 
 /** The task's thread from its items while `on`, kept loaded and followed while the component is mounted (if `load`). */
 export function useItemThread(task: Task, on: boolean, load = true): ItemThread | undefined {
@@ -56,28 +33,17 @@ export function useItemThread(task: Task, on: boolean, load = true): ItemThread 
   return useItemThreads((s) => (on ? s.threads[task.id] : undefined));
 }
 
-const NO_MESSAGES: Message[] = [];
-
 /**
- * The model of the task's thread, either way, while it's loaded (`load`: loading it too, as the thread does; without,
- * it's there while something else shows the thread, as for the Agents pill).
+ * The model of the task's thread while it's loaded (`load`: loading it too, as the thread does; without, it's there
+ * while something else shows the thread, as for the Agents pill). Empty on a host that doesn't serve it.
  */
 export function useThreadModel(task: Task, load: boolean): ThreadModel {
-  const items = useDrawsItems(task);
-  // Messages are only kept (and with `load`, loaded) for a thread drawn from them.
-  const messages = useThreadMessagesIf(task.id, !items, load);
-  const earlier = useStore((s) => s.threads[task.id]?.subagents);
-  const thread = useItemThread(task, items, load);
-  if (items) return itemModel(task.id, thread?.snap ?? EMPTY, task.running);
-  return threadModel(task.id, messages ?? NO_MESSAGES, task.running, earlier);
+  const on = useServesItems(task) && hasThread(task);
+  const thread = useItemThread(task, on, load);
+  return itemModel(task.id, thread?.snap ?? EMPTY, task.running);
 }
 
 const EMPTY = { items: [], requests: [] };
-
-/** useThreadMessages while `on`; nothing (and no load) otherwise. */
-function useThreadMessagesIf(taskId: string, on: boolean, load: boolean): Message[] | undefined {
-  return useThreadMessages(on ? taskId : null, load);
-}
 
 // ---------- what's sent ----------
 

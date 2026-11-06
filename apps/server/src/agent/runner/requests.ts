@@ -254,7 +254,7 @@ export function ask_permission(state: Shared, run_id: string, call_id: string, a
     if (asked.codex) codex_respond(state, run_id, asked.codex.id, { result: prompt_answer(asked.codex, response) });
     else write(state, run_id, { subtype: "success", request_id: asked.request_id, response });
   };
-  const call = tools.handle_control(state, { run_id, call_id, tool: "permission_prompt", args: asked }, respond);
+  const call = tools.handle_control(state, { run_id, call_id, tool: tools.PROMPT, args: asked }, respond);
   background(
     `run ${run_id}: permission prompt ${asked.request_id}`,
     call.finally(() => cancelled.delete(call_id)),
@@ -268,8 +268,8 @@ export function ask_permission(state: Shared, run_id: string, call_id: string, a
 export function call_tool(state: Shared, run_id: string, call_id: string, name: string, c: Called): void {
   const respond = (r: { ok: any } | { err: string }) => {
     if (cancelled.delete(call_id)) return;
-    if (c.codex) return codex_respond(state, run_id, c.codex.id, { result: tool_answer(r, name) });
-    const mcp_response = { jsonrpc: "2.0", id: c.rpc_id, result: mcp.call_result(name, r) };
+    if (c.codex) return codex_respond(state, run_id, c.codex.id, { result: tool_answer(r) });
+    const mcp_response = { jsonrpc: "2.0", id: c.rpc_id, result: mcp.call_result(r) };
     write(state, run_id, { subtype: "success", request_id: c.request_id, response: { mcp_response } });
   };
   const saved: Called = { request_id: c.request_id, rpc_id: c.rpc_id, arguments: c.arguments };

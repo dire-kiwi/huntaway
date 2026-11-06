@@ -8,8 +8,8 @@ import { SubagentStatusBadge } from "../task/thread/subagents";
 
 /** Running/finished counts of the thread's subagents; opens a list that shows each one's own thread. */
 export function AgentsPill({ task, onReveal, className }: { task: Task; onReveal?: () => void; className?: string }) {
-  // The thread's own (built once for both), kept while the pill shows, but only loaded by the thread: from its messages
-  // with those started before the loaded part of a long thread, or from its items (threadView.ts).
+  // The thread's own (built once for both), kept while the pill shows, but only loaded by the thread (threadView.ts): a
+  // long thread's window knows the subagents started before it.
   const model = useThreadModel(task, false);
   const subagents = useMemo(() => [...model.subagents.values()], [model.subagents]);
   const viewing = useSubagentView((s) => s.open[task.id]);

@@ -18,14 +18,15 @@
 // Tasks move onto items one at a time (`flip`), when they're quiet: no run going (a task mid-turn waits for its run to
 // end) and no prompt waiting for an answer (a question may be). Their items must be complete and this build's, so one that
 // isn't (never rebuilt, an older converter's, live writes stopped on an error) is rebuilt from its messages first, in
-// the same transaction. It happens at the server's start (`flip_all`), when a run ends (`settled`), and before any
+// the same transaction, and its rows are deleted (step 14: nothing reads them once it's on items, and migration 102
+// deleted those of tasks that had moved before). It happens at the server's start (`flip_all`), when a run ends (`settled`), and before any
 // message is written to a quiet task that's still on messages (insert_message, start_run): a new task moves with its
-// first message, so its thread starts on items. Moving back (`flip_back`) is safe until the thread's first write since
-// it moved, while its messages are still whole.
+// first message, so its thread starts on items.
 //
-// Only on a board whose database is huntaway-2.db (plan decision D7, see db/file.ts): an older build, rolled back to,
-// opens the older file as it was before the update, with every thread whole. On the older file (IA_NEW_DB_FILE=0)
-// tasks stay on messages (`set_flips`).
+// Since step 13 nothing reads a thread's messages but a rebuild (the readers, the app and Codex's driver read and write
+// items), so every task moves, whatever the database file. Step 10 moved them only in huntaway-2.db (plan decision D7,
+// see db/file.ts), so that an older build, rolled back to, finds the older file as it was; on the older file
+// (IA_NEW_DB_FILE=0) they move now too. Moving back is gone with the messages path: it's the database file.
 import * as db from "../db.ts";
 import type { Conn, Message } from "../db.ts";
 import type { AppState } from "../state.ts";
@@ -34,13 +35,16 @@ import * as live from "./live.ts";
 import type { ThreadRequest } from "./protocol.ts";
 import * as store from "./store.ts";
 import { CONVERTER_VERSION } from "./translate.ts";
-import { rebuild_rows, wrote_items } from "./write.ts";
+import { rebuild_failed, rebuild_rows, wrote_items } from "./write.ts";
 
 export type Source = "messages" | "items";
 
 const flipping = new WeakMap<Conn, boolean>();
 
-/** Whether tasks on this connection's board move onto items (serve.ts turns it on with huntaway-2.db). Off by default. */
+/**
+ * Whether tasks on this connection's board move onto items: serve.ts turns it on, whatever the file, and so does
+ * testing.ts's `on_items` but for a test of a task on messages. Off by default (a connection of a command or a test).
+ */
 export function set_flips(c: Conn, on: boolean): void {
   flipping.set(c, on);
 }
@@ -105,7 +109,8 @@ const rebuilt_at = (c: Conn, task_id: string) => db.value<string | null>(c, "SEL
 
 /**
  * Moves task `task_id` onto items if it's quiet (`busy`) and this board moves tasks (`flips`), in one transaction (the
- * caller's, if it has one): its items are rebuilt from its messages first unless they're complete and this build's.
+ * caller's, if it has one): its items are rebuilt from its messages first unless they're complete and this build's, and
+ * its messages rows are deleted.
  * A task with no messages yet (a new one) just starts its thread. What it did (see Flip). A rebuild that fails (a
  * translator or store bug on its history) is logged and leaves the task on messages, as it was, so the write it's
  * called from goes on as a row, as before this step; it isn't tried again until the thread is rebuilt (see `unbuilt`).
@@ -132,6 +137,8 @@ export function flip(c: Conn, task_id: string): Flip {
           let mine = failed;
           if (!mine) unbuilt.set(c, (mine = new Map()));
           mine.set(task_id, rebuilt_at(c, task_id));
+          // Nor by its readers (threads/history.ts's `ready`).
+          rebuild_failed(c, task_id);
           console.error(
             `${now()} ERROR huntaway: task ${task_id} stays on its messages: its thread couldn't be rebuilt as items to move onto them: ${err_str(e)}`,
           );
@@ -142,7 +149,12 @@ export function flip(c: Conn, task_id: string): Flip {
       }
     }
     db.run(c, "UPDATE tasks SET thread_source='items', thread_items=1 WHERE id=?1", task_id);
-    db.run(c, "UPDATE threads SET flipped_at=?2, flipped_writes=writes WHERE task_id=?1", task_id, now());
+    // Its messages rows go (step 14): nothing reads them once it's on items. flipped_writes is null, as for a thread that
+    // started on items, so a build from before step 13 (`threads-rebuild --back`) doesn't move it back onto no rows.
+    const kept = journals.get(c);
+    if (kept) for (const m of db.list_messages(c, task_id)) kept.set(m.id, m);
+    db.run(c, "DELETE FROM messages WHERE task_id=?1", task_id);
+    db.run(c, "UPDATE threads SET flipped_at=?2, flipped_writes=NULL WHERE task_id=?1", task_id, now());
     // Moved, but not yet committed: a crash here leaves the task on messages, as it was.
     reached("threads:flipped");
     return rebuilt ? "rebuilt" : "moved";
@@ -150,32 +162,8 @@ export function flip(c: Conn, task_id: string): Flip {
 }
 
 /**
- * Moves task `task_id` back onto messages, while that's safe: before its thread's first write since it moved, so its
- * messages are still the whole thread. Throws why it can't.
- */
-export function flip_back(c: Conn, task_id: string): void {
-  db.tx(c, () => {
-    const r = db.one<{ thread_source: string; writes: number | null; flipped_writes: number | null }>(
-      c,
-      "SELECT t.thread_source, h.writes, h.flipped_writes FROM tasks t LEFT JOIN threads h ON h.task_id=t.id WHERE t.id=?1",
-      task_id,
-    );
-    if (!r) throw new Error(`no task ${task_id}`);
-    if (r.thread_source !== "items") throw new Error(`task ${task_id}'s thread is on its messages already`);
-    if (r.flipped_writes == null) throw new Error(`task ${task_id}'s thread started on items: it has no messages to go back to`);
-    if (r.writes !== r.flipped_writes) {
-      throw new Error(
-        `task ${task_id}'s thread has been written since it moved onto items (${(r.writes ?? 0) - r.flipped_writes} times), and its messages don't have that`,
-      );
-    }
-    db.run(c, "UPDATE tasks SET thread_source='messages' WHERE id=?1", task_id);
-    db.run(c, "UPDATE threads SET flipped_at=NULL, flipped_writes=NULL WHERE task_id=?1", task_id);
-  });
-}
-
-/**
- * For the tests (testing.ts's `messages`): what an items task's messages were written as, which they compare with what
- * a task on messages has in its rows. Off (and nothing kept) unless a test's state turns it on.
+ * For the tests (testing.ts's `messages`): what an items task's messages were written as (its rows from before it moved
+ * too, which `flip` deletes), which they compare with what a task on messages has in its rows. Off (and nothing kept) unless a test's state turns it on.
  */
 const journals = new WeakMap<Conn, Map<number, Message>>();
 
@@ -293,7 +281,7 @@ export function kept(c: Conn, task_id: string, id: number): Message | null {
   }
   const item = store.get_item(c, task_id, `legacy:${id}`);
   if (item?.type === "notice" && item.code === "routine_report")
-    return { id, task_id, kind: "report", data: { ...(item.metadata ?? {}) }, created_at: item.created_at ?? "" };
+    return { id, task_id, kind: "report", data: { ...item.metadata }, created_at: item.created_at ?? "" };
   return null;
 }
 
