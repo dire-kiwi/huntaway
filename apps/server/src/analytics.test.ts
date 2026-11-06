@@ -36,14 +36,14 @@ test("reports_a_profiles_activity_in_range", () => {
        ('r1','me','p1','review',0,'Review','done','t1'),
        ('x1','other','p9','task',1,'Not mine','todo',NULL);
      ALTER TABLE tasks ADD COLUMN thread_items INTEGER NOT NULL DEFAULT 0;
-     ALTER TABLE tasks ADD COLUMN thread_source TEXT NOT NULL DEFAULT 'messages';
-     INSERT INTO messages VALUES
-       ('t1','user','{"text":"Start working on this task.","auto":true}','2026-10-01T09:00:00.000Z'),
-       ('t1','user','{"text":"looks good"}','2026-10-01T10:00:00.000Z'),
-       ('t1','claude','{}','2026-10-01T10:00:01.000Z'),
-       ('r1','user','{"text":"why?"}','2026-10-01T11:00:00.000Z'),
-       ('t1','user','{"text":"too late"}','2026-10-02T00:00:00.000Z'),
-       ('x1','user','{"text":"someone else"}','2026-10-01T10:00:00.000Z');
+     ALTER TABLE tasks ADD COLUMN thread_source TEXT NOT NULL DEFAULT 'items';
+     INSERT INTO thread_items VALUES
+       ('t1',0,'user_message','{"type":"user_message","text":"Start working on this task."}','{"auto":true}','2026-10-01T09:00:00.000Z'),
+       ('t1',1,'user_message','{"type":"user_message","text":"looks good"}',NULL,'2026-10-01T10:00:00.000Z'),
+       ('t1',2,'assistant_message','{"type":"assistant_message","text":"ok"}',NULL,'2026-10-01T10:00:01.000Z'),
+       ('r1',0,'user_message','{"type":"user_message","text":"why?"}',NULL,'2026-10-01T11:00:00.000Z'),
+       ('t1',3,'user_message','{"type":"user_message","text":"too late"}',NULL,'2026-10-02T00:00:00.000Z'),
+       ('x1',0,'user_message','{"type":"user_message","text":"someone else"}',NULL,'2026-10-01T10:00:00.000Z');
      INSERT INTO runs VALUES ('t1','prompt','2026-09-30T23:50:00.000Z','2026-10-01T00:10:00.000Z'),
        ('r1','review','2026-10-01T12:00:00.000Z',NULL),
        ('t1','prompt','2026-09-30T20:00:00.000Z','2026-09-30T21:00:00.000Z');`);

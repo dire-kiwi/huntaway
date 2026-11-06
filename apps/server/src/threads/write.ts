@@ -175,6 +175,13 @@ export function rebuild(c: Conn, task_id: string, immediate = false): Rebuilt {
 /** Tasks whose rebuild by `ensure` failed, so it isn't tried again on each read (until the server restarts). */
 const failed = new WeakMap<Conn, Set<string>>();
 
+/** Task `task_id`'s rebuild failed some other way (as it was to move onto items, threads/source.ts): `ensure` leaves it. */
+export function rebuild_failed(c: Conn, task_id: string): void {
+  let mine = failed.get(c);
+  if (!mine) failed.set(c, (mine = new Set()));
+  mine.add(task_id);
+}
+
 /**
  * Gives task `task_id` its thread kept as items if the setting is on and it doesn't have one this build wrote: one
  * from before the setting (or before step 7, when it defaulted on), or one an older converter wrote. A thread whose
@@ -199,9 +206,7 @@ export function ensure(c: Conn, task_id: string): boolean {
     rebuild(c, task_id);
     return true;
   } catch (e) {
-    let mine = failed.get(c);
-    if (!mine) failed.set(c, (mine = new Set()));
-    mine.add(task_id);
+    rebuild_failed(c, task_id);
     console.error(`${now()} ERROR huntaway: task ${task_id}'s thread couldn't be rebuilt as items: ${err_str(e)}`);
     return false;
   }

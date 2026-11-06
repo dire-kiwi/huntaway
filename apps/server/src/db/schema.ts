@@ -625,7 +625,7 @@ export function open(path: string): Conn {
       if (!has_column(conn, "runs", column.split(" ")[0])) batch(`ALTER TABLE runs ADD COLUMN ${column};`);
     }
     // From messages: the threads' tables come later (migrations 89 and 95).
-    stats.backfill(conn, "messages");
+    stats.backfill(conn);
     batch("PRAGMA user_version=79; COMMIT;");
   }
   if (version < 80) {
@@ -831,6 +831,21 @@ export function open(path: string): Conn {
     batch(`BEGIN; CREATE INDEX IF NOT EXISTS thread_items_user_time ON thread_items(type, created_at) WHERE type='user_message';
            PRAGMA user_version=101; COMMIT;`);
   }
+  if (version < 102) {
+    // The old message rows go (step 14 of docs/threads.md): a task on items reads and writes only its items, and its rows
+    // from before it moved can't rebuild them (threads/write.ts's rebuild_rows). Rows written since it moved (a message
+    // whose items couldn't be written, kept so it isn't lost) stay. Its flipped_writes goes too: see source.ts's flip.
+    // Then the file is compacted, once, if rows went: on the live board 323k rows, half of its 2 GB file.
+    batch("BEGIN;");
+    const deleted = run(
+      conn,
+      `DELETE FROM messages WHERE created_at <= (SELECT h.flipped_at FROM threads h JOIN tasks t ON t.id=h.task_id
+         WHERE h.task_id=messages.task_id AND t.thread_source='items')`,
+    ).changes;
+    batch("UPDATE threads SET flipped_writes=NULL; PRAGMA user_version=102; COMMIT;");
+    // In WAL mode VACUUM writes the whole file to the WAL: the checkpoint gives that room back.
+    if (deleted) batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
+  }
   return conn;
 }
 
@@ -876,7 +891,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 101;
+export const VERSION = 102;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

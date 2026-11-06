@@ -1,12 +1,10 @@
 // agent-threads' recorded Codex sessions (spec/fixtures/codex at main 5ad670a, copied into fixtures/codex), replayed as
 // the board would see them: the app-server's notifications and requests as the adapter writes them to the run's output
 // (agent/codex/adapter.ts), through agent/codex/output.ts's handle_line, and the board's own rows as it writes them (the
-// user's messages, its prompts and their answers). Each is replayed twice:
-//
-// - on a task whose items are its source, which agent/codex/driver.ts writes straight from the notifications: its items
-//   must be the ones the fixture's expected.jsonl folds into, but for what the board does otherwise (`ours`, `theirs`);
-// - and on a task still on its messages, where they're made into messages shaped like Claude Code's and translated:
-//   every difference between the two is listed in `DIFFERENCES` (and in docs/threads.md), so none goes unnoticed.
+// user's messages, its prompts and their answers), on a task whose items agent/codex/driver.ts writes straight from the
+// notifications: its items must be the ones the fixture's expected.jsonl folds into, but for what the board does
+// otherwise (`ours`, `theirs`). (Until step 13 each was replayed on a task on messages too, where they were made into
+// messages shaped like Claude Code's: docs/threads.md lists how the two differed.)
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -83,8 +81,8 @@ interface Replayed {
 }
 
 /** Scenario `scenario` replayed on a task whose thread is on `on` (see the top of the file). */
-function replay(scenario: string, on: "items" | "messages"): Replayed {
-  const s = testing.on_items(testing.state(), on === "items");
+function replay(scenario: string): Replayed {
+  const s = testing.on_items(testing.state());
   db.set_setting(s.db(), write.SETTING, "true");
   const profile = db.insert_profile(s.db(), "p", [], null);
   const task = db.insert_task(s.db(), {
@@ -99,7 +97,7 @@ function replay(scenario: string, on: "items" | "messages"): Replayed {
     effort: null,
     claude_config_id: null,
   });
-  if (on === "items") assert.equal(source.flip(s.db(), task.id), "moved");
+  assert.equal(source.flip(s.db(), task.id), "moved");
   const fixture = JSON.parse(readFileSync(join(DIR, scenario, "fixture.json"), "utf8"));
   const asks = (tool: string) => fixture.permissions === "ask" || tool === "request_user_input";
   const lines = jsonl(join(DIR, scenario, "session.jsonl"));
@@ -157,8 +155,7 @@ function replay(scenario: string, on: "items" | "messages"): Replayed {
     if (m.method === "turn/completed" && m.params?.threadId === db.get_task(s.db(), task.id)!.session_id) turn = false;
     line(m);
   }
-  assert.equal(source.of(s.db(), task.id), on);
-  if (on === "messages") assert.deepEqual(write.compare(s.db(), task.id), []);
+  assert.equal(source.of(s.db(), task.id), "items");
   return { items: store.items(s.db(), task.id), requests: store.requests(s.db(), task.id) };
 }
 
@@ -247,76 +244,9 @@ test("there_are_20_codex_fixtures", () => {
 
 for (const scenario of scenarios) {
   test(`codex_fixture_${scenario}`, () => {
-    const got = replay(scenario, "items");
+    const got = replay(scenario);
     const want = expected(scenario);
     assert.deepEqual(ours(got, scenario), theirs(want));
     assert.deepEqual(got.requests.map(request), want.requests.filter((r) => r.type !== "plan").map(request));
-  });
-}
-
-/**
- * Every way the items the driver writes differ from those the messages path made of the same run, by scenario: what
- * the comparison (`detail`) finds. Each is listed, and explained or closed, in docs/threads.md ("Codex writes items
- * directly").
- */
-const EXIT = "exit_code: a command's exit code is in its result";
-const DIFFERENCES: Record<string, string[]> = {
-  interrupt: ["cancelled: a call its turn's interruption cut short"],
-  "permission-allow": [EXIT],
-  plan: [EXIT, EXIT],
-  "set-options": [EXIT, EXIT],
-  steer: [EXIT],
-  subagent: [EXIT],
-  "tool-calls": [EXIT, EXIT],
-};
-
-/** An item in detail, for the comparison with the messages path: all of it but its id (not a tool call's), and times. */
-function detail(i: any): any {
-  const { created_at: _c, ...out } = i;
-  if (out.type !== "tool_call") delete out.id;
-  if (out.subagent?.ended_at) out.subagent = { ...out.subagent, ended_at: "(when)" };
-  return out;
-}
-
-/** What tells the driver's items from the messages path's, as `DIFFERENCES` names it. */
-function differences(native: Item[], legacy: Item[]): string[] {
-  const out: string[] = [];
-  const a = native.map(detail);
-  const b = legacy.map(detail);
-  const key = (x: any) => JSON.stringify(x);
-  for (let n = 0; n < Math.max(a.length, b.length); n++) {
-    const [x, y] = [a[n], b[n]];
-    if (key(x) === key(y)) continue;
-    if (x?.type === "tool_call" && y?.type === "tool_call" && x.id === y.id) {
-      const { result: rx, status: sx, ...restx } = x;
-      const { result: ry, status: sy, ...resty } = y;
-      if (key(restx) === key(resty)) {
-        if (sx === "cancelled" && sy === "running" && rx === undefined && ry === undefined) {
-          out.push("cancelled: a call its turn's interruption cut short");
-          continue;
-        }
-        if (sx === sy && rx?.content === ry?.content && rx?.exit_code !== undefined && ry?.exit_code === undefined && rx.truncated === ry.truncated) {
-          out.push(EXIT);
-          continue;
-        }
-      }
-    }
-    out.push(`item ${n}: native ${key(x)}, messages ${key(y)}`);
-  }
-  return out;
-}
-
-for (const scenario of scenarios) {
-  test(`codex_fixture_${scenario}_against_the_messages_path`, () => {
-    const native = replay(scenario, "items");
-    const legacy = replay(scenario, "messages");
-    assert.deepEqual(differences(native.items, legacy.items), DIFFERENCES[scenario] ?? []);
-    // The board's requests are the same either way.
-    const req = (r: any) => {
-      const { created_at: _c, metadata, ...rest } = r;
-      const { message_id: _m, ...md } = metadata ?? {};
-      return { ...rest, metadata: md };
-    };
-    assert.deepEqual(native.requests.map(req), legacy.requests.map(req));
   });
 }

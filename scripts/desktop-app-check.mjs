@@ -10,8 +10,8 @@
 //
 // The app starts with its own data dir, config dir and a free port (no 7878), release checks pointed at nothing, and
 // scripts/fake-claude for agents. Then: the window loads the board from the server the app started, which is the one
-// in its resources, run by the Node there; an agent runs a turn under the bundled ia-shim; the agents' MCP helper
-// (`huntaway mcp`, the same Node) answers tools/list; and quitting the app stops the server. Electron runs headless on
+// in its resources, run by the Node there; an agent runs a turn under the bundled ia-shim, given the board's tools (its
+// in-process MCP server's tools/list, in the `initialize` its input starts with); and quitting the app stops the server. Electron runs headless on
 // Linux; on macOS it opens a window (CI's macOS runners have a desktop session).
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -125,42 +125,21 @@ const alive = () => {
   }
 };
 
-/** The MCP helper an agent's run starts (`huntaway mcp`): initialize, then tools/list, over stdio. */
-async function mcpTools() {
-  const helper = spawn(path.join(resources, "huntaway"), ["mcp"], {
-    env: { ...env, IA_URL: base, IA_TOKEN: token, IA_RUN_ID: "desktop-app-check" },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  let buf = "";
-  let err = "";
-  helper.stderr.on("data", (d) => (err += d));
-  const replies = new Map();
-  helper.stdout.on("data", (d) => {
-    buf += d;
-    for (let i; (i = buf.indexOf("\n")) >= 0;) {
-      const line = buf.slice(0, i);
-      buf = buf.slice(i + 1);
-      try {
-        const m = JSON.parse(line);
-        if (m.id != null) replies.set(m.id, m);
-      } catch {
-        // not JSON-RPC
-      }
-    }
-  });
-  const send = (m) => helper.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+/**
+ * The board's tools run `run` (its folder) was given: the tools/list of the board's in-process MCP server, in the
+ * `initialize` control request its prompt starts with (apps/server/src/agent/runner/requests.ts's initialize_line).
+ * Until HA-225 runs could start a `huntaway mcp` helper, which this checked instead.
+ */
+function boardTools(run) {
+  const first = fs.readFileSync(path.join(run, "prompt"), "utf8").split("\n")[0];
+  let line;
   try {
-    send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "desktop-app-check", version: "1" } } });
-    await until("the MCP helper's initialize reply", () => replies.get(1), 30_000);
-    send({ method: "notifications/initialized" });
-    send({ id: 2, method: "tools/list" });
-    const list = await until("the MCP helper's tools/list reply", () => replies.get(2), 30_000);
-    return list.result?.tools?.map((t) => t.name) ?? [];
-  } catch (e) {
-    throw new Error(`${e.message} (helper's stderr: ${err.trim() || "none"})`);
-  } finally {
-    helper.kill();
+    line = JSON.parse(first);
+  } catch {
+    return [];
   }
+  const manifests = line?.request?.sdkMcpServerManifests ?? {};
+  return Object.values(manifests).flatMap((m) => m?.toolsListResult?.tools?.map((t) => t.name) ?? []);
 }
 
 let ok = false;
@@ -226,12 +205,8 @@ try {
   const exit = JSON.parse(fs.readFileSync(path.join(run, "exit"), "utf8"));
   check(exit.code === 0, "which recorded the agent's exit", exit);
 
-  const tools = await mcpTools();
-  check(
-    tools.some((t) => /create_task/.test(t)),
-    "the agents' MCP helper (huntaway mcp) lists the board's tools",
-    tools,
-  );
+  const tools = boardTools(run);
+  check(tools.includes("create_task"), "it was given the board's tools", tools);
 
   log("quitting");
   process.kill(-proc.pid, "SIGTERM");

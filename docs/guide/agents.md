@@ -55,7 +55,7 @@ threads it spawns): their parent does. The tools:
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
-_Waiting_), plus the internal `permission_prompt` (for compactions). Review threads
+_Waiting_). Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
 `list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see
@@ -106,7 +106,7 @@ server off, or has its own `gh`, gets neither.
 each), and each profile can pick which one its agents act as there (_GitHub account_ in Settings →
 Profiles → Edit, per host); a project can pick its own in its settings, overriding the profile's.
 The default is gh's active account. The run's launch records the account for the `gh` server
-(or passes it as `IA_GH_ACCOUNT` to a `huntaway gh-mcp` helper), which runs each call with that account's token (`gh auth token --user`) and no
+(see below), which runs each call with that account's token (`gh auth token --user`) and no
 other credentials, so switching gh's active account doesn't matter. gh gets a config folder of its
 own for the call (`GH_CONFIG_DIR`, private to the user and removed afterwards) with a login for the
 account's host only, so it has no token for any other host, whatever the call names; no tokens in
@@ -165,7 +165,7 @@ moved on. Claude Code says so with a `notifications/cancelled` MCP message (`mcp
 call's JSON-RPC id, which the board finds among the run's open calls in `mcp_calls`; a permission
 prompt it gives up on is a `control_cancel_request` instead. Such runs are run format 4,
 which an older build that's rolled back to stops rather than follow, as it couldn't answer their
-calls. With `IA_MCP_STDIO=1` (below), Claude runs get the helpers instead.
+calls.
 
 Older Codex sessions and compactions reach the board's tools over MCP's streamable HTTP transport, and every
 run reaches the `gh` server that way, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on
@@ -189,9 +189,7 @@ trying, with backoff. Claude Code also drops a call 90 seconds after its connect
 the call has made progress since, so the streams send progress notifications every 20 seconds
 (and as soon as a client reconnects).
 
-Runs started before the board served these (they have `huntaway mcp` and `huntaway gh-mcp` stdio
-helpers in their `mcp.json`) keep them: the helpers call `/api/internal/mcp` with the host's
-token, which still works. `IA_MCP_STDIO=1` in the server's environment starts new runs with the
-helpers too. Each helper is a Node process of about 90 MB (RSS) under the TypeScript server; with
-five agents running on a test server, each agent's processes came to 424 MB RSS (242 MB PSS)
-with the helpers and 239 MB (159 MB PSS) without (HA-180).
+Runs used to start `huntaway mcp` and `huntaway gh-mcp` stdio helpers of their own (before HA-180, or with
+`IA_MCP_STDIO=1`), which called `/api/internal/mcp`: HA-225 removed them. Each was a Node process of about 90 MB (RSS)
+under the TypeScript server; with five agents running on a test server, each agent's processes came to 424 MB RSS
+(242 MB PSS) with the helpers and 239 MB (159 MB PSS) without (HA-180).

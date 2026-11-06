@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterAll, beforeAll, test } from "vite-plus/test";
-import { demoProject, startServer, withBrowser } from "./harness.mjs";
+import { demoProject, routeThread, startServer, threadFeed, withBrowser } from "./harness.mjs";
 
 let server, project;
 beforeAll(async () => {
@@ -9,32 +9,31 @@ beforeAll(async () => {
 });
 afterAll(() => server?.stop());
 
-// IA-168: a new message only builds and redraws what it changes (rows keep their objects, and pick what they show
-// from the thread's model), and a thread nobody shows is dropped. What changes still has to show: a call's result
-// that comes later, a prompt's answer, a subagent's messages and status, and a thread opened again.
-test("new and updated messages show in the thread, and a closed thread isn't fetched again", async () => {
+// IA-168: a new item only builds and redraws what it changes (rows keep their objects, and pick what they show from
+// the thread's model), and a thread nobody shows is dropped. What changes still has to show: a call's result that
+// comes later, a prompt's answer, a subagent's items and status, and a thread opened again. The thread's events are
+// the server's translator's for the messages a run would have stored (threadFeed), sent as `thread_event`s.
+test("new and updated items show in the thread, and a closed thread isn't fetched again", async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Thread updates", status: "in_review" });
+  const feed = threadFeed(task.id);
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    let socket;
     await page.routeWebSocket(/\/api\/ws/, (ws) => {
-      socket = ws;
+      feed.socket = ws;
       ws.connectToServer();
     });
     await page.clock.install();
-    let fetches = 0;
-    page.on("request", (r) => r.url().includes(`/tasks/${task.id}/messages`) && r.method() === "GET" && fetches++);
-    let id = 5000;
-    const send = (data, kind = "claude", type = "message", msgId = ++id) => {
-      socket.send(JSON.stringify({ type, task_id: task.id, message: { id: msgId, task_id: task.id, kind, created_at: new Date().toISOString(), data } }));
-      return msgId;
-    };
+    const asked = await routeThread(page, task.id, feed);
+    const windows = () => asked.filter((q) => q.startsWith("thread?")).length;
+    const catchUps = () => asked.filter((q) => q.startsWith("thread/events")).length;
+    const send = (data, kind = "claude") => feed.add({ kind, data });
     const assistant = (content, parent = null) => send({ type: "assistant", parent_tool_use_id: parent, message: { content } });
     const result = (useId, content, extra = {}, parent = null) =>
       send({ type: "user", parent_tool_use_id: parent, message: { content: [{ type: "tool_result", tool_use_id: useId, content, ...extra }] } });
 
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait No agent has worked on this yet"]);
-    socket.send(JSON.stringify({ type: "task", task: { ...task, running: true } }));
+    assert.equal(windows(), 1);
+    feed.socket.send(JSON.stringify({ type: "task", task: { ...task, running: true, thread_source: "items" } }));
 
     // A group of calls, whose results come after them.
     assistant([{ type: "text", text: "Looking around." }]);
@@ -49,10 +48,10 @@ test("new and updated messages show in the thread, and a closed thread isn't fet
     await ui.run(["click ls second", "wait no such dir", "click ls first", "wait first output"]);
 
     // A prompt, then its answer.
-    const prompt = { kind: "permission", status: "pending", tool_use_id: "c3", tool_name: "Bash", input: { command: "rm -rf build" }, request_id: "p1" };
-    const promptId = send(prompt, "permission");
+    assistant([{ type: "tool_use", id: "c3", name: "Bash", input: { command: "rm -rf build" } }]);
+    const prompt = send({ status: "pending", tool_use_id: "c3", tool_name: "Bash", input: { command: "rm -rf build" }, request_id: "p1" }, "permission");
     await ui.run(["wait Claude wants to use", "wait Always allow Bash"]);
-    send({ ...prompt, status: "allowed" }, "permission", "message_updated", promptId);
+    feed.update({ ...prompt, data: { ...prompt.data, status: "allowed" } });
     await ui.run(["gone Always allow Bash", "wait allowed"]);
 
     // A subagent: its row, its messages as they come, and its result.
@@ -69,51 +68,39 @@ test("new and updated messages show in the thread, and a closed thread isn't fet
     assistant([{ type: "text", text: "All done." }]);
     await ui.run(["wait All done"]);
 
-    // Open, the thread is fetched again on a resync; closed for a while, it isn't.
-    const before = fetches;
-    socket.send(JSON.stringify({ type: "resync" }));
-    for (const end = Date.now() + 5000; fetches === before && Date.now() < end;) await page.waitForTimeout(50);
-    assert.equal(fetches, before + 1, "an open thread is fetched on a resync");
+    // Open, the thread catches up on a resync; closed for a while, it doesn't.
+    const host = (await server.api("GET", "/hosts")).find((h) => h.local).id;
+    assert.equal(catchUps(), 0);
+    feed.socket.send(JSON.stringify({ type: "resync", host_id: host }));
+    for (const end = Date.now() + 5000; catchUps() === 0 && Date.now() < end;) await page.waitForTimeout(50);
+    assert.equal(catchUps(), 1, "an open thread catches up on a resync");
     await page.keyboard.press("Escape");
     await ui.run(["gone All done"]);
     await page.clock.fastForward(30_000);
-    socket.send(JSON.stringify({ type: "resync" }));
+    feed.socket.send(JSON.stringify({ type: "resync", host_id: host }));
     await page.waitForTimeout(1000);
-    assert.equal(fetches, before + 1, "a closed thread isn't fetched on a resync");
+    assert.equal(catchUps(), 1, "a closed thread doesn't catch up on a resync");
 
-    // Opened again, it's fetched again (the server has none of these messages, as they only came over the websocket).
+    // Opened again, its window is loaded again, with everything.
     await page.locator(`[data-task="${task.id}"]`).first().click();
-    await ui.run(["wait No agent has worked on this yet"]);
-    assert.equal(fetches, before + 2);
+    await ui.run(["wait All done", "wait Explore config"]);
+    assert.equal(windows(), 2);
   });
 });
 
-// A subagent's messages leave the main conversation's items as they were, so its rows have to keep the thread at its
-// end themselves: expanded in the main conversation, and in the subagent's own thread.
-test("a thread at its end follows a subagent's messages, inline and in its own thread", async () => {
+// A subagent's items leave the main conversation's rows as they were, so its rows have to keep the thread at its end
+// themselves: expanded in the main conversation, and in the subagent's own thread.
+test("a thread at its end follows a subagent's items, inline and in its own thread", async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Subagent follow", status: "in_review" });
+  const feed = threadFeed(task.id);
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    let socket;
     await page.routeWebSocket(/\/api\/ws/, (ws) => {
-      socket = ws;
+      feed.socket = ws;
       ws.connectToServer();
     });
-    let id = 7000;
-    const assistant = (content, parent = null) =>
-      socket.send(
-        JSON.stringify({
-          type: "message",
-          task_id: task.id,
-          message: {
-            id: ++id,
-            task_id: task.id,
-            kind: "claude",
-            created_at: new Date().toISOString(),
-            data: { type: "assistant", parent_tool_use_id: parent, message: { content } },
-          },
-        }),
-      );
+    await routeThread(page, task.id, feed);
+    const assistant = (content, parent = null) => feed.add({ kind: "claude", data: { type: "assistant", parent_tool_use_id: parent, message: { content } } });
     const scroller = () =>
       page.evaluate(() => {
         const el = [...document.querySelectorAll(".overflow-y-auto")].find((e) => e.querySelector(".prose-chat"));
@@ -131,7 +118,7 @@ test("a thread at its end follows a subagent's messages, inline and in its own t
     };
 
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait No agent has worked on this yet"]);
-    socket.send(JSON.stringify({ type: "task", task: { ...task, running: true } }));
+    feed.socket.send(JSON.stringify({ type: "task", task: { ...task, running: true, thread_source: "items" } }));
     for (let i = 0; i < 20; i++) assistant([{ type: "text", text: `Reply ${i}\n\nwith a second paragraph` }]);
     assistant([{ type: "tool_use", id: "A1", name: "Agent", input: { description: "Explore config", prompt: "Find the config." } }]);
     assistant([{ type: "text", text: "Finding start" }], "A1");
@@ -160,19 +147,7 @@ test("a thread at its end follows a subagent's messages, inline and in its own t
     await ui.run(["wait Late prompt", "click [aria-label='Open subagent thread'] >> nth=1", "wait Second subagent here", "wait Show in thread"]);
     await scrollTo();
     const prompt = Array.from({ length: 40 }, (_, i) => `Prompt line ${i}`).join("\n");
-    socket.send(
-      JSON.stringify({
-        type: "message",
-        task_id: task.id,
-        message: {
-          id: ++id,
-          task_id: task.id,
-          kind: "claude",
-          created_at: new Date().toISOString(),
-          data: { type: "system", subtype: "task_started", tool_use_id: "A2", task_id: "k2", prompt },
-        },
-      }),
-    );
+    feed.add({ kind: "claude", data: { type: "system", subtype: "task_started", tool_use_id: "A2", task_id: "k2", prompt } });
     await ui.run(["wait Prompt line 39"]);
     assert.ok((await scroller()).gap < 80, "a subagent's own thread at its end follows a prompt that comes late");
   });

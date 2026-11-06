@@ -1,40 +1,13 @@
 // Port of the tests in server/src/mcp.rs.
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import { Ctx, check_args, tool_names } from "./mcp.ts";
+import { check_args, tool_names } from "./mcp.ts";
 import * as mcp from "./mcp.ts";
-
-test("helper_advertises_task_field_support_outside_the_tool_arguments", async () => {
-  // A server that answers with the call it was sent.
-  const server = createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => {
-      assert.equal(req.url, "/api/internal/mcp");
-      const body = JSON.parse(Buffer.concat(chunks).toString());
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ result: body }));
-    });
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
-  try {
-    const url = `http://127.0.0.1:${(server.address() as any).port}`;
-    const ctx = new Ctx(url, "", "run");
-    const args = { task_id: "IA-1" };
-    const sent = await ctx.call("get_task", args);
-    assert.equal(sent.task_fields, true);
-    assert.deepEqual(sent.args, args);
-    assert.equal(sent.run_id, "run");
-    assert.ok(tool_names(false).includes("get_task_field"));
-  } finally {
-    server.close();
-  }
-});
 
 test("reviewers_only_get_the_read_only_tools_and_submit_review", () => {
   const [task, review] = [tool_names(false), tool_names(true)];
   assert.ok(task.includes("update_project") && !task.includes("submit_review"));
-  const want = ["get_project", "get_task", "get_task_field", "list_projects", "list_tasks", "permission_prompt", "request_user_input", "submit_review", "wait"];
+  const want = ["get_project", "get_task", "get_task_field", "list_projects", "list_tasks", "request_user_input", "submit_review", "wait"];
   assert.deepEqual([...review].sort(), want);
   assert.ok(task.includes("delete_task"));
 });
@@ -50,7 +23,8 @@ test("checks_arguments_against_the_schema", () => {
   assert.ok(check_args("update_task", { task_id: "", status: "done" })!.startsWith("update_task needs task_id"));
   assert.notEqual(check_args("list_tasks", { project: "issue-agent" }), null);
   assert.ok(check_args("submit_review", { verdict: "pass", summary: "ok" })!.includes("serious_issues"));
-  // Claude Code's own; and unknown tools are left to the server to refuse.
+  // Not a tool of the server's any more (the board's own prompts), and unknown tools are left to the server to refuse.
+  assert.ok(!tool_names(false).includes("permission_prompt"));
   assert.equal(check_args("permission_prompt", { tool_name: "Bash", input: {}, extra: 1 }), null);
   assert.equal(check_args("no_such_tool", { x: 1 }), null);
 });

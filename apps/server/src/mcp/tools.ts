@@ -1,8 +1,8 @@
 // Port of server/src/mcp/tools.rs.
 /**
- * The `huntaway` MCP tools that agents call, executed here on behalf of the agent's MCP helper (`POST
- * /api/internal/mcp`). Calls are deduplicated by call id, so a helper that retries across a server restart never runs a
- * tool twice.
+ * The `huntaway` MCP tools that agents call, executed here for the board's MCP server (over HTTP, mcp/http.ts, and in
+ * process, agent/runner/requests.ts). Calls are deduplicated by call id, so a call delivered again across a server
+ * restart never runs a tool twice.
  *
  * Tools act on the caller's profile's board and on the boards of the other profiles that let its agents in
  * (`Profile::agent_access`). `list_projects` covers all of them, labelled with their profile; projects and tasks can be

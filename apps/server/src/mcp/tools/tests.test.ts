@@ -210,38 +210,6 @@ test("agents_say_what_a_task_starts_from", async () => {
   assert.ok(e.includes("start_from is for a task with a worktree"), e);
 });
 
-test("legacy_helper_keeps_full_details_after_server_upgrade", async () => {
-  const s = state();
-  const p = db.insert_profile(s.db(), "personal", [], null);
-  project(s, p, "ia", "IA");
-  const t = task(s, "ia", "Existing thread");
-  const description = "Description ā🙂\n".repeat(160);
-  const review = { ...db.Review_default(), state: "issues", summary: "Review\n".repeat(400) };
-  db.update_task(s.db(), t.id, [
-    ["description", description],
-    ["review", review],
-  ]);
-  const run = db.insert_run(s.db(), t.id, "prompt");
-  // An already-running helper keeps its API 58 schema and sends the same request shape after reconnecting to the
-  // upgraded daemon. No get_task_field capability.
-  const request: any = { run_id: run.id, call_id: "old-helper", tool: "get_task", args: { task_id: "IA-1" } };
-  const full = await post_tool(s, "/api/internal/mcp", request);
-  assert.ok(full.description === description, "legacy helper lost its description");
-  assert.equal(full.review.summary, review.summary);
-  assert.equal(full.omitted_fields, undefined);
-  // Its retried call remains idempotent across the upgrade too.
-  assert.deepEqual(await post_tool(s, "/api/internal/mcp", request), full);
-
-  const current = { ...request, call_id: "new-helper", task_fields: true };
-  const overview = await post_tool(s, "/api/internal/mcp", current);
-  assert.equal(overview.description, undefined);
-  assert.equal(overview.field_lengths.description, char_count(description));
-  current.call_id = "new-helper-field";
-  current.tool = "get_task_field";
-  current.args = { task_id: "IA-1", field: "description", limit: TASK_FIELD_MAX_LIMIT };
-  assert.equal((await post_tool(s, "/api/internal/mcp", current)).content, description);
-});
-
 test("legacy_host_keeps_full_details_from_upgraded_host", async () => {
   const s = state();
   const p = db.insert_profile(s.db(), "personal", [], null);

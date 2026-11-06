@@ -1,14 +1,13 @@
 import clsx from "clsx";
 import { Hourglass, Loader2 } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Message, Task, Turn } from "../../api";
-import { useStore, useThreadMessages } from "../../store";
+import type { Task, Turn } from "../../api";
 import { useDelta } from "../../deltas";
 import { useSubagentView, type Subagent } from "../../subagents";
-import { threadModel, type Item, type ThreadModel } from "../../threadModel";
+import type { Item, ThreadModel } from "../../threadModel";
 import { itemModel } from "../../itemModel";
-import { loadOlderItems, reloadItemThread } from "../../itemThreads";
-import { answersById, respond, useDrawsItems, useItemThread } from "../../threadView";
+import { loadOlderItems, reloadItemThread, useItemThreads } from "../../itemThreads";
+import { answersById, hasThread, respond, useItemThread, useServesItems } from "../../threadView";
 import type { Snapshot } from "../../threads";
 import { PromptAnswers, type PromptAnswerer } from "./thread/promptAnswers";
 import { RunningDot, WaitReason, waitTitle } from "../ui";
@@ -27,19 +26,16 @@ type ThreadProps = {
 };
 
 /**
- * Memoized, so the task view redrawing leaves a long thread be: pass an `empty` that stays the same. A thread kept as
- * items is drawn from them (threadView.ts), and every other from its messages, the same way. It's one element tree
- * either way, so a thread that switches (its first message flags it, the setting changes, its host has no items for it)
- * keeps its view, and the composer what's being typed in it and its focus.
+ * Memoized, so the task view redrawing leaves a long thread be: pass an `empty` that stays the same. It's drawn from
+ * the thread's items (threadView.ts); a host older than API 119, or one that has no items for the task, gets a notice
+ * in its place.
  */
 export const Thread = memo(function Thread(props: ThreadProps) {
   const { task } = props;
-  const items = useDrawsItems(task);
-  const fromItems = useItemsView(task, items);
-  // Until its window has loaded, a thread that's just switched to its items shows the messages it has.
-  const fromMessages = useMessagesView(task, !fromItems, !items);
-  const view = fromItems ?? fromMessages!;
-  // The prompt cards answer a thread drawn from its items with its commands.
+  const serves = useServesItems(task);
+  const missing = useItemThreads((s) => !!s.missing[task.id]);
+  const view = useItemsView(task, serves && hasThread(task));
+  // The prompt cards answer with the thread's commands.
   const host = task.host_id;
   const id = task.id;
   const answerer = useMemo<PromptAnswerer>(
@@ -49,14 +45,19 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     }),
     [host, id],
   );
+  const notice = !serves
+    ? "This host's Huntaway is too old to show this thread here: update it."
+    : missing
+      ? "This task's thread isn't kept as items on its host, so it can't be shown here: update the host's Huntaway, or turn on Keep threads as items in its settings."
+      : undefined;
   return (
-    <PromptAnswers.Provider value={fromItems ? answerer : null}>
-      <ThreadView {...props} model={view.model} paging={view.paging} source={fromItems ? "items" : "messages"} />
+    <PromptAnswers.Provider value={answerer}>
+      <ThreadView {...props} model={view.model} paging={view.paging} notice={notice} />
     </PromptAnswers.Provider>
   );
 });
 
-/** How the thread's earlier part loads, either way. */
+/** How the thread's earlier part loads. */
 interface Paging {
   /** What's shown has loaded. */
   loaded: boolean;
@@ -76,35 +77,10 @@ interface Paging {
 type View = { model: ThreadModel; paging: Paging };
 
 /**
- * The thread from its messages, while `on` (null otherwise): kept while it's on, and loaded if `load` (a thread that's
- * switched to its items keeps the messages it had until its window comes, without loading them).
+ * The thread's items, while `on`: its window, followed live and paged back (itemThreads.ts), drawn as itemModel.ts
+ * makes it (empty until its window has loaded). Off, it's empty.
  */
-function useMessagesView(task: Task, on: boolean, load: boolean): View | null {
-  const messages = useThreadMessages(on ? task.id : null, load);
-  // A long thread loads in pages, older ones as it's scrolled up (API 56).
-  const pages = useStore((s) => (on ? s.threads[task.id] : undefined));
-  const loadOlderMessages = useStore((s) => s.loadOlderMessages);
-  const oldest = messages?.[0]?.id;
-  const paging = useMemo<Paging>(
-    () => ({
-      loaded: !!messages,
-      more: !!pages?.more,
-      loading: !!pages?.loading,
-      oldest,
-      loadOlder: () => loadOlderMessages(task.id),
-      before: (sub) => sub.messageId != null && oldest != null && sub.messageId < oldest,
-    }),
-    [messages, pages?.more, pages?.loading, oldest, loadOlderMessages, task.id],
-  );
-  if (!on) return null;
-  return { model: threadModel(task.id, messages ?? NO_MESSAGES, task.running, pages?.subagents), paging };
-}
-
-/**
- * A thread kept as items, while `on`: its window, followed live and paged back (itemThreads.ts), drawn as itemModel.ts
- * makes it. Null until its window has loaded.
- */
-function useItemsView(task: Task, on: boolean): View | null {
+function useItemsView(task: Task, on: boolean): View {
   const thread = useItemThread(task, on);
   const snap = thread?.snap;
   const start = snap?.start ?? 0;
@@ -112,35 +88,29 @@ function useItemsView(task: Task, on: boolean): View | null {
   const items = snap?.items;
   const paging = useMemo<Paging>(
     () => ({
-      loaded: !!items,
+      loaded: !on || !!items,
       more: start > 0,
       loading: !!thread?.loading,
       oldest: start,
       loadOlder: () => loadOlderItems(task.id),
       // Its call is one of the window's context items, from before its start: its own items can be too.
       before: (sub) => !!context && (items ?? []).slice(0, context.length).some((i) => i.id === sub.id),
+      // A window that failed to load is shown as such, with its way to try again.
       failed: !!thread?.failed,
       retry: () => reloadItemThread(task.id),
     }),
-    [items, start, context, thread?.loading, thread?.failed, task.id],
+    [on, items, start, context, thread?.loading, thread?.failed, task.id],
   );
-  // A window that failed to load is shown as such, with its way to try again.
-  if (!on || (!snap && !thread?.failed)) return null;
   return { model: itemModel(task.id, snap ?? NO_SNAPSHOT, task.running), paging };
 }
 
 const NO_SNAPSHOT: Pick<Snapshot, "items" | "requests"> = { items: [], requests: [] };
 
-/** The thread, drawn from `model` (`source` says which way, in `data-thread`, for tests). */
-function ThreadView({
-  task,
-  cwd,
-  placeholder,
-  empty,
-  model,
-  paging,
-  source,
-}: ThreadProps & { model: ThreadModel; paging: Paging; source: "items" | "messages" }) {
+/**
+ * The thread, drawn from `model`, or `notice` in its place. `data-thread` says which (`items` once it's loaded, or
+ * `notice`), for tests.
+ */
+function ThreadView({ task, cwd, placeholder, empty, model, paging, notice }: ThreadProps & { model: ThreadModel; paging: Paging; notice?: string }) {
   const [olderFailed, setOlderFailed] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -228,7 +198,7 @@ function ThreadView({
     if (el && shownView.current === null && p.more && !p.loading && !olderFailed && el.scrollTop < 800) loadOlder();
   }, [loadOlder, olderFailed]);
   useEffect(nearTop, [items, nearTop]);
-  // A subagent's thread, from the Agents list, that started before the loaded messages: load back to it.
+  // A subagent's thread, from the Agents list, that started before the loaded part: load back to it.
   const viewedBefore = !!viewed && paging.before(viewed);
   useEffect(() => {
     if (viewedBefore && paging.more && !paging.loading && !olderFailed) loadOlder();
@@ -252,7 +222,7 @@ function ThreadView({
 
   return (
     <ThreadCtx.Provider value={threadSource}>
-      <div className="flex h-full min-h-0 flex-col" data-thread={paging.loaded ? source : undefined}>
+      <div className="flex h-full min-h-0 flex-col" data-thread={notice ? "notice" : paging.loaded ? "items" : undefined}>
         {viewed && <SubagentBar sub={viewed} />}
         <div
           ref={scroller}
@@ -265,6 +235,7 @@ function ThreadView({
           }}
           className="min-h-0 flex-1 overflow-y-auto"
         >
+          {notice && <div className="mx-auto w-full max-w-3xl px-5 pt-6 text-[12.5px] text-muted narrow:px-3 narrow:pt-4">{notice}</div>}
           {/* The main conversation's; a subagent's thread only loads back to its start. */}
           {paging.failed && (
             <div className="flex justify-center pt-5 text-[12px] text-faint">
@@ -334,8 +305,6 @@ function ThreadView({
     </ThreadCtx.Provider>
   );
 }
-
-const NO_MESSAGES: Message[] = [];
 
 /**
  * The first of the thread's items on screen in `scroller`, and where it is: in a group of tool calls,

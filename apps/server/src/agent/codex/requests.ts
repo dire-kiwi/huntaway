@@ -165,8 +165,8 @@ export function prompt_answer(req: CodexRequest, decision: any): any {
 }
 
 /** Codex's answer to a board tool's call (`r`, its dispatch's result), as the board's MCP server would have given it. */
-export function tool_answer(r: { ok: any } | { err: string }, name = ""): any {
-  const result = mcp.call_result(name, r);
+export function tool_answer(r: { ok: any } | { err: string }): any {
+  const result = mcp.call_result(r);
   const text = (Array.isArray(result.content) ? result.content : []).map((c: any) => str(c?.text) ?? "").join("\n");
   return { contentItems: [{ type: "inputText", text }], success: result.isError !== true };
 }

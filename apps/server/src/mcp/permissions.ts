@@ -613,14 +613,13 @@ function late_answers(input: any, answers: string[][]): string {
  * `deletions` the tasks they're waiting to delete too, and with `automations` the automations they're waiting to create,
  * change or delete (older UIs only know project changes, or those and deletions).
  */
-export function pending_approvals(s: Shared, deletions: boolean, automations: boolean, workflows = false, mode: history.Mode = "auto"): any[] {
+export function pending_approvals(s: Shared, deletions: boolean, automations: boolean, workflows = false): any[] {
   // Workflows' approvals are asked as automations' are, with `workflow` in place of `automation`: a UI from before them
   // (API 107) isn't shown them.
   const c = s.db();
   const rows = db.all<any>(
     c,
-    `SELECT p.*, m.data, ${history.reads(mode, "items")} AS on_items FROM permission_requests p JOIN tasks t ON t.id=p.task_id
-       LEFT JOIN messages m ON m.id=p.message_id AND NOT ${history.reads(mode, "items")}
+    `SELECT p.* FROM permission_requests p JOIN tasks t ON t.id=p.task_id
      WHERE (p.kind='project' OR (?1 AND p.kind='delete_task')
             OR (?2 AND p.kind='automation' AND (?3 OR json_extract(p.input, '$.workflow') IS NULL))) AND p.status='pending' ORDER BY p.created_at`,
     deletions,
@@ -628,20 +627,9 @@ export function pending_approvals(s: Shared, deletions: boolean, automations: bo
     workflows,
   );
   return rows.flatMap((r) => {
-    let v: any;
-    if (r.on_items) {
-      v = history.approval(c, r);
-      if (v === null) return [];
-    } else {
-      // The message, as an inner join had it.
-      if (r.data == null) return [];
-      try {
-        v = JSON.parse(r.data);
-      } catch {
-        v = {};
-      }
-      if (!v || typeof v !== "object" || Array.isArray(v)) v = {};
-    }
+    // What it asked, from the thread's request (threads/history.ts).
+    const v = history.approval(c, r);
+    if (v === null) return [];
     // As the request has it: a workflow's thread message says `workflow` (see `approve`), its approval `automation`.
     v.kind = r.kind;
     v.task_id = r.task_id;

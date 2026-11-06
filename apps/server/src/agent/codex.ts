@@ -15,9 +15,8 @@
  * ends with no turn going.
  *
  * It writes the app-server's notifications to stdout as they are (`out.jsonl`), and the server
- * writes them into the task's thread (`handle_line`): straight into its items for a task whose
- * items are its source (codex/driver.ts), or as messages shaped like Claude Code's stream-json for
- * one still on messages, so the thread view shows both agents the same way. Like the rest of a run
+ * writes them straight into the task's thread items (`handle_line`, codex/driver.ts), shaped as
+ * Claude's are, so the thread view shows both agents the same way. Like the rest of a run
  * directory these lines are a stable format: they're Codex's own protocol, which a newer server
  * must keep reading.
  *

@@ -105,10 +105,10 @@ export function clip(text: string): string {
 /** A review thread's activity belongs to the task under review. */
 const OWNER = "COALESCE(CASE WHEN t.kind='review' THEN t.parent_id END, t.id)";
 
-export function report(c: Conn, profile_id: string, from: string, to: string, mode: history.Mode = "auto"): Report {
+export function report(c: Conn, profile_id: string, from: string, to: string): Report {
   const events: Event[] = [];
-  // Each thread's from its items, if it has them (threads/history.ts).
-  for (const r of history.user_messages_between(c, profile_id, from, to, OWNER, mode)) {
+  // From each thread's items (threads/history.ts).
+  for (const r of history.user_messages_between(c, profile_id, from, to, OWNER)) {
     const data = r.data;
     const kind = classify(data);
     if (kind !== null) {

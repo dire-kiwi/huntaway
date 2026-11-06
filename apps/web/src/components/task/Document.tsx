@@ -18,7 +18,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { api, hostSupports, type DocumentType, type Message, type Task, type TaskDocument, type TaskType } from "../../api";
+import { api, hostSupports, type DocumentType, type Task, type TaskDocument, type TaskType } from "../../api";
 import { followsFrameInput, frameDoc, fromFrame, openable, trackBoardInput } from "./htmlFrame";
 import { diagramImage, renderMermaid, svgWidth, withPlanDiagrams } from "./mermaid";
 import {
@@ -35,8 +35,8 @@ import {
 } from "./planAnswers";
 import { isWholePage, themedPlan } from "./planTheme";
 import planCss from "./planTheme.css?raw";
-import { useHost, useThreadMessages } from "../../store";
-import { useDrawsItems, useItemThread } from "../../threadView";
+import { useHost } from "../../store";
+import { hasThread, useItemThread, useServesItems } from "../../threadView";
 import type { Item as ThreadItem } from "../../threads";
 import type { Progress } from "../board/TaskCard";
 import { Composer } from "./thread/Composer";
@@ -92,24 +92,12 @@ export function TaskTypeBadge({ type, progress, compact }: { type: TaskType | Do
   );
 }
 
-/** What the agent last said, as the server's `last_assistant_text` finds it. */
-function lastReply(messages: Message[] | undefined): string | null {
-  for (const m of [...(messages ?? [])].reverse().slice(0, 50)) {
-    if (m.kind !== "claude") continue;
-    if (m.data?.type === "result" && typeof m.data.result === "string" && m.data.result) return m.data.result;
-    if (m.data?.type === "assistant" && Array.isArray(m.data.message?.content)) {
-      const text = m.data.message.content.filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text);
-      if (text.length) return text.join("\n");
-    }
-  }
-  return null;
-}
-
 /**
- * lastReply for a thread drawn from its items (threadView.ts): its latest assistant message in the main conversation,
- * its text blocks (items of their own, `legacy:<message>:<block>`) joined, or a turn's result text no message said.
+ * What the agent last said, as the server's `last_assistant_text` finds it, from the thread's items: its latest
+ * assistant message in the main conversation, its text blocks (items of their own, `legacy:<message>:<block>`) joined,
+ * or a turn's result text no message said.
  */
-function lastItemReply(items: readonly ThreadItem[] | undefined): string | null {
+function lastReply(items: readonly ThreadItem[] | undefined): string | null {
   const said = (items ?? []).filter((i): i is Extract<ThreadItem, { type: "assistant_message" }> => i.type === "assistant_message" && !i.parent_id);
   const last = said.at(-1);
   if (!last) return null;
@@ -186,12 +174,10 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
     };
   }, [task.host_id, task.id, type, picked, task.document_at]);
 
-  // From its items or its messages, as its thread is drawn (an items task has no messages since it moved onto them).
-  const onItems = useDrawsItems(task) && task.thread_source === "items";
-  const messages = useThreadMessages(onItems ? null : task.id);
-  const thread = useItemThread(task, onItems);
+  // From the thread's items (threadView.ts), on a host that serves them.
+  const thread = useItemThread(task, useServesItems(task) && hasThread(task));
   const items = thread?.snap?.items;
-  const reply = useMemo(() => (task.running ? null : onItems ? lastItemReply(items) : lastReply(messages)), [onItems, items, messages, task.running]);
+  const reply = useMemo(() => (task.running ? null : lastReply(items)), [items, task.running]);
   // The agent's last reply covers the bottom of the document, so it's closed until asked for.
   const [showReply, setShowReply] = useState(false);
 
