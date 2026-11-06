@@ -121,8 +121,8 @@ Keep test servers fully separate from it:
   - `GET /api/permissions[?task_id=…]` lists pending permission prompts, and
     `POST /api/permissions/{id}` with `{"decision": "allow"}` (or `deny`) answers one. They're in
     the `permission_requests` table of `<data dir>/huntaway-2.db` (`huntaway.db` on a server started with
-    `IA_NEW_DB_FILE=0`; see _The database file_ in `docs/guide/server.md`). A task whose thread is on items
-    (`tasks.thread_source`, see `docs/threads.md`) has no `messages` rows: read its thread with `ia-api thread`.
+    `IA_NEW_DB_FILE=0`; see _The database file_ in `docs/guide/server.md`). Threads are kept as items (see
+    `docs/threads.md`), not `messages` rows: read a task's thread with `ia-api thread`.
   - `<data dir>/runs/<run id>/spec.json` shows how a run was launched (model, permission mode,
     config dir), so you can check launch flags without waiting for the model.
 - Build in the worktree, never in the main checkout (the board project's repository path), which is

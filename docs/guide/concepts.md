@@ -835,8 +835,8 @@
   the thread: Allow, Always allow (for that thread), or Deny. Claude asks on its own output
   (`--permission-prompt-tool stdio`: a `can_use_tool` control request in the run's `out.jsonl`)
   and gets the answer on its input (`input.jsonl`); a prompt still open when the server restarts
-  is asked again, and can be answered as before. A `/compact` run, which takes no input, asks
-  through the board's MCP server's `permission_prompt`, over HTTP. Codex's approvals come on the
+  is asked again, and can be answered as before. A `/compact` run, which takes no input and calls no
+  tools, has no prompt tool (until HA-225 it had the board's MCP server's `permission_prompt`). Codex's approvals come on the
   run's output too (the app-server's requests, which its adapter writes there) and get the same
   card, which names the agent asking; a Codex `/compact` declines them. Runs that ask on their output are
   run format 3 (4 when they call the board's tools there too, see _Agent tools (MCP)_, and 5 for
