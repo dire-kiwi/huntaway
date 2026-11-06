@@ -285,3 +285,22 @@ test("a task on items gets the events that come while its window loads", async (
   await settle();
   expect(client.thread).toHaveBeenCalledTimes(1);
 });
+
+// HA-262: a message sent with a photo showed withAttachments' raw list of paths; it shows the files by name, as the web does.
+test("a message's attached files show by name, not as the paths sent to the agent", async () => {
+  const text = "What's this?\n\nAttached files:\n- /home/me/.local/share/huntaway/attachments/0a1b2c/photo.jpg";
+  const client = {
+    task: jest.fn(async (_h: string, id: string) => ({ task: { id, running: false } })),
+    messagePage: jest.fn(async () => ({ messages: [{ id: 1, task_id: "t", kind: "user", data: { text }, created_at: "" }], more: false, subagents: [] })),
+  };
+  function Shown() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = useThread("b", client as any, "h", "t");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return <ThreadMessages t={t} client={client as any} host="h" taskId="t" onOpenTask={() => {}} />;
+  }
+  await render(<Shown />);
+  await waitFor(() => expect(screen.getByText("What's this?")).toBeTruthy());
+  expect(screen.getByText("📎 photo.jpg")).toBeTruthy();
+  expect(screen.queryByText(/Attached files|attachments\/0a1b2c/)).toBeNull();
+});
