@@ -73,6 +73,37 @@ test("a_task_that_cant_be_added_doesnt_use_up_a_number", () => {
   assert.equal(insert_task(c, t(p.id)).number, 3);
 });
 
+/** A database whose COMMITs fail while `fk_child` has a row with no parent (a deferred foreign key). */
+function deferred_fk(): Conn {
+  const c = open(":memory:");
+  c.exec("CREATE TABLE fk_parent (id TEXT PRIMARY KEY); CREATE TABLE fk_child (parent TEXT REFERENCES fk_parent(id) DEFERRABLE INITIALLY DEFERRED);");
+  return c;
+}
+
+// HA-262: a COMMIT that failed counted tx's depth down twice, so its ROLLBACK threw instead (hiding the error and leaving
+// the transaction open) and every later tx ran `SAVEPOINT sp-1`.
+test("a_transaction_whose_commit_fails_is_rolled_back_and_the_next_one_works", () => {
+  const c = deferred_fk();
+  assert.throws(() => db.tx(c, () => db.run(c, "INSERT INTO fk_child VALUES ('nobody')")), /FOREIGN KEY constraint failed/);
+  assert.equal(c.isTransaction, false);
+  assert.equal(db.value(c, "SELECT COUNT(*) FROM fk_child"), 0);
+  assert.equal(db.tx(c, () => db.tx(c, () => db.run(c, "INSERT INTO fk_parent VALUES ('p')").changes)), 1);
+  assert.equal(c.isTransaction, false);
+  assert.equal(db.value(c, "SELECT COUNT(*) FROM fk_parent"), 1);
+});
+
+// HA-262: insert_task's RELEASE (its COMMIT, outside a transaction) that failed left the transaction open.
+test("an_insert_task_whose_commit_fails_is_rolled_back", () => {
+  const c = deferred_fk();
+  const p = insert_profile(c, "me", [], null);
+  insert_project(c, np(p.id));
+  c.exec("CREATE TRIGGER orphan AFTER INSERT ON tasks BEGIN INSERT INTO fk_child VALUES ('nobody'); END;");
+  assert.throws(() => insert_task(c, nt(p.id, { project_id: "pr" })), /FOREIGN KEY constraint failed/);
+  assert.equal(c.isTransaction, false);
+  c.exec("DROP TRIGGER orphan");
+  assert.equal(insert_task(c, nt(p.id, { project_id: "pr" })).number, 1);
+});
+
 test("ensure_profile_makes_a_profile_only_if_none_has_its_name", () => {
   const c = open(":memory:");
   const p = ensure_profile(c, "personal", "/claude/personal");

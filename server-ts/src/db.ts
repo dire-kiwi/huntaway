@@ -71,18 +71,21 @@ export function value<T = any>(c: Conn, sql: string, ...ps: any[]): T | undefine
  */
 let depth = 0;
 export function tx<T>(c: Conn, f: () => T, immediate = false): T {
+  const top = depth === 0;
   const sp = `sp${depth}`;
-  c.exec(depth === 0 ? (immediate ? "BEGIN IMMEDIATE" : "BEGIN") : `SAVEPOINT ${sp}`);
+  c.exec(top ? (immediate ? "BEGIN IMMEDIATE" : "BEGIN") : `SAVEPOINT ${sp}`);
   depth++;
   try {
     const out = f();
-    depth--;
-    c.exec(depth === 0 ? "COMMIT" : `RELEASE ${sp}`);
+    c.exec(top ? "COMMIT" : `RELEASE ${sp}`);
     return out;
   } catch (e) {
-    depth--;
-    c.exec(depth === 0 ? "ROLLBACK" : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
+    // A COMMIT that failed (a deferred foreign key) leaves the transaction open, and some errors end it themselves.
+    if (!top) c.exec(`ROLLBACK TO ${sp}; RELEASE ${sp}`);
+    else if (c.isTransaction) c.exec("ROLLBACK");
     throw e;
+  } finally {
+    depth--;
   }
 }
 
