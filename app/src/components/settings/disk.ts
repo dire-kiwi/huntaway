@@ -1,6 +1,6 @@
-import { api, hostSupports, type DiskSize, type DiskUsageReport, type Status } from "../../api";
+import { api, boardHosts, hostSupports, type DiskSize, type DiskUsageReport, type Status } from "../../api";
 import { NEUTRAL, PALETTE } from "../../analytics";
-import { boardHosts, useStore } from "../../store";
+import { useStore } from "../../store";
 
 /**
  * Disk usage analytics: what each host reports its projects' repositories, worktrees, scratch

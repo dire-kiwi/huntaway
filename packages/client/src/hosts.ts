@@ -26,6 +26,18 @@ export function hostCompat(h: Host): Compat {
 /** Hosts that don't say are assumed to be able to run agents. */
 export const canRunAgents = (h: Host | undefined) => !!h && h.connected && h.agents !== false;
 
+/**
+ * A connected host this UI can work with and that can run agents. A hub that can't run agents
+ * (e.g. one deployed only to show other hosts) gets no new work; boardHosts says what it shows.
+ */
+export const usableHost = (h: Host) => canRunAgents(h) && ["ok", "outdated"].includes(hostCompat(h));
+
+/**
+ * Hosts whose profiles and projects are on the board: the usable ones, plus this host even if
+ * it can't run agents (it usually has none, but a PR preview seeds a demo project).
+ */
+export const boardHosts = (hosts: Host[]) => hosts.filter((h) => (h.local && h.connected) || usableHost(h));
+
 /** Statuses a host knows about ("Ready for merge" needs API 4). */
 export const hostStatuses = (h: Host | undefined) =>
   STATUSES.filter((s) => (s.id !== "ready_for_merge" || hostSupports(h, 4)) && (s.id !== "backlog" || hostSupports(h, 5)));
