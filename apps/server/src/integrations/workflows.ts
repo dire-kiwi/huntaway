@@ -4,7 +4,8 @@
  *
  * A workflow's **trigger** node starts a run on a task: when the task enters a column (such as *In review*, which is
  * where its agent's finished work goes), when the task's agent finishes its work (`on: finished`, HA-276: the task then
- * stays in *In progress* rather than going to *In review*, and the workflow moves it on), or only when it's run by hand
+ * stays in *In progress* rather than going to *In review*, and the workflow moves it on, or `release` does once it ends),
+ * or only when it's run by hand
  * (`POST /workflows/{id}/run`, `run_workflow`).
  * From there the run follows the graph's edges, out of the **port** each node ends on:
  *

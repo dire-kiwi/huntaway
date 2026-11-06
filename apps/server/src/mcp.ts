@@ -601,7 +601,7 @@ function workflow_tools(profile: any, project_one: string): any[] {
       "A node runs once every node with an edge into it has finished and one of those edges was taken (join 'any', the default) or all of them (join 'all'); " +
       "otherwise it's skipped. No loops: to go round again, send to the task's agent (its next finished run triggers the workflow again). Node kinds and their ports: " +
       "{kind: 'trigger', on: 'status', status} (the task entering that column), {kind: 'trigger', on: 'finished'} (the task's agent finishing its work: the task then stays in In progress " +
-      "rather than going to In review, for the workflow to move it on) or {kind: 'trigger', on: 'manual'} (only run_workflow, or Run on the board) → out; " +
+      "rather than going to In review, for the workflow to move it on; a run that ends without moving it sends it to In review, or needs_attention if a step failed or it was stopped) or {kind: 'trigger', on: 'manual'} (only run_workflow, or Run on the board) → out; " +
       "{kind: 'condition', check: 'changed'|'has_commits'|'has_pr'|'task_type'|'label', value} → yes, no ('changed': its commit or its agent's work changed since this workflow last finished on it; " +
       "value is the type, code or scratch, or the label, plan, artifact or diagram); " +
       "{kind: 'agent', name, prompt, output: 'text'|'verdict', claude_config_id, model, effort, skills, tab, input_only} runs an agent read-only in the task's worktree, in a thread of its own " +

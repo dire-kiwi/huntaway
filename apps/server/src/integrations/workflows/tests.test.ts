@@ -835,3 +835,122 @@ test("a_pull_request_step_pushes_the_branch_and_opens_it", async () => {
     engine_testing.GITHUB = null;
   }
 });
+
+/** The "Open a PR when done" preset's graph (apps/web's settings/Workflows.tsx). */
+function pr_when_done(): any {
+  return {
+    nodes: [
+      { id: "start", kind: "trigger", on: "finished" },
+      { id: "commits", kind: "condition", check: "has_commits" },
+      { id: "pr", kind: "open_pr" },
+      { id: "review", kind: "set_status", status: "in_review" },
+      { id: "attention", kind: "set_status", status: "needs_attention" },
+    ],
+    edges: [
+      { from: "start", port: "out", to: "commits" },
+      { from: "commits", port: "yes", to: "pr" },
+      { from: "commits", port: "no", to: "review" },
+      { from: "pr", port: "opened", to: "review" },
+      { from: "pr", port: "exists", to: "review" },
+      { from: "pr", port: "failed", to: "attention" },
+    ],
+  };
+}
+
+async function left_in_progress(s: AppState, task_id: string): Promise<Task> {
+  await until(() => db.get_task(s.db(), task_id)!.status !== "in_progress");
+  return db.get_task(s.db(), task_id)!;
+}
+
+// Review of HA-276: a task without a worktree stayed in In progress, idle, as the preset's check failed and skipped the rest.
+test("a_task_without_a_worktree_goes_to_review_with_the_pull_request_preset", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  db.update_task(s.db(), task.id, [
+    ["worktree_path", null],
+    ["worktree_state", "none"],
+    ["branch", null],
+  ]);
+  const w = make(s, project, pr_when_done());
+  agent_finishes(s, task);
+  const t = await left_in_progress(s, task.id);
+  const run = latest_run(s.db(), w.id, task.id)!;
+  assert.deepEqual([run_node(run, "commits").port, run_node(run, "pr").state], ["no", "skipped"]);
+  assert.deepEqual([t.status, t.running], ["in_review", false]);
+});
+
+test("a_finished_run_that_leaves_the_task_where_it_was_moves_it_on", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  // An agent step that can't start (no agents here), with nothing after its failure: Needs attention, saying why.
+  const w = make(s, project, {
+    nodes: [
+      { id: "t", kind: "trigger", on: "finished" },
+      { id: "a", kind: "agent", name: "Notes" },
+      { id: "m", kind: "set_status", status: "in_review" },
+    ],
+    edges: [
+      { from: "t", port: "out", to: "a" },
+      { from: "a", port: "done", to: "m" },
+    ],
+  });
+  agent_finishes(s, task);
+  let t = await left_in_progress(s, task.id);
+  assert.equal(t.status, "needs_attention");
+  assert.ok((t.attention_reason ?? "").startsWith('The workflow "Review" failed at Notes: '), t.attention_reason ?? "");
+  // One that ends without a move, and without failing: In review, as without it.
+  update(s, w.id, {
+    graph: {
+      nodes: [
+        { id: "t", kind: "trigger", on: "finished" },
+        { id: "c", kind: "condition", check: "has_pr" },
+      ],
+      edges: [{ from: "t", port: "out", to: "c" }],
+    },
+  });
+  agent_finishes(s, task);
+  t = await left_in_progress(s, task.id);
+  assert.deepEqual([t.status, t.attention_reason], ["in_review", null]);
+});
+
+test("a_stopped_finished_run_moves_the_task_on_unless_its_agent_started_again", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    const graph = {
+      nodes: [
+        { id: "t", kind: "trigger", on: "finished" },
+        { id: "a", kind: "agent", name: "Notes" },
+        { id: "m", kind: "set_status", status: "in_review" },
+      ],
+      edges: [
+        { from: "t", port: "out", to: "a" },
+        { from: "a", port: "done", to: "m" },
+      ],
+    };
+    const w = make(s, project, graph);
+    db.update_task(s.db(), task.id, [["status", "in_progress"]]);
+    // Started as its agent's finishing starts it (rather than through finish, whose step would end first here).
+    let run = (await start(s, w.id, task.id, false, 0, "finished"))!;
+    assert.equal(run_node(run, "a").state, "running");
+    // Its agent starts again: the task is its run's, and stays where it is.
+    db.insert_run(s.db(), task.id, "prompt");
+    supersede(s, task);
+    await sleep(100);
+    assert.equal(get_run(s.db(), run.id)!.state, "stopped");
+    assert.equal(db.get_task(s.db(), task.id)!.status, "in_progress");
+    // Stopped by the user: Needs attention.
+    s.runs.delete(thread_of(s, run.id, "a").id);
+    const r = db.insert_run(s.db(), task.id, "prompt");
+    db.run(s.db(), "UPDATE runs SET status='exited' WHERE id=?1", r.id);
+    run = (await start(s, w.id, task.id, false, 0, "finished"))!;
+    assert.ok(run && run.state === "running", "a new run");
+    assert.ok(stop(s, task.id));
+    const t = await left_in_progress(s, task.id);
+    assert.equal(t.status, "needs_attention");
+    assert.ok((t.attention_reason ?? "").startsWith('The workflow "Review" was stopped before it moved the task'), t.attention_reason ?? "");
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});

@@ -823,8 +823,8 @@ function NodeInspector({
           </Field>
           {n.on === "finished" && (
             <p className="text-[11.5px] text-faint">
-              The task then stays in In progress rather than moving to In review: move it on with a <i>Move task</i> step. A message that sends the agent back
-              to work runs this again once it finishes.
+              The task then stays in In progress rather than moving to In review: move it on with a <i>Move task</i> step. If the run ends without moving it, it
+              goes to In review, or to Needs attention when a step failed. A message that sends the agent back to work runs this again once it finishes.
             </p>
           )}
           <p className="text-[11.5px] text-faint">Any workflow can be run on a task by hand too, from the task's details.</p>

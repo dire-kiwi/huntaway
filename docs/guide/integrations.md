@@ -215,7 +215,9 @@ run on its tasks. The editor draws them as nodes: drag from a step's outcome to 
 - **Start.** When a task moves into a column; when the task's **agent finishes its work** (API 123:
   the task then stays in _In progress_ rather than going to _In review_, and the workflow moves it
   on with a _Move task_ step, so with one of these on, what happens after the agent is done is the
-  workflow's to decide); or only when run by hand from the task.
+  workflow's to decide. A run that ends without moving it sends it to _In review_ as before, or to
+  _Needs attention_, saying why, when a step failed or the run was stopped); or only when run by
+  hand from the task.
 - **Steps.** A _check_ (has the work changed, has it commits or a pull request, its type or a
   label); an _agent_ in a thread of its own, read-only in the task's worktree, in a fresh
   conversation each run, that writes text (shown in a tab of the task) or a verdict (pass, or the

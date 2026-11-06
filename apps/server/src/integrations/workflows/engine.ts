@@ -385,6 +385,62 @@ function ended_run(s: Shared, run: Run): void {
   const failed = run.graph.nodes.filter((n) => run_node(run, n.id).state === "failed").map((n) => `${node_name(n)}: ${run_node(run, n.id).text ?? ""}`);
   if (!failed.length) s.add_event(run.task_id, "info", `The workflow "${name}" finished`);
   else s.add_event(run.task_id, "warn", `The workflow "${name}" finished with steps that failed`, failed.join("\n"));
+  release(s, run);
+}
+
+/**
+ * A run that its task's agent finishing started (HA-276) has ended: the task, held in its column for it, moves on if
+ * the run left it there idle (it had no move step, or a step before one failed, or it was stopped). It goes to "In
+ * review", as it would have without the workflow, or to "Needs attention" saying why when a step failed or the run was
+ * stopped. Left alone once it has moved, its agent has started again, or another such run is still going on it.
+ */
+export function release(s: Shared, run: Run, why: string | null = null): void {
+  if (run.source !== "finished") return;
+  let task: Task | null;
+  try {
+    const c = s.db();
+    task = db.get_task(c, run.task_id);
+    if (!task || task.status !== "in_progress" || task.running || task.waiting || task.merging || s.is_running(task.id)) return;
+    if (db.later_run(c, task.id, run.task_run ?? "")) return;
+    if (running(c, task.id).some((r) => r.source === "finished" && r.id !== run.id)) return;
+  } catch (e) {
+    console.error(`task ${run.task_id}: after its workflow: ${err_str(e)}`);
+    return;
+  }
+  let name = "";
+  try {
+    name = get(s.db(), run.workflow_id)?.name ?? "";
+  } catch {}
+  const failed = run.graph.nodes.find((n) => run_node(run, n.id).state === "failed");
+  const reason =
+    why != null
+      ? `The workflow "${name}" ${why}`
+      : run.state === "stopped"
+        ? `The workflow "${name}" was stopped before it moved the task${run.detail ? `: ${run.detail}` : ""}`
+        : failed
+          ? `The workflow "${name}" failed at ${node_name(failed)}: ${(run_node(run, failed.id).text ?? "").split("\n")[0]}`
+          : null;
+  const id = task.id;
+  background(
+    "moving a task on after its workflow",
+    (async () => {
+      // Still as it was: nothing moved it while this waited.
+      const t = db.get_task(s.db(), id);
+      if (!t || t.status !== "in_progress" || t.running || s.is_running(id) || db.later_run(s.db(), id, run.task_run ?? "")) return;
+      if (reason == null) {
+        s.add_event(id, "info", `The workflow "${name}" ended without moving the task, so it goes to In review`);
+        await api.update_task_inner(s, id, { status: "in_review" });
+      } else {
+        await api.update_task_inner(s, id, { status: "needs_attention" });
+        attention(s, id, reason);
+      }
+    })().catch((e) => s.add_event(id, "warn", "Couldn't move the task on after its workflow", msg(e))),
+  );
+}
+
+/** Gives a task in "Needs attention" its reason, unless it has moved on meanwhile. */
+function attention(s: Shared, task_id: string, reason: string): void {
+  s.update_task_if(task_id, [["attention_reason", reason]], (c) => db.get_task(c, task_id)?.status === "needs_attention");
 }
 
 /** How a node reads in events: an agent step's name, or its kind. */
@@ -434,6 +490,8 @@ async function condition(s: Shared, run: Run, check: Check, value: string | null
     case "label":
       return value != null && task.labels.includes(value);
     case "has_commits":
+      // No worktree or branch (a scratch task, one that makes only documents, a project without worktrees): none.
+      if (!task.branch || !task.worktree_path || task.worktree_state !== "ready") return false;
       return !(await elsewhere(s, task))[1];
     case "changed": {
       // A run by hand is asked for whatever changed.
@@ -674,6 +732,7 @@ function send(s: Shared, run: Run, node: Node, message: string, max_rounds: numb
     runner.send_fixes(s, task.id, text, round);
   } catch (e) {
     s.add_event(task.id, "error", `The workflow "${workflow}" couldn't send its message to the agent`, msg(e));
+    release(s, current, `couldn't send its message to the agent: ${msg(e).split("\n")[0]}`);
   }
   return null;
 }
@@ -712,7 +771,7 @@ async function move_task(s: Shared, run: Run, status: string): Promise<Done> {
         .filter((n) => run_node(current, n.id).state === "failed")
         .map((n) => `${node_name(n)}: ${run_node(current, n.id).text ?? ""}`);
       const reason = failed.length ? `The workflow "${name}" failed at ${failed[0].split("\n")[0]}` : `The workflow "${name}" moved it here`;
-      s.update_task_if(run.task_id, [["attention_reason", reason]], (c) => db.get_task(c, run.task_id)?.status === "needs_attention");
+      attention(s, run.task_id, reason);
     }
     return Done_port("out");
   } catch (e) {
@@ -890,7 +949,7 @@ export function step_ended(s: Shared, thread: Task, run_id: string, outcome: Out
 }
 
 /** Stops a run in progress, saying `why`. Returns whether it was in progress. */
-export function stop_run(s: Shared, run_id: string, why: string): boolean {
+export function stop_run(s: Shared, run_id: string, why: string, move_on = true): boolean {
   let run: Run | null = null;
   try {
     run = get_run(s.db(), run_id);
@@ -904,22 +963,24 @@ export function stop_run(s: Shared, run_id: string, why: string): boolean {
   save(s, run);
   CHAIN.delete(run.id);
   for (const t of threads) runner.stop(s, t);
+  // Not when its agent has started again: the task is that run's now.
+  if (move_on) release(s, run);
   return true;
 }
 
-function stop_all(s: Shared, task_id: string, why: string): boolean {
+function stop_all(s: Shared, task_id: string, why: string, move_on = true): boolean {
   let rs: Run[] = [];
   try {
     rs = running(s.db(), task_id);
   } catch {}
   let any = false;
-  for (const r of rs) any = stop_run(s, r.id, why) || any;
+  for (const r of rs) any = stop_run(s, r.id, why, move_on) || any;
   return any;
 }
 
 /** The task's agent started working again: its workflows' runs in progress are out of date. */
 export function supersede(s: Shared, task: Task): void {
-  stop_all(s, task.id, "Stopped because the agent started working on the task again.");
+  stop_all(s, task.id, "Stopped because the agent started working on the task again.", false);
 }
 
 /** The user stopped the task: stop its workflows' runs too. Returns whether any was running. */
