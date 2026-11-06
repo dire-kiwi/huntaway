@@ -1,7 +1,6 @@
 import clsx from "clsx";
 import { useEffect, useMemo, useState } from "react";
-import { api, type Task } from "../../../../api";
-import { splitAttachments } from "../../../../attachments";
+import { api, splitAttachments, type Task } from "../../../../api";
 import { AttachmentList } from "../../Attachments";
 import { Markdown } from "../../thread/Markdown";
 import { Button, isSubmitShortcut, SUBMIT_KEYS, Textarea } from "../../../ui";
