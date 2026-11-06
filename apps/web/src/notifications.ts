@@ -1,17 +1,9 @@
-import { readyToCheck, type Status, type Task } from "./api";
+import { NOTIFY_EVENTS, readyToCheck, type NotifyEvent, type Status, type Task } from "./api";
 
 /**
- * What tasks notify of, and the settings for it: kept apart from how a browser shows them (notifier.ts), so that other
- * ways of telling the user (such as push to a phone) can use the same triggers and settings.
+ * When tasks notify (of packages/client's NOTIFY_EVENTS), and the settings for it: kept apart from how a browser shows
+ * them (notifier.ts), so that other ways of telling the user (such as push to a phone) can use the same triggers and settings.
  */
-export type NotifyEvent = "attention" | "review" | "merge" | "done";
-
-export const NOTIFY_EVENTS: { id: NotifyEvent; label: string; hint: string }[] = [
-  { id: "attention", label: "Needs attention", hint: "Its agent asks a question or for permission, or its run fails" },
-  { id: "review", label: "Ready to review", hint: "In review, once its automatic review passes (or with none to wait for)" },
-  { id: "merge", label: "Ready for merge", hint: "Moved to Ready for merge" },
-  { id: "done", label: "Done", hint: "Merged, or moved to Done" },
-];
 
 /** Off, system notifications, a sound, or both. */
 export type NotifyMode = "off" | "notify" | "sound" | "both";

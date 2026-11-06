@@ -1,9 +1,8 @@
 import clsx from "clsx";
 import { Bell, Smartphone, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { api, ASSISTANT_PUSH_EVENTS, type PushDevice, type PushEvents, type PushPrompts } from "../../api";
+import { api, ASSISTANT_PUSH_EVENTS, NOTIFY_EVENTS, PUSH_PROMPTS, type PushDevice, type PushEvents, type PushPrompts } from "../../api";
 import {
-  NOTIFY_EVENTS,
   NOTIFY_MODES,
   notifySettings,
   onNotifySettings,
@@ -253,12 +252,6 @@ function PushPanel() {
     </div>
   );
 }
-
-const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
-  { id: "off", label: "None" },
-  { id: "assistant", label: "The assistant's" },
-  { id: "all", label: "Every task's" },
-];
 
 /** The events a device gets by push (the board's, and the assistant's replies and reports), and whose permission prompts. */
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {

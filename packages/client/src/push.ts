@@ -1,11 +1,27 @@
 import { enc, type Http } from "./http";
 
+/** What tasks notify of: in the web board's notifications (apps/web/src/notifications.ts), and by push to a device. */
+export type NotifyEvent = "attention" | "review" | "merge" | "done";
+
+export const NOTIFY_EVENTS: { id: NotifyEvent; label: string; hint: string }[] = [
+  { id: "attention", label: "Needs attention", hint: "Its agent asks a question or for permission, or its run fails" },
+  { id: "review", label: "Ready to review", hint: "In review, once its automatic review passes (or with none to wait for)" },
+  { id: "merge", label: "Ready for merge", hint: "Moved to Ready for merge" },
+  { id: "done", label: "Done", hint: "Merged, or moved to Done" },
+];
+
 /** Whose permission prompts a device gets by push, with Allow and Deny on them (API 115): the assistant's by default. */
 export type PushPrompts = "off" | "assistant" | "all";
 
-/** Which of the board's notifications a device gets by push (see notifications.ts), the assistant's (API 110), and whose
+export const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
+  { id: "off", label: "None" },
+  { id: "assistant", label: "The assistant's" },
+  { id: "all", label: "Every task's" },
+];
+
+/** Which of the board's notifications a device gets by push (NOTIFY_EVENTS), the assistant's (API 110), and whose
  *  permission prompts (API 115). */
-export type PushEvents = Record<"attention" | "review" | "merge" | "done", boolean> & {
+export type PushEvents = Record<NotifyEvent, boolean> & {
   /** Left as they are, or the default, without; a board from before it doesn't have it. */
   prompts?: PushPrompts;
   /** The assistant's replies. Off unless chosen; a board from before it doesn't have it, and keeps what a change leaves out. */
@@ -14,7 +30,7 @@ export type PushEvents = Record<"attention" | "review" | "merge" | "done", boole
   reports?: boolean;
 };
 
-/** The assistant's events a device can be pushed, besides the board's (`NOTIFY_EVENTS` in the web app): those a board
+/** The assistant's events a device can be pushed, besides the board's (`NOTIFY_EVENTS`): those a board
  *  has are in its devices' events (API 110). */
 export const ASSISTANT_PUSH_EVENTS: { id: "replies" | "reports"; label: string; hint: string }[] = [
   { id: "replies", label: "Assistant's replies", hint: "It finished a reply" },
