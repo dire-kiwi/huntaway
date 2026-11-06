@@ -1,9 +1,8 @@
 import clsx from "clsx";
 import { ArrowUp, Clock, Loader2, MessageSquare, Square, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, dependencyQueued, isAssistant, limitQueued, hostSupports, runningAgentSteers, stopTitle, type RewindResult, type Task } from "../../../api";
+import { api, dependencyQueued, isAssistant, limitQueued, hostSupports, runningAgentSteers, splitAttachments, stopTitle, withAttachments, type AttachmentRef, type RewindResult, type Task } from "../../../api";
 import { useHost } from "../../../store";
-import { splitAttachments, withAttachments, type AttachmentRef } from "../../../attachments";
 import { lineRange, removeComments, reviewMessage, useReview, withComments, type LineComment } from "../../changes/lineComments";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "../SkillMenu";

@@ -1,5 +1,4 @@
-import type { ExternalLink, Profile } from "../../../api";
-import type { AttachmentRef } from "../../../attachments";
+import type { AttachmentRef, ExternalLink, Profile } from "../../../api";
 
 // The "Start agent now" choice is remembered per project on this client.
 export const startKey = (projectId: string) => `ia.startAgent.${projectId}`;

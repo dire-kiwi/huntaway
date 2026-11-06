@@ -2,7 +2,8 @@ import clsx from "clsx";
 import { FileText, Loader2, Paperclip, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { createPortal } from "react-dom";
-import { attachmentUrl, isImage, uploadAttachment, type AttachmentRef } from "../../attachments";
+import type { AttachmentRef } from "../../api";
+import { attachmentUrl, isImage, uploadAttachment } from "../../attachments";
 
 interface Item {
   key: string;

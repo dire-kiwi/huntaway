@@ -24,6 +24,7 @@ import { approvalRulesApi } from "./approvalRules";
 import { telegramApi } from "./telegram";
 
 export { ApiError, type ClientAdapter, type Fetch, type FetchResponse, type KeyValueStorage } from "./http";
+export * from "./attachments";
 export * from "./hosts";
 export * from "./push";
 export * from "./devices";

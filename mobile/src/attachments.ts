@@ -1,13 +1,6 @@
-// Photos attached to a message are saved on the task's host (POST /attachments) and listed after its text, as the
-// web board does (app/src/attachments.ts), so the agent reads them from there.
-import type { Attachment } from "@huntaway/client";
-
-/** `text` with the attachments listed after it. */
-export function withAttachments(text: string, files: Pick<Attachment, "path">[]): string {
-  if (!files.length) return text;
-  const list = `Attached files:\n${files.map((f) => `- ${f.path}`).join("\n")}`;
-  return text.trim() ? `${text.trimEnd()}\n\n${list}` : list;
-}
+// Photos attached to a message are saved on the task's host (POST /attachments) and listed after its text
+// (packages/client's withAttachments, as the web board does), so the agent reads them from there.
+export { withAttachments } from "@huntaway/client";
 
 /** A name for a photo the host takes (letters, digits, `.`, `_` and `-`). */
 export function photoName(fileName: string | null | undefined, mime: string | null | undefined, now = Date.now()) {

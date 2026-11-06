@@ -1,8 +1,7 @@
 import clsx from "clsx";
 import { History, Repeat } from "lucide-react";
 import { createContext, memo, useContext, useMemo } from "react";
-import { isWorkflowApproval, type Turn } from "../../../api";
-import { splitAttachments } from "../../../attachments";
+import { isWorkflowApproval, splitAttachments, type Turn } from "../../../api";
 import type { Item } from "../../../threadModel";
 import { openTask } from "../../../router";
 import { AutomationChangeCard, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "../Approvals";
