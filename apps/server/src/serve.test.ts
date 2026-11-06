@@ -2,11 +2,12 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
 import { join } from "node:path";
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { temp_dir } from "./testing.ts";
+import { sleep } from "./util.ts";
 import { db_path, loopback_host, older_db_path, parse_serve_args, stamped } from "./serve.ts";
 
 const TOKEN = "serve-test-token";
@@ -47,6 +48,39 @@ function start(args: string[]) {
   };
   return { ready, stop };
 }
+
+/** A port on 127.0.0.1 that nothing listens on (one the system gave out and took back). */
+async function free_port(): Promise<number> {
+  const s = createServer();
+  await new Promise<void>((ok) => s.listen(0, "127.0.0.1", ok));
+  const port = (s.address() as any).port as number;
+  await new Promise((ok) => s.close(ok));
+  return port;
+}
+
+// HA-262: the server took connections before it had a handler for them, while it read its commit and seeded the demo,
+// so a request that came then (a client reconnecting after a restart) got no answer.
+test("a_request_that_comes_while_the_server_starts_is_answered", async () => {
+  const port = await free_port();
+  const server = start(["--port", String(port), "--demo"]);
+  try {
+    const deadline = Date.now() + 30_000;
+    let res: Response;
+    for (;;) {
+      try {
+        res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(10_000) });
+        break;
+      } catch (e: any) {
+        if (e?.cause?.code !== "ECONNREFUSED" || Date.now() > deadline) throw e;
+        await sleep(1);
+      }
+    }
+    assert.equal(res.status, 200);
+    assert.equal(await server.ready, port);
+  } finally {
+    await server.stop();
+  }
+});
 
 // HA-262: a request's body was read (up to its route's limit, 300 MB for /api/h/…) before its token was checked.
 test("a_request_without_the_token_is_refused_before_its_body_is_read", async () => {
