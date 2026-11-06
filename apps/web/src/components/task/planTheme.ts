@@ -1,9 +1,11 @@
+import { linksInNewTabs } from "./htmlFrame";
+
 /**
  * Sizes an <ia-html>'s frame to its content (not the window, which the frame sets): it reports the
  * body's extent, overflow included, to the plan's frame (iaHtmlHeight). Chromium doesn't update the
  * rendering of an offscreen frame of another origin, so observers of size don't fire there until it's
  * scrolled to: it also reports when the page has loaded and when the DOM changes. It runs in the
- * component's frame, as source.
+ * component's frame, as source (with linksInNewTabs, as frames in a plan's frame can't load other pages).
  */
 function fitFrame() {
   let last = -1;
@@ -331,6 +333,6 @@ export function themedPlan(
   return (
     `<!doctype html><meta charset="utf-8"><style>${css}</style>\n${html}\n` +
     `<script>(${iaForm})(${answers}, ${!!form.readOnly}, ${JSON.stringify(form.key ?? null).replace(/</g, "\\u003c")})</script>\n` +
-    `<script>(${iaHtml})(${JSON.stringify(`(${fitFrame})()`)})</script>\n<script>(${iaDiagrams})()</script>`
+    `<script>(${iaHtml})(${JSON.stringify(`(${fitFrame})();(${linksInNewTabs})()`)})</script>\n<script>(${iaDiagrams})()</script>`
   );
 }
