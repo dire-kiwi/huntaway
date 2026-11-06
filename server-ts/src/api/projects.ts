@@ -1,11 +1,11 @@
 // Port of server/src/api/projects.rs: projects: creating, importing, editing, archiving and relocating them.
-import { existsSync, lstatSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import * as db from "../db.ts";
 import type { Project, Reviewer } from "../db.ts";
 import { ApiError, type Req } from "../http.ts";
 import type { AppState } from "../state.ts";
-import { derive_key, err_str, expand_tilde, new_id, now, path_str } from "../util.ts";
+import { derive_key, err_str, expand_tilde, new_id, now, path_str, remove_dir_all } from "../util.ts";
 import { pick } from "../api.ts";
 import * as runner from "../agent/runner.ts";
 import * as runs from "../agent/runs.ts";
@@ -699,7 +699,7 @@ export function remove_unused_dir(s: AppState, dir: string, what: string) {
     return;
   }
   try {
-    rmSync(dir, { recursive: true });
+    remove_dir_all(dir);
   } catch (e) {
     console.warn(`removing ${dir} after deleting its ${what}: ${err_str(e)}`);
   }

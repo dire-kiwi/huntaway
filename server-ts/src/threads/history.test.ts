@@ -391,7 +391,8 @@ test("pending approvals, from the thread's request and the request's row", () =>
   const { s, c, task } = board();
   const id = task([user("go")]);
   const ask = (rid: string, kind: string, tool: string, input: any, extra: object = {}) => {
-    const data = { kind, tool_name: tool, input, request_id: rid, status: "pending", ...extra };
+    // A workflow's message says `workflow` (see permissions.approve), and its approval `automation`, as its row does.
+    const data = { kind: permissions.workflow_kind(kind, input), tool_name: tool, input, request_id: rid, status: "pending", ...extra };
     const m = s.add_message(id, "permission", data);
     db.run(
       c,

@@ -33,7 +33,7 @@ import type { Spec } from "./codex.ts";
 import * as codex from "./codex.ts";
 import type { Shared } from "../state.ts";
 import { VERSION } from "../hosts/proto.ts";
-import { context, err_str, expand_tilde, sleep } from "../util.ts";
+import { context, err_str, expand_tilde, remove_dir_all, sleep } from "../util.ts";
 import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
@@ -477,11 +477,6 @@ export function asks_on_output(state: Shared, run_id: string): boolean {
   return format(state, run_id) >= ASKS_FORMAT && !is_codex_run(state, run_id);
 }
 
-/** Whether run `run_id`'s agent calls the board's tools on its output, an in-process MCP server (see runner/requests.ts). */
-export function tools_on_output(state: Shared, run_id: string): boolean {
-  return format(state, run_id) >= TOOLS_FORMAT && !is_codex_run(state, run_id);
-}
-
 /** Whether run `run_id` is Codex's (its adapter's `codex.json`). */
 function is_codex_run(state: Shared, run_id: string): boolean {
   return existsSync(join(run_dir(state, run_id), "codex.json"));
@@ -777,7 +772,7 @@ export function prune(state: Shared, now: Date): Pruned {
     else remove = finished(dir);
     if (remove) {
       try {
-        rmSync(dir, { recursive: true });
+        remove_dir_all(dir);
         pruned.runs++;
       } catch (e) {
         log.warn(`run=${id} removing the run's folder: ${err_str(e)}`);
@@ -818,7 +813,7 @@ export function remove_finished(state: Shared, run_ids: string[]): void {
     const dir = run_dir(state, id);
     if (existsSync(join(dir, "exit")) && !existsSync(join(dir, "orphan"))) {
       try {
-        rmSync(dir, { recursive: true });
+        remove_dir_all(dir);
       } catch (e) {
         log.warn(`run=${id} removing the run's folder: ${err_str(e)}`);
       }

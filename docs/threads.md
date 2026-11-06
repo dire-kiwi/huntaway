@@ -516,7 +516,11 @@ Steps 8 and 9 move what a Claude run asks the board onto Claude Code's control p
   request the run's input starts with, which also gives Claude Code the server's handshake (so no round trips before the
   first turn). Each MCP message is an `mcp_message` control request; a `tools/call` goes through the same dispatch as
   the HTTP server's calls (mcp/tools/dispatch.ts), knowing its task from its run. The run's `mcp.json` has no board
-  server, and the board's HTTP server refuses it. Run format 4.
+  server, and the board's HTTP server refuses it. Run format 4. A call Claude Code gives up on (an interrupted turn, a
+  sibling tool call that failed) comes as a `notifications/cancelled` `mcp_message` with the call's JSON-RPC id, not as
+  a `control_cancel_request` (which is what a permission prompt it gives up on gets): the board finds the run's open call
+  with that `rpc_id` (saved in `mcp_calls.args`) and ends it unanswered, as a prompt's cancel does (a `wait` ends, an
+  approval it asked for expires).
 
 Both are recorded in `mcp_calls` as `stdio:<run id>:<request id>`, at most once each, and answered before they're
 recorded as done. After a restart, those still executing are taken up again from there (`resume_requests`), since the

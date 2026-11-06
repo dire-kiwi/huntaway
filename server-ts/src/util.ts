@@ -1,6 +1,7 @@
 // Port of server/src/util.rs.
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { lstat, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -185,6 +186,29 @@ export function remove_dir_all(path: string): void {
     }
     try {
       lstatSync(path);
+    } catch {
+      return;
+    }
+    if (i >= 10) throw error ?? new Error(`${path} is still there after removing it`);
+  }
+}
+
+/**
+ * `remove_dir_all` with `fs.promises.rm`, which doesn't hold up the server while a big folder goes. It doesn't seem to
+ * take a file that goes meanwhile for the folder as rmSync does, but fails with ENOTEMPTY when one is written in it as it's
+ * removed (by an agent still at work there, say: HA-253), so that's tried again too.
+ */
+export async function remove_dir_all_async(path: string): Promise<void> {
+  for (let i = 1; ; i++) {
+    let error: unknown = null;
+    try {
+      await rm(path, { recursive: true, force: true });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw e;
+      error = e;
+    }
+    try {
+      await lstat(path);
     } catch {
       return;
     }
