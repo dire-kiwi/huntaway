@@ -118,7 +118,9 @@ showing its document as the agent writes it: HTML in a sandboxed frame (its scri
 can't reach the board, and a Content-Security-Policy lets it load only scripts, styles and fonts from
 cdnjs, jsDelivr, unpkg and Google Fonts: no remote images, requests, frames or form posts. Its links
 open in a new tab after your click in the page; one it opens otherwise, the board asks you about first.
-WebRTC isn't held by the policy, so a page can still reach a server of its choosing that way), a
+A page can still send data out in a hostname, though: WebRTC isn't held by the policy, and in a
+browser (not the desktop app) a frame it points at another host is refused only after Chrome has
+looked the host up and connected to it, TLS SNI included), a
 diagram drawn in the board with zoom, an SVG download and a button that
 sends a parse error back to the agent. Reply under the document to ask for changes. The board
 keeps a version from each turn that changed the file (`GET /tasks/{id}/document?label=plan`, with

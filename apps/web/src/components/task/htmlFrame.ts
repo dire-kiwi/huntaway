@@ -98,7 +98,9 @@ const CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpk
  * and blob: URLs. So a page an agent wrote (say, prompted by a poisoned issue) can't send what's in it, or the answers
  * typed into it, out with remote images, fetch, frames or form posts. The frame's own navigations are held by the
  * board's frame-src (index.html), and its links by `linksInNewTabs`. An <ia-html>'s frame (srcdoc) inherits it.
- * Not WebRTC, which Chromium doesn't hold to CSP: a page can still reach a STUN or TURN server of its choosing (HA-269).
+ * Two ways out remain, both through a hostname of the page's choosing (HA-269): WebRTC, which Chromium doesn't hold to
+ * CSP (a STUN or TURN server), and, in browsers but not Electron, a frame load the policy refuses (an <iframe>, or a
+ * frame navigating itself), for which Chromium still looks the host up and connects to it, TLS SNI included.
  */
 export const FRAME_CSP = [
   "default-src 'none'",

@@ -1,6 +1,8 @@
-// A plan or artifact an agent wrote can't send what's in it anywhere (HA-266): its frame's policy (FRAME_CSP in
+// A plan or artifact an agent wrote can't load anything from another host (HA-266): its frame's policy (FRAME_CSP in
 // src/components/task/htmlFrame.ts) and the board's frame-src (index.html) let it load only its own inline scripts and
-// styles, data: URLs and libraries from the CDNs.
+// styles, data: URLs and libraries from the CDNs. What this counts is requests: in Chromium (not Electron) a frame load
+// the policy refuses still looks the host up and connects to it (TLS SNI included), and WebRTC isn't held by the policy,
+// so a page can still send data in a hostname (HA-269).
 import assert from "node:assert/strict";
 import http from "node:http";
 import { afterAll, beforeAll, test } from "vite-plus/test";
