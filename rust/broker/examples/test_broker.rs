@@ -1,4 +1,4 @@
-//! A legacy-relay broker for the TypeScript server's tests (server-ts/src/hosts/broker/tests.test.ts), which need the
+//! A legacy-relay broker for the TypeScript server's tests (apps/server/src/hosts/broker/tests.test.ts), which need the
 //! limits the Rust tests set through `Config` and the binary has no flags for:
 //!
 //! ```text

@@ -16,7 +16,7 @@ export const DENY = "deny";
 /** What a plain tap on a notification is (expo-notifications' DEFAULT_ACTION_IDENTIFIER). */
 export const DEFAULT_ACTION = "expo.modules.notifications.actions.DEFAULT";
 
-/** The events a phone can be pushed, as the web board names them (app/src/notifications.ts). */
+/** The events a phone can be pushed, as the web board names them (apps/web/src/notifications.ts). */
 export const PUSH_EVENTS: { id: "attention" | "review" | "merge" | "done"; label: string }[] = [
   { id: "attention", label: "Needs attention" },
   { id: "review", label: "Ready to review" },
@@ -34,7 +34,7 @@ export const PUSH_PROMPTS: { id: PushPrompts; label: string }[] = [
   { id: "all", label: "Every task's" },
 ];
 
-/** What a push from a board carries (server-ts/src/integrations/push.ts, `expo_message`). */
+/** What a push from a board carries (apps/server/src/integrations/push.ts, `expo_message`). */
 export interface PushData {
   /** The board's host id: the paired board's id. */
   board: string;

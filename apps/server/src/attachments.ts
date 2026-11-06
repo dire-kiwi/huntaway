@@ -128,7 +128,7 @@ export async function save(s: AppState, name_given: string, data: Uint8Array): P
   return [id, name, path];
 }
 
-/** `text` with the files at `paths` listed after it, as the UI sends them (app/src/attachments.ts). */
+/** `text` with the files at `paths` listed after it, as the UI sends them (apps/web/src/attachments.ts). */
 export function listed(text: string, paths: string[]): string {
   if (!paths.length) return text;
   const list = `${HEADER}\n${paths.map((p) => `- ${path_str(p)}`).join("\n")}`;

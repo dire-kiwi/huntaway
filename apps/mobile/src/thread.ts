@@ -82,7 +82,7 @@ export const hiddenUser = (it: ThreadItem) => it.type === "user" && !it.text.tri
 
 // A task whose items are its thread's source (API 122, `thread_source`, see docs/threads.md) has no messages since it
 // moved onto them: its thread is read from `GET /tasks/{id}/thread` (a window of its last items) and its pages, whose
-// items and requests are server-ts/src/threads/protocol.ts's. These give what threadItems gives from messages.
+// items and requests are apps/server/src/threads/protocol.ts's. These give what threadItems gives from messages.
 
 /** The message an item made from one names in its id (`legacy:<message id>[:<block>]`). */
 const messageOf = (id: string): number | undefined => {

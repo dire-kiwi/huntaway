@@ -55,7 +55,7 @@ aborts, as it does when it runs out of memory), `bin/huntaway` starts it again a
 
 Tests: every Rust test that applied was ported (737 TS tests: `src/**/*.test.ts` beside their modules, and
 `tests/` for the Rust server's `server/tests/`). Not ported: `state.rs`'s two tests of the database lock, which the TS server doesn't have,
-and `testing.rs`'s tests of the cargo test harness. All 220 browser checks in `app/tests/ui/` pass against it. The broker
+and `testing.rs`'s tests of the cargo test harness. All 220 browser checks in `apps/web/tests/ui/` pass against it. The broker
 tests run the Rust broker's `test_broker` example (`cargo build -p huntaway-broker --example test_broker`).
 
 ## Memory

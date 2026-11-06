@@ -1,5 +1,5 @@
 // The assistant's Google card (API 113): whether its Google Workspace server (Gmail, Calendar and Drive, on the assistant's host)
-// is connected and as whom, and if not, what's missing and how to set it up (see server-ts/src/agent/assistant/google.ts).
+// is connected and as whom, and if not, what's missing and how to set it up (see apps/server/src/agent/assistant/google.ts).
 import clsx from "clsx";
 import { Copy, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";

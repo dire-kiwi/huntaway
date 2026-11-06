@@ -14,7 +14,7 @@ import * as testing from "../testing.ts";
 import * as db from "../db.ts";
 import * as backup from "../backup.ts";
 import type { AppState } from "../state.ts";
-import { builds_shim, bundle, check_deployed, pick_bundle_commit, status } from "./admin.ts";
+import { builds_shim, bundle, check_deployed, pick_bundle_commit, pnpm_command, status } from "./admin.ts";
 import * as api from "../api.ts";
 import { randomBytes } from "node:crypto";
 import { gunzipSync } from "node:zlib";
@@ -564,4 +564,15 @@ test("a_rebuild_without_cargo_keeps_a_prebuilt_ia_shim", () => {
   assert.equal(builds_shim(empty, ts), false, "no cargo: the release's shim is kept");
   assert.equal(builds_shim(undefined, ts), false);
   assert.equal(builds_shim(`${empty}:${cargo_dir}`, ts), true, "with cargo, the checkout's own shim is built");
+});
+
+test("a_rebuild_runs_pnpm_from_path_else_the_pinned_one_through_npx", () => {
+  const src = testing.temp_dir();
+  const bin = testing.temp_dir();
+  const empty = testing.temp_dir();
+  writeFileSync(join(src, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.9+sha512.abc" }));
+  assert.deepEqual(pnpm_command(empty, src), ["npx", ["--yes", "pnpm@10.34.9"]]);
+  writeFileSync(join(bin, "pnpm"), "", { mode: 0o755 });
+  assert.deepEqual(pnpm_command(`${empty}:${bin}`, src), ["pnpm", []]);
+  assert.deepEqual(pnpm_command(empty, empty), ["npx", ["--yes", "pnpm"]], "no package.json: the latest pnpm");
 });

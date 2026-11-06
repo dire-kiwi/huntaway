@@ -1,5 +1,5 @@
-// Port of server/broker/src/proto.rs (`huntaway_broker::proto`): what a host and the broker say to each other over the
-// websocket the host opens to `/_broker/connect`. The broker itself stays Rust (server/broker); this is the host's side
+// Port of rust/broker/src/proto.rs (`huntaway_broker::proto`): what a host and the broker say to each other over the
+// websocket the host opens to `/_broker/connect`. The broker itself stays Rust (rust/broker); this is the host's side
 // of its protocol, which hosts/broker.ts speaks.
 //
 // With managed tunnels, Welcome supplies a per-tunnel connector token and endpoint. Only registration and heartbeats use

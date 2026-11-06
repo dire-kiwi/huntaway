@@ -1,0 +1,11 @@
+{
+  "name": "huntaway",
+  "private": true,
+  "description": "A kanban board for orchestrating Claude Code and Codex agents",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=24"
+  }
+}

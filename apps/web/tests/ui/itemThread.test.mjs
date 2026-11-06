@@ -1,7 +1,7 @@
 // HA-218: a task's thread drawn from its items (with the host's Keep threads as items setting on) looks the same as
 // drawn from its messages (with it off): the same task, its thread shot both ways, compared pixel for pixel. Its
 // messages are served as a host serves them (routeThread), and its items as the server's translator makes them from
-// those messages (server-ts/src/threads/translate.ts), as a window and pages of earlier items.
+// those messages (apps/server/src/threads/translate.ts), as a window and pages of earlier items.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { demoProject, routeThread, startServer, withBrowser } from "./harness.mjs";
 import { threadHistory } from "../fixtures/threadHistory.mjs";
-import { convert } from "../../../server-ts/src/threads/translate.ts";
+import { convert } from "../../../server/src/threads/translate.ts";
 import { apply_events, initial_state, item_page, snapshot_window } from "../../src/threads.ts";
 
 // Its threads are seeded as messages rows, which a task whose items are its source (HA-222) has none of: its server is

@@ -6,7 +6,8 @@ __pycache__/
 .env.*
 *.pem
 *.key
-/app/release
+/apps/web/release
 /release-server
-/server-ts/bin/ia-shim
+/apps/server/bin/ia-shim
 /target
+/server-ts/bin/ia-shim

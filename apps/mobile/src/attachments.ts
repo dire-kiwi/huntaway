@@ -1,5 +1,5 @@
 // Photos attached to a message are saved on the task's host (POST /attachments) and listed after its text, as the
-// web board does (app/src/attachments.ts), so the agent reads them from there.
+// web board does (apps/web/src/attachments.ts), so the agent reads them from there.
 import type { Attachment } from "@huntaway/client";
 
 /** `text` with the attachments listed after it. */

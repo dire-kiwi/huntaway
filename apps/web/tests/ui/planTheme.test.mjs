@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { after, before, test } from "node:test";
 import { frameDoc } from "../../src/components/task/htmlFrame.ts";
 import { themedPlan } from "../../src/components/task/planTheme.ts";
-import { launchOptions } from "../../../scripts/ui-check.mjs";
+import { launchOptions } from "../../../../scripts/ui-check.mjs";
 
 const { chromium } = createRequire(import.meta.url)("playwright-core");
 const css = fs.readFileSync(new URL("../../src/components/task/planTheme.css", import.meta.url), "utf8");

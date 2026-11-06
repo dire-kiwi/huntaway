@@ -1,6 +1,6 @@
 // The board's service worker (registered by push.ts): it shows the board's push notifications (see
-// server-ts/src/integrations/push.ts) and opens the task when one is tapped. A permission prompt's has Allow and
-// Deny, which answer it with the one-time token that came with it (server-ts/src/integrations/push_answers.ts):
+// apps/server/src/integrations/push.ts) and opens the task when one is tapped. A permission prompt's has Allow and
+// Deny, which answer it with the one-time token that came with it (apps/server/src/integrations/push_answers.ts):
 // the worker never has the board's token. It caches nothing, and has no fetch
 // handler: pages, the UI's scripts and the API all come from the server as they would without it, so
 // a new UI build is never hidden behind an old copy (see uiVersion.ts).

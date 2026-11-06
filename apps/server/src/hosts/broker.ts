@@ -1,4 +1,4 @@
-// Port of server/src/hosts/broker.rs: dialling out to a broker (`serve --broker <url>`, see `server/broker`), so this
+// Port of server/src/hosts/broker.rs: dialling out to a broker (`serve --broker <url>`, see `rust/broker`), so this
 // host can be reached through it from anywhere: its board in a browser, and its API from hubs.
 //
 // A managed broker sends a connector token and public endpoint; cloudflared carries application traffic to our private

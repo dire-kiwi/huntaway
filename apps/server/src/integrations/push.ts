@@ -1,11 +1,11 @@
 // Port of server/src/integrations/push.rs: Web Push: the board's notifications (a task needs attention, is ready to
-// review, and so on; the same events and words as the UI's, in app/src/notifications.ts) sent to the devices that turned
+// review, and so on; the same events and words as the UI's, in apps/web/src/notifications.ts) sent to the devices that turned
 // push on in Settings → Notifications, such as a phone with the board installed on its home screen.
 //
 // Each device's browser gives a subscription (an endpoint at its push service, and keys), which is kept with the events
 // it wants. This board watches the task events of every host on it (as the UI does), and sends each subscription the
 // ones it wants, encrypted for it (RFC 8291) and signed with the board's VAPID key (RFC 8292), whose public half the
-// browser subscribed with. Tapping one opens the task (app/public/sw.js).
+// browser subscribed with. Tapping one opens the task (apps/web/public/sw.js).
 //
 // So are the assistant's routines' reports, as each is posted on its thread, and its replies, for the devices that choose
 // them, as the assistant's host says its turn ended (`REPLY_EVENT`), except one to a message sent on Telegram, which goes
@@ -184,7 +184,7 @@ export function authorization(v: Vapid, endpoint: string, sub: string, now: numb
 // ---------- subscriptions ----------
 
 /**
- * Which events a device gets: HA-8's (app/src/notifications.ts), with the same defaults, permission prompts, and the
+ * Which events a device gets: HA-8's (apps/web/src/notifications.ts), with the same defaults, permission prompts, and the
  * assistant's replies and its routines' reports.
  */
 export interface Events {
@@ -501,7 +501,7 @@ export function is_expo_token(t: string): boolean {
 
 /**
  * Expo's request for `msg` to `sub`. It carries the task's key and title and what happened, and for a prompt the token
- * for Allow and Deny (category `prompt`, see mobile/src/notifications.ts), which answers only that prompt.
+ * for Allow and Deny (category `prompt`, see apps/mobile/src/notifications.ts), which answers only that prompt.
  */
 function expo_message(s: AppState, sub: Subscription, msg: Message, urgent: boolean): any {
   const data: any = { board: s.host_id, url: msg.url, tag: msg.tag };
@@ -658,7 +658,7 @@ function receipts_url(send: string): string {
 // ---------- events ----------
 
 /**
- * HA-8's events (`NotifyEvent` in app/src/notifications.ts), `prompt` (a permission prompt was raised, see
+ * HA-8's events (`NotifyEvent` in apps/web/src/notifications.ts), `prompt` (a permission prompt was raised, see
  * `observe_prompt`), `reply` (the assistant finished a reply, see `observe_reply`) and `report` (a routine posted a report
  * in the assistant's thread, see `observe_report`).
  */
@@ -675,7 +675,7 @@ export const STOPPED = "Stopped by user";
 /** How long a task that's ready to review has to stay so before it notifies (`REVIEW_GRACE_MS`). */
 const REVIEW_GRACE = 5000;
 
-/** How long a move the user made keeps its notification away (`MOVE_MS` in app/src/api/tasks.ts). */
+/** How long a move the user made keeps its notification away (`MOVE_MS` in apps/web/src/api/tasks.ts). */
 const MOVE_GRACE = 15_000;
 
 function status(t: any): string {

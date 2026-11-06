@@ -1,4 +1,4 @@
-// The board's dark colours (app/src/index.css), for the app.
+// The board's dark colours (apps/web/src/index.css), for the app.
 import type { Status } from "@huntaway/client";
 
 export const colors = {

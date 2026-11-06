@@ -143,12 +143,12 @@ function findServerBinary(skip = []) {
     const choice = versions.chooseServer({ appDir: releaseDir(), bundled, minVersion: app.getVersion(), exe: EXE, skip });
     if (choice.version || fs.existsSync(bundled)) return { ...choice, bundled: !choice.version };
   }
-  // A checkout: the TypeScript server, once its dependencies are installed. A checkout that hasn't run `npm ci` in
-  // server-ts/ since the server moved there (an install whose Rust server rebuilt it) runs the Rust build it has left
-  // from before the Rust server was removed (HA-179) until then.
-  const root = path.join(__dirname, "..", "..");
-  const ts = path.join(root, "server-ts", "bin", "huntaway");
-  if (fs.existsSync(path.join(root, "server-ts", "node_modules", "ws", "package.json"))) return { bin: ts, version: null };
+  // A checkout: the TypeScript server (apps/server), once its dependencies are installed (`pnpm install`). A checkout
+  // that hasn't installed them since the server moved there (an install whose Rust server rebuilt it) runs the Rust
+  // build it has left from before the Rust server was removed (HA-179) until then.
+  const root = path.join(__dirname, "..", "..", "..");
+  const ts = path.join(root, "apps", "server", "bin", "huntaway");
+  if (fs.existsSync(path.join(root, "apps", "server", "node_modules", "ws", "package.json"))) return { bin: ts, version: null };
   const bin = [path.join(root, "server", "target", "release", EXE), path.join(root, "server", "target", "debug", EXE)].find((p) => fs.existsSync(p));
   return bin ? { bin, version: null } : null;
 }
@@ -166,7 +166,7 @@ let skipBackupOnce = false;
 /**
  * The environment for a server started here: a release build's, whichever binary it runs, turns on release updates.
  * `skipDbBackup` in desktop.json, or "Start without a backup" for one start, lets it start without backing up the
- * database (server-ts/src/backup.ts).
+ * database (apps/server/src/backup.ts).
  */
 function serverEnv() {
   const env = { ...process.env };
@@ -262,7 +262,7 @@ async function startServer(win) {
   const started = versions.startWithFallback({
     choose: (skip) => {
       const choice = findServerBinary(skip);
-      if (!choice) throw new Error("Could not find the huntaway server. Run `npm ci` in server-ts/, and `cargo build --release -p ia-shim` in server/.");
+      if (!choice) throw new Error("Could not find the huntaway server. Run `pnpm install`, and `cargo build --release -p ia-shim`, at the top of the checkout.");
       return choice;
     },
     start: (choice) =>
@@ -361,7 +361,7 @@ function spawnServer(choice, { onLost, onLate }) {
     });
     ended.then(({ code, signal }) => {
       clearTimeout(timer);
-      // It couldn't back up the database, and says why (server-ts/src/serve.ts): {reason, why, dir}.
+      // It couldn't back up the database, and says why (apps/server/src/serve.ts): {reason, why, dir}.
       const m = buf.match(/IA_BACKUP_FAILED (\{.*\})/);
       let backup = null;
       try {

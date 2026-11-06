@@ -1,4 +1,4 @@
-# Runs the server, UI and mobile app tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request. The
+# Runs the server, UI and mobile app tests, the browser checks in apps/web/tests/ui and scripts/ia-api's tests on each pull request. The
 # server is the TypeScript one in server-ts/ (the `server-ts` job, and what the browser checks run against); the `rust`
 # job tests what stays in Rust in server/: ia-shim and the broker. It needs no secrets, so pull requests from forks run
 # it too. Deployments live outside this repository.
@@ -158,7 +158,7 @@ jobs:
         working-directory: server-ts
         run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
 
-      # The broker tests run the Rust broker (its test_broker example, see server-ts/src/hosts/broker/test_broker.ts).
+      # The broker tests run the Rust broker (its test_broker example, see apps/server/src/hosts/broker/test_broker.ts).
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
@@ -179,7 +179,7 @@ jobs:
         working-directory: server-ts
         run: npm test
 
-  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against the server (server-ts/, as
+  # The browser checks in apps/web/tests/ui (`npm run test:ui`, which builds the UI first) against the server (server-ts/, as
   # scripts/test-server.sh runs it, with a debug ia-shim), and
   # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time on a GitHub-hosted one
   # (it has 4 CPUs, and Chromium keeps them busy: more at once only made each check slower) and 2 on a self-hosted one

@@ -18,7 +18,7 @@
  *
  * What the run reads from mail, invitations and files is untrusted: its message tells it to only read and draft, until
  * the approval rules (agent/approval_rules.ts) hold that for it. The brief's page is shown in a frame that runs no scripts
- * and holds no way to rate (see app/src/components/task/Brief.tsx): ratings come only from the board's own buttons.
+ * and holds no way to rate (see apps/web/src/components/task/Brief.tsx): ratings come only from the board's own buttons.
  */
 import { ApiError, type Req } from "../../http.ts";
 import type { AppState } from "../../state.ts";

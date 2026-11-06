@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Renders the app's icons in mobile/assets from the board's icon (app/public/icon.svg): the dog on its violet gradient.
+# Renders the app's icons in mobile/assets from the board's icon (apps/web/public/icon.svg): the dog on its violet gradient.
 # Run it again after changing that icon, and copy the change into the paths below. Needs rsvg-convert (librsvg).
 #
 #   icon.png                     1024², iOS (and the fallback): full bleed and opaque, since iOS rounds the corners itself
@@ -16,7 +16,7 @@ trap 'rm -rf "$out"' EXIT
 
 gradient='<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b8cf9"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>'
 
-# The dog, in app/public/icon.svg's 512 units, with its body and chest carried on to y=640 for the adaptive icon. $1 is
+# The dog, in apps/web/public/icon.svg's 512 units, with its body and chest carried on to y=640 for the adaptive icon. $1 is
 # the dark fur's colour, $2 the tan's, $3 the eyes', $4 their highlights', $5 the nose's and mouth's, $6 the tongue's.
 dog() {
   cat <<EOF

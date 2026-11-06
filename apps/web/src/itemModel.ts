@@ -1,5 +1,5 @@
 // What a thread shows, built from its items (a thread kept as items, docs/threads.md): the adapter from the shared model
-// (threads.ts, server-ts/src/threads/protocol.ts) onto the ThreadModel that threadModel.ts builds from messages, which
+// (threads.ts, apps/server/src/threads/protocol.ts) onto the ThreadModel that threadModel.ts builds from messages, which
 // the thread's components draw. The same task looks the same either way (tests/ui/itemThread.test.mjs compares them).
 //
 // What the items don't say, the board's `metadata` on them does (converter 4 on the server): an auto message, a turn's

@@ -1,6 +1,6 @@
 // The assistant's Brief tab (API 113): the morning brief its routine writes (brief.html, one version a day), and beside it the
 // day's items (from the run's brief.json, as the host checked them) with a thumbs up and down each, which go into MEMORY.md as
-// preferences (see server-ts/src/agent/assistant/brief.ts). Without a brief yet, it sets up the routine.
+// preferences (see apps/server/src/agent/assistant/brief.ts). Without a brief yet, it sets up the routine.
 //
 // The brief was written from mail, so its page has no say in the ratings: it's shown in a frame that runs no scripts and is
 // sent nothing, and the ratings are the board's own buttons, outside it. A page that navigates its frame elsewhere gets nothing.

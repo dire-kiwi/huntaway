@@ -61,7 +61,7 @@ export const API_COMPAT = 1;
 /** Identifies the exact build: here, the process's start (the Rust build stamps its build time). */
 export const BUILD_ID = `ts-${Date.now().toString(16)}`;
 
-/** server-ts/package.json, and build.json beside it, which a release writes (see .github/workflows/release.yml). */
+/** The server's package.json (apps/server/, server-ts/ in a release package), and build.json beside it, which a release writes (see .github/workflows/release.yml). */
 const read_json = (name: string): any => {
   try {
     return JSON.parse(readFileSync(new URL(`../../${name}`, import.meta.url), "utf8"));

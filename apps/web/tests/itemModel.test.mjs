@@ -1,5 +1,5 @@
 // The thread view on items (itemModel.ts) draws what the view on messages (threadModel.ts) does: the same messages,
-// translated into items by the server's translator (server-ts/src/threads/translate.ts, which is pure), give the same
+// translated into items by the server's translator (apps/server/src/threads/translate.ts, which is pure), give the same
 // rows, subagents and results.
 import assert from "node:assert/strict";
 import { register } from "node:module";
@@ -18,7 +18,7 @@ const hook = `export async function resolve(spec, ctx, next) {
 register("data:text/javascript," + encodeURIComponent(hook));
 const { buildModel, buildItems } = await import("../src/threadModel.ts");
 const { buildItemModel, keyOf, toolName } = await import("../src/itemModel.ts");
-const { convert } = await import("../../server-ts/src/threads/translate.ts");
+const { convert } = await import("../../server/src/threads/translate.ts");
 const { apply_events, initial_state, snapshot_window, item_page, with_page } = await import("../src/threads.ts");
 
 /** What a result line shows (items.tsx's ResultLine), and a compaction's (CompactLine). */

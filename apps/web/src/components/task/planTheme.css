@@ -1,7 +1,7 @@
 /*
  * The board's theme for plans (see planTheme.ts), ahead of the plan's own HTML in its frame.
  * Plain HTML gets the theme as it is, and the components below are what plan agents are told to
- * build with (the list in server-ts/src/agent/documents.ts's PLAN_FORMAT must match). They're modelled on
+ * build with (the list in apps/server/src/agent/documents.ts's PLAN_FORMAT must match). They're modelled on
  * ODS-23's plan: a slate palette, tinted pills and callouts, cards in a grid and numbered steps.
  */
 :root {

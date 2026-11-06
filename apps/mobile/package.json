@@ -22,7 +22,7 @@
       "<rootDir>/tests/setup.ts"
     ],
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@huntaway/.*|mdast-.*|micromark.*|decode-named-character-reference|character-entities|unist-.*|ccount|escape-string-regexp|markdown-table|longest-streak|zwitch|devlop)"
+      "node_modules/(?!(\\.pnpm|(jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@huntaway/.*|mdast-.*|micromark.*|decode-named-character-reference|character-entities|unist-.*|ccount|escape-string-regexp|markdown-table|longest-streak|zwitch|devlop)"
     ],
     "modulePaths": [
       "<rootDir>/node_modules"
@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@expo/metro-runtime": "~58.0.16",
-    "@huntaway/client": "file:../packages/client",
+    "@huntaway/client": "workspace:*",
     "expo": "~58.0.22",
     "expo-camera": "~58.0.14",
     "expo-clipboard": "~58.0.4",
@@ -61,9 +61,12 @@
     "react-native-web": "^0.21.4"
   },
   "devDependencies": {
+    "@expo/config-plugins": "~58.0.12",
+    "@expo/prebuild-config": "~58.0.19",
     "@testing-library/react-native": "^14.1.0",
     "@types/jest": "^30.0.0",
     "@types/mdast": "^4.0.4",
+    "@types/node": "^24.19.2",
     "@types/react": "~19.3.0",
     "jest": "^30.5.2",
     "jest-expo": "^58.0.13",

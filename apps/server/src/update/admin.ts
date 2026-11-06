@@ -30,7 +30,7 @@ const log = {
 export interface ServerMeta {
   boot_id: string;
   started_at: string;
-  /** Repository root containing `server/` and `app/`, if known. */
+  /** Repository root (with `Cargo.toml` and `apps/web/`), if known. */
   source_dir: string | null;
   /** HEAD of the source checkout when this process started. */
   running_commit: string | null;
@@ -79,16 +79,16 @@ const is_file = (p: string) => {
   }
 };
 
-/** `--source-dir`, or the checkout this server runs from (`<root>/server-ts/src/update/admin.ts`). */
+/** `--source-dir`, or the checkout this server runs from (`<root>/apps/server/src/update/admin.ts`). */
 export function detect_source_dir(explicit: string | null): string | null {
-  const root = explicit ?? join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const root = explicit ?? join(dirname(fileURLToPath(import.meta.url)), "../../../..");
   let real: string;
   try {
     real = realpathSync(root);
   } catch {
     return null;
   }
-  return is_file(join(real, "server/Cargo.toml")) && is_file(join(real, "app/package.json")) ? real : null;
+  return is_file(join(real, "Cargo.toml")) && is_file(join(real, "apps/web/package.json")) ? real : null;
 }
 
 /**
@@ -296,13 +296,29 @@ function build_env(): NodeJS.ProcessEnv {
   return env;
 }
 
+/** Whether `program` is in one of `path`'s folders. */
+const on_path = (path: string | undefined, program: string) => (path ?? "").split(delimiter).some((d) => d !== "" && is_file(join(d, program)));
+
 /**
- * Whether a rebuild builds ia-shim with cargo: unless there's no cargo on `path` and `ts_dir` (server-ts) has a prebuilt
- * one in `bin/`, from a release (scripts/install.sh puts it there on a machine without Rust). The shim seldom changes.
+ * Whether a rebuild builds ia-shim with cargo: unless there's no cargo on `path` and `server_dir` (apps/server) has a
+ * prebuilt one in `bin/`, from a release (scripts/install.sh puts it there on a machine without Rust). The shim seldom
+ * changes.
  */
-export function builds_shim(path: string | undefined, ts_dir: string): boolean {
-  const cargo = (path ?? "").split(delimiter).some((d) => d !== "" && is_file(join(d, "cargo")));
-  return cargo || !is_file(join(ts_dir, "bin/ia-shim"));
+export function builds_shim(path: string | undefined, server_dir: string): boolean {
+  return on_path(path, "cargo") || !is_file(join(server_dir, "bin/ia-shim"));
+}
+
+/**
+ * How a rebuild runs pnpm, as `[program, args before pnpm's own]`: `pnpm` on `path`, else the version the checkout's
+ * package.json pins (`packageManager`), through npx.
+ */
+export function pnpm_command(path: string | undefined, src: string): [string, string[]] {
+  if (on_path(path, "pnpm")) return ["pnpm", []];
+  let pinned = "pnpm";
+  try {
+    pinned = String(JSON.parse(readFileSync(join(src, "package.json"), "utf8")).packageManager ?? "pnpm").split("+")[0];
+  } catch {}
+  return ["npx", ["--yes", pinned]];
 }
 
 /** Run a build step, streaming stdout and stderr into the restart log. */
@@ -333,42 +349,25 @@ const is_dir = (p: string) => {
   }
 };
 
-const mtime = (p: string) => {
-  try {
-    return statSync(p).mtimeMs;
-  } catch {
-    return null;
-  }
-};
-
-/**
- * Whether `npm ci` has to run in `dir` (server-ts): its lockfile is newer than the one npm keeps of what it installed
- * (`node_modules/.package-lock.json`), as after a pull that changed it, or nothing is installed.
- */
-export function lockfile_changed(dir: string): boolean {
-  const lock = mtime(join(dir, "package-lock.json"));
-  const installed = mtime(join(dir, "node_modules/.package-lock.json"));
-  return lock !== null && (installed === null || lock > installed);
-}
-
 async function run(state: AppState, rebuild: boolean) {
   let exe = state.exe;
   if (rebuild) {
     const src = state.meta.source_dir;
     if (src === null) throw new Error("source checkout not found");
     set_phase(state, "building_ui", null);
-    // --no-save, so the build never rewrites the tracked package-lock.json: a hub's Update refuses a checkout with
+    // The dependencies of the server and the UI (and of the API client they share), not the mobile app's.
+    // --frozen-lockfile, so the build never rewrites the tracked pnpm-lock.yaml: a hub's Update refuses a checkout with
     // uncommitted changes, so that would stop the next one.
-    await step(state, join(src, "app"), "npm", ["install", "--no-save", "--no-audit", "--no-fund"]);
-    await step(state, join(src, "app"), "npm", ["run", "build"]);
+    const [pnpm, pre] = pnpm_command(build_env().PATH, src);
+    await step(state, src, pnpm, [...pre, "install", "--frozen-lockfile", "--filter", "huntaway-server...", "--filter", "huntaway-app..."]);
+    await step(state, src, pnpm, [...pre, "--filter", "huntaway-app", "run", "build"]);
     set_phase(state, "building_server", null);
-    // The TypeScript server runs from its sources: what it builds is its dependencies, when its lockfile changed, and the
-    // Rust ia-shim its agents run under (see agent/runs.ts's shim_path).
-    const ts = join(src, "server-ts");
-    if (lockfile_changed(ts)) await step(state, ts, "npm", ["ci", "--no-audit", "--no-fund"]);
-    if (builds_shim(build_env().PATH, ts)) await step(state, join(src, "server"), "cargo", ["build", "--release", "-p", "ia-shim"]);
-    else log_line(state, "no cargo on PATH: using the prebuilt ia-shim in server-ts/bin/");
-    exe = join(ts, "bin/huntaway");
+    // The TypeScript server runs from its sources: what's left to build is the Rust ia-shim its agents run under (see
+    // agent/runs.ts's shim_path), in the Cargo workspace at the checkout's root.
+    const server = join(src, "apps/server");
+    if (builds_shim(build_env().PATH, server)) await step(state, src, "cargo", ["build", "--release", "-p", "ia-shim"]);
+    else log_line(state, "no cargo on PATH: using the prebuilt ia-shim in apps/server/bin/");
+    exe = join(server, "bin/huntaway");
   }
   throw await restart_into(state, exe, []);
 }

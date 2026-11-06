@@ -17,7 +17,7 @@
  * change that older readers can't handle needs a new `RUN_FORMAT`, and readers must keep
  * supporting the old one. `run.json` records the format (runs without it are format 1).
  *
- * `ia-shim` stays the Rust binary (server/shim): see `shim_path`.
+ * `ia-shim` stays the Rust binary (rust/shim): see `shim_path`.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -146,11 +146,11 @@ export function run_dir(state: Shared, run_id: string): string {
   return join(state.data_dir, "runs", run_id);
 }
 
-/** This checkout's `server/` (the Rust workspace, where `ia-shim` is built). */
-const SERVER_DIR = fileURLToPath(new URL("../../../server/", import.meta.url));
+/** This checkout's Cargo `target/` (the Rust workspace is the repository's root, with `ia-shim` in rust/shim). */
+const TARGET_DIR = fileURLToPath(new URL("../../../../target/", import.meta.url));
 
 /**
- * The Rust `ia-shim`: `$IA_SHIM_BIN`, else `server/target/{release,debug}/ia-shim` in this checkout (the newer one),
+ * The Rust `ia-shim`: `$IA_SHIM_BIN`, else `target/{release,debug}/ia-shim` in this checkout (the newer one),
  * else `ia-shim` beside `bin/huntaway`.
  */
 export function shim_path(state: Shared): string {
@@ -158,7 +158,7 @@ export function shim_path(state: Shared): string {
   if (env) return env;
   // Not in tests (`node --test`), which mustn't start real agents unless they ask to (TEST_CAN_RUN), as the Rust tests
   // can't: their binary has no ia-shim beside it.
-  const built = process.env.NODE_TEST_CONTEXT ? [] : ["release", "debug"].map((p) => join(SERVER_DIR, "target", p, "ia-shim")).filter(is_file);
+  const built = process.env.NODE_TEST_CONTEXT ? [] : ["release", "debug"].map((p) => join(TARGET_DIR, p, "ia-shim")).filter(is_file);
   if (built.length) return built.sort((a, b) => mtime(b) - mtime(a))[0];
   return join(dirname(state.exe), "ia-shim");
 }
@@ -228,7 +228,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   }
   const shim = shim_path(state);
   if (!existsSync(shim)) {
-    throw new Error(`ia-shim not found next to ${state.exe} (build it with \`cargo build --release -p ia-shim\` in server/)`);
+    throw new Error(`ia-shim not found next to ${state.exe} (build it with \`cargo build --release -p ia-shim\` at the top of the checkout)`);
   }
   await mkdir(dir, { recursive: true });
   // The boot tells whether its pids are still its own later (see `pid_reused`).

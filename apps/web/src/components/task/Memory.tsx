@@ -1,5 +1,5 @@
 // The assistant's Memory tab (API 111): its USER.md, MEMORY.md and daily logs, which the board loads into each of its runs
-// (see server-ts/src/agent/assistant/memory.ts). Edit them, see each file's history and restore a version, or import what
+// (see apps/server/src/agent/assistant/memory.ts). Edit them, see each file's history and restore a version, or import what
 // another assistant knows about you.
 import clsx from "clsx";
 import { Copy, FileText, History, Import, Loader2, RotateCcw, Save } from "lucide-react";

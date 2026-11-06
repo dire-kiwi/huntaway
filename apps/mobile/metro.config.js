@@ -1,9 +1,5 @@
-// The shared API client is plain TypeScript in ../packages/client, linked with `file:` (as app/ does): Metro has to
-// watch it, and resolve its imports from this app's node_modules.
-const path = require("path");
+// Expo's defaults: in a monorepo (this pnpm workspace) they watch the workspace's root and resolve from both this app's
+// node_modules and the root's, so the shared API client (packages/client, linked with `workspace:*`) bundles as it is.
 const { getDefaultConfig } = require("expo/metro-config");
 
-const config = getDefaultConfig(__dirname);
-config.watchFolders = [...(config.watchFolders ?? []), path.resolve(__dirname, "../packages")];
-config.resolver.nodeModulesPaths = [path.resolve(__dirname, "node_modules")];
-module.exports = config;
+module.exports = getDefaultConfig(__dirname);

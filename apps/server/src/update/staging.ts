@@ -4,7 +4,7 @@
 // - `<v>/`: a release's server tarball, unpacked (`huntaway`, `ia-shim` and `ui/index.html` side by side)
 // - `<v>.partial/`: one being downloaded or unpacked
 // - `state.json`: `{current, previous, staged, trying, bad}`, which the desktop app reads and writes too
-//   (app/electron/versions.cjs), so it's written through a temp file and a rename, and keeps the keys it doesn't know.
+//   (apps/web/electron/versions.cjs), so it's written through a temp file and a rename, and keeps the keys it doesn't know.
 //
 // A release found by a check is downloaded, verified and unpacked here in the background ("staged"), and Update
 // restarts onto it. A server running from `app/<v>/huntaway` settles on startup: it becomes `current`, and the
@@ -232,7 +232,7 @@ export function settle(state: AppState): string | null {
 
 /**
  * For a server whose version nothing else chooses (a tarball's, which its supervisor starts again after a reboot), the
- * version in `app/` to exec instead, as the desktop app chooses (`chooseServer` in app/electron/versions.cjs): `current`,
+ * version in `app/` to exec instead, as the desktop app chooses (`chooseServer` in apps/web/electron/versions.cjs): `current`,
  * else `previous`, the first newer than `running` (so a newer tarball wins over older downloads) that isn't bad and has
  * its files. It's set as `trying`, which it clears once it's listening (`settle`).
  *

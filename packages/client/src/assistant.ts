@@ -5,16 +5,16 @@ import type { Profile } from "./profiles";
 import type { Task } from "./tasks";
 
 /** Each profile has an assistant (API 109): one long-lived thread in no project, keyed `A-<n>`, that works in a folder of its
- *  own and never goes to review or merge (see server-ts/src/agent/assistant.ts). The sidebar opens it; it's off the board. */
+ *  own and never goes to review or merge (see apps/server/src/agent/assistant.ts). The sidebar opens it; it's off the board. */
 export const ASSISTANT_API = 109;
 
 /** Its memory (API 111): USER.md, MEMORY.md and daily logs in its workspace, which the board loads into each of its runs and
- *  commits after each turn that changed them (see server-ts/src/agent/assistant/memory.ts). The Memory tab edits them. */
+ *  commits after each turn that changed them (see apps/server/src/agent/assistant/memory.ts). The Memory tab edits them. */
 export const MEMORY_API = 111;
 
 /** Google and the morning brief (API 113): the Google card (whether the assistant's Google Workspace server is connected), the
  *  morning brief routine template, the assistant's `brief` document (one version a day) and ratings of its items, which go into
- *  MEMORY.md (see server-ts/src/agent/assistant/google.ts and brief.ts). */
+ *  MEMORY.md (see apps/server/src/agent/assistant/google.ts and brief.ts). */
 export const BRIEF_API = 113;
 
 /** Whether the host has the Google card, the brief template and the Brief tab. */

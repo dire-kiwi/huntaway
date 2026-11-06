@@ -18,14 +18,14 @@ personal mode was ported in HA-201 to HA-210 (HA-190's slices) from its branch,
 are ported by HA-189, and HA-128 and HA-143's agent threads by HA-191.
 
 Scope: the whole server, including linking hosts (hub links, relay, SSH, broker: the broker's side of its protocol is
-`hosts/broker/proto.ts`, from `server/broker/src/proto.rs`, and tests run the Rust broker as a process, see
+`hosts/broker/proto.ts`, from `rust/broker/src/proto.rs`, and tests run the Rust broker as a process, see
 `hosts/broker/test_broker.ts`), Web Push, restarts, self-update from a checkout and release updates (`bin/huntaway` execs
 for the server, see `update/admin.ts`'s `exec`).
 
 ## Conventions (keep to them: code calls other modules by these rules, and they keep it matching the Rust it came from)
 
 - **One TS file per former Rust file, at the same path**: `server/src/agent/runner/queue.rs` →
-  `server-ts/src/agent/runner/queue.ts`, and new modules are laid out the same way. A module with parts (`runner.rs` +
+  `apps/server/src/agent/runner/queue.ts`, and new modules are laid out the same way. A module with parts (`runner.rs` +
   `runner/*.rs`) is `runner.ts` + `runner/*.ts`, and `runner.ts` re-exports every part with
   `export * from "./runner/queue.ts";` (as Rust's `pub use queue::*`), so callers import from `runner.ts`.
   A folder module's root (`agent.rs`, `git.rs`, …) has no TS file: import from the module itself (`../agent/runner.ts`).

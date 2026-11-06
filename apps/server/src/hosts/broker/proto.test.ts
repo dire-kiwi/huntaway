@@ -1,4 +1,4 @@
-// Port of the tests in server/broker/src/proto.rs.
+// Port of the tests in rust/broker/src/proto.rs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";

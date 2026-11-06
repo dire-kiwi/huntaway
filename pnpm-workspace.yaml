@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependencies' install scripts only run when they're allowed here (pnpm's default). These two don't need theirs:
+# @parcel/watcher (under jest) has prebuilt binaries, and electron-winstaller is for Windows builds.
+allowBuilds:
+  "@parcel/watcher": false
+  electron-winstaller: false

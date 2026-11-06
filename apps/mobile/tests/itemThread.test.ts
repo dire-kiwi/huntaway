@@ -2,7 +2,7 @@
 // from `GET /tasks/{id}/thread`. Its rows from the items the server's translator makes of a thread are the rows its
 // messages gave, and its Inbox question is the one its messages gave.
 import type { Message } from "@huntaway/client";
-import { convert } from "../../server-ts/src/threads/translate";
+import { convert } from "../../server/src/threads/translate";
 import { openQuestion } from "../src/inbox";
 import { itemThreadItems, openItemQuestion, threadItems } from "../src/thread";
 

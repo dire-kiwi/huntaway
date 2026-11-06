@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { apply_events, initial_state, snapshot_window } from "../src/threads.ts";
 
-// HA-212: the app gets the thread model from the server's file (server-ts/src/threads/protocol.ts), by relative path.
+// HA-212: the app gets the thread model from the server's file (apps/server/src/threads/protocol.ts), by relative path.
 test("folds a thread's events with the server's reducer", () => {
   const thread = { id: "th", harness: "claude", status: "idle", created_at: "2026-11-01T00:00:00Z" };
   const s = apply_events(initial_state(thread), [
