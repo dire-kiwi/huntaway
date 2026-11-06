@@ -193,8 +193,9 @@ export function claude_hook(exe: string, rules: Rules): any | null {
   const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
   let command = `${quote(path_str(exe))} approval-hook ${quote(JSON.stringify(own))}`;
   // Claude Code lets a call through when its hook fails, so with rules that ask or refuse, a hook that can't run at all
-  // (this binary moved, say) refuses it (exit 2). The hook does the same when it fails itself (see `hook`).
-  if (strict(own)) command += ` || { echo ${quote(HOOK_FAILED)} >&2; exit 2; }`;
+  // (this binary moved, say) refuses it (exit 2). The hook does the same when it fails itself (see `hook`), having said
+  // why, so then it isn't said again.
+  if (strict(own)) command += ` || { [ $? -eq 2 ] || echo ${quote(HOOK_FAILED)} >&2; exit 2; }`;
   // It answers at once: asking is the permission prompt's (the board's), not the hook's.
   return { matcher: claude_matcher(own), hooks: [{ type: "command", command, timeout: 30 }] };
 }

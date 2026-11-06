@@ -44,8 +44,20 @@ import * as history from "../../threads/history.ts";
 /** Held while starting a run, so two can't start for one workflow on one task at once (made on first use: see PORTING.md). */
 let STARTING: AsyncMutex | null = null;
 
-/** (task, workflow) pairs whose move step is moving the task, so the move doesn't start the same workflow again. */
-const MOVING: Array<[string, string]> = [];
+/**
+ * The tasks workflows' move steps are moving, each with the workflow (so the move doesn't start the same workflow again)
+ * and how many runs in a row the move continues (see CHAIN).
+ */
+const MOVING: Array<{ task: string; workflow: string; chain: number }> = [];
+
+/**
+ * Runs that another workflow's move started, by id: how many runs in a row (each started by the one before's move)
+ * led to them. Two workflows whose steps move the task into each other's trigger columns would go on forever.
+ */
+const CHAIN = new Map<string, number>();
+
+/** How many runs in a row moves may start on a task (counting the first), before the next isn't started. */
+export const MAX_CHAIN = 10;
 
 /** An error's message, as Rust's `e.1` of an ApiError (and `{e:#}` of anything else). */
 const msg = (e: unknown) => (e instanceof ApiError ? e.message : err_str(e));
@@ -68,7 +80,10 @@ function task_key(c: Conn, t: Task): string {
 /** The task entered the column it's in: start the project's workflows that trigger on that, in the background. */
 export function on_status(s: Shared, task: Task): void {
   if (task.kind !== "task" || !task.project_id) return;
-  const moving = MOVING.filter(([t]) => t === task.id).map(([, w]) => w);
+  const movers = MOVING.filter((m) => m.task === task.id);
+  const moving = movers.map((m) => m.workflow);
+  // Moved by a workflow's step: the runs it starts continue that one's chain.
+  const chain = movers.length ? Math.max(...movers.map((m) => m.chain)) + 1 : 0;
   let due;
   try {
     due = list(s.db(), task.project_id).filter((w) => w.enabled && trigger_status(w.graph) === task.status && !moving.includes(w.id));
@@ -76,10 +91,20 @@ export function on_status(s: Shared, task: Task): void {
     console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
     return;
   }
+  if (due.length && chain >= MAX_CHAIN) {
+    const names = due.map((w) => `"${w.name}"`).join(", ");
+    s.add_event(
+      task.id,
+      "warn",
+      `Didn't run ${due.length === 1 ? "the workflow" : "the workflows"} ${names}: workflows have moved the task ${chain} times in a row`,
+      "Their move steps may be sending the task into each other's trigger columns. Moving the task yourself (or running a workflow by hand) starts again.",
+    );
+    return;
+  }
   for (const w of due) {
     background(
       "starting a workflow",
-      start(s, w.id, task.id, false).catch((e) => s.add_event(task.id, "warn", `Couldn't run the workflow "${w.name}"`, msg(e))),
+      start(s, w.id, task.id, false, chain).catch((e) => s.add_event(task.id, "warn", `Couldn't run the workflow "${w.name}"`, msg(e))),
     );
   }
 }
@@ -104,16 +129,16 @@ async function rev_parse(dir: string, rev: string): Promise<string | null> {
  * it's on or its trigger matches, with fresh rounds, and says why when it can't. Returns the run, or null when there
  * was nothing to do.
  */
-export async function start(s: Shared, workflow_id: string, task_id: string, manual: boolean): Promise<Run | null> {
+export async function start(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain = 0): Promise<Run | null> {
   const release = await (STARTING ??= new AsyncMutex()).lock();
   try {
-    return await start_locked(s, workflow_id, task_id, manual);
+    return await start_locked(s, workflow_id, task_id, manual, chain);
   } finally {
     release();
   }
 }
 
-async function start_locked(s: Shared, workflow_id: string, task_id: string, manual: boolean): Promise<Run | null> {
+async function start_locked(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain: number): Promise<Run | null> {
   const w = get(s.db(), workflow_id);
   if (!w) throw ApiError.not_found("workflow");
   const task = db.get_task(s.db(), task_id);
@@ -153,6 +178,7 @@ async function start_locked(s: Shared, workflow_id: string, task_id: string, man
   // The agent may have started again while git was read: `supersede` found no run to stop then.
   if (db.later_run(s.db(), task.id, task_run ?? "") || s.is_running(task.id)) return skip(manual, "the task's agent is working again");
   insert_run(s.db(), run);
+  if (chain > 0) CHAIN.set(run.id, chain);
   s.add_event(task.id, "info", `Running the workflow "${w.name}"`);
   runs_changed(s, task.id);
   await advance(s, run.id);
@@ -252,11 +278,15 @@ export async function advance(s: Shared, run_id: string): Promise<void> {
     } catch {
       return;
     }
-    if (!run || run.state !== "running") return;
+    if (!run || run.state !== "running") {
+      CHAIN.delete(run_id);
+      return;
+    }
     const ready = plan(run);
     const ended = settle(run);
     save(s, run);
     if (ended) {
+      CHAIN.delete(run_id);
       ended_run(s, run);
       return;
     }
@@ -586,6 +616,7 @@ function send(s: Shared, run: Run, node: Node, message: string, max_rounds: numb
   current.finished_at = at;
   current.updated_at = at;
   save(s, current);
+  CHAIN.delete(current.id);
   for (const t of threads) runner.stop(s, t);
   try {
     runner.send_fixes(s, task.id, text, round);
@@ -614,7 +645,7 @@ function end_nodes(run: Run, why: string): string[] {
 }
 
 async function move_task(s: Shared, run: Run, status: string): Promise<Done> {
-  const key: [string, string] = [run.task_id, run.workflow_id];
+  const key = { task: run.task_id, workflow: run.workflow_id, chain: CHAIN.get(run.id) ?? 0 };
   MOVING.push(key);
   try {
     await api.update_task_inner(s, run.task_id, { status });
@@ -742,6 +773,7 @@ export function stop_run(s: Shared, run_id: string, why: string): boolean {
   run.finished_at = now();
   run.updated_at = now();
   save(s, run);
+  CHAIN.delete(run.id);
   for (const t of threads) runner.stop(s, t);
   return true;
 }
@@ -769,8 +801,9 @@ export function stop(s: Shared, task_id: string): boolean {
 }
 
 /**
- * On start: steps that were running on the board itself when the server stopped (not agents, which carry on) failed,
- * and the runs go on from there.
+ * On start (after `runner.load_active`): steps that were running on the board itself when the server stopped failed,
+ * and the runs go on from there. So did agent steps whose agent isn't running: the server stopped while the step was
+ * starting it (reading the task's git, before its thread had a run), so nothing would end them.
  */
 export function resume(s: Shared): void {
   let rs: Run[] = [];
@@ -780,14 +813,15 @@ export function resume(s: Shared): void {
   for (const run of rs) {
     let changed = false;
     for (const n of run.graph.nodes) {
-      if (n.kind === "agent") continue;
       const r = node_entry(run, n.id);
-      if (r.state === "running") {
-        r.state = "failed";
-        r.port = "failed";
-        r.text = "Interrupted: the server stopped while this ran.";
-        changed = true;
-      }
+      if (r.state !== "running") continue;
+      // Agents carry on over a restart, and their runs' ends end their steps (see `finished`).
+      if (n.kind === "agent" && r.thread_id && s.is_running(r.thread_id)) continue;
+      r.state = "failed";
+      r.port = "failed";
+      r.text = n.kind === "agent" ? "Interrupted: the server stopped before this step's agent started." : "Interrupted: the server stopped while this ran.";
+      r.finished_at = now();
+      changed = true;
     }
     if (changed) save(s, run);
   }

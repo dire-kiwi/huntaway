@@ -298,9 +298,11 @@ board's `create_task`.
   allows, asks or denies the calls a rule matches. Its *ask* goes to the board's permission prompt in every mode,
   Bypass included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool too; in
   *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are left out of the run
-  (`--disallowedTools`). The hook is only installed when a rule is for a tool other than the board's, and only
-  matches `mcp__.*` unless a rule names another tool; `bin/huntaway` starts it straight from its own module, without
-  loading the server. It fails closed: while any rule asks or refuses, a call it can't check (its rules or input
+  (`--disallowedTools`). The hook is only installed when a rule is for a tool other than the board's, and its
+  matcher only matches the MCP servers the rules name (an anchored, case-insensitive regular expression, see
+  `claude_matcher` in `server-ts/src/agent/approval_rules.ts`), or every tool when a rule names one that isn't an MCP
+  server's; `bin/huntaway` starts it from its own entry file (`server-ts/src/agent/approval_rules/hook_main.ts`),
+  without loading the server. It fails closed: while any rule asks or refuses, a call it can't check (its rules or input
   unreadable, the hook failing, or its binary missing) is refused. A rule on `Bash` holds for a `wait`'s command
   too, even in *Auto*, where Claude's classifier reviews the wait.
 - **Codex** can't hold an *ask* with a hook (its PreToolUse `ask` fails open, checked with Codex
@@ -2248,7 +2250,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
 Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs,
 as dynamic tools (a `huntaway` namespace, answered on the run's input) for Codex sessions started
 since they were, and over HTTP for older Codex sessions (Codex can't give a session it resumes new
-dynamic tools) and compactions (see *How runs reach the board's MCP servers* below):
+dynamic tools), sessions whose Codex wouldn't take dynamic tools, and compactions (see *How runs reach the board's MCP
+servers* below). A newer Codex session's subagents don't have them (Codex doesn't pass a thread's dynamic tools on to the
+threads it spawns): their parent does. The tools:
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
