@@ -24,6 +24,7 @@ import * as merge_gate from "../../review/merge_gate.ts";
 import * as threads from "../../threads/write.ts";
 import type { Outcome } from "../runner.ts";
 import { APPROVAL, start_next_merge } from "./merge.ts";
+import { start_unblocked } from "./send.ts";
 import * as plan from "./plan.ts";
 import * as thread_source from "../../threads/source.ts";
 import { is_initialized, on_control_cancel, on_control_request } from "./requests.ts";
@@ -460,6 +461,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
       console.error(`failed to finalize run: ${err_str(e)}`);
     }
     start_next_merge(state, task.project_id);
+    // A task waiting for its dependencies stays waiting while it's compacted, and isn't started meanwhile if they merge.
+    start_unblocked(state, task.project_id);
     return;
   }
   // What the automation runs whose messages it took cost (before a queued message carries on the thread).

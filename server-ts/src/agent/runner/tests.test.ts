@@ -1838,6 +1838,36 @@ test("a_queued_message_taken_back_as_its_run_ends_doesnt_wait_for_dependencies",
   assert.ok(!s.is_running(task.id));
 });
 
+test("a_task_whose_dependency_merges_while_its_conversation_is_compacted_starts_once_that_ends", () => {
+  // HA-262: start_unblocked passes over a running task (its compaction, which leaves it waiting), and nothing started it
+  // once the compaction ended.
+  runs.TEST_CAN_RUN.set(true);
+  const state = testing.state();
+  const c = state.db();
+  const p = db.insert_profile(c, "p", [], null);
+  new_project(c, { profile_id: p.id });
+  const dependency = new_task(c, { profile_id: p.id, project_id: "pr", title: "dependency" });
+  const task = new_task(c, { profile_id: p.id, project_id: "pr", title: "waits" });
+  // It has a conversation, and waits for its dependency with nothing queued (moved back to In progress, say).
+  db.run(c, "UPDATE tasks SET session_id='s1' WHERE id=?1", task.id);
+  state.update_task(task.id, [["depends_on", [dependency.id]], ["status", "in_progress"], ["waiting", true]]);
+  // Its conversation is compacted (idle for a while, or /compact).
+  const run = db.insert_run(c, task.id, "compact");
+  state.runs.set(task.id, { run_id: run.id, cancel: null });
+  state.update_task(task.id, [["running", true]]);
+  const prompts = () => db.value(c, "SELECT COUNT(*) FROM runs WHERE task_id=?1 AND kind='prompt'", task.id);
+  // The dependency merges meanwhile.
+  state.update_task(dependency.id, [["status", "done"]]);
+  start_unblocked(state, "pr");
+  assert.equal(prompts(), 0);
+  finish(state, run.id, "Ok");
+  runs.TEST_CAN_RUN.set(false);
+  const t = reload(state, task.id);
+  assert.equal(prompts(), 1);
+  assert.ok(state.is_running(task.id));
+  assert.deepEqual([t.waiting, t.status], [false, "in_progress"]);
+});
+
 test("an_agent_launched_just_before_a_restart_is_stopped", async () => {
   // ia-shim was launched as the server stopped, and hasn't written its output yet.
   const [s, task, run] = running(true);
