@@ -1,4 +1,4 @@
-import { backoff, BoardSocket, resume, type SocketLike } from "../src/live";
+import { backoff, BoardSocket, resume, SILENCE_MS, type SocketLike } from "../src/live";
 
 class FakeSocket implements SocketLike {
   onopen: (() => void) | null = null;
@@ -64,6 +64,47 @@ describe("live updates", () => {
     sockets[1].onclose?.();
     jest.advanceTimersByTime(60_000);
     expect(sockets).toHaveLength(3);
+    s.stop();
+  });
+
+  test("a connection that has had ticks and then goes quiet is opened again; one with no ticks (an older board) isn't", () => {
+    const sockets: FakeSocket[] = [];
+    const events: string[] = [];
+    const status: boolean[] = [];
+    const s = new BoardSocket(
+      () => "u",
+      (e) => events.push(e.type),
+      (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]),
+      (c) => status.push(c),
+    );
+    const tick = (n: number) => sockets[n].onmessage!({ data: JSON.stringify({ type: "tick" }) });
+    s.start();
+    sockets[0].onopen!();
+    // No ticks: however quiet, it stays.
+    jest.advanceTimersByTime(10 * SILENCE_MS);
+    expect(sockets).toHaveLength(1);
+    // Ticks, and events between them, keep it.
+    tick(0);
+    for (let i = 0; i < 4; i++) {
+      jest.advanceTimersByTime(SILENCE_MS / 2);
+      sockets[0].onmessage!({ data: JSON.stringify({ type: "task", task: {} }) });
+    }
+    jest.advanceTimersByTime(SILENCE_MS - 1);
+    expect(sockets).toHaveLength(1);
+    // The tick isn't an event.
+    expect(events).toEqual(["task", "task", "task", "task"]);
+    // Nothing for SILENCE_MS: it's closed, and another is opened after the backoff, which reads again what was missed.
+    jest.advanceTimersByTime(1);
+    expect(sockets[0].closed).toBe(true);
+    expect(s.connected).toBe(false);
+    jest.advanceTimersByTime(backoff(0));
+    expect(sockets).toHaveLength(2);
+    sockets[1].onopen!();
+    expect(events[events.length - 1]).toBe("resync");
+    expect(status).toEqual([true, false, true]);
+    // The new connection is to a board that doesn't tick (rolled back): it isn't watched.
+    jest.advanceTimersByTime(10 * SILENCE_MS);
+    expect(sockets).toHaveLength(2);
     s.stop();
   });
 

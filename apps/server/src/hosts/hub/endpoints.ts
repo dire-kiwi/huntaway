@@ -272,9 +272,22 @@ export function hub_url(s: AppState, headers: IncomingHttpHeaders | Record<strin
   return `${scheme}://${host}`;
 }
 
-/** Merged events from every host, for the UI. */
+/**
+ * How often the UI's events socket is sent a `{"type":"tick"}` of its own (not an event: it isn't saved, numbered or
+ * sent anywhere else). A client that has had one takes a connection that stays quiet for much longer than this for
+ * dead (a phone's network or a laptop's sleep can drop one without a close), and opens another; clients from before it
+ * ignore it, as they do any event type they don't know.
+ */
+export const TICK_MS = 25_000;
+const TICK = JSON.stringify({ type: "tick" });
+
+/** Merged events from every host, for the UI, with a tick every TICK_MS. */
 export function ws(s: AppState, _r: Req, socket: WebSocket) {
   socket.send(JSON.stringify({ type: "hello", host_id: s.host_id }));
+  const tick = setInterval(() => {
+    if (socket.readyState === socket.OPEN) socket.send(TICK);
+  }, TICK_MS);
+  tick.unref?.();
   let lagged = false;
   const off = s.hub_events.subscribe((v) => {
     if (socket.readyState !== socket.OPEN) return;
@@ -287,6 +300,10 @@ export function ws(s: AppState, _r: Req, socket: WebSocket) {
     }
     socket.send(JSON.stringify(v));
   });
-  socket.on("close", off);
-  socket.on("error", off);
+  const done = () => {
+    off();
+    clearInterval(tick);
+  };
+  socket.on("close", done);
+  socket.on("error", done);
 }

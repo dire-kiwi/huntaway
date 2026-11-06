@@ -757,6 +757,13 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let wakeListening = false;
 
 /**
+ * A connection that has had the server's `tick` (every 25 s, see its hosts/hub/endpoints.ts) and then nothing for this
+ * long is taken for dead (one a laptop's sleep or a network change dropped without a close), and opened again. One to a
+ * server from before ticks never is, as it can be quiet for any time.
+ */
+export const SILENCE_MS = 60_000;
+
+/**
  * Reconnects now rather than at the end of the backoff (up to 32 s), when the network comes back or the page is shown
  * again, as after a laptop wakes.
  */
@@ -783,6 +790,22 @@ export function connectEvents() {
   const ws = new WebSocket(wsUrl());
   socket = ws;
   let opened = false;
+  // When it last had anything, and the check for its silence once it has had a tick.
+  let heard = 0;
+  let silence: ReturnType<typeof setTimeout> | null = null;
+  const watch = (): ReturnType<typeof setTimeout> =>
+    setTimeout(
+      () => {
+        silence = null;
+        if (socket !== ws) return;
+        if (Date.now() - heard < SILENCE_MS) return void (silence = watch());
+        // Its close may not come for a long while: it's done with now.
+        ws.onclose = ws.onmessage = null;
+        ws.close();
+        lost();
+      },
+      heard + SILENCE_MS - Date.now(),
+    );
   ws.onopen = () => {
     opened = true;
     retry = 0;
@@ -792,7 +815,9 @@ export function connectEvents() {
       .loadAll()
       .catch(() => {});
   };
-  ws.onclose = () => {
+  const lost = () => {
+    if (silence) clearTimeout(silence);
+    silence = null;
     socket = null;
     if (!opened && retry === 0 && useStore.getState().authed === null)
       useStore
@@ -811,14 +836,17 @@ export function connectEvents() {
       500 * 2 ** retry,
     );
   };
+  ws.onclose = lost;
   ws.onmessage = (e) => {
+    heard = Date.now();
     let ev;
     try {
       ev = JSON.parse(e.data);
     } catch {
       return;
     }
-    handleEvent(ev);
+    if (ev?.type === "tick") silence ??= watch();
+    else handleEvent(ev);
   };
 }
 

@@ -1,6 +1,6 @@
 // Port of server/src/hosts/hub/tests.rs. (The broker in `a_host_dialled_in_through_a_broker_over_a_dead_connection_reconnects`
 // is the Rust one, run as a process: see hosts/broker/test_broker.ts.)
-import { afterAll, test } from "vite-plus/test";
+import { afterAll, test, vi } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createConnection, createServer as createTcpServer, type Socket } from "node:net";
@@ -19,7 +19,7 @@ import { API_VERSION, VERSION } from "../proto.ts";
 import { read_jsonl } from "../../threads/examples.ts";
 import * as store from "../../threads/store.ts";
 import * as live from "../../threads/live.ts";
-import { dial_out, find_link, host_request, hub_url, link_http, list_hosts, spawn_outbound, tunnel_to, type LinkConn } from "../hub.ts";
+import { dial_out, find_link, host_request, hub_url, link_http, list_hosts, spawn_outbound, TICK_MS, tunnel_to, ws, type LinkConn } from "../hub.ts";
 
 relay.test_timing();
 
@@ -70,6 +70,36 @@ function old_host(ui: boolean) {
     res.writeHead(405).end();
   };
 }
+
+test("the_uis_events_socket_is_sent_a_tick_that_isnt_an_event", (t) => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  t.onTestFinished(() => void vi.useRealTimers());
+  const s = testing.state();
+  const seen: any[] = [];
+  s.events.subscribe((v) => seen.push(v));
+  s.hub_events.subscribe((v) => seen.push(v));
+  const sent: string[] = [];
+  const on: Record<string, () => void> = {};
+  const socket = { OPEN: 1, readyState: 1, bufferedAmount: 0, send: (m: string) => sent.push(m), on: (ev: string, f: () => void) => (on[ev] = f) };
+  ws(s, {} as any, socket as any);
+  const types = () => sent.map((m) => JSON.parse(m).type);
+  assert.deepEqual(types(), ["hello"]);
+  vi.advanceTimersByTime(TICK_MS - 1);
+  assert.deepEqual(types(), ["hello"]);
+  vi.advanceTimersByTime(1);
+  s.hub_events.send({ type: "task", task: {} });
+  vi.advanceTimersByTime(TICK_MS);
+  assert.deepEqual(types(), ["hello", "tick", "task", "tick"]);
+  // It's the socket's own: nothing else that follows the events (push, Telegram, the event log) has it.
+  assert.deepEqual(
+    seen.map((v) => v.type),
+    ["task"],
+  );
+  // Closed: no more.
+  on.close!();
+  vi.advanceTimersByTime(TICK_MS * 3);
+  assert.equal(sent.length, 4);
+});
 
 test("older_hosts_unknown_routes_are_json_404s_through_the_proxy", async () => {
   const s = testing.state();
