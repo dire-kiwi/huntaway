@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { useEffect } from "react";
 
 /**
- * Live streamed assistant text per thread (not yet persisted), in a store of its own: a token
+ * Live streamed assistant text per thread (not yet saved: itemThreads.ts puts it here), in a store of its own: a token
  * changes only it, so the board's selectors don't run again for each one. Only the threads
  * something shows (useDelta) take tokens, and they're added once per animation frame.
  */
@@ -37,7 +37,7 @@ export function addDelta(taskId: string, text: string) {
   frame ??= nextFrame(flushDeltas);
 }
 
-/** Drops a thread's streamed text: it was saved as a message, or the agent started a new block. */
+/** Drops a thread's streamed text: it was saved as an item, or the agent started another. */
 export function clearDelta(taskId: string) {
   pending.delete(taskId);
   if (!(taskId in useDeltas.getState().deltas)) return;

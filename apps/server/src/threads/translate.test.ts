@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import * as testing from "../testing.ts";
 import * as permissions from "../mcp/permissions.ts";
-import { handle_line as codex_line } from "../agent/codex/output.ts";
 import { apply_events, initial_state, type Item, type NewEvent, type SavedEvent, type ThreadRequest } from "./protocol.ts";
 import * as store from "./store.ts";
 import { ASK_USER, CODEX_QUESTIONS, EXIT_PLAN, Translator, convert, fold, type Conversion, type Disposition, type Message } from "./translate.ts";
@@ -786,48 +785,4 @@ test("written_to_the_store_one_message_at_a_time_and_rebuilt_from_it", () => {
   assert.deepEqual(store.requests(c, task.id), whole.requests);
   assert.deepEqual(store.item_meta(c, task.id, "ag"), { session: "s1", subagent_task: "k1" });
   assert.deepEqual(store.item_origins(c, task.id, "ag"), [2, 3, 7, 8]);
-});
-
-/** What the board stores for a Codex run whose child agent compacts and completes (agent/codex/output.ts). */
-test("codex_children_as_the_board_stores_them", () => {
-  const s = testing.state();
-  const { task, run } = running(s, true);
-  const send = (method: string, thread: string, params: any) => codex_line(s, run, { method, params: { ...params, threadId: thread } });
-  const item = (thread: string, it: any) => {
-    send("item/started", thread, { item: it });
-    send("item/completed", thread, { item: it });
-  };
-  codex_line(s, run, { method: "thread/started", params: { thread: { id: "main" } } });
-  item("main", {
-    type: "collabAgentToolCall",
-    id: "spawn",
-    tool: "spawnAgent",
-    status: "completed",
-    senderThreadId: "main",
-    receiverThreadIds: ["child"],
-    prompt: "Inspect config",
-    model: "gpt-6.1-sol",
-    agentsStates: { child: { status: "running" } },
-  });
-  item("child", { type: "agentMessage", id: "text", text: "Reading" });
-  item("child", { type: "contextCompaction", id: "squash" });
-  item("main", {
-    type: "collabAgentToolCall",
-    id: "wait",
-    tool: "wait",
-    status: "completed",
-    senderThreadId: "main",
-    receiverThreadIds: ["child"],
-    agentsStates: { child: { status: "completed", message: "Config is fine" } },
-  });
-  const c = convert_all(db.list_messages(s.db(), task.id));
-  const agent = by_id(c)["codex-agent-child"];
-  assert.equal(agent.status, "completed");
-  const { ended_at, ...subagent } = agent.subagent;
-  assert.deepEqual(subagent, { status: "completed", background: true, model: "gpt-6.1-sol", summary: "Config is fine" });
-  assert.equal(typeof ended_at, "string");
-  // The child's compaction stays in the child's conversation.
-  assert.equal(c.items.find((i) => i.type === "compaction")!.parent_id, "codex-agent-child");
-  assert.deepEqual(c.warnings, []);
-  assert.equal(count(c, "retained"), 0);
 });

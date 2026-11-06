@@ -1,18 +1,18 @@
 // New in HA-223 (no Rust original): step 11 of docs/threads.md.
 /**
- * A Codex run's output, for a task whose items are its source (threads/source.ts): each app-server notification the
- * adapter writes (`out.jsonl`) is mapped straight onto the thread model's events (threads/protocol.ts), with no message
- * shaped like Claude Code's in between (agent/codex/output.ts still does that for a task on messages). The board's own
+ * A Codex run's output: each app-server notification the adapter writes (`out.jsonl`) is mapped straight onto the
+ * thread model's events (threads/protocol.ts), with no message shaped like Claude Code's in between (until step 13,
+ * agent/codex/output.ts made those for a task on messages). The board's own
  * messages in the thread (the user's, its events, prompts and questions, each turn's result) are written as before,
  * through the translator, which is told of what's written here (threads/native.ts).
  *
- * What it makes is what the messages path's items are, so the thread view, the readers and the tool calls' names don't
- * change between the two (see `map`, and docs/threads.md's "Codex writes items directly" for every difference): tool
+ * What it makes is what the messages path's items were, so the thread view, the readers and the tool calls' names didn't
+ * change when it took over (see `map`, and docs/threads.md's "Codex writes items directly" for every difference): tool
  * calls have the board's names (Bash, ApplyPatch, `mcp__<server>__<tool>`, WebSearch and WebFetch, Read, TodoWrite)
  * with their normalized fields, and Codex's ids; a subagent (a child thread) is an Agent call, `codex-agent-<thread
  * id>`, which its items have as their parent; the agent's messages, reasoning and compactions are items with Codex's
  * ids. The rest of a notification's effects (the session, the context meter, rate limits, the wait tool, the task's
- * documents, a turn's end) are the messages path's, in `handle`.
+ * documents, a turn's end) are as the messages path had them, in `handle`.
  *
  * `map` is pure: it reads the thread through a View (the store, in `handle`'s transaction), so a server that restarts
  * mid-run goes on from what's stored, and a notification read again (its offset wasn't saved) changes nothing more.
@@ -49,7 +49,7 @@ function same(a: unknown, b: unknown): boolean {
   return ka.length === kb.length && ka.every((k) => k in (b as object) && same((a as any)[k], (b as any)[k]));
 }
 
-/** Tool results longer than this (in UTF-8 bytes) are cut short, as the messages path stores them. */
+/** Tool results longer than this (in UTF-8 bytes) are cut short, as the messages path stored them. */
 const RESULT_MAX = 30_000;
 /** How long a subagent's description is, from its prompt. */
 const DESCRIPTION_MAX = 200;
@@ -273,7 +273,7 @@ function subagent_started(out: Out, thread: string, sender: string | null, meta:
   if (it.status === "running" && it.result === undefined) patch.status = "completed";
   if (fresh) {
     out.add({ ...it, ...patch } as ToolCall);
-    // Codex's id for it, as the messages path's task_started gave it.
+    // Codex's id for it, as the messages path's task_started gave it (and a rebuild of its messages does).
     out.meta.set(id, { subagent_task: thread });
   } else out.update(id, patch);
 }
@@ -372,9 +372,8 @@ export function stored(state: Shared, task_id: string): View {
 }
 
 /**
- * One line of a Codex run's output (an app-server notification), for a task whose items are its source: its items
- * (`map`), written in one transaction and sent to clients once committed, and its other effects, as the messages path
- * has them (agent/codex/output.ts's handle_line).
+ * One line of a Codex run's output (an app-server notification): its items (`map`), written in one transaction and
+ * sent to clients once committed, and its other effects, as the messages path had them.
  */
 export function handle(state: Shared, run: Run, v: any): void {
   const task_id = run.task_id;

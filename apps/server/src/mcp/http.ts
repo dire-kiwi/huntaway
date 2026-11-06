@@ -1,8 +1,8 @@
 /**
  * The board's MCP servers, served over HTTP (MCP's streamable HTTP transport) to the runs this host starts (HA-180):
  * the board's tools (`huntaway`, mcp.ts) and GitHub through gh (`gh`, mcp/gh_mcp.ts). Runs used to start a stdio helper
- * process for each (`huntaway mcp` and `huntaway gh-mcp`), which under Node cost about 90 MB apiece; those stay for runs
- * that were started with them. Claude runs that take input (all but a compaction's) call the board's tools on their
+ * process for each (`huntaway mcp` and `huntaway gh-mcp`, gone since step 13 of docs/threads.md), which under Node
+ * cost about 90 MB apiece. Claude runs that take input (all but a compaction's) call the board's tools on their
  * own output instead (HA-221, see agent/runner/requests.ts), so for them this serves only gh's; Codex runs and
  * compactions still call the board's here.
  *

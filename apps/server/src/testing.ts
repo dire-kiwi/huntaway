@@ -50,11 +50,11 @@ function state_of(id: Identity, m: ServerMeta): AppState {
 }
 
 /**
- * Whether tasks on `s`'s board move onto items (threads/source.ts), as they do on a server's: on by default, as there
- * (`IA_TEST_ITEMS_SOURCE=0` turns it off for every state(), to run the tests with threads on messages), and off for a
- * test of a task on messages (`items` false). The messages its items tasks are written as are kept for `messages`.
+ * Whether tasks on `s`'s board move onto items (threads/source.ts), as they do on a server's: on by default, as there,
+ * and off for a test of a task on messages (`items` false), which a server has only until it moves. The messages its
+ * items tasks are written as are kept for `messages`.
  */
-export function on_items<S extends { db(): db.Conn }>(s: S, items = process.env.IA_TEST_ITEMS_SOURCE !== "0"): S {
+export function on_items<S extends { db(): db.Conn }>(s: S, items = true): S {
   source.set_flips(s.db(), items);
   source.keep_journal(s.db());
   return s;

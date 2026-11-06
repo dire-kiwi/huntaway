@@ -16,13 +16,18 @@ function thread(taskId, items) {
   return items.map(([kind, data], i) => ({ id: i + 1, task_id: taskId, kind, data, created_at: `2026-10-31T07:00:${String(i).padStart(2, "0")}.000Z` }));
 }
 
-/** Answers what the cards send (a prompt's decision, or a question's answer) as a host would, and returns what they sent. */
+/**
+ * Answers what the cards send as a host would, and returns what they sent: in a thread, the thread's `respond` commands
+ * (docs/threads-api.md), as `{request_id, resolution}`.
+ */
 async function capture(page) {
   const sent = [];
-  await page.route(/\/api\/h\/[^/]+\/(permissions\/[^/?]+|tasks\/[^/]+\/questions\/\d+)$/, (route) => {
+  await page.route(/\/api\/h\/[^/]+\/tasks\/[^/]+\/thread\/commands$/, (route) => {
     if (route.request().method() !== "POST") return route.continue();
-    sent.push({ path: new URL(route.request().url()).pathname.replace(/^\/api\/h\/[^/]+/, ""), body: route.request().postDataJSON() });
-    return route.fulfill({ json: { ok: true, status: "allowed" } });
+    const { type, ...rest } = route.request().postDataJSON();
+    if (type !== "respond") return route.continue();
+    sent.push(rest);
+    return route.fulfill({ json: { ok: true, result: { ok: true } } });
   });
   return sent;
 }
@@ -64,13 +69,14 @@ test("a request_user_input question is answered with a click or keys 1-9, not wh
 
     // Elsewhere, it picks that option and sends it.
     await ui.run(["click Which colour should the button be?", "press 2"]);
-    assert.deepEqual(await nth(sent, 1), { path: `/tasks/${task.id}/questions/2`, body: { choices: ["Green"], text: null } });
+    const answer = (q) => ({ request_id: "legacy:2", resolution: { outcome: "answer", answers: { q } } });
+    assert.deepEqual(await nth(sent, 1), answer(["Green"]));
     // Or a click.
     await ui.run(["click Blue"]);
-    assert.deepEqual((await nth(sent, 2)).body, { choices: ["Blue"], text: null });
+    assert.deepEqual(await nth(sent, 2), answer(["Blue"]));
     // Or an answer of one's own, with Enter.
     await ui.run(["click Or write your own answer", "type  Purple ", "press Enter"]);
-    assert.deepEqual((await nth(sent, 3)).body, { choices: [], text: "Purple" });
+    assert.deepEqual(await nth(sent, 3), answer(["Purple"]));
   });
 });
 
@@ -96,7 +102,7 @@ test("questions with several answers, and answered ones", async () => {
 
     // Keys go to the latest question: here they tick, and Send sends them with what's typed.
     await ui.run(["click Which pets?", "press 1", "press 3", "press 3", "press 3", "click Something else (optional)", "type A lizard", "click Send answer"]);
-    assert.deepEqual(await nth(sent, 1), { path: `/tasks/${task.id}/questions/4`, body: { choices: ["Cats", "Birds"], text: "A lizard" } });
+    assert.deepEqual(await nth(sent, 1), { request_id: "legacy:4", resolution: { outcome: "answer", answers: { q: ["Cats", "Birds", "A lizard"] } } });
   });
 });
 
@@ -144,11 +150,17 @@ test("Claude's AskUserQuestion is answered from its card, question by question",
     // Picking the season moves on to the pets, where keys tick.
     await ui.run(["click Which season?", "press 2", "press 1", "press 3"]);
     await ui.run(["click Submit answers"]);
-    assert.deepEqual(await nth(sent, 1), { path: "/permissions/ask-1", body: { decision: "allow", answers: [["Summer"], ["Cats", "Birds"]] } });
+    assert.deepEqual(await nth(sent, 1), {
+      request_id: "ask-1",
+      resolution: { outcome: "answer", answers: { "Which season?": ["Summer"], "Which pets?": ["Cats", "Birds"] } },
+    });
 
     // Dismissed, it's declined with a note to the agent.
     await ui.run(["click Dismiss"]);
-    assert.deepEqual((await nth(sent, 2)).body, { decision: "deny", message: "The user dismissed these questions without answering them." });
+    assert.deepEqual(await nth(sent, 2), {
+      request_id: "ask-1",
+      resolution: { outcome: "cancel", message: "The user dismissed these questions without answering them." },
+    });
   });
 });
 
@@ -169,7 +181,10 @@ test("a question whose run ended is answered by message, and answered ones show 
     assert.equal(await page.getByRole("checkbox", { name: "Dogs" }).first().getAttribute("aria-checked"), "true");
     await ui.run(["click css=[aria-label='Questions from Claude'] >> nth=1 >> text=Which season?", "press 1"]);
     await ui.run(["click css=[aria-label='Your own answer to: Which pets?']", "type Fish", "click Send answers"]);
-    assert.deepEqual(await nth(sent, 1), { path: "/permissions/ask-1", body: { decision: "allow", answers: [["Spring"], ["Fish"]] } });
+    assert.deepEqual(await nth(sent, 1), {
+      request_id: "ask-1",
+      resolution: { outcome: "answer", answers: { "Which season?": ["Spring"], "Which pets?": ["Fish"] } },
+    });
   });
 });
 
@@ -201,7 +216,7 @@ test("a question or plan the conversation has moved past isn't answered any more
     assert.equal(await page.getByRole("radio", { name: "Green" }).isDisabled(), true);
     assert.equal(await page.getByRole("button", { name: "Send answers" }).count(), 1);
     await ui.run(["click Which colour should the button be?", "press 1"]);
-    assert.deepEqual(await nth(sent, 1), { path: "/permissions/ask-2", body: { decision: "allow", answers: [["Yes"]] } });
+    assert.deepEqual(await nth(sent, 1), { request_id: "ask-2", resolution: { outcome: "answer", answers: { "Still open?": ["Yes"] } } });
   });
 });
 
@@ -243,7 +258,7 @@ test("Codex's questions get the same card, and its other prompts say it's Codex 
     assert.equal(await page.getByLabel("Your own answer to: Which file name?").count(), 0);
     // A lone question is answered by picking.
     await ui.run(["click text=a.txt"]);
-    assert.deepEqual(await nth(sent, 1), { path: "/permissions/cq", body: { decision: "allow", answers: [["a.txt"]] } });
+    assert.deepEqual(await nth(sent, 1), { request_id: "cq", resolution: { outcome: "answer", answers: { name: ["a.txt"] } } });
   });
 });
 
@@ -258,7 +273,7 @@ test("a Codex question with no options takes a typed answer whatever it says", a
     const sent = await capture(page);
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait What should it be called?"]);
     await ui.run(["click css=[aria-label='Your own answer to: What should it be called?']", "type notes.txt", "press Enter"]);
-    assert.deepEqual(await nth(sent, 1), { path: "/permissions/cn", body: { decision: "allow", answers: [["notes.txt"]] } });
+    assert.deepEqual(await nth(sent, 1), { request_id: "cn", resolution: { outcome: "answer", answers: { name: ["notes.txt"] } } });
   });
 });
 
@@ -274,7 +289,7 @@ test("a plan's mode starts as the thread's own", async () => {
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Plan ready for approval"]);
     assert.equal(await page.getByLabel("Mode to continue in").inputValue(), "acceptEdits");
     await ui.run(["click Approve"]);
-    assert.deepEqual((await nth(sent, 1)).body, { decision: "allow", mode: "acceptEdits" });
+    assert.deepEqual(await nth(sent, 1), { request_id: "plan-1", resolution: { outcome: "allow", permission_mode: "accept_edits" } });
   });
 });
 
@@ -307,13 +322,13 @@ test("a plan is approved into the mode picked, or sent back with feedback", asyn
 
     await page.getByLabel("Mode to continue in").selectOption("acceptEdits");
     await ui.run(["click Approve"]);
-    assert.deepEqual(await nth(sent, 1), { path: "/permissions/plan-1", body: { decision: "allow", mode: "acceptEdits" } });
+    assert.deepEqual(await nth(sent, 1), { request_id: "plan-1", resolution: { outcome: "allow", permission_mode: "accept_edits" } });
 
     await ui.run([
       "click css=[aria-label='Plan from the agent'] >> nth=2 >> text=Keep planning",
       "type Cache misses too.",
       "click css=[aria-label='Plan from the agent'] >> nth=2 >> button:has-text('Keep planning')",
     ]);
-    assert.deepEqual((await nth(sent, 2)).body, { decision: "deny", feedback: "Cache misses too." });
+    assert.deepEqual(await nth(sent, 2), { request_id: "plan-1", resolution: { outcome: "deny", message: "Cache misses too." } });
   });
 });

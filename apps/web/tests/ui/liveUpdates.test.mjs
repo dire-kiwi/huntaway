@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterAll, beforeAll, test } from "vite-plus/test";
-import { demoProject, startServer, withBrowser } from "./harness.mjs";
+import { demoProject, routeThread, startServer, threadFeed, withBrowser } from "./harness.mjs";
 
 let server, project;
 beforeAll(async () => {
@@ -15,18 +15,21 @@ const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
 // a task event redraws only what it changes. What they show still has to follow the events: the streamed text (and
 // the thread scrolled to it, unless it was scrolled up), cards, times on cards, and a subproject's progress.
 test("streamed text, task events and the clock still update the thread, cards and task view", async () => {
-  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Live: streaming", status: "in_review" });
+  // A task whose thread is on items, as the events below say it is too.
+  const task = { ...(await server.api("POST", `/projects/${project.id}/tasks`, { title: "Live: streaming", status: "in_review" })), thread_source: "items" };
   const other = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Live: other", status: "in_review" });
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    let socket;
-    // Events the agents would send, from this end of the websocket.
+    // Events the agents would send, from this end of the websocket: the thread's from the messages its run would have
+    // stored, as the server's translator makes them (threadFeed).
+    const feed = threadFeed(task.id);
     await page.routeWebSocket(/\/api\/ws/, (ws) => {
-      socket = ws;
+      feed.socket = ws;
       ws.connectToServer();
     });
+    await routeThread(page, task.id, feed);
     await page.clock.install();
-    const send = (ev) => socket.send(JSON.stringify(ev));
+    const send = (ev) => feed.socket.send(JSON.stringify(ev));
     const thread = () =>
       page.evaluate(() => {
         const el = [...document.querySelectorAll(".overflow-y-auto")].find((e) => e.querySelector(".prose-chat"));
@@ -42,36 +45,35 @@ test("streamed text, task events and the clock still update the thread, cards an
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait No agent has worked on this yet"]);
     // A thread long enough to scroll.
     for (let i = 0; i < 40; i++)
-      send({
-        type: "message",
-        task_id: task.id,
-        message: {
-          id: 1000 + i,
-          task_id: task.id,
-          kind: "claude",
-          created_at: ago(600 - i),
-          data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `Reply ${i}\n\nwith a second paragraph` }] } },
-        },
+      feed.add({
+        kind: "claude",
+        created_at: ago(600 - i),
+        data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `Reply ${i}\n\nwith a second paragraph` }] } },
       });
     await ui.run(["wait Reply 39"]);
 
     // At its end, the thread follows the text as it streams in. It's drawn as it comes (HA-39): as markdown again for
     // each token, a long reply took longer and longer; the saved message is markdown.
-    send({ type: "delta", task_id: task.id, text: "Streaming **now**" });
+    let streamed = "";
+    const delta = (text) => {
+      feed.delta("stream:1", streamed.length, text);
+      streamed += text;
+    };
+    delta("Streaming **now**");
     await ui.run(["wait Streaming **now**"]);
-    for (let i = 0; i < 30; i++) send({ type: "delta", task_id: task.id, text: `\n\nstreamed ${i}` });
+    for (let i = 0; i < 30; i++) delta(`\n\nstreamed ${i}`);
     await ui.run(["wait streamed 29"]);
     assert.ok((await thread()).gap < 80, "a thread at its end follows streamed text");
 
     // Scrolled up, it stays where it is.
     await scrollThreadTo(100);
-    for (let i = 30; i < 45; i++) send({ type: "delta", task_id: task.id, text: `\n\nstreamed ${i}` });
+    for (let i = 30; i < 45; i++) delta(`\n\nstreamed ${i}`);
     await ui.run(["wait streamed 44"]);
     assert.equal((await thread()).top, 100, "a thread scrolled up isn't moved by streamed text");
 
-    // The saved message takes the streamed text's place.
-    send({ type: "delta_reset", task_id: task.id });
-    await ui.run(["gone Streaming **now**"]);
+    // The saved message takes the streamed text's place (drawn as markdown).
+    feed.add({ kind: "claude", data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: streamed }] } } });
+    await ui.run(["gone Streaming **now**", "wait streamed 44"]);
 
     // A task event redraws its card, and the open task's header.
     send({ type: "task", task: { ...task, title: "Live: renamed" } });

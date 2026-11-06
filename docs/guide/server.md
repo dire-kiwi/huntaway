@@ -47,8 +47,7 @@ The pieces that cross a restart are durable too:
   reach the board's tools over HTTP, and the gh server's over HTTP too, answered on an event
   stream: when a restart breaks it, the agent (Claude Code or Codex) reconnects for the call's
   answer, and the call carries on where it was. The server records each call's result, so a call
-  is never executed twice. Runs started before that (with `huntaway mcp` helpers) keep theirs,
-  which retry each call under the same id until the server answers.
+  is never executed twice.
 - Permission prompts are stored with the call that raised them. A prompt pending across a
   restart reappears, and the decision reaches the agent once it's made.
 
@@ -65,7 +64,8 @@ The board's database is `<data dir>/huntaway-2.db`. Older builds used `huntaway.
 the rename to Huntaway); the release that moves task threads onto items (HA-222, see `docs/threads.md`), whose
 database an older build can't read correctly (a thread on items has no messages since it moved), keeps the board in a
 file of its own so that going back to an older build is safe. `IA_NEW_DB_FILE=0` keeps a server on the older file
-(where threads stay on their messages; `IA_NEW_DB_FILE=0 scripts/test-server.sh`, whose restarts keep it). With it on,
+(`IA_NEW_DB_FILE=0 scripts/test-server.sh`, whose restarts keep it): since HA-225 its tasks move onto items there too,
+so an older build rolled back to on that file shows each thread as it was when its task moved. With it on,
 as by default:
 
 - The first time the server starts on a data dir, it copies the older file into `huntaway-2.db` (with

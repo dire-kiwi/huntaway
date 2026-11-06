@@ -61,6 +61,14 @@ const RERUNNABLE = [
 type CallResult = { ok: any } | { err: string };
 
 /**
+ * The board's own way of asking about an agent's tool call (agent/runner/requests.ts's `ask`, for Claude Code's
+ * `can_use_tool` and Codex's approvals). Until step 13 of docs/threads.md it was a tool of the board's MCP server too,
+ * which Claude Code called (`--permission-prompt-tool`): it isn't listed any more, and a call to it by name only asks
+ * the user, as a prompt does.
+ */
+export const PROMPT = "permission_prompt";
+
+/**
  * An agent's tool call, at most once per call id: it's recorded as executing before it runs, and with its result once it
  * has. Throws an Error with the message for the agent (Rust's `Err(String)`).
  */

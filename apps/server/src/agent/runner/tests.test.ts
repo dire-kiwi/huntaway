@@ -1639,7 +1639,7 @@ test("in_auto_mode_claude_reviews_waits_itself", () => {
   }
   for (const review of [false, true]) {
     const auto = board_tools_allowed("auto", review);
-    assert.ok(auto.includes("mcp__huntaway__get_task") && auto.includes("mcp__huntaway__permission_prompt"));
+    assert.ok(auto.includes("mcp__huntaway__get_task") && !auto.includes("mcp__huntaway__permission_prompt"));
     assert.ok(auto.includes("mcp__huntaway__get_task_field"));
     assert.ok(!auto.some((t) => t === "mcp__huntaway__wait" || t === "mcp__huntaway"), String(auto));
     assert.equal(auto.includes("mcp__huntaway__submit_review"), review);

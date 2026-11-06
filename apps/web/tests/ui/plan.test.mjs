@@ -1,11 +1,7 @@
 // A plan in the board's theme, running to the bottom of the task under the composer.
 import assert from "node:assert/strict";
 import { afterAll, beforeAll, test } from "vite-plus/test";
-import { demoProject, startServer, withBrowser } from "./harness.mjs";
-
-// Its threads are faked on the messages routes, which a task whose items are its source (HA-222) doesn't read: its server
-// is on the older database file, where tasks stay on their messages.
-process.env.IA_NEW_DB_FILE = "0";
+import { demoProject, routeThread, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
 beforeAll(async () => {
@@ -96,8 +92,8 @@ test("a plan's questions are answered in it, the answers last until they're sent
     assert.deepEqual(await state(), [true, "Keep the print styles"]);
 
     await ui.run(["click Send answers", "wait Answers sent"]);
-    const messages = await server.api("GET", `/tasks/${plan.id}/messages`);
-    const sent = messages.map((m) => m.data?.text ?? m.text ?? JSON.stringify(m.data)).find((t) => /My answers to the questions/.test(t));
+    const { items } = await server.api("GET", `/tasks/${plan.id}/thread`);
+    const sent = items.find((i) => i.type === "user_message" && /My answers to the questions/.test(i.text))?.text;
     assert.ok(sent, "the answers were sent");
     assert.match(sent, /Which choices should the toggle offer\? \(`toggle-choices`\): Only light and dark/);
     assert.match(sent, /`notes`\): Keep the print styles/);
@@ -416,16 +412,12 @@ test("the agent's last reply is closed under the plan until Summary opens it", a
   await withBrowser(server, { allowErrors: [/open-token/] }, async (ui) => {
     const { page } = ui;
     const reply = "I rewrote the approach section around CSS custom properties.";
-    // The demo plan has no reply from its agent: add one to its thread.
-    await page.route(new RegExp(`/tasks/${plan.id}/messages(\\?.*)?$`), async (route) => {
-      if (route.request().method() !== "GET") return route.continue();
-      const res = await route.fetch();
-      const body = await res.json();
-      const list = Array.isArray(body) ? body : body.messages;
-      const at = new Date().toISOString();
-      list.push({ id: 1_000_000, task_id: plan.id, kind: "claude", data: { type: "result", subtype: "success", result: reply }, created_at: at });
-      return route.fulfill({ response: res, json: body });
-    });
+    // The demo plan has no reply from its agent: give it a thread with one.
+    const at = new Date().toISOString();
+    await routeThread(page, plan.id, [
+      { id: 1, task_id: plan.id, kind: "user", data: { text: "Tighten the approach section" }, created_at: at },
+      { id: 2, task_id: plan.id, kind: "claude", data: { type: "result", subtype: "success", result: reply }, created_at: at },
+    ]);
     await openPlan(ui, plan);
     await ui.run(["wait css=button[aria-expanded=false]:has-text('Summary')"]);
     assert.equal(await page.getByText(reply).count(), 0);

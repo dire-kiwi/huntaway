@@ -625,7 +625,7 @@ export function open(path: string): Conn {
       if (!has_column(conn, "runs", column.split(" ")[0])) batch(`ALTER TABLE runs ADD COLUMN ${column};`);
     }
     // From messages: the threads' tables come later (migrations 89 and 95).
-    stats.backfill(conn, "messages");
+    stats.backfill(conn);
     batch("PRAGMA user_version=79; COMMIT;");
   }
   if (version < 80) {

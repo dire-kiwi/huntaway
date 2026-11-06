@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { afterAll } from "vite-plus/test";
 import { fileURLToPath } from "node:url";
 import { launch, open } from "../../../../scripts/ui-check.mjs";
+import { convert, Translator } from "../../../server/src/threads/translate.ts";
+import { apply_events, initial_state, item_page, snapshot_window } from "../../src/threads.ts";
 
 const script = fileURLToPath(new URL("../../../../scripts/test-server.sh", import.meta.url));
 
@@ -86,36 +88,103 @@ export async function withBrowser(server, opts, fn) {
   if (ui.errors.length) throw new Error(`page or console errors:\n${ui.errors.join("\n")}`);
 }
 
+/** Far past the events the server writes for a task itself, which the view then leaves be. */
+export const SEQ = 100_000;
+
 /**
- * Serves `messages` (an array, or a function of the query giving it) as task `taskId`'s thread, as a host does: all of it,
- * or with ?before=&after=&limit= a page counting the main conversation's messages (db::message_page), the
- * latest one with the earlier subagents' calls, results and task_* messages uncut (db::subagent_messages). Returns the
- * queries asked for.
+ * The thread `messages` (stored messages, as the board kept threads before they moved onto items) make, as the thread API
+ * gives it: translated into items by the server's translator (apps/server/src/threads/translate.ts), as the move did.
+ */
+export function itemSnapshot(taskId, messages) {
+  const c = convert(messages, { finished: false });
+  const thread = { id: taskId, harness: "claude", status: "idle", created_at: "2026-10-26T07:00:00.000Z" };
+  const s = apply_events(
+    initial_state(thread),
+    c.events.map((e, i) => ({ ...e, thread_id: taskId, seq: i + 1 })),
+  );
+  return { ...s, seq: SEQ };
+}
+
+/**
+ * A thread that goes on while it's shown: its log of saved events (numbered from SEQ on), made from the messages added
+ * (translated as they come, as the server writes items live) and the events put in it. Each is sent as a `thread_event`
+ * on `feed.socket` (a routeWebSocket's) once that's set. routeThread serves its snapshot and its log's events after a
+ * seq (`/thread/events?after=`), so a view catching up gets what it missed.
+ */
+export function threadFeed(taskId, messages = []) {
+  const t = new Translator();
+  const thread = { id: taskId, harness: "claude", status: "idle", created_at: "2026-10-26T07:00:00.000Z" };
+  const feed = {
+    messages: [],
+    log: [],
+    socket: null,
+    /** The seq of the last event in the log. */
+    get seq() {
+      return SEQ + feed.log.length;
+    },
+    /** Saved events (unnumbered) put in the log, and sent (unless `quiet`: missed, as while disconnected). */
+    event(e, quiet = false) {
+      const ev = { ...e, thread_id: taskId, seq: feed.seq + 1 };
+      feed.log.push(ev);
+      if (feed.socket && !quiet) feed.socket.send(JSON.stringify({ type: "thread_event", task_id: taskId, event: ev }));
+      return ev;
+    },
+    /** A message added: its events go in the log. `m` has its kind and data (id and created_at are filled in). */
+    add(m, quiet = false) {
+      const msg = { id: feed.messages.length + 1, task_id: taskId, created_at: new Date().toISOString(), ...m };
+      feed.messages.push(msg);
+      for (const e of convert([msg], { from: t, finished: false }).events) feed.event(e, quiet);
+      return msg;
+    },
+    /** A message changed in place (a prompt answered): its request's events again. */
+    update(m, quiet = false) {
+      for (const e of convert([m], { finished: false }).events) if (e.type.startsWith("request.")) feed.event(e, quiet);
+    },
+    /** Streamed text, not saved: a `delta` for `item_id`. */
+    delta(item_id, offset, text) {
+      const ev = { type: "delta", thread_id: taskId, seq: feed.seq, item_id, kind: "text", offset, text };
+      feed.socket?.send(JSON.stringify({ type: "thread_event", task_id: taskId, event: ev }));
+    },
+    snapshot() {
+      return { ...apply_events(initial_state(thread), feed.log), seq: feed.seq };
+    },
+  };
+  for (const m of messages) feed.add(m);
+  return feed;
+}
+
+/**
+ * Serves `messages` (an array, or a function giving it, called for each request, or a threadFeed) as task `taskId`'s thread, as a host
+ * serves a thread kept as items (see itemSnapshot): windows (`?limit=`), pages of earlier items (`/items?before=`), and
+ * no events after it. The task is served as one on items (`thread_source`), which a new one isn't until its first
+ * message, so the view asks for them. Returns the requests asked for (`thread?limit=300`, `thread/items?before=…`).
  */
 export async function routeThread(page, taskId, messages) {
   const asked = [];
-  const isCall = (m) => m.data?.type === "assistant" && m.data.message?.content?.some?.((b) => b.type === "tool_use" && ["Agent", "Task"].includes(b.name));
-  await page.route(new RegExp(`/tasks/${taskId}/messages(\\?.*)?$`), (route) => {
+  const onItems = (t) => (t?.id === taskId ? { ...t, thread_source: "items" } : t);
+  await page.route(new RegExp(`/(projects/[^/]+/tasks\\?.*|tasks/${taskId})$`), async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const res = await route.fetch();
+    const body = await res.json().catch(() => undefined);
+    if (body === undefined) return route.fulfill({ response: res });
+    const json = Array.isArray(body) ? body.map(onItems) : body?.task ? { ...body, task: onItems(body.task) } : onItems(body);
+    return route.fulfill({ response: res, json });
+  });
+  await page.route(new RegExp(`/tasks/${taskId}/thread(/items|/events)?(\\?.*)?$`), (route) => {
     if (route.request().method() !== "GET") return route.continue();
-    const q = new URL(route.request().url()).searchParams;
-    const all = typeof messages === "function" ? messages(q) : messages;
-    asked.push(q.toString());
-    if (![...q.keys()].length) return route.fulfill({ json: all });
-    const before = Number(q.get("before") ?? Infinity);
-    const after = Number(q.get("after") ?? -Infinity);
-    const limit = q.has("limit") ? Math.max(1, Number(q.get("limit"))) : Infinity;
-    const range = all.filter((m) => m.id > after && m.id < before);
-    let start = range.length;
-    for (let main = 0; start > 0 && main < limit;) if (!range[--start].data?.parent_tool_use_id) main++;
-    const shown = range.slice(start);
-    const first = shown[0]?.id ?? 0;
-    const calls = new Set(all.filter((m) => m.id < first && isCall(m)).flatMap((m) => m.data.message.content.map((b) => b.id)));
-    const ofCall = (m) =>
-      isCall(m) ||
-      m.data?.message?.content?.some?.((b) => b.type === "tool_result" && calls.has(b.tool_use_id)) ||
-      (m.data?.subtype?.startsWith("task_") && calls.has(m.data.tool_use_id));
-    const subagents = q.has("before") || q.has("after") ? [] : all.filter((m) => m.id < first && ofCall(m));
-    return route.fulfill({ json: { messages: shown, more: start > 0, subagents } });
+    const url = new URL(route.request().url());
+    const q = url.searchParams;
+    asked.push(url.pathname.replace(/.*\/thread/, "thread") + url.search);
+    const feed = messages?.snapshot ? messages : null;
+    if (url.pathname.endsWith("/events")) {
+      const after = Number(q.get("after"));
+      return route.fulfill({
+        json: feed ? { events: feed.log.filter((e) => e.seq > after), more: false, seq: feed.seq } : { events: [], more: false, seq: SEQ },
+      });
+    }
+    const snap = feed ? feed.snapshot() : itemSnapshot(taskId, typeof messages === "function" ? messages() : messages);
+    if (url.pathname.endsWith("/items")) return route.fulfill({ json: item_page(snap, Number(q.get("before")), Number(q.get("limit") ?? 100)) });
+    return route.fulfill({ json: q.has("limit") ? snapshot_window(snap, Number(q.get("limit"))) : snap });
   });
   return asked;
 }

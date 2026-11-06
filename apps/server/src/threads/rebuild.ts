@@ -6,8 +6,8 @@
 // again, and goes on with the rest. `--check` changes nothing: it says how each thread differs from a rebuild.
 //
 // A task whose items are its thread's source (threads/source.ts) has no messages since it moved onto them, so it isn't
-// rebuilt: `--all` and `--batch` leave it out, and one named fails. `--back <task>...` moves tasks back onto their
-// messages, while that's safe (before the thread's first write since the move: source.ts's `flip_back`).
+// rebuilt: `--all` and `--batch` leave it out, and one named fails. (`--back`, which moved one back onto its messages,
+// went with the messages path in step 13.)
 //
 // It works on the board's database while the server runs (the data dir's, by default), as each rebuild is one
 // transaction, which takes the database's write lock as it starts, and a running server's translators check the threads'
@@ -19,7 +19,6 @@ import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
 import { db_file } from "./report.ts";
 import { pending } from "./batch.ts";
-import { flip_back } from "./source.ts";
 import { compare, rebuild, type Rebuilt } from "./write.ts";
 
 export interface Options {
@@ -29,15 +28,12 @@ export interface Options {
   batch: boolean;
   check: boolean;
   json: boolean;
-  /** Move the named tasks back onto messages, rather than rebuild them. */
-  back: boolean;
 }
 
-const USAGE =
-  "Usage: huntaway threads-rebuild [--db <file or data dir>] (<task id or key>... | --all | --batch) [--check] [--json] | --back <task id or key>...";
+const USAGE = "Usage: huntaway threads-rebuild [--db <file or data dir>] (<task id or key>... | --all | --batch) [--check] [--json]";
 
 export function parse_args(args: string[]): Options {
-  const o: Options = { db: null, tasks: [], all: false, batch: false, check: false, json: false, back: false };
+  const o: Options = { db: null, tasks: [], all: false, batch: false, check: false, json: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--db" || a === "--data-dir") {
@@ -48,12 +44,10 @@ export function parse_args(args: string[]): Options {
     else if (a === "--batch") o.batch = true;
     else if (a === "--check") o.check = true;
     else if (a === "--json") o.json = true;
-    else if (a === "--back") o.back = true;
     else if (a.startsWith("-")) throw new Error(`unknown argument ${a}\n${USAGE}`);
     else o.tasks.push(a);
   }
   if (Number(o.all) + Number(o.batch) + Number(!!o.tasks.length) !== 1) throw new Error(`name the tasks, or --all, or --batch\n${USAGE}`);
-  if (o.back && (!o.tasks.length || o.check)) throw new Error(`--back takes the tasks to move back onto their messages\n${USAGE}`);
   return o;
 }
 
@@ -86,8 +80,6 @@ function task_ids(c: Conn, names: string[]): string[] {
 export interface Result {
   task_id: string;
   rebuilt?: Omit<Rebuilt, "task_id">;
-  /** With --back: moved back onto its messages. */
-  back?: true;
   /** With --check: how its items differ from a rebuild (none if they don't). */
   differences?: string[];
   error?: string;
@@ -106,10 +98,7 @@ export function run(o: Options, c: Conn, print: (s: string) => void = (s) => pro
     let r: Result;
     try {
       if (o.check) r = { task_id: id, differences: compare(c, id) };
-      else if (o.back) {
-        flip_back(c, id);
-        r = { task_id: id, back: true };
-      } else {
+      else {
         const { task_id: _, ...rebuilt } = rebuild(c, id, true);
         r = { task_id: id, rebuilt };
       }
@@ -125,16 +114,13 @@ export function run(o: Options, c: Conn, print: (s: string) => void = (s) => pro
     const failed = out.filter((r) => r.error).length;
     const differ = out.filter((r) => r.differences?.length).length;
     const s = ((performance.now() - start) / 1000).toFixed(1);
-    print(
-      `${out.length} tasks${o.check ? `, ${differ} differ from a rebuild` : o.back ? " moved back onto their messages" : " rebuilt"}${failed ? `, ${failed} failed` : ""}, in ${s} s\n`,
-    );
+    print(`${out.length} tasks${o.check ? `, ${differ} differ from a rebuild` : " rebuilt"}${failed ? `, ${failed} failed` : ""}, in ${s} s\n`);
   }
   return out;
 }
 
 function line(r: Result): string {
   if (r.error) return `${r.task_id}: failed: ${r.error}`;
-  if (r.back) return `${r.task_id}: on its messages again`;
   if (r.differences)
     return `${r.task_id}: ${r.differences.length ? `${r.differences.length} differences\n  ${r.differences.join("\n  ")}` : "same as a rebuild"}`;
   const b = r.rebuilt!;

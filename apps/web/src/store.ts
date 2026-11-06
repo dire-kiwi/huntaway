@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { approvalLoads, sortApprovals, withApproval, type HostApproval } from "./approvals";
 import { sortProjects } from "./projectOrder";
 import {
@@ -14,16 +14,12 @@ import {
   type ClaudeConfig,
   type Host,
   type HostSettings,
-  type Message,
-  type MessagePage,
   type Profile,
   type Project,
   type Task,
   type Usage,
 } from "./api";
-import { forgetThreadModels } from "./threadModel";
-import { catchUpItemThreads, followsItems, onThreadEvent, onThreadResync } from "./itemThreads";
-import { addDelta, clearDelta } from "./deltas";
+import { catchUpItemThreads, onThreadEvent, onThreadResync } from "./itemThreads";
 
 /**
  * The board spans every connected host and every profile on them. Each host has its own
@@ -47,10 +43,6 @@ interface State {
   archived: Project[];
   /** Every profile's tasks (review threads too), by id. */
   tasks: Record<string, Task>;
-  /** The messages of the threads that are shown (see useThreadMessages), by task id: the latest ones, and older pages as they're scrolled to (see `threads`). */
-  messages: Record<string, Message[]>;
-  /** How much of each open thread is loaded, on hosts that page them (API 56). */
-  threads: Record<string, ThreadPages>;
   /** Progress of a rebuild/restart of the local host, from websocket events. */
   restart: { phase: string; error: string | null; log: string[] } | null;
   /** Agent defaults per host (used to show what threads inherit). */
@@ -68,13 +60,6 @@ interface State {
   loadHostSettings: (hostId: string) => Promise<void>;
   loadUsage: (refresh?: boolean) => Promise<void>;
   loadApprovals: (hostId: string) => Promise<void>;
-  /**
-   * Loads a thread's latest messages, or once they're loaded, newer ones; `again` (after a reconnect)
-   * loads them again from the oldest loaded one on, for changes to them too.
-   */
-  loadMessages: (taskId: string, again?: boolean) => Promise<void>;
-  /** Loads the thread's next page of older messages, if it has more. */
-  loadOlderMessages: (taskId: string) => Promise<void>;
   upsertTask: (t: Task) => void;
   upsertProject: (p: Project) => void;
   removeProject: (hostId: string, id: string) => void;
@@ -114,63 +99,6 @@ export function scratchHost(profileName: string): Profile | null {
         ),
     );
   return preferred.map(on).find((p) => !!p) ?? null;
-}
-
-export interface ThreadPages {
-  /** There are older messages than the loaded ones. */
-  more: boolean;
-  /** What lists the subagents started before the loaded messages (MessagePage.subagents), for buildSubagents. */
-  subagents: Message[];
-  loading: boolean;
-}
-
-/**
- * Messages from events for threads with a load under way, in order, by task id. A response can be
- * older than them (read before a message was stored or changed, e.g. a permission answered), so they're
- * applied over it (see whileLoading).
- */
-const loadEvents = new Map<string, { loads: number; events: Message[] }>();
-
-/**
- * Runs `load` for a thread, then `apply` with its result and the thread's events since it started:
- * if something shows the thread, or it's still kept after being closed (see retainThread), as a
- * reload after a reconnect has changes the kept messages missed.
- */
-async function whileLoading<T>(taskId: string, load: () => Promise<T>, apply: (result: T, events: Message[]) => void) {
-  const buffer = loadEvents.get(taskId) ?? { loads: 0, events: [] };
-  buffer.loads++;
-  loadEvents.set(taskId, buffer);
-  try {
-    const result = await load();
-    if (threadViews.has(taskId) || useStore.getState().messages[taskId]) apply(result, buffer.events);
-  } finally {
-    if (--buffer.loads === 0) loadEvents.delete(taskId);
-  }
-}
-
-/** How many of a thread's main-conversation messages a page has. */
-const PAGE = 100;
-
-/** `list` with `page`'s messages added or updated (the later of two with one id wins), in order. */
-function mergeMessages(list: Message[], page: Message[]): Message[] {
-  const byId = new Map(list.map((m) => [m.id, m]));
-  for (const m of page) byId.set(m.id, m);
-  return [...byId.values()].sort((a, b) => a.id - b.id);
-}
-
-/** `events`: those that came while the page loaded (see whileLoading). */
-function withPage(s: State, taskId: string, page: Message[], change: { more: boolean; subagents?: Message[] }, events: Message[] = []): Partial<State> {
-  let list = mergeMessages(s.messages[taskId] ?? [], page);
-  // Not those older than what's loaded now: changes to them come with their page.
-  const newer = events.filter((m) => !list.length || m.id >= list[0].id);
-  if (newer.length) list = mergeMessages(list, newer);
-  const prev = s.threads[taskId];
-  const first = list[0]?.id ?? Infinity;
-  const subagents = (change.subagents ?? prev?.subagents ?? []).filter((m) => m.id < first);
-  return {
-    messages: { ...s.messages, [taskId]: list },
-    threads: { ...s.threads, [taskId]: { loading: prev?.loading ?? false, more: change.more, subagents } },
-  };
 }
 
 const tag = <T extends object>(items: T[], host_id: string) => items.map((x) => ({ ...x, host_id }));
@@ -286,8 +214,6 @@ export const useStore = create<State>((set, get) => ({
   projects: [],
   archived: [],
   tasks: {},
-  messages: {},
-  threads: {},
   restart: null,
   hostSettings: {},
   usage: {},
@@ -357,11 +283,7 @@ export const useStore = create<State>((set, get) => ({
       archived: s.archived.filter((p) => live.has(p.host_id)),
       tasks: Object.fromEntries(Object.entries(s.tasks).filter(([, t]) => live.has(t.host_id))),
     }));
-    for (const taskId of Object.keys(get().messages))
-      get()
-        .loadMessages(taskId, true)
-        .catch(() => {});
-    // And those drawn from their items catch up from their seqs.
+    // The threads shown catch up from their seqs.
     catchUpItemThreads();
   },
 
@@ -498,57 +420,6 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  loadMessages: async (taskId, again) => {
-    const t = get().tasks[taskId];
-    if (!t) return;
-    if (
-      !hostSupports(
-        get().hosts.find((h) => h.id === t.host_id),
-        56,
-      )
-    ) {
-      await whileLoading(
-        taskId,
-        () => api.messages(t.host_id, taskId),
-        (msgs, events) => set((s) => ({ messages: { ...s.messages, [taskId]: mergeMessages(msgs, events) } })),
-      );
-      return;
-    }
-    // Events keep a loaded thread up to date while the host is connected.
-    const list = get().messages[taskId];
-    if (!list?.length) {
-      await whileLoading(
-        taskId,
-        () => api.messagePage(t.host_id, taskId, { limit: PAGE }),
-        (page: MessagePage, events) => set((s) => withPage(s, taskId, page.messages, { more: page.more, subagents: page.subagents }, events)),
-      );
-      return;
-    }
-    await whileLoading(
-      taskId,
-      () => api.messagePage(t.host_id, taskId, { after: again ? list[0].id - 1 : list[list.length - 1].id }),
-      (page, events) => set((s) => withPage(s, taskId, page.messages, { more: s.threads[taskId]?.more ?? false }, events)),
-    );
-  },
-
-  loadOlderMessages: async (taskId) => {
-    const t = get().tasks[taskId];
-    const first = get().messages[taskId]?.[0]?.id;
-    const th = get().threads[taskId];
-    if (!t || first == null || !th?.more || th.loading) return;
-    const loading = (v: boolean) => set((s) => (s.threads[taskId] ? { threads: { ...s.threads, [taskId]: { ...s.threads[taskId], loading: v } } } : {}));
-    loading(true);
-    try {
-      await whileLoading(
-        taskId,
-        () => api.messagePage(t.host_id, taskId, { before: first, limit: PAGE }),
-        (page, events) => set((s) => withPage(s, taskId, page.messages, { more: page.more }, events)),
-      );
-    } finally {
-      loading(false);
-    }
-  },
-
   upsertTask: (t) => {
     if (!profileOn(get(), t.host_id, t.profile_id)) return;
     if (get().archived.some((p) => p.host_id === t.host_id && p.id === t.project_id)) return;
@@ -614,60 +485,6 @@ export const useStore = create<State>((set, get) => ({
     }));
   },
 }));
-
-/** How many views show each thread (see useThreadMessages). */
-const threadViews = new Map<string, number>();
-
-/** How long a thread nobody shows keeps its messages, so going back to it soon shows it straight away. */
-const THREAD_KEEP_MS = 10_000;
-
-/**
- * Keeps a thread's messages, and applies its new ones, until the returned function is called. Then,
- * once nothing else shows it, its messages are dropped (opening it loads them again): every open
- * thread is fetched again on a reconnect (from its oldest loaded message), and kept up to date.
- */
-export function retainThread(taskId: string): () => void {
-  threadViews.set(taskId, (threadViews.get(taskId) ?? 0) + 1);
-  let done = false;
-  return () => {
-    if (done) return;
-    done = true;
-    const n = (threadViews.get(taskId) ?? 1) - 1;
-    if (n > 0) return void threadViews.set(taskId, n);
-    threadViews.delete(taskId);
-    setTimeout(() => {
-      if (threadViews.has(taskId) || !useStore.getState().messages[taskId]) return;
-      useStore.setState((s) => {
-        const messages = { ...s.messages };
-        const threads = { ...s.threads };
-        delete messages[taskId];
-        delete threads[taskId];
-        return { messages, threads };
-      });
-      forgetThreadModels((id) => id in useStore.getState().messages);
-    }, THREAD_KEEP_MS);
-  };
-}
-
-/**
- * A task's messages, kept up to date while the component is mounted, and loaded when it mounts
- * (unless `load` is false: then they're only there while something else shows the thread). None for a null id.
- */
-export function useThreadMessages(taskId: string | null, load = true): Message[] | undefined {
-  const messages = useStore((s) => (taskId === null ? undefined : s.messages[taskId]));
-  useEffect(() => {
-    // None (a thread drawn from its items, see threadView.ts).
-    if (taskId === null) return;
-    const release = retainThread(taskId);
-    if (load)
-      useStore
-        .getState()
-        .loadMessages(taskId)
-        .catch(() => {});
-    return release;
-  }, [taskId, load]);
-  return messages;
-}
 
 /** Keeps loading lists of approvals from undoing changes that arrive meanwhile. */
 const approvalsLoading = approvalLoads();
@@ -968,28 +785,9 @@ export function handleEvent(ev: any) {
         approvalsLoading.changed(a);
         useStore.setState((st) => ({ approvals: withApproval(st.approvals, a) }));
       }
-      if (otherHost(ev.task_id)) break;
-      const m: Message = ev.message;
-      // A persisted assistant text block supersedes the streamed preview (whether the thread is loaded or not).
-      if (m.kind === "claude" && m.data?.type === "assistant" && !m.data.parent_tool_use_id && !followsItems(ev.task_id)) clearDelta(ev.task_id);
-      // For loads of the thread under way, whose responses may be older.
-      loadEvents.get(ev.task_id)?.events.push(m);
-      const list = s.messages[ev.task_id];
-      if (!list) break; // not shown; it'll load when it is
-      if (list.length && m.id < list[0].id) break; // older than what's loaded; it comes with its page
-      const next = withMessage(list, m);
-      useStore.setState((st) => ({ messages: { ...st.messages, [ev.task_id]: next } }));
+      // A thread's messages aren't drawn: its items are (thread_event, below).
       break;
     }
-    case "delta":
-      // A thread drawn from its items streams with its own delta events.
-      if (otherHost(ev.task_id) || followsItems(ev.task_id)) break;
-      addDelta(ev.task_id, ev.text);
-      break;
-    case "delta_reset":
-      if (otherHost(ev.task_id) || followsItems(ev.task_id)) break;
-      clearDelta(ev.task_id);
-      break;
     // A thread kept as items (API 114): see itemThreads.ts.
     case "thread_event":
       if (otherHost(ev.task_id)) break;
@@ -1003,8 +801,7 @@ export function handleEvent(ev: any) {
       if (ev.host_id) {
         s.refreshHost(ev.host_id).catch(() => {});
         s.loadApprovals(ev.host_id);
-        // The open threads' missed messages too (e.g. an approval's answer).
-        for (const taskId of Object.keys(s.messages)) if (s.tasks[taskId]?.host_id === ev.host_id) s.loadMessages(taskId, true).catch(() => {});
+        // The threads shown catch up too (e.g. on an approval's answer).
         catchUpItemThreads(ev.host_id);
       } else s.loadAll().catch(() => {}); // the hub's own events lagged: hosts and profiles may have changed too
       break;
@@ -1021,22 +818,6 @@ export function handleEvent(ev: any) {
       }));
       break;
   }
-}
-
-/**
- * A thread's messages (in id order) with `m` added, or in place of the one with its id. New ones
- * come at the end, and updates are mostly of recent ones, so neither looks through the whole thread.
- */
-export function withMessage(list: Message[], m: Message): Message[] {
-  const next = list.slice();
-  if (!list.length || m.id > list[list.length - 1].id) next.push(m);
-  else {
-    let i = list.length - 1;
-    while (i >= 0 && list[i].id > m.id) i--;
-    if (i >= 0 && list[i].id === m.id) next[i] = m;
-    else next.splice(i + 1, 0, m);
-  }
-  return next;
 }
 
 export function useProject(id: string | null | undefined) {
