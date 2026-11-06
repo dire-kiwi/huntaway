@@ -1,6 +1,7 @@
 // Live updates: one websocket per paired board (its /ws, the events of every host on it), which reconnects after a
-// drop with a backoff, and at once when the app comes back to the front or the network changes (see BoardSockets in
-// session.tsx). After each reconnect it hands on a `resync` event, so screens read again what they may have missed.
+// drop (or a minute without the board's ticks) with a backoff, and at once when the app comes back to the front or the
+// network changes (see BoardSockets in session.tsx). After each reconnect it hands on a `resync` event, so screens read
+// again what they may have missed.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type BoardEvent = { type: string; host_id?: string; [k: string]: any };
@@ -18,12 +19,22 @@ export type Connect = (url: string) => SocketLike;
 /** How long to wait before the `n`th attempt in a row to reconnect. */
 export const backoff = (n: number) => Math.min(30_000, 1000 * 2 ** Math.min(n, 5));
 
+/**
+ * A connection that has had the board's `tick` (every 25 s, see the server's hosts/hub/endpoints.ts) and then nothing
+ * for this long is taken for dead (a network that dropped it without a close) and opened again. One to a board from
+ * before ticks never is, as it can be quiet for any time.
+ */
+export const SILENCE_MS = 60_000;
+
 export class BoardSocket {
   private ws: SocketLike | null = null;
   private attempts = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private everOpened = false;
+  /** When the connection last had anything, and the check for its silence once it has had a tick. */
+  private heard = 0;
+  private silence: ReturnType<typeof setTimeout> | null = null;
   /** Whether it's connected, for the screens' "live" mark. */
   connected = false;
 
@@ -57,6 +68,8 @@ export class BoardSocket {
   }
 
   private drop() {
+    if (this.silence) clearTimeout(this.silence);
+    this.silence = null;
     const ws = this.ws;
     this.ws = null;
     if (ws) {
@@ -90,20 +103,37 @@ export class BoardSocket {
       this.everOpened = true;
     };
     ws.onmessage = (e) => {
+      this.heard = Date.now();
       if (typeof e.data !== "string") return;
       try {
         const ev = JSON.parse(e.data);
-        if (ev && typeof ev.type === "string" && ev.type !== "hello") this.onEvent(ev);
+        if (ev?.type === "tick") this.silence ??= this.watch(ws);
+        else if (ev && typeof ev.type === "string" && ev.type !== "hello") this.onEvent(ev);
       } catch {
         /* not an event */
       }
     };
-    ws.onclose = ws.onerror = () => {
-      if (this.ws !== ws) return;
-      this.ws = null;
-      this.setConnected(false);
-      this.retry();
-    };
+    ws.onclose = ws.onerror = () => this.lost(ws);
+  }
+
+  /** Checks, SILENCE_MS after it was last heard from, that `ws` has been since. */
+  private watch(ws: SocketLike): ReturnType<typeof setTimeout> {
+    return setTimeout(
+      () => {
+        this.silence = null;
+        if (this.ws !== ws) return;
+        if (Date.now() - this.heard >= SILENCE_MS) this.lost(ws);
+        else this.silence = this.watch(ws);
+      },
+      this.heard + SILENCE_MS - Date.now(),
+    );
+  }
+
+  /** `ws` closed, or went silent: another, after the backoff. */
+  private lost(ws: SocketLike) {
+    if (this.ws !== ws) return;
+    this.drop();
+    this.retry();
   }
 
   private retry() {

@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Bell, BellRing, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../activeProfile";
-import { api, hostCompat, hostSupports, isAssistant, isAssistants, readyToCheck, type Project, type Status, type Task } from "../../api";
+import { api, hostCompat, hostSupports, isAssistant, isAssistants, readyToCheck, taskKey, type Project, type Status, type Task } from "../../api";
 import { unavailableNote, useAssistantHome } from "../../assistant";
 import {
   groupKey,
@@ -27,7 +27,7 @@ import {
 import { isDue, reminderLabel, reminderTasks, starredTasks } from "../../reminders";
 import { useDrawer } from "../../narrow";
 import { navigate, openTask, usePanel, type Route } from "../../router";
-import { profileNames, taskKey, useStore } from "../../store";
+import { profileNames, useStore } from "../../store";
 import { ProfileAvatar } from "../board/Board";
 import { ReminderModal, reminderItems, starItem, useReminderClock } from "../task/Reminders";
 import { titleItem, TitleModal } from "./TitleModal";

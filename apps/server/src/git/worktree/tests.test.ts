@@ -275,6 +275,71 @@ test("a_worktree_removed_while_git_reads_its_diff_gives_its_branchs", async () =
   assert.ok(d.branch === undefined && JSON.stringify(d.untracked) === JSON.stringify(["draft"]), JSON.stringify(d));
 });
 
+// HA-262: a teardown that wasn't forced removed a worktree whose HEAD had commits on no branch (a detached HEAD, or a
+// rebase stopped part way), and they were lost with it.
+test("a_worktree_with_commits_on_no_branch_is_kept_unless_forced", async () => {
+  const s = testing.state();
+  const [repo, t, wt] = await task_with_work(s);
+  sh(wt, ["checkout", "-q", "--detach"]);
+  sh(wt, ["commit", "-q", "--allow-empty", "-m", "on no branch"]);
+  const head = rev(wt, "HEAD");
+  const e = await fails(teardown(s, t.id, false, false));
+  assert.ok(e.message.includes("1 commit on no branch"), e.message);
+  assert.ok(existsSync(wt));
+  assert.equal(db.get_task(s.db(), t.id)!.worktree_state, "ready");
+  assert.equal(rev(wt, "HEAD"), head);
+  // Forced, it goes.
+  await teardown(s, t.id, true, false);
+  assert.ok(!existsSync(wt));
+  assert.equal(db.get_task(s.db(), t.id)!.worktree_state, "none");
+  assert.ok(existsSync(repo));
+});
+
+/** Waits until task `id`'s worktree is in `state`. */
+async function until_state(s: AppState, id: string, state: string) {
+  for (let i = 0; i < 400 && db.get_task(s.db(), id)?.worktree_state !== state; i++) await sleep(5);
+  assert.equal(db.get_task(s.db(), id)?.worktree_state, state);
+}
+
+// HA-262: teardown didn't take the task's setup lock, so a run's setup that started meanwhile took over the folder being
+// removed and marked it ready, and its agent was left working in a folder that was then removed.
+test("a_setup_during_a_teardown_waits_for_it_and_sets_the_worktree_up_again", async () => {
+  const s = testing.state();
+  const [, t, wt, branch] = await task_with_work(s);
+  db.run(s.db(), "UPDATE projects SET teardown_script='sleep 0.5' WHERE id=?1", t.project_id);
+  const removing = teardown(s, t.id, false, false);
+  await until_state(s, t.id, "tearing_down");
+  const set_up = await setup(s, t.id);
+  await removing;
+  const now = db.get_task(s.db(), t.id)!;
+  assert.deepEqual([now.worktree_state, now.worktree_path, now.branch], ["ready", wt, branch]);
+  assert.equal(set_up.worktree_path, wt);
+  assert.ok(existsSync(join(wt, "a")), "set up again from its branch");
+});
+
+// HA-262: a task deleted while its worktree was being set up (before the worktree was saved) left the worktree and its
+// branch behind.
+test("a_task_deleted_while_its_worktree_is_set_up_leaves_neither_behind", async () => {
+  const s = testing.state();
+  const repo = testing.temp_dir();
+  sh(repo, ["init", "-q", "-b", "master"]);
+  sh(repo, ["commit", "-q", "--allow-empty", "-m", "init"]);
+  const p = await project_on(s, repo);
+  const t = api.create_task_inner(s, p.id, ct("Do it"));
+  // `git worktree add` takes a while.
+  writeFileSync(join(repo, ".git", "hooks", "post-checkout"), "#!/bin/sh\nsleep 0.5\n", { mode: 0o755 });
+  const setting_up = setup(s, t.id).catch((e) => e);
+  await until_state(s, t.id, "setting_up");
+  await api.delete_task_inner(s, db.get_task(s.db(), t.id)!, true);
+  await setting_up;
+  assert.equal(db.get_task(s.db(), t.id), null);
+  const worktrees = sh(repo, ["worktree", "list", "--porcelain"])
+    .split("\n")
+    .filter((l) => l.startsWith("worktree "));
+  assert.deepEqual(worktrees, [`worktree ${rev(repo, "--show-toplevel")}`]);
+  assert.equal(sh(repo, ["branch", "--list", "ia/*"]), "");
+});
+
 const kept = (why: string): Removal => ({ Kept: why });
 const removed = (into: string): Removal => ({ Removed: into });
 
@@ -410,6 +475,22 @@ test("a_task_with_commits_its_base_lacks_is_unmerged", async () => {
   t = db.update_task(s.db(), t.id, [["task_type", null]])!;
   sh(repo, ["merge", "-q", "--no-ff", "-m", "merge", branch]);
   assert.ok(!(await unmerged(s, t)));
+});
+
+// HA-262: the worktree was read with plain `git status`, so with status.showUntrackedFiles=no the agent's new files
+// didn't count, and Ready for merge marked the task done with them unmerged.
+test("new_files_are_work_to_merge_whatever_git_status_is_told_to_show", async () => {
+  const s = testing.state();
+  const repo = testing.temp_dir();
+  sh(repo, ["init", "-q", "-b", "master"]);
+  sh(repo, ["commit", "-q", "--allow-empty", "-m", "init"]);
+  sh(repo, ["config", "status.showUntrackedFiles", "no"]);
+  const p = await project_on(s, repo);
+  let t = api.create_task_inner(s, p.id, ct("Do it"));
+  t = await setup(s, t.id);
+  assert.ok(!(await has_work_to_merge(s, t)));
+  writeFileSync(join(t.worktree_path!, "notes"), "1");
+  assert.ok(await has_work_to_merge(s, t));
 });
 
 function log_texts(s: AppState, task_id: string): string[] {

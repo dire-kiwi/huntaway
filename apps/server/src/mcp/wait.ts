@@ -37,6 +37,7 @@ import * as db from "../db.ts";
 import type { AgentWait, Conn, Run, Task, WaitTask } from "../db.ts";
 import type { Shared } from "../state.ts";
 import * as runner from "../agent/runner.ts";
+import * as runs from "../agent/runs.ts";
 import * as pr_watch from "./pr_watch.ts";
 import { context, err_str, IN_TEST, new_id, now } from "../util.ts";
 import * as history from "../threads/history.ts";
@@ -421,7 +422,7 @@ export const LAUNCH = `exec 3<&0 </dev/null; (read -r _ <&3; kill -KILL 0) & exe
 export function spawn_command(command: string, cwd: string, log: number, env: Array<[string, string]>): { child: ChildProcess; alive: Writable } {
   const child = spawn("bash", ["-c", LAUNCH, "issue-agent-wait", command], {
     cwd,
-    env: { ...process.env, ...Object.fromEntries(env) },
+    env: { ...runs.agent_env(), ...Object.fromEntries(env) },
     stdio: ["pipe", log, log],
     // A process group (and session) of its own.
     detached: true,

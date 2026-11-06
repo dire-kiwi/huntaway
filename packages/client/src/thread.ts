@@ -162,6 +162,13 @@ export interface ThreadEventPage<E> {
 /** What the user answered a question or plan prompt with, besides allowing or denying it (API 64). */
 export type PermissionReply = { answers?: string[][]; mode?: PermissionMode; feedback?: string };
 
+/** The tools whose prompts are questions for the user, not requests for permission (server: permissions::is_question). */
+export const QUESTION_TOOLS = ["AskUserQuestion", "request_user_input"];
+
+/** Whether a question takes an answer the user types: Claude's (AskUserQuestion) always do, and Codex's say with `isOther`,
+ *  but one with no options takes nothing else. */
+export const takesTypedAnswer = (codex: boolean, q: { isOther?: boolean; options: unknown[] }) => !codex || q.isOther !== false || !q.options.length;
+
 /** A permission prompt waiting for the user, as `GET /permissions` lists them. */
 export interface PendingPermission {
   id: string;

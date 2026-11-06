@@ -1,11 +1,8 @@
 // What the app reads of a board's profiles and projects: its hosts, and their profiles merged by name (as the web
 // board merges them), with each profile's projects on each host. Each result says which board it's from, so a
 // screen never shows (or acts on) one board's projects under another.
-import type { Client, Host, Profile, Project } from "@huntaway/client";
+import { boardHosts, type Client, type Host, type Profile, type Project } from "@huntaway/client";
 import type { Board } from "./boards";
-
-/** The hosts of a board whose profiles and projects show: this one, and the linked ones that are connected and run agents. */
-export const boardHosts = (hosts: Host[]) => hosts.filter((h) => h.connected && (h.local || h.agents !== false));
 
 export interface BoardProfiles {
   boardId: string;

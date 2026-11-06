@@ -5,12 +5,11 @@ import { sortProjects } from "./projectOrder";
 import {
   api,
   ApiError,
+  boardHosts,
   canRunAgents,
-  hostCompat,
   hostSupports,
-  isScratch,
-  isAssistants,
   hasAssistant,
+  usableHost,
   wsUrl,
   type ClaudeConfig,
   type Host,
@@ -66,18 +65,7 @@ interface State {
   removeProject: (hostId: string, id: string) => void;
 }
 
-/**
- * Connected hosts this UI can work with and that can run agents. A hub that can't run agents
- * (e.g. one deployed only to show other hosts) gets no new work; boardHosts says what it shows.
- */
-const usable = (h: Host) => canRunAgents(h) && ["ok", "outdated"].includes(hostCompat(h));
-const usableHosts = (hosts: Host[]) => hosts.filter(usable);
-
-/**
- * Hosts whose profiles and projects are on the board: the usable ones, plus this host even if
- * it can't run agents (it usually has none, but a PR preview seeds a demo project).
- */
-export const boardHosts = (hosts: Host[]) => hosts.filter((h) => (h.local && h.connected) || usable(h));
+const usableHosts = (hosts: Host[]) => hosts.filter(usableHost);
 
 /** Where new work goes by default: this host if it can run agents, else the first one that can. */
 export function defaultAgentHost(): string | null {
@@ -573,6 +561,13 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let wakeListening = false;
 
 /**
+ * A connection that has had the server's `tick` (every 25 s, see its hosts/hub/endpoints.ts) and then nothing for this
+ * long is taken for dead (one a laptop's sleep or a network change dropped without a close), and opened again. One to a
+ * server from before ticks never is, as it can be quiet for any time.
+ */
+export const SILENCE_MS = 60_000;
+
+/**
  * Reconnects now rather than at the end of the backoff (up to 32 s), when the network comes back or the page is shown
  * again, as after a laptop wakes.
  */
@@ -599,6 +594,22 @@ export function connectEvents() {
   const ws = new WebSocket(wsUrl());
   socket = ws;
   let opened = false;
+  // When it last had anything, and the check for its silence once it has had a tick.
+  let heard = 0;
+  let silence: ReturnType<typeof setTimeout> | null = null;
+  const watch = (): ReturnType<typeof setTimeout> =>
+    setTimeout(
+      () => {
+        silence = null;
+        if (socket !== ws) return;
+        if (Date.now() - heard < SILENCE_MS) return void (silence = watch());
+        // Its close may not come for a long while: it's done with now.
+        ws.onclose = ws.onmessage = null;
+        ws.close();
+        lost();
+      },
+      heard + SILENCE_MS - Date.now(),
+    );
   ws.onopen = () => {
     opened = true;
     retry = 0;
@@ -608,7 +619,9 @@ export function connectEvents() {
       .loadAll()
       .catch(() => {});
   };
-  ws.onclose = () => {
+  const lost = () => {
+    if (silence) clearTimeout(silence);
+    silence = null;
     socket = null;
     if (!opened && retry === 0 && useStore.getState().authed === null)
       useStore
@@ -627,14 +640,17 @@ export function connectEvents() {
       500 * 2 ** retry,
     );
   };
+  ws.onclose = lost;
   ws.onmessage = (e) => {
+    heard = Date.now();
     let ev;
     try {
       ev = JSON.parse(e.data);
     } catch {
       return;
     }
-    handleEvent(ev);
+    if (ev?.type === "tick") silence ??= watch();
+    else handleEvent(ev);
   };
 }
 
@@ -810,17 +826,6 @@ export function useProject(id: string | null | undefined) {
 export function useHost(id: string | null | undefined) {
   return useStore((s) => s.hosts.find((h) => h.id === id));
 }
-
-export function taskKey(t: Task, projects: Project[]) {
-  return `${keyPrefix(
-    t,
-    projects.find((x) => x.id === t.project_id),
-  )}-${t.number}`;
-}
-
-/** What goes before a task's number: its project's key, `G` for a group task, or `S` for a scratch task. */
-export const keyPrefix = (t: Task, project?: Project) =>
-  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistants(t) ? "A" : "T");
 
 /** A group task: in no project, it plans the work of its group's projects. */
 export const isGroupTask = (t: Task) => t.kind === "task" && !t.project_id && !!t.group_name;

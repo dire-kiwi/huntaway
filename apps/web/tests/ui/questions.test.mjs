@@ -262,6 +262,21 @@ test("Codex's questions get the same card, and its other prompts say it's Codex 
   });
 });
 
+// HA-262: a Codex question with no options that said it took no answer of the user's own had neither options nor a field.
+test("a Codex question with no options takes a typed answer whatever it says", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Codex asks for a name" });
+  const question = { id: "name", header: "Name", question: "What should it be called?", options: [], isOther: false, isSecret: false, multiSelect: false };
+  const codexQuestion = { tool_name: "request_user_input", agent: "codex", request_id: "cn", status: "pending", input: { questions: [question] } };
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await routeThread(page, task.id, thread(task.id, [user("Start"), ["permission", codexQuestion]]));
+    const sent = await capture(page);
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait What should it be called?"]);
+    await ui.run(["click css=[aria-label='Your own answer to: What should it be called?']", "type notes.txt", "press Enter"]);
+    assert.deepEqual(await nth(sent, 1), { path: "/permissions/cn", body: { decision: "allow", answers: [["notes.txt"]] } });
+  });
+});
+
 // HA-9 review: the mode picked for a plan started as the project's or host's, so approving reset the thread's own.
 test("a plan's mode starts as the thread's own", async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Own mode" });

@@ -10,7 +10,7 @@ const hook = `export async function resolve(spec, ctx, next) {
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
-const { ApiError, assistantHome, createClient } = await import("@huntaway/client");
+const { ApiError, assistantHome, createClient, moveTask, splitAttachments, withAttachments } = await import("@huntaway/client");
 
 /** A board at `baseUrl` whose requests are recorded, answering `answer(url, init)` (200 with `{}` by default). */
 function board(baseUrl, { token = "", answer, wsBase } = {}) {
@@ -178,4 +178,40 @@ test("a profile's assistant is on its assistant host, or else the board's own ho
     profileId: "ph",
   });
   assert.deepEqual(assistantHome([profile("hub", "ph", { assistant_host: "hub" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });
+});
+
+// HA-262: moving a card to In progress on the phone didn't start its agent. Every move goes through moveTask, which
+// sends the empty message that starts a fresh task's agent, as dragging its card on the board does.
+test("a fresh task moved into In progress starts its agent, where one can run", async () => {
+  const desk = { id: "h", local: true, connected: true };
+  const moves = async (task, status, host = desk) => {
+    const { client, requests } = board("http://board");
+    await moveTask(client, { id: "t1", host_id: "h", status: "todo", session_id: null, running: false, ...task }, status, host, { position: 2 });
+    return requests.map((r) => [r.method, r.url, JSON.parse(r.body)]);
+  };
+  assert.deepEqual(await moves({}, "in_progress"), [
+    ["PATCH", "http://board/api/h/h/tasks/t1", { position: 2, status: "in_progress" }],
+    ["POST", "http://board/api/h/h/tasks/t1/messages", { text: "" }],
+  ]);
+  const patch = [["PATCH", "http://board/api/h/h/tasks/t1", { position: 2, status: "in_progress" }]];
+  // Not a fresh task, already in progress, or on a host that can't run agents: just the move.
+  assert.deepEqual(await moves({ session_id: "s" }, "in_progress"), patch);
+  assert.deepEqual(await moves({ running: true }, "in_progress"), patch);
+  assert.deepEqual(await moves({ status: "in_progress" }, "in_progress"), patch);
+  assert.deepEqual(await moves({}, "in_progress", { id: "h", local: true, connected: false }), patch);
+  assert.deepEqual(await moves({}, "in_progress", { id: "h", local: true, connected: true, agents: false }), patch);
+  assert.deepEqual(await moves({}, "in_review"), [["PATCH", "http://board/api/h/h/tasks/t1", { position: 2, status: "in_review" }]]);
+});
+
+// HA-262: the board and the phone list a message's files, and read them back off it, with the same code.
+test("files listed after a message are split back off it", () => {
+  const a = { id: "0a1b", name: "shot.png", path: "/d/attachments/0a1b/shot.png" };
+  const b = { id: "2c3d", name: "log.txt", path: "/d/attachments/2c3d/log.txt" };
+  const sent = withAttachments("Look at these", [a, b]);
+  assert.equal(sent, "Look at these\n\nAttached files:\n- /d/attachments/0a1b/shot.png\n- /d/attachments/2c3d/log.txt");
+  assert.deepEqual(splitAttachments(sent), { text: "Look at these", files: [a, b] });
+  // Two queued messages joined into one, each with its list.
+  assert.deepEqual(splitAttachments(`${withAttachments("One", [a])}\n\n${withAttachments("", [b])}`), { text: "One", files: [a, b] });
+  // A list of paths that aren't attachments stays as written.
+  assert.deepEqual(splitAttachments("Attached files:\n- /etc/passwd"), { text: "Attached files:\n- /etc/passwd", files: [] });
 });

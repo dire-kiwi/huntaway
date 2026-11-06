@@ -6,6 +6,7 @@ import * as db from "../../db.ts";
 import type { Project, Task } from "../../db.ts";
 import * as api from "../../api.ts";
 import * as runs from "../../agent/runs.ts";
+import * as merge_gate from "../../review/merge_gate.ts";
 import type { Outcome } from "../../agent/runner.ts";
 import * as testing from "../../testing.ts";
 import type { AppState } from "../../state.ts";
@@ -414,6 +415,22 @@ test("a_workflow_starts_when_its_task_enters_its_column_and_not_when_it_moves_it
   // Deleting a workflow takes its runs with it.
   delete_(s, first.id);
   assert.equal(latest_run(s.db(), first.id, task.id), null);
+});
+
+// HA-262: a merge approved or denied on its card didn't start the workflows of the column that moved the task to.
+test("deciding_a_merge_starts_the_workflows_of_the_column_it_moves_the_task_to", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  const w = make(s, project, { nodes: [{ id: "t", kind: "trigger", on: "status", status: "in_review" }], edges: [] });
+  // Its summary run has ended, and the card waits for the user's answer.
+  db.update_task(s.db(), task.id, [
+    ["status", "needs_attention"],
+    ["merging", true],
+    ["merge_approval", "pending"],
+  ]);
+  assert.equal(merge_gate.decide(s, task.id, false).status, "in_review");
+  await until(() => latest_run(s.db(), w.id, task.id) != null);
+  assert.equal(latest_run(s.db(), w.id, task.id)?.state, "done");
 });
 
 test("a_set_status_step_doesnt_start_its_own_workflow_again", async () => {

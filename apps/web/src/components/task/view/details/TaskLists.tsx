@@ -1,9 +1,9 @@
 import clsx from "clsx";
 import { GitCompareArrows, Hourglass } from "lucide-react";
 import { useMemo } from "react";
-import { hostSupports, type Task } from "../../../../api";
+import { hostSupports, taskKey, type Task } from "../../../../api";
 import { openCompare, openTask } from "../../../../router";
-import { isGroupTask, taskKey, useHost, useStore } from "../../../../store";
+import { isGroupTask, useHost, useStore } from "../../../../store";
 import { COMPARE_API, harnessLabels, useConfigsOf, useFanout } from "../../../board/Fanout";
 import { inGroupTaskGroup } from "../../../../projectGroups";
 import { GroupTaskBadge, useCreatedProgress } from "../../../board/TaskCard";

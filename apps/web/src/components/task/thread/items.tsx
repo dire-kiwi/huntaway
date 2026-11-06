@@ -1,9 +1,9 @@
 import clsx from "clsx";
 import { Bot, Brain, Check, ChevronRight, CircleAlert, Clock, Layers, ShieldQuestion } from "lucide-react";
 import { memo, useState, type ReactNode } from "react";
-import { api } from "../../../api";
+import { api, QUESTION_TOOLS } from "../../../api";
 import { useSubagentView, subagentTitle } from "../../../subagents";
-import { QUESTION_TOOLS, questionsOf } from "../../../questions";
+import { questionsOf } from "../../../questions";
 import { Button } from "../../ui";
 import { AskCard, BoardQuestionCard, PlanCard } from "../Questions";
 import { useThread } from "./context";

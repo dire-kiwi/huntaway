@@ -863,7 +863,7 @@ async function relay_websocket(s: AppState, path: string, headers: Array<[string
         if (m === null || m.type === "close") {
           const code = m?.type === "close" ? m.code : null;
           try {
-            if (code !== null) ws.close(code, truncate_reason(m?.type === "close" ? (m.reason ?? "") : ""));
+            if (code !== null) ws.close(code, relay.truncate_reason(m?.type === "close" ? (m.reason ?? "") : ""));
             else ws.close();
           } catch {
             try {
@@ -932,11 +932,4 @@ async function flushed(ws: WebSocket, signal: AbortSignal) {
   while (ws.bufferedAmount > 0 && !signal.aborted && ws.readyState !== WebSocket.CLOSED) {
     await new Promise((r) => setTimeout(r, 20));
   }
-}
-
-/** A close reason fits in 123 bytes. */
-function truncate_reason(r: string): string {
-  let out = r;
-  while (Buffer.byteLength(out) > 123) out = out.slice(0, -1);
-  return out;
 }

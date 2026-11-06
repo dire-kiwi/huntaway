@@ -14,9 +14,10 @@ what Huntaway uses, into its own code, noting the commit they came from (`main` 
 
 ## The model
 
-`apps/server/src/threads/protocol.ts` is one plain TypeScript file that the server and the app share. The app imports it
-by relative path (`apps/web/src/threads.ts` re-exports it), so it has no imports and nothing that's only Node's, and it
-passes both packages' typechecks. There's no code generation and no JSON Schema.
+`apps/server/src/threads/protocol.ts` is one plain TypeScript file that the server and the clients share. The shared
+client re-exports it by relative path (`@huntaway/client/protocol`, `packages/client/src/protocol.ts`), which the app
+(`apps/web/src/threads.ts`) and the phone app import, so it has no imports and nothing that's only Node's, and it passes
+every package's typecheck. There's no code generation and no JSON Schema.
 
 - **Thread**: a task has one thread, and its id is the task's. Its own state (`status`, `model`, `session_id`,
   `usage`...) is the task's, so it isn't stored with the items.
@@ -169,9 +170,9 @@ about 1.9 times today's `messages` (1.7 GB on this board).
 
 [threads-api.md](threads-api.md) has the routes (a snapshot or window, pages of earlier items, the events after a
 seq, and commands), and the live events. What writes a thread's items sends its events to clients with
-`threads/live.ts`'s `send_events` once they're committed, streamed text with `send_delta` (which keeps the text so far
-in memory, so a window taken mid-message has it), and `send_resync` when it changes a thread in a way its log doesn't
-say (a rebuild).
+`threads/live.ts`'s `send_events` once they're committed, and `send_resync` when it changes a thread in a way its log
+doesn't say (a rebuild). Streamed text goes as deltas for a preview item the thread doesn't have (`threads/write.ts`'s
+`stream_text`, see "Writing items live"), which no window has.
 
 ## Writing items live
 
@@ -259,10 +260,10 @@ and shows the messages it has until its window has loaded.
   the Agents list has them all, as the messages path's first page does with what lists the earlier subagents; its
   context items aren't drawn until their page loads, as a subagent from before the loaded messages isn't. What a new
   snapshot leaves as it was stays the same objects, so rows that didn't change don't redraw.
-- **What it sends**: the composer's messages, its stop and its mode go as thread commands (`send`, `interrupt`,
-  `set_options`), and the prompt cards answer with `respond` (a permission, a plan with the mode to carry on in, Claude's
-  questions by their ids, the board's own questions). Going back to the inherited mode, unqueuing and rewinding use the
-  board's routes, as do the board's lists of prompts outside the thread.
+- **What it sends**: the prompt cards answer with `respond` (a permission, a plan with the mode to carry on in, Claude's
+  questions by their ids, the board's own questions). The composer's messages, its stop and its mode, unqueuing and
+  rewinding use the board's routes (which the thread commands `send`, `interrupt` and `set_options` go to as well), as do
+  the board's lists of prompts outside the thread.
 - **What the items needed** (converter 4): what the board draws that the protocol doesn't say is the items' and
   requests' `metadata`: a user message the board sent itself (`auto`), a turn's `subtype`, `num_turns` and
   `total_cost_usd`, a compaction's `post_tokens`, a result's text no message said (`from_result`, which isn't drawn),
@@ -451,10 +452,11 @@ tasks stayed on their messages until step 13 (now they move there too: serve.ts 
 **The app** draws a task on items from its items whatever the host's _Keep threads as items_ setting (which was only
 for tasks still on messages, and since step 13 the app draws nothing else), and so do the board card's pending prompts (`PendingPrompts`) and a document's last
 reply, which read messages before. **The mobile app** (`apps/mobile/src/threadView.tsx`, `thread.ts`'s `itemThreadItems`)
-draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, loaded
-again as its messages' events come, and its Inbox finds an open question in the thread's requests
-(`openItemQuestion`); paired devices may read those two routes (devices.ts). A phone app from before this release reads
-an items task's messages, so it shows its thread as it was at the move: it needs this release's build.
+draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, with
+its `thread_event`s folded in by `apply_event` (it loads the window again after a gap or a `thread_resync`), and its
+Inbox finds an open question in the thread's requests (`openItemQuestion`); paired devices may read those two routes
+(devices.ts). A phone app from before this release reads an items task's messages, so it shows its thread as it was at
+the move: it needs this release's build.
 
 **The tests** default to items, as a server does (`testing.state()`; `IA_TEST_ITEMS_SOURCE=0` ran them with tasks on
 messages until step 13), and read what was written with `testing.messages`, which for a task on items is a journal of
@@ -585,8 +587,8 @@ run reaches the board.
 - **A write that fails** (the database, or a bug in `map`) writes nothing of the notification's items, and is logged; its
   other effects still happen, so a turn's end still records the run's result and a subagent's end still ends the wait
   for it (HA-261).
-- **The phone app** reloads a thread drawn from its items on its `thread_event`s too (the driver's writes send no
-  `message` event).
+- **The phone app** follows a thread drawn from its items by its `thread_event`s, not its messages' events (the
+  driver's writes send no `message` event).
 
 ### Every difference from what the messages path made
 
@@ -647,8 +649,8 @@ no data is deleted (that's step 14).
 - **The app** (`apps/web`) draws every thread from its items: threadModel.ts's and subagents.ts's folding of messages
   (`buildModel`, `buildItems`, `buildSubagents`) and the store's messages pages are gone (their types stay, for
   itemModel.ts), and so is threadView.ts's choice. A task that hasn't started has no thread on its host yet (a 404),
-  so the app shows it empty and sends its first message with the board's route; after that the composer and the
-  prompt cards send thread commands. A host older than API 119 can't serve its threads as items: the app shows a notice
+  so the app shows it empty (the composer sends with the board's routes for every thread since HA-268, and the prompt
+  cards answer with `respond` commands). A host older than API 119 can't serve its threads as items: the app shows a notice
   in their place ("This host's Huntaway is too old to show this thread here"). The `message` events still update the
   app's pending approvals.
 - **Kept, for the hub's older hosts and clients** until 2026-11-20 (a follow-up removes them): the message routes
@@ -719,13 +721,13 @@ mobile app, and Codex threads in the browser beyond the UI tests' fixtures.
 Left for later steps:
 
 - Live snapshots that include streamed text: step 3's deltas name a preview item the thread doesn't have yet (see
-  "Writing items live"), and `live.send_delta` only takes items the thread has, so a window taken mid-message doesn't
-  have the preview's text so far. The view shows the rest as it streams, as it did from messages.
+  "Writing items live"), so a window taken mid-message doesn't have the preview's text so far. The view shows the rest
+  as it streams, as it did from messages.
 - Saving `thread.updated` when the task's state changes: the view reads a thread's state from its task, whose `task`
   events it has anyway, so nothing needs it yet.
 - After 2026-11-20 (a follow-up): the message routes and the `message`/`message_updated` events, once the app's pending
   approvals have another source, and `packages/client`'s messages calls (and the mobile app's messages path).
 - A task that hasn't started has no thread (its thread API answers 404 until its first message moves it onto items),
-  so the app draws it empty and sends its first message with the board's route; giving a new task an empty thread
-  would let it send thread commands from the start.
+  so the app draws it empty without asking; giving a new task an empty thread would drop that check
+  (threadView.ts's `hasThread`).
 - Step 14 (HA-226): deleting the old `messages` rows, and with them the writer's rows for a task not yet on items.

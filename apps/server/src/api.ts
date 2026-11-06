@@ -3,10 +3,11 @@
 import { readFileSync } from "node:fs";
 import type { WebSocket } from "ws";
 import * as db from "./db.ts";
-import { Router, Reply, call, no_route_error, parseBody, parseQuery, type Answer, type Req } from "./http.ts";
+import { Router, call, no_route_error, parseBody, parseQuery, type Answer, type Req } from "./http.ts";
 import type { AppState } from "./state.ts";
-import { home_dir, path_str, same_secret } from "./util.ts";
+import { home_dir, path_str, safe_decode, same_secret } from "./util.ts";
 import { API_COMPAT, API_VERSION, BUILD_ID, ToolAnswer_from, VERSION } from "./hosts/proto.ts";
+import * as relay from "./hosts/relay.ts";
 import * as uplink from "./hosts/uplink.ts";
 import * as claude_configs from "./api/claude_configs.ts";
 import * as host from "./api/host.ts";
@@ -55,7 +56,7 @@ export function router(s: AppState): Router {
   r.route("/health", { GET: health }, { auth: false });
   r.ws("/hub/connect", hub.accept, { auth: false, pre: hub.accept_check });
   // Without the board's token: the token in its path reaches only its own automation.
-  r.route("/hooks/{id}/{token}", { POST: automations.webhook }, { auth: false, limit: automations.MAX_BODY ?? 1 << 20 });
+  r.route("/hooks/{id}/{token}", { POST: automations.webhook }, { auth: false, limit: automations.MAX_BODY });
   // Without the board's token: the token in its body answers only its own prompt, once (from a notification).
   r.route("/permissions/{id}/push-answer", { POST: push_answers.answer }, { auth: false });
   // Without the board's token: the one-time code from Settings → Phones is swapped for a device's own.
@@ -226,7 +227,7 @@ function tokens(headers: Record<string, any>, query_string: string): string[] {
     ...query_string
       .split("&")
       .filter((kv) => kv.startsWith("token="))
-      .map((kv) => decodeURIComponentSafe(kv.slice(6))),
+      .map((kv) => safe_decode(kv.slice(6))),
   ];
 }
 
@@ -259,14 +260,6 @@ export function auth(
   }
   return { ok: false, status: 401, error: "unauthorized" };
 }
-
-const decodeURIComponentSafe = (v: string) => {
-  try {
-    return decodeURIComponent(v);
-  } catch {
-    return v;
-  }
-};
 
 /** Pick known keys out of a JSON body as (column, value) pairs. */
 export function pick(body: Record<string, any>, keys: string[]): Array<[string, any]> {
@@ -360,7 +353,9 @@ function info(s: AppState) {
 
 /**
  * This host's events, for a hub that links to it. A hub that says hello here takes our agents' board tool calls (see
- * hosts/uplink.ts), while this lasts.
+ * hosts/uplink.ts), while this lasts. A hub that went without closing (a laptop that slept, a NAT mapping that expired)
+ * would otherwise keep them waiting for its answers until they time out, so it's let go once it hasn't answered our
+ * pings for a while (as the hub does with us, and a host with the hub it dials).
  */
 function ws(s: AppState, _r: Req, socket: WebSocket) {
   socket.send(JSON.stringify({ type: "hello" }));
@@ -369,11 +364,29 @@ function ws(s: AppState, _r: Req, socket: WebSocket) {
   });
   let up: uplink.Registered | null = null;
   const end = () => {
+    clearInterval(ping);
+    clearTimeout(quiet);
     off();
     up?.drop();
     up = null;
   };
+  const ping = setInterval(() => {
+    try {
+      socket.ping();
+    } catch {
+      socket.terminate();
+    }
+  }, relay.PING);
+  const silence = () => setTimeout(() => socket.terminate(), relay.SILENCE);
+  let quiet = silence();
+  const heard = () => {
+    clearTimeout(quiet);
+    if (socket.readyState === socket.OPEN) quiet = silence();
+  };
+  socket.on("pong", heard);
+  socket.on("ping", heard);
   socket.on("message", (data, binary) => {
+    heard();
     if (binary) return;
     let v: any;
     try {
@@ -400,5 +413,3 @@ function ws(s: AppState, _r: Req, socket: WebSocket) {
   socket.on("close", end);
   socket.on("error", end);
 }
-
-export { Reply };

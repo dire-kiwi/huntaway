@@ -1,11 +1,11 @@
 // A board's notifications on this phone: on or off, the events it pushes (as the web board's Settings → Notifications
 // has them for each device), whose permission prompts, with Allow and Deny on the notification, and a test.
-import { EXPO_PUSH_API, type PushDevice, type PushEvents } from "@huntaway/client";
+import { EXPO_PUSH_API, NOTIFY_EVENTS, PUSH_PROMPTS, type PushDevice, type PushEvents } from "@huntaway/client";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import { Linking, ScrollView, Switch, Text, View } from "react-native";
 import { retryPush, setBoardEvents, setBoardPush, supported, usePushState } from "../../notifications";
-import { assistantPushEvents, PUSH_EVENTS, PUSH_PROMPTS, subscriptionOn, withEvent } from "../../push";
+import { assistantPushEvents, subscriptionOn, withEvent } from "../../push";
 import { boards, clientFor, statusOf, usable, useBoards, useBoardStatuses, useLoad } from "../../session";
 import { colors } from "../../theme";
 import { Button, Chip, Empty, ErrorText, s } from "../../ui";
@@ -115,7 +115,7 @@ export default function BoardNotifications() {
           {on && device && (
             <>
               <View style={[s.card, { marginHorizontal: 0 }]}>
-                {PUSH_EVENTS.map((e) => (
+                {NOTIFY_EVENTS.map((e) => (
                   <View key={e.id} style={[s.row, { minHeight: 40 }]}>
                     <Text style={[s.muted, { flex: 1, color: colors.fg }]}>{e.label}</Text>
                     <Switch

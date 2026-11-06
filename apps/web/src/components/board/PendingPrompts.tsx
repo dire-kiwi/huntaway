@@ -1,10 +1,10 @@
 import { Check, Map as MapIcon, MessageCircleQuestion, ShieldQuestion, X } from "lucide-react";
 import { useState } from "react";
-import { api, ownWorkDir, type Task } from "../../api";
+import { api, ownWorkDir, QUESTION_TOOLS, type Task } from "../../api";
 import { openTask } from "../../router";
 import { type Item } from "../../threadModel";
 import { useThreadModel } from "../../threadView";
-import { QUESTION_TOOLS, questionsOf } from "../../questions";
+import { questionsOf } from "../../questions";
 import { toolMeta } from "../task/thread/tools";
 import { AskCard, BoardQuestionCard, PlanCard } from "../task/Questions";
 

@@ -62,7 +62,7 @@ esac
 # and this shell execs that: this script again, with the same arguments, or a release's Rust server. TERM, INT and HUP
 # stop node, and so this shell; node stops by itself if this shell is killed (see `watch_supervisor`). Agents run under
 # ia-shim, so they carry on through a restart either way. While it waits, the shell reaps any child it has: those it
-# inherits from a server that exec'd it as well (see `reap_inherited`).
+# inherits from a server that exec'd it as well.
 #
 # A server that crashes once it's up (HA-182) is started again, as the same process again: one that exits with an error
 # other than 75, or is ended by a fault of its own (SIGABRT, as running out of memory ends node, or SIGSEGV and the

@@ -567,6 +567,11 @@ export function tasks_in_work_dir(c: Conn, dir: string): Task[] {
   return tasks(c, "SELECT * FROM tasks WHERE work_dir=?1", dir);
 }
 
+/** A project's task (not a review or a subagent's thread) by number (its key is `<project key>-<n>`). */
+export function task_by_number(c: Conn, project_id: string, number: number): Task | null {
+  return task(c, "SELECT * FROM tasks WHERE project_id=?1 AND kind='task' AND number=?2 ORDER BY position, created_at LIMIT 1", project_id, number);
+}
+
 /** A profile's scratch task by number (its key is `S-<n>`). */
 export function scratch_task_by_number(c: Conn, profile_id: string, number: number): Task | null {
   return task(c, "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type=?3 AND number=?2", profile_id, number, SCRATCH);
@@ -916,17 +921,17 @@ export function end_position(c: Conn, project_id: string | null, status: string,
 /** Adds a thread. In a savepoint, so one that fails doesn't use up its project's next key number (and it works within a transaction as well). */
 export function insert_task(c: Conn, t: NewTask): Task {
   c.exec("SAVEPOINT insert_task");
-  let created: Task;
   try {
-    created = insert_task_now(c, t);
+    const created = insert_task_now(c, t);
+    // As the transaction's COMMIT when there's no other: one that fails leaves the savepoint, to roll back.
+    c.exec("RELEASE insert_task");
+    return created;
   } catch (e) {
     try {
       c.exec("ROLLBACK TO insert_task; RELEASE insert_task");
     } catch {}
     throw e;
   }
-  c.exec("RELEASE insert_task");
-  return created;
 }
 
 function insert_task_now(c: Conn, t: NewTask): Task {

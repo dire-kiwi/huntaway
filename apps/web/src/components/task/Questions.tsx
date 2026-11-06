@@ -7,7 +7,7 @@
 import clsx from "clsx";
 import { Check, ChevronRight, Map as MapIcon, MessageCircleQuestion, Send, X } from "lucide-react";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, hostSupports, PERMISSION_MODES, type PermissionMode } from "../../api";
+import { api, hostSupports, PERMISSION_MODES, takesTypedAnswer, type PermissionMode } from "../../api";
 import { useHost, useProject, useStore } from "../../store";
 import { askedAnswers, declinedWithAnswers, planTitle, questionsOf, withoutTitle, type AskedQuestion } from "../../questions";
 import { Button, Textarea } from "../ui";
@@ -329,9 +329,9 @@ type Draft = { picked: string[]; other: string };
 
 /**
  * The questions of Claude's AskUserQuestion (or Codex's request_user_input), each with its options and descriptions, a
- * free-text answer (Claude always takes one; Codex says which questions do), and several picks where a question takes
- * them. Keys 1–9 pick in the question that's current; picking the one answer of a question moves on to the next, and
- * answers a lone question outright. The answers go back to the agent as its tool's answers. A question whose run ended
+ * free-text answer (Claude always takes one; Codex says which questions do, and one with no options takes one), and
+ * several picks where a question takes them. Keys 1–9 pick in the question that's current; picking the one answer of a
+ * question moves on to the next, and answers a lone question outright. The answers go back to the agent as its tool's answers. A question whose run ended
  * first can still be answered, until a message is sent to the agent after it (`movedOn`): the answers go as the user's message.
  */
 export const AskCard = memo(function AskCard({
@@ -431,7 +431,7 @@ export const AskCard = memo(function AskCard({
           const d = drafts[i] ?? { picked: [], other: "" };
           const given = shown?.[i];
           const active = open && i === current && questions.length > 1;
-          const takesOther = !codex || q.isOther !== false;
+          const takesOther = takesTypedAnswer(codex, q);
           const picked = open ? (q.multiSelect ? d.picked : d.other.trim() ? [] : d.picked) : (given ?? []);
           const preview = q.options.find((o) => picked.includes(o.label) && o.preview)?.preview;
           return (

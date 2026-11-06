@@ -2,15 +2,18 @@
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import * as api from "../api.ts";
 import * as worktree from "../git/worktree.ts";
+import * as workflows from "../integrations/workflows.ts";
+import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as pr_watch from "../mcp/pr_watch.ts";
 import * as testing from "../testing.ts";
 import type { AppState } from "../state.ts";
+import { sleep } from "../util.ts";
 import { check, query, set_fake, states } from "./merged.ts";
 
 function sh(dir: string, args: string[]) {
@@ -153,6 +156,27 @@ test("a_closed_pull_request_flags_the_task_once", async () => {
   set_fake(null);
 });
 
+// HA-262: a task its pull request moved to Done (or Needs attention) didn't start the workflows that start when a task
+// enters that column, as moving it there does.
+test("a_task_its_pull_request_moves_starts_the_workflows_of_its_new_column", async () => {
+  const s = testing.state();
+  const profile = db.insert_profile(s.db(), "p", [], null);
+  const [merged_url, closed_url] = ["https://github.com/o/r/pull/7", "https://github.com/o/r/pull/8"];
+  const [, pid, a] = await task_in_review(s, profile.id, merged_url);
+  const b = await new_task(s, pid, closed_url);
+  const on = (status: string) => workflows.create(s, pid, { name: status, graph: { nodes: [{ id: "t", kind: "trigger", on: "status", status }], edges: [] } });
+  const [done, flagged] = [on("done"), on("needs_attention")];
+  const [prs] = fake_github();
+  prs.set(merged_url, "MERGED");
+  prs.set(closed_url, "CLOSED");
+  await check(s, new Map());
+  assert.deepEqual([task(s, a.id).status, task(s, b.id).status], ["done", "needs_attention"]);
+  const ran = (w: workflows.Workflow, t: Task) => workflows.latest_run(s.db(), w.id, t.id)?.state ?? null;
+  for (let i = 0; i < 200 && (ran(done, a) === null || ran(flagged, b) === null); i++) await sleep(10);
+  assert.deepEqual([ran(done, a), ran(flagged, b), ran(done, b), ran(flagged, a)], ["done", "done", null, null]);
+  set_fake(null);
+});
+
 test("leaves_tasks_that_are_busy_merging_opted_out_or_in_a_subproject", async () => {
   const s = testing.state();
   const profile = db.insert_profile(s.db(), "p", [], null);
@@ -214,6 +238,41 @@ test("reads_each_accounts_pull_requests_together_as_that_account", async () => {
   const statuses = [a, b, b2, c, d].map((t) => task(s, t.id).status);
   assert.deepEqual(statuses, ["in_review", "done", "done", "in_review", "in_review"]);
   set_fake(null);
+});
+
+// HA-262: each read left gh's config for the account, which holds its token, on disk (a folder every POLL).
+test("reading_as_an_account_leaves_no_copy_of_its_token", async () => {
+  const s = testing.state();
+  const profile = db.insert_profile(s.db(), "p", [], null);
+  db.run(s.db(), "UPDATE profiles SET github_account='alice' WHERE id=?1", profile.id);
+  const [, , t] = await task_in_review(s, profile.id, "https://github.com/o/r/pull/7");
+  // gh signed in as alice, and GitHub with the pull request open.
+  const root = testing.temp_dir();
+  const gh = join(root, "gh");
+  const answer = JSON.stringify({ data: { pr0: { pullRequest: { state: "OPEN" } } } });
+  writeFileSync(gh, `#!/bin/sh\ncase "$1" in\n  auth) echo token ;;\n  api) echo '${answer}' ;;\nesac\n`);
+  chmodSync(gh, 0o755);
+  const cache = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = join(root, "cache");
+  gh_mcp.TEST_GH_PROGRAM.set(gh);
+  // Kept from the garbage collector, which removes their folders too: only drop() does here.
+  const made: gh_mcp.GhEnv[] = [];
+  const env = gh_mcp.Account.prototype.env;
+  gh_mcp.Account.prototype.env = function (token: string) {
+    made.push(env.call(this, token));
+    return made[made.length - 1];
+  };
+  try {
+    await check(s, new Map());
+    assert.equal(task(s, t.id).status, "in_review");
+    assert.equal(made.length, 1);
+    assert.deepEqual(readdirSync(join(root, "cache", "huntaway", "gh-account")), []);
+  } finally {
+    gh_mcp.Account.prototype.env = env;
+    gh_mcp.TEST_GH_PROGRAM.set(null);
+    if (cache === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = cache;
+  }
 });
 
 test("builds_one_query_and_reads_its_answer", () => {
