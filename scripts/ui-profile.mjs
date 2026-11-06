@@ -83,7 +83,10 @@ function hottest(profile, n = 25) {
       total.set(key, (total.get(key) ?? 0) + (profile.timeDeltas[i] ?? 0));
     }
   });
-  return [...total].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, us]) => `    ${String(Math.round(us / 1000)).padStart(6)} ms  ${k}`);
+  return [...total]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k, us]) => `    ${String(Math.round(us / 1000)).padStart(6)} ms  ${k}`);
 }
 
 const rows = [];
@@ -95,9 +98,17 @@ async function measure(name, fn) {
   await sleep(1000);
   const after = await metrics();
   const d = (k) => ms(after[k] - before[k]);
-  rows.push({ name, script: d("ScriptDuration"), layout: d("LayoutDuration"), style: d("RecalcStyleDuration"), total: d("TaskDuration"), heapMB: Math.round(after.JSHeapUsedSize / 2 ** 20), nodes: after.Nodes });
+  rows.push({
+    name,
+    script: d("ScriptDuration"),
+    layout: d("LayoutDuration"),
+    style: d("RecalcStyleDuration"),
+    total: d("TaskDuration"),
+    heapMB: Math.round(after.JSHeapUsedSize / 2 ** 20),
+    nodes: after.Nodes,
+  });
   console.log(`${name}: script ${d("ScriptDuration")} ms, total ${d("TaskDuration")} ms`);
-  if (o.cpu) console.log((hottest((await cdp.send("Profiler.stop")).profile)).join("\n"));
+  if (o.cpu) console.log(hottest((await cdp.send("Profiler.stop")).profile).join("\n"));
 }
 const togglePanel = (id) =>
   page.evaluate((id) => {
@@ -179,8 +190,17 @@ await measure("50 new messages, task open", async () => {
   for (let i = 0; i < 50; i++) {
     const text = `Message ${i}: some **markdown** with \`code\`.`;
     const created_at = new Date().toISOString();
-    send({ type: "message", task_id: task.id, message: { id: 2 ** 40 + i, task_id: task.id, kind: "claude", created_at,
-      data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } } } });
+    send({
+      type: "message",
+      task_id: task.id,
+      message: {
+        id: 2 ** 40 + i,
+        task_id: task.id,
+        kind: "claude",
+        created_at,
+        data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } },
+      },
+    });
     if (items) {
       const item = { id: `legacy:${2 ** 40 + i}:0`, type: "assistant_message", text, created_at };
       send({ type: "thread_event", task_id: task.id, event: { type: "item.added", thread_id: task.id, seq: ++seq, item } });

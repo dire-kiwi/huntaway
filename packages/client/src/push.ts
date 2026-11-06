@@ -27,7 +27,7 @@ export const EXPO_PUSH_API = 120;
 /** How a device is pushed to: Web Push (a browser), or the mobile app through Expo (API 120; `web` before). */
 export type PushKind = "web" | "expo";
 
-/** A device that gets the board's notifications by Web Push (API 74; see server-ts/src/integrations/push.ts), or the app. */
+/** A device that gets the board's notifications by Web Push (API 74; see apps/server/src/integrations/push.ts), or the app. */
 export interface PushDevice {
   id: string;
   /** Its push service's URL for it, which tells this browser's own from the others; for the app, its Expo push token. */

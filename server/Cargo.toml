@@ -1,6 +1,0 @@
-# The Rust that stays beside the TypeScript server (server-ts/): ia-shim, the per-run supervisor the server runs agents
-# under, and huntaway-broker, the connection broker for hosts. The Rust server that was here (server/src/) was removed in
-# HA-179; see server-ts/PORTING.md.
-[workspace]
-members = ["shim", "broker"]
-resolver = "3"

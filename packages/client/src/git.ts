@@ -86,7 +86,9 @@ export const gitApi = ({ on }: Http) => ({
    */
   gitStatus: (h: string, id: string) => on(h).get<GitStatus>(`/tasks/${enc(id)}/git`),
   gitDiff: (h: string, id: string, path: string, q: { staged?: boolean; untracked?: boolean }) =>
-    on(h).get<{ patch: string; too_large?: boolean; not_utf8?: boolean; preview?: string }>(`/tasks/${enc(id)}/git/diff?${new URLSearchParams({ path, staged: String(!!q.staged), untracked: String(!!q.untracked) })}`),
+    on(h).get<{ patch: string; too_large?: boolean; not_utf8?: boolean; preview?: string }>(
+      `/tasks/${enc(id)}/git/diff?${new URLSearchParams({ path, staged: String(!!q.staged), untracked: String(!!q.untracked) })}`,
+    ),
   gitShow: (h: string, id: string, rev: string) => on(h).get<GitCommitShown>(`/tasks/${enc(id)}/git/show?rev=${enc(rev)}`),
   gitShowStash: (h: string, id: string, sha: string) => on(h).get<{ patch: string }>(`/tasks/${enc(id)}/git/show?rev=${enc(sha)}&stash=true`),
   /** Stages or unstages the files as they are, or with no paths everything. */
@@ -96,8 +98,12 @@ export const gitApi = ({ on }: Http) => ({
   gitDiscard: (h: string, id: string, paths: string[], staged: boolean) => on(h).post(`/tasks/${enc(id)}/git/discard`, { paths, staged }),
   /** Applies a patch of chosen lines (changes.ts linesPatch) to the index, or the working tree. */
   gitApply: (h: string, id: string, patch: string, b: { cached: boolean; reverse: boolean }) => on(h).post(`/tasks/${enc(id)}/git/apply`, { patch, ...b }),
-  gitCommit: (h: string, id: string, b: { message: string; amend?: boolean; reword?: boolean }) => on(h).post<{ head: string }>(`/tasks/${enc(id)}/git/commit`, b),
-  gitStash: (h: string, id: string, b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string }) =>
-    on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
+  gitCommit: (h: string, id: string, b: { message: string; amend?: boolean; reword?: boolean }) =>
+    on(h).post<{ head: string }>(`/tasks/${enc(id)}/git/commit`, b),
+  gitStash: (
+    h: string,
+    id: string,
+    b: { action: "push"; mode: "all" | "staged" | "unstaged"; message: string } | { action: "apply" | "pop" | "drop"; index: number; sha: string },
+  ) => on(h).post<{ output: string }>(`/tasks/${enc(id)}/git/stash`, b),
   gitReset: (h: string, id: string, rev: string, mode: "soft" | "mixed" | "hard") => on(h).post(`/tasks/${enc(id)}/git/reset`, { rev, mode }),
 });

@@ -1,0 +1,183 @@
+#!/bin/sh
+# The TypeScript port of the huntaway server (see server-ts/PORTING.md): `huntaway serve …` and its other subcommands.
+# A server started from a test (the browser tests') is not a test process itself (see IN_TEST in src/util.ts).
+unset VITEST NODE_TEST_CONTEXT
+# Its own path, through symbolic links to it (`readlink -f`, which macOS has since 12.3), else the path `$0` names.
+self=$(readlink -f "$0" 2>/dev/null)
+[ -n "$self" ] && [ -f "$self" ] || self=$(cd -P "$(dirname "$0")" && pwd)/$(basename "$0")
+here=$(dirname "$self")
+# A release's package (see .github/workflows/release.yml) has this script as its `huntaway`, with the server in
+# server-ts/ and Node in node/ beside it; a checkout has it in server-ts/bin/. A package's server is precompiled to .js
+# (scripts/package-server.sh), so Node doesn't load its TypeScript compiler (about 20 MB) for it; a checkout runs the .ts.
+if [ -f "$here/server-ts/src/main.js" ]; then src=$here/server-ts/src ext=js
+elif [ -f "$here/server-ts/src/main.ts" ]; then src=$here/server-ts/src ext=ts
+else src=$here/../src ext=ts; fi
+# The server goes by it for what runs it (agents' MCP helpers, and which installed release it is).
+IA_TS_EXE=$self
+export IA_TS_EXE
+# Node: $IA_NODE, else the package's own, else on PATH, else where installers put it (an SSH host's forced command runs with sshd's short PATH).
+node=${IA_NODE:-}
+[ -z "$node" ] && [ -x "$here/node/bin/node" ] && node=$here/node/bin/node
+if [ -z "$node" ]; then
+  node=$(command -v node 2>/dev/null) || node=
+  for n in /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node "$HOME/.volta/bin/node" "$HOME/.local/share/mise/shims/node" \
+    "$HOME/.local/bin/node" $(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1); do
+    [ -n "$node" ] && break
+    [ -x "$n" ] && node=$n
+  done
+  node=${node:-node}
+fi
+# Memory (HA-181, see apps/server/README.md → Memory). V8 lets its young generation grow to two 16 MB semi-spaces, which
+# a server that then goes idle keeps, with whatever garbage is in them (an idle server allocates too little to collect
+# it): 2 MB ones keep an idle server about 20 MB smaller and its heap collected. Under a lower old-space limit V8 grows
+# the heap less eagerly, which roughly halves what's left after a burst of load (loading every thread) at about 10% of
+# its speed. Either is left out when NODE_OPTIONS sets it (the command line would win over NODE_OPTIONS). --expose-gc
+# lets the server have a full GC after a burst of work (see src/memory.ts).
+flags="--disable-warning=ExperimentalWarning --expose-gc"
+case " ${NODE_OPTIONS:-} " in *semi-space-size*) ;; *) flags="$flags --max-semi-space-size=2" ;; esac
+case " ${NODE_OPTIONS:-} " in *old-space-size* | *max-heap-size*) ;; *) flags="$flags --max-old-space-size=1024" ;; esac
+# glibc's malloc serves blocks above its mmap threshold with their own mappings, which go back to the system when
+# freed, but raises the threshold (to up to 32 MB) as they're freed, so the response bodies and query results that
+# follow come from its heap, which keeps what's freed: a fixed threshold gives back 50 to 100 MB after a burst of load.
+# Only node gets it: the server takes it out of what its children inherit (see main.ts), unless it was set already.
+if [ -z "${MALLOC_MMAP_THRESHOLD_+x}" ]; then
+  MALLOC_MMAP_THRESHOLD_=131072 IA_MALLOC_MMAP=1
+  export MALLOC_MMAP_THRESHOLD_ IA_MALLOC_MMAP
+fi
+# Agents' MCP helper runs once per agent: started straight from its module, it doesn't load the whole server.
+if [ "$1" = mcp ]; then
+  shift
+  exec "$node" $flags "$src/mcp_main.$ext" "$@"
+fi
+# So does the approval rules' hook, which Claude Code runs before each tool call a rule may match (see
+# src/agent/approval_rules/hook_main.ts). Each runs an entry file of its own rather than a module that checks
+# import.meta.main, which Node before 24.2 doesn't set.
+if [ "$1" = approval-hook ]; then
+  shift
+  exec "$node" $flags "$src/agent/approval_rules/hook_main.$ext" "$@"
+fi
+case "$1" in
+  "" | serve) ;;
+  *) exec "$node" $flags "$src/main.$ext" "$@" ;;
+esac
+
+# `serve` runs node as this shell's child, so the server keeps this process's id when it restarts, as the Rust server
+# keeps its own when it execs (scripts/test-server.sh, the desktop app and service managers go by it). To restart (or
+# restart onto a release), the server writes what to exec to $IA_RESTART_FILE and exits with 75 (see update/admin.ts),
+# and this shell execs that: this script again, with the same arguments, or a release's Rust server. TERM, INT and HUP
+# stop node, and so this shell; node stops by itself if this shell is killed (see `watch_supervisor`). Agents run under
+# ia-shim, so they carry on through a restart either way. While it waits, the shell reaps any child it has: those it
+# inherits from a server that exec'd it as well (see `reap_inherited`).
+#
+# A server that crashes once it's up (HA-182) is started again, as the same process again: one that exits with an error
+# other than 75, or is ended by a fault of its own (SIGABRT, as running out of memory ends node, or SIGSEGV and the
+# like), after it wrote `started` beside its restart file (see `supervisor_started`). Not a server that never got that
+# far (a port in use, a bad argument), which whatever started it hears of at once, nor one stopped from outside (another
+# signal, or this shell's TERM, INT or HUP). It waits 1, 2, 4, 8 and then 16 seconds before each of the first five
+# times in a row, then gives up and exits with the server's code; a server that stayed up for ten minutes starts the
+# count again. $IA_CRASH_BACKOFF (seconds, for tests) replaces the first wait's second.
+
+# A shell can't trap a signal it was started with ignored, as a non-interactive shell's `… &` starts it with INT, which
+# the Rust server would still stop on: so start again with INT at its default, where env (GNU) or perl can do that.
+if [ -n "$IA_SERVE_SIGNALS" ]; then
+  unset IA_SERVE_SIGNALS
+else
+  IA_SERVE_SIGNALS=1
+  export IA_SERVE_SIGNALS
+  if env --default-signal=INT true 2>/dev/null; then
+    exec env --default-signal=INT "$0" "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    exec perl -e '$SIG{INT} = "DEFAULT"; exec { $ARGV[0] } @ARGV or die "$ARGV[0]: $!\n"' "$0" "$@"
+  fi
+  unset IA_SERVE_SIGNALS
+fi
+# The desktop app's "Start without a backup" (see src/backup.ts) is for the node this shell starts first, not for one it
+# starts again after a crash, nor for what it execs on a restart or an Update, which back the database up as usual.
+skip_backup_once=${IA_SKIP_DB_BACKUP_ONCE:-}
+unset IA_SKIP_DB_BACKUP_ONCE
+# So is IA_RECOPY_DB, copying the older builds' database again (see src/db/file.ts): a restart, Update or Roll back
+# leaves it out, as the server leaves out --recopy-db (see update/admin.ts's `restart_args`).
+recopy_db_once=${IA_RECOPY_DB:-}
+unset IA_RECOPY_DB
+dir=$(mktemp -d "${TMPDIR:-/tmp}/huntaway-serve.XXXXXX") || exit 1
+IA_RESTART_FILE=$dir/next
+IA_SUPERVISOR_PID=$$
+export IA_RESTART_FILE IA_SUPERVISOR_PID
+child=
+stopping=
+quitting=
+sleeper=
+# Node handles TERM; a background job starts with INT ignored, so it gets TERM for each.
+stop() {
+  stopping=1
+  quitting=1
+  if [ -n "$child" ]; then
+    kill -TERM "$child" 2>/dev/null
+  else
+    [ -n "$sleeper" ] && kill "$sleeper" 2>/dev/null
+    rm -rf "$dir"
+    exit 143
+  fi
+}
+trap stop TERM INT HUP
+# A background job's stdin would be /dev/null: node gets this shell's (when it has one).
+if [ -r /dev/stdin ]; then exec 3<&0; else exec 3</dev/null; fi
+crashes=0
+while :; do
+  rm -f "$dir/started"
+  began=$(date +%s)
+  if [ -n "$skip_backup_once$recopy_db_once" ]; then
+    IA_SKIP_DB_BACKUP_ONCE=$skip_backup_once IA_RECOPY_DB=$recopy_db_once "$node" $flags "$src/main.$ext" "$@" <&3 3<&- &
+    skip_backup_once=
+    recopy_db_once=
+  else
+    "$node" $flags "$src/main.$ext" "$@" <&3 3<&- &
+  fi
+  child=$!
+  while :; do
+    stopping=
+    wait "$child"
+    code=$?
+    # A signal cut the wait short: wait for node to stop.
+    [ -n "$stopping" ] && kill -0 "$child" 2>/dev/null || break
+  done
+  child=
+  [ -z "$quitting" ] && [ -f "$dir/started" ] || break
+  case $code in
+    0 | 75) break ;;
+  esac
+  if [ "$code" -gt 128 ]; then
+    case $(kill -l "$code" 2>/dev/null) in
+      ABRT | SEGV | BUS | ILL | FPE | TRAP | SYS) ;;
+      *) break ;;
+    esac
+  fi
+  [ $(($(date +%s) - began)) -ge 600 ] && crashes=0
+  if [ "$crashes" -ge 5 ]; then
+    echo "huntaway: the server stopped with $code, after starting it again $crashes times in a row; giving up" >&2
+    break
+  fi
+  crashes=$((crashes + 1))
+  delay=$((${IA_CRASH_BACKOFF:-1} << (crashes - 1)))
+  echo "huntaway: the server stopped with $code; starting it again in ${delay}s ($crashes of 5)" >&2
+  # In the background, so that TERM stops this shell at once rather than after the wait.
+  sleep "$delay" &
+  sleeper=$!
+  wait "$sleeper"
+  sleeper=
+done
+exec 3<&-
+if [ "$code" = 75 ] && [ -f "$IA_RESTART_FILE" ] && [ -O "$IA_RESTART_FILE" ]; then
+  next=
+  . "$IA_RESTART_FILE"
+  rm -rf "$dir"
+  unset IA_RESTART_FILE IA_SUPERVISOR_PID
+  [ -n "${IA_MALLOC_MMAP:-}" ] && unset MALLOC_MMAP_THRESHOLD_ IA_MALLOC_MMAP
+  if [ -n "$next" ] && [ -x "$next" ]; then
+    exec "$next" "$@"
+  fi
+  echo "huntaway: can't run ${next:-what the server asked for}" >&2
+  exit 1
+fi
+rm -rf "$dir"
+exit "$code"

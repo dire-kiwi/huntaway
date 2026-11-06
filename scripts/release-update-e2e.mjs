@@ -26,7 +26,7 @@ const assets = path.join(work, "assets");
 const only = opt("--only")?.split(",");
 const keep = args.includes("--keep");
 const runs = path.join(work, "runs");
-const { chromium } = await import(path.join(root, "app/node_modules/playwright-core/index.mjs"));
+const { chromium } = await import(path.join(root, "apps/web/node_modules/playwright-core/index.mjs"));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -405,13 +405,17 @@ async function checkAndWait(app, wanted) {
 async function restartJob(app, p, body) {
   const before = (await app.status()).boot_id;
   await app.api("POST", p, body);
-  return until(`a restart from ${p}`, async () => {
-    const s = await app.status().catch(() => null);
-    if (!s) return null;
-    if (s.boot_id !== before) return { status: s };
-    if (s.restart?.phase === "failed") return { failed: s.restart, status: s };
-    return null;
-  }, 120_000);
+  return until(
+    `a restart from ${p}`,
+    async () => {
+      const s = await app.status().catch(() => null);
+      if (!s) return null;
+      if (s.boot_id !== before) return { status: s };
+      if (s.restart?.phase === "failed") return { failed: s.restart, status: s };
+      return null;
+    },
+    120_000,
+  );
 }
 
 const noLeftovers = (app) => app.appDir().filter((f) => f.endsWith(".partial") || f.endsWith(".tmp"));
@@ -429,12 +433,7 @@ const checks = {};
 checks.updates = async (gh) => {
   const app = new App("updates", gh);
   try {
-    gh.releases = [
-      { tag: "release/v1", assets: [] },
-      release("0.9.9", { draft: true }),
-      release("0.9.1"),
-      release("0.9.0"),
-    ];
+    gh.releases = [{ tag: "release/v1", assets: [] }, release("0.9.9", { draft: true }), release("0.9.1"), release("0.9.0")];
     app.env.IA_FAKE_CLAUDE_SLEEP = "20";
     const cmd = appImage(app, "0.9.0");
     await app.launch(cmd);
@@ -452,7 +451,10 @@ checks.updates = async (gh) => {
     st = await app.status();
     check(st.boot_id === boot && (await app.info()).version === "0.9.0", "the server didn't restart");
     check(app.installed().staged === "0.9.1" && !app.installed().current, "state.json has 0.9.1 staged, nothing current", app.installed());
-    check(fs.existsSync(path.join(app.data, "app/0.9.1/huntaway")) && !fs.existsSync(path.join(app.data, "app/0.9.1/download.tar.gz")), "app/0.9.1 is unpacked, without its tarball");
+    check(
+      fs.existsSync(path.join(app.data, "app/0.9.1/huntaway")) && !fs.existsSync(path.join(app.data, "app/0.9.1/download.tar.gz")),
+      "app/0.9.1 is unpacked, without its tarball",
+    );
     check(!noLeftovers(app).length, "nothing half-done in app/", app.appDir());
 
     log("relaunch: still 0.9.0");
@@ -465,7 +467,10 @@ checks.updates = async (gh) => {
     log("Update with an agent running");
     const profile = await app.api("POST", "/profiles", { name: "test", claude_config_dir: path.join(app.dir, "claude"), default_model: "haiku" });
     const repo = path.join(app.dir, "repo");
-    execFileSync("sh", ["-c", `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add . && git -c user.name=t -c user.email=t@e.invalid commit -qm init`]);
+    execFileSync("sh", [
+      "-c",
+      `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add . && git -c user.name=t -c user.email=t@e.invalid commit -qm init`,
+    ]);
     const project = await app.api("POST", `/profiles/${profile.id}/projects`, { name: "Test", repo_path: repo });
     const task = await app.api("POST", `/projects/${project.id}/tasks`, { title: "Runs over an update" });
     await app.api("PATCH", `/tasks/${task.id}`, { status: "in_progress" });
@@ -479,11 +484,18 @@ checks.updates = async (gh) => {
     check(app.serverRootPid() === pid, "in the same process (exec), which the app keeps", { pid, now: app.serverRootPid() });
     check(up.status.release.exe === path.join(app.data, "app/0.9.1/huntaway"), "from app/0.9.1", up.status.release.exe);
     check((await app.api("GET", `/tasks/${task.id}`)).task.running, "the agent is still running");
-    const done = await until("the agent to finish", async () => {
-      const r = await app.api("GET", `/tasks/${task.id}`);
-      return !r.task.running && r;
-    }, 90_000);
-    check(done.task.status !== "needs_attention" && /Fake reply/.test(JSON.stringify(done.last_message)), "its run finished normally", { status: done.task.status, last: done.last_message });
+    const done = await until(
+      "the agent to finish",
+      async () => {
+        const r = await app.api("GET", `/tasks/${task.id}`);
+        return !r.task.running && r;
+      },
+      90_000,
+    );
+    check(done.task.status !== "needs_attention" && /Fake reply/.test(JSON.stringify(done.last_message)), "its run finished normally", {
+      status: done.task.status,
+      last: done.last_message,
+    });
     let s = app.installed();
     check(s.current === "0.9.1" && !s.trying && !s.staged, "state.json: current 0.9.1", s);
 
@@ -517,10 +529,14 @@ checks.updates = async (gh) => {
     check(r.staged === "0.9.2", "0.9.2 (which passes --version) is staged", r);
     const before = (await app.status()).boot_id;
     await app.api("POST", "/admin/release/update", { version: "0.9.2" });
-    st = await until("the app to fall back to a server that runs", async () => {
-      const st = await app.status().catch(() => null);
-      return st && st.boot_id !== before && st;
-    }, 120_000);
+    st = await until(
+      "the app to fall back to a server that runs",
+      async () => {
+        const st = await app.status().catch(() => null);
+        return st && st.boot_id !== before && st;
+      },
+      120_000,
+    );
     info = await app.info();
     check(info.version === "0.9.1", "the app falls back to 0.9.1", info.version);
     s = app.installed();
@@ -532,7 +548,11 @@ checks.updates = async (gh) => {
     gh.releases.unshift(release("0.9.3"));
     r = await checkAndWait(app, "0.9.3");
     check(r.staged === "0.9.3", "0.9.3 is staged", r);
-    check(r.shell?.outdated === true && r.shell.package?.name === "huntaway-0.9.3-linux-x86_64.AppImage", "its shell differs, with the AppImage to install", r.shell);
+    check(
+      r.shell?.outdated === true && r.shell.package?.name === "huntaway-0.9.3-linux-x86_64.AppImage",
+      "its shell differs, with the AppImage to install",
+      r.shell,
+    );
     job = await restartJob(app, "/admin/release/update", { version: "0.9.3" });
     check(!job.failed && (await app.info()).version === "0.9.3", "Update runs 0.9.3", job.failed);
     s = app.installed();
@@ -608,10 +628,12 @@ checks.attached = async (gh) => {
     const err = await app.api("POST", "/admin/release/check").catch((e) => e);
     check(err.status === 400, "and Check now is refused", err.message);
     const page = await app.page();
-    const shell = await page.evaluate(() => window.huntawayDesktop.updateShell().then(
-      () => "installed",
-      (e) => e.message,
-    ));
+    const shell = await page.evaluate(() =>
+      window.huntawayDesktop.updateShell().then(
+        () => "installed",
+        (e) => e.message,
+      ),
+    );
     check(/hasn't found a release/.test(shell), "the app's own package update has nothing to install", shell);
     check(!gh.requests.some((r) => r.startsWith("GET /dl/")), "nothing was downloaded", gh.requests);
     await app.quit({ attached: true });
@@ -634,10 +656,12 @@ checks.appimage = async (gh) => {
     const page = await app.page();
     check((await page.evaluate(() => window.huntawayDesktop.shellUpdateKind())) === "appimage", "the app can update itself as an AppImage");
     const oldPid = app.pgid;
-    const result = await page.evaluate(() => window.huntawayDesktop.updateShell().then(
-      (r) => r,
-      (e) => ({ error: e.message }),
-    ));
+    const result = await page.evaluate(() =>
+      window.huntawayDesktop.updateShell().then(
+        (r) => r,
+        (e) => ({ error: e.message }),
+      ),
+    );
     check(result.version === "0.9.3", "it installed 0.9.3", result);
     await app.browser.close().catch(() => {});
     app.browser = null;
@@ -647,7 +671,11 @@ checks.appimage = async (gh) => {
     // The relaunched app is a new process outside the old one's group: find it by its server.
     await until("the relaunched app's server", async () => (await app.info().catch(() => null))?.version === "0.9.3", 90_000);
     const st = await app.status();
-    check(st.release.shell.version === "0.9.3" && st.release.shell.outdated === false, "the relaunched app is 0.9.3, with its shell up to date", st.release.shell);
+    check(
+      st.release.shell.version === "0.9.3" && st.release.shell.outdated === false,
+      "the relaunched app is 0.9.3, with its shell up to date",
+      st.release.shell,
+    );
     // Stop the relaunched app: its Electron is the server's parent.
     app.adopt(app.serverAppGroup());
     check(app.pgid !== oldPid, "in a new process");
@@ -699,7 +727,9 @@ checks.pacman = async (gh) => {
     docker("run", "-d", "--rm", "--name", name, "--network", "host", "-v", `${assets}:/assets:ro`, "archlinux:latest", "sleep", "infinity");
     app.docker = name;
     const sh = (script) => docker("exec", name, "sh", "-c", script);
-    sh("pacman -Sy --noconfirm --needed archlinux-keyring >/dev/null 2>&1; pacman -U --noconfirm /assets/huntaway-0.9.0-linux-x64.pacman > /tmp/install.log 2>&1 || (cat /tmp/install.log; exit 1)");
+    sh(
+      "pacman -Sy --noconfirm --needed archlinux-keyring >/dev/null 2>&1; pacman -U --noconfirm /assets/huntaway-0.9.0-linux-x64.pacman > /tmp/install.log 2>&1 || (cat /tmp/install.log; exit 1)",
+    );
     check(/^huntaway 0\.9\.0/.test(sh("pacman -Q huntaway")), "huntaway 0.9.0 is installed", sh("pacman -Q huntaway"));
     // pkexec as root, without polkit: run the command.
     sh(`printf '#!/bin/sh\\necho "pkexec $*" >> /tmp/pkexec.log\\nexec "$@"\\n' > /usr/local/bin/pkexec && chmod +x /usr/local/bin/pkexec`);
@@ -715,18 +745,33 @@ checks.pacman = async (gh) => {
         `IA_CLAUDE_BIN=/bin/false`,
         `IA_CODEX_BIN=/bin/false`,
       ].flatMap((e) => ["-e", e]);
-      docker("exec", "-d", ...env, name, "sh", "-c",
-        `exec /opt/Huntaway/huntaway-desktop --ozone-platform=headless --disable-gpu --no-sandbox --remote-debugging-port=${app.cdp} >> /tmp/app.log 2>&1`);
+      docker(
+        "exec",
+        "-d",
+        ...env,
+        name,
+        "sh",
+        "-c",
+        `exec /opt/Huntaway/huntaway-desktop --ozone-platform=headless --disable-gpu --no-sandbox --remote-debugging-port=${app.cdp} >> /tmp/app.log 2>&1`,
+      );
       await until("the app's board in the container", () => app.boardLoaded(), 120_000);
       app.token = sh("cat /data/auth_token").trim();
     };
     await launch();
     let st = await app.status();
-    check(st.release?.shell?.install === "pacman" && (await app.info()).version === "0.9.0", "the pacman app runs its 0.9.0 server, and knows it's from pacman", st.release?.shell);
+    check(
+      st.release?.shell?.install === "pacman" && (await app.info()).version === "0.9.0",
+      "the pacman app runs its 0.9.0 server, and knows it's from pacman",
+      st.release?.shell,
+    );
     let r = await checkAndWait(app, "0.9.1");
     check(r.staged === "0.9.1", "0.9.1 is staged in the user's data dir, not /opt", r);
     const job = await restartJob(app, "/admin/release/update", { version: "0.9.1" });
-    check(!job.failed && (await app.info()).version === "0.9.1" && job.status.release.exe === "/data/app/0.9.1/huntaway", "Update runs /data/app/0.9.1", job.failed ?? job.status.release.exe);
+    check(
+      !job.failed && (await app.info()).version === "0.9.1" && job.status.release.exe === "/data/app/0.9.1/huntaway",
+      "Update runs /data/app/0.9.1",
+      job.failed ?? job.status.release.exe,
+    );
     check(sh("pacman -Qkk huntaway 2>&1 | tail -1").includes("0 altered"), "and pacman's files are unchanged", sh("pacman -Qkk huntaway 2>&1 | tail -1"));
 
     log("Install 0.9.3's package");
@@ -735,10 +780,12 @@ checks.pacman = async (gh) => {
     check(r.shell?.outdated && r.shell.package?.name === "huntaway-0.9.3-linux-x64.pacman", "0.9.3's shell differs, with its .pacman", r.shell);
     const page = await app.page();
     check((await page.evaluate(() => window.huntawayDesktop.shellUpdateKind())) === "pacman", "the app can install its package");
-    const result = await page.evaluate(() => window.huntawayDesktop.updateShell().then(
-      (r) => r,
-      (e) => ({ error: e.message }),
-    ));
+    const result = await page.evaluate(() =>
+      window.huntawayDesktop.updateShell().then(
+        (r) => r,
+        (e) => ({ error: e.message }),
+      ),
+    );
     check(result.version === "0.9.3", "it installed 0.9.3", result);
     await app.browser.close().catch(() => {});
     app.browser = null;
@@ -747,7 +794,11 @@ checks.pacman = async (gh) => {
     await until("the relaunched app", async () => (await app.status().catch(() => null))?.release?.shell?.version === "0.9.3", 120_000);
     st = await app.status();
     // The package (0.9.3) is newer than app/0.9.1, so it starts its own server.
-    check((await app.info()).version === "0.9.3" && st.release.exe === "/opt/Huntaway/resources/huntaway", "the relaunched 0.9.3 app runs its own 0.9.3 server", st.release.exe);
+    check(
+      (await app.info()).version === "0.9.3" && st.release.exe === "/opt/Huntaway/resources/huntaway",
+      "the relaunched 0.9.3 app runs its own 0.9.3 server",
+      st.release.exe,
+    );
     check(st.release.shell.outdated === false, "and its shell is up to date");
     check(!sh("ls /tmp").includes("huntaway-update-"), "the downloaded package is gone");
   } finally {

@@ -1,4 +1,4 @@
-"""Wordings of the agents' instructions on asking the user (`ask_and_finish` in server-ts/src/agent/runner/prompt.ts)
+"""Wordings of the agents' instructions on asking the user (`ask_and_finish` in apps/server/src/agent/runner/prompt.ts)
 that eval.py tries. Each replaces that paragraph of a case's system prompt; `{done}` is what the summary is of, as the
 case's prompt says it. `baseline` is the wording the board had when the case ran (left as it is). A variant in
 TOOL_VARIANTS also changes request_user_input's description (a function of the board's)."""

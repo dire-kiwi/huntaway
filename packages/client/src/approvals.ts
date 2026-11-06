@@ -148,13 +148,16 @@ export interface WorkflowChange {
 }
 
 export interface WorkflowApproval extends ApprovalRequest {
-  kind: "automation";
+  /** `workflow` in its thread message (see isWorkflowApproval). */
+  kind: "automation" | "workflow";
   tool_name: "create_workflow" | "update_workflow" | "delete_workflow";
   input: WorkflowChange;
 }
 
+/** A workflow's approval: `automation` in approvals lists, and `workflow` in the thread message that asks it (so UIs from
+ *  before API 107 don't draw it as an automation's). */
 export const isWorkflowApproval = (a: { kind: string; input: unknown }): a is WorkflowApproval =>
-  a.kind === "automation" && !!a.input && typeof a.input === "object" && "workflow" in a.input;
+  (a.kind === "automation" || a.kind === "workflow") && !!a.input && typeof a.input === "object" && "workflow" in a.input;
 
 /** What only the user decides for an agent, whatever its thread's permission mode. */
 export type Approval = ProjectApproval | ProjectCreationApproval | DeletionApproval | AutomationApproval | WorkflowApproval;

@@ -1,0 +1,22 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependencies' install scripts only run when they're allowed here (pnpm's default). These two don't need theirs:
+# @parcel/watcher (under jest) has prebuilt binaries, and electron-winstaller is for Windows builds.
+allowBuilds:
+  "@parcel/watcher": false
+  electron-winstaller: false
+
+# Vite+ (`vp`): one version for every package, and the Vite and Vitest it bundles for whatever else asks for them
+# (Vite plugins, say: the web app has `vite` as its peer for them), so there's one copy of each (see node_modules/vite-plus/docs/guide/local-cli.md).
+catalog:
+  vite-plus: 1.5.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.5.0
+overrides:
+  vite@*: npm:@voidzero-dev/vite-plus-core@1.5.0
+  vitest@*: 5.1.0
+# Vite plugins ask for vite ^8 as a peer, which the alias (versioned as vite-plus-core, 1.5.0) is, as Vite 8.3.5.
+peerDependencyRules:
+  allowAny:
+    - vite

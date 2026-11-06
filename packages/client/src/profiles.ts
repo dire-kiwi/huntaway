@@ -84,8 +84,7 @@ export const profilesApi = ({ on }: Http) => ({
       require_pr_approval?: boolean;
       assistant_host?: string | null;
     },
-  ) =>
-    on(h).post<Profile>("/profiles", b),
+  ) => on(h).post<Profile>("/profiles", b),
   /** `asana_token` (API 57) is checked with Asana; null disconnects it. */
   updateProfile: (h: string, id: string, b: Partial<Profile> & { asana_token?: string | null }) => on(h).patch<Profile>(`/profiles/${enc(id)}`, b),
   /** The Asana tasks the profile's token finds for `q` (words, or a task's URL), open ones first (API 57). */

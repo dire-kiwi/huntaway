@@ -1,8 +1,8 @@
 {
   "name": "@huntaway/client",
-  "private": true,
   "version": "0.1.0",
-  "description": "Huntaway's API client, shared by the web board (app/) and the mobile app (mobile/)",
+  "private": true,
+  "description": "Huntaway's API client, shared by the web board (apps/web) and the mobile app (apps/mobile)",
   "license": "MIT",
   "type": "module",
   "exports": {

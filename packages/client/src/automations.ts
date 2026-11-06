@@ -4,7 +4,7 @@ import type { DocumentType } from "./labels";
 import type { Status, TaskType } from "./tasks";
 
 /** Routines (API 110): a profile's automations, which wake its assistant (`message_assistant`), and for every automation
- *  the `cron` and `at` triggers, active hours, a precheck and a budget a day (see server-ts/src/integrations/automations.ts). */
+ *  the `cron` and `at` triggers, active hours, a precheck and a budget a day (see apps/server/src/integrations/automations.ts). */
 export const ROUTINES_API = 110;
 
 export const hasRoutines = (h: Host | undefined) => hostSupports(h, ROUTINES_API);

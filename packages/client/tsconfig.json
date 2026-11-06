@@ -1,5 +1,5 @@
 {
-  // Checked on its own (`npm run typecheck` in app/) with no DOM, so that it runs in React Native as well as a browser.
+  // Checked on its own (`pnpm run typecheck` in apps/web) with no DOM, so that it runs in React Native as well as a browser.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2023"],

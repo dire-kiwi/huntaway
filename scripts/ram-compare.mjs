@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Compares the memory use of the Rust server (removed in HA-179) and its TypeScript port (server-ts/, HA-174) on the same data:
+// Compares the memory use of the Rust server (removed in HA-179) and its TypeScript port (apps/server, HA-174) on the same data:
 // starts a test server of each (scripts/test-server.sh --no-agents), gives them the same board, then reads each
 // process's memory (RSS, its peak, and PSS from /proc/<pid>/smaps_rollup) idle after start, after loading every task's
 // thread through the API with UI websockets open, after more rounds of that, and once things settle.
@@ -14,7 +14,7 @@
 // The Rust server is RUST_BIN, else the newer of server/target/{release,debug}/huntaway, a build left from before its
 // removal: RUST_BIN can be a Rust release's huntaway (0.3.x, with its ia-shim beside it), or a release build of the
 // commit before HA-179 (`git worktree add <dir> HA-179^` and `cargo build --release` in <dir>/server). The TS server runs on the node on PATH (NODE_OPTIONS such as --max-old-space-size pass through), under
-// server-ts/bin/huntaway, a shell that keeps the server's process id across restarts: the node under it is measured.
+// apps/server/bin/huntaway, a shell that keeps the server's process id across restarts: the node under it is measured.
 // That runs the .ts from this checkout; TS_BIN=<dir>/huntaway measures a release's package instead (what
 // scripts/package-server.sh <dir> puts together: the server precompiled to .js, with its own node).
 import { execFileSync, spawn } from "node:child_process";
@@ -33,10 +33,19 @@ const nsockets = opt("--sockets", 3);
 const keep = flag("--keep");
 const tmp = process.env.TMPDIR || tmpdir();
 
-const newer = (paths) => paths.filter((p) => { try { return statSync(p).isFile(); } catch { return false; } }).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+const newer = (paths) =>
+  paths
+    .filter((p) => {
+      try {
+        return statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 const rustBin = process.env.RUST_BIN || newer([join(root, "server/target/release/huntaway"), join(root, "server/target/debug/huntaway")]);
 if (!rustBin) throw new Error("no Rust server: set RUST_BIN to a Rust release's huntaway (see the top of this script)");
-const tsBin = process.env.TS_BIN || join(root, "server-ts/bin/huntaway");
+const tsBin = process.env.TS_BIN || join(root, "apps/server/bin/huntaway");
 
 function start(name, bin) {
   const env = { ...process.env, IA_TEST_BIN: bin, IA_TEST_OPEN_TOKEN: "0" };
@@ -138,7 +147,10 @@ try {
   console.log("\nper-agent helpers, idle (each agent run starts one of each):");
   for (const sub of ["mcp", "gh-mcp"]) {
     for (const s of servers) {
-      const child = spawn(s.bin, [sub], { stdio: ["pipe", "ignore", "ignore"], env: { ...process.env, IA_URL: s.url, IA_TOKEN: s.token, IA_RUN_ID: "ram-compare" } });
+      const child = spawn(s.bin, [sub], {
+        stdio: ["pipe", "ignore", "ignore"],
+        env: { ...process.env, IA_URL: s.url, IA_TOKEN: s.token, IA_RUN_ID: "ram-compare" },
+      });
       await sleep(1500);
       let m = { rss: NaN, pss: NaN };
       try {
