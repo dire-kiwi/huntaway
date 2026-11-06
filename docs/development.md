@@ -76,6 +76,9 @@ published.
   `scripts/ui-check.mjs` drives its board in Chromium for screenshots and checks. CLAUDE.md describes them in full.
 - `scripts/release-update-e2e.sh` builds real release packages of this checkout and runs the desktop app through
   release updates against a fake GitHub (see [the desktop app and releases](guide/desktop.md)).
+- `node scripts/browser-pane-e2e.mjs --env <test-server.sh's output>` drives the desktop app's browser pane (HA-275)
+  in this checkout's Electron, headless, against a `--demo` test server (after `pnpm build`). CI doesn't run it: its
+  browser checks run in Chromium, which has no `<webview>`.
 
 ## Rust builds
 

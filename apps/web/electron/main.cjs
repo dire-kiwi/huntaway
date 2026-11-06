@@ -498,8 +498,15 @@ function attachBrowser(win) {
     }
     delete prefs.preload;
     delete prefs.preloadURL;
-    Object.assign(prefs, { nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true });
-    params.partition = BROWSER_PARTITION;
+    // The guest is made from these, its partition included (Electron takes it from the attribute before this event).
+    Object.assign(prefs, {
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      partition: BROWSER_PARTITION,
+    });
   });
   win.webContents.on("did-attach-webview", (_e, guest) => {
     guest.setWindowOpenHandler(({ url }) => {
