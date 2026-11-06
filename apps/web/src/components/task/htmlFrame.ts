@@ -65,13 +65,38 @@ export function linksInNewTabs() {
  * like work as before, but a new frame has no default policy, so it can't run a javascript: URL. A srcdoc frame of the
  * page's own still runs its scripts before anything can take WebRTC away there (in a browser: the desktop app takes it
  * away in every frame, see electron/preload.cjs). The board's <ia-html> frames run this first (planTheme.ts). Workers
- * have no RTCPeerConnection. It runs in a document's frame, as source.
+ * have no RTCPeerConnection, but a classic one the page makes (from a blob: or data: URL, all worker-src allows) has the
+ * policy without the default policy, which would fail its importScripts, eval and the like: it's started from a script
+ * that makes one, then imports the page's. A blob: URL's Blob is kept as it's made, and imported from a URL of its own,
+ * as pages often revoke theirs once the worker is made. (A worker that worker makes has no default policy.) It runs in
+ * a document's frame, as source.
  */
 export function noWebRtc() {
   for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection"]) delete (window as unknown as Record<string, unknown>)[name];
   const pass = (s: string) => s;
   type Policies = { createPolicy: (name: string, rules: Record<string, (s: string) => string>) => unknown };
   (window as unknown as { trustedTypes?: Policies }).trustedTypes?.createPolicy("default", { createHTML: pass, createScript: pass, createScriptURL: pass });
+  const blobs = new Map<string, Blob>();
+  const { createObjectURL, revokeObjectURL } = URL;
+  URL.createObjectURL = (obj: Blob | MediaSource) => {
+    const url = createObjectURL(obj);
+    if (obj instanceof Blob) blobs.set(url, obj);
+    return url;
+  };
+  URL.revokeObjectURL = (url: string) => {
+    blobs.delete(url);
+    revokeObjectURL(url);
+  };
+  const policy = 'self.trustedTypes?.createPolicy("default", { createHTML: (s) => s, createScript: (s) => s, createScriptURL: (s) => s });';
+  const PageWorker = Worker;
+  window.Worker = class extends PageWorker {
+    constructor(url: string | URL, options?: WorkerOptions) {
+      const href = String(url);
+      const blob = options?.type === "module" ? undefined : blobs.get(href);
+      const own = blob ? createObjectURL(blob) : options?.type !== "module" && /^data:/i.test(href) ? href : null;
+      super(own ? createObjectURL(new Blob([`${policy}\nimportScripts(${JSON.stringify(own)});`], { type: "text/javascript" })) : url, options);
+    }
+  };
 }
 
 /** When the user last used the board itself, rather than a frame in it: a pointer down or key press in its document. */

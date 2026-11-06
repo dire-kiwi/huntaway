@@ -261,6 +261,41 @@ test("in Chrome with Preload pages on, a refused frame load and a preconnect lin
   });
 });
 
+// The frame's policy requires Trusted Types (for javascript: URL frames), which a worker inherits without the default
+// policy the frame makes: noWebRtc starts the page's classic workers with one.
+test("a plan's workers, and its <ia-html>'s, still import scripts and run eval, from a blob: URL revoked at once or a data: URL", async () => {
+  // Strict, as the page's script asks, and with a library from a data: URL.
+  const code = `"use strict"; importScripts("data:text/javascript,self.lib = 'lib'"); postMessage([self.lib, eval("2 + 2"), new Function("return 3")(), (function () { return this === undefined; })()].join(" "))`;
+  const workers = (to) => `<script>
+    const code = ${JSON.stringify(code)};
+    const report = (kind, w) => {
+      w.onmessage = (e) => ${to}.postMessage({ worker: kind + " " + e.data }, "*");
+      w.onerror = (e) => ${to}.postMessage({ worker: kind + " error " + e.message }, "*");
+    };
+    const url = URL.createObjectURL(new Blob([code]));
+    const blob = new Worker(url);
+    URL.revokeObjectURL(url);
+    report("blob", blob);
+    report("data", new Worker("data:text/javascript," + encodeURIComponent(code)));
+    ${to}.postMessage({ worker: "instanceof " + (blob instanceof Worker) }, "*");
+  <\/script>`;
+  await withBrowser(server, {}, async (ui) => {
+    const frame = await openDocument(
+      ui,
+      `<h1>Workers</h1><script>window.got = []; addEventListener("message", (e) => e.data?.worker && got.push(e.data.worker));<\/script>${workers("window")}<ia-html><template><p>w</p>${workers("parent")}</template></ia-html>`,
+    );
+    await frame.waitForFunction(() => window.got.length >= 6, null, { timeout: 10000 }).catch(() => {});
+    assert.deepEqual((await frame.evaluate(() => window.got)).sort(), [
+      "blob lib 4 3 true",
+      "blob lib 4 3 true",
+      "data lib 4 3 true",
+      "data lib 4 3 true",
+      "instanceof true",
+      "instanceof true",
+    ]);
+  });
+});
+
 test("a link in a plan, or in its <ia-html>, opens in a new tab after the user's click in it, rather than in the frame", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
