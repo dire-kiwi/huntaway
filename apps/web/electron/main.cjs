@@ -25,7 +25,7 @@
 // A server this app finds already running, or a remote serverUrl, isn't started here, so it never gets release updates
 // from the app. "Updating the desktop app" in docs/guide/desktop.md has the whole story; scripts/release-update-e2e.sh tests it.
 
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -460,6 +460,68 @@ function relaunch() {
   app.quit();
 }
 
+/** The browser pane's pages' session: their cookies and storage are kept apart from the board's (and from the app's preload). */
+const BROWSER_PARTITION = "persist:huntaway-browser";
+
+/** A page the browser pane may show: http: and https: only. */
+function isBrowsable(url) {
+  try {
+    return ["http:", "https:"].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/** What the browser pane's pages may have without asking: copying to the clipboard and going full screen. */
+const BROWSER_PERMISSIONS = new Set(["clipboard-sanitized-write", "fullscreen"]);
+
+/**
+ * The board's browser pane (HA-275) is a <webview>. Only the board itself gets one, for a web page, sandboxed with no
+ * preload and no Node, in its own session (whatever the page asked for), and its pages stay web pages: a popup opens in
+ * the pane, and a link to anything else in the system's handler for web links (as the board's own do) or nowhere.
+ */
+function attachBrowser(win) {
+  const pages = session.fromPartition(BROWSER_PARTITION);
+  // Electron grants every permission by default: a page in the pane gets none of the camera, location, notifications…
+  pages.setPermissionRequestHandler((_wc, permission, callback) => callback(BROWSER_PERMISSIONS.has(permission)));
+  pages.setPermissionCheckHandler((_wc, permission) => BROWSER_PERMISSIONS.has(permission));
+  win.webContents.on("will-attach-webview", (e, prefs, params) => {
+    let origin = null;
+    try {
+      origin = new URL(win.webContents.getURL()).origin;
+    } catch {
+      // not the board
+    }
+    if (!boardOrigin || origin !== boardOrigin || !isBrowsable(params.src)) {
+      e.preventDefault();
+      return;
+    }
+    delete prefs.preload;
+    delete prefs.preloadURL;
+    // The guest is made from these, its partition included (Electron takes it from the attribute before this event).
+    Object.assign(prefs, {
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      partition: BROWSER_PARTITION,
+    });
+  });
+  win.webContents.on("did-attach-webview", (_e, guest) => {
+    guest.setWindowOpenHandler(({ url }) => {
+      if (isBrowsable(url)) void guest.loadURL(url).catch(() => {});
+      else if (isWebUrl(url)) void shell.openExternal(url);
+      return { action: "deny" };
+    });
+    guest.on("will-navigate", (e, url) => {
+      if (isBrowsable(url)) return;
+      e.preventDefault();
+      if (isWebUrl(url)) void shell.openExternal(url);
+    });
+  });
+}
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -469,11 +531,13 @@ async function createWindow() {
     backgroundColor: "#0b0b0e",
     autoHideMenuBar: true,
     title: "Huntaway",
-    // The preload runs in frames too, to take WebRTC away from the pages agents write (see preload.cjs).
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegrationInSubFrames: true, preload: path.join(__dirname, "preload.cjs") },
+    // The preload runs in frames too, to take WebRTC away from the pages agents write (see preload.cjs). webviewTag: the
+    // board's browser pane (HA-275), held to web pages with nothing of the app's (attachBrowser).
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegrationInSubFrames: true, webviewTag: true, preload: path.join(__dirname, "preload.cjs") },
   });
   // And should that miss a frame, WebRTC there sends no UDP (STUN, TURN over UDP) that isn't proxied (HA-269).
   win.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+  attachBrowser(win);
   // The board reloads once a rebuild has restarted the server. If that changed the app itself, start the new one.
   win.webContents.on("did-finish-load", () => {
     const why = shellChange({ boot: globalThis.huntawayBoot, stampNow: mainStamp, startStamp });
