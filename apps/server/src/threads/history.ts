@@ -332,7 +332,8 @@ export function user_wrote_since(c: Conn, task_id: string, since: string, from =
 /** Whether `task_id`'s agent was sent a message (anyone's, the board's too) at or after `at`. */
 export function user_messaged_since(c: Conn, task_id: string, at: string, from = source(c, task_id)): boolean {
   if (from === "messages") return db.user_messaged_since(c, task_id, at);
-  return !!db.value<number>(c, "SELECT EXISTS(SELECT 1 FROM thread_items WHERE task_id=?1 AND type='user_message' AND created_at>=?2)", task_id, at);
+  // `+type`: the task's items, not the board's user messages since then (thread_items_user_time, see db/messages.ts).
+  return !!db.value<number>(c, "SELECT EXISTS(SELECT 1 FROM thread_items WHERE task_id=?1 AND +type='user_message' AND created_at>=?2)", task_id, at);
 }
 
 /**

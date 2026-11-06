@@ -143,7 +143,7 @@ export function send_frame(ws: WebSocket, f: Frame): boolean {
 }
 
 /** A close reason fits in 123 bytes. */
-function truncate_reason(r: string): string {
+export function truncate_reason(r: string): string {
   let out = r;
   while (Buffer.byteLength(out) > 123) out = out.slice(0, -1);
   return out;

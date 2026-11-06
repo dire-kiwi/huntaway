@@ -3,9 +3,9 @@
 import clsx from "clsx";
 import { Cpu } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { agentOf, hostSupports, type ClaudeConfig, type Task } from "../../api";
+import { agentOf, hostSupports, taskKey, type ClaudeConfig, type Task } from "../../api";
 import { openCompare } from "../../router";
-import { taskConfig, taskKey, useHost, useStore } from "../../store";
+import { taskConfig, useHost, useStore } from "../../store";
 import { CARD_BADGE } from "../ui";
 
 /** Hosts from this API version compare them, and pick one (see Compare.tsx). */

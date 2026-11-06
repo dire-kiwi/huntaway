@@ -6,11 +6,11 @@
 import clsx from "clsx";
 import { AlertTriangle, ChevronDown, ChevronRight, Columns3, GitCompareArrows, Loader2, PanelTop, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, STATUSES, type DiffResult, type FanoutFacts, type PickOutcome, type Task } from "../../api";
+import { api, STATUSES, taskKey, type DiffResult, type FanoutFacts, type PickOutcome, type Task } from "../../api";
 import { parseDiff, type FileDiff } from "./diffs";
 import { useNarrow } from "../../narrow";
 import { closeCompare, openTask } from "../../router";
-import { taskKey, useStore } from "../../store";
+import { useStore } from "../../store";
 import { BranchView, LayoutToggle } from "./git/Patches";
 import type { Layout } from "./DiffLines";
 import { harnessLabels, useConfigsOf, useFanout } from "../board/Fanout";

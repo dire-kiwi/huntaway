@@ -46,9 +46,9 @@ export async function list_messages(s: AppState, r: Req) {
 // ---------- the thread kept as items (API 114, docs/threads-api.md) ----------
 
 /**
- * `GET /tasks/{id}/thread[?limit=N]`: the task's thread kept as items, as a Snapshot `{thread, items, requests, seq}`
- * with the text streamed so far, or with `limit` a window of its last N items (with `start` and `context`). A 404 for
- * a task without items (a task opened without them gets them first, with the setting on: see threads/batch.ts).
+ * `GET /tasks/{id}/thread[?limit=N]`: the task's thread kept as items, as a Snapshot `{thread, items, requests, seq}`,
+ * or with `limit` a window of its last N items (with `start` and `context`). A 404 for a task without items (a task
+ * opened without them gets them first, with the setting on: see threads/batch.ts).
  */
 export async function get_thread(s: AppState, r: Req) {
   batch.opened(s, r.params.id);

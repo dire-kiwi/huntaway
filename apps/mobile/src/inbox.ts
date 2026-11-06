@@ -2,7 +2,7 @@
 // board, its picked profile's tasks that need attention (its assistant's included), their pending permission prompts
 // (answered in place, the assistant's routine threads' too), and the questions their agents asked with request_user_input
 // (answered in place). A task with a prompt or a question shows once, as that.
-import { isScratch, type Client, type Message, type PendingPermission, type Project, type Task } from "@huntaway/client";
+import { taskKey, type Client, type Message, type PendingPermission, type Project, type Task } from "@huntaway/client";
 import { loadProfiles, pickedProfile } from "./boardData";
 import { openItemQuestion } from "./thread";
 
@@ -35,13 +35,6 @@ export interface BoardInbox {
   board: BoardRef;
   items: InboxItem[];
   error?: string;
-}
-
-/** What goes before a task's number: its project's key, `G` for a group task, `S` for a scratch task. */
-export function taskKey(t: Task, projects: Pick<Project, "id" | "key">[]) {
-  const project = projects.find((p) => p.id === t.project_id);
-  const prefix = project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : "T");
-  return `${prefix}-${t.number}`;
 }
 
 /** The question an agent asked with request_user_input that's still open, among a thread's latest messages. */

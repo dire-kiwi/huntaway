@@ -7,14 +7,14 @@ import { VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
 import type { Duplex } from "node:stream";
-import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import * as db from "./db.ts";
 import * as db_file from "./db/file.ts";
 import * as api from "./api.ts";
-import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
+import { readBody, send, errorAnswer, no_route_error, ApiError, DEFAULT_LIMIT, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
-import { background, expand_tilde, new_id, new_token, now, err_str, home_dir, make_private } from "./util.ts";
+import { background, expand_tilde, new_id, new_token, now, err_str, home_dir, make_private, safe_decode } from "./util.ts";
 import * as admin from "./update/admin.ts";
 import * as release from "./update/release.ts";
 import * as staging from "./update/staging.ts";
@@ -271,7 +271,7 @@ function find_ui_dir(explicit: string | null, from_app: boolean, exe: string): s
     return own;
   }
   if (explicit) return explicit;
-  const here = dirname(new URL(import.meta.url).pathname);
+  const here = import.meta.dirname;
   return [own, join(here, "../../ui"), join(here, "../../web/dist")].find((p) => existsSync(join(p, "index.html"))) ?? null;
 }
 
@@ -309,25 +309,24 @@ const TYPES: Record<string, string> = {
   ".map": "application/json",
 };
 
-/** Serve a file of the UI build, or index.html (the SPA fallback), as ServeDir with a ServeFile fallback does. */
-function serve_ui(ui: string, req: IncomingMessage, res: ServerResponse) {
+/**
+ * Serve a file of the UI build, or index.html (the SPA fallback), as ServeDir with a ServeFile fallback does. Never one
+ * outside `ui` (for a `/..%2F…` path): anyone who can reach the server can ask for one, with no token.
+ */
+export function serve_ui(ui: string, req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? "/", "http://x");
-  let rel: string;
-  try {
-    rel = decodeURIComponent(url.pathname);
-  } catch {
-    rel = url.pathname;
-  }
-  let file = normalize(join(ui, rel));
+  const rel = safe_decode(url.pathname);
+  // Absolute, as the file is: a relative `--ui-dir` served index.html for every file.
   const root = resolve(ui);
-  if (!file.startsWith(root + sep) && file !== root) file = join(ui, "index.html");
+  let file = join(root, rel);
+  if (!file.startsWith(root + sep) && file !== root) file = join(root, "index.html");
   let st = statOr(file);
   if (st?.isDirectory()) {
     file = join(file, "index.html");
     st = statOr(file);
   }
   if (!st?.isFile()) {
-    file = join(ui, "index.html");
+    file = join(root, "index.html");
     st = statOr(file);
   }
   if (!st) {
@@ -350,15 +349,6 @@ const statOr = (p: string) => {
     return null;
   }
 };
-
-/** `decodeURIComponent`, or the text as it is where it isn't valid. */
-function safe_decode(v: string): string {
-  try {
-    return decodeURIComponent(v);
-  } catch {
-    return v;
-  }
-}
 
 /**
  * `--open-token`'s route: the token for whoever asks, but not through a broker (where whoever asks could be anyone).
@@ -466,7 +456,6 @@ export async function serve(args: ServeArgs) {
   memory.start();
   // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
   admin.take_supervisor();
-  admin.reap_inherited();
   let data_dir = args.data_dir ?? default_data_dir();
   mkdirSync(data_dir, { recursive: true });
   data_dir = realpathSync(data_dir);
@@ -511,6 +500,26 @@ export async function serve(args: ServeArgs) {
   backup.record_version(data_dir, VERSION);
 
   const server = createServer();
+  // A request that comes while the server is still starting (a client reconnecting after a restart) waits until it can
+  // be answered (`ready()` below): one that came before there was a handler got no answer.
+  const { promise: started, resolve: ready } = Promise.withResolvers<void>();
+  // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
+  server.on("request", (req, res) =>
+    started
+      .then(() => answer(req, res))
+      .catch((e) => {
+        console.error(`answering ${req.method} ${(req.url ?? "/").split("?")[0]}:`, e);
+        res.destroy();
+      }),
+  );
+  server.on("upgrade", (req, socket, head) =>
+    started
+      .then(() => upgrade(state, wss, req, socket, head))
+      .catch((e) => {
+        console.error(`websocket ${(req.url ?? "/").split("?")[0]}:`, e);
+        socket.destroy();
+      }),
+  );
   await new Promise<void>((ok, fail) => {
     server.once("error", (e) => fail(new Error(`binding ${args.host}:${args.port}`, { cause: e })));
     server.listen(args.port, args.host, () => ok());
@@ -574,7 +583,11 @@ export async function serve(args: ServeArgs) {
       if (path === "/api" || path.startsWith("/api/")) {
         for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
         const found = state.local_router!.find(path.slice(4));
-        const raw = await readBody(req, found?.route.limit ?? 2 << 20);
+        // One without the token that the route needs isn't read: dispatch refuses it, and node drops its body after the
+        // answer. Read first, anyone who can reach the server could make it hold a route's body (300 MB for /api/h/…).
+        const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+        const refused = found?.route.auth && !api.auth(state, req.method ?? "GET", path, req.headers, query).ok;
+        const raw = refused ? Buffer.alloc(0) : await readBody(req, found?.route.limit ?? DEFAULT_LIMIT);
         const r = api.makeReq(req.method ?? "GET", url, req.headers, raw);
         r.incoming = req;
         send(res, await api.dispatch(state, r));
@@ -590,21 +603,8 @@ export async function serve(args: ServeArgs) {
       } else res.destroy();
     }
   };
-  // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
-  server.on("request", (req, res) =>
-    answer(req, res).catch((e) => {
-      console.error(`answering ${req.method} ${(req.url ?? "/").split("?")[0]}:`, e);
-      res.destroy();
-    }),
-  );
-
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-  server.on("upgrade", (req, socket, head) =>
-    upgrade(state, wss, req, socket, head).catch((e) => {
-      console.error(`websocket ${(req.url ?? "/").split("?")[0]}:`, e);
-      socket.destroy();
-    }),
-  );
+  ready();
 
   // Agents kept running while we were down; catch up on their output.
   runner.load_active(state);

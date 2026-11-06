@@ -192,7 +192,7 @@ export function resolve_task(s: Shared, ctx: Ctx, r: string, profile: string | n
       const projects = db.list_projects(s.db(), b.id);
       const here: Array<[db.Project, Task]> = [];
       for (const p of projects.filter((p) => eq_ic(p.key, k) || p.former_keys.some((f: string) => eq_ic(f, k)))) {
-        const t = db.list_tasks_for_project(s.db(), p.id, "task").find((t) => t.number === n);
+        const t = db.task_by_number(s.db(), p.id, n);
         if (t) here.push([p, t]);
       }
       if (here.length > 1) {

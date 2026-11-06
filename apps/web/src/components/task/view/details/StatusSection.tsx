@@ -2,13 +2,13 @@ import clsx from "clsx";
 import { useEffect, useState } from "react";
 import {
   api,
-  canRunAgents,
   dependencyQueued,
   hostStatuses,
   hostSupports,
   limitQueued,
   mergeAwaitsApproval,
   mergeQueued,
+  moveTask,
   outOfUsage,
   rejoinsMerge,
   type Host,
@@ -30,11 +30,7 @@ export function StatusSection({ task, host, confirmDone }: { task: Task; host: H
     setErr(null);
     if (status === "done" && !(await confirmDone(task))) return;
     try {
-      await api.updateTask(task.host_id, task.id, { status });
-      // Into "In progress" from the list, as from a drop on the board: a fresh task's agent starts (where one can run).
-      if (status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host)) {
-        await api.send(task.host_id, task.id, "");
-      }
+      await moveTask(api, task, status, host);
     } catch (e) {
       setErr((e as Error).message);
     }

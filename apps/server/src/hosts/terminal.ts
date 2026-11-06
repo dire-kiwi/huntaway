@@ -27,6 +27,7 @@ import { background, err_str, expand_tilde, new_id, path_str } from "../util.ts"
 import * as documents from "../agent/documents.ts";
 import * as memory from "../agent/assistant/memory.ts";
 import * as task_tmp from "../agent/task_tmp.ts";
+import * as runs from "../agent/runs.ts";
 import { Pty } from "./pty.ts";
 import { close } from "./relay.ts";
 
@@ -122,11 +123,11 @@ function target(task_id: string, tool: string | null): string {
 }
 
 /** tmux's environment and its first arguments. */
-function tmux_command(s: AppState): [string[], NodeJS.ProcessEnv] {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  // Shells inherit the tmux server's environment: keep our secrets out of it, and let it work when this server itself
-  // runs inside tmux.
-  for (const v of ["TMUX", "TMUX_PANE", "IA_TOKEN", "IA_HUB_TOKEN", "IA_BROKER_TOKEN"]) delete env[v];
+export function tmux_command(s: AppState): [string[], NodeJS.ProcessEnv] {
+  // Shells inherit the tmux server's environment: keep this server's settings and secrets out of it, as an agent's run
+  // does (a `huntaway serve` typed there mustn't pick them up), and let it work when this server itself runs inside tmux.
+  const env = runs.agent_env();
+  for (const v of ["TMUX", "TMUX_PANE"]) delete env[v];
   Object.assign(env, { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "huntaway" });
   return [["-L", socket(s)], env];
 }

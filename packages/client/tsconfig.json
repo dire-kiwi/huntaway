@@ -10,6 +10,8 @@
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "noEmit": true,
+    // src/protocol.ts is the server's threads/protocol.ts, by its path.
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "types": []
   },

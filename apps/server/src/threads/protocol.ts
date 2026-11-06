@@ -1,6 +1,7 @@
 // A task's thread as items, requests and numbered events: the model the server keeps (threads/store.ts) and the app
-// draws, shared by both. The app imports this file by relative path, so it must stay plain TypeScript that both
-// packages' settings accept: no imports, no Node APIs, only erasable syntax, and nothing unused.
+// and the phone draw, shared by all three. The shared client (packages/client/src/protocol.ts) re-exports this file by
+// relative path, so it must stay plain TypeScript that every package's settings accept: no imports, no Node APIs, only
+// erasable syntax, and nothing unused.
 //
 // It's agent-threads' protocol (~/personal/agent-threads, spec/PROTOCOL.md and ts/packages/protocol at main 5ad670a),
 // with its names and shapes, trimmed to what Huntaway uses. Ours is Huntaway's now: nothing depends on matching it,

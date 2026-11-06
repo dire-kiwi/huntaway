@@ -1,16 +1,27 @@
 import clsx from "clsx";
 import { ArrowUp, Clock, Loader2, MessageSquare, Square, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, dependencyQueued, isAssistant, limitQueued, hostSupports, runningAgentSteers, stopTitle, type RewindResult, type Task } from "../../../api";
+import {
+  api,
+  dependencyQueued,
+  isAssistant,
+  limitQueued,
+  hostSupports,
+  runningAgentSteers,
+  splitAttachments,
+  stopTitle,
+  withAttachments,
+  type AttachmentRef,
+  type RewindResult,
+  type Task,
+} from "../../../api";
 import { useHost } from "../../../store";
-import { splitAttachments, withAttachments, type AttachmentRef } from "../../../attachments";
 import { lineRange, removeComments, reviewMessage, useReview, withComments, type LineComment } from "../../changes/lineComments";
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments";
 import { SkillHint, SkillMenu, useSkillMenu } from "../SkillMenu";
 import { useTouch } from "../../../narrow";
 import { RewindNote } from "../Rewind";
 import { ModeSelect, useModeControl } from "./ModeSelect";
-import { sendMessage, stopAgent } from "../../../threadView";
 
 /** The diff's comments waiting to go with the next message: each one's file and lines, and its note. */
 function ComposerComments({ task, comments }: { task: Task; comments: LineComment[] }) {
@@ -105,8 +116,7 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
   sending.set(key, (sending.get(key) ?? 0) + 1);
   let end: SendEnd;
   try {
-    // A thread command for a thread drawn from its items (threadView.ts).
-    await sendMessage(task, body);
+    await api.send(task.host_id, task.id, body);
     // Off the saved draft as well, for when no composer shows it.
     const d = loadComposerDraft(key);
     if (d)
@@ -384,7 +394,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                 <button
                   onClick={() => {
                     setErr(null);
-                    stopAgent(task).catch((e) => setErr(`Couldn't stop the agent: ${(e as Error).message}`));
+                    api.stop(task.host_id, task.id).catch((e) => setErr(`Couldn't stop the agent: ${(e as Error).message}`));
                   }}
                   title={stopTitle(task, canSteer)}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15 narrow:h-9 narrow:w-9"
