@@ -148,6 +148,8 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
   // A websocket pong needn't come from the host: through a broker, it's our own relay to the broker that answers our
   // pings. So once the host has answered a `ping`, only its messages count.
   let answers_pings = false;
+  // Why the hub dropped it, if it did: the host is told, as when it's refused at the start.
+  let dropped: string | null = null;
   await new Promise<void>((done) => {
     let quiet: NodeJS.Timeout;
     const silence = () => {
@@ -164,6 +166,10 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
       ended = true;
       clearTimeout(quiet);
       done();
+    };
+    conn.drop = (reason) => {
+      dropped ??= reason;
+      end();
     };
     const control = () => {
       if (!answers_pings) {
@@ -231,7 +237,8 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
   });
   open = false;
   clearInterval(ping);
-  ws.terminate();
+  if (dropped === null) ws.terminate();
+  else background("telling a dropped host why", relay.close(ws, [REFUSED, dropped]));
   // Requests and websockets in flight hold the connection, so they'd wait for answers that won't come.
   for (const w of pending.values()) w(null);
   pending.clear();
