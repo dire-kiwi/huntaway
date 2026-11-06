@@ -121,35 +121,40 @@ export async function check(s: AppState, failing: Map<string, string>) {
   }
   for (const [key, { account, host, prs }] of groups) {
     const env: pr_watch.EnvSlot = { env: null };
-    for (let i = 0; i < prs.length; i += CHUNK) {
-      const chunk = prs.slice(i, i + CHUNK);
-      const targets = chunk.map(([t]) => t);
-      let states: Array<Read | null>;
-      try {
-        states = await read(account, env, host, targets);
-        failing.delete(key);
-      } catch (e) {
-        const msg = err_str(e);
-        if (failing.get(key) !== msg) {
-          console.warn(`reading tasks' pull requests as ${account ?? "gh's active account"} on ${host}: ${msg}`);
-          failing.set(key, msg);
+    // gh's config for the account holds its token: it goes once the account's reads are done.
+    try {
+      for (let i = 0; i < prs.length; i += CHUNK) {
+        const chunk = prs.slice(i, i + CHUNK);
+        const targets = chunk.map(([t]) => t);
+        let states: Array<Read | null>;
+        try {
+          states = await read(account, env, host, targets);
+          failing.delete(key);
+        } catch (e) {
+          const msg = err_str(e);
+          if (failing.get(key) !== msg) {
+            console.warn(`reading tasks' pull requests as ${account ?? "gh's active account"} on ${host}: ${msg}`);
+            failing.set(key, msg);
+          }
+          break;
         }
-        break;
-      }
-      for (let j = 0; j < chunk.length; j++) {
-        const [target, list] = chunk[j];
-        const r = states[j];
-        if (!r) continue;
-        for (const t of list) {
-          // The board shows how its checks stand (see pr_watch::record_checks).
-          if (r.state === "open") pr_watch.record_checks(s, t.id, target, r.head, r.checks);
-          try {
-            await changed(s, t, target, r.state);
-          } catch (e) {
-            console.error(`task ${t.id}, pr ${target.label()}: acting on its pull request's state: ${err_str(e)}`);
+        for (let j = 0; j < chunk.length; j++) {
+          const [target, list] = chunk[j];
+          const r = states[j];
+          if (!r) continue;
+          for (const t of list) {
+            // The board shows how its checks stand (see pr_watch::record_checks).
+            if (r.state === "open") pr_watch.record_checks(s, t.id, target, r.head, r.checks);
+            try {
+              await changed(s, t, target, r.state);
+            } catch (e) {
+              console.error(`task ${t.id}, pr ${target.label()}: acting on its pull request's state: ${err_str(e)}`);
+            }
           }
         }
       }
+    } finally {
+      env.env?.drop();
     }
   }
 }

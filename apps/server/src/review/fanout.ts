@@ -412,6 +412,7 @@ async function close_pr(s: AppState, t: Task, repo: string | null, url: string):
     try {
       env.check(args, null);
     } catch (e) {
+      env.drop();
       return err_str(e);
     }
     env.apply(vars);
@@ -424,6 +425,8 @@ async function close_pr(s: AppState, t: Task, repo: string | null, url: string):
       if (done) return;
       done = true;
       clearTimeout(timer);
+      // gh's config for the account holds its token.
+      env?.drop();
       resolve(v);
     };
     const child = spawn(gh_mcp.gh_program(), args, { cwd: repo ?? undefined, env: vars, stdio: ["ignore", "ignore", "pipe"] });

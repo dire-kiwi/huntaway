@@ -2,7 +2,7 @@
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
 import * as db from "../db.ts";
@@ -168,6 +168,42 @@ test("deletes_pushed_branches_and_closes_pull_requests_only_when_asked", async (
     assert.ok(has_ref(repo, `refs/heads/${ts[0].branch}`));
   } finally {
     gh_mcp.TEST_GH_PROGRAM.set(null);
+  }
+});
+
+// HA-262: closing a pull request as the task's account left gh's config for the account, which holds its token, on disk.
+test("closing_a_pull_request_as_an_account_leaves_no_copy_of_its_token", async () => {
+  const s = testing.state();
+  const [root, ts] = await fanned_out(s);
+  db.run(s.db(), "UPDATE profiles SET github_account='alice' WHERE id=?1", ts[0].profile_id);
+  // gh signed in as alice, saying what it was asked to do.
+  const log = join(root, "gh.log");
+  const gh = join(root, "gh");
+  writeFileSync(gh, `#!/bin/sh\nif [ "$1" = auth ]; then echo token; else echo "$*" >> '${log}'; fi\n`);
+  chmodSync(gh, 0o755);
+  const cache = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = join(root, "cache");
+  gh_mcp.TEST_GH_PROGRAM.set(gh);
+  // Kept from the garbage collector, which removes their folders too: only drop() does here.
+  const made: gh_mcp.GhEnv[] = [];
+  const env = gh_mcp.Account.prototype.env;
+  gh_mcp.Account.prototype.env = function (token: string) {
+    made.push(env.call(this, token));
+    return made[made.length - 1];
+  };
+  try {
+    const pr = "https://github.com/o/r/pull/7";
+    s.update_task(ts[1].id, [["pr_url", pr]]);
+    const v = await pick_inner(s, ts[0].id, P({ close_prs: true }));
+    assert.equal(v.results[0].pr, "closed");
+    assert.ok(readFileSync(log, "utf8").split("\n").includes(`pr close ${pr}`));
+    assert.equal(made.length, 1);
+    assert.deepEqual(readdirSync(join(root, "cache", "huntaway", "gh-account")), []);
+  } finally {
+    gh_mcp.Account.prototype.env = env;
+    gh_mcp.TEST_GH_PROGRAM.set(null);
+    if (cache === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = cache;
   }
 });
 
