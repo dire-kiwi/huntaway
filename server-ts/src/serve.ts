@@ -14,7 +14,7 @@ import * as db_file from "./db/file.ts";
 import * as api from "./api.ts";
 import { readBody, send, errorAnswer, no_route_error, ApiError, DEFAULT_LIMIT, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
-import { background, expand_tilde, new_id, new_token, now, err_str, home_dir, make_private } from "./util.ts";
+import { background, expand_tilde, new_id, new_token, now, err_str, home_dir, make_private, safe_decode } from "./util.ts";
 import * as admin from "./update/admin.ts";
 import * as release from "./update/release.ts";
 import * as staging from "./update/staging.ts";
@@ -276,12 +276,7 @@ const TYPES: Record<string, string> = {
  */
 export function serve_ui(ui: string, req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? "/", "http://x");
-  let rel: string;
-  try {
-    rel = decodeURIComponent(url.pathname);
-  } catch {
-    rel = url.pathname;
-  }
+  const rel = safe_decode(url.pathname);
   // Absolute, as the file is: a relative `--ui-dir` served index.html for every file.
   const root = resolve(ui);
   let file = join(root, rel);
@@ -322,15 +317,6 @@ const statOr = (p: string) => {
  * On a loopback-only server (`--host 127.0.0.1`) it also needs a loopback `Host`, so a page on another site that rebinds
  * its name to 127.0.0.1 can't read the token.
  */
-/** `decodeURIComponent`, or the text as it is where it isn't valid. */
-function safe_decode(v: string): string {
-  try {
-    return decodeURIComponent(v);
-  } catch {
-    return v;
-  }
-}
-
 export function open_token(token: string, loopback_only: boolean): (headers: Record<string, any>) => Answer {
   return (headers) => {
     const json = (status: number, v: any): Answer => ({ status, headers: { "content-type": "application/json" }, body: Buffer.from(JSON.stringify(v)) });
@@ -419,7 +405,6 @@ export async function serve(args: ServeArgs) {
   memory.start();
   // bin/huntaway's variables, which nothing this server starts should see (see update/admin.ts's `exec`).
   admin.take_supervisor();
-  admin.reap_inherited();
   let data_dir = args.data_dir ?? default_data_dir();
   mkdirSync(data_dir, { recursive: true });
   data_dir = realpathSync(data_dir);

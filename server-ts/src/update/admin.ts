@@ -501,14 +501,6 @@ export function exec_env(): Array<[string, string]> | null {
   return EXEC_ENV;
 }
 
-/**
- * Reap the children this process inherited from the server it replaced (see `exec`). Node is never exec'd into: it's
- * always `bin/huntaway`'s new child, which has none. The process that is (a server exec'ing `bin/huntaway`, such as a
- * release rolling back to this one) is that shell, which reaps every child it has, its inherited ones too, while it
- * waits for node. So there's nothing to do here.
- */
-export function reap_inherited() {}
-
 // ---------- updating from a hub ----------
 
 /**
