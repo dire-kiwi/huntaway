@@ -1,7 +1,7 @@
 // A thread on the phone, as the task screen and the Assistant tab show it: its messages (the agent's as markdown, with
 // its reply streaming in), the prompts and questions it waits on, kept current from the board's events, with earlier
 // pages on request.
-import type { Client, Message, Task } from "@huntaway/client";
+import { splitAttachments, type Client, type Message, type Task } from "@huntaway/client";
 import { apply_event, is_gap, with_page, type ItemPage, type Snapshot, type ThreadEvent } from "@huntaway/client/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, Text, View } from "react-native";
@@ -243,14 +243,24 @@ function Row({
   onOpenTask?: (id: string) => void;
 }) {
   switch (item.type) {
-    case "user":
+    case "user": {
+      // The files sent with it (withAttachments' list after the text) by name, as the web board shows them.
+      const { text, files } = splitAttachments(item.text);
       return (
         <View style={{ alignSelf: "flex-end", maxWidth: "85%", margin: 6, marginHorizontal: 12, padding: 10, borderRadius: 12, backgroundColor: "rgba(109,90,230,0.35)" }}>
-          <Text style={{ color: colors.fg, fontSize: 15 }} selectable>
-            {item.text}
-          </Text>
+          {!!text && (
+            <Text style={{ color: colors.fg, fontSize: 15 }} selectable>
+              {text}
+            </Text>
+          )}
+          {files.map((f) => (
+            <Text key={f.path} style={{ color: colors.muted, fontSize: 13, marginTop: text ? 4 : 0 }} numberOfLines={1}>
+              📎 {f.name}
+            </Text>
+          ))}
         </View>
       );
+    }
     case "text":
       return (
         <View style={{ paddingHorizontal: 14, paddingVertical: 6 }}>
