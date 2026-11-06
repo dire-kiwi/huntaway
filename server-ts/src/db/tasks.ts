@@ -532,6 +532,11 @@ export function tasks_in_work_dir(c: Conn, dir: string): Task[] {
   return tasks(c, "SELECT * FROM tasks WHERE work_dir=?1", dir);
 }
 
+/** A project's task (not a review or a subagent's thread) by number (its key is `<project key>-<n>`). */
+export function task_by_number(c: Conn, project_id: string, number: number): Task | null {
+  return task(c, "SELECT * FROM tasks WHERE project_id=?1 AND kind='task' AND number=?2 ORDER BY position, created_at LIMIT 1", project_id, number);
+}
+
 /** A profile's scratch task by number (its key is `S-<n>`). */
 export function scratch_task_by_number(c: Conn, profile_id: string, number: number): Task | null {
   return task(c, "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type=?3 AND number=?2", profile_id, number, SCRATCH);

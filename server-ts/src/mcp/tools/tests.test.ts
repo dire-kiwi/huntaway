@@ -859,6 +859,30 @@ test("a_renamed_projects_old_key_still_names_its_tasks", async () => {
   assert.ok(e.includes("more than one task"), e);
 });
 
+test("a_task_named_by_key_is_its_projects_task_of_that_number", async () => {
+  // HA-262: found by a query of its own (db.task_by_number), rather than by reading every task of the project.
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  project(s, p, "web", "WEB");
+  project(s, p, "api", "API");
+  const me = ctx(p);
+  await call(s, me, "create_task", { title: "One", project_id: "WEB" });
+  const two = await call(s, me, "create_task", { title: "Two", project_id: "WEB", use_worktree: true });
+  task(s, "api", "Elsewhere");
+  // A review's thread has no number of its own (0), so no key.
+  db.insert_task(s.db(), new_task(p, "Review", { project_id: "web", kind: "review" }));
+  assert.equal(db.task_by_number(s.db(), "web", 0), null);
+  assert.equal((await call(s, me, "get_task", { task_id: "WEB-2" })).title, "Two");
+  assert.equal((await call(s, me, "get_task", { task_id: "web-1" })).title, "One");
+  assert.equal((await call(s, me, "get_task", { task_id: "API-1" })).title, "Elsewhere");
+  for (const key of ["WEB-0", "WEB-3"]) assert.ok(await fails(call(s, me, "get_task", { task_id: key })), key);
+  // What a task starts from, too (api/new_task.ts).
+  const t = await call(s, me, "create_task", { title: "On top", project_id: "WEB", use_worktree: true, start_from: "task:web-2" });
+  assert.deepEqual(db.get_task(s.db(), t.id)!.start_from, { type: "task", task_id: two.id });
+  const e = await err(call(s, me, "create_task", { title: "Nowhere", project_id: "WEB", use_worktree: true, start_from: "task:WEB-9" }));
+  assert.ok(e.includes("no task WEB-9 in web"), e);
+});
+
 test("agents_read_and_change_a_projects_prompts", async () => {
   const s = state();
   const p = db.insert_profile(s.db(), "personal", [], null);
