@@ -232,7 +232,10 @@ export const SERVE_ENV = [
   "IA_BUNDLED_SERVER",
 ];
 
-/** The environment an agent's run starts with: this server's, without `SERVE_ENV`. */
+/**
+ * The environment an agent's run starts with: this server's, without `SERVE_ENV`. So do the commands this server starts for
+ * an agent or a project (a wait's command, setup and teardown scripts, status scripts, prechecks, a task's terminal).
+ */
 export function agent_env(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const k of SERVE_ENV) delete env[k];
