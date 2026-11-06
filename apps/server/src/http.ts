@@ -4,7 +4,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import type { WebSocket } from "ws";
 import type { AppState } from "./state.ts";
 import type { DeviceAuth } from "./devices.ts";
-import { err_str } from "./util.ts";
+import { err_str, safe_decode } from "./util.ts";
 import { performance } from "node:perf_hooks";
 import * as lag from "./lag.ts";
 
@@ -105,15 +105,15 @@ export class Router {
   }
 
   /** `methods` maps GET/POST/PATCH/DELETE (or ANY) to a handler. */
-  route(path: string, methods: Record<string, Handler | undefined>, opts: RouteOpts = {}): this {
+  route(path: string, methods: Record<string, Handler>, opts: RouteOpts = {}): this {
     const r = this.add(path, opts);
-    for (const [m, h] of Object.entries(methods)) r.methods.set(m.toUpperCase(), h ?? notPorted(`${m.toUpperCase()} ${path}`));
+    for (const [m, h] of Object.entries(methods)) r.methods.set(m.toUpperCase(), h);
     return this;
   }
 
-  ws(path: string, h: WsHandler | undefined, opts: RouteOpts = {}): this {
+  ws(path: string, h: WsHandler, opts: RouteOpts = {}): this {
     const r = this.add(path, opts);
-    r.ws = h ?? (() => {});
+    r.ws = h;
     if (opts.pre) r.pre = opts.pre;
     r.methods.set("GET", r.methods.get("GET") ?? (() => new Reply(400, { error: "expected a websocket upgrade" })));
     return this;
@@ -121,16 +121,7 @@ export class Router {
 
   /** The route for `path`, with its parameters. Static segments win over parameters. */
   find(path: string): { route: Route; params: Record<string, string> } | null {
-    const parts = path
-      .split("/")
-      .filter(Boolean)
-      .map((p) => {
-        try {
-          return decodeURIComponent(p);
-        } catch {
-          return p;
-        }
-      });
+    const parts = path.split("/").filter(Boolean).map(safe_decode);
     const rawParts = path.split("/").filter(Boolean);
     let best: { route: Route; params: Record<string, string>; score: number } | null = null;
     for (const route of this.routes) {
@@ -145,10 +136,7 @@ export class Router {
             ok = false;
             break;
           }
-          params[seg.slice(2, -1)] = rawParts
-            .slice(i)
-            .map((p) => safeDecode(p))
-            .join("/");
+          params[seg.slice(2, -1)] = rawParts.slice(i).map(safe_decode).join("/");
           i = parts.length;
           break;
         }
@@ -168,18 +156,6 @@ export class Router {
     }
     return best && { route: best.route, params: best.params };
   }
-}
-
-const safeDecode = (p: string) => {
-  try {
-    return decodeURIComponent(p);
-  } catch {
-    return p;
-  }
-};
-
-function notPorted(what: string): Handler {
-  return () => new Reply(501, { error: `not ported to the TypeScript server: ${what}` });
 }
 
 /** The start of the error for an `/api/...` path with no route (so it isn't served the UI). */

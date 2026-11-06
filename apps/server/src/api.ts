@@ -3,9 +3,9 @@
 import { readFileSync } from "node:fs";
 import type { WebSocket } from "ws";
 import * as db from "./db.ts";
-import { Router, Reply, call, no_route_error, parseBody, parseQuery, type Answer, type Req } from "./http.ts";
+import { Router, call, no_route_error, parseBody, parseQuery, type Answer, type Req } from "./http.ts";
 import type { AppState } from "./state.ts";
-import { home_dir, path_str, same_secret } from "./util.ts";
+import { home_dir, path_str, safe_decode, same_secret } from "./util.ts";
 import { API_COMPAT, API_VERSION, BUILD_ID, ToolAnswer_from, VERSION } from "./hosts/proto.ts";
 import * as uplink from "./hosts/uplink.ts";
 import * as claude_configs from "./api/claude_configs.ts";
@@ -55,7 +55,7 @@ export function router(s: AppState): Router {
   r.route("/health", { GET: health }, { auth: false });
   r.ws("/hub/connect", hub.accept, { auth: false, pre: hub.accept_check });
   // Without the board's token: the token in its path reaches only its own automation.
-  r.route("/hooks/{id}/{token}", { POST: automations.webhook }, { auth: false, limit: automations.MAX_BODY ?? 1 << 20 });
+  r.route("/hooks/{id}/{token}", { POST: automations.webhook }, { auth: false, limit: automations.MAX_BODY });
   // Without the board's token: the token in its body answers only its own prompt, once (from a notification).
   r.route("/permissions/{id}/push-answer", { POST: push_answers.answer }, { auth: false });
   // Without the board's token: the one-time code from Settings → Phones is swapped for a device's own.
@@ -227,7 +227,7 @@ function tokens(headers: Record<string, any>, query_string: string): string[] {
     ...query_string
       .split("&")
       .filter((kv) => kv.startsWith("token="))
-      .map((kv) => decodeURIComponentSafe(kv.slice(6))),
+      .map((kv) => safe_decode(kv.slice(6))),
   ];
 }
 
@@ -260,14 +260,6 @@ export function auth(
   }
   return { ok: false, status: 401, error: "unauthorized" };
 }
-
-const decodeURIComponentSafe = (v: string) => {
-  try {
-    return decodeURIComponent(v);
-  } catch {
-    return v;
-  }
-};
 
 /** Pick known keys out of a JSON body as (column, value) pairs. */
 export function pick(body: Record<string, any>, keys: string[]): Array<[string, any]> {
@@ -401,5 +393,3 @@ function ws(s: AppState, _r: Req, socket: WebSocket) {
   socket.on("close", end);
   socket.on("error", end);
 }
-
-export { Reply };

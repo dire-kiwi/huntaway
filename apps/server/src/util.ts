@@ -148,6 +148,15 @@ export function truncate(s: string, max: number): string {
   return `${b.subarray(0, end).toString()}\n… [truncated ${b.length - end} bytes]`;
 }
 
+/** `decodeURIComponent(s)`, or `s` as it is where it isn't valid percent-encoding. */
+export function safe_decode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 /** A promise that resolves after `ms` milliseconds. */
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
