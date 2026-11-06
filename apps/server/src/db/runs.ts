@@ -12,6 +12,8 @@ export interface Run {
   out_offset: number;
   stop_requested: boolean;
   attention: string | null;
+  /** The agent said its work is done (`finish_work`, see integrations/workflows.ts) in its turn. */
+  finished: boolean;
   result_error: string | null;
   saw_result: boolean;
   /** What the agent has cost in this run so far (see `add_cost`). */
@@ -35,6 +37,7 @@ export function Run_from_row(r: any): Run {
     out_offset: r.out_offset,
     stop_requested: !!r.stop_requested,
     attention: r.attention ?? null,
+    finished: !!r.finished,
     result_error: r.result_error ?? null,
     saw_result: !!r.saw_result,
     cost_usd: r.cost_usd,

@@ -210,28 +210,44 @@ start}` or `{kind: "send_to_task", task_id, message}`. Changes and runs are broa
 
 A project's workflows (API 107, in its settings under _Workflows_; agents' tools `list_workflows`,
 `create_workflow`, `update_workflow`, `delete_workflow` and `run_workflow`) are graphs of steps that
-run on its tasks. The editor draws them as nodes: drag from a step's outcome to the next step.
+run on its tasks. The editor draws them as nodes: drag from a step's outcome to the next step. From
+API 123 a workflow can hold a task's whole way across the board, column by column.
 
-- **Start.** When a task moves into a column; when the task's **agent finishes its work** (API 123:
-  the task then stays in _In progress_ rather than going to _In review_, and the workflow moves it
-  on with a _Move task_ step, so with one of these on, what happens after the agent is done is the
-  workflow's to decide. A run that ends without moving it sends it to _In review_ as before, or to
-  _Needs attention_, saying why, when a step failed or the run was stopped); or only when run by
-  hand from the task.
+- **Columns.** A _column_ step is a column of the board, with the prompt the task's agent is sent
+  when the task enters it: in _In progress_ it's what the agent starts with (in place of the
+  project's start prompt), in _Ready for merge_ how it merges, and in any other column a message
+  that sets the agent to work there. The board adds to the prompt what happens once the agent is
+  done, from the steps after the column (for example "The board then pushes your branch and opens
+  its pull request (so don't open one yourself) and moves the task to In review"), and while an
+  _Open a PR_ step follows In progress, the agent isn't told to open a pull request itself.
+- **Done.** A column's _done_ outcome comes once its work is: when the agent's turn ends, or, with
+  _Done when: the agent says so_, only once it calls the board's `finish_work` tool (a turn that
+  ends without it moves the task to _Needs attention_). A question for you leaves the task in _Needs
+  attention_ until the agent is done after your answer. Meanwhile the task stays in _In progress_
+  rather than going to _In review_. In _Ready for merge_, done comes once the task is merged, and in
+  a column without a prompt as soon as the task moves there.
+- **Moving on.** A line into a column moves the task there, and the run goes on from that column
+  once its work is done, so a workflow can go round (review, fixes, review again) through its
+  columns. A run that ends without moving the task sends it to _In review_ as before, or to _Needs
+  attention_, saying why, when a step failed or the run was stopped. A column where the agent works
+  belongs to one workflow that's on, and a workflow has one step per column. Workflows from before
+  column steps keep working: their start on a column, or on the agent finishing, is that column's
+  step, and their _Move task_ steps are lines into a column.
 - **Steps.** A _check_ (has the work changed, has it commits or a pull request, its type or a
   label); an _agent_ in a thread of its own, read-only in the task's worktree, in a fresh
   conversation each run, that writes text (shown in a tab of the task) or a verdict (pass, or the
-  serious issues it found); _open a pull request_ (API 123: the board pushes the task's branch and
-  opens it with the gh tools, as the project's GitHub account, with a title and body that can come
-  from an agent step before it, `{{<step id>.text}}`); _send to the task's agent_ (the issues
-  found, or a message of its own, for up to so many rounds); and _move the task_.
+  serious issues it found); _open a pull request_ (the board pushes the task's branch and opens it
+  with the gh tools, as the project's GitHub account, with a title and body that can come from an
+  agent step before it, `{{<step id>.text}}`; one it has already gets the new commits); and _send to
+  the task's agent_ (the issues found, or a message of its own, for up to so many rounds). A
+  workflow can also have a start for runs by hand from the task.
 - **Pipelines.** An agent step is given the output of the agent steps before it in the graph. With
   _Work only on what the steps before it wrote_ (`input_only`) it isn't told where the task's work
   is either, so a summary can be passed to another agent that processes it with a skill, in a
   fresh context (the _Summarise, then a skill_ preset).
-- **Presets.** _Open a PR when done_ (start when the agent finishes, open its pull request if the
-  branch has commits, move it to _In review_, or to _Needs attention_ if that fails), _Summarise,
-  then a skill_, _Review and summarise_, and _From the Review tab_ (the project's reviewers, fix
-  rounds and summarizers as a workflow). The Review tab's own reviews, summaries and pull request
+- **Presets.** _Work, PR and review_ (In progress, a pull request, In review with a reviewer that
+  sends its issues back and a summary once it passes), _Open a PR when done_, _Summarise, then a
+  skill_, _Review and summarise_, and _From the Review tab_ (the project's reviewers, fix rounds
+  and summarizers as a workflow). The Review tab's own reviews, summaries and pull request
   instructions still work alongside them: it says which workflows take tasks on, so the same review
   isn't run twice.

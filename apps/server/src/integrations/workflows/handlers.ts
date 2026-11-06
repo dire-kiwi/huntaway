@@ -70,14 +70,14 @@ export async function run_handler(s: Shared, r: Req): Promise<any> {
 }
 
 /**
- * `GET /tasks/{id}/workflow-runs`: the latest run of each workflow on the task, and the project's workflows (to run
- * one by hand).
+ * `GET /tasks/{id}/workflow-runs`: the latest run of each workflow on the task (with the earlier ones its tabs show,
+ * see `latest_runs`), and the project's workflows (to run one by hand).
  */
 export async function task_runs_handler(s: Shared, r: Req): Promise<any> {
   const c = s.db();
   const task = db.get_task(c, r.params.id);
   if (!task) throw ApiError.not_found("task");
-  const runs = latest_runs(c, task.id).map((x) => run_json(c, x));
+  const runs = latest_runs(c, task.id, true).map((x) => run_json(c, x));
   const workflows = task.project_id && task.kind === "task" ? list(c, task.project_id).map((w) => ({ id: w.id, name: w.name, enabled: w.enabled })) : [];
   return { runs, workflows };
 }

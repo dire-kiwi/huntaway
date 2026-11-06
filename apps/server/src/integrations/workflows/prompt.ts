@@ -51,7 +51,7 @@ function numbered(list: string[]): string {
  * `text` with its `{{…}}` filled in: `task.key`, `task.title`, `task.description`, `branch`, `commit`, `workflow`,
  * `issues` (those the run found), and `<node id>.text`, `<node id>.issues` and `<node id>.verdict` for its steps.
  */
-export function render(text: string, task: Task, key: string, workflow: string, run: Run): string {
+export function render(text: string, task: Task, key: string, workflow: string, run: Run | null): string {
   let out = "";
   let rest = text;
   for (;;) {
@@ -77,17 +77,17 @@ export function render(text: string, task: Task, key: string, workflow: string, 
         value = task.branch ?? "";
         break;
       case "commit":
-        value = run.head ?? "";
+        value = run?.head ?? "";
         break;
       case "workflow":
         value = workflow;
         break;
       case "issues":
-        value = numbered(issues(run));
+        value = run ? numbered(issues(run)) : "";
         break;
       default: {
         const dot = name.indexOf(".");
-        const r = dot >= 0 ? run.nodes[name.slice(0, dot)] : undefined;
+        const r = dot >= 0 ? run?.nodes[name.slice(0, dot)] : undefined;
         if (r) {
           const field = name.slice(dot + 1);
           if (field === "text") value = r.text ?? "";

@@ -123,7 +123,7 @@ export function steered(state: Shared, run: Run, id: string) {
   if (new_turn === undefined) throw new Error("Query returned no rows");
   db.run(
     state.db(),
-    "UPDATE runs SET attention=NULL, between_turns=0, stop_requested = CASE WHEN stop_requested=2 THEN 0 ELSE stop_requested END WHERE id=?1",
+    "UPDATE runs SET attention=NULL, finished=0, between_turns=0, stop_requested = CASE WHEN stop_requested=2 THEN 0 ELSE stop_requested END WHERE id=?1",
     run.id,
   );
   const msg: any = { text: steer.text, steered: true };

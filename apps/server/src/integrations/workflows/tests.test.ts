@@ -19,7 +19,10 @@ import {
   get_run,
   is_workflow,
   latest_run,
+  latest_runs,
   on_status,
+  on_finished,
+  on_finish_due,
   resume,
   run_node,
   start,
@@ -30,10 +33,12 @@ import {
   update,
   upstream,
   insert_run,
+  Run_from_row,
   type Run,
   type Workflow,
 } from "../workflows.ts";
-import { advance, engine_testing, MAX_CHAIN, plan, step_ended } from "./engine.ts";
+import { advance, board_opens_pr, engine_testing, MAX_CHAIN, merge_instructions, plan, start_instructions, step_ended } from "./engine.ts";
+import { handle_mcp } from "../../mcp/tools.ts";
 import { finish } from "../../agent/runner.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
@@ -161,7 +166,7 @@ async function until(f: () => boolean, ms = 2000) {
   for (let i = 0; i < ms / 10 && !f(); i++) await sleep(10);
 }
 
-test("a_graph_needs_one_trigger_real_ports_and_no_loops", () => {
+test("a_graph_needs_a_start_real_ports_and_no_loops", () => {
   const s = testing.state();
   const [project] = setup(s);
   const c = s.db();
@@ -176,8 +181,18 @@ test("a_graph_needs_one_trigger_real_ports_and_no_loops", () => {
       },
     );
   };
-  bad({ nodes: [], edges: [] }, "exactly one trigger");
-  bad({ nodes: [{ id: "a", kind: "trigger", on: "status" }], edges: [] }, "needs the column");
+  bad({ nodes: [], edges: [] }, "needs a column node");
+  bad({ nodes: [{ id: "a", kind: "trigger", on: "status" }], edges: [] }, "needs its column");
+  bad(
+    {
+      nodes: [
+        { id: "a", kind: "trigger", on: "manual" },
+        { id: "b", kind: "trigger", on: "manual" },
+      ],
+      edges: [],
+    },
+    "one start",
+  );
   const two = {
     nodes: [
       { id: "a", kind: "trigger", on: "manual" },
@@ -193,22 +208,55 @@ test("a_graph_needs_one_trigger_real_ports_and_no_loops", () => {
     ],
     edges: [{ from: "b", port: "out", to: "a" }],
   };
-  bad(into_trigger, "into the trigger");
+  bad(into_trigger, "into the start");
   const looped = {
     nodes: [
       { id: "a", kind: "trigger", on: "manual" },
-      { id: "b", kind: "set_status", status: "todo" },
-      { id: "c", kind: "set_status", status: "backlog" },
+      { id: "b", kind: "agent", name: "B" },
+      { id: "c", kind: "agent", name: "C" },
     ],
     edges: [
       { from: "a", port: "out", to: "b" },
-      { from: "b", port: "out", to: "c" },
-      { from: "c", port: "out", to: "b" },
+      { from: "b", port: "done", to: "c" },
+      { from: "c", port: "done", to: "b" },
     ],
   };
   bad(looped, "loop through b");
+  // Round again through a column is no loop: the path ends there, and the next run starts from it.
+  check_graph(c, project, {
+    nodes: [
+      { id: "w", kind: "column", status: "in_progress" },
+      { id: "r", kind: "agent", name: "R", output: "verdict" },
+      { id: "v", kind: "column", status: "in_review" },
+    ],
+    edges: [
+      { from: "w", port: "done", to: "v" },
+      { from: "v", port: "done", to: "r" },
+      { from: "r", port: "issues", to: "w" },
+    ],
+  });
   const manual = { id: "a", kind: "trigger", on: "manual" };
-  bad({ nodes: [manual, { id: "b", kind: "set_status", status: "done" }], edges: [] }, "needs a column");
+  bad({ nodes: [manual, { id: "b", kind: "column", status: "nowhere" }], edges: [] }, "needs a column");
+  bad({ nodes: [manual, { id: "b", kind: "column", status: "done", prompt: "Hi" }], edges: [] }, "no work in Done");
+  bad({ nodes: [manual, { id: "b", kind: "column", status: "needs_attention", prompt: "Hi" }], edges: [] }, "waits for the user");
+  bad(
+    {
+      nodes: [manual, { id: "b", kind: "column", status: "done" }],
+      edges: [{ from: "a", port: "out", to: "b" }],
+    },
+    "into Done",
+  );
+  bad(
+    {
+      nodes: [
+        { id: "b", kind: "column", status: "in_review" },
+        { id: "c", kind: "set_status", status: "in_review" },
+      ],
+      edges: [],
+    },
+    "two nodes are the column In review",
+  );
+  bad({ nodes: [{ id: "b", kind: "column", status: "ready_for_merge", done_when: "finish" }], edges: [] }, "when the task is merged");
   bad({ nodes: [manual, { id: "b", kind: "agent", name: " " }], edges: [] }, "needs a name");
   bad({ nodes: [manual, { id: "b", kind: "agent", name: "R", claude_config_id: "nope" }], edges: [] }, "agent configs");
   bad({ nodes: [manual, { id: "a", kind: "set_status", status: "todo" }], edges: [] }, "two nodes");
@@ -426,7 +474,13 @@ test("a_workflow_starts_when_its_task_enters_its_column_and_not_when_it_moves_it
 test("deciding_a_merge_starts_the_workflows_of_the_column_it_moves_the_task_to", async () => {
   const s = testing.state();
   const [project, task] = setup(s);
-  const w = make(s, project, { nodes: [{ id: "t", kind: "trigger", on: "status", status: "in_review" }], edges: [] });
+  const w = make(s, project, {
+    nodes: [
+      { id: "t", kind: "trigger", on: "status", status: "in_review" },
+      { id: "c", kind: "condition", check: "has_pr" },
+    ],
+    edges: [{ from: "t", port: "out", to: "c" }],
+  });
   // Its summary run has ended, and the card waits for the user's answer.
   db.update_task(s.db(), task.id, [
     ["status", "needs_attention"],
@@ -438,25 +492,30 @@ test("deciding_a_merge_starts_the_workflows_of_the_column_it_moves_the_task_to",
   assert.equal(latest_run(s.db(), w.id, task.id)?.state, "done");
 });
 
-test("a_set_status_step_doesnt_start_its_own_workflow_again", async () => {
+test("an_edge_into_a_column_moves_the_task_and_the_next_run_starts_from_there", async () => {
   const s = testing.state();
   const [project, task] = setup(s);
-  db.update_task(s.db(), task.id, [["status", "todo"]]);
-  // It moves the task into the column that triggers it: once, not over and over.
+  db.update_task(s.db(), task.id, [["status", "backlog"]]);
   const w = make(s, project, {
     nodes: [
-      { id: "t", kind: "trigger", on: "status", status: "in_review" },
-      { id: "m", kind: "set_status", status: "in_review" },
+      { id: "todo", kind: "column", status: "todo" },
+      { id: "review", kind: "column", status: "in_review" },
+      { id: "has_pr", kind: "condition", check: "has_pr" },
     ],
-    edges: [{ from: "t", port: "out", to: "m" }],
+    edges: [
+      { from: "todo", port: "done", to: "review" },
+      { from: "review", port: "done", to: "has_pr" },
+    ],
   });
-  const run = (await start(s, w.id, task.id, true))!;
-  assert.equal(run.state, "done");
-  await sleep(200);
-  assert.equal(db.value(s.db(), "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1", w.id), 1);
+  await api.update_task_inner(s, task.id, { status: "todo" });
+  const count = () => Number(db.value(s.db(), "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1", w.id));
+  await until(() => db.get_task(s.db(), task.id)!.status === "in_review" && count() === 2 && latest_run(s.db(), w.id, task.id)?.state === "done");
+  const runs = db.all(s.db(), "SELECT * FROM workflow_runs WHERE workflow_id=?1 ORDER BY rowid", w.id).map((r: any) => JSON.parse(r.nodes));
+  assert.equal(runs.length, 2);
+  // The first ends at In review, which it moved the task to; the second starts there and goes on.
+  assert.deepEqual([runs[0].todo.start, runs[0].review.state, runs[0].review.port, runs[0].has_pr.state], [true, "done", undefined, "skipped"]);
+  assert.deepEqual([runs[1].review.start, runs[1].has_pr.port, runs[1].todo.state], [true, "no", "skipped"]);
 });
-
-// ---------- HA-189's own ----------
 
 test("a_restart_fails_the_steps_the_board_was_running_and_goes_on", async () => {
   const s = testing.state();
@@ -564,19 +623,19 @@ test("a_restart_fails_agent_steps_whose_agent_never_started_and_leaves_those_run
   assert.equal(get_run(s.db(), "run1")!.state, "done");
 });
 
-test("workflows_that_move_a_task_into_each_others_columns_stop_after_a_few_runs_in_a_row", async () => {
+test("a_workflow_that_moves_a_task_from_column_to_column_and_back_stops_after_a_few_runs_in_a_row", async () => {
   const s = testing.state();
   const [project, task] = setup(s);
-  const mover = (from: string, to: string) =>
-    make(s, project, {
-      nodes: [
-        { id: "t", kind: "trigger", on: "status", status: from },
-        { id: "m", kind: "set_status", status: to },
-      ],
-      edges: [{ from: "t", port: "out", to: "m" }],
-    });
-  const there = mover("in_review", "todo");
-  const back = mover("todo", "in_review");
+  const w = make(s, project, {
+    nodes: [
+      { id: "review", kind: "column", status: "in_review" },
+      { id: "todo", kind: "column", status: "todo" },
+    ],
+    edges: [
+      { from: "review", port: "done", to: "todo" },
+      { from: "todo", port: "done", to: "review" },
+    ],
+  });
   const count = () => Number(db.value(s.db(), "SELECT COUNT(*) FROM workflow_runs WHERE task_id=?1", task.id));
   const warned = () => testing.messages(s.db(), task.id).some((m: any) => m.kind === "event" && /moved the task \d+ times in a row/.test(m.data?.text ?? ""));
   on_status(s, task);
@@ -584,7 +643,7 @@ test("workflows_that_move_a_task_into_each_others_columns_stop_after_a_few_runs_
   assert.ok(warned(), "it says why it stopped");
   await sleep(200);
   assert.equal(count(), MAX_CHAIN, "runs in a row, counting the first");
-  assert.ok([there, back].every((w) => latest_run(s.db(), w.id, task.id)!.state === "done"));
+  assert.equal(latest_run(s.db(), w.id, task.id)!.state, "done");
   // Moving the task by hand starts a chain of its own.
   const status = db.get_task(s.db(), task.id)!.status;
   await api.update_task_inner(s, task.id, { status: status === "todo" ? "in_review" : "todo" });
@@ -646,7 +705,9 @@ test("the_new_nodes_are_checked", () => {
       { from: "pr", port: "exists", to: "a" },
     ],
   });
-  assert.deepEqual(g.nodes[0], { id: "t", kind: "trigger", on: "finished", x: 0, y: 0 }, "a finished trigger keeps no column");
+  // A start on the agent finishing, from before column nodes, is In progress's node, and its `out` is `done`.
+  assert.deepEqual(g.nodes[0], { id: "t", kind: "column", status: "in_progress", prompt: "", x: 0, y: 0 });
+  assert.deepEqual(g.edges[0], { from: "t", port: "done", to: "pr" });
   assert.deepEqual(g.nodes[1], { id: "pr", kind: "open_pr", title: "{{task.key}}", body: "", draft: true, x: 0, y: 0 });
   assert.equal((g.nodes[2] as any).input_only, true);
   const plain: any = check_graph(s.db(), project, {
@@ -687,29 +748,22 @@ test("a_finished_workflow_holds_the_task_in_progress_and_moves_it_on", async () 
       { from: "c", port: "no", to: "m" },
     ],
   });
-  // An In progress workflow doesn't start on it: the task didn't enter In progress.
-  const entering = make(s, project, {
-    nodes: [
-      { id: "t", kind: "trigger", on: "status", status: "in_progress" },
-      { id: "m", kind: "set_status", status: "backlog" },
-    ],
-    edges: [{ from: "t", port: "out", to: "m" }],
-  });
-  update(s, entering.id, { enabled: true });
   db.update_task(s.db(), task.id, [["status", "in_progress"]]);
   agent_finishes(s, task);
-  await until(() => latest_run(s.db(), w.id, task.id)?.state === "done");
-  const run = latest_run(s.db(), w.id, task.id)!;
+  await until(() => db.get_task(s.db(), task.id)!.status === "backlog" && latest_run(s.db(), w.id, task.id)?.state === "done");
+  // (Moving it to Backlog starts a run at its node there too.)
+  const run = finished_run(s, w.id);
   assert.equal(run.source, "finished");
-  assert.equal(db.get_task(s.db(), task.id)!.status, "backlog");
-  assert.equal(latest_run(s.db(), entering.id, task.id), null);
   // Off, it leaves the agent's run to go to In review as before.
   update(s, w.id, { enabled: false });
   agent_finishes(s, task);
   assert.equal(db.get_task(s.db(), task.id)!.status, "in_review");
-  // It doesn't start when the task enters a column, only when its agent finishes.
+  // Its In progress node doesn't start when the task enters In progress, only when its agent's work is done.
   update(s, w.id, { enabled: true });
-  assert.equal(await start(s, w.id, task.id, false, 0, "status"), null);
+  db.update_task(s.db(), task.id, [["status", "todo"]]);
+  await api.update_task_inner(s, task.id, { status: "in_progress" });
+  await sleep(100);
+  assert.equal(latest_run(s.db(), w.id, task.id)!.id, run.id);
 });
 
 test("an_agent_step_gets_only_the_output_of_the_steps_before_it", async () => {
@@ -857,6 +911,11 @@ function pr_when_done(): any {
   };
 }
 
+/** Workflow `id`'s latest run that its task's agent finishing started. */
+function finished_run(s: AppState, id: string): Run {
+  return Run_from_row(db.one(s.db(), "SELECT * FROM workflow_runs WHERE workflow_id=?1 AND source='finished' ORDER BY rowid DESC LIMIT 1", id));
+}
+
 async function left_in_progress(s: AppState, task_id: string): Promise<Task> {
   await until(() => db.get_task(s.db(), task_id)!.status !== "in_progress");
   return db.get_task(s.db(), task_id)!;
@@ -874,7 +933,8 @@ test("a_task_without_a_worktree_goes_to_review_with_the_pull_request_preset", as
   const w = make(s, project, pr_when_done());
   agent_finishes(s, task);
   const t = await left_in_progress(s, task.id);
-  const run = latest_run(s.db(), w.id, task.id)!;
+  // The run its agent finishing started (moving the task to In review starts one there too).
+  const run = finished_run(s, w.id);
   assert.deepEqual([run_node(run, "commits").port, run_node(run, "pr").state], ["no", "skipped"]);
   assert.deepEqual([t.status, t.running], ["in_review", false]);
 });
@@ -953,4 +1013,316 @@ test("a_stopped_finished_run_moves_the_task_on_unless_its_agent_started_again", 
   } finally {
     runs.TEST_CAN_RUN.set(false);
   }
+});
+
+/** A whole task's way across the board, as column nodes: work, a pull request, review (sending its issues back), merge. */
+function lifecycle(o: { work?: any; review?: any; merge?: any } = {}): any {
+  return {
+    nodes: [
+      { id: "work", kind: "column", status: "in_progress", prompt: "Build {{task.title}}.", ...o.work },
+      { id: "pr", kind: "open_pr" },
+      { id: "review", kind: "column", status: "in_review", ...o.review },
+      { id: "reviewer", kind: "agent", name: "Reviewer", output: "verdict" },
+      { id: "merge", kind: "column", status: "ready_for_merge", prompt: "Squash it into {{task.key}}.", ...o.merge },
+    ],
+    edges: [
+      { from: "work", port: "done", to: "pr" },
+      { from: "pr", port: "opened", to: "review" },
+      { from: "pr", port: "exists", to: "review" },
+      { from: "review", port: "done", to: "reviewer" },
+      { from: "reviewer", port: "issues", to: "work" },
+      { from: "reviewer", port: "pass", to: "merge" },
+    ],
+  };
+}
+
+test("a_column_prompt_is_the_start_prompt_and_says_what_the_board_does_next", () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  assert.equal(start_instructions(s, task, project), null, "without a workflow, the project's start prompt");
+  const w = make(s, project, lifecycle());
+  const text = start_instructions(s, task, project)!;
+  assert.ok(text.startsWith("Build Fix the thing."), text);
+  assert.ok(text.includes("end your turn with a summary of what you did. The board then pushes your branch and opens its pull request"), text);
+  assert.ok(text.includes("and moves the task to In review."), text);
+  assert.ok(board_opens_pr(s, task), "the agent isn't told to open it");
+  assert.equal(merge_instructions(s, task), "Squash it into X-1.");
+  // A blank prompt is the project's start prompt; waiting for finish_work says how.
+  update(s, w.id, { graph: lifecycle({ work: { prompt: "", done_when: "finish" } }) });
+  const blank = start_instructions(s, task, project)!;
+  assert.ok(
+    blank.startsWith(`${project.start_prompt ?? "Start working on this task."}\n\nWhen the work you were asked for here is complete, call \`finish_work\``),
+    blank,
+  );
+  // Off, it's the project's again.
+  update(s, w.id, { enabled: false });
+  assert.deepEqual([start_instructions(s, task, project), merge_instructions(s, task), board_opens_pr(s, task)], [null, null, false]);
+});
+
+test("a_column_with_the_agents_work_belongs_to_one_workflow_thats_on", () => {
+  const s = testing.state();
+  const [project] = setup(s);
+  make(s, project, lifecycle());
+  const clash = (g: any) =>
+    assert.throws(
+      () => make(s, project, g),
+      (e: any) => e.status === 409 && e.message.includes("has the column"),
+    );
+  clash({ nodes: [{ id: "w", kind: "column", status: "in_progress" }], edges: [] });
+  clash({ nodes: [{ id: "w", kind: "column", status: "in_review", prompt: "Check CI." }], edges: [] });
+  // A column only entered (no prompt) is fine in two.
+  const other = make(s, project, { nodes: [{ id: "v", kind: "column", status: "in_review" }], edges: [] });
+  // Off, it may have one; turning it on checks again.
+  const off = create(s, project.id, { name: "Off", enabled: false, graph: { nodes: [{ id: "w", kind: "column", status: "in_progress" }], edges: [] } });
+  assert.throws(
+    () => update(s, off.id, { enabled: true }),
+    (e: any) => e.status === 409,
+  );
+  assert.ok(other.enabled);
+});
+
+test("a_finish_work_column_needs_attention_when_the_agent_doesnt_say_its_done", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  const w = make(s, project, {
+    nodes: [
+      { id: "work", kind: "column", status: "in_progress", done_when: "finish" },
+      { id: "out", kind: "column", status: "backlog" },
+    ],
+    edges: [{ from: "work", port: "done", to: "out" }],
+  });
+  agent_finishes(s, task);
+  let t = db.get_task(s.db(), task.id)!;
+  assert.deepEqual(
+    [t.status, t.attention_reason],
+    ["needs_attention", "The agent ended its turn without saying its work in In progress is done (with finish_work)"],
+  );
+  assert.equal(latest_run(s.db(), w.id, task.id), null);
+  // It says so with the tool: the run's flag, which a new turn clears.
+  const r = db.insert_run(s.db(), task.id, "prompt");
+  db.run(s.db(), "UPDATE runs SET status='running' WHERE id=?1", r.id);
+  s.update_task(task.id, [
+    ["status", "in_progress"],
+    ["running", true],
+  ]);
+  assert.deepEqual(await handle_mcp(s, { run_id: r.id, call_id: "c1", tool: "finish_work", args: {}, task_fields: true }), {
+    ok: true,
+    note: "Recorded that the work is done. End your turn now with a summary of what you did.",
+  });
+  finish(s, r.id, "Ok");
+  t = await left_in_progress(s, task.id);
+  assert.equal(t.status, "backlog");
+});
+
+test("a_column_with_a_prompt_sends_it_and_waits_for_the_agents_work_there", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    db.update_task(s.db(), task.id, [
+      ["status", "todo"],
+      ["session_id", "sess"],
+    ]);
+    const w = make(s, project, {
+      nodes: [
+        { id: "ci", kind: "column", status: "in_review", prompt: "Check the CI of {{branch}}." },
+        { id: "out", kind: "column", status: "backlog" },
+      ],
+      edges: [{ from: "ci", port: "done", to: "out" }],
+    });
+    await api.update_task_inner(s, task.id, { status: "in_review" });
+    await until(() => latest_run(s.db(), w.id, task.id) != null);
+    const waiting = latest_run(s.db(), w.id, task.id)!;
+    assert.deepEqual([waiting.state, run_node(waiting, "ci").state], ["running", "running"]);
+    assert.equal(
+      last_user_text(s, task.id),
+      "Check the CI of ia/x-1.\n\nWhen you're done, end your turn with a summary of what you did. The board then moves the task to Backlog.",
+    );
+    // Its agent starting (on the prompt) leaves it waiting; the launch fails here, which needs attention: still waiting.
+    await until(() => !s.is_running(task.id) && !db.get_task(s.db(), task.id)!.running);
+    assert.equal(get_run(s.db(), waiting.id)!.state, "running");
+    // The user answers, and the agent's work is done: the run goes on from the column.
+    agent_finishes(s, task);
+    const t = await left_in_progress(s, task.id);
+    assert.equal(t.status, "backlog");
+    await until(() => get_run(s.db(), waiting.id)!.state === "done");
+    const run = get_run(s.db(), waiting.id)!;
+    assert.deepEqual([run.state, run.source, run_node(run, "ci").port, run_node(run, "out").state], ["done", "finished", "done", "done"]);
+    // Moved out of the column it waits at, it stops waiting.
+    db.update_task(s.db(), task.id, [["status", "todo"]]);
+    await api.update_task_inner(s, task.id, { status: "in_review" });
+    const waits = () => db.one(s.db(), "SELECT id FROM workflow_runs WHERE workflow_id=?1 AND state='running'", w.id)?.id as string | undefined;
+    await until(() => waits() != null);
+    const again = waits()!;
+    await until(() => !s.is_running(task.id) && !db.get_task(s.db(), task.id)!.running);
+    await api.update_task_inner(s, task.id, { status: "todo" });
+    assert.deepEqual([get_run(s.db(), again)!.state, get_run(s.db(), again)!.detail], ["stopped", "Stopped because the task left In review."]);
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});
+
+test("a_column_whose_work_ends_with_nothing_after_it_goes_to_review_without_starting_again", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    db.update_task(s.db(), task.id, [
+      ["status", "todo"],
+      ["session_id", "sess"],
+    ]);
+    const w = make(s, project, { nodes: [{ id: "ci", kind: "column", status: "in_review", prompt: "Check the CI." }], edges: [] });
+    await api.update_task_inner(s, task.id, { status: "in_review" });
+    await until(() => latest_run(s.db(), w.id, task.id) != null);
+    await until(() => !s.is_running(task.id) && !db.get_task(s.db(), task.id)!.running);
+    agent_finishes(s, task);
+    const t = await left_in_progress(s, task.id);
+    assert.equal(t.status, "in_review");
+    await sleep(200);
+    // Back in In review, whose work just ended: not sent the prompt again.
+    assert.equal(db.value(s.db(), "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1", w.id), 1);
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});
+
+test("an_edge_into_in_progress_gives_the_agent_the_issues_found_or_the_columns_prompt", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    db.update_task(s.db(), task.id, [["session_id", "sess"]]);
+    const w = make(s, project, {
+      nodes: [
+        { id: "review", kind: "column", status: "in_review" },
+        { id: "has_pr", kind: "condition", check: "has_pr" },
+        { id: "work", kind: "column", status: "in_progress", prompt: "Open a PR for {{task.key}} after all." },
+      ],
+      edges: [
+        { from: "review", port: "done", to: "has_pr" },
+        { from: "has_pr", port: "no", to: "work" },
+      ],
+    });
+    const run = (await start(s, w.id, task.id, true))!;
+    assert.deepEqual([run.state, run_node(run, "work").state], ["done", "done"]);
+    assert.ok(last_user_text(s, task.id).startsWith("Open a PR for X-1 after all."), last_user_text(s, task.id));
+    assert.equal(db.get_task(s.db(), task.id)!.status, "in_progress");
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});
+
+test("a_merge_goes_on_from_ready_for_merge", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  const w = make(s, project, {
+    nodes: [
+      { id: "merge", kind: "column", status: "ready_for_merge" },
+      { id: "c", kind: "condition", check: "has_pr" },
+    ],
+    edges: [{ from: "merge", port: "done", to: "c" }],
+  });
+  // Moved to Done without being merged: nothing.
+  db.update_task(s.db(), task.id, [
+    ["status", "done"],
+    ["resolution", "wont_fix"],
+  ]);
+  on_status(s, db.get_task(s.db(), task.id)!);
+  await sleep(100);
+  assert.equal(latest_run(s.db(), w.id, task.id), null);
+  db.update_task(s.db(), task.id, [["resolution", "done"]]);
+  on_status(s, db.get_task(s.db(), task.id)!);
+  await until(() => latest_run(s.db(), w.id, task.id)?.state === "done");
+  const run = latest_run(s.db(), w.id, task.id)!;
+  assert.deepEqual([run.source, run_node(run, "c").port], ["merged", "no"]);
+});
+
+test("old_starts_and_moves_are_read_as_column_nodes", () => {
+  const g = Graph_from_json({
+    nodes: [
+      { id: "t", kind: "trigger", on: "status", status: "in_review" },
+      { id: "m", kind: "set_status", status: "needs_attention" },
+      { id: "h", kind: "trigger", on: "manual" },
+    ],
+    edges: [
+      { from: "t", port: "out", to: "m" },
+      { from: "h", port: "out", to: "m" },
+    ],
+  });
+  assert.deepEqual(
+    g.nodes.map((n: any) => [n.kind, n.status ?? n.on]),
+    [
+      ["column", "in_review"],
+      ["column", "needs_attention"],
+      ["trigger", "manual"],
+    ],
+  );
+  assert.deepEqual(
+    g.edges.map((e) => e.port),
+    ["done", "out"],
+  );
+});
+
+// Review of HA-276's column nodes: entering a column that's only where lines end made a run that skipped the review,
+// which then hid the review's output in the task's tab, as did a run from In progress.
+test("a_column_with_nothing_after_it_runs_nothing_and_tabs_keep_each_steps_last_output", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  const w = make(s, project, {
+    nodes: [
+      { id: "review", kind: "column", status: "in_review" },
+      { id: "reviewer", kind: "agent", name: "Reviewer", output: "verdict", tab: "Review" },
+      { id: "attention", kind: "column", status: "needs_attention" },
+    ],
+    edges: [
+      { from: "review", port: "done", to: "reviewer" },
+      { from: "reviewer", port: "failed", to: "attention" },
+    ],
+  });
+  await api.update_task_inner(s, task.id, { status: "needs_attention" });
+  await sleep(100);
+  assert.equal(latest_run(s.db(), w.id, task.id), null);
+  // A run whose review ran, then a later one that skipped it.
+  const at = (n: number) => new Date(Date.parse("2026-11-07T00:00:00Z") + n * 1000).toISOString();
+  const run = (id: string, n: number, reviewer: any) => {
+    const r = bare_run(w.graph, task.id, null);
+    Object.assign(r, { id, workflow_id: w.id, state: "done", created_at: at(n), nodes: { review: { state: "done", port: "done" }, reviewer } });
+    insert_run(s.db(), r);
+  };
+  run("reviewed", 1, { state: "done", port: "pass", text: "Looks good." });
+  run("skipped", 2, { state: "skipped" });
+  assert.deepEqual(
+    latest_runs(s.db(), task.id).map((r) => r.id),
+    ["skipped"],
+  );
+  assert.deepEqual(
+    latest_runs(s.db(), task.id, true).map((r) => r.id),
+    ["skipped", "reviewed"],
+  );
+});
+
+// Review of HA-276's column nodes: a task held in In progress for a run that then didn't start stayed there, idle.
+test("a_task_held_for_a_run_that_doesnt_start_goes_to_review", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  const w = make(s, project, {
+    nodes: [
+      { id: "work", kind: "column", status: "in_progress" },
+      { id: "c", kind: "condition", check: "has_pr" },
+    ],
+    edges: [{ from: "work", port: "done", to: "c" }],
+  });
+  db.update_task(s.db(), task.id, [["status", "in_progress"]]);
+  // It ran once for this run of the agent's already (as when a restart settles a plan task's column again).
+  const r = db.insert_run(s.db(), task.id, "prompt");
+  db.run(s.db(), "UPDATE runs SET status='exited' WHERE id=?1", r.id);
+  assert.ok(await start(s, w.id, task.id, false, 0, "finished"));
+  await left_in_progress(s, task.id);
+  // Held again for the same run of the agent: the workflow doesn't run twice for it.
+  db.update_task(s.db(), task.id, [["status", "in_progress"]]);
+  on_finished(s, db.get_task(s.db(), task.id)!, on_finish_due(s, db.get_task(s.db(), task.id)!)!);
+  await sleep(50);
+  assert.equal(Number(db.value(s.db(), "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1", w.id)), 1);
+  const t = await left_in_progress(s, task.id);
+  assert.equal(t.status, "in_review");
 });

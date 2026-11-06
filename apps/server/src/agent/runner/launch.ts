@@ -21,6 +21,7 @@ import * as review from "../../review.ts";
 import * as attachments from "../../attachments.ts";
 import * as assistant from "../assistant.ts";
 import * as automations from "../../integrations/automations.ts";
+import * as workflows from "../../integrations/workflows.ts";
 import * as approval_rules from "../approval_rules.ts";
 import { Cancelled, load } from "../runner.ts";
 import {
@@ -180,7 +181,10 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const plan = task.kind === "task" && run.kind !== "compact" ? documents.plan_command(text) : null;
   const plan_file = docs.find(([l]) => l === "plan");
   if (plan != null && plan_file) text = documents.plan_prompt(plan_file[1], plan, true);
-  let prompt = task.session_id == null && task.kind === "task" && run.kind !== "compact" ? start_prompt(task, project, text) : text;
+  let prompt =
+    task.session_id == null && task.kind === "task" && run.kind !== "compact"
+      ? start_prompt(task, project, text, workflows.start_instructions(state, task, project))
+      : text;
   // The assistant reads its routines' reports since its last turn with the next message. They're read once the agent
   // has started with them.
   let reports: number[] = [];
@@ -229,7 +233,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     const codex_rules = rules ? approval_rules.for_mode(rules, permission_mode) : null;
     const [approval_policy, approvals_reviewer, sandbox] = approval_rules.codex_policy(codex_rules, codex.policy(permission_mode, task.kind === "review"));
     const gh_tools = uses_gh_server(tools);
-    const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
+    const base = system_prompt(told, project, parent, group, docs, github, gh_tools, workflows.board_opens_pr(state, task));
     const profiles = db.list_profiles(state.db());
     const to: Told = { codex: true, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
     let instr = instructions(base, task, to);
@@ -317,7 +321,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   if (tools_on_output) prompt = `${initialize_line(run.id, task.kind === "review")}\n${prompt}`;
   // The project's own skills and MCP servers, and the ones it turns off.
   const gh_tools = uses_gh_server(tools);
-  const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
+  const base = system_prompt(told, project, parent, group, docs, github, gh_tools, workflows.board_opens_pr(state, task));
   const profiles = db.list_profiles(state.db());
   const to: Told = { codex: false, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
   // In a file rather than an argument: the assistant's memory and a project's documents can make it longer than the most

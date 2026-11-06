@@ -30,11 +30,18 @@ import {
   running,
   save_run,
   settled,
-  trigger_status,
-  on_finish,
+  trigger,
+  column_node,
+  agent_works,
+  after_done,
+  opens_pr,
+  status_label,
   upstream,
   WORKFLOW,
+  type ColumnNode,
+  type Graph,
   type TriggerOn,
+  type Workflow,
   type Node,
   type NodeRun,
   type Run,
@@ -44,6 +51,8 @@ import * as prompt from "./prompt.ts";
 import type { Work } from "./prompt.ts";
 import * as history from "../../threads/history.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
+import * as documents from "../../agent/documents.ts";
+import type { Project } from "../../db.ts";
 
 /** Held while starting a run, so two can't start for one workflow on one task at once (made on first use: see PORTING.md). */
 let STARTING: AsyncMutex | null = null;
@@ -81,70 +90,243 @@ function task_key(c: Conn, t: Task): string {
   return `${p?.key ?? "T"}-${t.number}`;
 }
 
-/** The task entered the column it's in: start the project's workflows that trigger on that, in the background. */
+/**
+ * Column nodes a run's end just moved the task back into (see `release`), by `task|workflow|node`: the column's work is
+ * what ended, so entering it again doesn't start it again.
+ */
+const QUIET = new Set<string>();
+
+/** The project's workflows that are on, with their nodes for column `status`. */
+function columns(c: Conn, project_id: string, status: string): Array<[Workflow, ColumnNode]> {
+  return list(c, project_id).flatMap((w): Array<[Workflow, ColumnNode]> => {
+    const n = w.enabled ? column_node(w.graph, status) : undefined;
+    return n ? [[w, n]] : [];
+  });
+}
+
+/** The column node a run waits at for the task's agent's work there, which it was sent the prompt of. */
+export function waiting_column(run: Run): ColumnNode | null {
+  for (const n of run.graph.nodes) {
+    const r = run.nodes[n.id];
+    if (n.kind === "column" && r?.start && r.state === "running") return n;
+  }
+  return null;
+}
+
+/**
+ * The task entered the column it's in: start the project's workflows at their nodes for that column, in the
+ * background. In In progress and Ready for merge they start when the agent's work there is done (see `on_finish_due`
+ * and `on_merged`, which a task done as merged starts), not now. A run waiting for the work of a column the task has
+ * left is over.
+ */
 export function on_status(s: Shared, task: Task): void {
   if (task.kind !== "task" || !task.project_id) return;
   const movers = MOVING.filter((m) => m.task === task.id);
-  const moving = movers.map((m) => m.workflow);
   // Moved by a workflow's step: the runs it starts continue that one's chain.
   const chain = movers.length ? Math.max(...movers.map((m) => m.chain)) + 1 : 0;
-  let due;
+  let due: Array<[Workflow, ColumnNode]>;
   try {
-    due = list(s.db(), task.project_id).filter((w) => w.enabled && trigger_status(w.graph) === task.status && !moving.includes(w.id));
+    left_columns(s, task);
+    if (task.status === "in_progress" || task.status === "ready_for_merge") return;
+    if (db.is_merged(task)) on_merged(s, task);
+    due = columns(s.db(), task.project_id, task.status).filter(([w, n]) => !QUIET.delete(`${task.id}|${w.id}|${n.id}`));
   } catch (e) {
     console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
     return;
   }
   if (due.length && chain >= MAX_CHAIN) {
-    const names = due.map((w) => `"${w.name}"`).join(", ");
+    const names = due.map(([w]) => `"${w.name}"`).join(", ");
     s.add_event(
       task.id,
       "warn",
       `Didn't run ${due.length === 1 ? "the workflow" : "the workflows"} ${names}: workflows have moved the task ${chain} times in a row`,
-      "Their move steps may be sending the task into each other's trigger columns. Moving the task yourself (or running a workflow by hand) starts again.",
+      "Their steps may be moving the task from column to column and back. Moving the task yourself (or running a workflow by hand) starts again.",
     );
     return;
   }
-  for (const w of due) {
+  for (const [w, n] of due) {
     background(
       "starting a workflow",
-      start(s, w.id, task.id, false, chain).catch((e) => s.add_event(task.id, "warn", `Couldn't run the workflow "${w.name}"`, msg(e))),
+      start(s, w.id, task.id, false, chain, "status", n.id).catch((e) => s.add_event(task.id, "warn", `Couldn't run the workflow "${w.name}"`, msg(e))),
     );
   }
 }
 
 /**
- * The project's workflows that start when `task`'s agent finishes its work (HA-276), which then take the task on from
- * "In progress" in its place: a task that has some stays in its column rather than going to "In review".
+ * Stops the runs waiting for the work of a column the task has left. Its agent's work moves it to In progress, and a
+ * question it asks to Needs attention, without leaving the column it works for.
  */
-export function on_finish_due(s: Shared, task: Task): string[] {
-  if (task.kind !== "task" || !task.project_id || task.subproject) return [];
-  try {
-    const p = db.get_project(s.db(), task.project_id);
-    if (!p || p.archived_at) return [];
-    return list(s.db(), task.project_id)
-      .filter((w) => w.enabled && on_finish(w.graph))
-      .map((w) => w.id);
-  } catch (e) {
-    console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
-    return [];
+function left_columns(s: Shared, task: Task) {
+  if (task.status === "in_progress" || task.status === "needs_attention") return;
+  for (const r of running(s.db(), task.id)) {
+    const n = waiting_column(r);
+    if (n && n.status !== task.status) stop_run(s, r.id, `Stopped because the task left ${status_label(n.status)}.`);
   }
 }
 
-/** The task's agent finished its work (and it was left in its column for them): start the workflows `due` (see `on_finish_due`). */
-export function on_finished(s: Shared, task: Task, due: string[]): void {
-  for (const id of due) {
+/** The column node whose work the task's agent's run did, which its end is the end of (see `on_finish_due`). */
+export interface Due {
+  workflow_id: string;
+  node: ColumnNode;
+  /** The run waiting at the node, which the agent was sent its prompt by; none for In progress. */
+  run_id: string | null;
+}
+
+/**
+ * The column node that takes the task on once its agent's run ends with its work done (HA-276): the column whose
+ * prompt it was sent, or else In progress's. The task stays in its column for it, rather than going to "In review".
+ */
+export function on_finish_due(s: Shared, task: Task): Due | null {
+  if (task.kind !== "task" || !task.project_id || task.subproject) return null;
+  try {
+    const c = s.db();
+    const p = db.get_project(c, task.project_id);
+    if (!p || p.archived_at) return null;
+    for (const r of running(c, task.id)) {
+      const n = waiting_column(r);
+      if (n && db.later_run(c, task.id, r.task_run ?? "")) return { workflow_id: r.workflow_id, node: n, run_id: r.id };
+    }
+    // With nothing after it (and not waiting for finish_work), there's nothing to hold the task for.
+    const [found] = columns(c, task.project_id, "in_progress").filter(([w, n]) => n.done_when === "finish" || w.graph.edges.some((e) => e.from === n.id));
+    return found ? { workflow_id: found[0].id, node: found[1], run_id: null } : null;
+  } catch (e) {
+    console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
+    return null;
+  }
+}
+
+/** Why a task whose agent ended its run without saying its work was done (`done_when: finish`) needs attention. */
+export function unfinished(due: Due): string {
+  return `The agent ended its turn without saying its work in ${status_label(due.node.status)} is done (with finish_work)`;
+}
+
+/** The task's agent's work for `due` is done (and the task was left in its column for it): its run goes on from there. */
+export function on_finished(s: Shared, task: Task, due: Due): void {
+  const failed = (e: unknown) => {
+    let name = due.workflow_id;
+    try {
+      name = get(s.db(), due.workflow_id)?.name ?? name;
+    } catch {}
+    s.add_event(task.id, "warn", `Couldn't run the workflow "${name}"`, msg(e));
+  };
+  if (due.run_id == null) {
     background(
       "starting a workflow",
-      start(s, id, task.id, false, 0, "finished").catch((e) => {
-        let name = id;
-        try {
-          name = get(s.db(), id)?.name ?? id;
-        } catch {}
-        s.add_event(task.id, "warn", `Couldn't run the workflow "${name}"`, msg(e));
-      }),
+      start(s, due.workflow_id, task.id, false, 0, "finished", due.node.id)
+        .then((run) => {
+          if (!run) unheld(s, task.id);
+        })
+        .catch((e) => {
+          failed(e);
+          unheld(s, task.id);
+        }),
+    );
+    return;
+  }
+  const run = get_run(s.db(), due.run_id);
+  if (!run || run.state !== "running" || run_node(run, due.node.id).state !== "running") return unheld(s, task.id);
+  const r = node_entry(run, due.node.id);
+  r.state = "done";
+  r.port = "done";
+  r.finished_at = now();
+  // It holds the task now, as a run that its agent finishing started does (see `release`), from the run that ended.
+  run.source = "finished";
+  run.task_run = db.latest_run(s.db(), task.id, null);
+  run.updated_at = now();
+  save(s, run);
+  background("advancing a workflow run", advance(s, run.id));
+}
+
+/**
+ * The task was held in its column for a run that didn't start (or had ended): unless something else has it (a run that
+ * holds it, its agent working again), it goes to "In review", as it would have without the workflow.
+ */
+function unheld(s: Shared, task_id: string): void {
+  background(
+    "moving a task on",
+    (async () => {
+      const t = db.get_task(s.db(), task_id);
+      if (!t || t.status !== "in_progress" || t.running || t.waiting || t.merging || s.is_running(task_id)) return;
+      if (running(s.db(), task_id).some((r) => r.source === "finished")) return;
+      await api.update_task_inner(s, task_id, { status: "in_review" });
+    })().catch((e) => s.add_event(task_id, "warn", "Couldn't move the task on after its workflow", msg(e))),
+  );
+}
+
+/** The task was merged: the project's workflow with a node for Ready for merge goes on from there. */
+export function on_merged(s: Shared, task: Task): void {
+  if (task.kind !== "task" || !task.project_id || task.subproject) return;
+  let due: Array<[Workflow, ColumnNode]> = [];
+  try {
+    due = columns(s.db(), task.project_id, "ready_for_merge");
+  } catch (e) {
+    console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
+  }
+  for (const [w, n] of due) {
+    background(
+      "starting a workflow",
+      start(s, w.id, task.id, false, 0, "merged", n.id).catch((e) => s.add_event(task.id, "warn", `Couldn't run the workflow "${w.name}"`, msg(e))),
     );
   }
+}
+
+/** The project's workflow node for column `status` with the task's agent's work there, if any. */
+function work_column(s: Shared, task: Task, status: string): [Workflow, ColumnNode] | null {
+  if (task.kind !== "task" || !task.project_id || task.subproject) return null;
+  try {
+    return columns(s.db(), task.project_id, status).find(([, n]) => agent_works(n)) ?? null;
+  } catch (e) {
+    console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
+    return null;
+  }
+}
+
+/**
+ * What the agent is told once column node `n`'s work is done, after its prompt: how to say it's done, and what the
+ * board does then (see `after_done`).
+ */
+export function done_note(g: Graph, n: ColumnNode): string {
+  const then = after_done(g, n.id);
+  const finish = n.done_when === "finish";
+  if (!then.length && !finish) return "";
+  let p = finish
+    ? "When the work you were asked for here is complete, call `finish_work`, then end your turn with a summary of what you did. A turn that ends " +
+      "without it leaves the task in Needs attention."
+    : "When you're done, end your turn with a summary of what you did.";
+  if (then.length) p += ` The board then ${then.length === 1 ? then[0] : `${then.slice(0, -1).join(", ")} and ${then[then.length - 1]}`}.`;
+  return p;
+}
+
+/** Column node `n`'s prompt for `task` (its templates filled in), with what to do when its work is done. */
+function column_text(task: Task, key: string, w: Workflow, n: ColumnNode, run: Run | null, fallback: string): string {
+  const own = n.prompt.trim() ? prompt.render(n.prompt, task, key, w.name, run).trim() : fallback;
+  const note = done_note(w.graph, n);
+  return note ? `${own}\n\n${note}` : own;
+}
+
+/**
+ * What a task's agent is told to do when it starts, if the project's workflow has an In progress node: its prompt (or
+ * the project's start prompt), and what happens when it's done. Only for its code tasks, as the project's own is.
+ */
+export function start_instructions(s: Shared, task: Task, project: Project | null | undefined): string | null {
+  if (!project || task.task_type != null || documents.documents_only(task)) return null;
+  const found = work_column(s, task, "in_progress");
+  if (!found) return null;
+  const [w, n] = found;
+  return column_text(task, task_key(s.db(), task), w, n, null, prompts.start(project));
+}
+
+/** How the task's agent merges it, if the project's workflow's Ready for merge node has a prompt. */
+export function merge_instructions(s: Shared, task: Task): string | null {
+  const found = work_column(s, task, "ready_for_merge");
+  if (!found || !found[1].prompt.trim()) return null;
+  return prompt.render(found[1].prompt, task, task_key(s.db(), task), found[0].name, null).trim();
+}
+
+/** Whether the project's workflow opens the task's pull request once its agent's work in In progress is done. */
+export function board_opens_pr(s: Shared, task: Task): boolean {
+  const found = work_column(s, task, "in_progress");
+  return found != null && opens_pr(found[0].graph, found[1].id);
 }
 
 function skip(manual: boolean, why: string): null {
@@ -164,20 +346,37 @@ async function rev_parse(dir: string, rev: string): Promise<string | null> {
 
 /**
  * Run workflow `workflow_id` on task `task_id`. `manual` (the user, or an agent, asked for it) runs it whether or not
- * it's on or its trigger matches, with fresh rounds, and says why when it can't. Otherwise `on` is what happened: the
- * task entered its column (`status`) or its agent finished (`finished`). Returns the run, or null when there was
- * nothing to do.
+ * it's on or the task is in its column, with fresh rounds, from its start (or else its node for the task's column), and
+ * says why when it can't. Otherwise it starts at node `at`, for what `on` says happened: the task entered its column
+ * (`status`), its agent's work there is done (`finished`) or it was merged (`merged`). Returns the run, or null when
+ * there was nothing to do.
  */
-export async function start(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain = 0, on: TriggerOn = "status"): Promise<Run | null> {
+export async function start(
+  s: Shared,
+  workflow_id: string,
+  task_id: string,
+  manual: boolean,
+  chain = 0,
+  on: TriggerOn = "status",
+  at: string | null = null,
+): Promise<Run | null> {
   const release = await (STARTING ??= new AsyncMutex()).lock();
   try {
-    return await start_locked(s, workflow_id, task_id, manual, chain, on);
+    return await start_locked(s, workflow_id, task_id, manual, chain, on, at);
   } finally {
     release();
   }
 }
 
-async function start_locked(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain: number, on: TriggerOn): Promise<Run | null> {
+async function start_locked(
+  s: Shared,
+  workflow_id: string,
+  task_id: string,
+  manual: boolean,
+  chain: number,
+  on: TriggerOn,
+  at: string | null,
+): Promise<Run | null> {
   const w = get(s.db(), workflow_id);
   if (!w) throw ApiError.not_found("workflow");
   const task = db.get_task(s.db(), task_id);
@@ -187,20 +386,39 @@ async function start_locked(s: Shared, workflow_id: string, task_id: string, man
   if (!project) throw ApiError.not_found("project");
   if (project.archived_at) return skip(manual, "the project is archived");
   if (!manual && !w.enabled) return null;
-  if (!manual && on === "status" && trigger_status(w.graph) !== task.status) return null;
-  if (!manual && on === "finished" && (!on_finish(w.graph) || task.status === "done" || task.merging)) return null;
+  const from = manual
+    ? (trigger(w.graph) ?? column_node(w.graph, task.status))
+    : at != null
+      ? graph_node(w.graph, at)
+      : column_node(w.graph, on === "finished" ? "in_progress" : on === "merged" ? "ready_for_merge" : task.status);
+  if (!from) return skip(manual, `it has no start, nor a node for the task's column (${status_label(task.status)})`);
+  if (!manual) {
+    if (from.kind !== "column") return null;
+    if (on === "status" && from.status !== task.status) return null;
+    if (on === "finished" && (task.status === "done" || task.merging)) return null;
+    if (on === "merged" && task.status !== "done") return null;
+  }
+  // Waiting at a column whose prompt the agent is sent, for that work to be done (see `on_finished`).
+  const waits = !manual && on === "status" && agent_works(from);
+  // A column with nothing after it is only where lines end: entering it runs nothing (a run would hide the last
+  // one's output in the task's tabs).
+  if (!manual && !waits && on !== "finished" && !w.graph.edges.some((e) => e.from === from.id)) return null;
   // Read before the check that it isn't running, so a run that starts in between counts as later (see below).
   const task_run = db.latest_run(s.db(), task.id, null);
-  if (s.is_running(task.id)) return skip(manual, "the task's agent is still working");
+  // A merge ends while the agent that merged it is still going.
+  if (on !== "merged" && s.is_running(task.id)) return skip(manual, "the task's agent is still working");
   const previous = latest_run(s.db(), w.id, task.id);
-  if (previous?.state === "running") return skip(manual, "it's already running on this task");
+  const same = running(s.db(), task.id).some((r) => r.workflow_id === w.id && Object.entries(r.nodes).some(([id, n]) => n.start && id === from.id));
+  if (same) return skip(manual, "it's already running on this task");
   // Once for each time the agent finishes (a restart settles a plan task's column again, see runner::settle_plans).
-  if (!manual && on === "finished" && previous != null && previous.task_run === task_run) return null;
+  if (!manual && on === "finished" && previous != null && previous.source === "finished" && previous.task_run === task_run) return null;
   const head = task.worktree_path && task.worktree_state === "ready" ? await rev_parse(task.worktree_path, "HEAD") : null;
-  const at = now();
+  const at_ = now();
   const nodes: Record<string, NodeRun> = {};
   for (const n of w.graph.nodes) {
-    nodes[n.id] = n.kind === "trigger" ? { state: "done", port: "out", started_at: at, finished_at: at } : { state: "pending" };
+    if (n.id !== from.id) nodes[n.id] = { state: "pending" };
+    else if (waits) nodes[n.id] = { state: "running", start: true, started_at: at_ };
+    else nodes[n.id] = { state: "done", port: n.kind === "trigger" ? "out" : "done", start: true, started_at: at_, finished_at: at_ };
   }
   const run: Run = {
     id: new_id(),
@@ -214,16 +432,23 @@ async function start_locked(s: Shared, workflow_id: string, task_id: string, man
     nodes,
     rounds: manual ? {} : (previous?.rounds ?? {}),
     detail: null,
-    created_at: at,
-    updated_at: at,
+    created_at: at_,
+    updated_at: at_,
     finished_at: null,
   };
   // The agent may have started again while git was read: `supersede` found no run to stop then.
-  if (db.later_run(s.db(), task.id, task_run ?? "") || s.is_running(task.id)) return skip(manual, "the task's agent is working again");
+  if (on !== "merged" && (db.later_run(s.db(), task.id, task_run ?? "") || s.is_running(task.id))) return skip(manual, "the task's agent is working again");
   insert_run(s.db(), run);
   if (chain > 0) CHAIN.set(run.id, chain);
   s.add_event(task.id, "info", `Running the workflow "${w.name}"`);
   runs_changed(s, task.id);
+  if (waits && from.kind === "column") {
+    try {
+      runner.send_as(s, task.id, column_text(task, task_key(s.db(), task), w, from, run, ""), true);
+    } catch (e) {
+      record(s, run.id, from.id, Done_failed(`couldn't send the agent the column's prompt: ${msg(e)}`));
+    }
+  }
   await advance(s, run.id);
   return get_run(s.db(), run.id);
 }
@@ -240,7 +465,10 @@ export function plan(run: Run): string[] {
     for (const n of run.graph.nodes) {
       if (run_node(run, n.id).state !== "pending") continue;
       const incoming = run.graph.edges.filter((e) => e.to === n.id);
-      if (!incoming.every((e) => settled(run_node(run, e.from)))) continue;
+      // A column's `done` comes only where the run starts (waiting there until it does): others end their paths.
+      const from_settled = (from: string) =>
+        graph_node(run.graph, from)?.kind === "column" ? run_node(run, from).state !== "running" : settled(run_node(run, from));
+      if (!incoming.every((e) => from_settled(e.from))) continue;
       const taken = incoming.filter((e) => {
         const from = run_node(run, e.from);
         return from.state !== "skipped" && from.port === e.port;
@@ -363,6 +591,9 @@ export async function advance(s: Shared, run_id: string): Promise<void> {
         case "set_status":
           done = await move_task(s, run, node.status);
           break;
+        case "column":
+          done = await enter_column(s, run, node);
+          break;
         case "open_pr":
           try {
             done = await open_pr(s, run, node);
@@ -429,13 +660,27 @@ export function release(s: Shared, run: Run, why: string | null = null): void {
       if (!t || t.status !== "in_progress" || t.running || s.is_running(id) || db.later_run(s.db(), id, run.task_run ?? "")) return;
       if (reason == null) {
         s.add_event(id, "info", `The workflow "${name}" ended without moving the task, so it goes to In review`);
-        await api.update_task_inner(s, id, { status: "in_review" });
+        // Back in the column whose work this was, which isn't started again (see `on_status`).
+        const from = start_node(run);
+        const quiet = from?.kind === "column" && from.status === "in_review" ? `${id}|${run.workflow_id}|${from.id}` : null;
+        if (quiet) QUIET.add(quiet);
+        try {
+          await api.update_task_inner(s, id, { status: "in_review" });
+        } finally {
+          if (quiet) QUIET.delete(quiet);
+        }
       } else {
         await api.update_task_inner(s, id, { status: "needs_attention" });
         attention(s, id, reason);
       }
     })().catch((e) => s.add_event(id, "warn", "Couldn't move the task on after its workflow", msg(e))),
   );
+}
+
+/** The node a run started at. */
+function start_node(run: Run): Node | undefined {
+  const id = Object.keys(run.nodes).find((k) => run.nodes[k].start);
+  return id != null ? graph_node(run.graph, id) : undefined;
 }
 
 /** Gives a task in "Needs attention" its reason, unless it has moved on meanwhile. */
@@ -458,6 +703,8 @@ export function node_name(n: Node): string {
       return "Move the task";
     case "open_pr":
       return "Open a pull request";
+    case "column":
+      return status_label(n.status);
   }
 }
 
@@ -755,6 +1002,60 @@ function end_nodes(run: Run, why: string): string[] {
   return threads;
 }
 
+/**
+ * An edge into a column node: moves the task there, where the column's node starts the next run (see `on_status`). In
+ * In progress the agent is given its work, which ends the run as a send does: a task that hasn't started starts, and
+ * one that has is sent the issues the run found, or else the column's prompt.
+ */
+async function enter_column(s: Shared, run: Run, node: Node): Promise<Done | null> {
+  if (node.kind !== "column") return Done_failed("not a column");
+  let task = db.get_task(s.db(), run.task_id);
+  if (!task) return Done_failed("the task is gone");
+  if (task.status !== node.status) {
+    const moved = await move_task(s, run, node.status);
+    if (moved.state === "failed") return moved;
+    task = db.get_task(s.db(), run.task_id);
+    if (!task) return Done_failed("the task is gone");
+  }
+  if (node.status !== "in_progress" || task.status !== "in_progress" || task.waiting || task.merging || s.is_running(task.id)) return Done_port_none();
+  const w = get(s.db(), run.workflow_id);
+  const issues = prompt.issues(run);
+  const key = task_key(s.db(), task);
+  const text =
+    task.session_id == null
+      ? ""
+      : issues.length
+        ? prompt.fixes(w?.name ?? "", issues)
+        : w && node.prompt.trim()
+          ? column_text(task, key, w, node, run, "")
+          : null;
+  if (text == null) return Done_port_none();
+  // Ends the run, and stops its other steps: the agent's work is about to change.
+  const current = get_run(s.db(), run.id);
+  if (!current || current.state !== "running") return null;
+  const at = now();
+  const r = node_entry(current, node.id);
+  r.state = "done";
+  delete r.port;
+  r.finished_at = at;
+  const threads = end_nodes(current, "Stopped because the task's agent was given its work.");
+  current.state = "done";
+  current.finished_at = at;
+  current.updated_at = at;
+  save(s, current);
+  CHAIN.delete(current.id);
+  for (const t of threads) runner.stop(s, t);
+  try {
+    runner.send_as(s, task.id, text, true);
+  } catch (e) {
+    s.add_event(task.id, "error", `The workflow "${w?.name ?? ""}" couldn't give the agent its work`, msg(e));
+  }
+  return null;
+}
+
+/** A node that ended without an outcome: a column, whose outcome is the next run's. */
+const Done_port_none = (): Done => ({ state: "done", port: null, text: null });
+
 async function move_task(s: Shared, run: Run, status: string): Promise<Done> {
   const key = { task: run.task_id, workflow: run.workflow_id, chain: CHAIN.get(run.id) ?? 0 };
   MOVING.push(key);
@@ -797,10 +1098,13 @@ async function open_pr(s: Shared, run: Run, node: Node): Promise<Done> {
   if (node.kind !== "open_pr") return Done_failed("not a pull request step");
   const task = db.get_task(s.db(), run.task_id);
   if (!task) throw "the task is gone";
-  if (task.pr_url?.trim()) return { state: "done", port: "exists", text: task.pr_url };
+  const has = task.pr_url?.trim() ? { state: "done", port: "exists", text: task.pr_url } : null;
+  // One it has already gets its branch's new commits.
+  if (has && (!task.branch || !task.worktree_path || task.worktree_state !== "ready")) return has;
   const project = task.project_id ? db.get_project(s.db(), task.project_id) : null;
   if (!project) throw "the task has no project";
   const [work, is_elsewhere] = await elsewhere(s, task);
+  if (is_elsewhere && has) return has;
   if (is_elsewhere) throw "the task's branch has no commits of its own to open a pull request for";
   const dir = task.worktree_path!;
   const branch = task.branch!;
@@ -824,6 +1128,7 @@ async function open_pr(s: Shared, run: Run, node: Node): Promise<Done> {
   } catch {}
   const [pushed, push_failed] = await call("git_push", { remote: gh.remote, branch });
   if (push_failed) throw `couldn't push ${branch} to ${gh.remote}: ${pushed}`;
+  if (has) return has;
   const title = prompt.render(node.title, task, work.key, workflow, run).trim() || `${work.key}: ${task.title}`;
   const body =
     prompt.render(node.body, task, work.key, workflow, run).trim() || history.last_assistant_text(s.db(), task.id)?.trim() || task.description.trim();
@@ -968,19 +1273,31 @@ export function stop_run(s: Shared, run_id: string, why: string, move_on = true)
   return true;
 }
 
-function stop_all(s: Shared, task_id: string, why: string, move_on = true): boolean {
+function stop_all(s: Shared, task_id: string, why: string, move_on = true, keep_waiting = false): boolean {
   let rs: Run[] = [];
   try {
     rs = running(s.db(), task_id);
   } catch {}
   let any = false;
-  for (const r of rs) any = stop_run(s, r.id, why, move_on) || any;
+  for (const r of rs) if (!keep_waiting || !waiting_column(r)) any = stop_run(s, r.id, why, move_on) || any;
   return any;
 }
 
-/** The task's agent started working again: its workflows' runs in progress are out of date. */
+/**
+ * The task's agent started working again: its workflows' runs in progress are out of date, but those waiting for its
+ * work in a column (see `waiting_column`), which this may be.
+ */
 export function supersede(s: Shared, task: Task): void {
-  stop_all(s, task.id, "Stopped because the agent started working on the task again.", false);
+  stop_all(s, task.id, "Stopped because the agent started working on the task again.", false, true);
+}
+
+/** Stops workflow `workflow_id`'s runs that wait for the work of a column (it's off, say). */
+export function stop_waiting(s: Shared, workflow_id: string, why: string): void {
+  let rs: Run[] = [];
+  try {
+    rs = running(s.db(), null);
+  } catch {}
+  for (const r of rs) if (r.workflow_id === workflow_id && waiting_column(r)) stop_run(s, r.id, why);
 }
 
 /** The user stopped the task: stop its workflows' runs too. Returns whether any was running. */
@@ -1005,8 +1322,10 @@ export function resume(s: Shared): void {
     for (const n of run.graph.nodes) {
       const r = node_entry(run, n.id);
       if (r.state !== "running") continue;
-      // Agents carry on over a restart, and their runs' ends end their steps (see `finished`).
+      // Agents carry on over a restart, and their runs' ends end their steps (see `finished`), as the task's agent's
+      // do a column's whose work it was given.
       if (n.kind === "agent" && r.thread_id && s.is_running(r.thread_id)) continue;
+      if (n.kind === "column" && r.start) continue;
       r.state = "failed";
       r.port = "failed";
       r.text = n.kind === "agent" ? "Interrupted: the server stopped before this step's agent started." : "Interrupted: the server stopped while this ran.";

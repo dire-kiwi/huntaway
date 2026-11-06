@@ -13,6 +13,7 @@ import {
   type Reviewer,
   type WatchPullRequests,
   type Workflow,
+  workflowColumns,
 } from "../../../api";
 import { onWorkflowsChanged, useStore } from "../../../store";
 import { WORKFLOWS_API } from "../../task/Workflows";
@@ -303,8 +304,8 @@ function useProjectSkillNames(project: Project, on: boolean): string[] {
 }
 
 /**
- * Which of the project's workflows (HA-276) take over from these settings: those that start when a task moves to In
- * review, or when its agent finishes (which then keeps the task out of In review until the workflow moves it there).
+ * Which of the project's workflows (HA-276) take over from these settings: those with a node for In review, or for In
+ * progress (which keeps the task out of In review until the workflow moves it there once its agent is done).
  */
 function WorkflowsNote({ project, host }: { project: Project; host: Host | undefined }) {
   const [list, setList] = useState<Workflow[]>([]);
@@ -321,20 +322,17 @@ function WorkflowsNote({ project, host }: { project: Project; host: Host | undef
       if (h === project.host_id && projectId === project.id) load();
     });
   }, [supported, project.host_id, project.id]);
-  const trigger = (w: Workflow) => {
-    const t = w.graph.nodes.find((n) => n.kind === "trigger");
-    return t?.kind === "trigger" ? t : null;
-  };
-  const review = list.filter((w) => w.enabled && trigger(w)?.on === "status" && trigger(w)?.status === "in_review");
-  const finished = list.filter((w) => w.enabled && trigger(w)?.on === "finished");
+  const review = list.filter((w) => w.enabled && workflowColumns(w.graph).includes("in_review"));
+  // A node for In progress takes the task on once its agent is done there.
+  const finished = list.filter((w) => w.enabled && w.graph.nodes.some((n) => n.kind === "column" && n.status === "in_progress"));
   if (!review.length && !finished.length) return null;
   const names = (ws: Workflow[]) => ws.map((w) => `"${w.name}"`).join(", ");
   return (
     <div className="space-y-1 rounded-md border border-line/70 bg-raised/40 p-2.5 text-[12px] text-muted" data-testid="review-workflows-note">
       {finished.length > 0 && (
         <p>
-          {finished.length === 1 ? "The workflow" : "The workflows"} {names(finished)} take{finished.length === 1 ? "s" : ""} a task on when its agent finishes:
-          it stays in In progress until a workflow moves it, so reviews here start only once one moves it to In review.
+          {finished.length === 1 ? "The workflow" : "The workflows"} {names(finished)} take{finished.length === 1 ? "s" : ""} a task on when its agent is done
+          in In progress: it stays in In progress until a workflow moves it, so reviews here start only once one moves it to In review.
         </p>
       )}
       {review.length > 0 && (

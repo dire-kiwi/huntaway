@@ -1,13 +1,19 @@
 // Port of server/src/integrations/workflows.rs (HA-173's branch, ported by HA-189).
 /**
- * Workflows: a project's automations that act on its tasks, as graphs of nodes (HA-173, API 107).
+ * Workflows: a project's automations that act on its tasks, as graphs of nodes (HA-173, API 107): since HA-276 (API
+ * 123), a task's whole way across the board, column by column.
  *
- * A workflow's **trigger** node starts a run on a task: when the task enters a column (such as *In review*, which is
- * where its agent's finished work goes), when the task's agent finishes its work (`on: finished`, HA-276: the task then
- * stays in *In progress* rather than going to *In review*, and the workflow moves it on, or `release` does once it ends),
- * or only when it's run by hand
- * (`POST /workflows/{id}/run`, `run_workflow`).
- * From there the run follows the graph's edges, out of the **port** each node ends on:
+ * A **column** node starts a run on a task that enters its column. Its prompt is what the task's agent is sent then,
+ * with what the board does once that work is done: for In progress, the task's start prompt (an edge into In progress
+ * gives a started task the issues the run found, or else the prompt), and for Ready for merge, its merge instructions.
+ * Where the agent works (In progress, Ready for merge, a column with a prompt), the run waits for that work to be done:
+ * the agent's run ending (a question for the user, or a failure, leaves the task in Needs attention meanwhile), or,
+ * with `done_when: finish`, its saying so with `finish_work`; for Ready for merge, the task's merge. Then it goes on
+ * from the column's `done`, and the task stays in its column rather than going to *In review*: the workflow moves it on,
+ * or `release` does once the run ends. Elsewhere `done` follows at once. An edge into a column node moves the task
+ * there, which ends that path of the run: what comes after the column is the next run's. The **trigger** node starts a
+ * run by hand (`POST /workflows/{id}/run`, `run_workflow`); a workflow without one is run by hand from its node for the
+ * task's column. From there the run follows the graph's edges, out of the **port** each node ends on:
  *
  * - a **condition** checks the task (`yes` or `no`): has its work changed since the workflow last ran on it, has
  *   its branch commits of its own, has it a pull request, or a type or label;
@@ -18,19 +24,21 @@
  *   before it in the graph (those with a path to it), and with `input_only` only that and its prompt, not the task's
  *   work, so a step can process another's output (a summary, say) with a skill in a fresh context;
  * - **open a pull request** for the task's branch, which the board does itself (pushing the branch and creating it
- *   with the gh tools, as the task's GitHub account): `opened`, `exists` (the task has one already) or `failed`. Its
- *   title and body are templates, so an agent step before it can write them;
+ *   with the gh tools, as the task's GitHub account): `opened`, `exists` (the task has one already, which gets the
+ *   branch's new commits) or `failed`. Its title and body are templates, so an agent step before it can write them;
  * - **send to the task's agent** sends a message (by default the issues the run's agents found) to the task's
  *   agent: at most `max_rounds` runs in a row (`sent`), then `exhausted`, which with nothing after it leaves the
- *   task in *Needs attention*. Sending ends the run, as the agent's work changes under it;
- * - **move the task** to another column (`out`).
+ *   task in *Needs attention*. Sending ends the run, as the agent's work changes under it.
  *
  * A node runs once every node with an edge into it has finished, when one of those edges was taken (`join: any`,
  * the default) or all of them (`join: all`); otherwise it's skipped, and so are the nodes only it leads to. Nodes
- * with several outputs side by side run at once, so two agent steps after the trigger review together.
+ * with several outputs side by side run at once, so two agent steps after a column review together. A graph has a
+ * node for each column at most, and a column where the agent works belongs to one workflow that's on.
  *
  * A run keeps the graph as it was when it started, so changing a workflow doesn't change runs in progress. A run in
- * progress is stopped when the task's agent starts working again (its work is changing) or the task is stopped.
+ * progress is stopped when the task's agent starts working again (its work is changing), but one waiting for that
+ * work in a column, or when the task is stopped. Graphs from before column nodes (a trigger on a column or on the
+ * agent finishing, and `set_status` moves) are read as column nodes.
  */
 import * as db from "../db.ts";
 import type { Conn, Project } from "../db.ts";
@@ -56,7 +64,13 @@ const MAX_TEXT = 20_000;
 // ---------- what a workflow is ----------
 
 export type Join = "any" | "all";
-export type TriggerOn = "status" | "finished" | "manual";
+/**
+ * What a run starts from: the task entering a column node's column (`status`), its agent finishing the work it was
+ * given there (`finished`), its merge (`merged`), or a run by hand (`manual`).
+ */
+export type TriggerOn = "status" | "finished" | "merged" | "manual";
+/** When a column node's work is done: when the agent's run ends (`run_end`), or when it calls `finish_work` (`finish`). */
+export type DoneWhen = "run_end" | "finish";
 /**
  * `changed`: the workflow hasn't finished a run on the task, or its commit or its agent's work changed since.
  * `has_commits`: its branch has commits of its own. `has_pr`: it has a pull request. `task_type`: it's of type `value`
@@ -66,17 +80,24 @@ export type Check = "changed" | "has_commits" | "has_pr" | "task_type" | "label"
 /** `text`: its last message. `verdict`: `pass` or `issues`, reported with `submit_review`. */
 export type Output = "text" | "verdict";
 
-const TRIGGER_ONS: TriggerOn[] = ["status", "finished", "manual"];
+/** What a trigger node can be: before HA-276's column nodes, `status` and `finished` too, which are read as column nodes. */
+const TRIGGER_ONS = ["status", "finished", "manual"];
+const DONE_WHENS: DoneWhen[] = ["run_end", "finish"];
 const CHECKS: Check[] = ["changed", "has_commits", "has_pr", "task_type", "label"];
 const OUTPUTS: Output[] = ["text", "verdict"];
-const KINDS = ["trigger", "condition", "agent", "send_to_task", "set_status", "open_pr"];
+const KINDS = ["trigger", "condition", "agent", "send_to_task", "set_status", "open_pr", "column"];
 
 export type NodeKind =
+  /** A run by hand (`POST /workflows/{id}/run`). Its `on: status` and `on: finished` from before are read as column nodes. */
+  | { kind: "trigger"; on: "manual" }
   /**
-   * What starts a run: the task entering `status` (`on: status`), its agent finishing its work (`on: finished`), or only
-   * a run by hand (`on: manual`).
+   * A column of the board (HA-276). A task entering it starts a run here, and `prompt` is what the task's agent is
+   * sent then (see `agent_works`): for In progress, it's the task's start prompt, and for Ready for merge its merge
+   * instructions. Its `done` port is when that work is done: the agent's run ending (or, with `done_when: finish`, its
+   * calling `finish_work`), its merge, or straight away where the agent has no work. An edge into it moves the task
+   * there, which ends that path of the run: what comes after the column is the next run's.
    */
-  | { kind: "trigger"; on: TriggerOn; status?: string }
+  | { kind: "column"; status: string; prompt: string; done_when?: DoneWhen }
   /** A check on the task: `yes` or `no`. `value` is the type or label for `task_type` and `label`. */
   | { kind: "condition"; check: Check; value?: string }
   /**
@@ -99,7 +120,7 @@ export type NodeKind =
     }
   /** A message to the task's agent; empty sends the issues the run's agent steps found. */
   | { kind: "send_to_task"; message: string; max_rounds: number }
-  /** Moves the task to another column. */
+  /** Moves the task to another column: from before HA-276, and read as a column node. */
   | { kind: "set_status"; status: string }
   /**
    * Opens a pull request for the task's branch: `title` and `body` are templates (empty: the task's key and title, and
@@ -161,9 +182,20 @@ export function Node_from_json(v: any): Node {
   const kind = de_enum(v, "kind", KINDS as any) as NodeKind["kind"];
   const n: any = { id, kind };
   switch (kind) {
-    case "trigger":
-      n.on = de_enum(v, "on", TRIGGER_ONS);
-      put(n, "status", de_opt_str(v, "status"));
+    case "trigger": {
+      const on = de_enum(v, "on", TRIGGER_ONS as any);
+      const status = de_opt_str(v, "status");
+      // From before column nodes: a start on a column, or on the agent finishing (in In progress), is that column's node.
+      if (on === "status" && status == null) fail("a start on a column needs its column (`status`)");
+      if (on === "status") Object.assign(n, { kind: "column", status, prompt: "" });
+      else if (on === "finished") Object.assign(n, { kind: "column", status: "in_progress", prompt: "" });
+      else n.on = "manual";
+      break;
+    }
+    case "column":
+      n.status = de_str(v, "status");
+      n.prompt = de_def_str(v, "prompt");
+      if (de_enum(v, "done_when", DONE_WHENS, "run_end") === "finish") n.done_when = "finish";
       break;
     case "condition":
       n.check = de_enum(v, "check", CHECKS);
@@ -188,7 +220,8 @@ export function Node_from_json(v: any): Node {
       n.max_rounds = v.max_rounds === undefined ? 2 : de_uint(v, "max_rounds");
       break;
     case "set_status":
-      n.status = de_str(v, "status");
+      // A move is an edge into the column's node.
+      Object.assign(n, { kind: "column", status: de_str(v, "status"), prompt: "" });
       break;
     case "open_pr":
       n.title = de_def_str(v, "title");
@@ -211,7 +244,16 @@ function Edge_from_json(v: any): Edge {
 export function Graph_from_json(v: any): Graph {
   if (v === null || typeof v !== "object" || Array.isArray(v)) fail("invalid type: expected struct Graph");
   const seq = (k: string): any[] => (v[k] === undefined ? [] : Array.isArray(v[k]) ? v[k] : fail(`invalid type for \`${k}\`: expected a sequence`));
-  return { nodes: seq("nodes").map(Node_from_json), edges: seq("edges").map(Edge_from_json) };
+  const nodes = seq("nodes").map(Node_from_json);
+  const edges = seq("edges").map(Edge_from_json);
+  // The `out` of a start or a move read as a column node is its `done`.
+  const read_as_column = new Set(
+    seq("nodes")
+      .filter((n: any) => n?.kind === "set_status" || (n?.kind === "trigger" && n?.on !== "manual"))
+      .map((n: any) => n.id),
+  );
+  for (const e of edges) if (e.port === "out" && read_as_column.has(e.from)) e.port = "done";
+  return { nodes, edges };
 }
 
 /** The ports a node of this kind can end on. */
@@ -220,6 +262,8 @@ export function ports(n: NodeKind): string[] {
     case "trigger":
     case "set_status":
       return ["out"];
+    case "column":
+      return ["done"];
     case "condition":
       return ["yes", "no"];
     case "agent":
@@ -239,16 +283,80 @@ export function trigger(g: Graph): Node | undefined {
   return g.nodes.find((n) => n.kind === "trigger");
 }
 
-/** The column whose tasks entering it start a run, if its trigger is one. */
-export function trigger_status(g: Graph): string | null {
-  const t = trigger(g);
-  return t?.kind === "trigger" && t.on === "status" ? (t.status ?? null) : null;
+export type ColumnNode = Node & { kind: "column" };
+
+/** The graph's node for column `status`: a graph has one for each column at most (an older one's first counts). */
+export function column_node(g: Graph, status: string): ColumnNode | undefined {
+  return g.nodes.find((n): n is ColumnNode => n.kind === "column" && n.status === status);
 }
 
-/** Whether its trigger is the task's agent finishing its work. */
-export function on_finish(g: Graph): boolean {
-  const t = trigger(g);
-  return t?.kind === "trigger" && t.on === "finished";
+/**
+ * Whether the task's agent works in column node `n`'s column, so that its `done` waits for that work: In progress
+ * (its agent's work), Ready for merge (its merge), and any other column with a prompt (which the agent is sent). In
+ * the other columns `done` follows at once. Needs attention, where the agent waits for the user, has no prompt.
+ */
+export function agent_works(n: Node): boolean {
+  return n.kind === "column" && (n.status === "in_progress" || n.status === "ready_for_merge" || n.prompt.trim() !== "");
+}
+
+/**
+ * What the board does once column node `id`'s work is done, as its prompt tells the agent: the steps after its `done`
+ * up to the columns they move the task to, when they go well (both ways of a check, but not after a failure).
+ */
+export function after_done(g: Graph, id: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>([id]);
+  let next = g.edges.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
+  while (next.length) {
+    const later: string[] = [];
+    for (const to of next) {
+      if (seen.has(to)) continue;
+      seen.add(to);
+      const n = graph_node(g, to);
+      if (!n) continue;
+      if (n.kind === "column") {
+        out.push(`moves the task to ${status_label(n.status)}`);
+        continue;
+      }
+      if (n.kind === "open_pr") out.push("pushes your branch and opens its pull request (so don't open one yourself)");
+      else if (n.kind === "agent") out.push(n.output === "verdict" ? `has "${n.name}" review your work` : `has "${n.name}" read your work`);
+      else if (n.kind === "send_to_task") out.push("sends you what it found to fix");
+      // What happens when it goes well: not after a failure, or a send out of rounds.
+      later.push(...g.edges.filter((e) => e.from === to && e.port !== "failed" && e.port !== "exhausted").map((e) => e.to));
+    }
+    next = later;
+  }
+  return out.filter((x, i) => out.indexOf(x) === i);
+}
+
+/** Whether the board opens the pull request once column node `id`'s work is done (before it moves the task on). */
+export function opens_pr(g: Graph, id: string): boolean {
+  const seen = new Set<string>([id]);
+  const stack = g.edges.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
+  while (stack.length) {
+    const to = stack.pop()!;
+    if (seen.has(to)) continue;
+    seen.add(to);
+    const n = graph_node(g, to);
+    if (!n || n.kind === "column") continue;
+    if (n.kind === "open_pr") return true;
+    stack.push(...g.edges.filter((e) => e.from === to).map((e) => e.to));
+  }
+  return false;
+}
+
+/** A column's name on the board. */
+export function status_label(status: string): string {
+  const names: Record<string, string> = {
+    backlog: "Backlog",
+    todo: "To do",
+    in_progress: "In progress",
+    needs_attention: "Needs attention",
+    in_review: "In review",
+    ready_for_merge: "Ready for merge",
+    done: "Done",
+  };
+  return names[status] ?? status;
 }
 
 /** The agent steps with a path to node `id`, in the graph's order: whose output it's given. */
@@ -305,6 +413,8 @@ export interface NodeRun {
   issues?: string[];
   /** The thread's last run before this step's (empty if it had none), so an earlier run's late end doesn't end it. */
   after_run?: string;
+  /** It's where the run started (a column, or the start for a run by hand). */
+  start?: boolean;
   started_at?: string;
   finished_at?: string;
 }
@@ -318,7 +428,10 @@ export interface Run {
   id: string;
   workflow_id: string;
   task_id: string;
-  /** `status` (its trigger) or `manual`. */
+  /**
+   * What started it: `status` (the task entering a column), `finished` (its agent's work in a column being done, which
+   * a run waiting for it becomes, see engine.on_finished), `merged`, or `manual`.
+   */
   source: string;
   /** running, done or stopped */
   state: string;
@@ -393,16 +506,29 @@ export function get_run(c: Conn, id: string): Run | null {
   return r ? Run_from_row(r) : null;
 }
 
-/** The latest run of each workflow on the task, newest first. */
-export function latest_runs(c: Conn, task_id: string): Run[] {
-  return db
-    .all(
-      c,
-      `SELECT * FROM workflow_runs r WHERE task_id=?1 AND rowid = (SELECT MAX(rowid) FROM workflow_runs WHERE task_id=?1 AND workflow_id=r.workflow_id)
-       ORDER BY created_at DESC, rowid DESC`,
-      task_id,
-    )
-    .map(Run_from_row);
+/**
+ * The latest run of each workflow on the task, newest first. With `steps`, also the latest earlier run in which each
+ * of its agent steps ran, where the latest skipped it (a run from one column, say, when the step comes after another),
+ * so the task's tabs show each step's last output.
+ */
+export function latest_runs(c: Conn, task_id: string, steps = false): Run[] {
+  const all = db.all(c, "SELECT * FROM workflow_runs WHERE task_id=?1 ORDER BY rowid DESC", task_id).map(Run_from_row);
+  const out: Run[] = [];
+  const ran = (r: Run, id: string) => {
+    const st = r.nodes[id]?.state;
+    return st != null && st !== "pending" && st !== "skipped";
+  };
+  for (const latest of all) {
+    if (out.some((r) => r.workflow_id === latest.workflow_id)) continue;
+    out.push(latest);
+    if (!steps) continue;
+    for (const n of latest.graph.nodes) {
+      if (n.kind !== "agent" || ran(latest, n.id)) continue;
+      const earlier = all.find((r) => r.workflow_id === latest.workflow_id && r.id !== latest.id && ran(r, n.id));
+      if (earlier && !out.includes(earlier)) out.push(earlier);
+    }
+  }
+  return out.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : all.indexOf(a) - all.indexOf(b)));
 }
 
 /** The workflow's latest run on the task. */
@@ -449,7 +575,7 @@ export function insert_run(c: Conn, r: Run): void {
 export function save_run(c: Conn, r: Run): void {
   db.run(
     c,
-    "UPDATE workflow_runs SET state=?2, nodes=?3, rounds=?4, detail=?5, updated_at=?6, finished_at=?7 WHERE id=?1",
+    "UPDATE workflow_runs SET state=?2, nodes=?3, rounds=?4, detail=?5, updated_at=?6, finished_at=?7, source=?8, task_run=?9 WHERE id=?1",
     r.id,
     r.state,
     JSON.stringify(sorted(r.nodes)),
@@ -457,6 +583,8 @@ export function save_run(c: Conn, r: Run): void {
     r.detail,
     r.updated_at,
     r.finished_at,
+    r.source,
+    r.task_run,
   );
 }
 
@@ -495,6 +623,7 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
   const ids = new Set<string>();
   let triggers = 0;
   let agents = 0;
+  const columns = new Set<string>();
   for (const n of g.nodes) {
     n.id = n.id.trim();
     if (!n.id || n.id.length > 40 || !/^[A-Za-z0-9_-]+$/.test(n.id)) throw bad(`node id ${JSON.stringify(n.id)} must be 1 to 40 letters, digits, - or _`);
@@ -506,11 +635,21 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
     }
     const id = n.id;
     switch (n.kind) {
-      case "trigger": {
+      case "trigger":
         triggers += 1;
-        set_opt(n, "status", trimmed(n.status));
-        if (n.on !== "status") delete n.status;
-        else if (!n.status || !db.STATUSES.includes(n.status)) throw bad(`trigger ${id} needs the column (status) whose tasks entering it start a run`);
+        break;
+      case "column": {
+        n.status = n.status.trim();
+        if (!db.STATUSES.includes(n.status)) throw bad(`column ${id} needs a column: one of ${db.STATUSES.join(", ")}`);
+        if (n.status === "done" && n.prompt.trim()) throw bad(`column ${id} can't have a prompt: the agent has no work in Done`);
+        if (columns.has(n.status)) throw bad(`two nodes are the column ${status_label(n.status)}: a workflow has one node for each column`);
+        columns.add(n.status);
+        if (bytes(n.prompt) > MAX_TEXT) throw bad(`column ${id}'s prompt is longer than ${MAX_TEXT} bytes`);
+        if (n.status === "needs_attention" && n.prompt.trim()) {
+          throw bad(`column ${id} can't have a prompt: in Needs attention the agent waits for the user`);
+        }
+        if (!agent_works(n)) delete n.done_when;
+        else if (n.status === "ready_for_merge" && n.done_when) throw bad(`column ${id}'s work is done when the task is merged, not when the agent says so`);
         break;
       }
       case "condition": {
@@ -570,7 +709,8 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
       }
     }
   }
-  if (triggers !== 1) throw bad("a workflow needs exactly one trigger node");
+  if (triggers > 1) throw bad("a workflow has one start for runs by hand at most");
+  if (!triggers && !columns.size) throw bad("a workflow needs a column node (or a start, to run it only by hand)");
   if (agents > MAX_AGENTS) throw bad(`a workflow has at most ${MAX_AGENTS} agent steps`);
   const seen = new Set<string>();
   for (const e of g.edges) {
@@ -579,28 +719,36 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
     const to = graph_node(g, e.to);
     if (!to) throw bad(`an edge goes to node ${e.to}, which isn't in the graph`);
     if (!ports(from).includes(e.port)) throw bad(`node ${e.from} has no port ${e.port} (it has ${ports(from).join(", ")})`);
-    if (to.kind === "trigger") throw bad("no edge can go into the trigger");
+    if (to.kind === "trigger") throw bad("no edge can go into the start");
+    if (to.kind === "column" && to.status === "done") throw bad("no edge can go into Done: a task is done once it's merged (from Ready for merge)");
     const key = JSON.stringify([e.from, e.port, e.to]);
     if (seen.has(key)) throw bad(`the edge from ${e.from}.${e.port} to ${e.to} is there twice`);
     seen.add(key);
   }
   const c_ = cycle(g);
   if (c_ !== null) {
-    throw bad(`the graph goes round in a loop through ${c_}: a workflow runs from its trigger forward (send to the task's agent to go round again)`);
+    throw bad(
+      `the graph goes round in a loop through ${c_}: a run goes forward from where it starts (go round again through a column, or by sending to the task's agent)`,
+    );
   }
   return g;
 }
 
-/** A node on a cycle, if the graph has one. */
+/**
+ * A node on a cycle, if the graph has one. A path into a column ends there (the next run starts from it), so a cycle
+ * through a column is no loop.
+ */
 export function cycle(g: Graph): string | null {
+  const into_column = (e: Edge) => graph_node(g, e.to)?.kind === "column";
+  const edges = g.edges.filter((e) => !into_column(e));
   const indegree = new Map<string, number>(g.nodes.map((n) => [n.id, 0]));
-  for (const e of g.edges) indegree.set(e.to, (indegree.get(e.to) ?? 0) + 1);
+  for (const e of edges) indegree.set(e.to, (indegree.get(e.to) ?? 0) + 1);
   const ready = [...indegree].filter(([, d]) => d === 0).map(([n]) => n);
   let done = 0;
   while (ready.length) {
     const n = ready.pop()!;
     done += 1;
-    for (const e of g.edges.filter((e) => e.from === n)) {
+    for (const e of edges.filter((e) => e.from === n)) {
       const d = indegree.get(e.to)! - 1;
       indegree.set(e.to, d);
       if (d === 0) ready.push(e.to);
@@ -615,6 +763,25 @@ export function cycle(g: Graph): string | null {
 }
 
 // ---------- changing workflows ----------
+
+/**
+ * Checks that no other workflow of the project that's on (but `except`) has a node for a column where `graph` waits for
+ * the agent's work (see `agent_works`): the agent is sent one column's prompt, and its work goes on from one node.
+ */
+function check_columns(c: Conn, project_id: string, except: string | null, graph: Graph) {
+  for (const w of list(c, project_id)) {
+    if (w.id === except || !w.enabled) continue;
+    for (const n of graph.nodes) {
+      if (n.kind !== "column") continue;
+      const other = column_node(w.graph, n.status);
+      if (other && (agent_works(n) || agent_works(other))) {
+        throw ApiError.conflict(
+          `the workflow "${w.name}" has the column ${status_label(n.status)} already, where the task's agent works: a column with the agent's work belongs to one workflow that's on`,
+        );
+      }
+    }
+  }
+}
 
 function changed(s: Shared, project_id: string, id: string) {
   s.emit({ type: "workflows_changed", project_id, workflow_id: id });
@@ -633,6 +800,7 @@ export function create(s: Shared, project_id: string, b: Record<string, any>): W
   const name = check_name(b.name ?? null);
   const graph = check_graph(s.db(), p, b.graph ?? null);
   const enabled = check_enabled(b.enabled, true);
+  if (enabled) check_columns(s.db(), p.id, null, graph);
   const id = new_id();
   const at = now();
   db.run(
@@ -658,8 +826,11 @@ export function update(s: Shared, id: string, b: Record<string, any>): Workflow 
   const name = b.name == null ? w.name : check_name(b.name);
   const graph = b.graph == null ? w.graph : check_graph(s.db(), p, b.graph);
   const enabled = check_enabled(b.enabled, w.enabled);
+  if (enabled && (b.graph != null || !w.enabled)) check_columns(s.db(), p.id, id, graph);
   db.run(s.db(), "UPDATE workflows SET name=?2, graph=?3, enabled=?4, updated_at=?5 WHERE id=?1", id, name, JSON.stringify(graph), enabled, now());
   changed(s, w.project_id, id);
+  // Turned off, it no longer waits for its columns' work.
+  if (!enabled && w.enabled) engine.stop_waiting(s, id, "Stopped because the workflow was turned off.");
   const out = get(s.db(), id);
   if (!out) throw ApiError.not_found("workflow");
   return out;

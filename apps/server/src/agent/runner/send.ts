@@ -142,7 +142,7 @@ export function send_message(state: Shared, task_id: string, message_in: Queued 
       return [db.insert_message(c, task_id, "user", msg)];
     } else if (first_run && task.kind === "task") {
       const project = task.project_id != null ? db.get_project(c, task.project_id) : null;
-      const start = prompts.start_task(task, project);
+      const start = workflows.start_instructions(state, task, project) ?? prompts.start_task(task, project);
       const msg: any = { text: start, auto: true, start: true };
       if (message.routine) msg.routine = true;
       return [db.insert_message(c, task_id, "user", msg)];

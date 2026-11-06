@@ -522,10 +522,15 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   }
   // A run that may have only written or revised the task's plan: its column waits for its checkpoints (see plan.ts).
   const plan_check = is_task && status === "in_review" && plan.candidate(state, task, run);
-  // Workflows that take the task on once its agent finishes (HA-276): it stays in its column for them, rather than
-  // going to "In review".
-  const finish_due = is_task && status === "in_review" ? workflows.on_finish_due(state, task) : [];
-  if (finish_due.length) status = null;
+  // The workflow column whose work this was takes the task on once it's done (HA-276): it stays in its column for it,
+  // rather than going to "In review". One that waits for the agent to say so needs attention without that (but not
+  // for a plan, which isn't the work yet).
+  let finish_due = is_task && status === "in_review" && !task.merging ? workflows.on_finish_due(state, task) : null;
+  if (finish_due && !plan_check && finish_due.node.done_when === "finish" && !run.finished) {
+    [status, reason] = ["needs_attention", workflows.unfinished(finish_due)];
+    finish_due = null;
+  }
+  if (finish_due) status = null;
   // The queued message carries on the conversation, so the task stays where it is. Out of usage, it would only be
   // refused too: it stays queued for when the limit resets.
   if (queued && limit == null && send_queued(state, task_id)) return;
@@ -572,7 +577,7 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
     if (updated && is_task && updated.status === "in_review" && status === "in_review") review.on_in_review(state, updated);
     // The task's workflows that start when it enters the column its run ended in.
     if (updated && is_task && status === updated.status && updated.status !== task.status) workflows.on_status(state, updated);
-    if (updated && finish_due.length) workflows.on_finished(state, updated, finish_due);
+    if (updated && finish_due) workflows.on_finished(state, updated, finish_due);
   }
 }
 
@@ -581,15 +586,15 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
  * workflows that take the task on when its agent finishes (`finish_due`), it stays in its column for them unless its
  * plan waits for the user.
  */
-function settle_plan(state: Shared, task: Task, run: Run, finish_due: string[]) {
-  const stay = finish_due.length > 0;
+function settle_plan(state: Shared, task: Task, run: Run, finish_due: workflows.Due | null) {
+  const stay = finish_due != null;
   plan
     .settle(
       state,
       task,
       run,
       (t) => {
-        if (stay && t.status === task.status) return workflows.on_finished(state, t, finish_due);
+        if (finish_due && t.status === task.status) return workflows.on_finished(state, t, finish_due);
         if (t.status === "in_review") review.on_in_review(state, t);
         workflows.on_status(state, t);
       },

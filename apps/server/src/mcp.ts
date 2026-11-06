@@ -242,6 +242,14 @@ function board_tools(): any[] {
       },
     },
     {
+      name: "finish_work",
+      description:
+        "Say that the work you were asked for in the task's current column is complete, when its prompt asks you to (a project's workflow " +
+        "can wait for this rather than for your turn to end). Call it once the work is done, then end your turn with a summary. Don't call it " +
+        "when you're stopping for another reason, such as to ask the user something with request_user_input.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
       name: "wait",
       description:
         "Wait without doing anything, e.g. for the tasks you created to finish, for a pull request's checks or reviews, or for a deploy or a background command. " +
@@ -597,11 +605,20 @@ function workflow_tools(profile: any, project_one: string): any[] {
   const graph = {
     type: "object",
     description:
-      "The workflow's nodes and the edges between them. A run starts at its one trigger node and follows edges out of the port each node ends on. " +
-      "A node runs once every node with an edge into it has finished and one of those edges was taken (join 'any', the default) or all of them (join 'all'); " +
-      "otherwise it's skipped. No loops: to go round again, send to the task's agent (its next finished run triggers the workflow again). Node kinds and their ports: " +
-      "{kind: 'trigger', on: 'status', status} (the task entering that column), {kind: 'trigger', on: 'finished'} (the task's agent finishing its work: the task then stays in In progress " +
-      "rather than going to In review, for the workflow to move it on; a run that ends without moving it sends it to In review, or needs_attention if a step failed or it was stopped) or {kind: 'trigger', on: 'manual'} (only run_workflow, or Run on the board) → out; " +
+      "The workflow's nodes and the edges between them: a task's way across the board, column by column. A run starts at a column node (or at the start, " +
+      "for a run by hand) and follows edges out of the port each node ends on. A node runs once every node with an edge into it has finished and one of those " +
+      "edges was taken (join 'any', the default) or all of them (join 'all'); otherwise it's skipped. An edge into a column node moves the task there, which " +
+      "ends that path: the column's own outcome is the next run's. No loops but through a column (or by sending to the task's agent). Node kinds and their ports: " +
+      "{kind: 'column', status, prompt, done_when} (one per column) → done. A task entering the column starts a run there. prompt (a template) is what the " +
+      "task's agent is sent then, with what the board does once its work is done (the steps after done): for in_progress it's the task's start prompt " +
+      "(empty: the project's), and an edge into in_progress gives a started task the issues the run found, or else the prompt; for ready_for_merge it's how " +
+      "the agent merges. done comes when that work is: for in_progress and a column with a prompt, when the agent's run ends (a question for the user or a " +
+      "failure leaves it in needs_attention, waiting), or with done_when 'finish' only once the agent calls finish_work in its turn (without it, " +
+      "needs_attention); for ready_for_merge once the task is merged; elsewhere at once. Meanwhile the task stays in In progress rather than going to " +
+      "In review; a run that ends without moving it sends it to In review, or needs_attention if a step failed or it was stopped. A column whose agent works " +
+      "there (in_progress, ready_for_merge, or one with a prompt) belongs to one workflow that's on; needs_attention and done have no prompt, and nothing " +
+      "goes into done. {kind: 'trigger', on: 'manual'} (at most one) starts runs by hand (run_workflow, or Run on the board; without one, a run by hand " +
+      "starts at the node for the task's column) → out; " +
       "{kind: 'condition', check: 'changed'|'has_commits'|'has_pr'|'task_type'|'label', value} → yes, no ('changed': its commit or its agent's work changed since this workflow last finished on it; " +
       "value is the type, code or scratch, or the label, plan, artifact or diagram); " +
       "{kind: 'agent', name, prompt, output: 'text'|'verdict', claude_config_id, model, effort, skills, tab, input_only} runs an agent read-only in the task's worktree, in a thread of its own " +
@@ -611,9 +628,10 @@ function workflow_tools(profile: any, project_one: string): any[] {
       "prompts and messages take {{task.key}}, {{task.title}}, {{task.description}}, {{branch}}, {{commit}}, {{workflow}}, {{issues}} and {{<node id>.text}}, {{<node id>.issues}}; " +
       "{kind: 'send_to_task', message, max_rounds} sends the message (empty: the issues the run's verdict steps found) to the task's agent, ending the run, " +
       "at most max_rounds runs in a row (default 2), then → exhausted (with nothing after it, the task goes to needs_attention); " +
-      "{kind: 'set_status', status} moves the task → out; " +
       "{kind: 'open_pr', title, body, draft} pushes the task's branch and opens its pull request with the gh tools (title and body are templates; empty: the task's key and title, and its agent's last message) " +
-      "→ opened, exists (it has one already), failed. Each node has an id (letters, digits, - and _), and x and y for where the editor draws it.",
+      "→ opened, exists (it has one already, which gets the branch's new commits), failed; while one comes after In progress's done, the agent isn't told to open one. " +
+      "The kinds from before column nodes, {kind: 'trigger', on: 'status', status}, {kind: 'trigger', on: 'finished'} and {kind: 'set_status', status}, are read as column nodes. " +
+      "Each node has an id (letters, digits, - and _), and x and y for where the editor draws it.",
     properties: {
       nodes: {
         type: "array",
@@ -621,8 +639,8 @@ function workflow_tools(profile: any, project_one: string): any[] {
           type: "object",
           properties: {
             id: { type: "string" },
-            kind: { type: "string", enum: ["trigger", "condition", "agent", "send_to_task", "set_status"] },
-            on: { type: "string", enum: ["status", "manual"] },
+            kind: { type: "string", enum: ["column", "trigger", "condition", "agent", "send_to_task", "open_pr"] },
+            on: { type: "string", enum: ["manual"] },
             status: { type: "string", enum: STATUSES },
             check: { type: "string", enum: ["changed", "has_commits", "has_pr", "task_type", "label"] },
             value: { type: "string" },
@@ -634,6 +652,11 @@ function workflow_tools(profile: any, project_one: string): any[] {
             effort: { type: "string", enum: THREAD_EFFORTS },
             skills: { type: "array", items: { type: "string" } },
             tab: { type: "string" },
+            input_only: { type: "boolean" },
+            done_when: { type: "string", enum: ["run_end", "finish"] },
+            title: { type: "string" },
+            body: { type: "string" },
+            draft: { type: "boolean" },
             message: { type: "string" },
             max_rounds: { type: "integer", minimum: 0, maximum: WORKFLOW_MAX_ROUNDS },
             join: { type: "string", enum: ["any", "all"] },
@@ -656,7 +679,7 @@ function workflow_tools(profile: any, project_one: string): any[] {
     {
       name: "list_workflows",
       description:
-        "List a project's workflows: graphs of steps (conditions, agent steps that review or report on a task's work, messages to the task's agent, moves) that run on its tasks when they enter a column, or by hand. Each comes with its graph.",
+        "List a project's workflows: graphs of a task's columns and the steps between them (conditions, agent steps that review or report on a task's work, pull requests, messages to the task's agent) that run on its tasks as they move across the board, or by hand. Each comes with its graph.",
       inputSchema: { type: "object", properties: { project_id: { type: "string", description: project_one }, profile } },
     },
     {

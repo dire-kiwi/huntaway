@@ -157,7 +157,7 @@ export async function preview(state: Shared, project: Project, o: PreviewOptions
   const permission_mode = db.effective_permission_mode(task, state.db(), project);
   const gh_tools = uses_gh_server(tools);
   const account = github_account(project, profile);
-  const base = system_prompt(task, project, null, [], docs, github, gh_tools);
+  const base = system_prompt(task, project, null, [], docs, github, gh_tools, workflows.board_opens_pr(state, task));
   const tmp = path_str(task_tmp.dir(state, task));
   const to: Told = { codex, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: "" };
   return [instructions(base, task, to), codex, permission_mode];
@@ -179,11 +179,12 @@ export function key_prefix(task: Task, project: Project | null | undefined): str
 }
 
 /**
- * A task's first prompt: the task, the project's instructions for starting (see agent/prompts.rs), then any message it
+ * A task's first prompt: the task, the project's instructions for starting (see agent/prompts.rs, or `start`, its
+ * workflow's for In progress: see integrations/workflows/engine.ts's start_instructions), then any message it
  * was started with (e.g. from `create_task`). A message that calls a skill (`/name …`) goes first instead, since Claude
  * Code only expands a command at the start of a prompt, and the task becomes part of its arguments.
  */
-export function start_prompt(task: Task, project: Project | null | undefined, text: string): string {
+export function start_prompt(task: Task, project: Project | null | undefined, text: string, start: string | null = null): string {
   const key = key_prefix(task, project);
   text = text.trim();
   // The assistant is a conversation, not a task to start on: its first prompt is the user's message. A routine thread's
@@ -194,7 +195,7 @@ export function start_prompt(task: Task, project: Project | null | undefined, te
   p += `# ${key}-${task.number}: ${task.title}\n`;
   if (task.description.trim()) p += `\n${task.description.trim()}\n`;
   p += external_links_note(task.external_links);
-  p += `\n---\n\n${prompts.start_task(task, project)}\n`;
+  p += `\n---\n\n${start ?? prompts.start_task(task, project)}\n`;
   if (text && !is_slash_command(text)) p += `\n${text}\n`;
   return p;
 }
@@ -259,7 +260,7 @@ function ask_and_finish(done: string): string {
  * What a task's agent is told on top of its agent's own system prompt, in paragraphs separated by blank lines
  * (`instructions` adds more). `group`: for a group task, its group's projects. `docs`: the files its labels ask it to
  * write, by label (see agent/documents.rs). `github`: where a task with its own branch opens its pull request, if its
- * repository is on GitHub.
+ * repository is on GitHub. `board_pr`: the project's workflow opens it instead, once the agent's work is done.
  */
 export function system_prompt(
   task: Task,
@@ -269,6 +270,7 @@ export function system_prompt(
   docs: Array<[string, string]>,
   github: worktree.Github | null | undefined,
   gh_tools: boolean,
+  board_pr = false,
 ): string {
   const p = project ?? null;
   const tools =
@@ -426,7 +428,7 @@ export function system_prompt(
         `\n\nYou are in a dedicated git worktree at ${task.worktree_path} on branch \`${task.branch}\`${task.base_branch != null ? ` (branched from \`${task.base_branch}\`)` : ""}. Make all changes here. ` +
         "When you complete a meaningful unit of work, commit it to this branch with a clear message. " +
         // It pushes the branch for its pull request.
-        `Do not ${gh ? "merge or switch branches" : "push, merge, or switch branches"} unless asked.`;
+        `Do not ${gh && !board_pr ? "merge or switch branches" : "push, merge, or switch branches"} unless asked.`;
     }
     // Stacked on another task's (or pull request's) branch, which it merges into rather than the project's.
     const sf = task.start_from;
@@ -470,7 +472,12 @@ export function system_prompt(
         `its tasks: your branch starts from \`${sp_branch}\` and is merged back into it, not into the project's main ` +
         `branch. ${merge} into \`${sp_branch}\`${wt}. Tasks you create are added to the subproject too.`;
     }
-    if (gh && task.branch != null) {
+    if (gh && task.branch != null && board_pr) {
+      s +=
+        `\n\nThe repository is on GitHub (${gh.repo}). The board pushes this task's branch and opens its pull request once your work is done, ` +
+        "so commit everything, but don't push the branch or open a pull request yourself, even if the project's own instructions (e.g. " +
+        "in CLAUDE.md) say to. Once it has one, the board pushes your new commits to it too.";
+    } else if (gh && task.branch != null) {
       const br = task.branch;
       const base0 = task.base_branch ?? p?.base_branch ?? null;
       const base = base0 ? base0 : null;
