@@ -193,15 +193,15 @@ export function run_round(c: Conn, task_id: string, run_id: string): string | nu
 }
 
 /**
- * The round each of the runs of `task_id`'s review threads (not its summaries) was in, by when the round started: runs
- * started within `ROUND_GAP` of the one before are in its round, unless their thread has a run in it already (a
- * reviewer runs once a round).
+ * The round each of the runs of `task_id`'s review threads (not its summaries or workflows' steps) was in, by when the
+ * round started: runs started within `ROUND_GAP` of the one before are in its round, unless their thread has a run in
+ * it already (a reviewer runs once a round).
  */
 function run_rounds(c: Conn, task_id: string): Map<string, string> {
   const runs = db.all<{ id: string; task_id: string; created_at: string }>(
     c,
     `SELECT r.id, r.task_id, r.created_at FROM runs r JOIN tasks t ON t.id=r.task_id
-     WHERE t.parent_id=?1 AND t.kind='review' AND COALESCE(t.task_type, '') != 'summary' AND r.kind='review'
+     WHERE t.parent_id=?1 AND t.kind='review' AND COALESCE(t.task_type, '') NOT IN ('summary', 'workflow') AND r.kind='review'
      ORDER BY r.created_at`,
     task_id,
   );
