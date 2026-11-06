@@ -88,7 +88,8 @@ jobs:
         run: pnpm --filter huntaway-app run build && cargo build --release --locked -p ia-shim
 
       # The server the desktop app and the server tarball carry: the TypeScript server, the Node this job runs on (the
-      # runner's own os and arch), ia-shim and the UI, in release-server/ (see the script). IA_BUILD_COMMIT: the server
+      # runner's own os and arch; the script copies the binary that Vite+'s node shim runs, not the shim, HA-270), ia-shim
+      # and the UI, in release-server/ (see the script). IA_BUILD_COMMIT: the server
       # reports the commit it was built from, as a checkout does (a hub that updates itself to a release goes by it to
       # update hosts, and hosts that follow the hub with --update-from too).
       - name: Package the TypeScript server
