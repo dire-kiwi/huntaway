@@ -18,5 +18,8 @@ export default defineConfig({
   // The unit tests (`vp test`). The browser checks in tests/ui have a config of their own (`pnpm run test:ui`).
   test: {
     include: ["tests/*.test.mjs"],
+    // As the server's: some run git in a scratch repository, which CI's runners can take seconds over.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });
