@@ -273,7 +273,7 @@ test("a Codex question with no options takes a typed answer whatever it says", a
     const sent = await capture(page);
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait What should it be called?"]);
     await ui.run(["click css=[aria-label='Your own answer to: What should it be called?']", "type notes.txt", "press Enter"]);
-    assert.deepEqual(await nth(sent, 1), { path: "/permissions/cn", body: { decision: "allow", answers: [["notes.txt"]] } });
+    assert.deepEqual(await nth(sent, 1), { request_id: "cn", resolution: { outcome: "answer", answers: { name: ["notes.txt"] } } });
   });
 });
 
