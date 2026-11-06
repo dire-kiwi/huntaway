@@ -2,6 +2,7 @@
 /** Running a project's setup and teardown scripts. */
 import { spawn } from "node:child_process";
 import type { Project, Task } from "../../db.ts";
+import * as runs from "../../agent/runs.ts";
 import { context, path_str, truncate } from "../../util.ts";
 import { output, type RawOutput } from "../worktree.ts";
 
@@ -24,7 +25,7 @@ function duration_str(ms: number): string {
 
 /** Run a project script with bash. With a time limit (milliseconds), it's stopped (with everything it started) if it runs over. */
 export async function run_script(script: string, cwd: string, env: Array<[string, string]>, limit: number | null): Promise<string> {
-  const full: NodeJS.ProcessEnv = { ...process.env };
+  const full = runs.agent_env();
   for (const [k, v] of env) full[k] = v;
   let out: RawOutput & { signal?: string | null };
   if (limit !== null) out = await run_limited(script, cwd, full, limit);

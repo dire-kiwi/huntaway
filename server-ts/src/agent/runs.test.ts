@@ -10,6 +10,11 @@ import * as testing from "../testing.ts";
 import { new_id, sleep } from "../util.ts";
 import { RUN_FORMAT, SERVE_ENV, boot_id, follow_inner, pid_reused, prune, remove_finished, resume_reaping, run_dir, start, stop_orphan, timing, type Launch } from "./runs.ts";
 import * as mcp_http from "../mcp/http.ts";
+import { spawn_command } from "../mcp/wait.ts";
+import * as worktree from "../git/worktree.ts";
+import { precheck } from "../integrations/automations/routines.ts";
+import type { Automation } from "../integrations/automations.ts";
+import { tmux_command } from "../hosts/terminal.ts";
 
 // As Rust's are under cfg(test).
 timing.REAP_WAIT = 5_000;
@@ -339,6 +344,45 @@ test("an_agents_run_doesnt_get_the_servers_own_settings", async () => {
   assert.equal(env.get("IA_CLAUDE_BIN"), "/bin/true");
   assert.equal(env.get("IA_FROM_LAUNCH"), "1");
   assert.ok(env.get("PATH"));
+});
+
+test("what_the_server_starts_for_agents_and_projects_doesnt_get_its_own_settings_either", async () => {
+  // HA-262: as with an agent's run (HA-185), so with a wait's command, a project's scripts, an automation's precheck and
+  // a task's terminal, any of which may start a `huntaway serve` of its own.
+  const state = testing.state();
+  const dir = testing.temp_dir();
+  const profile = db.insert_profile(state.db(), "p", [], null);
+  const project = db.insert_project(state.db(), {
+    id: "web", profile_id: profile.id, name: "Web", key: "WEB", repo_path: dir, scratch_path: dir, worktrees_root: dir, base_branch: null, use_worktrees: false,
+  });
+  // What it saw of the server's settings, and of a variable of the server's that isn't one.
+  const show = `env | grep -E '^(${SERVE_ENV.join("|")})=' || true; echo "kept=$HA262_KEPT"`;
+  const set = { HA262_KEPT: "yes", ...Object.fromEntries(SERVE_ENV.map((k) => [k, `from-the-server-${k}`])) };
+  const before = Object.fromEntries(Object.keys(set).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, set);
+  let wait_out: string, script_out: string, precheck_out: string, terminal_env: NodeJS.ProcessEnv;
+  try {
+    const log_path = join(dir, "wait.log");
+    const log = openSync(log_path, "w");
+    const { child, alive } = spawn_command(show, dir, log, []);
+    closeSync(log);
+    await new Promise((resolve) => child.on("exit", resolve));
+    alive.destroy();
+    wait_out = readFileSync(log_path, "utf8");
+    script_out = await worktree.run_script(show, dir, [], 10_000);
+    precheck_out = await precheck(state, { project_id: project.id } as Automation, show);
+    terminal_env = tmux_command(state)[1];
+  } finally {
+    for (const [k, v] of Object.entries(before)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+  assert.equal(wait_out.trim(), "kept=yes", "a wait's command");
+  assert.equal(script_out.trim(), "kept=yes", "a project's script");
+  assert.equal(precheck_out.trim(), "kept=yes", "an automation's precheck");
+  for (const k of SERVE_ENV) assert.equal(terminal_env[k], undefined, `${k} reached the terminal`);
+  assert.equal(terminal_env.HA262_KEPT, "yes");
 });
 
 test("a_run_that_calls_the_board_on_its_output_has_no_board_server_in_its_mcp_config", async () => {

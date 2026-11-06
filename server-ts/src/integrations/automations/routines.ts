@@ -16,6 +16,7 @@ import * as api from "../../api.ts";
 import * as assistant from "../../agent/assistant.ts";
 import * as memory from "../../agent/assistant/memory.ts";
 import * as runner from "../../agent/runner.ts";
+import * as runs from "../../agent/runs.ts";
 import * as worktree from "../../git/worktree.ts";
 import type { Shared } from "../../state.ts";
 import { err_str, expand_tilde, reached, truncate } from "../../util.ts";
@@ -253,7 +254,7 @@ export async function precheck(s: Shared, a: Automation, cmd: string): Promise<s
   const dir = precheck_dir(s, a);
   let out;
   try {
-    out = await worktree.run_limited(cmd, dir, process.env, PRECHECK_LIMIT);
+    out = await worktree.run_limited(cmd, dir, runs.agent_env(), PRECHECK_LIMIT);
   } catch (e) {
     throw { err: [null, `its precheck failed: ${err_str(e)}`] } satisfies Outcome;
   }
