@@ -89,8 +89,7 @@ export const hostsApi = ({ del, get, on, patch, post }: Http) => ({
   /** Send this hub's code to a host, which updates its checkout and restarts. */
   updateHost: (id: string) => post<{ ok: boolean; up_to_date?: boolean }>(`/hosts/${enc(id)}/update`),
   sshKey: () => get<{ public_key: string }>("/hosts/ssh-key"),
-  addSshHost: (b: { target: string; ssh_port?: number; remote_port?: number }) =>
-    post<{ id: string; name: string; started: boolean }>("/hosts/ssh", b),
+  addSshHost: (b: { target: string; ssh_port?: number; remote_port?: number }) => post<{ id: string; name: string; started: boolean }>("/hosts/ssh", b),
   joinInfo: () => get<{ hub_token: string; host_token: string; command: string }>("/hosts/join"),
   /** Copy a Claude config (API 20 hosts) or a profile's config (older hosts) to another host. */
   copyClaudeConfig: (b: { config?: string; profile?: string; from_host: string; to_host: string; config_dir?: string; overwrite?: boolean }) =>

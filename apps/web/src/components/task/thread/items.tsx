@@ -36,11 +36,7 @@ export function EventLine({ level, text, detail }: { level: string; text: string
   const color = level === "error" ? "text-red-400" : level === "warn" ? "text-amber-400" : "text-faint";
   return (
     <div className="text-[12px]">
-      <button
-        disabled={!detail}
-        onClick={() => setOpen(!open)}
-        className={clsx("flex items-center gap-1.5", color, detail && "hover:text-muted")}
-      >
+      <button disabled={!detail} onClick={() => setOpen(!open)} className={clsx("flex items-center gap-1.5", color, detail && "hover:text-muted")}>
         {level === "error" ? <CircleAlert size={12} /> : <span className="h-1 w-1 rounded-full bg-current" />}
         {text}
         {detail && <ChevronRight size={11} className={clsx("transition-transform", open && "rotate-90")} />}
@@ -103,7 +99,11 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
     setBusy(true);
     setErr(null);
     try {
-      if (commands) await commands.respond(data.request_id, d === "deny" ? { outcome: "deny" } : d === "allow_always" ? { outcome: "allow", always: true } : { outcome: "allow" });
+      if (commands)
+        await commands.respond(
+          data.request_id,
+          d === "deny" ? { outcome: "deny" } : d === "allow_always" ? { outcome: "allow", always: true } : { outcome: "allow" },
+        );
       else await api.resolvePermission(hostId, data.request_id, d);
     } catch (e) {
       setErr((e as Error).message);
@@ -125,7 +125,11 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
           <span
             className={clsx(
               "ml-auto rounded px-1.5 py-0.5 text-[11px]",
-              data.status === "allowed" ? "bg-emerald-500/10 text-emerald-300" : data.status === "denied" ? "bg-red-500/10 text-red-300" : "bg-white/5 text-faint",
+              data.status === "allowed"
+                ? "bg-emerald-500/10 text-emerald-300"
+                : data.status === "denied"
+                  ? "bg-red-500/10 text-red-300"
+                  : "bg-white/5 text-faint",
             )}
           >
             {data.status}
@@ -141,7 +145,12 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
           </Button>
           {/* What an approval rule asks about is asked each time (API 115). */}
           {!data.rule && (
-            <Button size="sm" disabled={busy} onClick={() => decide("allow_always")} className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal">
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => decide("allow_always")}
+              className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal"
+            >
               Always allow {data.tool_name} for this thread
             </Button>
           )}
@@ -184,17 +193,14 @@ function tokens(n: number) {
 export function CompactLine({ meta, summary, result }: { meta: Any; summary?: string; result?: Any }) {
   const [open, setOpen] = useState(false);
   const bits = [
-    meta.pre_tokens != null && (meta.post_tokens != null ? `${tokens(meta.pre_tokens)} → ${tokens(meta.post_tokens)} tokens` : `${tokens(meta.pre_tokens)} tokens`),
+    meta.pre_tokens != null &&
+      (meta.post_tokens != null ? `${tokens(meta.pre_tokens)} → ${tokens(meta.post_tokens)} tokens` : `${tokens(meta.pre_tokens)} tokens`),
     result?.duration_ms != null && `${(result.duration_ms / 1000).toFixed(1)}s`,
     result?.total_cost_usd != null && `$${Number(result.total_cost_usd).toFixed(3)}`,
   ].filter(Boolean);
   return (
     <div className="text-[12px]">
-      <button
-        disabled={!summary}
-        onClick={() => setOpen(!open)}
-        className={clsx("flex w-full items-center gap-2 text-faint", summary && "hover:text-muted")}
-      >
+      <button disabled={!summary} onClick={() => setOpen(!open)} className={clsx("flex w-full items-center gap-2 text-faint", summary && "hover:text-muted")}>
         <span className="h-px flex-1 bg-line" />
         <Layers size={12} />
         {meta.trigger === "auto" ? "Context full, conversation compacted" : "Conversation compacted"}

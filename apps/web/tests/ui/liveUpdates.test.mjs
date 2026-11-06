@@ -42,8 +42,17 @@ test("streamed text, task events and the clock still update the thread, cards an
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait No agent has worked on this yet"]);
     // A thread long enough to scroll.
     for (let i = 0; i < 40; i++)
-      send({ type: "message", task_id: task.id, message: { id: 1000 + i, task_id: task.id, kind: "claude", created_at: ago(600 - i),
-        data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `Reply ${i}\n\nwith a second paragraph` }] } } } });
+      send({
+        type: "message",
+        task_id: task.id,
+        message: {
+          id: 1000 + i,
+          task_id: task.id,
+          kind: "claude",
+          created_at: ago(600 - i),
+          data: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `Reply ${i}\n\nwith a second paragraph` }] } },
+        },
+      });
     await ui.run(["wait Reply 39"]);
 
     // At its end, the thread follows the text as it streams in. It's drawn as it comes (HA-39): as markdown again for

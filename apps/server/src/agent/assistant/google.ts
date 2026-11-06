@@ -285,8 +285,7 @@ export function status(s: Shared, profile_id: string): Status {
     server_state = { id: server.id, enabled: server.enabled, on, command, command_found: command_found(command) };
   }
   const warnings: string[] = [];
-  const account =
-    wanted !== null ? accts.find((a) => a.email.toLowerCase() === wanted.toLowerCase()) : (accts.find((a) => a.refresh_token) ?? accts[0]);
+  const account = wanted !== null ? accts.find((a) => a.email.toLowerCase() === wanted.toLowerCase()) : (accts.find((a) => a.refresh_token) ?? accts[0]);
   const consent_command = `huntaway google-auth --client-secret ${path_str(secret)}`;
   let problem: string | null = null;
   if (server_state === null) problem = "There's no Google server on this host yet: add it here.";

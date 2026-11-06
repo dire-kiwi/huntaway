@@ -62,7 +62,11 @@ async function run(s: AppState, task: Task, work: (t: Task) => void): Promise<Ta
   const r: Run = db.insert_run(c, task.id, "prompt");
   const m = db.insert_message(c, task.id, "user", { text: "Go on" });
   db.run(c, "UPDATE runs SET status='running', turn_message_id=?1 WHERE id=?2", m.id, r.id);
-  s.update_task(task.id, [["status", "in_progress"], ["running", true], ["attention_reason", null]]);
+  s.update_task(task.id, [
+    ["status", "in_progress"],
+    ["running", true],
+    ["attention_reason", null],
+  ]);
   await checkpoints.before_run(s, task, db.get_run(c, r.id)!);
   // A new version of the plan has a later time than the run's start.
   await sleep(5);
@@ -177,7 +181,11 @@ async function run_cut_short(s: AppState, task: Task, work: (t: Task) => void): 
   const r: Run = db.insert_run(c, task.id, "prompt");
   const m = db.insert_message(c, task.id, "user", { text: "Go on" });
   db.run(c, "UPDATE runs SET status='running', turn_message_id=?1 WHERE id=?2", m.id, r.id);
-  s.update_task(task.id, [["status", "in_progress"], ["running", true], ["attention_reason", null]]);
+  s.update_task(task.id, [
+    ["status", "in_progress"],
+    ["running", true],
+    ["attention_reason", null],
+  ]);
   await checkpoints.before_run(s, task, db.get_run(c, r.id)!);
   await sleep(5);
   work(db.get_task(c, task.id)!);
@@ -222,7 +230,10 @@ test("a_restart_leaves_other_tasks_in_progress_alone", async () => {
   await run_cut_short(s, task, write_plan(s));
   s.update_task(task.id, [["waiting", true]]);
   assert.equal(plan_unsettled(s).length, 0);
-  s.update_task(task.id, [["waiting", false], ["queued_message", "And then"]]);
+  s.update_task(task.id, [
+    ["waiting", false],
+    ["queued_message", "And then"],
+  ]);
   assert.equal(plan_unsettled(s).length, 0);
   // A run that failed or asked for attention.
   s.update_task(task.id, [["queued_message", null]]);

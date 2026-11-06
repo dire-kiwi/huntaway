@@ -35,7 +35,8 @@ const only = opt("--only", null);
 const asJson = args.includes("--json") ? (args.splice(args.indexOf("--json"), 1), true) : false;
 if (!envFile) throw new Error("--env <test-server env file>");
 const vars = Object.fromEntries([...readFileSync(envFile, "utf8").matchAll(/^export (IA_TEST_\w+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
-const url = vars.IA_TEST_URL, token = vars.IA_TEST_TOKEN;
+const url = vars.IA_TEST_URL,
+  token = vars.IA_TEST_TOKEN;
 if (!/^http:\/\/127\.0\.0\.1:/.test(url)) throw new Error(`${url} isn't a test server`);
 const headers = { Authorization: `Bearer ${token}` };
 
@@ -48,7 +49,8 @@ async function get(path) {
 
 /** Probes the server every 5 ms until stopped: the slowest answers to /api/health and to a websocket ping. */
 async function probe() {
-  const health = [], pings = [];
+  const health = [],
+    pings = [];
   let on = true;
   const ws = new WebSocket(`${url.replace("http", "ws")}/api/ws?token=${token}`);
   await new Promise((ok, fail) => (ws.once("open", ok), ws.once("error", fail)));
@@ -81,7 +83,11 @@ async function probe() {
 }
 
 /** The server's own figures (apps/server/src/lag.ts), or null from a server without them (to compare with an older build). */
-const lagged = (q = "") => get(`/debug/event-loop${q}`).then((r) => r.json(), () => null);
+const lagged = (q = "") =>
+  get(`/debug/event-loop${q}`).then(
+    (r) => r.json(),
+    () => null,
+  );
 
 async function measure(label, path) {
   await lagged("?reset=1");
@@ -89,7 +95,8 @@ async function measure(label, path) {
   const stop = await probe();
   await new Promise((r) => setTimeout(r, 30));
   const t = performance.now();
-  let bytes = 0, error = null;
+  let bytes = 0,
+    error = null;
   try {
     bytes = (await get(path)).bytes;
   } catch (e) {
@@ -100,7 +107,16 @@ async function measure(label, path) {
   const p = await stop();
   const lag = await lagged();
   const route = lag?.routes.find((r) => r.max_path === path.split("?")[0]) ?? lag?.routes.find((r) => !/health|debug/.test(r.route));
-  return { label, path, took_ms: took, mb: Math.round(bytes / 1e5) / 10, on_thread_ms: route?.max_ms ?? null, loop_max_ms: lag?.delay_ms.max ?? null, ...p, error };
+  return {
+    label,
+    path,
+    took_ms: took,
+    mb: Math.round(bytes / 1e5) / 10,
+    on_thread_ms: route?.max_ms ?? null,
+    loop_max_ms: lag?.delay_ms.max ?? null,
+    ...p,
+    error,
+  };
 }
 
 async function usual() {
@@ -109,7 +125,10 @@ async function usual() {
   for (const p of profiles) {
     list.push([`profile tasks (${p.name})`, `/profiles/${p.id}/tasks`]);
     // The analytics page's ranges: a week, and a year (all of it).
-    for (const [span, days] of [["week", 7], ["year", 365]]) {
+    for (const [span, days] of [
+      ["week", 7],
+      ["year", 365],
+    ]) {
       const range = `from=${new Date(Date.now() - days * 864e5).toISOString()}&to=${new Date().toISOString()}`;
       list.push([`analytics, ${span} (${p.name})`, `/profiles/${p.id}/analytics?${range}`]);
       list.push([`context stats, ${span} (${p.name})`, `/profiles/${p.id}/context-stats?${range}`]);
@@ -128,7 +147,11 @@ async function usual() {
   // The longest threads, by the size of their messages (read from the test server's database).
   const db = join(vars.IA_TEST_DATA_DIR, "huntaway.db");
   const sql = `SELECT task_id FROM messages GROUP BY task_id ORDER BY sum(length(data)) DESC LIMIT ${nthreads}`;
-  const longest = execFileSync("sqlite3", ["-readonly", db, sql], { encoding: "utf8" }).trim().split("\n").filter(Boolean).map((id) => ({ id }));
+  const longest = execFileSync("sqlite3", ["-readonly", db, sql], { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((id) => ({ id }));
   for (const t of longest) {
     list.push([`thread, whole (${t.id.slice(0, 8)})`, `/tasks/${t.id}/messages`]);
     list.push([`thread, first page (${t.id.slice(0, 8)})`, `/tasks/${t.id}/messages?limit=100`]);

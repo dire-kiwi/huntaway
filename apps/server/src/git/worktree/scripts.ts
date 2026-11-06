@@ -65,7 +65,8 @@ export function run_limited(script: string, cwd: string, env: NodeJS.ProcessEnv,
     } catch (e) {
       return reject(context("failed to run script", e));
     }
-    const out: Buffer[] = [], err: Buffer[] = [];
+    const out: Buffer[] = [],
+      err: Buffer[] = [];
     child.stdout!.on("data", (d: Buffer) => out.push(d));
     child.stderr!.on("data", (d: Buffer) => err.push(d));
     let over = false;
@@ -80,7 +81,8 @@ export function run_limited(script: string, cwd: string, env: NodeJS.ProcessEnv,
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      const stdout = Buffer.concat(out), stderr = Buffer.concat(err);
+      const stdout = Buffer.concat(out),
+        stderr = Buffer.concat(err);
       if (over) {
         const log = stdout.toString() + stderr.toString();
         return reject(new Error(`script still running after ${duration_str(limit)}; stopped it\n${truncate(log, 8000)}`));

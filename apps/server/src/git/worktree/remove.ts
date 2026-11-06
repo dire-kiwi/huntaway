@@ -41,7 +41,9 @@ import {
  */
 export async function removable_by_hand(project: Project, repo: string, wt: string): Promise<boolean> {
   const canon = (p: string) => canonicalize(p) ?? p;
-  const root = canon(project.worktrees_root), wt_c = canon(wt), repo_c = canon(repo);
+  const root = canon(project.worktrees_root),
+    wt_c = canon(wt),
+    repo_c = canon(repo);
   if (!path_starts_with(wt_c, root) || same_path(wt_c, root) || same_path(wt_c, repo_c)) return false;
   // A main checkout's git dir is its own `.git`; a linked worktree's is under the repository's.
   try {
@@ -58,7 +60,10 @@ export async function removable_by_hand(project: Project, repo: string, wt: stri
  */
 export async function uncommitted(wt: string): Promise<string> {
   const status = await git_ok(wt, ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]);
-  const lines: string[] = status.split("\n").filter((l) => l.trim() !== "").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+  const lines: string[] = status
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+    .map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
   // git status skips marked files, so they're compared with the index here: content and, with core.fileMode (git's
   // default), the executable bit. One that isn't on disk (left out of a sparse checkout, say) has nothing to lose. File
   // names are bytes, which needn't be UTF-8.
@@ -71,7 +76,8 @@ export async function uncommitted(wt: string): Promise<string> {
     // "<tag> <mode> <object> <stage>\t<path>"; a lowercase tag is assume-unchanged, S skip-worktree.
     const tab = entry.indexOf(0x09);
     if (tab < 0) continue;
-    const meta = entry.subarray(0, tab).toString(), path = entry.subarray(tab + 1);
+    const meta = entry.subarray(0, tab).toString(),
+      path = entry.subarray(tab + 1);
     const [tag, mode, object] = meta.split(" ");
     if (tag === undefined || mode === undefined || object === undefined) continue;
     const assumed = [...tag].every((c) => c >= "a" && c <= "z");
@@ -86,10 +92,7 @@ export async function uncommitted(wt: string): Promise<string> {
     // Only a regular file is compared; anything else counts as changed.
     const executable = (file.mode & 0o100) !== 0;
     const same =
-      file.isFile() &&
-      ["100644", "100755"].includes(mode) &&
-      (!file_mode || executable === (mode === "100755")) &&
-      (await hash_object(wt, path)) === object;
+      file.isFile() && ["100644", "100755"].includes(mode) && (!file_mode || executable === (mode === "100755")) && (await hash_object(wt, path)) === object;
     if (!same) {
       const mark = assumed ? "assume-unchanged" : "skip-worktree";
       lines.push(` M ${path.toString()} (marked ${mark})`);
@@ -218,7 +221,11 @@ export async function teardown(state: AppState, task_id: string, force: boolean,
   // Its checkpoints are of files that are gone now (or were already), and the next run takes a new baseline. Not before:
   // a teardown that keeps the worktree keeps them too.
   await checkpoints.forget(state, task_id, repo);
-  const fields: Array<[string, any]> = [["worktree_state", "none"], ["worktree_path", null], ["worktree_error", null]];
+  const fields: Array<[string, any]> = [
+    ["worktree_state", "none"],
+    ["worktree_path", null],
+    ["worktree_error", null],
+  ];
   if (delete_branch && branch) {
     const o = await git(repo, ["branch", "-D", branch]);
     if (o.ok) {

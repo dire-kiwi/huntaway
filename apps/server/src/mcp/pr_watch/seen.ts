@@ -122,6 +122,9 @@ export function store(c: Conn, task_id: string, key: string, row: Row): void {
     c,
     `INSERT INTO pr_watches (task_id, pr, state, updated_at) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(task_id, pr) DO UPDATE SET state=?3, updated_at=?4`,
-    task_id, key, Row_to_json(row), now(),
+    task_id,
+    key,
+    Row_to_json(row),
+    now(),
   );
 }

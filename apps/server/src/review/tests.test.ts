@@ -137,7 +137,10 @@ test("a_branch_without_commits_is_reviewed_only_when_the_agent_changed_code", as
     const id = `t${n}`;
     s.add_message(task.id, "claude", { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } });
     if (result !== null) {
-      s.add_message(task.id, "claude", { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "", is_error: result }] } });
+      s.add_message(task.id, "claude", {
+        type: "user",
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "", is_error: result }] },
+      });
     }
   };
   // Only read and answered, and its edits failed or were declined.
@@ -371,7 +374,17 @@ const AS = ["-c", "user.name=t", "-c", "user.email=t@t"];
 /** A task in a project that reviews automatically, with a worktree branch with a commit. */
 function reviewable(s: AppState): [Task, string] {
   const p = db.insert_profile(s.db(), "p", [], null);
-  const np = { id: "pr", profile_id: p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: true };
+  const np = {
+    id: "pr",
+    profile_id: p.id,
+    name: "x",
+    key: "X",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: true,
+  };
   db.insert_project(s.db(), np);
   const task = db.insert_task(s.db(), { ...new_task(p.id, "task"), project_id: "pr" });
   const dir = testing.temp_dir();
@@ -444,7 +457,7 @@ test("a_review_doesnt_start_once_the_agent_has_started_again", async () => {
 /** The task's review once one has been recorded (started in the background), within 10 seconds. */
 async function review_started(s: AppState, task: Task): Promise<Review | null> {
   let review: Review | null = null;
-  for (const until = Date.now() + 10_000; !review && Date.now() < until; ) {
+  for (const until = Date.now() + 10_000; !review && Date.now() < until;) {
     review = db.get_task(s.db(), task.id)!.review;
     if (!review) await sleep(10);
   }
@@ -551,7 +564,13 @@ test("a_verdict_from_an_earlier_round_doesnt_count", async () => {
   round("");
   const a = db.insert_run(s.db(), thread.id, "review");
   // A's verdict is cut short by a restart, then A ends and B starts the next round.
-  const call = () => ({ task_fields: true, run_id: a.id, call_id: "a", tool: "submit_review", args: { verdict: "pass", summary: "Fine.", serious_issues: [] } });
+  const call = () => ({
+    task_fields: true,
+    run_id: a.id,
+    call_id: "a",
+    tool: "submit_review",
+    args: { verdict: "pass", summary: "Fine.", serious_issues: [] },
+  });
   testing.when("mcp:executed", () => {
     throw new Error("the server stopped");
   });

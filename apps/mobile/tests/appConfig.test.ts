@@ -20,7 +20,11 @@ test("iOS: one share extension, in the app's app group, and the mic and speech p
   const bundle = config.exp.ios?.bundleIdentifier;
   const extensions = config.exp.extra?.eas?.build?.experimental?.ios?.appExtensions;
   expect(extensions).toEqual([
-    { targetName: "HuntawayShare", bundleIdentifier: `${bundle}.share-extension`, entitlements: { "com.apple.security.application-groups": [`group.${bundle}`] } },
+    {
+      targetName: "HuntawayShare",
+      bundleIdentifier: `${bundle}.share-extension`,
+      entitlements: { "com.apple.security.application-groups": [`group.${bundle}`] },
+    },
   ]);
   const plist = config.exp.ios?.infoPlist ?? {};
   expect(plist.NSMicrophoneUsageDescription).toMatch(/dictate/);

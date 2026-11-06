@@ -152,7 +152,8 @@ function truncate_reason(r: string): string {
 /** Open a websocket to `url` (`ws://…`) with a bearer token. */
 export async function connect(url: string, token: string): Promise<Pipe> {
   const ws = await open(url, { Authorization: `Bearer ${token}` });
-  const tx = new Chan<Frame>(), rx = new Chan<Frame>();
+  const tx = new Chan<Frame>(),
+    rx = new Chan<Frame>();
   let ended = false;
   const end = (f: Frame) => {
     if (ended) return;

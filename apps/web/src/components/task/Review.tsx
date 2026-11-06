@@ -2,7 +2,18 @@ import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, FileText, Loader2, MessageSquareText, RotateCw, ScanSearch } from "lucide-react";
 import { lazy, Suspense, useMemo, useState, type MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, hostSupports, summariesOf, type ChangeSummary, type Review, type ReviewerRun, type ReviewState, type Task, type Turn, type TurnDiff } from "../../api";
+import {
+  api,
+  hostSupports,
+  summariesOf,
+  type ChangeSummary,
+  type Review,
+  type ReviewerRun,
+  type ReviewState,
+  type Task,
+  type Turn,
+  type TurnDiff,
+} from "../../api";
 import { openTask } from "../../router";
 import { useHost, useProject, useStore } from "../../store";
 import { turnStat, useTurns } from "./turns";
@@ -16,8 +27,7 @@ export const reviewParts = (r: Review): ReviewerRun[] =>
   r.reviewers?.length ? r.reviewers : [{ thread_id: r.thread_id, label: "", state: r.state, summary: r.summary, issues: r.issues }];
 
 /** The review threads' own state, for prompts they're waiting on. */
-const useThreads = (r: Review | null | undefined) =>
-  useStore(useShallow((s) => (r ? reviewParts(r).map((p) => s.tasks[p.thread_id]) : [])));
+const useThreads = (r: Review | null | undefined) => useStore(useShallow((s) => (r ? reviewParts(r).map((p) => s.tasks[p.thread_id]) : [])));
 
 const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
 
@@ -33,7 +43,12 @@ function describe(r: { state: ReviewState; summary: string | null; issues: strin
       const progress = of > 1 ? ` ${done}/${of}` : "";
       return waiting
         ? { label: "review waiting", headline: "The reviewer is waiting for you", title: `The reviewer is waiting: ${waiting.attention_reason}`, tone: "warn" }
-        : { label: `reviewing${progress}`, headline: `Reviewing…${progress}`, title: of > 1 ? `${of} reviewers are checking this task's changes` : "A reviewer is checking this task's changes", tone: "running" };
+        : {
+            label: `reviewing${progress}`,
+            headline: `Reviewing…${progress}`,
+            title: of > 1 ? `${of} reviewers are checking this task's changes` : "A reviewer is checking this task's changes",
+            tone: "running",
+          };
     }
     case "passed":
       return { label: "reviewed", headline: "No serious issues", title: r.summary ?? "The review found no serious issues", tone: "ok" };
@@ -114,7 +129,9 @@ export function ReviewDot({ task }: { task: Task }) {
   if (!r || !showsReview(task)) return null;
   const { title, tone } = describeReview(r, threads);
   if (tone !== "running" && tone !== "warn") return null;
-  return <span title={title} className={clsx("inline-block h-1.5 w-1.5 rounded-full", tone === "running" ? "animate-pulse-dot bg-st-review" : "bg-st-attention")} />;
+  return (
+    <span title={title} className={clsx("inline-block h-1.5 w-1.5 rounded-full", tone === "running" ? "animate-pulse-dot bg-st-review" : "bg-st-attention")} />
+  );
 }
 
 /** What a review (or a reviewer) reported: its summary and the serious issues it found. */
@@ -176,7 +193,11 @@ export function ReviewVerdict({ task }: { task: Task }) {
   const parts = reviewParts(r);
   return (
     <div className="space-y-1.5">
-      <button className={clsx("flex items-center gap-1.5 hover:underline", TONE_TEXT[d.tone])} title={`${d.title}\n\nClick to open the review thread.`} onClick={() => openTask(threadToOpen(r))}>
+      <button
+        className={clsx("flex items-center gap-1.5 hover:underline", TONE_TEXT[d.tone])}
+        title={`${d.title}\n\nClick to open the review thread.`}
+        onClick={() => openTask(threadToOpen(r))}
+      >
         {r.state === "running" ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />}
         {d.headline}
       </button>
@@ -222,7 +243,8 @@ export function MoreFixRounds({ task, className }: { task: Task; className?: str
         onClick={extend}
         title={`Send the review's ${plural(r.issues.length, "issue")} to the agent to fix, and review its changes again after each round, up to ${roundsOf(r, rounds) + more} rounds in all`}
       >
-        {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCw size={12} />} {more === 1 ? "Another round of fixes" : `${more} more rounds of fixes`}
+        {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCw size={12} />}{" "}
+        {more === 1 ? "Another round of fixes" : `${more} more rounds of fixes`}
       </Button>
       {err && <div className="basis-full rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
     </div>
@@ -336,7 +358,8 @@ export function ChangeSummaryView({ task, threadId }: { task: Task; threadId?: s
       <div className="flex flex-wrap gap-2 pt-1">
         {!running && task.kind === "task" && (
           <Button size="sm" disabled={busy || task.running} onClick={summarize} title={task.running ? "Wait for the agent to finish" : undefined}>
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />} {all.length ? (all.length > 1 ? "Summarise all again" : "Summarise again") : "Summarise now"}
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}{" "}
+            {all.length ? (all.length > 1 ? "Summarise all again" : "Summarise again") : "Summarise now"}
           </Button>
         )}
       </div>
@@ -451,7 +474,12 @@ function FixRound({ task, r }: { task: Task; r: Round }) {
   const stat = diff && "stats" in diff ? turnStat({ ...r.last, stats: diff.stats }) : r.turns === 1 ? turnStat(r.last) : `${r.turns} turns`;
   return (
     <div className="rounded-lg border border-line">
-      <button className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/[0.03]" onClick={toggle} disabled={!can} title={can ? undefined : "There are no checkpoints from around this round"}>
+      <button
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-white/[0.03]"
+        onClick={toggle}
+        disabled={!can}
+        title={can ? undefined : "There are no checkpoints from around this round"}
+      >
         {open ? <ChevronDown size={12} className="shrink-0 text-faint" /> : <ChevronRight size={12} className="shrink-0 text-faint" />}
         <span className="font-medium text-fg">Round {r.round}</span>
         <span className="min-w-0 flex-1 truncate text-faint">

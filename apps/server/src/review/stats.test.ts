@@ -89,7 +89,10 @@ test("reviews_are_read_from_their_threads_in_rounds", () => {
   // A workflow's verdict step (a review thread too) runs just before round 2: neither its run nor its verdict is a
   // reviewer's, so it starts no round and has no row.
   const step = db.insert_task(s.db(), fresh("review"));
-  s.update_task(step.id, [["parent_id", task.id], ["task_type", "workflow"]]);
+  s.update_task(step.id, [
+    ["parent_id", task.id],
+    ["task_type", "workflow"],
+  ]);
   run(step.id, "2026-10-01T10:59:50.000Z");
   say(step.id, "2026-10-01T11:02:00.000Z", call("w", { verdict: "needs_fixes", summary: "Workflow.", serious_issues: ["w"] }));
 

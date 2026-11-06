@@ -197,7 +197,17 @@ export interface Automation {
 // serde's deserialization of the enums above, with its defaults (and errors much like its own).
 
 const type_name = (v: any) =>
-  v === null || v === undefined ? "null" : Array.isArray(v) ? "a sequence" : typeof v === "object" ? "a map" : typeof v === "string" ? `string ${JSON.stringify(v)}` : typeof v === "boolean" ? `boolean \`${v}\`` : `integer \`${v}\``;
+  v === null || v === undefined
+    ? "null"
+    : Array.isArray(v)
+      ? "a sequence"
+      : typeof v === "object"
+        ? "a map"
+        : typeof v === "string"
+          ? `string ${JSON.stringify(v)}`
+          : typeof v === "boolean"
+            ? `boolean \`${v}\``
+            : `integer \`${v}\``;
 
 function field(o: any, k: string, kind: "string" | "u32" | "bool" | "opt_string" | "string_list" | "any", def?: any): any {
   const v = o[k];
@@ -309,7 +319,13 @@ export function set_labels(a: Extract<Action, { kind: "create_task" }>, labels: 
 /** A JSON value with its objects' keys sorted (serde_json's `Value` keeps them sorted), as text. */
 export function sorted_json(v: any): string {
   return JSON.stringify(v, (_k, x) =>
-    x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x,
+    x && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(
+          Object.keys(x)
+            .sort()
+            .map((k) => [k, x[k]]),
+        )
+      : x,
   );
 }
 
@@ -477,8 +493,23 @@ export function insert_run(c: Conn, r: Run): void {
     c,
     `INSERT INTO automation_runs (id,automation_id,source,status,detail,task_id,delivery_id,event,count,batch_key,batch_id,payload,due_at,created_at,finished_at,outcome,cost_usd)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`,
-    r.id, r.automation_id, r.source, r.status, r.detail, r.task_id, r.delivery_id, r.event, r.count, r.batch_key ?? null, r.batch_id, r.payload ?? null,
-    r.due_at, r.created_at, r.finished_at, r.outcome, r.cost_usd,
+    r.id,
+    r.automation_id,
+    r.source,
+    r.status,
+    r.detail,
+    r.task_id,
+    r.delivery_id,
+    r.event,
+    r.count,
+    r.batch_key ?? null,
+    r.batch_id,
+    r.payload ?? null,
+    r.due_at,
+    r.created_at,
+    r.finished_at,
+    r.outcome,
+    r.cost_usd,
   );
 }
 
@@ -489,7 +520,9 @@ export function get_run(c: Conn, id: string): Run | null {
 
 /** An automation's latest runs, newest first. */
 export function runs(c: Conn, automation_id: string, limit: number): Run[] {
-  return db.all(c, "SELECT * FROM automation_runs WHERE automation_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2", automation_id, limit).map(Run_from_row);
+  return db
+    .all(c, "SELECT * FROM automation_runs WHERE automation_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2", automation_id, limit)
+    .map(Run_from_row);
 }
 
 /**
@@ -508,7 +541,11 @@ export function finish(c: Conn, run_id: string, result: RunResult): void {
   db.run(
     c,
     "UPDATE automation_runs SET status=?2, task_id=COALESCE(?3, task_id), detail=?4, finished_at=?5 WHERE id=?1",
-    run_id, status, task, detail, util_now(),
+    run_id,
+    status,
+    task,
+    detail,
+    util_now(),
   );
 }
 
@@ -538,19 +575,26 @@ export function prune(c: Conn, now: number): void {
     db.run(
       c,
       `DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND id NOT IN (${newest}) AND NOT ${costs}`,
-      id, KEEP_RUNS, null, costs_since,
+      id,
+      KEEP_RUNS,
+      null,
+      costs_since,
     );
     db.run(
       c,
       `DELETE FROM automation_runs WHERE automation_id=?1 AND status NOT IN ('pending','running') AND created_at < ?3 AND id NOT IN (${newest})
                    AND NOT ${costs}`,
-      id, KEEP_RECENT, cutoff, costs_since,
+      id,
+      KEEP_RECENT,
+      cutoff,
+      costs_since,
     );
     db.run(
       c,
       `UPDATE automation_runs SET payload=NULL WHERE automation_id=?1 AND payload IS NOT NULL AND status NOT IN ('pending','running') AND id NOT IN
                (SELECT id FROM automation_runs WHERE automation_id=?1 AND payload IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT ?2)`,
-      id, KEEP_PAYLOADS,
+      id,
+      KEEP_PAYLOADS,
     );
   }
 }

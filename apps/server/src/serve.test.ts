@@ -57,7 +57,10 @@ test("serves_console_lines_get_the_time_except_ia_ready_and_stamped_ones", () =>
   // HA-185: "task … starting claude" and "connected to host …" had no time in the server's log.
   const lines: any[][] = [];
   const at = new Date("2026-11-05T00:15:57.481Z");
-  const write = stamped((...a: any[]) => lines.push(a), () => at);
+  const write = stamped(
+    (...a: any[]) => lines.push(a),
+    () => at,
+  );
   write("connected to host omarchy");
   write("run %s: resuming", "r1");
   write(`IA_READY {"port":1}`);

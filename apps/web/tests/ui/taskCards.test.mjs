@@ -15,14 +15,52 @@ const review = (state, issues = []) => ({ thread_id: "none", state, head: null, 
 
 // What the cards get on top of what the server says: agents can't run here, so their states are made up.
 const STATES = {
-  "Card: subproject at work": { subproject: true, running: true, run_started_at: ago(4140), starred: true, remind_at: later(7200), branch: "ia/a", cost_usd: 4.12 },
-  "Card: waiting agent": { running: true, run_started_at: ago(1380), agent_wait: { reason: "Waiting for CI on the release branch to finish", since: ago(600), until: later(1800) } },
-  "Card: needs you": { status: "needs_attention", attention_reason: "Which of the two layouts should the sidebar use? I need your call before I go on.", starred: true, remind_at: later(86400) },
-  "Card: reviewed": { status: "in_review", review: review("issues", Array(12).fill("an issue")), preview_url: "http://127.0.0.1:1/", pr_url: "https://github.com/o/r/pull/7", branch: "ia/b" },
-  "Card: everything": { status: "in_review", labels: ["plan"], starred: true, remind_at: later(3 * 3600), review: review("running"), depends: true, branch: "ia/c", cost_usd: 12.75 },
+  "Card: subproject at work": {
+    subproject: true,
+    running: true,
+    run_started_at: ago(4140),
+    starred: true,
+    remind_at: later(7200),
+    branch: "ia/a",
+    cost_usd: 4.12,
+  },
+  "Card: waiting agent": {
+    running: true,
+    run_started_at: ago(1380),
+    agent_wait: { reason: "Waiting for CI on the release branch to finish", since: ago(600), until: later(1800) },
+  },
+  "Card: needs you": {
+    status: "needs_attention",
+    attention_reason: "Which of the two layouts should the sidebar use? I need your call before I go on.",
+    starred: true,
+    remind_at: later(86400),
+  },
+  "Card: reviewed": {
+    status: "in_review",
+    review: review("issues", Array(12).fill("an issue")),
+    preview_url: "http://127.0.0.1:1/",
+    pr_url: "https://github.com/o/r/pull/7",
+    branch: "ia/b",
+  },
+  "Card: everything": {
+    status: "in_review",
+    labels: ["plan"],
+    starred: true,
+    remind_at: later(3 * 3600),
+    review: review("running"),
+    depends: true,
+    branch: "ia/c",
+    cost_usd: 12.75,
+  },
   // Agents stopped on a permission prompt: still running, and needing you.
   "Card: approval while working": { status: "needs_attention", running: true, run_started_at: ago(600), attention_reason: "Allow Bash: cargo test?" },
-  "Card: approval while merging": { status: "needs_attention", running: true, merging: true, run_started_at: ago(900), attention_reason: "Allow Bash: git push?" },
+  "Card: approval while merging": {
+    status: "needs_attention",
+    running: true,
+    merging: true,
+    run_started_at: ago(900),
+    attention_reason: "Allow Bash: git push?",
+  },
   "Card: won't fix": { status: "done", resolution: "wont_fix", done_at: ago(3600), last_activity_at: ago(3600) },
 };
 
@@ -43,7 +81,17 @@ test("task cards keep their status bar on one line, and show words once there's 
         if (t.title === "Card: subproject at work") sub = t;
       }
       // Its tasks: 2 of 8 done.
-      for (let i = 0; i < 8; i++) tasks.push({ ...sub, id: `sub-task-${i}`, number: 900 + i, title: `Sub task ${i}`, subproject: false, parent_id: sub.id, status: i < 2 ? "done" : "todo", running: false });
+      for (let i = 0; i < 8; i++)
+        tasks.push({
+          ...sub,
+          id: `sub-task-${i}`,
+          number: 900 + i,
+          title: `Sub task ${i}`,
+          subproject: false,
+          parent_id: sub.id,
+          status: i < 2 ? "done" : "todo",
+          running: false,
+        });
       await route.fulfill({ response: res, json: tasks });
     });
     const rows = () =>
@@ -54,7 +102,18 @@ test("task cards keep their status bar on one line, and show words once there's 
             const [key, state] = [row.firstElementChild, row.lastElementChild];
             const whole = (el) => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= card.getBoundingClientRect().right;
             const title = card.children[1].textContent;
-            return [title, { height: row.getBoundingClientRect().height, width: card.getBoundingClientRect().width, key: whole(key), state: whole(state), text: row.innerText.replace(/\s+/g, " "), stateTitle: state.title, stateClass: state.className }];
+            return [
+              title,
+              {
+                height: row.getBoundingClientRect().height,
+                width: card.getBoundingClientRect().width,
+                key: whole(key),
+                state: whole(state),
+                text: row.innerText.replace(/\s+/g, " "),
+                stateTitle: state.title,
+                stateClass: state.className,
+              },
+            ];
           }),
         ),
       );
@@ -76,7 +135,10 @@ test("task cards keep their status bar on one line, and show words once there's 
     // The state: needing you before the agent's run, which still shows how long it's been going.
     const state = (title) => [cards[title].stateTitle, cards[title].stateClass, cards[title].text];
     assert.match(state("Card: needs you")[0], /^Needs your input · /);
-    for (const [title, run] of [["Card: approval while working", /working since/], ["Card: approval while merging", /merging since/]]) {
+    for (const [title, run] of [
+      ["Card: approval while working", /working since/],
+      ["Card: approval while merging", /merging since/],
+    ]) {
       const [tip, cls, text] = state(title);
       assert.match(tip, /^Needs your input · /, title);
       assert.match(tip, run, title);

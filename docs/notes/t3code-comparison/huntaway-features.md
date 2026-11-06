@@ -10,8 +10,8 @@ data model, how runs are launched).
 ## 1. What it is
 
 - A **kanban board for coding agents**: every task is an agent thread (Claude Code's `claude -p`, or
-  Codex through `codex app-server`) that moves through *Backlog → To do → In progress → Needs attention
-  → In review → Ready for merge → Done*, usually in its own git worktree and branch. Clicking a card
+  Codex through `codex app-server`) that moves through _Backlog → To do → In progress → Needs attention
+  → In review → Ready for merge → Done_, usually in its own git worktree and branch. Clicking a card
   opens the thread, its changes, its review, a terminal and its details.
 - **Self-hosted**: one Rust binary (`huntaway serve`: axum, SQLite, the agent runner, worktrees, the
   MCP helpers and the hub) serves a React + Vite UI on port 7878. An Electron shell
@@ -23,14 +23,15 @@ data model, how runs are launched).
   doesn't interrupt agents: the new process picks every unfinished run back up from where it had read.
   Board tool calls are retried under the same id and recorded, so none runs twice; permission prompts
   pending across a restart reappear.
-- **One board across machines**: every `huntaway serve` is a *host* (its own database, runs its own
-  agents) and a *hub* (serves the UI and can show other hosts). See §11.
-- **Profiles** (e.g. *work* and *personal*) scope projects, tasks, agent logins, GitHub accounts and
+- **One board across machines**: every `huntaway serve` is a _host_ (its own database, runs its own
+  agents) and a _hub_ (serves the UI and can show other hosts). See §11.
+- **Profiles** (e.g. _work_ and _personal_) scope projects, tasks, agent logins, GitHub accounts and
   Asana tokens. The board shows every profile at once.
 
 ## 2. Agent runtimes and configuration
 
 ### Runtimes
+
 - **Claude Code**: `claude -p --output-format stream-json --input-format stream-json` with
   `--append-system-prompt` (the board's instructions), `--permission-mode`,
   `--permission-prompt-tool mcp__huntaway__permission_prompt`, `--resume <session>`, `--model`,
@@ -44,6 +45,7 @@ data model, how runs are launched).
 - No other runtimes: no Cursor, OpenCode, Gemini/Antigravity, ACP agents or direct API models.
 
 ### Agent configs and profiles
+
 - An **agent config** is a Claude config directory (`CLAUDE_CONFIG_DIR`) or a Codex home (`CODEX_HOME`)
   on a host, so logins, settings and history stay separate. A thread's config decides which runtime
   runs it. Logging a config in is done on the host's CLI, or by **Copy login** from another host
@@ -53,21 +55,23 @@ data model, how runs are launched).
   can be changed until its agent first starts.
 
 ### Models, effort and permission modes
+
 - **Model**: task → project → profile → host default. **Effort**: task → host default (`low`…`max`, and
   Codex's `minimal`/`ultra`). Codex configs list their models with efforts; Claude models are aliases or
   free text.
 - **Six permission modes**, per host default, project and thread (selector under the composer;
-  Shift+Tab cycles): *Ask* (`default`), *Accept edits*, *Auto* (Claude's classifier, Codex's
-  `auto_review`), *Plan*, *Don't ask*, *Bypass*. They map to Claude's `--permission-mode` and to Codex
+  Shift+Tab cycles): _Ask_ (`default`), _Accept edits_, _Auto_ (Claude's classifier, Codex's
+  `auto_review`), _Plan_, _Don't ask_, _Bypass_. They map to Claude's `--permission-mode` and to Codex
   approval policies and sandboxes, whose writable paths include the worktree, the repository's git
   directory and package caches (`~/.npm`, `~/.cargo/registry`, pnpm's store). A change applies from the
   next message; switching to Bypass or Don't ask also settles open prompts. Approving a plan
   (`ExitPlanMode`) drops the thread out of Plan mode.
-- **Approvals**: in *Ask* mode a tool call becomes an approval card in the thread (*Allow*, *Always allow*
-  for that thread, *Deny*, optionally with a note back to the agent). Prompts raised inside a subagent
+- **Approvals**: in _Ask_ mode a tool call becomes an approval card in the thread (_Allow_, _Always allow_
+  for that thread, _Deny_, optionally with a note back to the agent). Prompts raised inside a subagent
   show on the parent thread and name the subagent.
 
 ### Skills, MCP servers and prompts
+
 - **Skills and MCP servers kept on the host**, global (on or off per profile) or per project (stdio,
   HTTP or SSE servers; a server can allow all its tools). Skills and servers from elsewhere (the config,
   plugins, claude.ai connectors, the repository) can be turned off per project, using what recent runs
@@ -78,6 +82,7 @@ data model, how runs are launched).
   reviewed and when it's merged; the board keeps the parts it relies on around them.
 
 ### Threads, steering and context
+
 - **Steering**: a message sent while the agent works goes to it after its current tool call, in the
   same turn (Claude stream-json input, Codex `turn/steer`). **Queued messages** are used where it can't
   steer and are sent as the next prompt; the ✕ takes one back for editing. **Stop** interrupts the turn
@@ -101,26 +106,26 @@ data model, how runs are launched).
 
 - **Boards**: per project, per subproject, per project group, and per profile (every task of the profile
   across projects and hosts). Each has a kanban view and a list view (with collapsible sections and an
-  *Archived* section).
+  _Archived_ section).
 - **Cards** show the key (`IA-12`), type and subproject badges, dependency and merge-queue state, the
-  model of a fan-out sibling, the review state (*reviewing 1/2*, *N issues*…), star and reminder marks,
-  a live working timer or *waiting* with the agent's reason, the attention reason (the agent's question,
+  model of a fan-out sibling, the review state (_reviewing 1/2_, _N issues_…), star and reminder marks,
+  a live working timer or _waiting_ with the agent's reason, the attention reason (the agent's question,
   the permission it wants, the failure), branch and PR icons, the preview dot, Asana marks and cost.
-- **Drag and drop** between columns and within one. Dropping into *In progress* starts the agent, into
-  *Ready for merge* starts the merge, into *Done* sets the resolution. A right-click menu completes a task
-  as *Done*, *Not done* or *Won't fix*, stars it, or sets a reminder.
+- **Drag and drop** between columns and within one. Dropping into _In progress_ starts the agent, into
+  _Ready for merge_ starts the merge, into _Done_ sets the resolution. A right-click menu completes a task
+  as _Done_, _Not done_ or _Won't fix_, stars it, or sets a reminder.
 - **Search, filter and sort** on every board (`/` focuses search): statuses, task types, projects, tasks
   with a running agent, a star, a PR or a reminder; sort by board order, activity, age, title or cost.
-- **Archiving**: tasks done for two days leave the *Done* column for the list's *Archived* section.
+- **Archiving**: tasks done for two days leave the _Done_ column for the list's _Archived_ section.
   Projects can be archived (off every board, no new runs; tasks and worktrees kept).
-- **Sidebar**: profiles with a bar of their tasks per state; *Starred* tasks; *Reminders* (an hour,
+- **Sidebar**: profiles with a bar of their tasks per state; _Starred_ tasks; _Reminders_ (an hour,
   tomorrow, next Monday or a picked time, with a note); the active profile's projects with running dots
-  and *needs attention* / *ready to check* counts; groups (collapsible folders whose board shows all their
-  tasks), pinned and hidden projects; plan usage; *N new commits · Restart*.
+  and _needs attention_ / _ready to check_ counts; groups (collapsible folders whose board shows all their
+  tasks), pinned and hidden projects; plan usage; _N new commits · Restart_.
 - **New task dialog** is a token editor: `/plan` (or `/subproject`, `/scratch`, `/artifact`, `/diagram`)
   picks the type, `@KEY` the project (`@group`, `@none`), `!model` the model (one task per `!`),
-  `^high` the effort and `#IA-3` a dependency, with autocomplete, highlighting and a *Reads as* row that
-  shows what will be made. Drafts are kept per destination; *Add another* keeps it open.
+  `^high` the effort and `#IA-3` a dependency, with autocomplete, highlighting and a _Reads as_ row that
+  shows what will be made. Drafts are kept per destination; _Add another_ keeps it open.
 
 ## 4. Kinds of task
 
@@ -134,32 +139,32 @@ data model, how runs are launched).
   tools, in its own folder with read-only access to the project. No worktree, review or merge.
 - **Document tasks**: **Plan** (`plan.html`, with the board's components and `<ia-question>` form fields
   you answer in place and send back), **Artifact** (`artifact.html`, a designed page) or **Diagram**
-  (`diagram.mmd`, Mermaid, drawn with zoom, SVG download and a *Fix* button that sends parse errors back).
+  (`diagram.mmd`, Mermaid, drawn with zoom, SVG download and a _Fix_ button that sends parse errors back).
   Shown sandboxed as the agent writes, with a version per turn. An approved plan's agent can break it
   into tasks and its card counts them.
 - **One prompt, several agents** (fan-out): each `!model` in a description makes its own task with that
   model and worktree (`!opus !gpt-5.5` gives one Claude and one Codex task). Siblings show each other's
   state and cost, to compare.
-- **Dependencies**: a task waits (*queued*) until the tasks it depends on are *Done*, then starts.
+- **Dependencies**: a task waits (_queued_) until the tasks it depends on are _Done_, then starts.
 
 ## 5. Lifecycle automation
 
-- **Automatic columns**: running → *In progress*; a question (`request_user_input`), a permission
-  prompt, a failure or Stop → *Needs attention*; a clean finish → *In review*.
-- **Reviews**: moving to *In review* starts reviewer agents on the branch's PR (or diff), read-only in the
+- **Automatic columns**: running → _In progress_; a question (`request_user_input`), a permission
+  prompt, a failure or Stop → _Needs attention_; a clean finish → _In review_.
+- **Reviews**: moving to _In review_ starts reviewer agents on the branch's PR (or diff), read-only in the
   task's worktree, each in its own review thread, reporting with `submit_review`. Up to six reviewers per
   project (for example one Claude and one Codex, each with a model and effort). Serious issues go back to
-  the task's agent as one round of fixes; after the project's fix rounds (default 2) it goes to *Needs
-  attention*. Tasks without code changes aren't reviewed. *Review now* on demand. The review prompt quotes
+  the task's agent as one round of fixes; after the project's fix rounds (default 2) it goes to _Needs
+  attention_. Tasks without code changes aren't reviewed. _Review now_ on demand. The review prompt quotes
   what you told the agent, so reviewers don't re-raise what you accepted.
 - **Ready for merge**: the task's agent merges its PR (or branch) following the project's instructions,
-  and moves the task to *Done*. One merge at a time per project (and per subproject), in column order.
-  A task with nothing to merge goes straight to *Done*.
+  and moves the task to _Done_. One merge at a time per project (and per subproject), in column order.
+  A task with nothing to merge goes straight to _Done_.
 - **Status scripts**: bash run in the task's worktree when it moves into a column (or on every move), with
   `IA_OLD_STATUS`, `IA_NEW_STATUS`, `IA_TASK_KEY`, `IA_PR_URL`… (5-minute limit, output in the thread), for
   notifications, other trackers or clean-up.
 - **Preview URLs**: a task's preview URL shows as a dot that turns green once it answers 200.
-- **Restart and rebuild**: when the source checkout has new commits, *Restart* runs `npm install`, `npm run
+- **Restart and rebuild**: when the source checkout has new commits, _Restart_ runs `npm install`, `npm run
   build` and `cargo build --release`, then re-execs the server; running agents carry on.
 
 ## 6. Agents orchestrating agents (board MCP tools)
@@ -170,7 +175,7 @@ data model, how runs are launched).
 - Agents can create, start, message and update other tasks (with dependencies, subprojects, models,
   stars and reminders), so a subproject, group task, plan or scratch task can run a whole piece of work.
 - **`wait`** blocks until watched tasks change status, a subagent finishes, a shell `command` exits (e.g.
-  `gh pr checks 12 --watch`), a message arrives or the time is up, while the card shows *waiting* and the
+  `gh pr checks 12 --watch`), a message arrives or the time is up, while the card shows _waiting_ and the
   reason. It survives server restarts.
 - **Across profiles and hosts**: a profile can let other profiles' agents use its board (off by default,
   one way). Board tools reach projects and tasks on linked hosts, so an agent can work across machines.
@@ -228,15 +233,15 @@ data model, how runs are launched).
 
 ## 11. Hosts and multi-machine
 
-- **Three ways to link a host** (Settings → Hosts): *Add host* (the hub calls the host's URL with its
-  token), *Connect from elsewhere* (`huntaway serve --hub … --hub-token …`: the host dials out, so no
-  inbound port, suiting cloud VMs and NAT) and *Over SSH* (the hub gets a restricted `authorized_keys`
+- **Three ways to link a host** (Settings → Hosts): _Add host_ (the hub calls the host's URL with its
+  token), _Connect from elsewhere_ (`huntaway serve --hub … --hub-token …`: the host dials out, so no
+  inbound port, suiting cloud VMs and NAT) and _Over SSH_ (the hub gets a restricted `authorized_keys`
   line, starts `huntaway` on the target if needed and tunnels to it).
 - Nothing about another host is stored on a hub beyond how to reach it, so any number of boards can show
   the same host. Events from every host arrive on one websocket tagged with the host.
-- **Agent configs and profiles merge by name** across hosts; *Copy login* copies a config to another host.
+- **Agent configs and profiles merge by name** across hosts; _Copy login_ copies a config to another host.
 - **Versions**: each host reports its API version and the oldest UI it serves; the board hides newer
-  features for older hosts and marks them *outdated*, *too old* or *board too old*.
+  features for older hosts and marks them _outdated_, _too old_ or _board too old_.
 - **Update to <commit>** sends the hub's checkout to a host as a git bundle over the link, which then
   rebuilds and restarts with its agents running.
 - A hub that can't run agents sends new scratch tasks to a chosen host.
@@ -256,7 +261,7 @@ data model, how runs are launched).
 
 - Task panel as a side panel beside the board or expanded into a dialog; Escape or a click outside closes
   it unless something is unsaved. Composer drafts and new-task drafts are kept per task in the browser.
-- Live updates over one websocket; reconnects with backoff and refetches; offers *Reload* when the server
+- Live updates over one websocket; reconnects with backoff and refetches; offers _Reload_ when the server
   serves a newer UI.
 - Missing (from the UI sweep): browser, desktop or mobile notifications; sounds or badges; a mobile app or
   mobile layout; a light theme; a command palette or global shortcuts; bulk actions; syntax highlighting

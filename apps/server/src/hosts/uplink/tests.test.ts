@@ -19,7 +19,17 @@ process.env.IA_CLAUDE_BIN = "/nonexistent/claude";
 process.env.IA_CODEX_BIN = "/nonexistent/codex";
 
 function project(s: AppState, profile: db.Profile, id: string, key: string) {
-  db.insert_project(s.db(), { id, profile_id: profile.id, name: id, key, repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+  db.insert_project(s.db(), {
+    id,
+    profile_id: profile.id,
+    name: id,
+    key,
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  });
 }
 
 function task(s: AppState, project: string, title: string): Task {
@@ -172,7 +182,10 @@ test("calls_up_a_link_run_once_and_never_go_back_down_or_up", async () => {
   // as its own (HA-241).
   for (const h of ["homeserver", "host"]) {
     e = err(await result(handle_up_call(hub_s, "host", call(`named-${h}`, "get_task", { task_id: "LAP-1", host: h }))));
-    assert.equal(e, `${h} is the host this call came up from (homeserver), and desktop doesn't pass calls back down: leave out host to use that host's own board`);
+    assert.equal(
+      e,
+      `${h} is the host this call came up from (homeserver), and desktop doesn't pass calls back down: leave out host to use that host's own board`,
+    );
   }
   // Nor does the hub pass it up a link of its own.
   assert.equal(hub_s.uplinks.size, 0);

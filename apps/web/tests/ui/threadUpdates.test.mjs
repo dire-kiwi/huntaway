@@ -72,7 +72,7 @@ test("new and updated messages show in the thread, and a closed thread isn't fet
     // Open, the thread is fetched again on a resync; closed for a while, it isn't.
     const before = fetches;
     socket.send(JSON.stringify({ type: "resync" }));
-    for (const end = Date.now() + 5000; fetches === before && Date.now() < end; ) await page.waitForTimeout(50);
+    for (const end = Date.now() + 5000; fetches === before && Date.now() < end;) await page.waitForTimeout(50);
     assert.equal(fetches, before + 1, "an open thread is fetched on a resync");
     await page.keyboard.press("Escape");
     await ui.run(["gone All done"]);
@@ -101,8 +101,19 @@ test("a thread at its end follows a subagent's messages, inline and in its own t
     });
     let id = 7000;
     const assistant = (content, parent = null) =>
-      socket.send(JSON.stringify({ type: "message", task_id: task.id, message: { id: ++id, task_id: task.id, kind: "claude", created_at: new Date().toISOString(),
-        data: { type: "assistant", parent_tool_use_id: parent, message: { content } } } }));
+      socket.send(
+        JSON.stringify({
+          type: "message",
+          task_id: task.id,
+          message: {
+            id: ++id,
+            task_id: task.id,
+            kind: "claude",
+            created_at: new Date().toISOString(),
+            data: { type: "assistant", parent_tool_use_id: parent, message: { content } },
+          },
+        }),
+      );
     const scroller = () =>
       page.evaluate(() => {
         const el = [...document.querySelectorAll(".overflow-y-auto")].find((e) => e.querySelector(".prose-chat"));
@@ -149,8 +160,19 @@ test("a thread at its end follows a subagent's messages, inline and in its own t
     await ui.run(["wait Late prompt", "click [aria-label='Open subagent thread'] >> nth=1", "wait Second subagent here", "wait Show in thread"]);
     await scrollTo();
     const prompt = Array.from({ length: 40 }, (_, i) => `Prompt line ${i}`).join("\n");
-    socket.send(JSON.stringify({ type: "message", task_id: task.id, message: { id: ++id, task_id: task.id, kind: "claude", created_at: new Date().toISOString(),
-      data: { type: "system", subtype: "task_started", tool_use_id: "A2", task_id: "k2", prompt } } }));
+    socket.send(
+      JSON.stringify({
+        type: "message",
+        task_id: task.id,
+        message: {
+          id: ++id,
+          task_id: task.id,
+          kind: "claude",
+          created_at: new Date().toISOString(),
+          data: { type: "system", subtype: "task_started", tool_use_id: "A2", task_id: "k2", prompt },
+        },
+      }),
+    );
     await ui.run(["wait Prompt line 39"]);
     assert.ok((await scroller()).gap < 80, "a subagent's own thread at its end follows a prompt that comes late");
   });

@@ -17,7 +17,12 @@ export function RawDiff({ file }: { file: FileDiff }) {
       {file.binary && <div className="text-muted">Binary file: stage or discard it whole from the files panel.</div>}
       {file.combined && <div className="mb-1 text-amber-300">A conflict: resolve it in the file, then stage it from the files panel.</div>}
       {lines.map((l, i) => (
-        <div key={i} className={clsx(/^(\+\+|\+ | \+)/.test(l) ? "text-emerald-300" : /^(--|- | -)/.test(l) ? "text-red-300" : /^@@/.test(l) ? "text-accent" : "text-[#b4b4c4]")}>
+        <div
+          key={i}
+          className={clsx(
+            /^(\+\+|\+ | \+)/.test(l) ? "text-emerald-300" : /^(--|- | -)/.test(l) ? "text-red-300" : /^@@/.test(l) ? "text-accent" : "text-[#b4b4c4]",
+          )}
+        >
           {l || " "}
         </div>
       ))}
@@ -25,12 +30,23 @@ export function RawDiff({ file }: { file: FileDiff }) {
   );
 }
 
-
 /**
  * Several files' diffs (a commit's, the branch's), each under a header that folds it away. With a `source`, lines
  * are picked by their numbers (drag or shift-click for more) and commented on for the agent.
  */
-export function PatchView({ files, head, empty, layout, source }: { files: FileDiff[]; head?: ReactNode; empty: string; layout: Layout; source?: CommentSource }) {
+export function PatchView({
+  files,
+  head,
+  empty,
+  layout,
+  source,
+}: {
+  files: FileDiff[];
+  head?: ReactNode;
+  empty: string;
+  layout: Layout;
+  source?: CommentSource;
+}) {
   const [folded, setFolded] = useState<Record<string, boolean>>({});
   const big = (f: FileDiff) => f.adds + f.dels > 1500;
   const isFolded = (f: FileDiff, i: number) => folded[`${i}:${f.path}`] ?? big(f);
@@ -48,7 +64,13 @@ export function PatchView({ files, head, empty, layout, source }: { files: FileD
     const f = files[k];
     if (!f || !source || !comments) return;
     const rows = diffRows(f).slice(Math.min(from, to), Math.max(from, to) + 1);
-    comments.open(commentLines(f, source, rows.filter((r) => r.line >= 0)));
+    comments.open(
+      commentLines(
+        f,
+        source,
+        rows.filter((r) => r.line >= 0),
+      ),
+    );
     setSel(null);
   };
   // `n` comments on what's picked here, until another diff picks lines.
@@ -142,7 +164,13 @@ export function PatchView({ files, head, empty, layout, source }: { files: FileD
 }
 
 const fileLabel = (f: FileDiff) =>
-  f.oldPath && f.newPath && f.oldPath !== f.newPath ? `${f.oldPath} → ${f.newPath}` : f.oldPath === null ? `${f.path} (new)` : f.newPath === null ? `${f.path} (deleted)` : f.path;
+  f.oldPath && f.newPath && f.oldPath !== f.newPath
+    ? `${f.oldPath} → ${f.newPath}`
+    : f.oldPath === null
+      ? `${f.path} (new)`
+      : f.newPath === null
+        ? `${f.path} (deleted)`
+        : f.path;
 
 export function CommitHead({ c }: { c: GitCommitShown }) {
   return (
@@ -171,7 +199,10 @@ export function TurnView({ turn, shown, layout }: { turn: Turn; shown: { diff?: 
   const files = useMemo(() => parseDiff(shown?.diff?.patch ?? ""), [shown]);
   const label = turnLabel(turn);
   const source = useMemo<CommentSource>(
-    () => ({ key: `turn:${turn.before_n}:${turn.n}`, label: `what the agent changed in turn ${turn.turn}, "${label.length > 60 ? `${label.slice(0, 60)}…` : label}"` }),
+    () => ({
+      key: `turn:${turn.before_n}:${turn.n}`,
+      label: `what the agent changed in turn ${turn.turn}, "${label.length > 60 ? `${label.slice(0, 60)}…` : label}"`,
+    }),
     [turn.before_n, turn.n, turn.turn, label],
   );
   const excluded = shown?.diff?.excluded ?? turn.stats?.excluded ?? [];
@@ -219,7 +250,10 @@ export function TurnView({ turn, shown, layout }: { turn: Turn; shown: { diff?: 
 export function BranchView({ diff, layout }: { diff: DiffResult | null; layout: Layout }) {
   const files = useMemo(() => parseDiff(diff?.patch ?? ""), [diff]);
   const base = diff?.base;
-  const source = useMemo<CommentSource>(() => ({ key: "branch", label: base ? `the branch's changes against ${base}, uncommitted ones too` : "the branch's changes" }), [base]);
+  const source = useMemo<CommentSource>(
+    () => ({ key: "branch", label: base ? `the branch's changes against ${base}, uncommitted ones too` : "the branch's changes" }),
+    [base],
+  );
   if (!diff) return null;
   if (!diff.available) return <Note error>Diff unavailable: {diff.reason}</Note>;
   return (

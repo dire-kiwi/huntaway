@@ -120,7 +120,8 @@ async function answer_call(f: Fake, path: string, raw: Buffer): Promise<[number,
   }
   const rest = path.slice("/bot".length);
   const i = rest.indexOf("/");
-  const tok = rest.slice(0, i), method = rest.slice(i + 1);
+  const tok = rest.slice(0, i),
+    method = rest.slice(i + 1);
   const bot = ["123456", "654321"].find((b) => tok.startsWith(`${b}:`));
   if (!bot) return [200, { ok: false, error_code: 401, description: "Unauthorized" }];
   let body: any = {};
@@ -409,7 +410,10 @@ test("a_code_seen_in_a_group_links_nobody", async (t) => {
   f.push(text_update(7, 7, `/start ${code}`));
   await until("the sender's own try is dropped", () => dropped_count(s, p) === 2);
   assert.equal(config(s.db(), p).owner, null);
-  assert.ok(f.calls("sendMessage").every((b) => b.chat_id === -100), JSON.stringify(f.sent_texts()));
+  assert.ok(
+    f.calls("sendMessage").every((b) => b.chat_id === -100),
+    JSON.stringify(f.sent_texts()),
+  );
 });
 
 // HA-207: a code is for the profile that made it: another profile's bot doesn't take it, and it links nothing there.
@@ -454,7 +458,14 @@ test("photos_and_voice_notes_arrive_as_attachments", async (t) => {
   });
   f.push({ message: { message_id: 4, from: user(7, "Pat"), chat: { id: 7, type: "private" }, voice: { file_id: "voice", file_size: 4 } } });
   // One too big isn't fetched.
-  f.push({ message: { message_id: 5, from: user(7, "Pat"), chat: { id: 7, type: "private" }, document: { file_id: "huge", file_name: "huge.pdf", file_size: 50 << 20 } } });
+  f.push({
+    message: {
+      message_id: 5,
+      from: user(7, "Pat"),
+      chat: { id: 7, type: "private" },
+      document: { file_id: "huge", file_name: "huge.pdf", file_size: 50 << 20 },
+    },
+  });
   await until("all three", () => sent_to_assistant(s, p).some((m) => m.includes("huge.pdf")));
   const all = sent_to_assistant(s, p).join("\n---\n");
   assert.ok(all.includes("This receipt\n\nAttached files:\n- "), all);
@@ -571,9 +582,25 @@ test("prompts_come_with_buttons_that_only_the_owner_can_press", async (t) => {
   assert.equal(status_of(s, "req-3"), "pending");
   // Nor a project task's, in the same profile.
   const project = db.insert_project(s.db(), {
-    id: "pr", profile_id: p, name: "P", key: "P", repo_path: "/nonexistent", scratch_path: "", worktrees_root: "", base_branch: null, use_worktrees: false,
+    id: "pr",
+    profile_id: p,
+    name: "P",
+    key: "P",
+    repo_path: "/nonexistent",
+    scratch_path: "",
+    worktrees_root: "",
+    base_branch: null,
+    use_worktrees: false,
   });
-  const task = db.insert_task(s.db(), { profile_id: p, project_id: project.id, kind: "task", title: "Work", description: "", status: "todo", use_worktree: false });
+  const task = db.insert_task(s.db(), {
+    profile_id: p,
+    project_id: project.id,
+    kind: "task",
+    title: "Work",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+  });
   raise_prompt(s, task.id, "req-4", null);
   assert.throws(() => answer(s, p, "req-4", true), /isn't this assistant's/);
   assert.equal(status_of(s, "req-4"), "pending");
@@ -738,7 +765,12 @@ test("queued_sends_and_prompts_settled_meanwhile_go_after_a_restart", async (t) 
   assert.equal(outbox(s.db(), p).items.length, 1);
   assert.ok(config(s.db(), p).last_error?.includes("502"));
   // A prompt whose buttons were sent ended while the board was down (nobody heard).
-  db.run(s.db(), "INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at) VALUES ('old',?1,0,'Bash','{}','denied',?2)", a, now());
+  db.run(
+    s.db(),
+    "INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at) VALUES ('old',?1,0,'Bash','{}','denied',?2)",
+    a,
+    now(),
+  );
   update_progress(s, p, (pr) => void (pr.prompts.old = { message_id: 41, html: "🔐 old" }));
   // Starting again (as the server does), with Telegram back: both go.
   f.fail("sendMessage", 7, 0);
@@ -863,7 +895,10 @@ type PushService = Awaited<ReturnType<typeof fake_push_service>>;
 
 async function call(s: Shared, method: string, path: string, body: any): Promise<any> {
   if (!s.local_router) api.router(s);
-  const a = await api.dispatch(s, api.makeReq(method, path, { authorization: "Bearer ", "content-type": "application/json" }, Buffer.from(JSON.stringify(body))));
+  const a = await api.dispatch(
+    s,
+    api.makeReq(method, path, { authorization: "Bearer ", "content-type": "application/json" }, Buffer.from(JSON.stringify(body))),
+  );
   const v = JSON.parse(a.body.toString());
   assert.equal(a.status, 200, JSON.stringify(v));
   return v;
@@ -976,7 +1011,8 @@ test("reports_go_by_push_telegram_or_both_as_chosen", async (t) => {
   const a = assistant_id(s, p);
   // A new device has reports on, unless it says otherwise.
   const phone = await subscribe_phone(s, pushed, "phone", {});
-  const report = (outcome: string, text: string) => s.add_message(a, "report", { automation: "Inbox check", task_id: "routine-thread", key: "A-9", outcome, text });
+  const report = (outcome: string, text: string) =>
+    s.add_message(a, "report", { automation: "Inbox check", task_id: "routine-thread", key: "A-9", outcome, text });
 
   // Both (Telegram's reports are on by default): pushed, opening the routine's thread.
   report("reported", "Two mails from the bank");
@@ -1068,7 +1104,10 @@ test("a_turn_that_failed_or_was_stopped_is_no_reply", async (t) => {
   report(s, a, "Marker");
   await until("the marker", () => f.sent_texts().some((t) => t.includes("Marker")));
   const texts = f.sent_texts();
-  assert.ok(!texts.some((t) => t.includes("Broke") || t.includes("limit") || t.includes("Half a thought") || t.includes("A real reply")), JSON.stringify(texts));
+  assert.ok(
+    !texts.some((t) => t.includes("Broke") || t.includes("limit") || t.includes("Half a thought") || t.includes("A real reply")),
+    JSON.stringify(texts),
+  );
 });
 
 test("how_a_turn_ended_is_read_from_its_result", () => {

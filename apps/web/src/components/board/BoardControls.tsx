@@ -10,7 +10,11 @@ const BUTTON_STATE = (active: boolean) => (active ? "border-accent/50 bg-accent/
 
 /** Whether a key press is meant for the page rather than a field being typed in, or a dialog or menu. */
 const forPage = (e: KeyboardEvent) =>
-  !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as Element).closest?.("input, textarea, select, [contenteditable]") && !document.querySelector("[data-modal]");
+  !e.ctrlKey &&
+  !e.metaKey &&
+  !e.altKey &&
+  !(e.target as Element).closest?.("input, textarea, select, [contenteditable]") &&
+  !document.querySelector("[data-modal]");
 
 /** The board's search field. "/" anywhere on the page goes to it; Escape clears it, then leaves it. */
 export function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -112,7 +116,12 @@ export function FilterMenu({
       onClick={onSelect}
       className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12.5px] text-fg outline-none hover:bg-white/5 focus:bg-white/5"
     >
-      <span className={clsx("flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border", checked ? "border-accent bg-accent/80 text-bg" : "border-line-strong")}>
+      <span
+        className={clsx(
+          "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border",
+          checked ? "border-accent bg-accent/80 text-bg" : "border-line-strong",
+        )}
+      >
         {checked && <Check size={11} strokeWidth={3} />}
       </span>
       {label}
@@ -121,12 +130,7 @@ export function FilterMenu({
   const heading = (text: string) => <div className="px-2 pt-2 pb-1 text-[11px] font-medium tracking-wide text-faint uppercase first:pt-1">{text}</div>;
   return (
     <div ref={ref} className="relative">
-      <button
-        title="Filter the board's tasks"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className={clsx(BUTTON, BUTTON_STATE(count > 0 || open))}
-      >
+      <button title="Filter the board's tasks" aria-expanded={open} onClick={() => setOpen(!open)} className={clsx(BUTTON, BUTTON_STATE(count > 0 || open))}>
         <ListFilter size={13} /> Filter
         {count > 0 && <span className="rounded bg-accent/25 px-1 text-[11px] text-fg">{count}</span>}
       </button>
@@ -134,7 +138,10 @@ export function FilterMenu({
         <div
           data-modal
           role="menu"
-          className={clsx(align === "right" ? "right-0" : "left-0", "absolute top-full z-50 mt-1 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50")}
+          className={clsx(
+            align === "right" ? "right-0" : "left-0",
+            "absolute top-full z-50 mt-1 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-line bg-panel p-1 shadow-2xl shadow-black/50",
+          )}
         >
           {heading("Status")}
           {statuses.map((s) =>
@@ -158,7 +165,9 @@ export function FilterMenu({
           {projects.length > 1 && (
             <>
               {heading("Project")}
-              {projects.map((p) => item(`p:${p.id}`, query.projects.includes(p.id), p.label, () => onChange({ ...query, projects: toggled(query.projects, p.id) })))}
+              {projects.map((p) =>
+                item(`p:${p.id}`, query.projects.includes(p.id), p.label, () => onChange({ ...query, projects: toggled(query.projects, p.id) })),
+              )}
             </>
           )}
           {heading("Only")}

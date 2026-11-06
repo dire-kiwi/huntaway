@@ -16,7 +16,8 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
   const { completing, description, caret, edit } = ed;
   const { typeTabs, offered, atVocab, placeNames, project } = where;
   const { pickConfig, inherited, hostSettings, efforts, modelList } = agent;
-  const { labelWords, labelling, harnessVocab, specific, named, effortList, depTasks, depKey, deps, depProject, fromOk, fromTasks, fromKeys, projectBranches } = tok;
+  const { labelWords, labelling, harnessVocab, specific, named, effortList, depTasks, depKey, deps, depProject, fromOk, fromTasks, fromKeys, projectBranches } =
+    tok;
   const hostCount = hosts.length;
   // What's offered for each prefix as it's typed.
   const suggestions: Record<TokenPrefix, Suggestion[]> = {
@@ -27,7 +28,11 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
     "@": subproject
       ? []
       : [
-          ...(projects ?? []).map((p, i) => ({ value: placeNames[i], label: p.name, hint: hostCount > 1 ? hosts.find((h) => h.id === p.host_id)?.name : undefined })),
+          ...(projects ?? []).map((p, i) => ({
+            value: placeNames[i],
+            label: p.name,
+            hint: hostCount > 1 ? hosts.find((h) => h.id === p.host_id)?.name : undefined,
+          })),
           ...(group ? [{ value: GROUP_WORD, label: `Group task (${group})`, hint: "Plans the work across the group's projects" }] : []),
           ...(scratch ? [{ value: NONE_WORD, label: `No project (${scratch.name})`, hint: "A scratch task, with no repository" }] : []),
         ],
@@ -50,7 +55,9 @@ export function useCompletion(opened: Opened, origin: Origin, ed: EditorText, wh
       ? [
           ...fromTasks.map((t) => ({ value: depKey(t), label: t.title, hint: "Stacks it on this task's branch, which its pull request targets" })),
           // Not the tasks' own branches, which their keys stand for.
-          ...projectBranches.filter((b) => !fromTasks.some((t) => t.branch === b.name)).map((b) => ({ value: b.name, label: b.remote ? "remote branch" : "branch" })),
+          ...projectBranches
+            .filter((b) => !fromTasks.some((t) => t.branch === b.name))
+            .map((b) => ({ value: b.name, label: b.remote ? "remote branch" : "branch" })),
         ]
       : [],
   };

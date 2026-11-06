@@ -4,8 +4,24 @@ import { describe, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { read_json, read_jsonl } from "./examples.ts";
 import {
-  apply_event, apply_events, initial_state, is_gap, item_page, open_requests, request_anchor, snapshot_window, with_page,
-  type AssistantMessage, type Command, type Item, type ItemPage, type Snapshot, type Thread, type ThreadEvent, type ThreadRequest, type ToolCall,
+  apply_event,
+  apply_events,
+  initial_state,
+  is_gap,
+  item_page,
+  open_requests,
+  request_anchor,
+  snapshot_window,
+  with_page,
+  type AssistantMessage,
+  type Command,
+  type Item,
+  type ItemPage,
+  type Snapshot,
+  type Thread,
+  type ThreadEvent,
+  type ThreadRequest,
+  type ToolCall,
 } from "./protocol.ts";
 
 const ids = (list: { id: string }[]) => list.map((x) => x.id);
@@ -108,7 +124,15 @@ describe("apply_event", () => {
   });
 
   /** A text delta to a1 at seq 3. */
-  const delta = (text: string, offset: number, item_id = "a1", seq = 3): ThreadEvent => ({ type: "delta", thread_id: "th", seq, item_id, kind: "text", offset, text });
+  const delta = (text: string, offset: number, item_id = "a1", seq = 3): ThreadEvent => ({
+    type: "delta",
+    thread_id: "th",
+    seq,
+    item_id,
+    kind: "text",
+    offset,
+    text,
+  });
 
   test("appends deltas to text without counting them", () => {
     const s = started();
@@ -226,7 +250,13 @@ describe("apply_event", () => {
 
 describe("windows", () => {
   const thread: Thread = { id: "th", harness: "claude", status: "waiting", created_at: "2026-11-01T00:00:00Z" };
-  const msg = (id: string, parent_id?: string, turn_id = "t1"): Item => ({ id, type: "assistant_message", text: id, turn_id, ...(parent_id ? { parent_id } : {}) });
+  const msg = (id: string, parent_id?: string, turn_id = "t1"): Item => ({
+    id,
+    type: "assistant_message",
+    text: id,
+    turn_id,
+    ...(parent_id ? { parent_id } : {}),
+  });
   const agent = (id: string, parent_id?: string): Item => ({
     id,
     type: "tool_call",

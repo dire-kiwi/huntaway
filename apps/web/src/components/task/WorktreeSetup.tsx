@@ -65,11 +65,14 @@ export function WorktreeSetup({ project, hostName }: { project: Project; hostNam
           </IconButton>
         </div>
       </header>
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-amber-500/[0.06] px-5 py-2.5 text-[12.5px]" data-worktree-setup>
+      <div
+        className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-amber-500/[0.06] px-5 py-2.5 text-[12.5px]"
+        data-worktree-setup
+      >
         <GitBranch size={14} className="shrink-0 text-amber-300" />
         <div className="min-w-0 flex-1 text-muted">
-          <span className="text-fg">The project's folder {missing}.</span> Each task gets its own git worktree and branch, so its tasks
-          wait until the folder is a git repository with a commit to branch from. The board comes back once it is.
+          <span className="text-fg">The project's folder {missing}.</span> Each task gets its own git worktree and branch, so its tasks wait until the folder is
+          a git repository with a commit to branch from. The board comes back once it is.
           {taskCount > 0 && ` Its ${taskCount === 1 ? "task is" : `${taskCount} tasks are`} kept until then.`}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -85,14 +88,23 @@ export function WorktreeSetup({ project, hostName }: { project: Project; hostNam
           >
             <RefreshCw size={13} className={checking ? "animate-spin" : undefined} /> Check again
           </Button>
-          <Button size="sm" disabled={busy} onClick={withoutWorktrees} title="Tasks work in the project's folder itself, one at a time. You can turn worktrees back on in the project's settings.">
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={withoutWorktrees}
+            title="Tasks work in the project's folder itself, one at a time. You can turn worktrees back on in the project's settings."
+          >
             Use without worktrees
           </Button>
         </div>
       </div>
       {err && <div className="shrink-0 border-b border-line px-5 py-2 text-[12px] text-red-400">{err}</div>}
       <main className="min-h-0 flex-1">
-        {task ? <Thread key={`${task.host_id}:${task.id}`} task={task} cwd={project.repo_path} /> : <StartSetup project={project} missing={missing} onError={setErr} />}
+        {task ? (
+          <Thread key={`${task.host_id}:${task.id}`} task={task} cwd={project.repo_path} />
+        ) : (
+          <StartSetup project={project} missing={missing} onError={setErr} />
+        )}
       </main>
     </div>
   );
@@ -132,9 +144,9 @@ function StartSetup({ project, missing, onError }: { project: Project; missing: 
         <div className="space-y-1.5">
           <h2 className="text-[15px] font-semibold">Get {project.name} ready for worktrees</h2>
           <p className="text-[13px] text-muted">
-            <span className="font-mono text-[12px]">{project.repo_path}</span> {missing}. An agent can help: it looks at what's in the folder,
-            makes it a git repository with a <span className="font-mono text-[12px]">.gitignore</span> for what shouldn't be committed, makes
-            the first commit and, if you want, puts it on GitHub. It asks you before anything that's hard to undo.
+            <span className="font-mono text-[12px]">{project.repo_path}</span> {missing}. An agent can help: it looks at what's in the folder, makes it a git
+            repository with a <span className="font-mono text-[12px]">.gitignore</span> for what shouldn't be committed, makes the first commit and, if you
+            want, puts it on GitHub. It asks you before anything that's hard to undo.
           </p>
         </div>
         <Textarea

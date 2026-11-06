@@ -152,7 +152,9 @@ test("a task on items is drawn from its thread's window, loaded again as it's wr
   expect(view.result.current.thread.data?.more).toBe(true);
   // A message written to it (its event) loads the window again.
   window = { items: [user(5, "five"), user(6, "six")], requests: [], start: 3, seq: 2 };
-  await act(async () => emitBoardEvent("b", { type: "message", host_id: "h", task_id: "T", message: { id: 6, task_id: "T", kind: "user", data: { text: "six" }, created_at: "" } }));
+  await act(async () =>
+    emitBoardEvent("b", { type: "message", host_id: "h", task_id: "T", message: { id: 6, task_id: "T", kind: "user", data: { text: "six" }, created_at: "" } }),
+  );
   await waitFor(() => expect(rows()).toEqual(["six", "five"]), { timeout: 2000 });
   await act(async () => view.result.current.older());
   expect(client.threadItems).toHaveBeenCalledWith("h", "T", 3, expect.any(Number));

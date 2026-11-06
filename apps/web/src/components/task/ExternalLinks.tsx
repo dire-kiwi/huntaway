@@ -62,7 +62,10 @@ export function LinkList({ links, onRemove, chips }: { links: ExternalLink[]; on
             onClick={() => onRemove(l)}
             title="Unlink"
             aria-label={`Unlink ${l.title}`}
-            className={clsx("flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:bg-white/5 hover:text-fg", !chips && "opacity-0 group-hover:opacity-100 focus:opacity-100")}
+            className={clsx(
+              "flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:bg-white/5 hover:text-fg",
+              !chips && "opacity-0 group-hover:opacity-100 focus:opacity-100",
+            )}
           >
             <X size={11} />
           </button>
@@ -136,7 +139,15 @@ export function AsanaPicker({
   const [reconnect, setReconnect] = useState(false);
   const connected = !!profile?.asana_user && !reconnect;
   return (
-    <Modal title={<span className="flex items-center gap-2"><AsanaIcon size={15} /> Link an Asana task</span>} onClose={onClose} width="max-w-xl">
+    <Modal
+      title={
+        <span className="flex items-center gap-2">
+          <AsanaIcon size={15} /> Link an Asana task
+        </span>
+      }
+      onClose={onClose}
+      width="max-w-xl"
+    >
       {!profile ? (
         <div className="text-[12.5px] text-muted">This task's profile isn't on this host.</div>
       ) : connected ? (
@@ -177,8 +188,8 @@ export function ConnectAsana({ hostId, profile, expired, onConnected }: { hostId
       }}
     >
       <p className="text-[12.5px] leading-relaxed text-muted">
-        {expired ? "Asana no longer accepts this profile's token. " : ""}Connect the <span className="text-fg">{profile.name}</span> profile to Asana with a personal access
-        token, which you can create in{" "}
+        {expired ? "Asana no longer accepts this profile's token. " : ""}Connect the <span className="text-fg">{profile.name}</span> profile to Asana with a
+        personal access token, which you can create in{" "}
         <a className="text-accent hover:underline" href={ASANA_TOKENS_URL} target="_blank" rel="noreferrer">
           Asana's developer console
         </a>
@@ -231,7 +242,12 @@ function AsanaSearch({
             if (stale) return;
             setFound({ q, tasks: ts });
             setErr(null);
-            setActive(Math.max(0, ts.findIndex((t) => !isLinked(t))));
+            setActive(
+              Math.max(
+                0,
+                ts.findIndex((t) => !isLinked(t)),
+              ),
+            );
           })
           .catch((e) => {
             if (stale) return;
@@ -304,9 +320,17 @@ function AsanaSearch({
                   disabled={done || !current}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => pick(t)}
-                  className={clsx("flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left", i === active && !done ? "bg-raised" : "", done && "opacity-60")}
+                  className={clsx(
+                    "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left",
+                    i === active && !done ? "bg-raised" : "",
+                    done && "opacity-60",
+                  )}
                 >
-                  {t.completed ? <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-st-done" /> : <Circle size={13} className="mt-0.5 shrink-0 text-faint" />}
+                  {t.completed ? (
+                    <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-st-done" />
+                  ) : (
+                    <Circle size={13} className="mt-0.5 shrink-0 text-faint" />
+                  )}
                   <span className="min-w-0 flex-1">
                     <span className={clsx("block truncate text-[13px]", t.completed ? "text-muted" : "text-fg")}>{t.name || "(untitled)"}</span>
                     {where && <span className="block truncate text-[11.5px] text-faint">{where}</span>}

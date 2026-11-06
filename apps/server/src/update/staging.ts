@@ -618,7 +618,8 @@ export function check_types(listing: string) {
 function smoke_test(exe: string, version: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = execFile(exe, ["--version"], { timeout: 30_000, encoding: "utf8" }, (e, stdout, stderr) => {
-      if (e && (e as any).killed && (e as any).signal === "SIGTERM" && typeof (e as any).code !== "number") return reject(new Error(`${exe} --version didn't finish`));
+      if (e && (e as any).killed && (e as any).signal === "SIGTERM" && typeof (e as any).code !== "number")
+        return reject(new Error(`${exe} --version didn't finish`));
       if (e && typeof (e as any).code !== "number" && !(e as any).signal) return reject(new Error(`running ${exe} --version`, { cause: e }));
       if (e) {
         const status = (e as any).signal ? `signal: ${signal_number((e as any).signal)} (${(e as any).signal})` : `exit status: ${(e as any).code}`;

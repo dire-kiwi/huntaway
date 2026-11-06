@@ -269,7 +269,14 @@ function resume(s: Shared, res: ServerResponse, run_id: string, server: string, 
   const fake = { headers: { accept: "text/event-stream" } } as unknown as IncomingMessage;
   if (server === gh_mcp.SERVER_NAME) {
     const kept = gh_calls.get(last);
-    const answer = kept ?? Promise.resolve(tool_error(ev.rpc_id, "The board's server restarted while this gh call ran, so its output is lost: it may or may not have taken effect. Check before you run it again."));
+    const answer =
+      kept ??
+      Promise.resolve(
+        tool_error(
+          ev.rpc_id,
+          "The board's server restarted while this gh call ran, so its output is lost: it may or may not have taken effect. Check before you run it again.",
+        ),
+      );
     return reply(fake, res, last, ev.rpc_id, ev.progress, answer);
   }
   // The board's call, which picks up where it was (see tools::handle_mcp): its record has what it was.
@@ -277,11 +284,26 @@ function resume(s: Shared, res: ServerResponse, run_id: string, server: string, 
   try {
     row = db.one(s.db(), "SELECT run_id, tool, args FROM mcp_calls WHERE id=?1", ev.call_id);
   } catch (e) {
-    return reply(fake, res, last, ev.rpc_id, ev.progress, Promise.resolve(tool_error(ev.rpc_id, `The board couldn't look up this call: ${err_str(e)}. Call it again.`)));
+    return reply(
+      fake,
+      res,
+      last,
+      ev.rpc_id,
+      ev.progress,
+      Promise.resolve(tool_error(ev.rpc_id, `The board couldn't look up this call: ${err_str(e)}. Call it again.`)),
+    );
   }
   if (row && row.run_id !== run_id) return json(res, 404, rpc_error(null, -32000, "unknown event id"));
   // Not recorded, so it never ran: the server stopped before it got to it.
-  if (!row) return reply(fake, res, last, ev.rpc_id, ev.progress, Promise.resolve(tool_error(ev.rpc_id, "The board's server restarted before this call ran, so it wasn't run: call it again.")));
+  if (!row)
+    return reply(
+      fake,
+      res,
+      last,
+      ev.rpc_id,
+      ev.progress,
+      Promise.resolve(tool_error(ev.rpc_id, "The board's server restarted before this call ran, so it wasn't run: call it again.")),
+    );
   let args: any = null;
   try {
     args = JSON.parse(row.args);

@@ -463,7 +463,8 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
         set_opt(n, "value", trimmed(n.value));
         if (n.check === "task_type") {
           const t = n.value;
-          if (!(t === "code" || (t !== undefined && db.TASK_TYPES.includes(t)))) throw bad(`condition ${id} needs a task type: code or ${db.TASK_TYPES.join(", ")}`);
+          if (!(t === "code" || (t !== undefined && db.TASK_TYPES.includes(t))))
+            throw bad(`condition ${id} needs a task type: code or ${db.TASK_TYPES.join(", ")}`);
         } else if (n.check === "label") {
           if (!(n.value !== undefined && db.LABELS.includes(n.value))) throw bad(`condition ${id} needs a label: ${db.LABELS.join(", ")}`);
         } else delete n.value;
@@ -485,7 +486,8 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
           throw bad(`agent step ${id}'s model must be a model's name of up to 100 characters, without spaces`);
         }
         set_opt(n, "effort", trimmed(n.effort));
-        if (n.effort !== undefined && !db.THREAD_EFFORTS.includes(n.effort)) throw bad(`agent step ${id}'s effort must be one of ${db.THREAD_EFFORTS.join(", ")}`);
+        if (n.effort !== undefined && !db.THREAD_EFFORTS.includes(n.effort))
+          throw bad(`agent step ${id}'s effort must be one of ${db.THREAD_EFFORTS.join(", ")}`);
         const skills = (n.skills ?? []).filter((s) => s.trim()).map((s) => s.trim().replace(/^[/$]+/, ""));
         if (skills.length > 10) throw bad(`agent step ${id} has more than 10 skills`);
         if (skills.length) n.skills = skills;
@@ -545,7 +547,10 @@ export function cycle(g: Graph): string | null {
     }
   }
   if (done >= g.nodes.length) return null;
-  const left = [...indegree].filter(([, d]) => d > 0).map(([n]) => n).sort();
+  const left = [...indegree]
+    .filter(([, d]) => d > 0)
+    .map(([n]) => n)
+    .sort();
   return left[0] ?? "";
 }
 

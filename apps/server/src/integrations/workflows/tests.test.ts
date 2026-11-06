@@ -44,7 +44,17 @@ function git(dir: string, args: string[]) {
 /** A project, and a task in review with a worktree that has a commit of its own on a branch off master. */
 function setup(s: AppState): [Project, Task, string] {
   const p = db.insert_profile(s.db(), "p", [], null);
-  const np = { id: "pr", profile_id: p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: "master", use_worktrees: true };
+  const np = {
+    id: "pr",
+    profile_id: p.id,
+    name: "x",
+    key: "X",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: "master",
+    use_worktrees: true,
+  };
   const project = db.insert_project(s.db(), np);
   const task = db.insert_task(s.db(), {
     profile_id: p.id,
@@ -257,7 +267,13 @@ test("templates_take_the_task_and_earlier_steps", () => {
   const [, task] = setup(s);
   const run = bare_run(review_graph(), task.id, "abc");
   run.nodes.review = { state: "done", port: "issues", text: "Nearly.", issues: ["a bug", "another"] };
-  const out = prompt.render("{{task.key}} {{ task.title }} on {{branch}} at {{commit}}: {{review.text}}\n{{issues}} {{nope}} {{unclosed", task, "X-1", "W", run);
+  const out = prompt.render(
+    "{{task.key}} {{ task.title }} on {{branch}} at {{commit}}: {{review.text}}\n{{issues}} {{nope}} {{unclosed",
+    task,
+    "X-1",
+    "W",
+    run,
+  );
   assert.equal(out, "X-1 Fix the thing on ia/x-1 at abc: Nearly.\n1. a bug\n\n2. another {{nope}} {{unclosed");
 });
 
@@ -487,7 +503,18 @@ test("a_restart_fails_agent_steps_whose_agent_never_started_and_leaves_those_run
     ],
   });
   const thread = (title: string) =>
-    db.insert_task(s.db(), { profile_id: task.profile_id, project_id: project.id, kind: "review", title, description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null });
+    db.insert_task(s.db(), {
+      profile_id: task.profile_id,
+      project_id: project.id,
+      kind: "review",
+      title,
+      description: "",
+      status: "todo",
+      use_worktree: false,
+      model: null,
+      effort: null,
+      claude_config_id: null,
+    });
   const working = thread("working");
   const idle = thread("idle");
   // `a` was marked running, but the server stopped while it read the task's git, before it had a thread; `b`'s thread

@@ -67,5 +67,10 @@ export function usageAlert(u: Pick<Usage, "limits" | "out_until"> | undefined, n
   if (!worst || worst.percent < WARN_AT) return null;
   const used = worst.percent >= 100;
   const amount = used ? "used up" : `${Math.round(worst.percent)}% used`;
-  return { level: used ? "out" : "warn", text: `${worst.label} ${amount}${when(worst.resets_at)}`, short: `${worst.label.toLowerCase()} ${amount}`, until: worst.resets_at };
+  return {
+    level: used ? "out" : "warn",
+    text: `${worst.label} ${amount}${when(worst.resets_at)}`,
+    short: `${worst.label.toLowerCase()} ${amount}`,
+    until: worst.resets_at,
+  };
 }

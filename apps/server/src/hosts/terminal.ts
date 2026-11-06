@@ -69,7 +69,8 @@ export function parse_tools(v: any): Tool[] {
   const out: Tool[] = [];
   for (const item of v) {
     const field = (k: string) => (item && typeof item === "object" && typeof item[k] === "string" ? (item[k] as string).trim() : "");
-    const name = field("name"), command = field("command");
+    const name = field("name"),
+      command = field("command");
     if (!name || !command) throw ApiError.bad("each terminal tool needs a name and a command");
     let id = field("id");
     if (!valid_tool_id(id) || out.some((t) => t.id === id)) id = new_id().slice(0, 8);
@@ -366,14 +367,17 @@ async function attach(s: AppState, task: Task, tool: Tool | null, cols: number, 
       if (gone) return;
       gone = true;
       clearInterval(ping);
-      background("closing an ended terminal's websocket", (async () => {
-        try {
-          await pty.wait();
-          await close(ws, [1000, "Session ended"]);
-        } finally {
-          done();
-        }
-      })());
+      background(
+        "closing an ended terminal's websocket",
+        (async () => {
+          try {
+            await pty.wait();
+            await close(ws, [1000, "Session ended"]);
+          } finally {
+            done();
+          }
+        })(),
+      );
     });
     ws.on("close", () => {
       clearInterval(ping);

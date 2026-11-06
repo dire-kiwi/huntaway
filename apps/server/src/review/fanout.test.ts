@@ -295,7 +295,11 @@ test("a_task_is_completed_only_once_the_runner_has_written_its_runs_end", async 
   const run = db.insert_run(s.db(), ts[1].id, "prompt");
   db.run(s.db(), "UPDATE runs SET status='running', between_turns=1 WHERE id=?1", run.id);
   s.runs.set(ts[1].id, { run_id: run.id, cancel: null });
-  s.update_task(ts[1].id, [["running", true], ["status", "in_progress"], ["pr_url", "https://github.com/o/r/pull/1"]]);
+  s.update_task(ts[1].id, [
+    ["running", true],
+    ["status", "in_progress"],
+    ["pr_url", "https://github.com/o/r/pull/1"],
+  ]);
   // Picked once the run is marked exited, before its end is written to the task.
   let v: any = null;
   testing.when("finish:exited", () => {

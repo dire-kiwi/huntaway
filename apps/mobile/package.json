@@ -1,7 +1,7 @@
 {
   "name": "huntaway-mobile",
-  "private": true,
   "version": "1.0.0",
+  "private": true,
   "description": "Huntaway's mobile app: your boards, prompts and threads on Android and iOS",
   "license": "MIT",
   "main": "index.ts",
@@ -12,21 +12,6 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "jest"
-  },
-  "jest": {
-    "preset": "jest-expo",
-    "testMatch": [
-      "<rootDir>/tests/**/*.test.ts?(x)"
-    ],
-    "setupFilesAfterEnv": [
-      "<rootDir>/tests/setup.ts"
-    ],
-    "transformIgnorePatterns": [
-      "node_modules/(?!(\\.pnpm|(jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@huntaway/.*|mdast-.*|micromark.*|decode-named-character-reference|character-entities|unist-.*|ccount|escape-string-regexp|markdown-table|longest-streak|zwitch|devlop)"
-    ],
-    "modulePaths": [
-      "<rootDir>/node_modules"
-    ]
   },
   "dependencies": {
     "@expo/metro-runtime": "~58.0.16",
@@ -71,5 +56,20 @@
     "jest": "^30.5.2",
     "jest-expo": "^58.0.13",
     "typescript": "~6.0.3"
+  },
+  "jest": {
+    "modulePaths": [
+      "<rootDir>/node_modules"
+    ],
+    "preset": "jest-expo",
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup.ts"
+    ],
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.ts?(x)"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!(\\.pnpm|(jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@huntaway/.*|mdast-.*|micromark.*|decode-named-character-reference|character-entities|unist-.*|ccount|escape-string-regexp|markdown-table|longest-streak|zwitch|devlop)"
+    ]
   }
 }

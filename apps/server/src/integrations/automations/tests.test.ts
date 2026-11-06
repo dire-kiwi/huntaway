@@ -55,7 +55,8 @@ const DAY = 24 * HOUR;
  */
 const Nz: Tz = {
   offset(utc) {
-    const start = Date.UTC(2026, 8, 26, 14), end = Date.UTC(2027, 3, 3, 14);
+    const start = Date.UTC(2026, 8, 26, 14),
+      end = Date.UTC(2027, 3, 3, 14);
     return (utc >= start && utc < end ? 13 : 12) * 3600;
   },
 };
@@ -119,7 +120,15 @@ function setup(): [Shared, Project] {
   s.local_router = api.router(s);
   const p = db.insert_profile(s.db(), "work", [], null);
   const project = db.insert_project(s.db(), {
-    id: "web", profile_id: p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false,
+    id: "web",
+    profile_id: p.id,
+    name: "Web",
+    key: "WEB",
+    repo_path: "/src/web",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
   });
   return [s, project];
 }
@@ -133,7 +142,9 @@ function tasks(s: Shared): Task[] {
 }
 
 function statuses(s: Shared, a: Automation): string[] {
-  return runs(s.db(), a.id, 100).reverse().map((r) => r.status);
+  return runs(s.db(), a.id, 100)
+    .reverse()
+    .map((r) => r.status);
 }
 
 function set_next(s: Shared, a: Automation, at: number) {
@@ -293,11 +304,22 @@ test("a_webhook_creates_a_task_with_its_values_marked_as_untrusted", async () =>
     p.id,
     {
       kind: "webhook",
-      filters: [{ path: "event", op: "equals", value: "issues" }, { path: "action", op: "in", value: "opened, reopened" }, { path: "labels", op: "in", value: ["bug"] }],
+      filters: [
+        { path: "event", op: "equals", value: "issues" },
+        { path: "action", op: "in", value: "opened, reopened" },
+        { path: "labels", op: "in", value: ["bug"] },
+      ],
     },
-    { kind: "create_task", title: "Triage #{{body.issue.number}}: {{body.issue.title}}", description: "Look into this:\n\n{{body.issue.body}}\n\n{{ not a path }}" },
+    {
+      kind: "create_task",
+      title: "Triage #{{body.issue.number}}: {{body.issue.title}}",
+      description: "Look into this:\n\n{{body.issue.body}}\n\n{{ not a path }}",
+    },
   );
-  const gh = (id: string): Array<[string, string]> => [["x-github-event", "issues"], ["x-github-delivery", id]];
+  const gh = (id: string): Array<[string, string]> => [
+    ["x-github-event", "issues"],
+    ["x-github-delivery", id],
+  ];
   let [status, v] = await deliver(s, hook_path(a), gh("d1"), ISSUE);
   assert.equal(status, 202, JSON.stringify(v));
   assert.equal((await ran(s, v)).status, "ok");
@@ -332,7 +354,9 @@ test("a_webhook_creates_a_task_with_its_values_marked_as_untrusted", async () =>
 });
 
 function urlencode(s: string): string {
-  return [...Buffer.from(s)].map((b) => (/[A-Za-z0-9]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, "0")}`)).join("");
+  return [...Buffer.from(s)]
+    .map((b) => (/[A-Za-z0-9]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, "0")}`))
+    .join("");
 }
 
 test("a_webhook_takes_only_its_own_token_and_a_good_signature", async () => {
@@ -415,7 +439,15 @@ test("unsigned_deliveries_dont_use_up_the_rate_and_signed_ones_cant_be_replayed"
   assert.deepEqual([status, v.status], [200, "duplicate"], JSON.stringify(v));
   assert.ok(v.detail.includes("signed body"), JSON.stringify(v));
   // One with an id of its own is told apart by it, as before.
-  [status, v] = await deliver(s, hook_path(a), [["x-hub-signature-256", sign("s3cret", body)], ["x-github-delivery", "d2"]], body);
+  [status, v] = await deliver(
+    s,
+    hook_path(a),
+    [
+      ["x-hub-signature-256", sign("s3cret", body)],
+      ["x-github-delivery", "d2"],
+    ],
+    body,
+  );
   assert.equal(status, 202, JSON.stringify(v));
   assert.equal((await ran(s, v)).status, "ok");
   assert.equal(tasks(s).length, 2);
@@ -431,7 +463,14 @@ test("deliveries_at_once_coalesce_into_one_task", async () => {
   );
   const body = (n: number, title: string) => JSON.stringify({ issue: { number: n, title } });
   const calls: Array<Promise<[number, any]>> = [];
-  ([[1, "One"], [1, "One, edited"], [2, "Two"], [1, "One, again"]] as Array<[number, string]>).forEach(([n, title], i) => {
+  (
+    [
+      [1, "One"],
+      [1, "One, edited"],
+      [2, "Two"],
+      [1, "One, again"],
+    ] as Array<[number, string]>
+  ).forEach(([n, title], i) => {
     calls.push(deliver(s, hook_path(a), [["x-github-delivery", `d${i}`]], body(n, title)));
   });
   // And the same delivery twice at once.
@@ -442,7 +481,9 @@ test("deliveries_at_once_coalesce_into_one_task", async () => {
   await tick(s, Date.now());
   assert.equal(tasks(s).length, 0);
   await tick(s, Date.now() + 61_000);
-  const titles = tasks(s).map((t) => t.title).sort();
+  const titles = tasks(s)
+    .map((t) => t.title)
+    .sort();
   assert.deepEqual(titles, ["Issue 1: One, again (3 events)", "Issue 2: Two (1 events)"]);
   await tick(s, Date.now() + 120_000);
   assert.equal(tasks(s).length, 2);
@@ -459,7 +500,12 @@ test("the_same_delivery_on_several_threads_at_once_runs_once", async () => {
   const answers = await Promise.all(calls);
   const got = (await Promise.all(answers.map(async ([, v]) => (v.status === "running" ? (await ran(s, v)).status : (v.status as string))))).sort();
   assert.deepEqual(got, ["duplicate", "duplicate", "duplicate", "duplicate", "duplicate", "duplicate", "ok", "ok"]);
-  assert.deepEqual(tasks(s).map((t) => t.title).sort(), ["other", "same"]);
+  assert.deepEqual(
+    tasks(s)
+      .map((t) => t.title)
+      .sort(),
+    ["other", "same"],
+  );
 });
 
 /** Makes `task_id` look as if its agent were running, so a message sent to it is queued (tests can't start agents). */
@@ -472,7 +518,15 @@ test("an_automation_reaches_only_its_own_projects_tasks", async () => {
   // Another profile's project and task.
   const other = db.insert_profile(s.db(), "home", [], null);
   db.insert_project(s.db(), {
-    id: "home", profile_id: other.id, name: "Home", key: "HOME", repo_path: "/src/home", scratch_path: "/s2", worktrees_root: "/w2", base_branch: null, use_worktrees: false,
+    id: "home",
+    profile_id: other.id,
+    name: "Home",
+    key: "HOME",
+    repo_path: "/src/home",
+    scratch_path: "/s2",
+    worktrees_root: "/w2",
+    base_branch: null,
+    use_worktrees: false,
   });
   const their_task = api.create_task_inner(s, "home", { title: "Private" } as any);
   const mine = api.create_task_inner(s, p.id, { title: "Inbox" } as any);
@@ -524,7 +578,10 @@ test("webhook_responses_dont_name_the_task", async () => {
 test("githubs_ping_is_ignored_unless_a_filter_asks_for_it", async () => {
   const [s, p] = setup();
   const ping = `{"zen": "Keep it logically awesome.", "hook_id": 1}`;
-  const gh = (event: string, id: string): Array<[string, string]> => [["x-github-event", event], ["x-github-delivery", id]];
+  const gh = (event: string, id: string): Array<[string, string]> => [
+    ["x-github-event", event],
+    ["x-github-delivery", id],
+  ];
   const a = hook(s, p.id, { kind: "webhook" }, { kind: "create_task", title: "{{event}}" });
   let [status, v] = await deliver(s, hook_path(a), gh("ping", "p1"), ping);
   assert.deepEqual([status, v.status], [202, "filtered"], JSON.stringify(v));
@@ -550,7 +607,10 @@ test("githubs_ping_is_ignored_unless_a_filter_asks_for_it", async () => {
 test("a_filtered_delivery_can_be_redelivered_after_the_filters_change", async () => {
   const [s, p] = setup();
   const a = hook(s, p.id, { kind: "webhook", filters: [{ path: "action", op: "equals", value: "opend" }] }, { kind: "create_task", title: "x" });
-  const gh: Array<[string, string]> = [["x-github-event", "issues"], ["x-github-delivery", "d1"]];
+  const gh: Array<[string, string]> = [
+    ["x-github-event", "issues"],
+    ["x-github-delivery", "d1"],
+  ];
   const body = `{"action": "opened"}`;
   assert.equal((await deliver(s, hook_path(a), gh, body))[1].status, "filtered");
   await update(s, a.id, { trigger: { kind: "webhook", filters: [{ path: "action", op: "equals", value: "opened" }] } });
@@ -618,7 +678,10 @@ test("values_from_outside_cant_break_out_of_their_tags", () => {
 test("run_now_runs_whether_or_not_its_on_and_test_deliveries_go_through_filters", async () => {
   const [s, p] = setup();
   const sched = new_(s, p.id, {
-    name: "Weekly", enabled: false, trigger: { kind: "daily", time: "09:00", weekdays: ["mon"] }, action: { kind: "create_task", title: "Weekly", status: "backlog" },
+    name: "Weekly",
+    enabled: false,
+    trigger: { kind: "daily", time: "09:00", weekdays: ["mon"] },
+    action: { kind: "create_task", title: "Weekly", status: "backlog" },
   });
   assert.equal(sched.next_run_at, null);
   const r = await run_handler(s, req({ id: sched.id }));
@@ -627,7 +690,12 @@ test("run_now_runs_whether_or_not_its_on_and_test_deliveries_go_through_filters"
   assert.equal(tasks(s)[0].status, "backlog");
   assert.ok(tasks(s)[0].description.includes("by hand, from the board"));
 
-  const a = hook(s, p.id, { kind: "webhook", filters: [{ path: "event", op: "equals", value: "issues" }] }, { kind: "create_task", title: "{{body.issue.title}}" });
+  const a = hook(
+    s,
+    p.id,
+    { kind: "webhook", filters: [{ path: "event", op: "equals", value: "issues" }] },
+    { kind: "create_task", title: "{{body.issue.title}}" },
+  );
   const run = (b: any) => run_handler(s, req({ id: a.id }, b));
   assert.equal((await run({ payload: { issue: { title: "A" } } })).status, "filtered");
   assert.equal((await run({ payload: { issue: { title: "A" } }, event: "issues" })).status, "ok");

@@ -60,7 +60,15 @@ const failed = (e: any): Outcome => ({ err: [null, e instanceof ApiError ? e.mes
  * made or messaged (`{ok}`), or why it couldn't. The run is linked to that thread before its agent starts, so a run that
  * ends at once still finds it (see `finished`).
  */
-export function message(s: Shared, a: Automation, run_id: string, vars: Vars, how: string, text: string, mode: "fresh" | "thread"): { ok: string | null } | Outcome {
+export function message(
+  s: Shared,
+  a: Automation,
+  run_id: string,
+  vars: Vars,
+  how: string,
+  text: string,
+  mode: "fresh" | "thread",
+): { ok: string | null } | Outcome {
   let the_assistant: Task;
   try {
     the_assistant = assistant.get_or_create(s, a.profile_id);

@@ -54,13 +54,27 @@ export function StatusIcon({ status, size = 14 }: { status: Status; size?: numbe
   const frac = { todo: 0, in_progress: 0.5, needs_attention: 0.5, in_review: 0.75, ready_for_merge: 1, done: 1, backlog: 0 }[status] ?? 0;
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
-      <circle cx={cx} cy={cx} r={r} fill="none" stroke={c} strokeWidth={1.5} strokeDasharray={status === "todo" ? "2 2" : status === "backlog" ? "1 2.5" : undefined} />
+      <circle
+        cx={cx}
+        cy={cx}
+        r={r}
+        fill="none"
+        stroke={c}
+        strokeWidth={1.5}
+        strokeDasharray={status === "todo" ? "2 2" : status === "backlog" ? "1 2.5" : undefined}
+      />
       {status === "needs_attention" ? (
         <text x={cx} y={cx + 3} textAnchor="middle" fontSize={size * 0.62} fontWeight={700} fill={c}>
           !
         </text>
       ) : status === "done" ? (
-        <path d={`M${size * 0.3} ${cx} l${size * 0.14} ${size * 0.14} l${size * 0.26} -${size * 0.28}`} fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" />
+        <path
+          d={`M${size * 0.3} ${cx} l${size * 0.14} ${size * 0.14} l${size * 0.26} -${size * 0.28}`}
+          fill="none"
+          stroke={c}
+          strokeWidth={1.6}
+          strokeLinecap="round"
+        />
       ) : (
         frac > 0 && (
           <circle
@@ -136,8 +150,12 @@ export function CardState({ task }: { task: Task }) {
           ? [<Hourglass size={11} />, "text-muted", waitTitle(wait)]
           : [<RunningDot />, "text-st-progress", working]
         : task.status === "done" && task.resolution
-        ? [RESOLUTION_STYLE[task.resolution].icon, RESOLUTION_STYLE[task.resolution].className, `Resolution: ${RESOLUTION_LABELS[task.resolution]} · ${at(task.last_activity_at)}`]
-        : [null, "", undefined];
+          ? [
+              RESOLUTION_STYLE[task.resolution].icon,
+              RESOLUTION_STYLE[task.resolution].className,
+              `Resolution: ${RESOLUTION_LABELS[task.resolution]} · ${at(task.last_activity_at)}`,
+            ]
+          : [null, "", undefined];
   const ended = !task.running && task.status === "done" && task.resolution;
   return (
     <span className={clsx("ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap tabular-nums", className)} title={title}>

@@ -87,7 +87,14 @@ export class Boards {
       const token = await this.store.get(tokenKey(b.id)).catch(() => null);
       if (!token) continue;
       this.tokens.set(b.id, token);
-      boards.push({ ...b, profile: b.profile ?? null, apiVersion: b.apiVersion ?? 0, deviceId: b.deviceId ?? "", name: b.name || b.url, pairedAt: b.pairedAt ?? "" });
+      boards.push({
+        ...b,
+        profile: b.profile ?? null,
+        apiVersion: b.apiVersion ?? 0,
+        deviceId: b.deviceId ?? "",
+        name: b.name || b.url,
+        pairedAt: b.pairedAt ?? "",
+      });
     }
     const selected = await this.store.get(SELECTED_KEY).catch(() => null);
     const shared = await this.store.get(SHARED_KEY).catch(() => null);

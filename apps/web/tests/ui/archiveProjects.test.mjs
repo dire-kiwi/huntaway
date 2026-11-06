@@ -24,9 +24,18 @@ test("archives a project from the sidebar and unarchives it in Settings", async 
 
     await ui.run([`goto /p/${project.id}`, "wait Demo is archived"]);
     assert.doesNotMatch(await page.locator("aside").innerText(), /Demo/, "still archived after a reload");
-    assert.equal((await server.api("GET", `/profiles/${project.profile_id}/projects`)).some((p) => p.id === project.id), false);
+    assert.equal(
+      (await server.api("GET", `/profiles/${project.profile_id}/projects`)).some((p) => p.id === project.id),
+      false,
+    );
 
-    await ui.run(["click Unarchive it in Settings", "wait Archived projects", "click role=button[name='Unarchive']", "wait No archived projects", `wait ${row}`]);
+    await ui.run([
+      "click Unarchive it in Settings",
+      "wait Archived projects",
+      "click role=button[name='Unarchive']",
+      "wait No archived projects",
+      `wait ${row}`,
+    ]);
     // Its tasks are loaded again without a reload.
     await ui.run(["click css=nav[aria-label=Profiles] >> text=Default", `wait ${task}`]);
   });

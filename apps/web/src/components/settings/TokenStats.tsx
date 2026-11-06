@@ -74,7 +74,9 @@ export function TokenStats({ data, project }: { data: TokenData; project: string
             </button>
           ))}
         </div>
-        {data.pending > 0 && <span className="text-[11.5px] text-faint">{plural(data.pending, "finished run is", "finished runs are")} still being counted</span>}
+        {data.pending > 0 && (
+          <span className="text-[11.5px] text-faint">{plural(data.pending, "finished run is", "finished runs are")} still being counted</span>
+        )}
       </div>
       <Tiles rows={rows} />
       <DailyChart data={scoped} metric={metric} />
@@ -136,7 +138,9 @@ function DailyChart({ data, metric }: { data: TokenData; metric: Metric }) {
           <div className="relative h-52 pl-12">
             {lines.map((v) => (
               <div key={v} className="absolute right-0 left-12 border-t border-white/[0.06]" style={{ bottom: `${(v * 100) / top}%` }}>
-                <span className="absolute -top-2 -left-12 w-10 text-right text-[10.5px] text-faint tabular-nums">{metric === "cost" ? `$${v}` : tokens(v)}</span>
+                <span className="absolute -top-2 -left-12 w-10 text-right text-[10.5px] text-faint tabular-nums">
+                  {metric === "cost" ? `$${v}` : tokens(v)}
+                </span>
               </div>
             ))}
             <div className="relative flex h-full items-end gap-[2px]">
@@ -148,7 +152,9 @@ function DailyChart({ data, metric }: { data: TokenData; metric: Metric }) {
                     className="flex h-full min-w-0 flex-1 cursor-default flex-col-reverse gap-[2px] rounded-sm hover:bg-white/[0.03]"
                     {...bind(() => (
                       <>
-                        <div className="mb-1 font-medium">{new Date(d.day).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}</div>
+                        <div className="mb-1 font-medium">
+                          {new Date(d.day).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                        </div>
                         {segs.length === 0 && <div className="text-faint">Nothing</div>}
                         {segs.map(({ p, v }) => (
                           <div key={p} className="flex items-center gap-1.5">
@@ -176,7 +182,11 @@ function DailyChart({ data, metric }: { data: TokenData; metric: Metric }) {
           <div className="mt-1 flex gap-[2px] pl-12">
             {days.map((d, i) => (
               <div key={d} className="min-w-0 flex-1 text-center text-[10.5px] text-faint tabular-nums">
-                {i % every === 0 ? (days.length <= 7 ? new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric" }) : new Date(d).getDate()) : ""}
+                {i % every === 0
+                  ? days.length <= 7
+                    ? new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric" })
+                    : new Date(d).getDate()
+                  : ""}
               </div>
             ))}
           </div>
@@ -202,7 +212,10 @@ const td = "px-3 py-1.5 text-right tabular-nums";
 function Cells({ t, metric, whole }: { t: Totals; metric: Metric; whole: number }) {
   return (
     <>
-      <td className={td} title={`${tokens(t.input)} input · ${tokens(t.cacheRead)} cache reads · ${tokens(t.cacheWrite)} cache writes · ${tokens(t.output)} output`}>
+      <td
+        className={td}
+        title={`${tokens(t.input)} input · ${tokens(t.cacheRead)} cache reads · ${tokens(t.cacheWrite)} cache writes · ${tokens(t.output)} output`}
+      >
         {tokens(allTokens(t))}
       </td>
       <td className={clsx(td, "text-muted")} title={t.reasoning ? `${tokens(t.reasoning)} of it thinking` : undefined}>
@@ -399,7 +412,10 @@ function Tasks({ data, metric }: { data: TokenData; metric: Metric }) {
           </tbody>
         </table>
         {!all && tasks.length > list.length && (
-          <button className="w-full border-t border-line bg-panel/60 px-3 py-2 text-center text-[12px] text-muted hover:bg-raised hover:text-fg" onClick={() => setAll(true)}>
+          <button
+            className="w-full border-t border-line bg-panel/60 px-3 py-2 text-center text-[12px] text-muted hover:bg-raised hover:text-fg"
+            onClick={() => setAll(true)}
+          >
             Show all {tasks.length}
           </button>
         )}
@@ -437,8 +453,16 @@ function Reviews({ data }: { data: TokenData }) {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile label="Reviews" value={String(s.reviews)} hint={`of ${plural(s.tasks, "task")}, in ${plural(new Set(data.reviews.map((r) => `${r.taskId} ${r.round}`)).size, "round")}`} />
-            <Tile label="Found serious issues" value={pct(s.withIssues, s.reviews)} hint={`${plural(s.serious, "issue")} in ${plural(s.withIssues, "review")}`} />
+            <Tile
+              label="Reviews"
+              value={String(s.reviews)}
+              hint={`of ${plural(s.tasks, "task")}, in ${plural(new Set(data.reviews.map((r) => `${r.taskId} ${r.round}`)).size, "round")}`}
+            />
+            <Tile
+              label="Found serious issues"
+              value={pct(s.withIssues, s.reviews)}
+              hint={`${plural(s.serious, "issue")} in ${plural(s.withIssues, "review")}`}
+            />
             <Tile label="Passed the first round" value={pct(s.firstPassed, s.tasks)} hint={`${s.firstPassed} of ${plural(s.tasks, "task")}`} />
             <Tile
               label="Noted minor issues"
@@ -481,7 +505,10 @@ function SeriousIssues({ data }: { data: TokenData }) {
   };
   return (
     <div>
-      <h3 className="mb-2 text-[12.5px] text-muted" title="Serious issues the reviews found, by the model each reviewed task's agent used and the effort it was set to work at. Per task: serious issues divided by the tasks reviewed.">
+      <h3
+        className="mb-2 text-[12.5px] text-muted"
+        title="Serious issues the reviews found, by the model each reviewed task's agent used and the effort it was set to work at. Per task: serious issues divided by the tasks reviewed."
+      >
         Serious issues by model and effort
       </h3>
       <div className="overflow-x-auto rounded-lg border border-line">
@@ -518,7 +545,19 @@ function SeriousIssues({ data }: { data: TokenData }) {
   );
 }
 
-function ReviewTable({ title, first, hint, rows, implementer }: { title: string; first: string; hint?: string; rows: { key: string; s: ReviewSummary }[]; implementer?: boolean }) {
+function ReviewTable({
+  title,
+  first,
+  hint,
+  rows,
+  implementer,
+}: {
+  title: string;
+  first: string;
+  hint?: string;
+  rows: { key: string; s: ReviewSummary }[];
+  implementer?: boolean;
+}) {
   return (
     <div>
       <h3 className="mb-2 text-[12.5px] text-muted" title={hint}>
@@ -535,7 +574,10 @@ function ReviewTable({ title, first, hint, rows, implementer }: { title: string;
                   <th className={clsx(th, "w-24")} title="Tasks whose first round of review found no serious issues, if it was before this range too">
                     First pass
                   </th>
-                  <th className={clsx(th, "w-28")} title="Rounds of review that found serious issues, per task: all of its rounds, if some were outside this range">
+                  <th
+                    className={clsx(th, "w-28")}
+                    title="Rounds of review that found serious issues, per task: all of its rounds, if some were outside this range"
+                  >
                     Rounds of fixes
                   </th>
                 </>

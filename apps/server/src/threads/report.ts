@@ -209,7 +209,10 @@ export function parse_args(args: string[]): Options & { db: string } {
     else if (a === "--task") o.tasks.push(next());
     else if (a === "--examples") o.examples = Number(next());
     else if (a === "--write") o.write = next();
-    else throw new Error(`unknown argument ${a}\nUsage: huntaway threads-import --db <file or data dir> [--json] [--task <id or key>]... [--examples <n>] [--write <new file>]`);
+    else
+      throw new Error(
+        `unknown argument ${a}\nUsage: huntaway threads-import --db <file or data dir> [--json] [--task <id or key>]... [--examples <n>] [--write <new file>]`,
+      );
   }
   if (!o.db) throw new Error("--db <file or data dir> is needed");
   return o;
@@ -323,12 +326,18 @@ export function summary(reports: TaskReport[], seconds: number, examples: number
   const list = Object.entries(items)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${n(v)} ${k}`);
-  lines.push(`Items: ${list.join(", ")} (${mb(sum((r) => r.item_bytes))}); ${n(sum((r) => r.requests))} requests (${mb(sum((r) => r.request_bytes))}); ${n(sum((r) => r.origins))} origins.`);
+  lines.push(
+    `Items: ${list.join(", ")} (${mb(sum((r) => r.item_bytes))}); ${n(sum((r) => r.requests))} requests (${mb(sum((r) => r.request_bytes))}); ${n(sum((r) => r.origins))} origins.`,
+  );
   lines.push(`Events: ${n(sum((r) => r.events))} (${mb(sum((r) => r.event_bytes))}), kept for a day.`);
   const slowest = [...reports].sort((a, b) => b.ms - a.ms).slice(0, examples);
   lines.push(`Slowest: ${slowest.map((r) => `${r.key} (${n(r.messages)} messages) ${r.ms.toFixed(0)} ms`).join(", ")}.`);
   if (written) {
-    const tables = written.tables ? ` (${Object.entries(written.tables).map(([t, b]) => `${t} ${mb(b)}`).join(", ")}, with their indexes)` : "";
+    const tables = written.tables
+      ? ` (${Object.entries(written.tables)
+          .map(([t, b]) => `${t} ${mb(b)}`)
+          .join(", ")}, with their indexes)`
+      : "";
     lines.push(`Written to ${written.file} in ${(written.ms / 1000).toFixed(1)}s: ${mb(written.bytes)}${tables}.`);
   }
   const blocked = new Map<string, string[]>();
@@ -357,7 +366,9 @@ export function summary(reports: TaskReport[], seconds: number, examples: number
   const largest = [...reports].sort((a, b) => b.item_bytes + b.event_bytes - (a.item_bytes + a.event_bytes)).slice(0, examples);
   lines.push("", "Largest threads:");
   for (const r of largest) {
-    lines.push(`  ${r.key}: ${n(r.messages)} messages (${mb(r.message_bytes)}) → ${n(Object.values(r.items).reduce((a, b) => a + b, 0))} items (${mb(r.item_bytes)}), ${n(r.events)} events (${mb(r.event_bytes)})`);
+    lines.push(
+      `  ${r.key}: ${n(r.messages)} messages (${mb(r.message_bytes)}) → ${n(Object.values(r.items).reduce((a, b) => a + b, 0))} items (${mb(r.item_bytes)}), ${n(r.events)} events (${mb(r.event_bytes)})`,
+    );
   }
   return lines.join("\n") + "\n";
 }

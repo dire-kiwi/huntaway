@@ -31,11 +31,14 @@ export function node(id: string, name: string): AppState {
 export async function serve(s: AppState): Promise<string> {
   api.router(s);
   const srv: Server = createServer((req, res) =>
-    background("serving a test node's API", (async () => {
-      const found = s.local_router!.find((req.url ?? "/").split("?")[0].slice(4));
-      const raw = await readBody(req, found?.route.limit ?? 2 << 20);
-      send(res, await api.dispatch(s, api.makeReq(req.method ?? "GET", req.url ?? "/", req.headers, raw)));
-    })()),
+    background(
+      "serving a test node's API",
+      (async () => {
+        const found = s.local_router!.find((req.url ?? "/").split("?")[0].slice(4));
+        const raw = await readBody(req, found?.route.limit ?? 2 << 20);
+        send(res, await api.dispatch(s, api.makeReq(req.method ?? "GET", req.url ?? "/", req.headers, raw)));
+      })(),
+    ),
   );
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   srv.on("upgrade", (req, socket, head) => {

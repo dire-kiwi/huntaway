@@ -142,7 +142,11 @@ function SubagentItems({ sub, result, withPrompts }: { sub: Subagent; result?: T
   const prev = useRef<Item[]>(undefined);
   const items = useMemo(() => {
     if (fromItems) return withPrompts ? (own ?? NO_ITEMS) : (own ?? NO_ITEMS).filter((i) => i.type !== "permission");
-    return (prev.current = buildItems((msgs ?? []).filter((m) => withPrompts || m.kind !== "permission"), results, prev.current));
+    return (prev.current = buildItems(
+      (msgs ?? []).filter((m) => withPrompts || m.kind !== "permission"),
+      results,
+      prev.current,
+    ));
   }, [fromItems, own, msgs, results, withPrompts]);
   const report = reportText(sub, result);
   const hasText = items.some((i) => i.type === "text");
@@ -181,7 +185,9 @@ export function SubagentThread({ sub }: { sub: Subagent }) {
       <div className="text-[11.5px] text-faint">{meta.join(" · ")}</div>
       {sub.prompt && (
         <div className="flex justify-end">
-          <div className="max-w-[85%] rounded-2xl rounded-br-md border border-line-strong bg-raised px-3.5 py-2 text-[13.5px] whitespace-pre-wrap">{sub.prompt}</div>
+          <div className="max-w-[85%] rounded-2xl rounded-br-md border border-line-strong bg-raised px-3.5 py-2 text-[13.5px] whitespace-pre-wrap">
+            {sub.prompt}
+          </div>
         </div>
       )}
       <SubagentItems sub={sub} result={result} withPrompts />

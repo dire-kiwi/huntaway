@@ -132,7 +132,15 @@ function useItemsView(task: Task, on: boolean): View | null {
 const NO_SNAPSHOT: Pick<Snapshot, "items" | "requests"> = { items: [], requests: [] };
 
 /** The thread, drawn from `model` (`source` says which way, in `data-thread`, for tests). */
-function ThreadView({ task, cwd, placeholder, empty, model, paging, source }: ThreadProps & { model: ThreadModel; paging: Paging; source: "items" | "messages" }) {
+function ThreadView({
+  task,
+  cwd,
+  placeholder,
+  empty,
+  model,
+  paging,
+  source,
+}: ThreadProps & { model: ThreadModel; paging: Paging; source: "items" | "messages" }) {
   const [olderFailed, setOlderFailed] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -176,7 +184,8 @@ function ThreadView({ task, cwd, placeholder, empty, model, paging, source }: Th
   // subagent's thread is shown: note what's at the top of the screen (before the DOM changes), to
   // put it back where it was.
   const anchor = useRef<{ el: Element; top: number } | null>(null);
-  if (!anchor.current && shownView.current === null && (oldest !== shownOldest.current || viewKey !== null)) anchor.current = topItem(scroller.current, list.current);
+  if (!anchor.current && shownView.current === null && (oldest !== shownOldest.current || viewKey !== null))
+    anchor.current = topItem(scroller.current, list.current);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -313,7 +322,13 @@ function ThreadView({ task, cwd, placeholder, empty, model, paging, source }: Th
         {/* A fresh draft per task: its attachments are on this task's host. */}
         <Composer key={task.id} task={task} placeholder={placeholder} />
         {rewinding && (
-          <RewindDialog task={task} turn={rewinding} head={turns.data?.head} onClose={() => setRewinding(null)} onDone={(r, convo) => rewound(task, r, convo)} />
+          <RewindDialog
+            task={task}
+            turn={rewinding}
+            head={turns.data?.head}
+            onClose={() => setRewinding(null)}
+            onDone={(r, convo) => rewound(task, r, convo)}
+          />
         )}
       </div>
     </ThreadCtx.Provider>

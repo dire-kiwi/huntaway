@@ -72,7 +72,13 @@ export async function withBrowser(server, opts, fn) {
     if (ui.errors.length) e.message += `\npage or console errors:\n${ui.errors.join("\n")}`;
     // As scripts/ui-check.mjs does for a failed step (CI keeps these).
     const shot = join(tmpdir(), `ui-check-${process.pid}-${++failures}-failed.png`);
-    if (await ui.page.screenshot({ path: shot }).then(() => true, () => false)) e.message += `\nthe page at the time: ${shot} (${ui.page.url()})`;
+    if (
+      await ui.page.screenshot({ path: shot }).then(
+        () => true,
+        () => false,
+      )
+    )
+      e.message += `\nthe page at the time: ${shot} (${ui.page.url()})`;
     throw e;
   } finally {
     await ui.close();
@@ -100,12 +106,14 @@ export async function routeThread(page, taskId, messages) {
     const limit = q.has("limit") ? Math.max(1, Number(q.get("limit"))) : Infinity;
     const range = all.filter((m) => m.id > after && m.id < before);
     let start = range.length;
-    for (let main = 0; start > 0 && main < limit; ) if (!range[--start].data?.parent_tool_use_id) main++;
+    for (let main = 0; start > 0 && main < limit;) if (!range[--start].data?.parent_tool_use_id) main++;
     const shown = range.slice(start);
     const first = shown[0]?.id ?? 0;
     const calls = new Set(all.filter((m) => m.id < first && isCall(m)).flatMap((m) => m.data.message.content.map((b) => b.id)));
     const ofCall = (m) =>
-      isCall(m) || m.data?.message?.content?.some?.((b) => b.type === "tool_result" && calls.has(b.tool_use_id)) || (m.data?.subtype?.startsWith("task_") && calls.has(m.data.tool_use_id));
+      isCall(m) ||
+      m.data?.message?.content?.some?.((b) => b.type === "tool_result" && calls.has(b.tool_use_id)) ||
+      (m.data?.subtype?.startsWith("task_") && calls.has(m.data.tool_use_id));
     const subagents = q.has("before") || q.has("after") ? [] : all.filter((m) => m.id < first && ofCall(m));
     return route.fulfill({ json: { messages: shown, more: start > 0, subagents } });
   });

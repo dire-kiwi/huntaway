@@ -235,7 +235,9 @@ async function updatePacman({ pkg, onProgress, onInstalling = () => {}, fetch, s
     // pkexec: 126 when the password dialog was dismissed (or the user isn't allowed), 127 when it couldn't ask at all.
     if (code === 126) throw fail(`The password prompt was cancelled, so nothing was installed. ${instead}`);
     if (code === 127) {
-      const why = /authentication agent/i.test(output) ? "there's no polkit agent running to ask for the password" : `pkexec couldn't ask for the password${output.trim() ? ` (${tail(output, 2)})` : ""}`;
+      const why = /authentication agent/i.test(output)
+        ? "there's no polkit agent running to ask for the password"
+        : `pkexec couldn't ask for the password${output.trim() ? ` (${tail(output, 2)})` : ""}`;
       throw fail(`The package wasn't installed: ${why}. ${instead}`);
     }
     if (code !== 0) throw fail(`pacman couldn't install the package (exit ${code})${output.trim() ? `:\n${tail(output)}` : "."}`);

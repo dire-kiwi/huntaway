@@ -23,7 +23,12 @@ export async function loadProfiles(client: Pick<Client, "hosts" | "profiles">, b
   const allHosts = await client.hosts();
   const hosts = boardHosts(allHosts);
   const lists = await Promise.all(
-    hosts.map((h) => client.profiles(h.id).then((ps) => ps.map((profile) => ({ hostId: h.id, profile: { ...profile, host_id: h.id } }))).catch(() => [])),
+    hosts.map((h) =>
+      client
+        .profiles(h.id)
+        .then((ps) => ps.map((profile) => ({ hostId: h.id, profile: { ...profile, host_id: h.id } })))
+        .catch(() => []),
+    ),
   );
   const byName = new Map<string, { hostId: string; profile: Profile }[]>();
   for (const e of lists.flat()) byName.set(e.profile.name, [...(byName.get(e.profile.name) ?? []), e]);

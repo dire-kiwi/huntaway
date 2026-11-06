@@ -3,10 +3,35 @@
 // gives it the lines picked (a cursor and a range when staging, lines picked by their numbers elsewhere).
 import clsx from "clsx";
 import { MessageSquare, MessageSquarePlus } from "lucide-react";
-import { createContext, Fragment, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import {
+  createContext,
+  Fragment,
+  memo,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import type { DiffLine, FileDiff } from "./diffs";
 import { runStyle, useHighlight, type Run } from "./highlight";
-import { dropDraft, isUnder, lineRange, removeComments, saveDraft, setDraftNote, type CommentDraft, type CommentLines, type CommentSource, type LineComment, type Review } from "./lineComments";
+import {
+  dropDraft,
+  isUnder,
+  lineRange,
+  removeComments,
+  saveDraft,
+  setDraftNote,
+  type CommentDraft,
+  type CommentLines,
+  type CommentSource,
+  type LineComment,
+  type Review,
+} from "./lineComments";
 import { Button } from "../ui";
 
 export type Layout = "unified" | "split";
@@ -154,7 +179,9 @@ export function DiffLines({
     const m = new Map<number, (LineComment | CommentDraft)[]>();
     if (!api || !source) return m;
     const editing = new Set(api.review.drafts.map((d) => d.of));
-    const items = [...api.review.comments.filter((c) => !editing.has(c.id)), ...api.review.drafts].filter((c) => c.where === source.key && c.path === file.path);
+    const items = [...api.review.comments.filter((c) => !editing.has(c.id)), ...api.review.drafts].filter(
+      (c) => c.where === source.key && c.path === file.path,
+    );
     for (const c of items) {
       const i = rows.findIndex((r) => r.line >= 0 && isUnder(c, source.key, file.path, file.hunks[r.hunk].lines[r.line]));
       if (i >= 0) m.set(i, [...(m.get(i) ?? []), c]);
@@ -197,7 +224,10 @@ export function DiffLines({
                 tabIndex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onHunk(rows[i].hunk, a)}
-                className={clsx("rounded border px-1.5 text-[10.5px] leading-4 capitalize", a === "discard" ? "border-red-500/30 text-red-300 hover:bg-red-500/15" : "border-line-strong text-muted hover:bg-white/10 hover:text-fg")}
+                className={clsx(
+                  "rounded border px-1.5 text-[10.5px] leading-4 capitalize",
+                  a === "discard" ? "border-red-500/30 text-red-300 hover:bg-red-500/15" : "border-line-strong text-muted hover:bg-white/10 hover:text-fg",
+                )}
               >
                 {a} hunk
               </button>
@@ -335,7 +365,7 @@ const Cell = memo(function Cell({
 
 /** A line's text, in its highlighted runs once they've come (those in the default style as plain text). */
 const Code = memo(function Code({ text, runs }: { text: string; runs?: Run[] }) {
-  if (!text) return <>{" "}</>;
+  if (!text) return <> </>;
   if (!runs) return <>{text}</>;
   let at = 0;
   const out: ReactNode[] = runs.map(([n, s], k) => {
@@ -373,7 +403,12 @@ function Added({ c, api }: { c: LineComment; api: CommentsApi }) {
           <button tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => api.edit(c.id)} className="hover:text-fg">
             Edit
           </button>
-          <button tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => removeComments(api.hostId, api.taskId, [c.id])} className="hover:text-red-300">
+          <button
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => removeComments(api.hostId, api.taskId, [c.id])}
+            className="hover:text-red-300"
+          >
             Delete
           </button>
         </span>

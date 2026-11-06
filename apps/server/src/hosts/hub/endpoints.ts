@@ -95,7 +95,9 @@ export function host_path(rest: string, query: string | null): string {
 /** Answer an upgrade request with an error, without upgrading. */
 function refuse(socket: Duplex, status: number, text: string, body: any) {
   const payload = JSON.stringify(body);
-  socket.end(`HTTP/1.1 ${status} ${text}\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(payload)}\r\nconnection: close\r\n\r\n${payload}`);
+  socket.end(
+    `HTTP/1.1 ${status} ${text}\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(payload)}\r\nconnection: close\r\n\r\n${payload}`,
+  );
 }
 
 /**
@@ -178,7 +180,8 @@ export function list_hosts(s: AppState) {
 export async function add_host(s: AppState, r: Req) {
   devices.board_only(r.device, "link hosts");
   const b = r.body ?? {};
-  if (typeof b.url !== "string" || typeof b.token !== "string") throw new ApiError(422, "Failed to deserialize the JSON body into the target type: missing field `url` or `token`");
+  if (typeof b.url !== "string" || typeof b.token !== "string")
+    throw new ApiError(422, "Failed to deserialize the JSON body into the target type: missing field `url` or `token`");
   const url = b.url.trim().replace(/\/+$/, "");
   const token = b.token.trim();
   let endpoint: string;
@@ -213,7 +216,8 @@ export async function add_host(s: AppState, r: Req) {
 /** Rename a linked host, or let its agents use this board (or not). */
 export function change_host(s: AppState, r: Req) {
   const b = r.body && typeof r.body === "object" && !Array.isArray(r.body) ? r.body : {};
-  const bad = (field: string, kind: string) => new ApiError(422, `Failed to deserialize the JSON body into the target type: ${field}: invalid type, expected ${kind}`);
+  const bad = (field: string, kind: string) =>
+    new ApiError(422, `Failed to deserialize the JSON body into the target type: ${field}: invalid type, expected ${kind}`);
   if (b.name != null && typeof b.name !== "string") throw bad("name", "a string");
   /** Whether its agents may use this board's tools, up the link (API 112, see hosts/uplink.ts). */
   if (b.uplink != null && typeof b.uplink !== "boolean") throw bad("uplink", "a boolean");

@@ -33,7 +33,16 @@ const nsockets = opt("--sockets", 3);
 const keep = flag("--keep");
 const tmp = process.env.TMPDIR || tmpdir();
 
-const newer = (paths) => paths.filter((p) => { try { return statSync(p).isFile(); } catch { return false; } }).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+const newer = (paths) =>
+  paths
+    .filter((p) => {
+      try {
+        return statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 const rustBin = process.env.RUST_BIN || newer([join(root, "server/target/release/huntaway"), join(root, "server/target/debug/huntaway")]);
 if (!rustBin) throw new Error("no Rust server: set RUST_BIN to a Rust release's huntaway (see the top of this script)");
 const tsBin = process.env.TS_BIN || join(root, "apps/server/bin/huntaway");
@@ -138,7 +147,10 @@ try {
   console.log("\nper-agent helpers, idle (each agent run starts one of each):");
   for (const sub of ["mcp", "gh-mcp"]) {
     for (const s of servers) {
-      const child = spawn(s.bin, [sub], { stdio: ["pipe", "ignore", "ignore"], env: { ...process.env, IA_URL: s.url, IA_TOKEN: s.token, IA_RUN_ID: "ram-compare" } });
+      const child = spawn(s.bin, [sub], {
+        stdio: ["pipe", "ignore", "ignore"],
+        env: { ...process.env, IA_URL: s.url, IA_TOKEN: s.token, IA_RUN_ID: "ram-compare" },
+      });
       await sleep(1500);
       let m = { rss: NaN, pss: NaN };
       try {

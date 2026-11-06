@@ -115,7 +115,16 @@ export function scratchHost(profileName: string): Profile | null {
     defaultAgentHost(),
     ...usableHosts(s.hosts).map((h) => h.id),
   ];
-  const on = (h: string | null | undefined) => s.profiles.find((p) => p.host_id === h && p.name === profileName && hostSupports(s.hosts.find((x) => x.id === h), 47));
+  const on = (h: string | null | undefined) =>
+    s.profiles.find(
+      (p) =>
+        p.host_id === h &&
+        p.name === profileName &&
+        hostSupports(
+          s.hosts.find((x) => x.id === h),
+          47,
+        ),
+    );
   return preferred.map(on).find((p) => !!p) ?? null;
 }
 
@@ -316,9 +325,23 @@ export const useStore = create<State>((set, get) => ({
     const gen = ++profileLoads.started;
     const online = boardHosts(get().hosts);
     const [lists, configs] = await Promise.all([
-      Promise.all(online.map((h) => api.profiles(h.id).then((ps) => tag(ps, h.id)).catch(() => [] as Profile[]))),
       Promise.all(
-        online.filter((h) => hostSupports(h, 20)).map((h) => api.claudeConfigs(h.id).then((cs) => tag(cs, h.id)).catch(() => [] as ClaudeConfig[])),
+        online.map((h) =>
+          api
+            .profiles(h.id)
+            .then((ps) => tag(ps, h.id))
+            .catch(() => [] as Profile[]),
+        ),
+      ),
+      Promise.all(
+        online
+          .filter((h) => hostSupports(h, 20))
+          .map((h) =>
+            api
+              .claudeConfigs(h.id)
+              .then((cs) => tag(cs, h.id))
+              .catch(() => [] as ClaudeConfig[]),
+          ),
       ),
     ]);
     // A newer load read them later (and refreshes the hosts' tasks with them).
@@ -326,7 +349,9 @@ export const useStore = create<State>((set, get) => ({
     profileLoads.applied = gen;
     const profiles = lists.flat();
     set({ profiles, claudeConfigs: configs.flat() });
-    get().loadUsage().catch(() => {});
+    get()
+      .loadUsage()
+      .catch(() => {});
     await get().refreshProfileData();
   },
 
@@ -344,16 +369,28 @@ export const useStore = create<State>((set, get) => ({
       archived: s.archived.filter((p) => live.has(p.host_id)),
       tasks: Object.fromEntries(Object.entries(s.tasks).filter(([, t]) => live.has(t.host_id))),
     }));
-    for (const taskId of Object.keys(get().messages)) get().loadMessages(taskId, true).catch(() => {});
+    for (const taskId of Object.keys(get().messages))
+      get()
+        .loadMessages(taskId, true)
+        .catch(() => {});
     // And those drawn from their items catch up from their seqs.
     catchUpItemThreads();
   },
 
   refreshHost: async (h) => {
     const profiles = get().profiles.filter((p) => p.host_id === h);
-    const reviews = hostSupports(get().hosts.find((x) => x.id === h), 12);
-    const groups = hostSupports(get().hosts.find((x) => x.id === h), 34);
-    const archiving = hostSupports(get().hosts.find((x) => x.id === h), 46);
+    const reviews = hostSupports(
+      get().hosts.find((x) => x.id === h),
+      12,
+    );
+    const groups = hostSupports(
+      get().hosts.find((x) => x.id === h),
+      34,
+    );
+    const archiving = hostSupports(
+      get().hosts.find((x) => x.id === h),
+      46,
+    );
     // The profile's assistant too, for the sidebar and its page: the boards leave it out.
     const assistants = hasAssistant(get().hosts.find((x) => x.id === h));
     let projects: Project[] = [];
@@ -379,9 +416,18 @@ export const useStore = create<State>((set, get) => ({
           return { projects: ps, archived: gone, tasks: [...projectless, ...lists.flat()] };
         }),
       );
-      projects = tag(loaded.flatMap((l) => l.projects), h);
-      archived = tag(loaded.flatMap((l) => l.archived), h);
-      tasks = tag(loaded.flatMap((l) => l.tasks), h);
+      projects = tag(
+        loaded.flatMap((l) => l.projects),
+        h,
+      );
+      archived = tag(
+        loaded.flatMap((l) => l.archived),
+        h,
+      );
+      tasks = tag(
+        loaded.flatMap((l) => l.tasks),
+        h,
+      );
     } catch {
       load.done();
       return; // host dropped mid-load; hosts_changed will follow
@@ -405,7 +451,13 @@ export const useStore = create<State>((set, get) => ({
       // What this refresh set (or found gone) is a change to the loads under way that started before it, and read it
       // earlier (an unarchived project's tasks). Refreshes that started after it read it later, so they don't keep it.
       const ours = (x: { host_id: string }) => x.host_id === h;
-      for (const id of new Set([...Object.values(s.tasks).filter(ours).map((t) => t.id), ...tasks.map((t) => t.id)])) changed(h, "tasks", id, gen);
+      for (const id of new Set([
+        ...Object.values(s.tasks)
+          .filter(ours)
+          .map((t) => t.id),
+        ...tasks.map((t) => t.id),
+      ]))
+        changed(h, "tasks", id, gen);
       for (const p of [...s.projects, ...s.archived].filter(ours).concat(projects, archived)) changed(h, "projects", p.id, gen);
       return { projects: sortProjects(nextProjects), archived: nextArchived, tasks: next };
     });
@@ -422,7 +474,11 @@ export const useStore = create<State>((set, get) => ({
 
   loadUsage: async (refresh = false) => {
     // Only hosts with a config that shows usage: older ones would fetch every config's.
-    const shown = new Set(get().claudeConfigs.filter((c) => c.show_usage).map((c) => c.host_id));
+    const shown = new Set(
+      get()
+        .claudeConfigs.filter((c) => c.show_usage)
+        .map((c) => c.host_id),
+    );
     const hosts = usableHosts(get().hosts).filter((h) => hostSupports(h, 52) && shown.has(h.id));
     const lists = await Promise.all(
       hosts.map((h) =>
@@ -436,7 +492,13 @@ export const useStore = create<State>((set, get) => ({
   },
 
   loadApprovals: async (h) => {
-    if (!hostSupports(get().hosts.find((x) => x.id === h), 44)) return;
+    if (
+      !hostSupports(
+        get().hosts.find((x) => x.id === h),
+        44,
+      )
+    )
+      return;
     const load = approvalsLoading.start(h);
     try {
       const list = load.merge(tag(await api.projectApprovals(h), h));
@@ -451,7 +513,12 @@ export const useStore = create<State>((set, get) => ({
   loadMessages: async (taskId, again) => {
     const t = get().tasks[taskId];
     if (!t) return;
-    if (!hostSupports(get().hosts.find((h) => h.id === t.host_id), 56)) {
+    if (
+      !hostSupports(
+        get().hosts.find((h) => h.id === t.host_id),
+        56,
+      )
+    ) {
       await whileLoading(
         taskId,
         () => api.messages(t.host_id, taskId),
@@ -523,7 +590,15 @@ export const useStore = create<State>((set, get) => ({
     });
     // One that's back has its tasks loaded again.
     if (unarchived) {
-      const kinds: Task["kind"][] = ["task", ...(hostSupports(get().hosts.find((x) => x.id === p.host_id), 12) ? (["review"] as const) : [])];
+      const kinds: Task["kind"][] = [
+        "task",
+        ...(hostSupports(
+          get().hosts.find((x) => x.id === p.host_id),
+          12,
+        )
+          ? (["review"] as const)
+          : []),
+      ];
       const load = startHostLoad(p.host_id);
       Promise.all(kinds.map((k) => api.projectTasks(p.host_id, p.id, k)))
         .then((lists) => {
@@ -596,7 +671,11 @@ export function useThreadMessages(taskId: string | null, load = true): Message[]
     // None (a thread drawn from its items, see threadView.ts).
     if (taskId === null) return;
     const release = retainThread(taskId);
-    if (load) useStore.getState().loadMessages(taskId).catch(() => {});
+    if (load)
+      useStore
+        .getState()
+        .loadMessages(taskId)
+        .catch(() => {});
     return release;
   }, [taskId, load]);
   return messages;
@@ -629,7 +708,12 @@ export function taskConfig(s: Pick<State, "profiles" | "claudeConfigs" | "projec
   const own = s.claudeConfigs.find((c) => c.host_id === task.host_id && c.id === task.claude_config_id);
   if (own) return own;
   if (!task.claude_config_id && task.session_id) return undefined;
-  return availableConfigs(s, task.host_id, task.profile_id, s.projects.find((p) => p.host_id === task.host_id && p.id === task.project_id))[0];
+  return availableConfigs(
+    s,
+    task.host_id,
+    task.profile_id,
+    s.projects.find((p) => p.host_id === task.host_id && p.id === task.project_id),
+  )[0];
 }
 
 export function useAvailableConfigs(hostId: string, profileId: string, project?: Project | null) {
@@ -703,19 +787,29 @@ export function connectEvents() {
     opened = true;
     retry = 0;
     useStore.setState({ connected: true });
-    useStore.getState().loadAll().catch(() => {});
+    useStore
+      .getState()
+      .loadAll()
+      .catch(() => {});
   };
   ws.onclose = () => {
     socket = null;
-    if (!opened && retry === 0 && useStore.getState().authed === null) useStore.getState().loadAll().catch(() => {});
+    if (!opened && retry === 0 && useStore.getState().authed === null)
+      useStore
+        .getState()
+        .loadAll()
+        .catch(() => {});
     useStore.setState({ connected: false });
     // Not with a wrong token: the token screen reloads the page with the new one.
     if (useStore.getState().authed === false) return;
     retry = Math.min(retry + 1, 6);
-    retryTimer = setTimeout(() => {
-      retryTimer = null;
-      connectEvents();
-    }, 500 * 2 ** retry);
+    retryTimer = setTimeout(
+      () => {
+        retryTimer = null;
+        connectEvents();
+      },
+      500 * 2 ** retry,
+    );
   };
   ws.onmessage = (e) => {
     let ev;
@@ -938,7 +1032,10 @@ export function useHost(id: string | null | undefined) {
 }
 
 export function taskKey(t: Task, projects: Project[]) {
-  return `${keyPrefix(t, projects.find((x) => x.id === t.project_id))}-${t.number}`;
+  return `${keyPrefix(
+    t,
+    projects.find((x) => x.id === t.project_id),
+  )}-${t.number}`;
 }
 
 /** What goes before a task's number: its project's key, `G` for a group task, or `S` for a scratch task. */

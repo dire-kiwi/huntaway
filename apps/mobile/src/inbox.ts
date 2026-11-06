@@ -116,7 +116,14 @@ export async function promptedTasks(
 ): Promise<Task[]> {
   const have = new Set(listed.map((t) => t.id));
   const missing = [...new Set(permissions.map((p) => p.task_id).filter((id) => !have.has(id)))];
-  const got = await Promise.all(missing.map((id) => client.task(hostId, id).then((d) => d.task).catch(() => null)));
+  const got = await Promise.all(
+    missing.map((id) =>
+      client
+        .task(hostId, id)
+        .then((d) => d.task)
+        .catch(() => null),
+    ),
+  );
   return got.filter((t): t is Task => !!t && t.profile_id === profileId);
 }
 

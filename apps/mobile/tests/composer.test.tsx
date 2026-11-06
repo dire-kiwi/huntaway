@@ -97,7 +97,17 @@ describe("a share from another app", () => {
       { uri: "file:///big.mov", name: "big.mov", mime: "video/quicktime", size: null },
       { uri: "file:///a.pdf", name: "a.pdf", mime: "application/pdf", size: 1 },
     ];
-    await render(<Composer client={{ send: jest.fn(), uploadAttachment }} host="h" taskId="t" bottom={0} onSent={() => {}} readFile={readFile} prefill={{ id: 2, text: "", files }} />);
+    await render(
+      <Composer
+        client={{ send: jest.fn(), uploadAttachment }}
+        host="h"
+        taskId="t"
+        bottom={0}
+        onSent={() => {}}
+        readFile={readFile}
+        prefill={{ id: 2, text: "", files }}
+      />,
+    );
     await waitFor(() => expect(screen.getByLabelText("Remove a.pdf")).toBeTruthy());
     expect(screen.getByText(/big.mov is larger than 10 MB/)).toBeTruthy();
     expect(uploadAttachment).toHaveBeenCalledTimes(1);

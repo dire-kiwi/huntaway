@@ -6,7 +6,8 @@ import { memoryStorage } from "../src/pairing";
 import { fakeFetch } from "./helpers";
 
 const host = (id: string, extra: Partial<Host> = {}): Host => ({ id, name: id, local: false, connected: true, mode: "outbound", api_version: 120, ...extra });
-const profile = (id: string, host_id: string, extra: Partial<Profile> = {}) => ({ id, host_id, name: "Ivan", claude_config_dir: "", default_model: null, ...extra }) as Profile;
+const profile = (id: string, host_id: string, extra: Partial<Profile> = {}) =>
+  ({ id, host_id, name: "Ivan", claude_config_dir: "", default_model: null, ...extra }) as Profile;
 
 function profilesOn(hosts: Host[], list: Profile[]): BoardProfiles {
   const byName = new Map<string, { hostId: string; profile: Profile }[]>();
@@ -16,7 +17,6 @@ function profilesOn(hosts: Host[], list: Profile[]): BoardProfiles {
 
 describe("the Assistant tab", () => {
   test("shows on boards from API 120, which let a paired phone reach the assistant", () => {
-    
     expect(hasAssistantTab({ apiVersion: 119 })).toBe(false);
     expect(hasAssistantTab({ apiVersion: 120 })).toBe(true);
     expect(hasAssistantTab(undefined)).toBe(false);
@@ -43,7 +43,9 @@ describe("the Assistant tab", () => {
 
   test("opens it on that host through the board, as a paired phone may (?local=1)", async () => {
     const { fetch, calls } = fakeFetch((method, path) =>
-      method === "GET" && path === "/api/h/vps/profiles/p9/assistant?local=1" ? { status: 200, body: { id: "a1", task_type: "assistant", host_id: "vps" } } : undefined,
+      method === "GET" && path === "/api/h/vps/profiles/p9/assistant?local=1"
+        ? { status: 200, body: { id: "a1", task_type: "assistant", host_id: "vps" } }
+        : undefined,
     );
     const client = createClient({ baseUrl: "https://board.ts.net", getToken: () => "device-token", setToken: () => {}, storage: memoryStorage(), fetch });
     const task = await openAssistant(client, { hostId: "vps", profileId: "p9" });

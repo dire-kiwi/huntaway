@@ -1,6 +1,21 @@
 import clsx from "clsx";
 import { useEffect, useState } from "react";
-import { api, canRunAgents, dependencyQueued, hostStatuses, hostSupports, limitQueued, mergeAwaitsApproval, mergeQueued, outOfUsage, rejoinsMerge, type Host, type Resolution, type Status, type Task } from "../../../../api";
+import {
+  api,
+  canRunAgents,
+  dependencyQueued,
+  hostStatuses,
+  hostSupports,
+  limitQueued,
+  mergeAwaitsApproval,
+  mergeQueued,
+  outOfUsage,
+  rejoinsMerge,
+  type Host,
+  type Resolution,
+  type Status,
+  type Task,
+} from "../../../../api";
 import { resetsPhrase, resetTime } from "../../../../usageConfigs";
 import { saveMarks } from "../../Reminders";
 import { MoreFixRounds } from "../../Review";
@@ -78,8 +93,8 @@ export function StatusSection({ task, host, confirmDone }: { task: Task; host: H
       )}
       {rejoinsMerge(task) && (
         <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
-          Stepped out of the merge queue to make changes, so the tasks behind it could merge. It rejoins the end of the queue when its
-          agent is done, unless you move it to another column first.
+          Stepped out of the merge queue to make changes, so the tasks behind it could merge. It rejoins the end of the queue when its agent is done, unless you
+          move it to another column first.
         </div>
       )}
       {dependencyQueued(task) && (
@@ -87,9 +102,7 @@ export function StatusSection({ task, host, confirmDone }: { task: Task; host: H
           Queued. Its agent starts once the tasks it depends on are merged.
         </div>
       )}
-      {task.attention_reason && (
-        <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2.5 py-2 text-[12px] text-amber-200/90">{task.attention_reason}</div>
-      )}
+      {task.attention_reason && <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2.5 py-2 text-[12px] text-amber-200/90">{task.attention_reason}</div>}
       {task.status === "needs_attention" && <MoreFixRounds task={task} className="mt-2" />}
       <UsageLimitNote task={task} onError={(e) => setErr(e)} />
       {task.remind_at && (
@@ -147,12 +160,18 @@ function UsageLimitNote({ task, onError }: { task: Task; onError: (e: string | n
   return (
     <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted" data-usage-limit="out">
       <span className="min-w-0 flex-1">
-        {name} is out of usage; it {when}.
-        {/* Waiting in In progress would give up its merge slot, so another merge could start alongside it. */}
+        {name} is out of usage; it {when}.{/* Waiting in In progress would give up its merge slot, so another merge could start alongside it. */}
         {task.merging && " Its merge keeps its place in the merge queue: message its agent once it has reset to carry on."}
       </span>
       {!task.merging && (
-        <Button size="sm" variant="ghost" className="-my-1 shrink-0" disabled={busy} onClick={wait} title="Wait in In progress, and carry on once the limit resets">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="-my-1 shrink-0"
+          disabled={busy}
+          onClick={wait}
+          title="Wait in In progress, and carry on once the limit resets"
+        >
           Carry on then
         </Button>
       )}

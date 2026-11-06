@@ -50,7 +50,13 @@ test("a refresh that finishes last keeps the approvals of a host that reconnecte
 // IA-169 review: events kept while a thread's first page loaded were added to the page as they were, so a message
 // the page had too was shown twice, and a change to one in the page went to the end.
 test("a thread's first page and the events that came while it loaded make one list, in order", async () => {
-  const msg = (id, text) => ({ id, task_id: "t1", kind: "claude", created_at: "", data: { type: "assistant", message: { content: [{ type: "text", text }] } } });
+  const msg = (id, text) => ({
+    id,
+    task_id: "t1",
+    kind: "claude",
+    created_at: "",
+    data: { type: "assistant", message: { content: [{ type: "text", text }] } },
+  });
   let answer;
   api.messagePage = () => new Promise((resolve) => (answer = resolve));
   useStore.setState({ hosts: [{ ...host("local"), api_version: 56 }], tasks: { t1: { id: "t1", host_id: "local" } }, messages: {}, threads: {} });
@@ -123,7 +129,16 @@ test("a reload of a closed thread that's still kept updates it", async () => {
 // IA-161: a host's refresh replaced all its tasks with what it loaded, so a task event that came while it loaded was undone
 // (a card stayed "working"), and a task deleted meanwhile came back.
 test("a host's refresh keeps the task and project changes that came while it loaded", async () => {
-  const task = (id, extra = {}) => ({ id, profile_id: "p", project_id: "proj", kind: "task", title: id, running: false, updated_at: "2026-10-28T01:00:00Z", ...extra });
+  const task = (id, extra = {}) => ({
+    id,
+    profile_id: "p",
+    project_id: "proj",
+    kind: "task",
+    title: id,
+    running: false,
+    updated_at: "2026-10-28T01:00:00Z",
+    ...extra,
+  });
   const project = (id) => ({ id, profile_id: "p", name: id });
   let answer;
   api.projects = (_h, _p, archived) => Promise.resolve(archived ? [] : [project("proj"), project("gone")]);
@@ -153,7 +168,10 @@ test("a host's refresh keeps the task and project changes that came while it loa
   assert.deepEqual(Object.keys(s.tasks).sort(), ["added", "kept", "newer", "ran"]);
   assert.equal(s.tasks.ran.running, false);
   assert.equal(s.tasks.newer.title, "new title");
-  assert.deepEqual(s.projects.map((p) => p.id), ["proj"]);
+  assert.deepEqual(
+    s.projects.map((p) => p.id),
+    ["proj"],
+  );
 
   // The next refresh, with nothing changing meanwhile, takes the lists as they are.
   api.projectTasks = (_h, id, kind) => Promise.resolve(kind === "task" && id === "proj" ? [task("kept")] : []);
@@ -167,7 +185,10 @@ test("events change only their own host's tasks and projects", () => {
   useStore.setState({
     hosts: [host("local"), host("remote")],
     localHostId: "local",
-    profiles: [{ id: "p", name: "p", host_id: "local" }, { id: "p", name: "p", host_id: "remote" }],
+    profiles: [
+      { id: "p", name: "p", host_id: "local" },
+      { id: "p", name: "p", host_id: "remote" },
+    ],
     projects: [{ id: "proj", profile_id: "p", host_id: "local" }],
     archived: [],
     tasks: { same: t },
@@ -185,7 +206,10 @@ test("events change only their own host's tasks and projects", () => {
   handleEvent({ type: "message", host_id: "remote", task_id: "same", message: { id: 1, task_id: "same", kind: "user", data: { text: "hi" } } });
   const s = useStore.getState();
   assert.equal(s.tasks.same.title, "local's");
-  assert.deepEqual(s.projects.map((p) => p.id), ["proj"]);
+  assert.deepEqual(
+    s.projects.map((p) => p.id),
+    ["proj"],
+  );
   flushDeltas();
   assert.deepEqual(useDeltas.getState().deltas, {});
   unwatch();
@@ -259,7 +283,10 @@ test("a refresh that ends before a newer one doesn't hold that one back", async 
   await newer;
   const s = useStore.getState();
   assert.deepEqual(Object.keys(s.tasks), ["a"]);
-  assert.deepEqual(s.projects.map((p) => p.name), ["new name"]);
+  assert.deepEqual(
+    s.projects.map((p) => p.name),
+    ["new name"],
+  );
 });
 
 // HA-38: two profile loads whose answers came out of order (after a reconnect, profiles_changed and hosts_changed): the
@@ -290,12 +317,18 @@ test("a profile load that ends after a newer one doesn't undo it", async () => {
   const newer = useStore.getState().loadProfiles();
   await new Promise((r) => setTimeout(r));
   assert.equal(lists.length, 2);
-  lists[1]([{ id: "a", name: "a" }, { id: "b", name: "b" }]);
+  lists[1]([
+    { id: "a", name: "a" },
+    { id: "b", name: "b" },
+  ]);
   await newer;
   lists[0]([{ id: "a", name: "a" }]);
   await older;
   const s = useStore.getState();
-  assert.deepEqual(s.profiles.map((p) => p.id), ["a", "b"]);
+  assert.deepEqual(
+    s.profiles.map((p) => p.id),
+    ["a", "b"],
+  );
   assert.deepEqual(Object.keys(s.tasks).sort(), ["task-proj-a", "task-proj-b"]);
 });
 
@@ -317,7 +350,10 @@ test("loads of everything that come while one runs share one that starts after i
   assert.equal(answers.length, 2);
   answers[1]([host("local"), host("remote")]);
   await second;
-  assert.deepEqual(useStore.getState().hosts.map((h) => h.id), ["local", "remote"]);
+  assert.deepEqual(
+    useStore.getState().hosts.map((h) => h.id),
+    ["local", "remote"],
+  );
   // With none under way, the next call loads at once.
   const next = useStore.getState().loadAll();
   await new Promise((r) => setTimeout(r));
@@ -356,7 +392,10 @@ test("a load of everything queued behind a slow one starts anyway, and the slow 
     await queued;
     answers[0]([host("local")]);
     await slow;
-    assert.deepEqual(useStore.getState().hosts.map((h) => h.id), ["local", "remote"]);
+    assert.deepEqual(
+      useStore.getState().hosts.map((h) => h.id),
+      ["local", "remote"],
+    );
   } finally {
     vi.useRealTimers();
   }

@@ -23,7 +23,16 @@ import * as asana_tests from "../integrations/asana/tests.ts";
 import * as github_tests from "../integrations/github/tests.ts";
 import { create_group_task, create_scratch_task, create_scratch_task_inner, create_task, create_task_inner, type CreateTask } from "./new_task.ts";
 import { check_agent_access, check_github_account, create_profile, update_profile } from "./profiles.ts";
-import { clone_project, clone_project_inner, create_github_project_inner, create_project_inner, delete_project_inner, list_projects, remove_unused_dir, update_project_inner } from "./projects.ts";
+import {
+  clone_project,
+  clone_project_inner,
+  create_github_project_inner,
+  create_project_inner,
+  delete_project_inner,
+  list_projects,
+  remove_unused_dir,
+  update_project_inner,
+} from "./projects.ts";
 import { delete_one, update_task, update_task_inner } from "./tasks.ts";
 import { get_settings, internal_merge_gate, update_settings } from "./host.ts";
 import { send_message, setup_worktree, start_setup_thread_inner, teardown_worktree } from "./thread.ts";
@@ -82,11 +91,28 @@ function git(dir: string, args: string[]) {
 }
 
 const new_project = (profile_id: string): db.NewProject => ({
-  id: "pr", profile_id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false,
+  id: "pr",
+  profile_id,
+  name: "Web",
+  key: "WEB",
+  repo_path: "/src/web",
+  scratch_path: "/s",
+  worktrees_root: "/w",
+  base_branch: null,
+  use_worktrees: false,
 });
 
 const new_task = (profile_id: string, status = "todo"): db.NewTask => ({
-  profile_id, project_id: null, kind: "task", title: "t", description: "", status, use_worktree: false, model: null, effort: null, claude_config_id: null,
+  profile_id,
+  project_id: null,
+  kind: "task",
+  title: "t",
+  description: "",
+  status,
+  use_worktree: false,
+  model: null,
+  effort: null,
+  claude_config_id: null,
 });
 
 /** With agents able to run (Rust's TEST_CAN_RUN), until `f` is done. */
@@ -132,7 +158,10 @@ test("a_config_s_proxy_keys_are_write_only", async () => {
   const [status2] = await call(s, "PATCH", path, { agent: "codex" });
   assert.equal(status2, 200);
   assert.deepEqual(await call(s, "PATCH", path, { api_url: "http://x:1" }), [400, { error: "a proxy is for Claude Code configs; clear api_url first" }]);
-  assert.deepEqual(await call(s, "POST", "/api/claude-configs", { name: "cx", agent: "codex", api_url: "http://x:1" }), [400, { error: "a proxy is for Claude Code configs" }]);
+  assert.deepEqual(await call(s, "POST", "/api/claude-configs", { name: "cx", agent: "codex", api_url: "http://x:1" }), [
+    400,
+    { error: "a proxy is for Claude Code configs" },
+  ]);
 });
 
 test("unknown_api_routes_get_a_json_404_not_the_ui", async () => {
@@ -216,7 +245,17 @@ test("profiles_choose_reviewers_and_a_summarizer_that_projects_can_override", as
   assert.ok(await fails(create({ name: "bad", reviewers: [{ claude_config_id: "nope" }] })));
   assert.ok(await fails(create({ name: "bad", summarizer: "haiku" })));
   const id = p.id;
-  db.insert_project(s.db(), { id: "pr", profile_id: id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+  db.insert_project(s.db(), {
+    id: "pr",
+    profile_id: id,
+    name: "x",
+    key: "X",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  });
   const project = () => db.get_project(s.db(), "pr")!;
   const reviewers = () => db.reviewers_for(s.db(), project());
   const summarizer = () => db.summarizers_for(s.db(), project())[0];
@@ -260,7 +299,17 @@ test("profiles_and_projects_can_have_several_summarizers_with_skills", async () 
   // Older clients read the first.
   assert.deepEqual(p.summarizer, wanted[0]);
   const id = p.id;
-  db.insert_project(s.db(), { id: "pr", profile_id: id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+  db.insert_project(s.db(), {
+    id: "pr",
+    profile_id: id,
+    name: "x",
+    key: "X",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  });
   const summarizers = () => db.summarizers_for(s.db(), db.get_project(s.db(), "pr")!);
   assert.equal(summarizers().length, 2);
   // A project's own, over the profile's, and back with an empty list.
@@ -280,7 +329,10 @@ test("profiles_and_projects_can_have_several_summarizers_with_skills", async () 
   // A client from before API 103 sends the first as `summarizer` with every save: the rest stay.
   await update_project_inner(s, "pr", { summarizers: [{ name: "A", model: "haiku" }, { name: "B" }, { name: "C" }] });
   await update_project_inner(s, "pr", { summarizer: { claude_config_id: null, model: "haiku", effort: null } });
-  assert.deepEqual(summarizers().map((r) => r.name), ["A", "B", "C"]);
+  assert.deepEqual(
+    summarizers().map((r) => r.name),
+    ["A", "B", "C"],
+  );
   // Changed, it replaces just the first.
   await update_project_inner(s, "pr", { summarizer: { model: "sonnet" } });
   const after = summarizers();
@@ -315,7 +367,17 @@ test("a_deleted_reviewer_config_doesnt_stop_saving_other_settings", async () => 
   const spec = { claude_config_id: gone.id, model: "haiku", effort: null };
   const p = await create_profile(s, req({ name: "work", reviewers: [spec], summarizer: spec }));
   const id = p.id;
-  db.insert_project(s.db(), { id: "pr", profile_id: id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+  db.insert_project(s.db(), {
+    id: "pr",
+    profile_id: id,
+    name: "x",
+    key: "X",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  });
   await update_project_inner(s, "pr", { reviewers: [spec], summarizer: spec });
   db.delete_claude_config(s.db(), gone.id);
   // The forms send them unchanged with every save, as they were saved.
@@ -384,7 +446,10 @@ test("profiles_connect_to_asana_and_search_it", async () => {
   let found;
   [status, found] = await call(s, "GET", search);
   assert.equal(status, 200);
-  assert.deepEqual(found.map((t: any) => t.name), ["Fix signup", "Fix login"]);
+  assert.deepEqual(
+    found.map((t: any) => t.name),
+    ["Fix signup", "Fix login"],
+  );
   assert.equal(found[0].url, "https://app.asana.com/0/1/1002");
   // Through the hub too, and a URL for a task the token can't see finds nothing.
   assert.deepEqual(await call(s, "GET", `/api/h/h/profiles/${p.id}/asana/tasks?q=https%3A%2F%2Fapp.asana.com%2F0%2F1%2F7777`), [200, []]);
@@ -571,7 +636,10 @@ test("tasks_link_to_asana_tasks", async () => {
   // Each task once, and only with an id and a web link.
   const set = (v: any) => update_task_inner(s, t.id, { external_links: v });
   const t2 = await set([link("1002", "Fix signup"), link("2001", "Write docs"), link("1002", "again")]);
-  assert.deepEqual(t2.external_links.map((l: any) => l.id), ["1002", "2001"]);
+  assert.deepEqual(
+    t2.external_links.map((l: any) => l.id),
+    ["1002", "2001"],
+  );
   for (const bad of ["x", [{ provider: "asana", id: "", url: "https://x" }], [{ provider: "asana", id: "1", url: "javascript:x" }]]) {
     assert.ok(await fails(set(bad)), JSON.stringify(bad));
   }
@@ -659,7 +727,11 @@ test("a_folder_being_cloned_into_waits_for_that_clone_and_isnt_added_twice", asy
   // clone makes it, and with the symlink after a folder that isn't there and `..`.
   mkdirSync(join(github, "real"), { recursive: true });
   symlinkSync(join(github, "real"), join(github, "alias"));
-  const paths = [["clones/slow", "clones/slow"], ["alias/new/slow", "real/new/slow"], ["missing/../alias/other/slow", "real/other/slow"]];
+  const paths = [
+    ["clones/slow", "clones/slow"],
+    ["alias/new/slow", "real/new/slow"],
+    ["missing/../alias/other/slow", "real/other/slow"],
+  ];
   for (const [d, f] of paths) {
     // (Joined as Rust's Path::join does, without resolving the `..`.)
     const destGiven = `${github}/${d}`;
@@ -777,7 +849,10 @@ test("a_worktree_isnt_torn_down_or_set_up_under_a_reviewer", async () => {
   let t = create_task_inner(s, p.id, { title: "x" });
   t = await worktree.setup(s, t.id);
   const r = db.insert_task(s.db(), { ...new_task(t.profile_id), project_id: t.project_id ?? null, kind: "review", title: "Review" });
-  db.update_task(s.db(), r.id, [["parent_id", t.id], ["running", true]]);
+  db.update_task(s.db(), r.id, [
+    ["parent_id", t.id],
+    ["running", true],
+  ]);
   const teardown = () => teardown_worktree(s, req({}, { id: t.id }));
   assert.equal((await err(teardown())).status, 409);
   assert.equal((await err(setup_worktree(s, req({}, { id: t.id })))).status, 409);
@@ -826,7 +901,10 @@ test("ready_for_merge_needs_a_github_approval_where_required", async () => {
   db.update_project(s.db(), p.id, [["pull_requests", false]]);
   cur = db.get_task(s.db(), t.id)!;
   assert.ok(!(await worktree.pr_approval_required(s, cur)));
-  db.update_project(s.db(), p.id, [["pull_requests", true], ["subproject_pull_requests", false]]);
+  db.update_project(s.db(), p.id, [
+    ["pull_requests", true],
+    ["subproject_pull_requests", false],
+  ]);
   const sub = await task_with_work(s, p, "sub");
   db.update_task(s.db(), sub.id, [["subproject", true]]);
   db.update_task(s.db(), t.id, [["parent_id", sub.id]]);
@@ -994,7 +1072,10 @@ test("archives_projects", async () => {
   assert.ok(archived, "archived");
   assert.deepEqual([await listed(false), await listed(true)], [["y"], ["x"]]);
   // Out of its group, and no new tasks.
-  assert.deepEqual(db.group_projects(s.db(), profile.id, "Shop").map((p) => p.name), ["y"]);
+  assert.deepEqual(
+    db.group_projects(s.db(), profile.id, "Shop").map((p) => p.name),
+    ["y"],
+  );
   const e2 = await err(() => create_task_inner(s, p.id, { title: "u" }));
   assert.ok(e2.message.includes("is archived"), e2.message);
   // Archiving again keeps when it was archived.
@@ -1062,7 +1143,11 @@ test("any_task_can_have_labels", async () => {
     assert.equal(merged.status, "done");
 
     // A plan task from before labels (as the migration leaves it) still works in its own folder.
-    old = db.update_task(s.db(), old.id, [["labels", ["plan"]], ["use_worktree", false], ["work_dir", `documents/${old.id}`]])!;
+    old = db.update_task(s.db(), old.id, [
+      ["labels", ["plan"]],
+      ["use_worktree", false],
+      ["work_dir", `documents/${old.id}`],
+    ])!;
     assert.equal(runner.work_dir(s, old), documents.dir(s, old.id));
     assert.ok(await fails(set(old.id, { use_worktree: true })));
     assert.ok(await fails(set(old.id, { subproject: true })));
@@ -1089,7 +1174,8 @@ test("any_task_can_have_labels", async () => {
       if (exit) writeFileSync(join(d, "exit"), "{}");
       return d;
     };
-    const finished = run(true), stopping = run(false);
+    const finished = run(true),
+      stopping = run(false);
     await delete_one(s, done, false);
     assert.ok(!existsSync(folder));
     assert.ok(!existsSync(finished) && existsSync(stopping));
@@ -1268,7 +1354,13 @@ test("profile_names_are_required_and_unique", async () => {
   assert.equal((await err(create("Personal"))).status, 409);
   assert.equal((await err(create(" "))).status, 400);
   const rename = (id: string, name: any) => update_profile(s, req({ name }, { id }));
-  for (const [bad, status] of [["", 400], [" ", 400], [3, 400], [null, 400], [" PERSONAL", 409]] as Array<[any, number]>) {
+  for (const [bad, status] of [
+    ["", 400],
+    [" ", 400],
+    [3, 400],
+    [null, 400],
+    [" PERSONAL", 409],
+  ] as Array<[any, number]>) {
     assert.equal((await err(rename(work.id, bad))).status, status, JSON.stringify(bad));
   }
   assert.equal(db.get_profile(s.db(), work.id)!.name, "work");
@@ -1372,7 +1464,10 @@ async function run_ends(s: AppState, id: string) {
 }
 
 function last_prompt(s: AppState, id: string): string {
-  const m = testing.messages(s.db(), id).filter((m) => m.kind === "user").pop()!;
+  const m = testing
+    .messages(s.db(), id)
+    .filter((m) => m.kind === "user")
+    .pop()!;
   return m.data.text;
 }
 
@@ -1411,7 +1506,11 @@ test("a_merge_waits_for_the_users_approval_of_its_summary", async () => {
     assert.deepEqual([cards.length, cards[0].data.status], [1, "pending"]);
     // It doesn't hold the merge slot meanwhile: another task merges.
     const other = await task_with_work(s, p, "b");
-    db.update_task(s.db(), other.id, [["status", "ready_for_merge"], ["merging", true], ["merge_approval", "approved"]]);
+    db.update_task(s.db(), other.id, [
+      ["status", "ready_for_merge"],
+      ["merging", true],
+      ["merge_approval", "approved"],
+    ]);
     runner.start_next_merge(s, p.id);
     assert.ok(s.is_running(other.id));
     assert.ok(last_prompt(s, other.id).includes("The user approved the merge."));
@@ -1463,7 +1562,10 @@ test("a_denied_merge_goes_back_to_review", async () => {
     t = db.get_task(s.db(), t.id)!;
     assert.deepEqual([t.status, t.merge_approval, t.running], ["ready_for_merge", "pending", true]);
     const cards = approval_cards(s, t.id);
-    assert.deepEqual(cards.map((c) => c.data.status), ["answered", "replaced"]);
+    assert.deepEqual(
+      cards.map((c) => c.data.status),
+      ["answered", "replaced"],
+    );
     assert.equal((await err(() => questions.answer(s, t.id, cards[1].id, pick("Approve")))).status, 409);
     await idle(s, t.id);
 
@@ -1482,15 +1584,28 @@ test("approval_rules_with_a_pattern_twice_arent_saved_and_saved_ones_decide_as_t
   const profile = db.insert_profile(s.db(), "p", [], null);
   const path = `/api/profiles/${profile.id}/approval-rules`;
   // Bash: never under Bash: allow (the dialog's Try a tool says never) isn't saved as allow: it isn't saved.
-  let [status, v] = await call(s, "POST", path, { rules: [{ tool: "Bash", decision: "allow" }, { tool: "bash", decision: "never" }] });
+  let [status, v] = await call(s, "POST", path, {
+    rules: [
+      { tool: "Bash", decision: "allow" },
+      { tool: "bash", decision: "never" },
+    ],
+  });
   assert.equal(status, 400, JSON.stringify(v));
   assert.ok(v.error.includes("more than one rule"), JSON.stringify(v));
   assert.equal((await call(s, "GET", path))[1].is_default, true);
   // Saved with one, it reads back, and decides, as it was sent.
-  [status] = await call(s, "POST", path, { rules: [{ tool: "Bash", decision: "never" }, { tool: "mcp__g", decision: "allow" }] });
+  [status] = await call(s, "POST", path, {
+    rules: [
+      { tool: "Bash", decision: "never" },
+      { tool: "mcp__g", decision: "allow" },
+    ],
+  });
   assert.equal(status, 200);
   [, v] = await call(s, "GET", path);
-  assert.deepEqual(v.rules, [{ tool: "Bash", decision: "never" }, { tool: "mcp__g", decision: "allow" }]);
+  assert.deepEqual(v.rules, [
+    { tool: "Bash", decision: "never" },
+    { tool: "mcp__g", decision: "allow" },
+  ]);
   assert.equal(approval_rules.decide(approval_rules.get(s.db(), profile.id), "Bash")?.decision, "never");
 });
 
@@ -1521,7 +1636,15 @@ test("approval_rules_and_the_action_log_take_only_what_they_should", async () =>
   // The action log is the profile's own.
   const other = db.insert_profile(s.db(), "q", [], null);
   const mine = db.insert_task(s.db(), {
-    profile_id: profile.id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null,
+    profile_id: profile.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+    model: null,
+    effort: null,
     claude_config_id: null,
   });
   approval_rules.log_blocked(s, mine, "mcp__g__delete", { id: 1 }, "mcp__g__*delete*");

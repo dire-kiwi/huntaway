@@ -2,7 +2,19 @@
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import * as api from "../../api.ts";
 import * as db from "../../db.ts";
@@ -59,7 +71,10 @@ async function git_project(s: AppState, name: string): Promise<Project> {
 function conversation(s: AppState, t: Task, cwd: string): string {
   const config_dir = temp("claude");
   const config = db.insert_claude_config(s.db(), "Claude", path_str(config_dir), "claude");
-  db.update_task(s.db(), t.id, [["session_id", "s1"], ["claude_config_id", config.id]]);
+  db.update_task(s.db(), t.id, [
+    ["session_id", "s1"],
+    ["claude_config_id", config.id],
+  ]);
   const dir = join(config_dir, "projects", claude_project_dir(cwd));
   mkdirSync(join(dir, "s1/subagents"), { recursive: true });
   writeFileSync(join(dir, "s1.jsonl"), "{}\n");
@@ -514,7 +529,8 @@ test("a_worktree_being_set_up_keeps_the_folder_where_it_is", async () => {
   const [p] = await project_with_worktree(s, "os-sandbox", ".worktrees");
   const signals = temp("signals");
   mkdirSync(signals, { recursive: true });
-  const started = join(signals, "started"), go = join(signals, "go");
+  const started = join(signals, "started"),
+    go = join(signals, "go");
   const script = `touch ${started}; while [ ! -e ${go} ]; do sleep 0.05; done`;
   db.update_project(s.db(), p.id, [["setup_script", script]]);
   const t = api.create_task_inner(s, p.id, { ...api.CreateTask_default(), title: "Another" });

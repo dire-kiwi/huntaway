@@ -55,17 +55,26 @@ function PromptLine({ data, task }: { data: Any; task: Task }) {
           {err}
         </span>
       )}
-      <button disabled={busy} onClick={() => decide("allow")} className="flex shrink-0 items-center gap-1 rounded bg-accent-strong px-1.5 py-0.5 text-white hover:bg-accent disabled:opacity-50">
+      <button
+        disabled={busy}
+        onClick={() => decide("allow")}
+        className="flex shrink-0 items-center gap-1 rounded bg-accent-strong px-1.5 py-0.5 text-white hover:bg-accent disabled:opacity-50"
+      >
         <Check size={11} /> Allow
       </button>
-      <button disabled={busy} onClick={() => decide("deny")} className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-red-300 hover:bg-red-500/15 disabled:opacity-50">
+      <button
+        disabled={busy}
+        onClick={() => decide("deny")}
+        className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-red-300 hover:bg-red-500/15 disabled:opacity-50"
+      >
         <X size={11} /> Deny
       </button>
     </div>
   );
 }
 
-const pendingPrompts = (items: Item[]) => items.filter((it): it is Extract<Item, { type: "permission" }> => it.type === "permission" && it.data?.status === "pending");
+const pendingPrompts = (items: Item[]) =>
+  items.filter((it): it is Extract<Item, { type: "permission" }> => it.type === "permission" && it.data?.status === "pending");
 
 /** The permission prompts, questions and plans a task's agent is waiting on, to answer without opening its thread. */
 export function PendingPrompts({ task }: { task: Task }) {
@@ -89,4 +98,3 @@ export function PendingPrompts({ task }: { task: Task }) {
     </div>
   );
 }
-

@@ -35,8 +35,7 @@ export function useOrigin({ initial, projects, subproject, groupName, scratch }:
     asGroup: !!group && !!initial && localStorage.getItem(PROJECT_KEY) === groupTarget(initial.host_id, group),
   }));
   const baseProject = (initial?.id === base.projectId ? initial : projects?.find((p) => p.id === base.projectId)) ?? initial;
-  const basePref =
-    base.noProject && scratch ? scratchTarget(scratch) : base.asGroup && group ? groupTarget(baseProject!.host_id, group) : baseProject!.id;
+  const basePref = base.noProject && scratch ? scratchTarget(scratch) : base.asGroup && group ? groupTarget(baseProject!.host_id, group) : baseProject!.id;
   // The draft is kept where the dialog starts, wherever its tokens send the task, so it comes back with them.
   const draft = draftKey(basePref, subproject?.id);
   const [saved] = useState(() => loadDraft(draft));

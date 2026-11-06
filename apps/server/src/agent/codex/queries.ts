@@ -148,7 +148,9 @@ function save_models(codex_home: string, r: any): Model[] {
       name: str(m.displayName) ?? str(m.model) ?? "",
       description: str(m.description) ?? "",
       is_default: m.isDefault === true,
-      efforts: (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts : []).map((e: any) => str(e?.reasoningEffort)).filter((e: any) => e !== null),
+      efforts: (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts : [])
+        .map((e: any) => str(e?.reasoningEffort))
+        .filter((e: any) => e !== null),
       default_effort: str(m.defaultReasoningEffort),
     }))
     .filter((m) => m.id !== "");
@@ -223,7 +225,10 @@ export async function rate_limits(codex_home: string): Promise<[string | null, L
  */
 export function limits(rl: any): Limit[] {
   const out: Limit[] = [];
-  for (const [key, default_id] of [["primary", "session"], ["secondary", "weekly"]]) {
+  for (const [key, default_id] of [
+    ["primary", "session"],
+    ["secondary", "weekly"],
+  ]) {
     const w = rl?.[key];
     const used = w?.usedPercent;
     if (typeof used !== "number") continue;

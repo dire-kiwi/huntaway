@@ -29,7 +29,10 @@ test("creates a GitHub repository, private or public, when adding a folder", asy
       requests.push(body);
       if (fail) return route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "Name already exists on this account" }) });
       const project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: body.name, repo_path: body.repo_path });
-      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...project, github: { full_name: pushError ? "acme/pushy" : "me/x", pushed: !pushError, push_error: pushError } }) });
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ ...project, github: { full_name: pushError ? "acme/pushy" : "me/x", pushed: !pushError, push_error: pushError } }),
+      });
     });
     await ui.run(["goto /", "click [title='Add project']", "wait Repository folder", "click role=radio[name=/Folder/]"]);
     // Nothing is created unless it's asked for.
@@ -54,7 +57,12 @@ test("creates a GitHub repository, private or public, when adding a folder", asy
 
     // A repository that's made but can't be pushed to still adds the project, and the dialog says why instead of closing.
     pushError = "couldn't push to acme/pushy: remote: Permission denied";
-    await ui.run(["click [title='Add project']", "wait Repository folder", "click role=radio[name=/Folder/]", "click role=checkbox[name=/Create a GitHub repository/]"]);
+    await ui.run([
+      "click [title='Add project']",
+      "wait Repository folder",
+      "click role=radio[name=/Folder/]",
+      "click role=checkbox[name=/Create a GitHub repository/]",
+    ]);
     await page.locator("[data-modal] input[type=text], [data-modal] input:not([type])").first().fill(`${folders}/pushy`);
     await ui.run(["click role=button[name='Create private repository and add project']", "wait Project added, but not pushed", "wait Permission denied"]);
     assert.match(await page.locator("[data-modal]").innerText(), /acme\/pushy.*git push -u origin HEAD/s);

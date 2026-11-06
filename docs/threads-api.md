@@ -12,7 +12,7 @@ thread is read from the board's own tables, and commands go onto the board's own
 - A host serves these routes from **API 114** (`api_version` in `/api/info`, and in the hub's `/api/hosts`). For an
   older host, keep using the message API (`/tasks/{id}/messages`, and the `message`, `message_updated`, `delta` and
   `delta_reset` events), which every host keeps serving.
-- A task has a thread kept as items once its first message has been written with the host's *Keep threads as items*
+- A task has a thread kept as items once its first message has been written with the host's _Keep threads as items_
   setting on (API 116, which flags it `thread_items`), or it has been rebuilt (`huntaway threads-rebuild`), and while
   its live writes haven't stopped on an error. Otherwise the routes answer **404** `{"error": "task <id> has no thread kept as items"}`, and its
   thread is its messages.
@@ -32,11 +32,11 @@ thread is read from the board's own tables, and commands go onto the board's own
 
 ## Reading
 
-| Route | Returns |
-| --- | --- |
-| `GET /api/tasks/{id}/thread` | The whole thread as a `Snapshot` `{thread, items, requests, seq}`, with the text streamed so far. |
-| `GET /api/tasks/{id}/thread?limit=N` | A window: the last `N` items, with `start` and `context` (the whole thread if it has no more than `N`). |
-| `GET /api/tasks/{id}/thread/items?before=I[&limit=N]` | An `ItemPage` of the items before index `I` (a window's `start`), 100 unless `limit` says. `start` 0: nothing before it. |
+| Route                                                   | Returns                                                                                                                                     |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/tasks/{id}/thread`                            | The whole thread as a `Snapshot` `{thread, items, requests, seq}`, with the text streamed so far.                                           |
+| `GET /api/tasks/{id}/thread?limit=N`                    | A window: the last `N` items, with `start` and `context` (the whole thread if it has no more than `N`).                                     |
+| `GET /api/tasks/{id}/thread/items?before=I[&limit=N]`   | An `ItemPage` of the items before index `I` (a window's `start`), 100 unless `limit` says. `start` 0: nothing before it.                    |
 | `GET /api/tasks/{id}/thread/events?after=SEQ[&limit=N]` | `{events, more, seq}`: the saved events after `SEQ` (0 unless given; no deltas), at most `N` and 1,000. With `more`, ask again after `seq`. |
 
 Put a page into a window with `with_page`. Events of types this host's build doesn't know (a newer build's, read
@@ -81,20 +81,20 @@ another one is a 400). Each goes through the board's own route for it, unchanged
 messages, dependencies, the merge queue, checkpoints) and the task in step. The answer is `{"ok": true, "result":
 <what the route answered>}`, or the route's error as it is.
 
-| Command | Route | Notes |
-| --- | --- | --- |
-| `send` `{text}` | `POST /tasks/{id}/messages` | Starts a turn, or steers the running one (or queues, as the composer's message does). `attachments` aren't taken: upload them with `POST /attachments` and link them in the text, as the composer does. `client_id` is ignored. |
-| `interrupt` | `POST /tasks/{id}/stop` | Stops the agent, and a review, summary or workflow run of the task. |
-| `respond` `{request_id, resolution}` | `POST /permissions/{id}`, or `POST /tasks/{id}/questions/{message_id}` | See below. |
-| `set_options` `{model, effort, permission_mode}` | `PATCH /tasks/{id}` | Any of them. Modes in the model's names (`accept_edits`, `dont_ask`, `bypass`...). |
-| `rewind` `{item_id \| turn_id, conversation, branch}` | `POST /tasks/{id}/rewind` | Back to before a `user_message` item (Huntaway's `item_id`), or the first of a turn's. The route takes the message the item came from. |
-| `compact` | `POST /tasks/{id}/messages` `{"text": "/compact"}` | As the composer's `/compact`: a turn that's running finishes first. |
-| `new_session` | (its own) | The next message starts a new conversation with the agent, keeping the items: the task's session is cleared, as a rewind of the conversation to its start does. 409 while the agent runs. |
+| Command                                               | Route                                                                  | Notes                                                                                                                                                                                                                           |
+| ----------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `send` `{text}`                                       | `POST /tasks/{id}/messages`                                            | Starts a turn, or steers the running one (or queues, as the composer's message does). `attachments` aren't taken: upload them with `POST /attachments` and link them in the text, as the composer does. `client_id` is ignored. |
+| `interrupt`                                           | `POST /tasks/{id}/stop`                                                | Stops the agent, and a review, summary or workflow run of the task.                                                                                                                                                             |
+| `respond` `{request_id, resolution}`                  | `POST /permissions/{id}`, or `POST /tasks/{id}/questions/{message_id}` | See below.                                                                                                                                                                                                                      |
+| `set_options` `{model, effort, permission_mode}`      | `PATCH /tasks/{id}`                                                    | Any of them. Modes in the model's names (`accept_edits`, `dont_ask`, `bypass`...).                                                                                                                                              |
+| `rewind` `{item_id \| turn_id, conversation, branch}` | `POST /tasks/{id}/rewind`                                              | Back to before a `user_message` item (Huntaway's `item_id`), or the first of a turn's. The route takes the message the item came from.                                                                                          |
+| `compact`                                             | `POST /tasks/{id}/messages` `{"text": "/compact"}`                     | As the composer's `/compact`: a turn that's running finishes first.                                                                                                                                                             |
+| `new_session`                                         | (its own)                                                              | The next message starts a new conversation with the agent, keeping the items: the task's session is cleared, as a rewind of the conversation to its start does. 409 while the agent runs.                                       |
 
 `respond` answers one of the thread's requests:
 
 - A **permission**: `{"outcome": "allow" | "deny", "always": true, "message": "…"}`. `always` allows matching calls
-  from now on, as *Always allow* does; a denial's `message` is what the agent is told.
+  from now on, as _Always allow_ does; a denial's `message` is what the agent is told.
 - A **plan**: `{"outcome": "allow", "permission_mode": "accept_edits"}` starts on it in that mode (the route's
   default if left out). `{"outcome": "deny", "message": "…"}` keeps planning, with the message as the user's feedback.
 - A **question** asked with Claude's AskUserQuestion: `{"outcome": "answer", "answers": {"<question id>": ["<label or

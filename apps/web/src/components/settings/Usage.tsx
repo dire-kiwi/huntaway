@@ -49,7 +49,11 @@ function AccountRow({ account, now }: { account: UsageAccount; now: number }) {
     .map((l) => `${l.label}: ${Math.round(100 - Math.min(100, Math.max(0, l.percent)))}% left${l.resets_at ? `, ${resetsPhrase(l.resets_at, now)}` : ""}`)
     .join("\n");
   return (
-    <div className="flex items-center gap-1.5 text-[10.5px]" data-account={account.name} title={[account.name, detail, account.error].filter(Boolean).join("\n")}>
+    <div
+      className="flex items-center gap-1.5 text-[10.5px]"
+      data-account={account.name}
+      title={[account.name, detail, account.error].filter(Boolean).join("\n")}
+    >
       <span className={clsx("min-w-0 flex-1 truncate", account.error ? "text-faint" : "text-muted")}>{account.name}</span>
       {account.error && shown.length === 0 ? (
         <TriangleAlert size={10} className="shrink-0 text-st-attention" aria-label={account.error} />
@@ -71,7 +75,10 @@ function AccountRow({ account, now }: { account: UsageAccount; now: number }) {
 export function UsageAlertIcon({ alert, size = 11 }: { alert: UsageAlert | null; size?: number }) {
   if (!alert) return null;
   return (
-    <span title={alert.until ? `${alert.text} (${resetTime(alert.until)})` : alert.text} className={clsx("inline-flex shrink-0", alert.level === "out" ? "text-red-400" : "text-st-attention")}>
+    <span
+      title={alert.until ? `${alert.text} (${resetTime(alert.until)})` : alert.text}
+      className={clsx("inline-flex shrink-0", alert.level === "out" ? "text-red-400" : "text-st-attention")}
+    >
       <TriangleAlert size={size} aria-label={alert.level === "out" ? "Out of usage" : "Running low"} />
     </span>
   );

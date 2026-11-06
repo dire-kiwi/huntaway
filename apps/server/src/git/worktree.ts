@@ -193,7 +193,8 @@ export function canonicalize(p: string): string | null {
 
 /** `Path::starts_with`: whether `p` is `base` or inside it, by whole components. */
 export function path_starts_with(p: string, base: string): boolean {
-  const a = trim_slashes(p), b = trim_slashes(base);
+  const a = trim_slashes(p),
+    b = trim_slashes(base);
   if (b === "") return p.startsWith("/") === base.startsWith("/") || a === "";
   return a === b || a.startsWith(b === "/" ? "/" : b + "/");
 }
@@ -201,7 +202,8 @@ export function path_starts_with(p: string, base: string): boolean {
 /** `Path::strip_prefix`: the rest of `p` after `base` (by whole components), or null. */
 export function strip_path_prefix(p: string, base: string): string | null {
   if (!path_starts_with(p, base)) return null;
-  const a = trim_slashes(p), b = trim_slashes(base);
+  const a = trim_slashes(p),
+    b = trim_slashes(base);
   if (a === b) return "";
   return a.slice(b === "/" ? 1 : b.length + 1);
 }

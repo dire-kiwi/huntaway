@@ -58,9 +58,11 @@ export function threadItems(messages: Message[]): ThreadItem[] {
       (d.message?.content ?? []).forEach((b: Any, i: number) => {
         const key = `${k}.${i}`;
         if (b?.type === "text" && b.text?.trim()) items.push({ type: "text", key, text: b.text });
-        else if (b?.type === "tool_use") items.push({ type: "tool", key, id: b.id, name: b.name, input: b.input, failed: results.get(b.id), done: results.has(b.id) });
+        else if (b?.type === "tool_use")
+          items.push({ type: "tool", key, id: b.id, name: b.name, input: b.input, failed: results.get(b.id), done: results.has(b.id) });
       });
-    } else if (m.kind === "claude" && d.type === "result" && d.is_error) items.push({ type: "result", key: k, error: true, text: String(d.result ?? d.subtype ?? "The run failed") });
+    } else if (m.kind === "claude" && d.type === "result" && d.is_error)
+      items.push({ type: "result", key: k, error: true, text: String(d.result ?? d.subtype ?? "The run failed") });
   }
   return items;
 }
@@ -141,7 +143,8 @@ export function itemThreadItems(items: Any[], requests: Any[], context = 0): Thr
       });
     } else if (it.type === "notice" && it.level === "error" && it.code) out.push({ type: "text", key: it.id, text: it.text ?? "" });
     else if (it.type === "notice") out.push({ type: "event", key: it.id, level: it.level ?? "info", text: it.text ?? "" });
-    else if (it.type === "turn_result" && !it.ok && !it.interrupted) out.push({ type: "result", key: it.id, error: true, text: String(it.error ?? "The run failed") });
+    else if (it.type === "turn_result" && !it.ok && !it.interrupted)
+      out.push({ type: "result", key: it.id, error: true, text: String(it.error ?? "The run failed") });
   }
   for (const { r } of asked) put(r);
   return out;
@@ -152,7 +155,9 @@ export function itemThreadItems(items: Any[], requests: Any[], context = 0): Thr
  * message would be (for the Inbox): the latest such request still open.
  */
 export function openItemQuestion(taskId: string, requests: Any[]): Message | undefined {
-  const open = requests.map(requestItem).filter((it): it is Extract<ThreadItem, { type: "question" }> => it.type === "question" && it.data?.status === "pending");
+  const open = requests
+    .map(requestItem)
+    .filter((it): it is Extract<ThreadItem, { type: "question" }> => it.type === "question" && it.data?.status === "pending");
   const last = open[open.length - 1];
   if (!last) return undefined;
   const r = requests.find((x) => x.id === last.key);

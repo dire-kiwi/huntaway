@@ -33,7 +33,10 @@ afterEach(() => wt && git(wt, "reset", "-q"));
 // HA-4: the Changes tab stages the lines picked in a file's diff, and only those.
 test("stages and unstages chosen lines from the keyboard", async () => {
   // Two changes far apart: lines 3 and 25.
-  writeFileSync(`${wt}/app.txt`, lines(30, (i) => (i === 3 ? "three" : i === 25 ? "twenty-five" : `line ${i}`)));
+  writeFileSync(
+    `${wt}/app.txt`,
+    lines(30, (i) => (i === 3 ? "three" : i === 25 ? "twenty-five" : `line ${i}`)),
+  );
   writeFileSync(`${wt}/new.txt`, "a\nb\n");
   await withBrowser(server, {}, async (ui) => {
     await ui.run([`goto /t/${task.id}`, "click changes", "wait new.txt"]);
@@ -57,7 +60,10 @@ test("stages and unstages chosen lines from the keyboard", async () => {
 // state: after an Escape back to the files, `j` moved the cursor in the diff that was left and space staged app.txt.
 // Keys sent at once, with no render between them, are the same at any speed.
 test("keys pressed before the last one's change is shown wait for it", async () => {
-  writeFileSync(`${wt}/app.txt`, lines(30, (i) => (i === 3 ? "three" : i === 25 ? "twenty-five" : `line ${i}`)));
+  writeFileSync(
+    `${wt}/app.txt`,
+    lines(30, (i) => (i === 3 ? "three" : i === 25 ? "twenty-five" : `line ${i}`)),
+  );
   writeFileSync(`${wt}/new.txt`, "a\nb\n");
   await withBrowser(server, {}, async (ui) => {
     // Into app.txt's diff, staging its lines ("Select range" is only offered there).
@@ -78,7 +84,16 @@ test("Escape after Enter on a file still loading goes back to the files", async 
       await new Promise((r) => setTimeout(r, 500));
       await route.continue();
     });
-    await ui.run([`goto /p/${task.project_id}?task=${task.id}`, "click changes", "wait new.txt", "sleep 700", "press j", "press Enter", "press Escape", "sleep 800"]);
+    await ui.run([
+      `goto /p/${task.project_id}?task=${task.id}`,
+      "click changes",
+      "wait new.txt",
+      "sleep 700",
+      "press j",
+      "press Enter",
+      "press Escape",
+      "sleep 800",
+    ]);
     assert.match(ui.page.url(), /task=/);
     // Back in the files: space stages new.txt.
     await ui.run(["press Space"]);
@@ -90,7 +105,16 @@ test("Escape after Enter on a file still loading goes back to the files", async 
 // went nowhere once it closed.
 test("keys still work after a dialog opened from a menu", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /t/${task.id}`, "click changes", "wait new.txt", "press S", "wait Stash staged changes", "press a", "wait Message (optional)", "type wip"]);
+    await ui.run([
+      `goto /t/${task.id}`,
+      "click changes",
+      "wait new.txt",
+      "press S",
+      "wait Stash staged changes",
+      "press a",
+      "wait Message (optional)",
+      "type wip",
+    ]);
     await ui.run(["press Enter", "gone Message (optional)"]);
     await waitFor(() => git(wt, "stash", "list").includes("wip"));
     await ui.run(["press 4", "press g", "wait Apply and then drop", "press Enter", "gone Apply and then drop"]);

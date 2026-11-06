@@ -35,6 +35,6 @@ export function run_cmd(cmd: string, args: string[], opts: CmdOpts = {}): Promis
 /** Run `cmd` and return its stdout, throwing with its stderr if it fails. */
 export async function run_ok(cmd: string, args: string[], opts: CmdOpts = {}): Promise<string> {
   const out = await run_cmd(cmd, args, opts);
-  if (!out.success) throw new Error(`${cmd} ${args.join(" ")}: ${(out.stderr.trim() || out.stdout.trim() || `exit ${out.code}`)}`);
+  if (!out.success) throw new Error(`${cmd} ${args.join(" ")}: ${out.stderr.trim() || out.stdout.trim() || `exit ${out.code}`}`);
   return out.stdout;
 }

@@ -94,7 +94,18 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
         label: "Discard unstaged changes",
         hint: "Keeps what's staged",
         danger: true,
-        run: () => void act("Discarding", () => api.gitDiscard(h, id, r.files.filter(hasUnstaged).map((f) => f.path), false), `Discarded unstaged changes in ${name}`),
+        run: () =>
+          void act(
+            "Discarding",
+            () =>
+              api.gitDiscard(
+                h,
+                id,
+                r.files.filter(hasUnstaged).map((f) => f.path),
+                false,
+              ),
+            `Discarded unstaged changes in ${name}`,
+          ),
       });
     setDialog({ kind: "menu", title: `Discard ${name}`, items });
   };
@@ -248,10 +259,19 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
     const n = [...chosenRows].length;
     const run = () => {
       setAnchor(null);
-      void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", () => api.gitApply(h, id, patch, { cached: what !== "discard", reverse: what !== "stage" }));
+      void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", () =>
+        api.gitApply(h, id, patch, { cached: what !== "discard", reverse: what !== "stage" }),
+      );
     };
     if (what !== "discard") return run();
-    setDialog({ kind: "confirm", title: "Discard lines", body: `Throw away ${hunkMode ? "this hunk" : n === 1 ? "this line's change" : `these ${n} lines' changes`}?`, yes: "Discard", danger: true, onYes: run });
+    setDialog({
+      kind: "confirm",
+      title: "Discard lines",
+      body: `Throw away ${hunkMode ? "this hunk" : n === 1 ? "this line's change" : `these ${n} lines' changes`}?`,
+      yes: "Discard",
+      danger: true,
+      onYes: run,
+    });
   };
   const linesAction = () => applyLines(activePane === "unstaged" ? "stage" : "unstage");
   const discardLines = () => {
@@ -263,8 +283,12 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
     if (!f) return;
     const patch = linesPatch(f, (hh) => hh === hunk, what !== "stage");
     if (!patch) return;
-    const run = () => void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", () => api.gitApply(h, id, patch, { cached: what !== "discard", reverse: what !== "stage" }));
-    if (what === "discard") setDialog({ kind: "confirm", title: "Discard the hunk", body: "Throw away this hunk's changes?", yes: "Discard", danger: true, onYes: run });
+    const run = () =>
+      void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", () =>
+        api.gitApply(h, id, patch, { cached: what !== "discard", reverse: what !== "stage" }),
+      );
+    if (what === "discard")
+      setDialog({ kind: "confirm", title: "Discard the hunk", body: "Throw away this hunk's changes?", yes: "Discard", danger: true, onYes: run });
     else run();
   };
 

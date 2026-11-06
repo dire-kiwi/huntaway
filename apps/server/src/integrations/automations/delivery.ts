@@ -34,7 +34,8 @@ export function Delivery_default(body: any = null): Delivery {
 export function Delivery_from_json(v: any): Delivery | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const map = (m: any) => (m === undefined ? {} : m && typeof m === "object" && !Array.isArray(m) ? m : null);
-  const headers = map(v.headers), query = map(v.query);
+  const headers = map(v.headers),
+    query = map(v.query);
   if (headers === null || query === null) return null;
   return { body: v.body === undefined ? null : v.body, headers, query };
 }
@@ -141,7 +142,10 @@ function walk(v: any, path: string[]): any[] {
   const [first, ...rest] = path;
   if (first === "*" && Array.isArray(v)) return v.flatMap((i) => walk(i, rest));
   // serde_json's maps are sorted by key.
-  if (first === "*" && is_object(v)) return Object.keys(v).sort().flatMap((k) => walk(v[k], rest));
+  if (first === "*" && is_object(v))
+    return Object.keys(v)
+      .sort()
+      .flatMap((k) => walk(v[k], rest));
   if (is_object(v)) return Object.hasOwn(v, first) ? walk(v[first], rest) : [];
   if (Array.isArray(v)) {
     if (!/^\+?\d+$/.test(first)) return [];
@@ -223,7 +227,11 @@ function lookup(vars: Vars, path: string): [any[], boolean] {
 function text(v: any): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
-  if (Array.isArray(v)) return v.map(text).filter((t) => t).join(", ");
+  if (Array.isArray(v))
+    return v
+      .map(text)
+      .filter((t) => t)
+      .join(", ");
   return sorted_json(v);
 }
 
@@ -242,7 +250,11 @@ export function cut(s: string, max: number): string {
   return end < 0 ? s : `${s.slice(0, end)}…`;
 }
 
-const words = (s: string) => s.split(/\s+/).filter((w) => w).join(" ");
+const words = (s: string) =>
+  s
+    .split(/\s+/)
+    .filter((w) => w)
+    .join(" ");
 
 /**
  * Where a template's text goes: a title is one short line; a description or message wraps
@@ -311,7 +323,11 @@ export function untrusted_note(vars: Vars, title_too: boolean): string {
 export function wanted(f: Filter): string[] {
   const v = f.value;
   if (Array.isArray(v)) return v.map((i) => text(i).trim()).filter((t) => t);
-  if (typeof v === "string" && (f.op === "in" || f.op === "not_in")) return v.split(",").map((t) => t.trim()).filter((t) => t);
+  if (typeof v === "string" && (f.op === "in" || f.op === "not_in"))
+    return v
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t);
   const t = text(v);
   return t ? [t] : [];
 }

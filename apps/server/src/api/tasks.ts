@@ -69,8 +69,28 @@ export async function update_task(s: AppState, r: Req) {
 }
 
 const UPDATABLE = [
-  "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "model", "effort", "base_branch", "start_from",
-  "permission_mode", "preview_url", "pr_url", "external_links", "subproject", "claude_config_id", "depends_on", "starred", "remind_at", "reminder", "done_at",
+  "title",
+  "title_pinned",
+  "description",
+  "status",
+  "resolution",
+  "position",
+  "use_worktree",
+  "model",
+  "effort",
+  "base_branch",
+  "start_from",
+  "permission_mode",
+  "preview_url",
+  "pr_url",
+  "external_links",
+  "subproject",
+  "claude_config_id",
+  "depends_on",
+  "starred",
+  "remind_at",
+  "reminder",
+  "done_at",
 ];
 
 type Fields = Array<[string, any]>;
@@ -186,7 +206,8 @@ export async function update_task_inner(s: AppState, id: string, b: Record<strin
     // null (or blank) falls back to the host's default.
     if (effort_f[1] === "") effort_f[1] = null;
     const v = effort_f[1];
-    if (!(v === null || (typeof v === "string" && db.THREAD_EFFORTS.includes(v)))) throw ApiError.bad(`effort must be null or one of ${debug_list(db.THREAD_EFFORTS)}`);
+    if (!(v === null || (typeof v === "string" && db.THREAD_EFFORTS.includes(v))))
+      throw ApiError.bad(`effort must be null or one of ${debug_list(db.THREAD_EFFORTS)}`);
   }
   const mode_f = field(fields, "permission_mode");
   // null falls back to the project's mode, then the host's.

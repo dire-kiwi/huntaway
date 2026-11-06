@@ -76,7 +76,10 @@ export class Watcher implements EnvSlot {
       return structuredClone(f.ok);
     }
     const t = this.target;
-    const vars: Array<[string, string]> = [["owner", t.owner], ["name", t.name]];
+    const vars: Array<[string, string]> = [
+      ["owner", t.owner],
+      ["name", t.name],
+    ];
     if (after !== null) vars.push(["after", after]);
     return graphql(this.account, this, t.host, query, vars, [["number", t.number]]);
   }

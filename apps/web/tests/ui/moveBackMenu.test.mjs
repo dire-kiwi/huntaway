@@ -22,13 +22,24 @@ test("a done task moves back to To do or Backlog from its right-click menu", asy
     await ui.run([`goto /p/${project.id}`, `wait ${DONE}`, `rclick ${DONE}`, "wait [role=menu]"]);
     // The statuses to move to, then Done's resolutions.
     const labels = await page.locator("[role=menu] [role^=menuitem]").allTextContents();
-    for (const l of ["Backlog", "To do", "In progress", "Won't fix"]) assert.ok(labels.some((t) => t.includes(l)), `${l} in ${labels}`);
+    for (const l of ["Backlog", "To do", "In progress", "Won't fix"])
+      assert.ok(
+        labels.some((t) => t.includes(l)),
+        `${l} in ${labels}`,
+      );
     await ui.run(["click [role=menu] >> text=Backlog", "gone [role=menu]"]);
     await expect_status(DONE, "backlog");
     assert.equal((await statusOf(DONE)).resolution, null);
 
     // An archived task, in the list view, goes back to To do.
-    await ui.run(["click List view", "click css=#archived-tasks button", `wait ${ARCHIVED}`, `rclick ${ARCHIVED}`, "wait [role=menu]", "click [role=menu] >> text=To do"]);
+    await ui.run([
+      "click List view",
+      "click css=#archived-tasks button",
+      `wait ${ARCHIVED}`,
+      `rclick ${ARCHIVED}`,
+      "wait [role=menu]",
+      "click [role=menu] >> text=To do",
+    ]);
     await expect_status(ARCHIVED, "todo");
     assert.equal((await statusOf(ARCHIVED)).resolution, null);
   });

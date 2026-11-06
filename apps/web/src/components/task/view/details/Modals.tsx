@@ -17,8 +17,8 @@ export function TeardownModal({ task, onClose }: { task: Task; onClose: () => vo
       body={
         <>
           <p>
-            Runs the project's teardown script, then removes the worktree directory. The branch <span className="font-mono text-fg">{task.branch}</span> is
-            kept unless you delete it, so the agent can pick up where it left off later.
+            Runs the project's teardown script, then removes the worktree directory. The branch <span className="font-mono text-fg">{task.branch}</span> is kept
+            unless you delete it, so the agent can pick up where it left off later.
           </p>
           <Toggle checked={force} onChange={setForce} label="Discard uncommitted changes" />
           <Toggle checked={deleteBranch} onChange={setDeleteBranch} label="Also delete the branch" />

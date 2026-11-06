@@ -182,7 +182,13 @@ export const threadApi = ({ on }: Http) => ({
    * main conversation's, with the subagents' own messages among them.
    */
   messagePage: (h: string, id: string, q: { before?: number; after?: number; limit?: number }) =>
-    on(h).get<MessagePage>(`/tasks/${enc(id)}/messages?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))}`),
+    on(h).get<MessagePage>(
+      `/tasks/${enc(id)}/messages?${new URLSearchParams(
+        Object.entries(q)
+          .filter(([, v]) => v != null)
+          .map(([k, v]) => [k, String(v)]),
+      )}`,
+    ),
   send: (h: string, id: string, text: string) => on(h).post<Task>(`/tasks/${enc(id)}/messages`, { text }),
   stop: (h: string, id: string) => on(h).post(`/tasks/${enc(id)}/stop`),
   /** The task's turns with checkpoints, and the changes between two checkpoints (API 70). */

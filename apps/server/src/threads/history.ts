@@ -75,7 +75,11 @@ export interface Entry {
   meta: ItemMeta;
 }
 
-const entry = (r: { pos: number; data: string; meta: string | null }): Entry => ({ pos: r.pos, item: JSON.parse(r.data), meta: r.meta ? JSON.parse(r.meta) : {} });
+const entry = (r: { pos: number; data: string; meta: string | null }): Entry => ({
+  pos: r.pos,
+  item: JSON.parse(r.data),
+  meta: r.meta ? JSON.parse(r.meta) : {},
+});
 
 /** What was said: user messages, the agent's messages, turns' results and notices (not tool calls, the bulk of a thread). */
 const SAID = "('user_message', 'assistant_message', 'turn_result', 'notice')";
@@ -509,7 +513,14 @@ export function approval(c: Conn, p: any): any | null {
  * analytics: when, the task whose activity it is (`owner`, an SQL expression on tasks `t`), and its data, as the
  * message has it, or as user_message gives it from an item.
  */
-export function user_messages_between(c: Conn, profile_id: string, from: string, to: string, owner: string, mode: Mode = "auto"): Array<{ at: string; owner: string; data: any }> {
+export function user_messages_between(
+  c: Conn,
+  profile_id: string,
+  from: string,
+  to: string,
+  owner: string,
+  mode: Mode = "auto",
+): Array<{ at: string; owner: string; data: any }> {
   const out: Array<{ at: string; owner: string; data: any }> = [];
   const parse = (d: string) => {
     try {
@@ -523,7 +534,9 @@ export function user_messages_between(c: Conn, profile_id: string, from: string,
     `SELECT m.created_at AS at, ${owner} AS owner, m.data AS data FROM messages m JOIN tasks t ON t.id=m.task_id
        WHERE m.kind='user' AND m.created_at >= ?2 AND m.created_at < ?3 AND t.profile_id=?1 AND ${reads(mode, "messages")}
        ORDER BY m.created_at`,
-    profile_id, from, to,
+    profile_id,
+    from,
+    to,
   )) {
     out.push({ at: r.at, owner: r.owner, data: parse(r.data) });
   }
@@ -532,7 +545,9 @@ export function user_messages_between(c: Conn, profile_id: string, from: string,
     `SELECT i.created_at AS at, ${owner} AS owner, i.pos, i.data, i.meta FROM thread_items i JOIN tasks t ON t.id=i.task_id
        WHERE i.type='user_message' AND i.created_at >= ?2 AND i.created_at < ?3 AND t.profile_id=?1 AND ${reads(mode, "items")}
        ORDER BY i.created_at, i.task_id, i.pos`,
-    profile_id, from, to,
+    profile_id,
+    from,
+    to,
   );
   for (const r of items) {
     out.push({ at: r.at, owner: r.owner, data: user_data(entry(r)) });
@@ -582,7 +597,8 @@ export function submissions(c: Conn, mode: Mode = "auto"): Submitted[] {
     const blocks = m?.message?.content;
     if (!Array.isArray(blocks)) continue;
     for (const b of blocks) {
-      if (b?.type === "tool_result" && JSON.stringify(b).includes("nothing to submit") && typeof b.tool_use_id === "string") refused.add(`${task_id}\0${b.tool_use_id}`);
+      if (b?.type === "tool_result" && JSON.stringify(b).includes("nothing to submit") && typeof b.tool_use_id === "string")
+        refused.add(`${task_id}\0${b.tool_use_id}`);
     }
   }
   for (const { task_id, parent_id, created_at, data } of rows) {
@@ -669,5 +685,7 @@ export function unread_reports(c: Conn, task_id: string): db.Message[] {
       return m ? [m] : [];
     });
   }
-  return db.all(c, "SELECT * FROM messages WHERE task_id=?1 AND kind='report' AND json_extract(data,'$.read') IS NOT 1 ORDER BY id", task_id).map(db.Message_from_row);
+  return db
+    .all(c, "SELECT * FROM messages WHERE task_id=?1 AND kind='report' AND json_extract(data,'$.read') IS NOT 1 ORDER BY id", task_id)
+    .map(db.Message_from_row);
 }

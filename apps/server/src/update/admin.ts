@@ -136,8 +136,14 @@ export async function status(state: AppState): Promise<any> {
   if (src === null) return v;
   const deployed = state.deployed;
   const head = await head_commit(src);
-  const branch = await worktree.git(src, ["symbolic-ref", "--short", "HEAD"]).then((o) => (o.ok ? o.stdout.trim() : null), () => null);
-  const dirty = await worktree.git(src, ["status", "--porcelain", "--untracked-files=no"]).then((o) => o.stdout.trim() !== "", () => false);
+  const branch = await worktree.git(src, ["symbolic-ref", "--short", "HEAD"]).then(
+    (o) => (o.ok ? o.stdout.trim() : null),
+    () => null,
+  );
+  const dirty = await worktree.git(src, ["status", "--porcelain", "--untracked-files=no"]).then(
+    (o) => o.stdout.trim() !== "",
+    () => false,
+  );
   let new_commits: string[] = [];
   if (meta.running_commit !== null && head !== null && meta.running_commit !== head) {
     const o = await worktree.git(src, ["log", "--format=%h %s", "-n", "30", `${meta.running_commit}..${head}`]);
@@ -151,7 +157,8 @@ export async function status(state: AppState): Promise<any> {
   // ahead: not for a checkout that has moved on or diverged from it).
   if (meta.update_from !== null) {
     let deployed_commits: string[] = [];
-    const running = meta.running_commit, commit = deployed?.commit ?? null;
+    const running = meta.running_commit,
+      commit = deployed?.commit ?? null;
     if (running !== null && commit !== null && running !== commit && (await worktree.git(src, ["merge-base", "--is-ancestor", running, commit])).ok) {
       const o = await worktree.git(src, ["log", "--format=%h %s", "-n", "30", `${running}..${commit}`]);
       deployed_commits = lines(o.stdout);
@@ -408,7 +415,8 @@ let supervisor: { file: string; pid: number } | null = null;
  * starts sees them, and keep them when they're this process's parent's. Call first thing in `serve`.
  */
 export function take_supervisor() {
-  const file = process.env.IA_RESTART_FILE, pid = Number(process.env.IA_SUPERVISOR_PID);
+  const file = process.env.IA_RESTART_FILE,
+    pid = Number(process.env.IA_SUPERVISOR_PID);
   delete process.env.IA_RESTART_FILE;
   delete process.env.IA_SUPERVISOR_PID;
   supervisor = file && pid > 1 && process.ppid === pid ? { file, pid } : null;

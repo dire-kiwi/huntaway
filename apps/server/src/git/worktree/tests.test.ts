@@ -111,7 +111,14 @@ test("reads_github_remotes", () => {
   ]) {
     assert.equal(github_repo(url), "o/r", url);
   }
-  for (const url of ["git@gitlab.com:o/r.git", "https://example.com/github.com/o/r", "/srv/git/o/r.git", "./github.com:o/r", "https://github.com/o", "https://github.com/o/r/pull/1"]) {
+  for (const url of [
+    "git@gitlab.com:o/r.git",
+    "https://example.com/github.com/o/r",
+    "/srv/git/o/r.git",
+    "./github.com:o/r",
+    "https://github.com/o",
+    "https://github.com/o/r/pull/1",
+  ]) {
     assert.equal(github_repo(url), null, url);
   }
 });
@@ -181,7 +188,8 @@ async function task_with_work(s: AppState): Promise<[string, Task, string, strin
   const p = await project_on(s, repo);
   let t = api.create_task_inner(s, p.id, ct("Do it"));
   t = await setup(s, t.id);
-  const wt = t.worktree_path!, branch = t.branch!;
+  const wt = t.worktree_path!,
+    branch = t.branch!;
   writeFileSync(join(wt, "a"), "a");
   sh(wt, ["add", "a"]);
   sh(wt, ["commit", "-qm", "a"]);
@@ -295,7 +303,10 @@ test("removes_a_done_tasks_worktree_once_merged_and_clean", async () => {
   assert.deepEqual(await remove(), kept("it has no worktree"));
 
   // Run again (after a rename), it gets its folder back, on its branch.
-  db.update_task(s.db(), t.id, [["title", "Renamed"], ["status", "in_progress"]]);
+  db.update_task(s.db(), t.id, [
+    ["title", "Renamed"],
+    ["status", "in_progress"],
+  ]);
   t = await setup(s, t.id);
   assert.equal(t.worktree_path, path_str(wt));
   assert.equal(await current_branch(wt), branch);
@@ -316,7 +327,9 @@ test("removes_a_done_tasks_worktree_once_merged_and_clean", async () => {
 test("a_branch_merged_upstream_counts_as_merged", async () => {
   const s = testing.state();
   const root = testing.temp_dir();
-  const origin = join(root, "origin"), repo = join(root, "repo"), other = join(root, "other");
+  const origin = join(root, "origin"),
+    repo = join(root, "repo"),
+    other = join(root, "other");
   sh(root, ["init", "-q", "--bare", "-b", "master", path_str(origin)]);
   sh(root, ["clone", "-q", path_str(origin), path_str(repo)]);
   sh(repo, ["commit", "-q", "--allow-empty", "-m", "init"]);
@@ -324,7 +337,8 @@ test("a_branch_merged_upstream_counts_as_merged", async () => {
   const p = await project_on(s, repo);
   let t = api.create_task_inner(s, p.id, ct("Do it"));
   t = await setup(s, t.id);
-  const wt = t.worktree_path!, branch = t.branch!;
+  const wt = t.worktree_path!,
+    branch = t.branch!;
   sh(wt, ["commit", "-q", "--allow-empty", "-m", "work"]);
   sh(wt, ["push", "-q", "origin", branch]);
   db.update_task(s.db(), t.id, [["status", "done"]]);
@@ -381,7 +395,8 @@ test("a_task_with_commits_its_base_lacks_is_unmerged", async () => {
   const p = await project_on(s, repo);
   let t = api.create_task_inner(s, p.id, ct("Do it"));
   t = await setup(s, t.id);
-  const wt = t.worktree_path!, branch = t.branch!;
+  const wt = t.worktree_path!,
+    branch = t.branch!;
   // Nothing done yet.
   assert.ok(!(await unmerged(s, t)));
   writeFileSync(join(wt, "notes"), "1");
@@ -407,7 +422,9 @@ function log_texts(s: AppState, task_id: string): string[] {
 test("task_branches_start_from_the_latest_base", async () => {
   const s = testing.state();
   const root = testing.temp_dir();
-  const origin = join(root, "origin"), repo = join(root, "repo"), other = join(root, "other");
+  const origin = join(root, "origin"),
+    repo = join(root, "repo"),
+    other = join(root, "other");
   sh(root, ["init", "-q", "--bare", "-b", "master", path_str(origin)]);
   sh(root, ["clone", "-q", path_str(origin), path_str(repo)]);
   writeFileSync(join(repo, "notes"), "1");
@@ -514,7 +531,9 @@ test("task_branches_start_from_the_latest_base", async () => {
  */
 async function stacking_repo(s: AppState): Promise<[string, string, string, Project]> {
   const root = testing.temp_dir();
-  const origin = join(root, "origin"), repo = join(root, "repo"), other = join(root, "other");
+  const origin = join(root, "origin"),
+    repo = join(root, "repo"),
+    other = join(root, "other");
   sh(root, ["init", "-q", "--bare", "-b", "master", path_str(origin)]);
   sh(root, ["clone", "-q", path_str(origin), path_str(repo)]);
   writeFileSync(join(repo, "notes"), "1");
@@ -663,7 +682,8 @@ test("a_task_started_from_a_merged_task_goes_where_that_went", async () => {
     const [, repo, , p] = await stacking_repo(s);
     const make = (title: string, from: string) => api.create_task_inner(s, p.id, ct(title, { start_from: from }));
     const a = await setup(s, api.create_task_inner(s, p.id, ct("First")).id);
-    const a_wt = a.worktree_path!, a_branch = a.branch!;
+    const a_wt = a.worktree_path!,
+      a_branch = a.branch!;
     commit_file(a_wt, "parent-file");
     const b = await setup(s, make("Second", "X-1").id);
     commit_file(b.worktree_path!, "child-file");
@@ -944,7 +964,10 @@ test("a_pull_request_is_looked_up_where_the_projects_tasks_open_theirs", async (
   const gh = join(root, "gh");
   const pr = `{"state":"OPEN","headRefName":"feature","baseRefName":"master","headRefOid":"${feature}","isCrossRepository":false}`;
   const log = join(root, "gh.log");
-  fake_gh(gh, `#!/bin/sh\necho "$@" >> ${path_str(log)}\ncase "$3 $5" in\n'7 o/upstream') echo '${pr}' ;;\n*) echo 'no such pull request' >&2; exit 1 ;;\nesac\n`);
+  fake_gh(
+    gh,
+    `#!/bin/sh\necho "$@" >> ${path_str(log)}\ncase "$3 $5" in\n'7 o/upstream') echo '${pr}' ;;\n*) echo 'no such pull request' >&2; exit 1 ;;\nesac\n`,
+  );
   pr_testing.GH = gh;
   try {
     const make = (title: string, from: string) => api.create_task_inner(s, p.id, ct(title, { start_from: from }));
@@ -962,7 +985,12 @@ test("a_pull_request_is_looked_up_where_the_projects_tasks_open_theirs", async (
       const text = await told(t);
       assert.ok(text.includes(`repo \`o/upstream\`, head \`${t.branch}\` and base \`master\``), text);
     }
-    assert.ok(readFileSync(log, "utf8").split("\n").filter((l) => l).every((l) => l.includes("--repo o/upstream")));
+    assert.ok(
+      readFileSync(log, "utf8")
+        .split("\n")
+        .filter((l) => l)
+        .every((l) => l.includes("--repo o/upstream")),
+    );
     // With a local feature that follows upstream's, it's that branch, and the task's pull request targets it there.
     sh(repo, ["fetch", "-q", "upstream"]);
     sh(repo, ["branch", "-q", "--track", "feature", "upstream/feature"]);
@@ -1210,7 +1238,10 @@ test("keeps_it_while_a_reviewer_works_in_it", async () => {
     effort: null,
     claude_config_id: null,
   });
-  db.update_task(s.db(), r.id, [["parent_id", t.id], ["running", true]]);
+  db.update_task(s.db(), r.id, [
+    ["parent_id", t.id],
+    ["running", true],
+  ]);
   db.update_task(s.db(), t.id, [["status", "done"]]);
 
   assert.deepEqual(await remove_if_merged(s, t.id, true), kept("an agent is working in it"));

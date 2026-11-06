@@ -131,7 +131,10 @@ export async function facts(s: AppState, t: Task): Promise<Facts> {
   if (wt != null && t.worktree_state === "ready" && existsSync(wt)) {
     try {
       const status: string = await worktree.uncommitted(wt);
-      uncommitted = status.split("\n").filter((l) => l.trim() !== "").map((l) => l.replace(/\r$/, ""));
+      uncommitted = status
+        .split("\n")
+        .filter((l) => l.trim() !== "")
+        .map((l) => l.replace(/\r$/, ""));
     } catch (e) {
       uncommitted_error = err_str(e);
     }

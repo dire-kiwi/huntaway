@@ -92,7 +92,13 @@ export function queue(c: Conn, task_id: string, message: Queued): Task | null {
   run(
     c,
     "UPDATE tasks SET queued_message=?2, queued_from_agent=?3, queued_user_text=?4, queued_routine=?5, queued_routine_runs=?6, updated_at=?7 WHERE id=?1",
-    task_id, queued.text, queued.from_agent, queued.user_text, queued.routine, JSON.stringify(queued.routine_runs), now(),
+    task_id,
+    queued.text,
+    queued.from_agent,
+    queued.user_text,
+    queued.routine,
+    JSON.stringify(queued.routine_runs),
+    now(),
   );
   return get_task(c, task_id);
 }
@@ -145,7 +151,8 @@ export function clear_queued(c: Conn, task_id: string): Task | null {
   run(
     c,
     "UPDATE tasks SET queued_message=NULL, queued_from_agent=0, queued_user_text=NULL, queued_routine=0, queued_routine_runs=NULL, updated_at=?2 WHERE id=?1",
-    task_id, now(),
+    task_id,
+    now(),
   );
   return get_task(c, task_id);
 }
@@ -393,7 +400,8 @@ export function subagent_messages(c: Conn, task_id: string, before: number): Mes
     if (type === "assistant" && call) {
       const content = get(get(d, "message"), "content");
       const blocks: any[] = (Array.isArray(content) ? content : []).filter(
-        (b) => get(b, "type") === "tool_use" && (get(b, "name") === "Agent" || get(b, "name") === "Task" || (typeof get(b, "id") === "string" && calls.has(b.id))),
+        (b) =>
+          get(b, "type") === "tool_use" && (get(b, "name") === "Agent" || get(b, "name") === "Task" || (typeof get(b, "id") === "string" && calls.has(b.id))),
       );
       if (!blocks.length) continue;
       for (const b of blocks) {
@@ -410,7 +418,14 @@ export function subagent_messages(c: Conn, task_id: string, before: number): Mes
           // The start of the report is enough to tell a background subagent's launch.
           const ct = get(b, "content");
           const text =
-            typeof ct === "string" ? ct : Array.isArray(ct) ? ct.map((x) => get(x, "text")).filter((x) => typeof x === "string").join("\n") : "";
+            typeof ct === "string"
+              ? ct
+              : Array.isArray(ct)
+                ? ct
+                    .map((x) => get(x, "text"))
+                    .filter((x) => typeof x === "string")
+                    .join("\n")
+                : "";
           return { type: "tool_result", tool_use_id: get(b, "tool_use_id"), is_error: get(b, "is_error"), content: clip(text) };
         });
       if (!blocks.length) continue;
@@ -490,7 +505,10 @@ export function last_assistant_text(c: Conn, task_id: string, window = 50): stri
 function text_of(v: any): string | null {
   const blocks = get(get(v, "message"), "content");
   if (!Array.isArray(blocks)) return null;
-  const text = blocks.filter((b) => get(b, "type") === "text").map((b) => get(b, "text")).filter((t) => typeof t === "string");
+  const text = blocks
+    .filter((b) => get(b, "type") === "text")
+    .map((b) => get(b, "text"))
+    .filter((t) => typeof t === "string");
   return text.length ? text.join("\n") : null;
 }
 
@@ -503,7 +521,10 @@ export function last_assistant_text_after(c: Conn, task_id: string, after: numbe
   const rows = all(
     c,
     "SELECT data FROM messages WHERE task_id=?1 AND kind='claude' AND id > ?2 AND (?4 IS NULL OR id <= ?4) ORDER BY id DESC LIMIT ?3",
-    task_id, after, limit, upto,
+    task_id,
+    after,
+    limit,
+    upto,
   );
   for (const r of rows) {
     let v: any = null;

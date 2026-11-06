@@ -208,9 +208,28 @@ function stdio_servers(state: Shared, l: Launch): Record<string, any> {
  * hubs, broker, tokens and release updates, and could Roll back to the desktop app's own server.
  */
 export const SERVE_ENV = [
-  "IA_HOST", "IA_PORT", "IA_DATA_DIR", "IA_UI_DIR", "IA_SOURCE_DIR", "IA_UPDATE_FROM", "IA_RELEASE_UPDATES", "IA_RELEASE_API", "IA_NAME",
-  "IA_HUB", "IA_HUB_TOKEN", "IA_BROKER", "IA_BROKER_TOKEN", "IA_BROKER_NAME", "IA_TOKEN", "IA_DEMO", "IA_OPEN_TOKEN", "IA_PROFILES",
-  "IA_DESKTOP_VERSION", "IA_DESKTOP_SHELL", "IA_DESKTOP_INSTALL", "IA_BUNDLED_SERVER",
+  "IA_HOST",
+  "IA_PORT",
+  "IA_DATA_DIR",
+  "IA_UI_DIR",
+  "IA_SOURCE_DIR",
+  "IA_UPDATE_FROM",
+  "IA_RELEASE_UPDATES",
+  "IA_RELEASE_API",
+  "IA_NAME",
+  "IA_HUB",
+  "IA_HUB_TOKEN",
+  "IA_BROKER",
+  "IA_BROKER_TOKEN",
+  "IA_BROKER_NAME",
+  "IA_TOKEN",
+  "IA_DEMO",
+  "IA_OPEN_TOKEN",
+  "IA_PROFILES",
+  "IA_DESKTOP_VERSION",
+  "IA_DESKTOP_SHELL",
+  "IA_DESKTOP_INSTALL",
+  "IA_BUNDLED_SERVER",
 ];
 
 /** The environment an agent's run starts with: this server's, without `SERVE_ENV`. */
@@ -244,10 +263,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   // that gives a new Codex session them as dynamic tools: the adapter gives it the board's server only if Codex won't
   // take them (agent/codex/adapter.ts's start_thread).
   const in_process = !!l.tools_on_output || (!!l.board_tools_dynamic && !l.codex?.board_tools);
-  await writeFile(
-    join(dir, mcp_http.SETTINGS_FILE),
-    mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }),
-  );
+  await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }));
   const servers: Record<string, any> = process.env.IA_MCP_STDIO === "1" ? stdio_servers(state, l) : mcp_http.servers(state, l.run_id);
   if (in_process) delete servers[runner.MCP_SERVER_NAME];
   for (const [name, server] of Object.entries(l.mcp_servers ?? {})) {

@@ -80,7 +80,13 @@ export function written(c: Conn, m: Message, flagged: boolean, inserted: boolean
     forget(c, m.task_id);
     const why = `message ${m.id}: ${err_str(e)}`;
     console.error(`${now()} ERROR huntaway: task ${m.task_id}'s thread stops being written as items (until huntaway threads-rebuild): ${why}`);
-    run(c, "INSERT INTO threads (task_id, error, created_at) VALUES (?1, ?2, ?3) ON CONFLICT (task_id) DO UPDATE SET error=excluded.error", m.task_id, why, now());
+    run(
+      c,
+      "INSERT INTO threads (task_id, error, created_at) VALUES (?1, ?2, ?3) ON CONFLICT (task_id) DO UPDATE SET error=excluded.error",
+      m.task_id,
+      why,
+      now(),
+    );
   }
   saved_stream(c, m, inserted);
 }
@@ -205,7 +211,8 @@ export function rebuild_rows(c: Conn, task_id: string, keep = true): Rebuilt {
   const task = one<{ thread_source: string }>(c, "SELECT thread_source FROM tasks WHERE id=?1", task_id);
   if (!task) throw new Error(`no task ${task_id}`);
   // Its messages stop where it moved onto items: a rebuild from them would lose everything since.
-  if (task.thread_source === "items") throw new Error(`task ${task_id}'s thread is written as items only (its items are its source), so it can't be rebuilt from its messages`);
+  if (task.thread_source === "items")
+    throw new Error(`task ${task_id}'s thread is written as items only (its items are its source), so it can't be rebuilt from its messages`);
   store.clear(c, task_id);
   // A translator or store bug in a rebuild, for the tests.
   reached("threads:rebuild");
@@ -251,7 +258,10 @@ function rows_of(c: Conn, task_id: string): Rows {
       meta: r.meta ? JSON.parse(r.meta) : null,
       live: r.live,
     })),
-    requests: all(c, "SELECT data, open FROM thread_requests WHERE task_id=?1 ORDER BY pos", task_id).map((r) => ({ request: JSON.parse(r.data), open: r.open })),
+    requests: all(c, "SELECT data, open FROM thread_requests WHERE task_id=?1 ORDER BY pos", task_id).map((r) => ({
+      request: JSON.parse(r.data),
+      open: r.open,
+    })),
     origins: all(c, "SELECT item_id, message_id FROM thread_item_origins WHERE task_id=?1 ORDER BY item_id, message_id", task_id).map(
       (r) => `${r.item_id}<-${r.message_id}`,
     ),
@@ -281,13 +291,16 @@ export function compare(c: Conn, task_id: string): string[] {
 
 function differences(a: Rows, b: Rows): string[] {
   const out: string[] = [];
-  const json = (v: unknown) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x));
+  const json = (v: unknown) =>
+    JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x));
   const list = <T>(what: string, xs: T[], ys: T[], id: (x: T) => string) => {
     if (xs.length !== ys.length) out.push(`${what}: ${xs.length} written, ${ys.length} rebuilt`);
     for (let i = 0; i < Math.max(xs.length, ys.length); i++) {
       const [x, y] = [xs[i], ys[i]];
       if (x === undefined || y === undefined || json(x) !== json(y)) {
-        out.push(`${what} ${i} (${x === undefined ? "-" : id(x)}): written ${x === undefined ? "nothing" : json(x)}, rebuilt ${y === undefined ? "nothing" : json(y)}`);
+        out.push(
+          `${what} ${i} (${x === undefined ? "-" : id(x)}): written ${x === undefined ? "nothing" : json(x)}, rebuilt ${y === undefined ? "nothing" : json(y)}`,
+        );
       }
     }
   };

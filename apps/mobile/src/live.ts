@@ -108,10 +108,13 @@ export class BoardSocket {
 
   private retry() {
     if (this.closed || this.timer) return;
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.open();
-    }, backoff(this.attempts++));
+    this.timer = setTimeout(
+      () => {
+        this.timer = null;
+        this.open();
+      },
+      backoff(this.attempts++),
+    );
   }
 
   private setConnected(c: boolean) {

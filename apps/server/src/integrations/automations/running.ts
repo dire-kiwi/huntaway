@@ -147,7 +147,14 @@ function spawn_action(s: Shared, a: Automation, run_id: string, source: string, 
 }
 
 /** `spawn_action`, waited for. */
-export async function run_action_detached(s: Shared, a: Automation, run_id: string, source: string, delivery: Delivery | null, count: number): Promise<Run | null> {
+export async function run_action_detached(
+  s: Shared,
+  a: Automation,
+  run_id: string,
+  source: string,
+  delivery: Delivery | null,
+  count: number,
+): Promise<Run | null> {
   return await spawn_action(s, a, run_id, source, delivery, count);
 }
 
@@ -279,7 +286,9 @@ export async function receive(s: Shared, a: Automation, delivery: Delivery, raw:
         c,
         `SELECT id FROM automation_runs WHERE automation_id=?1 AND delivery_id=?2 AND created_at >= ?3
                        AND status IN ('pending','coalesced','running','ok') ORDER BY created_at LIMIT 1`,
-        a.id, id, cutoff,
+        a.id,
+        id,
+        cutoff,
       );
       if (seen != null) {
         const why = id.startsWith("body-sha256:")
@@ -293,7 +302,8 @@ export async function receive(s: Shared, a: Automation, delivery: Delivery, raw:
       const batch = db.value<string>(
         c,
         "SELECT id FROM automation_runs WHERE automation_id=?1 AND status='pending' AND COALESCE(batch_key,'')=?2 LIMIT 1",
-        a.id, key,
+        a.id,
+        key,
       );
       run.batch_key = key;
       if (batch != null) {
@@ -301,7 +311,10 @@ export async function receive(s: Shared, a: Automation, delivery: Delivery, raw:
         db.run(
           c,
           "UPDATE automation_runs SET count=count+1, payload=?2, delivery_id=COALESCE(delivery_id,?3), event=?4 WHERE id=?1",
-          batch, payload, run.delivery_id, run.event,
+          batch,
+          payload,
+          run.delivery_id,
+          run.event,
         );
         run.status = "coalesced";
         run.batch_id = batch;
@@ -466,7 +479,10 @@ function claim_each(s: Shared, now: number, tz: Tz, due: Array<[Automation, bool
         const n = db.run(
           c,
           "UPDATE automations SET next_run_at=?3, enabled=CASE WHEN ?4 THEN 0 ELSE enabled END WHERE id=?1 AND next_run_at=?2 AND enabled=1",
-          a.id, a.next_run_at, next === null ? null : fmt(next), once,
+          a.id,
+          a.next_run_at,
+          next === null ? null : fmt(next),
+          once,
         ).changes;
         if (n === 0) return null;
         // An archived project's schedules go on without running (or filling its history) until it's unarchived.
@@ -528,7 +544,10 @@ function claim_batches(s: Shared, now: number): Array<[Automation, Run[], InFlig
       claimed = db.run(
         c,
         "UPDATE automation_runs SET status=?2, detail=?3, finished_at=CASE WHEN ?2='skipped' THEN ?4 END WHERE id=?1 AND status='pending'",
-        r.id, status, detail, fmt(now),
+        r.id,
+        status,
+        detail,
+        fmt(now),
       ).changes;
     } catch (e) {
       in_flight?.drop();

@@ -11,8 +11,34 @@ import * as runs from "../../agent/runs.ts";
 import { sleep } from "../../util.ts";
 import { TEST_GH_PROGRAM } from "../gh_mcp.ts";
 import {
-  BODY_MAX, COMMENT_WAKES, EVENTS, LOG_CHARS, LOG_LINES, LOG_LINE_CHARS, POLL, QUERY, REVIEW_POLL, SEEN_MAX, THREADS, Target, Watcher, backoff,
-  compare, fake, fake_pages, fix_checks, log_tail, note, record_checks, response, stored, sweep, trimmed, wake_events, type Pr, type Watched,
+  BODY_MAX,
+  COMMENT_WAKES,
+  EVENTS,
+  LOG_CHARS,
+  LOG_LINES,
+  LOG_LINE_CHARS,
+  POLL,
+  QUERY,
+  REVIEW_POLL,
+  SEEN_MAX,
+  THREADS,
+  Target,
+  Watcher,
+  backoff,
+  compare,
+  fake,
+  fake_pages,
+  fix_checks,
+  log_tail,
+  note,
+  record_checks,
+  response,
+  stored,
+  sweep,
+  trimmed,
+  wake_events,
+  type Pr,
+  type Watched,
 } from "../pr_watch.ts";
 import { Pr_parse, summary } from "./pr.ts";
 import { load, Seen_default, type Seen } from "./seen.ts";
@@ -53,7 +79,17 @@ test("takes_a_number_a_repository_and_number_or_a_url", () => {
 });
 
 test("a_first_wait_reports_how_checks_ended_but_not_old_comments", () => {
-  const p = pr(response("bot", "a1", [["test", "COMPLETED", "FAILURE", false], ["lint", "COMPLETED", "SUCCESS", false]], [["01", "alice", "old"]]));
+  const p = pr(
+    response(
+      "bot",
+      "a1",
+      [
+        ["test", "COMPLETED", "FAILURE", false],
+        ["lint", "COMPLETED", "SUCCESS", false],
+      ],
+      [["01", "alice", "old"]],
+    ),
+  );
   const [quiet, news] = compare(null, p, all());
   assert.deepEqual(events(news), ["checks_failed"]);
   assert.deepEqual(quiet.remarks, ["01"]);
@@ -69,7 +105,18 @@ test("a_first_wait_reports_how_checks_ended_but_not_old_comments", () => {
 });
 
 test("checks_pass_once_per_head_and_required_ones_are_enough", () => {
-  const checks = (head: string) => pr(response("bot", head, [["req", "COMPLETED", "SUCCESS", true], ["slow", "IN_PROGRESS", "", false]], []));
+  const checks = (head: string) =>
+    pr(
+      response(
+        "bot",
+        head,
+        [
+          ["req", "COMPLETED", "SUCCESS", true],
+          ["slow", "IN_PROGRESS", "", false],
+        ],
+        [],
+      ),
+    );
   const [, news] = compare(Seen_default(), checks("a1"), all());
   assert.deepEqual(events(news), ["checks_passed"]);
   const [report, told] = news!;
@@ -78,7 +125,17 @@ test("checks_pass_once_per_head_and_required_ones_are_enough", () => {
   // A new commit's checks are news again.
   assert.deepEqual(events(compare(told, checks("b2"), all())[1]), ["checks_passed"]);
   // Without required checks, all of them have to pass.
-  const p = pr(response("bot", "a1", [["a", "COMPLETED", "SUCCESS", false], ["b", "QUEUED", "", false]], []));
+  const p = pr(
+    response(
+      "bot",
+      "a1",
+      [
+        ["a", "COMPLETED", "SUCCESS", false],
+        ["b", "QUEUED", "", false],
+      ],
+      [],
+    ),
+  );
   assert.equal(compare(Seen_default(), p, all())[1], null);
   // A re-run that fails again is news (a new run).
   const told2 = seen({ head: "a1", failed: ["run:a10"] });
@@ -91,7 +148,16 @@ test("checks_pass_once_per_head_and_required_ones_are_enough", () => {
 
 test("others_comments_and_reviews_are_news_but_not_the_agents_own", () => {
   const s0 = seen({ remarks: ["01"] });
-  const v = response("me", "a1", [], [["01", "alice", "old"], ["02", "me", "my reply"], ["03", "bob", "<!-- bot -->Please fix"]]);
+  const v = response(
+    "me",
+    "a1",
+    [],
+    [
+      ["01", "alice", "old"],
+      ["02", "me", "my reply"],
+      ["03", "bob", "<!-- bot -->Please fix"],
+    ],
+  );
   const p = v.data.repository.pullRequest;
   p.reviews.nodes = [
     { id: "R1", author: { login: "carol" }, state: "CHANGES_REQUESTED", body: "", url: "u", submittedAt: "2026-10-31T00:01:00Z" },
@@ -99,7 +165,23 @@ test("others_comments_and_reviews_are_news_but_not_the_agents_own", () => {
     { id: "R3", author: { login: "me" }, state: "PENDING", body: "draft", url: "u", submittedAt: null },
   ];
   p.reviewThreads.nodes = [
-    { path: "src/a.rs", comments: { nodes: [{ id: "T1", author: { login: "carol" }, body: "Off by one", url: "u", createdAt: "2026-10-31T00:00:59Z", path: "src/a.rs", line: null, originalLine: 12 }] } },
+    {
+      path: "src/a.rs",
+      comments: {
+        nodes: [
+          {
+            id: "T1",
+            author: { login: "carol" },
+            body: "Off by one",
+            url: "u",
+            createdAt: "2026-10-31T00:00:59Z",
+            path: "src/a.rs",
+            line: null,
+            originalLine: 12,
+          },
+        ],
+      },
+    },
   ];
   const [quiet, news] = compare(s0, pr(v), all());
   assert.deepEqual(events(news), ["comments"]);
@@ -107,7 +189,14 @@ test("others_comments_and_reviews_are_news_but_not_the_agents_own", () => {
   assert.deepEqual(quiet.remarks, ["01", "02", "R2"]);
   const [report, told] = news!;
   const comments = report.comments;
-  assert.deepEqual(comments.map((c: any) => [c.author, c.kind]), [["bob", "comment"], ["carol", "review_comment"], ["carol", "review"]]);
+  assert.deepEqual(
+    comments.map((c: any) => [c.author, c.kind]),
+    [
+      ["bob", "comment"],
+      ["carol", "review_comment"],
+      ["carol", "review"],
+    ],
+  );
   assert.equal(comments[0].body, "Please fix");
   assert.deepEqual([comments[1].path, comments[1].line], ["src/a.rs", 12]);
   assert.equal(comments[2].review_state, "changes_requested");
@@ -137,7 +226,10 @@ test("a_conflict_is_news_once_until_it_clears", () => {
 });
 
 test("merged_or_closed_always_ends_it", () => {
-  for (const [state, event] of [["MERGED", "merged"], ["CLOSED", "closed"]]) {
+  for (const [state, event] of [
+    ["MERGED", "merged"],
+    ["CLOSED", "closed"],
+  ]) {
     const v = response("me", "a1", [], []);
     v.data.repository.pullRequest.state = state;
     const [, news] = compare(Seen_default(), pr(v), []);
@@ -162,11 +254,14 @@ test("reads_githubs_response", () => {
          "createdAt":"2026-10-30T20:00:00Z","isRequired":false}
       ]}}}}]},"comments":{"nodes":[]},"reviews":{"nodes":[]},"reviewThreads":{"nodes":[]}}}}}`);
   const p = pr(v);
-  assert.deepEqual(p.checks.map((c) => [c.name, c.state, c.key]), [
-    ["Tests / server", "Passed", "run:123802950792"],
-    ["Tests / app", "Passed", "run:123802951119"],
-    ["Vercel", "Pending", "status:Vercel:2026-10-30T20:00:00Z"],
-  ]);
+  assert.deepEqual(
+    p.checks.map((c) => [c.name, c.state, c.key]),
+    [
+      ["Tests / server", "Passed", "run:123802950792"],
+      ["Tests / app", "Passed", "run:123802951119"],
+      ["Vercel", "Pending", "status:Vercel:2026-10-30T20:00:00Z"],
+    ],
+  );
   const s = summary(p);
   assert.deepEqual([s.state, s.mergeable, s.checks.outcome], ["merged", "unknown", "pending"]);
   assert.deepEqual(s.checks.pending, ["Vercel"]);
@@ -176,7 +271,10 @@ test("reads_githubs_response", () => {
 test("a_missing_pull_request_is_an_error", () => {
   const not_found = { type: "NOT_FOUND", message: "Could not resolve to a Repository with the name 'o/r'." };
   const v = { data: { viewer: { login: "me" }, repository: null }, errors: [not_found] };
-  assert.equal(err(() => Pr_parse(v)), "Could not resolve to a Repository with the name 'o/r'.");
+  assert.equal(
+    err(() => Pr_parse(v)),
+    "Could not resolve to a Repository with the name 'o/r'.",
+  );
   // Fields it isn't allowed to read don't make it one.
   const v2 = response("me", "a1", [], []);
   v2.errors = [{ message: "Resource not accessible by integration" }];
@@ -195,10 +293,23 @@ test("long_comments_and_bots_metadata_are_trimmed", () => {
  */
 function in_review(s: Shared, mode: string): [Task, { v: any }] {
   const p = db.insert_profile(s.db(), "p", [], null);
-  db.insert_project(s.db(), { id: "pr", profile_id: p.id, name: "P", key: "P", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+  db.insert_project(s.db(), {
+    id: "pr",
+    profile_id: p.id,
+    name: "P",
+    key: "P",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  });
   db.update_project(s.db(), "pr", [["watch_pull_requests", mode]]);
   let t = db.insert_task(s.db(), { profile_id: p.id, project_id: "pr", kind: "task", title: "t", description: "", status: "in_review", use_worktree: false });
-  t = db.update_task(s.db(), t.id, [["session_id", "sess"], ["pr_url", "https://github.com/o/r/pull/7"]])!;
+  t = db.update_task(s.db(), t.id, [
+    ["session_id", "sess"],
+    ["pr_url", "https://github.com/o/r/pull/7"],
+  ])!;
   const gh = { v: response("me", "a1", [], []) };
   fake((_, target) => {
     assert.equal(target.label(), "o/r#7");
@@ -230,7 +341,10 @@ function wakes(s: Shared, id: string): string[] {
 async function settle(s: Shared, id: string) {
   for (let i = 0; i < 250; i++) {
     if (!s.is_running(id) && !db.get_task(s.db(), id)!.running) {
-      db.update_task(s.db(), id, [["status", "in_review"], ["attention_reason", null]]);
+      db.update_task(s.db(), id, [
+        ["status", "in_review"],
+        ["attention_reason", null],
+      ]);
       return;
     }
     await sleep(20);
@@ -248,7 +362,14 @@ function comment(id: string, login: string, kind: string, body: string) {
 }
 
 function by(id: string, login: string, kind: string, association: string, body: string) {
-  return { id, author: { __typename: kind, login }, authorAssociation: association, body, url: `https://github.com/o/r/pull/7#${id}`, createdAt: `2026-10-31T00:${id}Z` };
+  return {
+    id,
+    author: { __typename: kind, login },
+    authorAssociation: association,
+    body,
+    url: `https://github.com/o/r/pull/7#${id}`,
+    createdAt: `2026-10-31T00:${id}Z`,
+  };
 }
 
 const KEY = "github.com/o/r#7";
@@ -270,7 +391,8 @@ test("a_failure_or_a_comment_on_a_task_in_reviews_pull_request_wakes_its_agent",
     const s = testing.state();
     const [t, gh] = in_review(s, "all");
     set_comments(gh, [comment("01:01", "alice", "User", "From before")]);
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     // Not read until it's been in review a while.
     await sweep_at(s, watched, start, 0);
     assert.equal(load(s.db(), t.id, KEY), null);
@@ -329,7 +451,8 @@ test("only_failures_wake_it_when_the_project_says_so_and_nothing_does_in_other_c
   can_run(async () => {
     const s = testing.state();
     const [t, gh] = in_review(s, "failures");
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 0);
     await sweep_at(s, watched, start, 1);
     set_comments(gh, [comment("02:01", "alice", "User", "Please rename it")]);
@@ -346,7 +469,10 @@ test("only_failures_wake_it_when_the_project_says_so_and_nothing_does_in_other_c
     const review = { thread_id: "r", state: "running", head: null, summary: null, updated_at: "1" };
     db.update_task(s.db(), t.id, [["review", review]]);
     await sweep_at(s, watched, start, 4);
-    db.update_task(s.db(), t.id, [["review", null], ["status", "ready_for_merge"]]);
+    db.update_task(s.db(), t.id, [
+      ["review", null],
+      ["status", "ready_for_merge"],
+    ]);
     await sweep_at(s, watched, start, 5);
     assert.deepEqual(wakes(s, t.id), []);
     // Off, nothing's read.
@@ -369,7 +495,8 @@ test("comments_alone_wake_it_ten_times_in_a_row_until_the_user_writes", () =>
     const s = testing.state();
     const [t, gh] = in_review(s, "all");
     // A start whose reads at 31 and 32 were a rounding apart (see sweep_at), so the last one wasn't due.
-    const start = 968.5255631372014, watched = new Map<string, Watched>();
+    const start = 968.5255631372014,
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 0);
     await sweep_at(s, watched, start, 1);
     const list: any[] = [];
@@ -407,7 +534,8 @@ test("a_merged_pull_request_isnt_read_again", () =>
   can_run(async () => {
     const s = testing.state();
     const [t, gh] = in_review(s, "all");
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 1);
     gh.v = response("me", "a1", [["test", "COMPLETED", "FAILURE", false]], []);
     gh.v.data.repository.pullRequest.state = "MERGED";
@@ -433,7 +561,8 @@ test("comments_from_people_who_cant_push_dont_wake_it", () =>
   can_run(async () => {
     const s = testing.state();
     const [t, gh] = in_review(s, "all");
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 0);
     await sweep_at(s, watched, start, 1);
     // Anyone can comment on a public repository.
@@ -466,7 +595,10 @@ test("comments_from_people_who_cant_push_dont_wake_it", () =>
 test("reads_bots_comments", () => {
   const v = response("me", "a1", [], []);
   v.data.repository.pullRequest.comments.nodes = [comment("01:00", "renovate", "Bot", "x"), comment("02:00", "bob", "User", "y")];
-  assert.deepEqual(pr(v).remarks.map((r) => r.bot), [true, false]);
+  assert.deepEqual(
+    pr(v).remarks.map((r) => r.bot),
+    [true, false],
+  );
   assert.deepEqual(wake_events("failures"), ["checks_failed", "conflicts"]);
   assert.deepEqual(wake_events("off"), []);
 });
@@ -476,7 +608,10 @@ function threads(first: number, n: number): any[] {
   const out: any[] = [];
   for (let i = first; i < first + n; i++) {
     const t = `2026-10-31T01:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}Z`;
-    out.push({ path: "a.rs", comments: { nodes: [{ id: `T${i}`, author: { login: "carol" }, body: "x", url: "u", createdAt: t, path: "a.rs", line: i, originalLine: null }] } });
+    out.push({
+      path: "a.rs",
+      comments: { nodes: [{ id: `T${i}`, author: { login: "carol" }, body: "x", url: "u", createdAt: t, path: "a.rs", line: i, originalLine: null }] },
+    });
   }
   return out;
 }
@@ -564,7 +699,10 @@ test("a_failed_jobs_log_is_cut_to_its_end_without_times_colours_or_groups", () =
     "test\tRun tests\t2026-11-01T01:02:04.1234567Z ##[endgroup]\n" +
     "test\tRun tests\t2026-11-01T01:02:05.0000000Z \u{1b}[31mFAILED\u{1b}[0m a::b\n" +
     "test\tRun tests\t2026-11-01T01:02:06.0000000Z ##[error]Process completed with exit code 101.\n\n";
-  assert.equal(log_tail(raw), "--- Set up job ---\nRunner\n--- Run tests ---\nRun cargo test\ncargo test\nFAILED a::b\n##[error]Process completed with exit code 101.");
+  assert.equal(
+    log_tail(raw),
+    "--- Set up job ---\nRunner\n--- Run tests ---\nRun cargo test\ncargo test\nFAILED a::b\n##[error]Process completed with exit code 101.",
+  );
   // A long one keeps its last lines, under their step's heading.
   let long = "";
   for (let i = 0; i < 500; i++) long += `j\tBuild\t2026-11-01T01:02:03.0000000Z line ${i}\n`;
@@ -625,7 +763,16 @@ test("fix_broken_checks_sends_the_failures_with_their_logs_and_they_dont_wake_it
     fake_gh(dir);
     const s = testing.state();
     const [t, gh] = in_review(s, "failures");
-    const v = response("me", "abcdef123", [["test", "COMPLETED", "FAILURE", true], ["lint", "COMPLETED", "FAILURE", false], ["docs", "COMPLETED", "SUCCESS", false]], []);
+    const v = response(
+      "me",
+      "abcdef123",
+      [
+        ["test", "COMPLETED", "FAILURE", true],
+        ["lint", "COMPLETED", "FAILURE", false],
+        ["docs", "COMPLETED", "SUCCESS", false],
+      ],
+      [],
+    );
     actions_job(v, 0, 42);
     actions_job(v, 1, 43);
     gh.v = v;
@@ -648,18 +795,30 @@ test("fix_broken_checks_sends_the_failures_with_their_logs_and_they_dont_wake_it
     // The board shows them.
     let checks = db.get_task(s.db(), t.id)!.pr_checks!;
     assert.deepEqual([checks.outcome, checks.head, checks.passed, checks.url], ["failed", "abcdef123", 1, "https://github.com/o/r/pull/7"]);
-    assert.deepEqual(checks.failed.map((c) => c.name), ["CI / test", "CI / lint"]);
+    assert.deepEqual(
+      checks.failed.map((c) => c.name),
+      ["CI / test", "CI / lint"],
+    );
     await settle(s, t.id);
 
     // Back in review, watching it doesn't wake the agent with them again.
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 0);
     await sweep_at(s, watched, start, 1);
     assert.ok(load(s.db(), t.id, KEY)!.polled_at > sent.updated_at, "not read");
     assert.deepEqual(wakes(s, t.id), []);
 
     // Once they pass, there's nothing to fix, and the board shows they passed.
-    const v2 = response("me", "fff0000", [["test", "COMPLETED", "SUCCESS", true], ["lint", "IN_PROGRESS", "", false]], []);
+    const v2 = response(
+      "me",
+      "fff0000",
+      [
+        ["test", "COMPLETED", "SUCCESS", true],
+        ["lint", "IN_PROGRESS", "", false],
+      ],
+      [],
+    );
     actions_job(v2, 0, 44);
     gh.v = v2;
     await assert.rejects(fix_checks(s, t.id), (e: any) => e.status === 409 && e.message === "no checks have failed on o/r#7's head commit (1 still running)");
@@ -686,9 +845,18 @@ test("failed_checks_wake_the_agent_with_the_ends_of_their_logs", () =>
     fake_gh(dir);
     const s = testing.state();
     const [t, gh] = in_review(s, "failures");
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 1);
-    const v = response("me", "b2", [["test", "COMPLETED", "FAILURE", true], ["Vercel", "COMPLETED", "FAILURE", false]], []);
+    const v = response(
+      "me",
+      "b2",
+      [
+        ["test", "COMPLETED", "FAILURE", true],
+        ["Vercel", "COMPLETED", "FAILURE", false],
+      ],
+      [],
+    );
     actions_job(v, 0, 42);
     gh.v = v;
     await sweep_at(s, watched, start, 2);
@@ -713,7 +881,8 @@ test("a_task_moved_out_of_review_while_its_logs_are_fetched_isnt_woken", () =>
     writeFileSync(join(dir, "hold"), "");
     const s = testing.state();
     const [t, gh] = in_review(s, "failures");
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 1);
     const v = response("me", "b2", [["test", "COMPLETED", "FAILURE", true]], []);
     actions_job(v, 0, 42);
@@ -746,7 +915,8 @@ test("failures_sent_by_hand_while_a_wake_fetches_their_logs_dont_wake_it_again",
     writeFileSync(join(dir, "hold"), "");
     const s = testing.state();
     const [t, gh] = in_review(s, "all");
-    const start = performance.now(), watched = new Map<string, Watched>();
+    const start = performance.now(),
+      watched = new Map<string, Watched>();
     await sweep_at(s, watched, start, 0);
     await sweep_at(s, watched, start, 1);
     const v = response("me", "b2", [["test", "COMPLETED", "FAILURE", true]], []);

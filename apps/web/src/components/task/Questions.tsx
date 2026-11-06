@@ -68,10 +68,7 @@ function Frame({ pending, children, cardRef, label }: { pending: boolean; childr
       ref={cardRef}
       role="group"
       aria-label={label}
-      className={clsx(
-        "rounded-lg border p-3",
-        pending ? "border-line border-l-[3px] border-l-st-attention bg-panel" : "border-line bg-panel/60",
-      )}
+      className={clsx("rounded-lg border p-3", pending ? "border-line border-l-[3px] border-l-st-attention bg-panel" : "border-line bg-panel/60")}
     >
       {children}
     </div>
@@ -98,7 +95,15 @@ type Option = { label: string; description?: string; preview?: string };
  * One choice of a question: a numbered row (its number is its key while the question's the one keys pick in), ticked
  * when it's picked. Shown as picked or not, and not clickable, once the question's answered.
  */
-function Choice({ option, n, picked, multi, onPick, disabled, keys }: {
+function Choice({
+  option,
+  n,
+  picked,
+  multi,
+  onPick,
+  disabled,
+  keys,
+}: {
   option: Option;
   n: number;
   picked: boolean;
@@ -139,7 +144,15 @@ function Choice({ option, n, picked, multi, onPick, disabled, keys }: {
 }
 
 /** A free-text answer: picked as soon as there's text in it. Enter sends it when `onEnter` is given. */
-function OtherField({ value, onChange, placeholder, disabled, secret, onEnter, label }: {
+function OtherField({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  secret,
+  onEnter,
+  label,
+}: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
@@ -195,7 +208,13 @@ function useBusy() {
  * sends the answer as the user's message. Without options, the reply is typed in the thread as before. Once a message
  * has been sent to the agent after it (`movedOn`), it isn't answered any more.
  */
-export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hostId, taskId, movedOn }: {
+export const BoardQuestionCard = memo(function BoardQuestionCard({
+  id,
+  data,
+  hostId,
+  taskId,
+  movedOn,
+}: {
   id: number;
   data: Any;
   hostId: string;
@@ -225,7 +244,7 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
   };
   useDigitKeys(id, pending && options.length > 0 && !busy, ref, (n) => options[n - 1] && pick(options[n - 1].label));
   const answered: { choices?: string[]; text?: string | null } = data.answer ?? {};
-  const shown = pending ? picked : answered.choices ?? [];
+  const shown = pending ? picked : (answered.choices ?? []);
   const canSend = multi ? picked.length > 0 || !!text.trim() : !!text.trim();
   // The board's own question, whether to merge (API 92): answering it is the decision, not a message to the agent.
   const merge = data.merge_approval === true;
@@ -286,7 +305,9 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({ id, data, hos
         </div>
       )}
       {!pending && answered.text && (
-        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">{answered.text}</div>
+        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">
+          {answered.text}
+        </div>
       )}
       {pending && (
         <div className="mt-2 text-[11.5px] text-faint">
@@ -313,7 +334,19 @@ type Draft = { picked: string[]; other: string };
  * answers a lone question outright. The answers go back to the agent as its tool's answers. A question whose run ended
  * first can still be answered, until a message is sent to the agent after it (`movedOn`): the answers go as the user's message.
  */
-export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }: { id: number; data: Any; hostId: string; from?: ReactNode; movedOn: boolean }) {
+export const AskCard = memo(function AskCard({
+  id,
+  data,
+  hostId,
+  from,
+  movedOn,
+}: {
+  id: number;
+  data: Any;
+  hostId: string;
+  from?: ReactNode;
+  movedOn: boolean;
+}) {
   const questions = questionsOf(data);
   const codex = data.agent === "codex" || data.tool_name === "request_user_input";
   const host = useHost(hostId);
@@ -344,7 +377,11 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
     );
   const DISMISSED = "The user dismissed these questions without answering them.";
   const dismiss = () =>
-    run(() => (commands ? commands.respond(data.request_id, { outcome: "cancel", message: DISMISSED }) : api.resolvePermission(hostId, data.request_id, "deny", DISMISSED)));
+    run(() =>
+      commands
+        ? commands.respond(data.request_id, { outcome: "cancel", message: DISMISSED })
+        : api.resolvePermission(hostId, data.request_id, "deny", DISMISSED),
+    );
   const set = (i: number, d: Partial<Draft>) => setDrafts((all) => all.map((x, j) => (j === i ? { ...x, ...d } : x)));
   const pick = (i: number, label: string) => {
     const q = questions[i];
@@ -395,7 +432,7 @@ export const AskCard = memo(function AskCard({ id, data, hostId, from, movedOn }
           const given = shown?.[i];
           const active = open && i === current && questions.length > 1;
           const takesOther = !codex || q.isOther !== false;
-          const picked = open ? (q.multiSelect ? d.picked : d.other.trim() ? [] : d.picked) : given ?? [];
+          const picked = open ? (q.multiSelect ? d.picked : d.other.trim() ? [] : d.picked) : (given ?? []);
           const preview = q.options.find((o) => picked.includes(o.label) && o.preview)?.preview;
           return (
             <div
@@ -483,7 +520,13 @@ const modeLabel = (m: PermissionMode) => PERMISSION_MODES.find((x) => x.id === m
  * the mode picked beside it) and **Keep planning**, which sends the agent back to it with the user's feedback. As with
  * questions, one whose run ended first is answered by message until the conversation moves on (`movedOn`).
  */
-export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, movedOn }: {
+export const PlanCard = memo(function PlanCard({
+  data,
+  hostId,
+  taskId,
+  from,
+  movedOn,
+}: {
   data: Any;
   hostId: string;
   taskId: string;
@@ -572,7 +615,9 @@ export const PlanCard = memo(function PlanCard({ data, hostId, taskId, from, mov
         </button>
       )}
       {!open && data.feedback && (
-        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">{data.feedback}</div>
+        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">
+          {data.feedback}
+        </div>
       )}
       {open && feedback === null && (
         <div className="mt-3 flex flex-wrap items-center gap-2">

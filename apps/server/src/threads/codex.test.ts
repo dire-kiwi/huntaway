@@ -33,7 +33,8 @@ function running(): [Shared, Run] {
   return [state, run];
 }
 
-const event = (state: Shared, run: Run, method: string, thread: string, extra: any) => handle_line(state, run, { method, params: { ...extra, threadId: thread } });
+const event = (state: Shared, run: Run, method: string, thread: string, extra: any) =>
+  handle_line(state, run, { method, params: { ...extra, threadId: thread } });
 
 function item(state: Shared, run: Run, thread: string, it: any) {
   event(state, run, "item/started", thread, { item: it });
@@ -63,20 +64,51 @@ test("a_codex_turn_with_each_kind_of_item", () => {
   const [state, run] = running();
   state.add_message(run.task_id, "user", { text: "Go" });
   item(state, run, "main", { type: "reasoning", id: "r", summary: ["Thinking it over"] });
-  item(state, run, "main", { type: "commandExecution", id: "sh", command: "/usr/bin/bash -lc 'ls'", cwd: "/w", status: "completed", aggregatedOutput: "a\n", exitCode: 0 });
+  item(state, run, "main", {
+    type: "commandExecution",
+    id: "sh",
+    command: "/usr/bin/bash -lc 'ls'",
+    cwd: "/w",
+    status: "completed",
+    aggregatedOutput: "a\n",
+    exitCode: 0,
+  });
   item(state, run, "main", { type: "commandExecution", id: "bad", command: "false", status: "failed", aggregatedOutput: "", exitCode: 1 });
   item(state, run, "main", {
     type: "fileChange",
     id: "fc",
     status: "completed",
-    changes: [{ path: "/w/a.rs", kind: { type: "add" }, diff: "+x" }, { path: "/w/b.rs", kind: { type: "update", move_path: "/w/c.rs" }, diff: "@@" }],
+    changes: [
+      { path: "/w/a.rs", kind: { type: "add" }, diff: "+x" },
+      { path: "/w/b.rs", kind: { type: "update", move_path: "/w/c.rs" }, diff: "@@" },
+    ],
   });
-  item(state, run, "main", { type: "mcpToolCall", id: "mcp", server: "gh", tool: "pr_view", arguments: { pr: 1 }, status: "completed", result: { content: [{ type: "text", text: "PR" }] } });
-  item(state, run, "main", { type: "dynamicToolCall", id: "dyn", tool: "lookup", arguments: {}, status: "completed", contentItems: [{ type: "inputText", text: "found" }] });
+  item(state, run, "main", {
+    type: "mcpToolCall",
+    id: "mcp",
+    server: "gh",
+    tool: "pr_view",
+    arguments: { pr: 1 },
+    status: "completed",
+    result: { content: [{ type: "text", text: "PR" }] },
+  });
+  item(state, run, "main", {
+    type: "dynamicToolCall",
+    id: "dyn",
+    tool: "lookup",
+    arguments: {},
+    status: "completed",
+    contentItems: [{ type: "inputText", text: "found" }],
+  });
   item(state, run, "main", { type: "webSearch", id: "web", query: "huntaway", results: [1, 2] });
   item(state, run, "main", { type: "webSearch", id: "fetch", action: { url: "https://example.com" } });
   item(state, run, "main", { type: "imageView", id: "img", path: "/w/a.png" });
-  event(state, run, "turn/plan/updated", "main", { plan: [{ step: "Read", status: "completed" }, { step: "Write", status: "inProgress" }] });
+  event(state, run, "turn/plan/updated", "main", {
+    plan: [
+      { step: "Read", status: "completed" },
+      { step: "Write", status: "inProgress" },
+    ],
+  });
   event(state, run, "error", "main", { willRetry: true, error: { message: "overloaded" } });
   event(state, run, "warning", "main", { message: "slow" });
   item(state, run, "main", { type: "agentMessage", id: "msg", text: "Done." });
@@ -116,7 +148,10 @@ test("a_codex_turn_with_each_kind_of_item", () => {
   assert.equal(items.fetch.url, "https://example.com");
   assert.equal(items.img.path, "/w/a.png");
   const plan = c.items.find((i: any) => i.kind === "todo") as any;
-  assert.deepEqual(plan.todos, [{ text: "Read", status: "completed" }, { text: "Write", status: "in_progress" }]);
+  assert.deepEqual(plan.todos, [
+    { text: "Read", status: "completed" },
+    { text: "Write", status: "in_progress" },
+  ]);
   assert.equal(plan.status, "completed");
   const result = c.items.at(-1) as any;
   assert.deepEqual([result.ok, result.duration_ms], [true, 1500]);
@@ -186,7 +221,10 @@ test("codex_subagents_keep_the_main_session_turn_and_stream_separate", () => {
   assert.equal(c.items.find((i: any) => i.kind === "todo")!.parent_id, "codex-agent-nested");
   // The nested one never said it ended.
   assert.equal(items["codex-agent-nested"].subagent.status, "stopped");
-  assert.deepEqual(c.warnings.map((w) => w.code), ["subagent_running"]);
+  assert.deepEqual(
+    c.warnings.map((w) => w.code),
+    ["subagent_running"],
+  );
   assert.deepEqual(retained(c), []);
 });
 
@@ -261,6 +299,9 @@ test("codex_failed_spawns_and_child_failures", () => {
   assert.equal(items["bad-spawn"].subagent, undefined);
   assert.equal(c.items.at(-1)!.type, "turn_result");
   // The board tells of children that never started: those messages stay in the source only.
-  assert.deepEqual(c.warnings.map((w) => w.code), ["unknown_task", "unknown_task"]);
+  assert.deepEqual(
+    c.warnings.map((w) => w.code),
+    ["unknown_task", "unknown_task"],
+  );
   assert.equal(retained(c).length, 2);
 });

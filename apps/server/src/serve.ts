@@ -146,25 +146,62 @@ export function parse_serve_args(argv: string[]): ServeArgs {
       return argv[++i];
     };
     switch (arg) {
-      case "--host": a.host = next(); break;
-      case "--port": a.port = Number(next()); break;
-      case "--data-dir": a.data_dir = next(); break;
-      case "--ui-dir": a.ui_dir = next(); break;
-      case "--source-dir": a.source_dir = next(); break;
-      case "--update-from": a.update_from = next(); break;
-      case "--release-updates": a.release_updates = next(); break;
-      case "--name": a.name = next(); break;
-      case "--hub": (hubs ??= []).push(...next().split(",")); break;
-      case "--hub-token": a.hub_token = next(); break;
-      case "--broker": a.broker = next(); break;
-      case "--broker-token": a.broker_token = next(); break;
-      case "--broker-name": a.broker_name = next(); break;
-      case "--token": a.access_token = next(); break;
-      case "--demo": a.demo = true; break;
-      case "--open-token": a.open_token = true; break;
-      case "--recopy-db": a.recopy_db = true; break;
-      case "--profile": (profiles ??= []).push(...next().split(",").map(parse_profile)); break;
-      default: throw new Error(`unexpected argument '${argv[i]}'`);
+      case "--host":
+        a.host = next();
+        break;
+      case "--port":
+        a.port = Number(next());
+        break;
+      case "--data-dir":
+        a.data_dir = next();
+        break;
+      case "--ui-dir":
+        a.ui_dir = next();
+        break;
+      case "--source-dir":
+        a.source_dir = next();
+        break;
+      case "--update-from":
+        a.update_from = next();
+        break;
+      case "--release-updates":
+        a.release_updates = next();
+        break;
+      case "--name":
+        a.name = next();
+        break;
+      case "--hub":
+        (hubs ??= []).push(...next().split(","));
+        break;
+      case "--hub-token":
+        a.hub_token = next();
+        break;
+      case "--broker":
+        a.broker = next();
+        break;
+      case "--broker-token":
+        a.broker_token = next();
+        break;
+      case "--broker-name":
+        a.broker_name = next();
+        break;
+      case "--token":
+        a.access_token = next();
+        break;
+      case "--demo":
+        a.demo = true;
+        break;
+      case "--open-token":
+        a.open_token = true;
+        break;
+      case "--recopy-db":
+        a.recopy_db = true;
+        break;
+      case "--profile":
+        (profiles ??= []).push(...next().split(",").map(parse_profile));
+        break;
+      default:
+        throw new Error(`unexpected argument '${argv[i]}'`);
     }
   }
   a.hubs = hubs ?? (env("IA_HUB") ? env("IA_HUB")!.split(",") : []);
@@ -175,7 +212,8 @@ export function parse_serve_args(argv: string[]): ServeArgs {
 /** `<data dir>/huntaway`, or `<data dir>/issue-agent` on a machine that ran the board before it was renamed. */
 export function default_data_dir(): string {
   const base = process.env.XDG_DATA_HOME || join(home_dir() ?? ".", ".local/share");
-  const dir = join(base, "huntaway"), legacy = join(base, "issue-agent");
+  const dir = join(base, "huntaway"),
+    legacy = join(base, "issue-agent");
   return !existsSync(dir) && isDir(legacy) ? legacy : dir;
 }
 
@@ -197,7 +235,8 @@ export function db_path(data_dir: string): string {
 
 /** The database older builds use in a data dir: `huntaway.db`, or `issue-agent.db` from before the rename. */
 export function older_db_path(data_dir: string): string {
-  const d = join(data_dir, "huntaway.db"), legacy = join(data_dir, "issue-agent.db");
+  const d = join(data_dir, "huntaway.db"),
+    legacy = join(data_dir, "issue-agent.db");
   let legacyFile = false;
   try {
     legacyFile = statSync(legacy).isFile();
@@ -381,7 +420,19 @@ export async function upgrade(state: AppState, wss: WebSocketServer, req: Incomi
     return reject(404, "not found");
   }
   if (found.route.auth && !trusted && !authed()) return;
-  const r = api.makeReq("GET", `${path}${query ? `?${query.split("&").filter((kv) => !kv.startsWith("token=")).join("&")}` : ""}`, req.headers, Buffer.alloc(0));
+  const r = api.makeReq(
+    "GET",
+    `${path}${
+      query
+        ? `?${query
+            .split("&")
+            .filter((kv) => !kv.startsWith("token="))
+            .join("&")}`
+        : ""
+    }`,
+    req.headers,
+    Buffer.alloc(0),
+  );
   r.params = found.params;
   r.incoming = req;
   r.device = device;
@@ -436,7 +487,8 @@ export async function serve(args: ServeArgs) {
   // the new database file (see db/file.ts) that's huntaway-2.db; before it's made, nothing: making it only reads the
   // older builds' file, which stays as it was.
   const new_file = db_file.enabled();
-  if (args.recopy_db && !new_file) log.warn(`--recopy-db does nothing: this server uses ${basename(db_path(data_dir))}, not ${db_file.FILE} (${db_file.ENV} turns that on)`);
+  if (args.recopy_db && !new_file)
+    log.warn(`--recopy-db does nothing: this server uses ${basename(db_path(data_dir))}, not ${db_file.FILE} (${db_file.ENV} turns that on)`);
   try {
     backup.on_start(data_dir, db_path(data_dir), VERSION, db.VERSION);
   } catch (e) {
@@ -587,7 +639,8 @@ export async function serve(args: ServeArgs) {
     const name = args.broker_name?.trim() || null;
     const t = args.broker_token?.trim() || null;
     if (t === null) log.warn("--broker needs --broker-token");
-    else if (name !== null && !broker_proto.valid_name(name)) log.warn(`bad --broker-name ${JSON.stringify(name)}: use up to 48 lowercase letters, digits and hyphens`);
+    else if (name !== null && !broker_proto.valid_name(name))
+      log.warn(`bad --broker-name ${JSON.stringify(name)}: use up to 48 lowercase letters, digits and hyphens`);
     else {
       let origin_port: number;
       try {

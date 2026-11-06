@@ -80,7 +80,13 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
       "Run with bash when a task moves to another column, in its worktree (or the repository without one), e.g. to send a notification or clean up a finished build. Output shows in the task's thread.",
     fields: ["status_script", "status_scripts"],
   },
-  { id: "tools", label: "Skills and MCP", icon: <Puzzle size={14} />, description: "The skills and MCP servers the project's agents get. Saved as you change them.", fields: [] },
+  {
+    id: "tools",
+    label: "Skills and MCP",
+    icon: <Puzzle size={14} />,
+    description: "The skills and MCP servers the project's agents get. Saved as you change them.",
+    fields: [],
+  },
   {
     id: "automations",
     label: "Automations",
@@ -92,7 +98,8 @@ const PROJECT_TABS: { id: ProjectTab; label: string; icon: ReactNode; descriptio
     id: "workflows",
     label: "Workflows",
     icon: <Workflow size={14} />,
-    description: "Steps that run on the project's tasks when they enter a column: checks, agents that review or report on the work in tabs of the task, messages to the task's agent, and moves. Saved as you change them.",
+    description:
+      "Steps that run on the project's tasks when they enter a column: checks, agents that review or report on the work in tabs of the task, messages to the task's agent, and moves. Saved as you change them.",
     fields: [],
   },
 ];
@@ -240,7 +247,9 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
 
             {current.id === "prompts" && <PromptsTab project={project} form={form} host={host} set={set} />}
 
-            {current.id === "scripts" && <ProjectStatusScripts project={form} perColumn={hostSupports(host, 38)} statuses={hostStatuses(host)} onChange={set} />}
+            {current.id === "scripts" && (
+              <ProjectStatusScripts project={form} perColumn={hostSupports(host, 38)} statuses={hostStatuses(host)} onChange={set} />
+            )}
 
             {current.id === "tools" && <ProjectAgentTools project={project} />}
 

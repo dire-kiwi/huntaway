@@ -138,7 +138,11 @@ export function serious_count(args: any): number {
 /** The minor issues a submission lists, if it has the field. */
 export function minor_list(args: any): string[] | null {
   const m = args?.minor_issues;
-  if (Array.isArray(m)) return m.filter((i) => typeof i === "string").map((i: string) => i.trim()).filter((i) => i !== "");
+  if (Array.isArray(m))
+    return m
+      .filter((i) => typeof i === "string")
+      .map((i: string) => i.trim())
+      .filter((i) => i !== "");
   if (typeof m === "string") return m.trim() === "" ? [] : [m.trim()];
   return null;
 }
@@ -243,4 +247,3 @@ export class Rounds {
     return [this.start, fresh];
   }
 }
-

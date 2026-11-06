@@ -45,10 +45,7 @@ function renamed(dir, legacy) {
 const legacyUserData = app.isPackaged ? "Issue Agent" : "issue-agent-app";
 app.setPath("userData", renamed(app.getPath("userData"), path.join(app.getPath("appData"), legacyUserData)));
 
-const CONFIG_PATH = renamed(
-  path.join(app.getPath("appData"), "huntaway", "desktop.json"),
-  path.join(app.getPath("appData"), "issue-agent", "desktop.json"),
-);
+const CONFIG_PATH = renamed(path.join(app.getPath("appData"), "huntaway", "desktop.json"), path.join(app.getPath("appData"), "issue-agent", "desktop.json"));
 
 function loadConfig() {
   try {
@@ -262,7 +259,8 @@ async function startServer(win) {
   const started = versions.startWithFallback({
     choose: (skip) => {
       const choice = findServerBinary(skip);
-      if (!choice) throw new Error("Could not find the huntaway server. Run `pnpm install`, and `cargo build --release -p ia-shim`, at the top of the checkout.");
+      if (!choice)
+        throw new Error("Could not find the huntaway server. Run `pnpm install`, and `cargo build --release -p ia-shim`, at the top of the checkout.");
       return choice;
     },
     start: (choice) =>

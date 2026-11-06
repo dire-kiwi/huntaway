@@ -341,7 +341,9 @@ export async function run_up_call(s: AppState, host_id: string, c: ToolCall, via
   } catch {}
   if (!link?.uplink) return off(null);
   if (!linked_via(link, via)) {
-    return off(`${s.host_name} links ${link.name} ${link.mode === "inbound" ? "as a host that dials in" : "itself"}, and this call came another way, so it isn't taken`);
+    return off(
+      `${s.host_name} links ${link.name} ${link.mode === "inbound" ? "as a host that dials in" : "itself"}, and this call came another way, so it isn't taken`,
+    );
   }
   let placed = false;
   try {
@@ -458,28 +460,31 @@ export function spawn_outbound(s: AppState, link: Link) {
       stopped = true;
       abort?.();
     };
-    background("keeping a link to another host open", (async () => {
-      let backoff = 1;
-      while (!stopped) {
-        try {
-          await run_outbound(s, link, "outbound", (a) => (abort = a));
-          backoff = 1;
-        } catch (e) {
-          if (process.env.IA_DEBUG) console.error(`link ${link.name}: ${err_str(e)}`);
+    background(
+      "keeping a link to another host open",
+      (async () => {
+        let backoff = 1;
+        while (!stopped) {
+          try {
+            await run_outbound(s, link, "outbound", (a) => (abort = a));
+            backoff = 1;
+          } catch (e) {
+            if (process.env.IA_DEBUG) console.error(`link ${link.name}: ${err_str(e)}`);
+          }
+          abort = null;
+          if (stopped) break;
+          await new Promise<void>((r) => {
+            const t = setTimeout(r, backoff * 1000);
+            abort = () => {
+              clearTimeout(t);
+              r();
+            };
+          });
+          abort = null;
+          backoff = Math.min(backoff * 2, 30);
         }
-        abort = null;
-        if (stopped) break;
-        await new Promise<void>((r) => {
-          const t = setTimeout(r, backoff * 1000);
-          abort = () => {
-            clearTimeout(t);
-            r();
-          };
-        });
-        abort = null;
-        backoff = Math.min(backoff * 2, 30);
-      }
-    })());
+      })(),
+    );
   }
   const old = s.link_tasks.get(id);
   s.link_tasks.set(id, stop);
@@ -553,9 +558,12 @@ export async function run_outbound(s: AppState, link: Link, mode: string, on_abo
     if (ev?.type === "hub_call") {
       const c = ToolCall_from(ev);
       if (c) {
-        background("answering a host's board tool call", run_up_call(s, link.id, c, "dialled").then((a) => {
-          if (!finished && ws.readyState === ws.OPEN) ws.send(JSON.stringify(uplink.answer_frame(a)));
-        }));
+        background(
+          "answering a host's board tool call",
+          run_up_call(s, link.id, c, "dialled").then((a) => {
+            if (!finished && ws.readyState === ws.OPEN) ws.send(JSON.stringify(uplink.answer_frame(a)));
+          }),
+        );
       }
       return;
     }

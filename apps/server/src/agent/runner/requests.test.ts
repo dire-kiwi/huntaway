@@ -40,7 +40,10 @@ function running(mode: string | null = null): [Shared, Task, Run] {
   writeFileSync(join(dir, "input.jsonl"), "");
   writeFileSync(join(dir, "run.json"), JSON.stringify({ format: runs.RUN_FORMAT }));
   state.runs.set(task.id, { run_id: run.id, cancel: null });
-  const t = state.update_task(task.id, [["running", true], ["permission_mode", mode]])!;
+  const t = state.update_task(task.id, [
+    ["running", true],
+    ["permission_mode", mode],
+  ])!;
   return [state, t, db.get_run(state.db(), run.id)!];
 }
 
@@ -362,7 +365,7 @@ test("a_board_call_on_the_output_knows_its_task_from_its_run", async () => {
   // An error is the tool's result, as the HTTP server has it.
   output(state, run, [tool_call("c2", 5, "get_task", { task: task.id })]);
   const [text2, error2] = said_by((await answered(state, run, 2))[1]);
-  assert.ok(error2 && text2.startsWith("Error: get_task has no argument \"task\""), text2);
+  assert.ok(error2 && text2.startsWith('Error: get_task has no argument "task"'), text2);
 });
 
 test("a_reviewers_board_server_has_the_reviewers_tools_only", async () => {
@@ -459,7 +462,13 @@ test("a_board_call_claude_cancels_ends_unanswered", async () => {
   // A cancel of another id (or the same id as a string) leaves it waiting; the notifications themselves are answered.
   output(state, run, [cancelled("n1", 4), cancelled("n2", "3")]);
   assert.equal(reload(state, task.id).agent_wait?.call_id, control_call_id(run.id, "w1"));
-  assert.deepEqual((await answered(state, run, 2)).map((r) => [r.request_id, r.response.mcp_response.result]), [["n1", {}], ["n2", {}]]);
+  assert.deepEqual(
+    (await answered(state, run, 2)).map((r) => [r.request_id, r.response.mcp_response.result]),
+    [
+      ["n1", {}],
+      ["n2", {}],
+    ],
+  );
   output(state, run, [cancelled("n3", 3)]);
   assert.equal(reload(state, task.id).agent_wait, null);
   await answered(state, run, 3);
@@ -485,7 +494,15 @@ test("an_approval_claude_cancels_can_no_longer_be_given", async () => {
     use_worktrees: false,
   });
   db.run(state.db(), "UPDATE tasks SET project_id=?1, number=1 WHERE id=?2", project_id, task.id);
-  const doomed = db.insert_task(state.db(), { profile_id: task.profile_id, project_id, kind: "task", title: "Doomed", description: "", status: "backlog", use_worktree: false });
+  const doomed = db.insert_task(state.db(), {
+    profile_id: task.profile_id,
+    project_id,
+    kind: "task",
+    title: "Doomed",
+    description: "",
+    status: "backlog",
+    use_worktree: false,
+  });
   output(state, run, [tool_call("d1", 5, "delete_task", { task_id: doomed.id, reason: "A duplicate" })]);
   for (let i = 0; i < 200 && request_of(state, run, "d1")?.status !== "pending"; i++) await sleep(5);
   assert.equal(request_of(state, run, "d1")?.status, "pending");
@@ -495,7 +512,10 @@ test("an_approval_claude_cancels_can_no_longer_be_given", async () => {
   for (let i = 0; i < 200 && call_status(state, run, "d1") !== "done"; i++) await sleep(5);
   assert.notEqual(db.get_task(state.db(), doomed.id), null);
   // Only the notification was answered.
-  assert.deepEqual((await answered(state, run, 1)).map((r) => r.request_id), ["n1"]);
+  assert.deepEqual(
+    (await answered(state, run, 1)).map((r) => r.request_id),
+    ["n1"],
+  );
   await quiet(state, run, 1);
 });
 
@@ -505,18 +525,25 @@ test("claude_codes_answer_to_the_initialize_isnt_taken_for_another", async () =>
   assert.equal(testing.messages(state.db(), task.id).length, 0);
   // Refused, the run goes on without the board's tools, and the thread says so.
   output(state, run, [{ type: "control_response", response: { subtype: "error", request_id: `huntaway-init-${run.id}`, error: "unknown subtype" } }]);
-  const said = testing.messages(state.db(), task.id).filter((m) => m.kind === "event").map((m) => m.data.text);
+  const said = testing
+    .messages(state.db(), task.id)
+    .filter((m) => m.kind === "event")
+    .map((m) => m.data.text);
   assert.equal(said.length, 1);
   assert.match(said[0], /didn't take the board's tools \(unknown subtype\)/);
 });
 
 test("the_initialize_registers_the_board_server_with_its_handshake", () => {
   const line = JSON.parse(initialize_line("run1", false));
-  assert.deepEqual([line.type, line.request_id, line.request.subtype, line.request.sdkMcpServers], ["control_request", "huntaway-init-run1", "initialize", ["huntaway"]]);
+  assert.deepEqual(
+    [line.type, line.request_id, line.request.subtype, line.request.sdkMcpServers],
+    ["control_request", "huntaway-init-run1", "initialize", ["huntaway"]],
+  );
   assert.deepEqual(line.request.sdkMcpServerConfigs.huntaway, { timeout: 86_400_000, disableAutoBackground: true });
   const manifest = line.request.sdkMcpServerManifests.huntaway;
   assert.equal(manifest.initializeResult.protocolVersion, MCP_PROTOCOL);
-  const names = (review: boolean) => JSON.parse(initialize_line("r", review)).request.sdkMcpServerManifests.huntaway.toolsListResult.tools.map((t: any) => t.name);
+  const names = (review: boolean) =>
+    JSON.parse(initialize_line("r", review)).request.sdkMcpServerManifests.huntaway.toolsListResult.tools.map((t: any) => t.name);
   assert.ok(names(false).includes("create_task") && !names(false).includes("submit_review"));
   assert.ok(names(true).includes("submit_review") && !names(true).includes("create_task"));
 });

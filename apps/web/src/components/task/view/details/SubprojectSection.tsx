@@ -27,8 +27,8 @@ export function SubprojectSection({ task }: { task: Task }) {
           {subproject.title}
         </button>
         <div className="mt-1.5 text-[12px] text-muted">
-          Branches from {subproject.branch ? <span className="font-mono text-[11.5px]">{subproject.branch}</span> : "the subproject's branch"} and merges back into
-          it.
+          Branches from {subproject.branch ? <span className="font-mono text-[11.5px]">{subproject.branch}</span> : "the subproject's branch"} and merges back
+          into it.
         </div>
       </Section>
     );

@@ -20,7 +20,10 @@ export function DependencyBadge({ task, project, compact }: { task: Task; projec
   if (dependencyQueued(task)) {
     const keys = unmet.map((t) => keyOf(t, project)).join(", ");
     return (
-      <span className={clsx(CARD_BADGE, "text-muted")} title={`Queued: its agent starts once ${keys || "the tasks it depends on"} ${unmet.length === 1 ? "is" : "are"} merged`}>
+      <span
+        className={clsx(CARD_BADGE, "text-muted")}
+        title={`Queued: its agent starts once ${keys || "the tasks it depends on"} ${unmet.length === 1 ? "is" : "are"} merged`}
+      >
         <Clock size={11} /> {compact ? <Wide>queued</Wide> : "queued"}
       </span>
     );
@@ -28,7 +31,11 @@ export function DependencyBadge({ task, project, compact }: { task: Task; projec
   if (!unmet.length || task.status === "done") return null;
   // "138", or "IA-138" with room; "2", or "2 deps".
   const label = !compact ? (
-    unmet.length === 1 ? keyOf(unmet[0], project) : `${unmet.length} deps`
+    unmet.length === 1 ? (
+      keyOf(unmet[0], project)
+    ) : (
+      `${unmet.length} deps`
+    )
   ) : unmet.length === 1 ? (
     <span>
       <Wide>{project?.key ?? "T"}-</Wide>

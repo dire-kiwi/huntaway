@@ -129,7 +129,10 @@ function Limits({ turns, compactions }: { turns: CTurn[]; compactions: CCompacti
                 Tasks
               </th>
               {costs && (
-                <th className="px-3 py-2 text-right font-normal" title="What the turns that started from a bigger context cost: the ones a compaction would have made cheaper">
+                <th
+                  className="px-3 py-2 text-right font-normal"
+                  title="What the turns that started from a bigger context cost: the ones a compaction would have made cheaper"
+                >
                   Cost of turns started past it
                 </th>
               )}
@@ -230,7 +233,10 @@ function Compactions({ data, compactions }: { data: ContextData; compactions: CC
             </tbody>
           </table>
           {!all && shown.length > list.length && (
-            <button className="w-full border-t border-line bg-panel/60 px-3 py-2 text-center text-[12px] text-muted hover:bg-raised hover:text-fg" onClick={() => setAll(true)}>
+            <button
+              className="w-full border-t border-line bg-panel/60 px-3 py-2 text-center text-[12px] text-muted hover:bg-raised hover:text-fg"
+              onClick={() => setAll(true)}
+            >
               Show all {shown.length}
             </button>
           )}
@@ -279,7 +285,10 @@ function Tasks({ data, turns, compactions }: { data: ContextData; turns: CTurn[]
           </tbody>
         </table>
         {!all && rows.length > list.length && (
-          <button className="w-full border-t border-line bg-panel/60 px-3 py-2 text-center text-[12px] text-muted hover:bg-raised hover:text-fg" onClick={() => setAll(true)}>
+          <button
+            className="w-full border-t border-line bg-panel/60 px-3 py-2 text-center text-[12px] text-muted hover:bg-raised hover:text-fg"
+            onClick={() => setAll(true)}
+          >
             Show all {rows.length}
           </button>
         )}

@@ -5,13 +5,13 @@ shallow clone of [pingdotgg/t3code](https://github.com/pingdotgg/t3code) at comm
 (2026-10-30, release v0.1.5): its `docs/` and, where the docs lag, its source. The detail files cite the
 file each fact came from and mark what was read from code rather than docs.
 
-| Area | Detail |
-|---|---|
-| Agents, providers, permissions, orchestration, MCP tools, scheduling, checkpoints | [t3code-agents.md](t3code-agents.md) |
-| Threads, sidebar, composer, how output renders, shortcuts, themes, settings | [t3code-ui.md](t3code-ui.md) |
-| Worktrees, git actions, diffs, PR review, code hosts, terminal, browser, files, secrets | [t3code-source-control.md](t3code-source-control.md) |
-| Install, `t3` CLI, remote access, pairing, T3 Connect, mobile and desktop apps, telemetry | [t3code-remote.md](t3code-remote.md) |
-| Stack, layout, data model, transport, restarts, API surface, server settings, undocumented features | [t3code-architecture.md](t3code-architecture.md) |
+| Area                                                                                                | Detail                                               |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Agents, providers, permissions, orchestration, MCP tools, scheduling, checkpoints                   | [t3code-agents.md](t3code-agents.md)                 |
+| Threads, sidebar, composer, how output renders, shortcuts, themes, settings                         | [t3code-ui.md](t3code-ui.md)                         |
+| Worktrees, git actions, diffs, PR review, code hosts, terminal, browser, files, secrets             | [t3code-source-control.md](t3code-source-control.md) |
+| Install, `t3` CLI, remote access, pairing, T3 Connect, mobile and desktop apps, telemetry           | [t3code-remote.md](t3code-remote.md)                 |
+| Stack, layout, data model, transport, restarts, API surface, server settings, undocumented features | [t3code-architecture.md](t3code-architecture.md)     |
 
 ## What it is
 
@@ -19,10 +19,10 @@ file each fact came from and mark what was read from code rather than docs.
   Electron desktop app and iOS/Android apps that drive the coding agents already installed and logged in on
   your machines. "T3 Code uses those harnesses. It is not a harness." Free and MIT-licensed, by T3 Tools
   (Theo). It uses your own subscriptions and has no local-model support.
-- **Early**: version 0.1.5, labelled *Beta*, "very very early, expect bugs"; contributions mostly not
+- **Early**: version 0.1.5, labelled _Beta_, "very very early, expect bugs"; contributions mostly not
   accepted. Very high change volume (PR numbers above 27,000), nightly builds every 30 minutes, stable
   releases promoted from nightlies.
-- **Shape**: an *environment* is one T3 server (Node, Effect 4, SQLite) on one machine that owns the
+- **Shape**: an _environment_ is one T3 server (Node, Effect 4, SQLite) on one machine that owns the
   providers, agents, files, terminals and browser tabs. Clients connect to any number of environments at
   once. The core is event-sourced: commands, events, read models and follow-up effects commit in one SQLite
   transaction, and clients talk to it over Effect RPC on one WebSocket (about 200 methods, each checked
@@ -48,10 +48,10 @@ file each fact came from and mark what was read from code rather than docs.
 - **Models**: a picker per thread with favourites, effort, context window (200k/1M), thinking, fast mode;
   a model manifest fetched between releases says which CLI version unlocks which model; custom models;
   a **fallback model** when the default provider runs out of usage.
-- **Four permission modes** (*Supervised*, *Auto-accept edits*, *Auto*, *Full access*), mapped to each
+- **Four permission modes** (_Supervised_, _Auto-accept edits_, _Auto_, _Full access_), mapped to each
   provider's own mechanism; **new threads default to Full access**. Approvals inline (approve, decline,
   always this session); with Claude, typing a reply declines and sends feedback.
-- **Plans and questions**: proposed-plan cards with *Refine*, *Implement* and *Implement in a new thread*;
+- **Plans and questions**: proposed-plan cards with _Refine_, _Implement_ and _Implement in a new thread_;
   structured question cards (options, multi-select, attachments); `/goal` keeps an agent going across turns.
 - **Turn control**: steer or queue (server-side queue, editable and reorderable), interrupt, **force stop**,
   **Edit from here** (rewind the conversation, optionally the files too), compaction (by hand, by threshold,
@@ -61,7 +61,7 @@ file each fact came from and mark what was read from code rather than docs.
   server.
 - **Usage**: a Usage page that reads every provider's local history (tokens, cache savings, API-equivalent
   cost, custom prices) and pools subscription limits across accounts and machines, with reset credits,
-  *Resume at reset* for limited threads, and mobile widgets.
+  _Resume at reset_ for limited threads, and mobile widgets.
 
 ## Orchestration and agent tools
 
@@ -84,8 +84,8 @@ file each fact came from and mark what was read from code rather than docs.
 
 ## Threads and the UI
 
-- **Sidebar sections** *Pinned / Active / Working / Snoozed / Settled*, with status labels (*Approval*,
-  *Input*, *Working*, *Failed*, *Limited*, *Plan Ready*, *Done* while unseen), server-synced unread state,
+- **Sidebar sections** _Pinned / Active / Working / Snoozed / Settled_, with status labels (_Approval_,
+  _Input_, _Working_, _Failed_, _Limited_, _Plan Ready_, _Done_ while unseen), server-synced unread state,
   search including message text, multi-select bulk actions, undo, snooze presets, and **auto-settle**
   (after 3 inactive days or when the thread's PR merges).
 - **Composer**: a Markdown rich-text editor; inline **context chips** for files (`@`), threads, machines,
@@ -93,10 +93,10 @@ file each fact came from and mark what was read from code rather than docs.
   quoted assistant text; up to 100 attachments; prompt recall and a prompt stash; prompt links that open a
   pre-filled draft; voice input on iPhone.
 - **Output**: virtualised timeline, grouped tool calls with live command output, per-turn changed-file
-  cards, syntax-highlighted code with *Run in terminal*, Mermaid, maths, a timeline minimap, find in thread
+  cards, syntax-highlighted code with _Run in terminal_, Mermaid, maths, a timeline minimap, find in thread
   (server-side), **visual replies** (agents publish sandboxed HTML pages) and MCP Apps (Codex).
 - **Panels** beside the thread: browser, terminal, files (view and edit), diff, PR, device; a thread
-  details card (environment, scripts, branch and PR, git actions, running dev servers with *Stop*,
+  details card (environment, scripts, branch and PR, git actions, running dev servers with _Stop_,
   automations, lineage, usage).
 - **About 75 configurable shortcuts** (`keybindings.json` with `when` conditions), a command palette,
   F6 focus cycling, light and dark themes with a theme editor and VS Code theme import, browser and
@@ -111,28 +111,28 @@ file each fact came from and mark what was read from code rather than docs.
   first message; cleanup policies (inactive days, settled, merged) keep branches.
 - **Per-turn checkpoints** as hidden git refs: diffs of each turn's own changes, and file rewind for
   worktree threads.
-- **Git actions** from the thread: *Commit*, *Commit & push*, *Commit, push & PR* with model-written
+- **Git actions** from the thread: _Commit_, _Commit & push_, _Commit, push & PR_ with model-written
   messages that follow the repository's style and PR templates. No local merge, stash or staging.
 - **Diff pane**: per turn, branch vs base, uncommitted or per commit; split or stacked, file tree, find;
   line comments become chips sent to the agent.
 - **Pull requests page and review UI** across seven code hosts (GitHub and GitHub Enterprise, GitLab,
   Forgejo/Gitea, Bitbucket, Azure DevOps, GitCafe; Jujutsu detected but not implemented): line comments,
-  verdicts, viewed-file marks, merge methods, auto-merge, stacks, labels, reviewers. *Fix in a thread* and
-  *Resolve conflicts* hand a PR to an agent. **Review guides** (beta): a model writes a guided tour of a PR.
+  verdicts, viewed-file marks, merge methods, auto-merge, stacks, labels, reviewers. _Fix in a thread_ and
+  _Resolve conflicts_ hand a PR to an agent. **Review guides** (beta): a model writes a guided tour of a PR.
 - **PR watch**: an agent can watch its PR and is woken on failed checks, new comments or conflicts; a
   merged PR settles the thread.
 
 ## Workspace tools
 
 - **Terminal**: server-owned PTYs per thread, split panes, 5,000 lines of history kept across restarts,
-  rendered with Ghostty's VT core (WebAssembly); *Add to chat* sends an excerpt to the agent.
+  rendered with Ghostty's VT core (WebAssembly); _Add to chat_ sends an excerpt to the agent.
 - **Built-in browser**: tabs, device viewports, profiles with cookies imported from your browser, element
   annotation and screen recording; agents drive it with Playwright-like tools; a headless Chromium on the
   server streams it to remote clients; dev servers are discovered automatically.
 - **Devices**: live, interactive iOS Simulator and Android Emulator screens that agents can drive too
   (local, over SSH, or Expo's cloud).
 - **Files**: tree, viewer for code, Markdown, PDF, Office, notebooks and media, in-app editing, fuzzy file
-  picker and content search, *Open in* 20+ editors (remote-aware).
+  picker and content search, _Open in_ 20+ editors (remote-aware).
 - **SnapShots** (desktop): a global shortcut captures any app window, with its accessibility text, into the
   draft.
 

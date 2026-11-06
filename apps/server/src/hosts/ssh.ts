@@ -187,13 +187,26 @@ export async function public_key(s: AppState): Promise<string> {
 export function ssh_args(s: AppState, t: Target, more: string[]): string[] {
   const dir = ssh_dir(s);
   return [
-    "-i", join(dir, "id_ed25519"),
-    "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-    "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+    "-i",
+    join(dir, "id_ed25519"),
+    "-o",
+    "IdentitiesOnly=yes",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=10",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
     // Trust on first use; later changes of the host key are refused.
-    "-o", `UserKnownHostsFile=${path_str(join(dir, "known_hosts"))}`,
-    "-o", "StrictHostKeyChecking=accept-new",
-    "-p", String(t.ssh_port), t.target,
+    "-o",
+    `UserKnownHostsFile=${path_str(join(dir, "known_hosts"))}`,
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-p",
+    String(t.ssh_port),
+    t.target,
     ...more,
   ];
 }
@@ -215,7 +228,10 @@ function ssh_spawn(args: string[], stdout: "pipe" | "ignore"): { child: ChildPro
     child.once("error", (e) => resolve(`couldn't start: ${err_str(e)}`));
     child.once("exit", (code, signal) => resolve(exit_status(code, signal)));
   });
-  background("an ssh connection", exited.then(() => alive.destroy()));
+  background(
+    "an ssh connection",
+    exited.then(() => alive.destroy()),
+  );
   const stop = () => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     alive.destroy();
@@ -242,7 +258,10 @@ async function run_ssh(args: string[], on_stop: (stop: () => void) => void): Pro
 export async function ensure(s: AppState, t: Target, on_stop: (stop: () => void) => void = () => {}): Promise<any> {
   await public_key(s);
   const out = await run_ssh(ssh_args(s, t, ["ensure"]), on_stop);
-  const line = out.stdout.split("\n").reverse().find((l) => l.trimStart().startsWith("{"));
+  const line = out.stdout
+    .split("\n")
+    .reverse()
+    .find((l) => l.trimStart().startsWith("{"));
   if (out.success && line !== undefined) return JSON.parse(line);
   const err = out.stderr.trim();
   if (err.includes("Permission denied")) throw new Error(`${t.target} refused the hub's key; add the authorized_keys line shown in Settings → Hosts`);
@@ -258,28 +277,37 @@ export function run(s: AppState, link: Link): () => void {
   }
   let stopped = false;
   let abort: (() => void) | null = null;
-  background("keeping an ssh host connected", (async () => {
-    let backoff = 1;
-    while (!stopped) {
-      try {
-        await connect_once(s, link, t, (a) => (abort = a), () => stopped);
-        backoff = 1;
-      } catch (e) {
-        if (!stopped) console.error(`ssh host ${link.name}: ${err_str(e)}`);
+  background(
+    "keeping an ssh host connected",
+    (async () => {
+      let backoff = 1;
+      while (!stopped) {
+        try {
+          await connect_once(
+            s,
+            link,
+            t,
+            (a) => (abort = a),
+            () => stopped,
+          );
+          backoff = 1;
+        } catch (e) {
+          if (!stopped) console.error(`ssh host ${link.name}: ${err_str(e)}`);
+        }
+        abort = null;
+        if (stopped) break;
+        await new Promise<void>((r) => {
+          const timer = setTimeout(r, backoff * 1000);
+          abort = () => {
+            clearTimeout(timer);
+            r();
+          };
+        });
+        abort = null;
+        backoff = Math.min(backoff * 2, 30);
       }
-      abort = null;
-      if (stopped) break;
-      await new Promise<void>((r) => {
-        const timer = setTimeout(r, backoff * 1000);
-        abort = () => {
-          clearTimeout(timer);
-          r();
-        };
-      });
-      abort = null;
-      backoff = Math.min(backoff * 2, 30);
-    }
-  })());
+    })(),
+  );
   return () => {
     stopped = true;
     abort?.();
@@ -324,7 +352,10 @@ async function connect_once(s: AppState, link: Link, t: Target, on_abort: (abort
   const tunnel = ssh_spawn(ssh_args(s, t, ["-N", "-o", "ExitOnForwardFailure=yes", "-L", `127.0.0.1:${local}:127.0.0.1:${port}`]), "ignore");
   tunnel.child.stderr!.resume();
   const tunnel_state: { status: string | null } = { status: null };
-  background("an ssh tunnel", tunnel.exited.then((st) => (tunnel_state.status = st)));
+  background(
+    "an ssh tunnel",
+    tunnel.exited.then((st) => (tunnel_state.status = st)),
+  );
   const outbound: { abort: (() => void) | null } = { abort: null };
   on_abort(() => {
     tunnel.stop();

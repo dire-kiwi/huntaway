@@ -277,7 +277,9 @@ function wait_for_code(listener: Server, state: string): Promise<string> {
 export function parse_args(args: string[]): { client_secret: string | null; credentials_dir: string | null; port: number } {
   const out = { client_secret: null as string | null, credentials_dir: null as string | null, port: CONSENT_PORT };
   for (let i = 0; i < args.length; i++) {
-    let [k, v] = args[i].includes("=") ? [args[i].slice(0, args[i].indexOf("=")), args[i].slice(args[i].indexOf("=") + 1)] : [args[i], undefined as string | undefined];
+    let [k, v] = args[i].includes("=")
+      ? [args[i].slice(0, args[i].indexOf("=")), args[i].slice(args[i].indexOf("=") + 1)]
+      : [args[i], undefined as string | undefined];
     const value = () => {
       v ??= args[++i];
       if (v === undefined) throw new Error(`${k} needs a value`);
@@ -320,7 +322,9 @@ export async function run(args: string[]): Promise<void> {
         `\nThat's a Web application client: Google sends the browser back only to its registered redirect URIs, so add ${redirect} to them (or use a Desktop app client).`,
       );
     }
-    console.log(`\n1. Forward this port from the machine your browser is on, if you haven't (in another terminal there):\n\n     ssh -N -L ${port}:127.0.0.1:${port} ${host}\n`);
+    console.log(
+      `\n1. Forward this port from the machine your browser is on, if you haven't (in another terminal there):\n\n     ssh -N -L ${port}:127.0.0.1:${port} ${host}\n`,
+    );
     console.log(`2. Open this in that browser, sign in and allow access:\n\n     ${url}\n`);
     console.log(`Waiting for Google to send the browser back to ${redirect} (up to ${WAIT / 60_000} minutes)…`);
   });

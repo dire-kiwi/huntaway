@@ -77,7 +77,22 @@ test("normalizes_what_to_clone", () => {
   assert.equal(normalize_url("git@github.com:o/r.git"), "git@github.com:o/r.git");
   assert.equal(normalize_url("ssh://git@host/o/r"), "ssh://git@host/o/r");
   assert.equal(normalize_url("/srv/repo"), "/srv/repo");
-  for (const bad of ["", "  ", "--upload-pack=x", "-c", "ext::sh -c id", "ext::sh%20-c%20id", "fd::3", "ftp://x/y", "a/b/c", "../x", "owner", "https://x y", "a/b\nc", "./rel/path"]) {
+  for (const bad of [
+    "",
+    "  ",
+    "--upload-pack=x",
+    "-c",
+    "ext::sh -c id",
+    "ext::sh%20-c%20id",
+    "fd::3",
+    "ftp://x/y",
+    "a/b/c",
+    "../x",
+    "owner",
+    "https://x y",
+    "a/b\nc",
+    "./rel/path",
+  ]) {
     assert.throws(() => normalize_url(bad), JSON.stringify(bad));
   }
   assert.equal(check_ref(null), null);
@@ -113,9 +128,18 @@ test("finds_the_skills_in_a_repository", () => {
     ],
   );
   assert.equal(found[0].content, skill_md("alpha", "A"));
-  assert.ok(notes.some((n) => n.startsWith("skills/bad:")), String(notes));
-  assert.ok(notes.some((n) => n.startsWith("skills/Upper:")), String(notes));
-  assert.ok(notes.some((n) => n.startsWith(".claude/skills/alpha:") && n.includes("another skill is named alpha")), String(notes));
+  assert.ok(
+    notes.some((n) => n.startsWith("skills/bad:")),
+    String(notes),
+  );
+  assert.ok(
+    notes.some((n) => n.startsWith("skills/Upper:")),
+    String(notes),
+  );
+  assert.ok(
+    notes.some((n) => n.startsWith(".claude/skills/alpha:") && n.includes("another skill is named alpha")),
+    String(notes),
+  );
   assert.equal(notes.length, 3);
 
   // A skill at the root owns the whole repository.
@@ -132,12 +156,16 @@ test("finds_the_skills_in_a_repository", () => {
   write(join(linked, "elsewhere/SKILL.md"), skill_md("linked", "x"));
   symlinkSync(join(linked, "elsewhere/SKILL.md"), join(linked, "s/SKILL.md"));
   symlinkSync(join(linked, "elsewhere"), join(linked, "dir-link"));
-  assert.deepEqual(discover(linked)[0].map((f) => f.path), ["elsewhere"]);
+  assert.deepEqual(
+    discover(linked)[0].map((f) => f.path),
+    ["elsewhere"],
+  );
 });
 
 test("copies_a_skill_folder_and_keeps_to_it", async () => {
   const root = testing.temp_dir();
-  const from = join(root, "from"), to = join(root, "to");
+  const from = join(root, "from"),
+    to = join(root, "to");
   write(join(from, "SKILL.md"), "skill");
   write(join(from, "scripts/run.sh"), "#!/bin/sh\n");
   write(join(from, ".git/config"), "secret");
@@ -160,7 +188,8 @@ test("copies_a_skill_folder_and_keeps_to_it", async () => {
   assert.equal(readFileSync(join(to, "SKILL.md"), "utf8"), "skill 2");
 
   // A change that's only to a script's permissions reaches the copy, both ways.
-  const script = join(from, "scripts/run.sh"), copy = join(to, "scripts/run.sh");
+  const script = join(from, "scripts/run.sh"),
+    copy = join(to, "scripts/run.sh");
   const mode = (p: string) => statSync(p).mode & 0o777;
   chmodSync(script, 0o644);
   copy_skill(from, to);
@@ -179,7 +208,8 @@ test("adds_updates_and_removes_a_skill_source", async () => {
 
   // Added, its skill is off everywhere.
   let v = await add(state, url);
-  const source_id: string = v.source.id, skill_id: string = v.skills[0].id;
+  const source_id: string = v.source.id,
+    skill_id: string = v.skills[0].id;
   assert.equal(v.source.name, "repo");
   assert.equal(v.skills[0].name, "ste-writer");
   assert.equal(v.skills[0].source_id, source_id);
@@ -197,7 +227,15 @@ test("adds_updates_and_removes_a_skill_source", async () => {
   const c = state.db();
   const profile = db.insert_profile(c, "p", [], null);
   const project = db.insert_project(c, {
-    id: "pr", profile_id: profile.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false,
+    id: "pr",
+    profile_id: profile.id,
+    name: "x",
+    key: "X",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
   });
   const skills_dir = join(state.data_dir, "projects/pr/agent/.claude/skills/ste-writer");
   assert.equal(for_run(state, "pr", null).skills_dir, null);
@@ -218,9 +256,18 @@ test("adds_updates_and_removes_a_skill_source", async () => {
 
   // A source's skill is changed in its repository, not by itself.
   const edit = { content: skill_md("ste-writer", "mine"), enabled: null };
-  assert.throws(() => update_skill_in(state.db(), null, skill_id, edit), (e: any) => e.status === 400);
-  assert.throws(() => delete_in(state.db(), "agent_skills", null, skill_id), (e: any) => e.status === 400);
-  assert.throws(() => create_skill_in(state.db(), null, { content: skill_md("ste-writer", "x"), enabled: null }), (e: any) => e.status === 409);
+  assert.throws(
+    () => update_skill_in(state.db(), null, skill_id, edit),
+    (e: any) => e.status === 400,
+  );
+  assert.throws(
+    () => delete_in(state.db(), "agent_skills", null, skill_id),
+    (e: any) => e.status === 400,
+  );
+  assert.throws(
+    () => create_skill_in(state.db(), null, { content: skill_md("ste-writer", "x"), enabled: null }),
+    (e: any) => e.status === 409,
+  );
 
   // The repository changes: a changed script and skill, and a file less.
   write(join(repo, "scripts/lint.py"), "print('lint 2')\n");
@@ -272,7 +319,10 @@ test("adds_updates_and_removes_a_skill_source", async () => {
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-q", "-m", "restructure"]);
   v = await update();
-  assert.deepEqual(v.skills.map((s: any) => s.name), ["fresh"]);
+  assert.deepEqual(
+    v.skills.map((s: any) => s.name),
+    ["fresh"],
+  );
   assert.equal(v.source.error, null);
   assert.deepEqual(switches(state.db(), "profile", profile.id), {});
   assert.equal(for_run(state, "pr", null).skills_dir, null);

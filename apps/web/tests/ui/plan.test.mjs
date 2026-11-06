@@ -188,7 +188,15 @@ test("a checkbox question with every choice unticked can be sent, as none of the
     const at = new Date().toISOString();
     const content = `<h1>Extras</h1><ia-question name="extras" type="checkbox" title="Which extras?"><option value="a" selected>A</option><option value="b">B</option></ia-question>`;
     await page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
-      route.fulfill({ json: { task_type: "plan", file: "plan.html", versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }], version: 1, content } }),
+      route.fulfill({
+        json: {
+          task_type: "plan",
+          file: "plan.html",
+          versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
+          version: 1,
+          content,
+        },
+      }),
     );
     const posted = [];
     await page.route(new RegExp(`/tasks/${plan.id}/messages$`), (route) => {
@@ -292,7 +300,15 @@ test("a version written over while the source view shows doesn't offer to send o
     // Version 1 is open (the agent's turn is writing it), so its content changes without a new version.
     let content = `<h1>Plan</h1><ia-question name="first" type="text" title="First question?"></ia-question>`;
     await page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
-      route.fulfill({ json: { task_type: "plan", file: "plan.html", versions: [{ version: 1, open: true, created_at: at, updated_at: at, size: content.length }], version: 1, content } }),
+      route.fulfill({
+        json: {
+          task_type: "plan",
+          file: "plan.html",
+          versions: [{ version: 1, open: true, created_at: at, updated_at: at, size: content.length }],
+          version: 1,
+          content,
+        },
+      }),
     );
     const posted = [];
     await page.route(new RegExp(`/tasks/${plan.id}/messages$`), (route) => {
@@ -329,7 +345,15 @@ test("a plan form's own reset button puts its fields back for Send answers and f
     const at = new Date().toISOString();
     const content = `<h1>Owner</h1><form><label>Owner <input name="owner" value="Alice"></label><button type="reset">Reset form</button></form>`;
     await page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
-      route.fulfill({ json: { task_type: "plan", file: "plan.html", versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }], version: 1, content } }),
+      route.fulfill({
+        json: {
+          task_type: "plan",
+          file: "plan.html",
+          versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
+          version: 1,
+          content,
+        },
+      }),
     );
     const posted = [];
     await page.route(new RegExp(`/tasks/${plan.id}/messages$`), (route) => {
@@ -364,7 +388,15 @@ test("a plan form's reset that its own handler calls off keeps the answers", asy
     const at = new Date().toISOString();
     const content = `<h1>Owner</h1><form onreset="event.preventDefault()"><label>Owner <input name="owner" value="Alice"></label><button type="reset">Reset form</button></form>`;
     await page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
-      route.fulfill({ json: { task_type: "plan", file: "plan.html", versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }], version: 1, content } }),
+      route.fulfill({
+        json: {
+          task_type: "plan",
+          file: "plan.html",
+          versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
+          version: 1,
+          content,
+        },
+      }),
     );
     let frame = await openPlan(ui, plan);
     await frame.locator("input[name=owner]").fill("Bob");

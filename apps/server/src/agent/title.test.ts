@@ -174,7 +174,8 @@ test("a_message_sent_while_the_first_title_is_written_has_the_last_word", async 
     [true, "KEEP", "Fix the original issue"],
   ] as Array<[boolean, string, string]>) {
     const task = fresh();
-    const generating = gate(), refreshing = gate();
+    const generating = gate(),
+      refreshing = gate();
     TEST.replies.push(["Fix the original issue", generating.wait], [refreshed, refreshing.wait]);
     generate(s, task, null);
     s.add_message(task.id, "user", { text: "Instead, add an export button" });
@@ -223,7 +224,15 @@ test("a_message_sent_again_goes_once", () => {
   task.queued_user_text = "wrong browser ";
   let input = refresh_input(task, [[null, "wrong browser"]], null, 0);
   assert.equal(count(input, "wrong browser"), 1, input);
-  input = refresh_input(task, [[null, "wrong browser"], [null, "wrong browser"]], null, 0);
+  input = refresh_input(
+    task,
+    [
+      [null, "wrong browser"],
+      [null, "wrong browser"],
+    ],
+    null,
+    0,
+  );
   assert.equal(count(input, "wrong browser"), 1, input);
 
   // The same words answering a different question are a different message, whether the agent has taken them in yet or

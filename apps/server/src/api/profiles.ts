@@ -67,8 +67,18 @@ export async function create_profile(s: AppState, r: Req) {
   const summarizers = summarizers_value(c, given, true, []);
   const assistant_host = assistant.check_host(s, b.assistant_host);
   let p = db.insert_profile(c, name, ids, b.default_model);
-  const fields: Array<[string, any]> = [["github_account", github_account], ["clone_dir", clone_dir], ["asana_enabled", b.asana_enabled]];
-  fields.push(["limit_wait", b.limit_wait], ["limit_switch", b.limit_switch], ["reviewers", reviewers], ["summarizer", summarizer_mirror(summarizers)], ["summarizers", summarizers]);
+  const fields: Array<[string, any]> = [
+    ["github_account", github_account],
+    ["clone_dir", clone_dir],
+    ["asana_enabled", b.asana_enabled],
+  ];
+  fields.push(
+    ["limit_wait", b.limit_wait],
+    ["limit_switch", b.limit_switch],
+    ["reviewers", reviewers],
+    ["summarizer", summarizer_mirror(summarizers)],
+    ["summarizers", summarizers],
+  );
   fields.push(["merge_approval", b.merge_approval]);
   fields.push(["require_pr_approval", b.require_pr_approval]);
   fields.push(["assistant_host", assistant_host]);
@@ -127,7 +137,11 @@ export async function update_profile(s: AppState, r: Req) {
   // Either may name a config deleted since it was saved, as both are sent with every save.
   const saved: Reviewer[] = [...current.reviewers, ...current.summarizers];
   if (Object.hasOwn(b, "reviewers")) fields.push(["reviewers", reviewers_value(c, b.reviewers, true, saved)]);
-  const given = Object.hasOwn(b, "summarizers") ? b.summarizers : Object.hasOwn(b, "summarizer") ? legacy_summarizer(current.summarizers, b.summarizer) : undefined;
+  const given = Object.hasOwn(b, "summarizers")
+    ? b.summarizers
+    : Object.hasOwn(b, "summarizer")
+      ? legacy_summarizer(current.summarizers, b.summarizer)
+      : undefined;
   if (given !== undefined) {
     const value = summarizers_value(c, given, true, saved);
     fields.push(["summarizer", summarizer_mirror(value)]);
@@ -263,7 +277,8 @@ export function check_agent_access(own_name: string, v: any): string[] {
 
 /** Rust's `String` ordering (by bytes; by code points, which is the same). */
 export function byte_order(a: string, b: string): number {
-  const x = Buffer.from(a), y = Buffer.from(b);
+  const x = Buffer.from(a),
+    y = Buffer.from(b);
   return Buffer.compare(x, y);
 }
 
@@ -282,7 +297,14 @@ const MAX_SKILLS = 20;
 const MAX_PROMPT = 20_000;
 
 /** A Reviewer as serde writes it: `name` and `prompt` left out when they're None, and `skills` when it's empty. */
-function reviewer(claude_config_id: string | null, model: string | null, effort: string | null, name: string | null, skills: string[], prompt: string | null): Reviewer {
+function reviewer(
+  claude_config_id: string | null,
+  model: string | null,
+  effort: string | null,
+  name: string | null,
+  skills: string[],
+  prompt: string | null,
+): Reviewer {
   const r: Reviewer = { claude_config_id, model, effort };
   if (name !== null) r.name = name;
   if (skills.length) r.skills = skills;
@@ -290,7 +312,8 @@ function reviewer(claude_config_id: string | null, model: string | null, effort:
   return r;
 }
 
-const is_default = (r: Reviewer) => r.claude_config_id == null && r.model == null && r.effort == null && r.name == null && !r.skills?.length && r.prompt == null;
+const is_default = (r: Reviewer) =>
+  r.claude_config_id == null && r.model == null && r.effort == null && r.name == null && !r.skills?.length && r.prompt == null;
 
 /**
  * Reviewers (or summarizers, which keep their name, skills and prompt), with blank fields as None and each config
@@ -310,7 +333,10 @@ function check_reviewers(c: Conn, list: Reviewer[], saved: Reviewer[], summarize
     if (prompt !== null && char_count(prompt) > MAX_PROMPT) throw ApiError.bad(`a prompt can be at most ${MAX_PROMPT} characters`);
     const skills: string[] = [];
     for (const given of r.skills ?? []) {
-      const skill = given.trim().replace(/^[/$]+/, "").trim();
+      const skill = given
+        .trim()
+        .replace(/^[/$]+/, "")
+        .trim();
       if (!skill || skills.includes(skill)) continue;
       if (/\s/u.test(skill)) throw ApiError.bad(`${JSON.stringify(skill)} isn't a skill's name: skills are named without spaces`);
       skills.push(skill);
@@ -389,4 +415,3 @@ export function summarizer_mirror(value: any): any {
     return null;
   }
 }
-

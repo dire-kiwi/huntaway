@@ -28,7 +28,13 @@ describe("pairing links", () => {
   });
 
   test("other links aren't pairing links", () => {
-    for (const bad of ["", "https://work.tailnet.ts.net/?token=x", "huntaway://pair?url=ftp%3A%2F%2Fx&code=a", "huntaway://pair?url=https%3A%2F%2Fx", "huntaway://other?url=x&code=y"]) {
+    for (const bad of [
+      "",
+      "https://work.tailnet.ts.net/?token=x",
+      "huntaway://pair?url=ftp%3A%2F%2Fx&code=a",
+      "huntaway://pair?url=https%3A%2F%2Fx",
+      "huntaway://other?url=x&code=y",
+    ]) {
       expect(parsePairingLink(bad)).toBeNull();
     }
   });
@@ -46,8 +52,19 @@ describe("pair", () => {
     const { fetch, calls } = board();
     const { board: b, token } = await pair(link, "Pixel", { fetch });
     expect(token).toBe("device-token");
-    expect(b).toEqual({ id: "host-1", url: "https://work.tailnet.ts.net", name: "work-hub", deviceId: "dev-1", apiVersion: MIN_API, profile: null, pairedAt: paired.device.created_at });
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["GET https://work.tailnet.ts.net/api/health", "POST https://work.tailnet.ts.net/api/devices/pair"]);
+    expect(b).toEqual({
+      id: "host-1",
+      url: "https://work.tailnet.ts.net",
+      name: "work-hub",
+      deviceId: "dev-1",
+      apiVersion: MIN_API,
+      profile: null,
+      pairedAt: paired.device.created_at,
+    });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET https://work.tailnet.ts.net/api/health",
+      "POST https://work.tailnet.ts.net/api/devices/pair",
+    ]);
     expect(calls[1].body).toEqual({ code: "abc", name: "Pixel" });
   });
 
@@ -82,7 +99,9 @@ describe("pair", () => {
 describe("pairing a board again", () => {
   test("unpairs the previous device with its own token", async () => {
     const { fetch, calls } = fakeFetch((method, path, _b, headers) =>
-      method === "DELETE" && path === "/api/devices/old" && headers.Authorization === "Bearer old-token" ? { status: 200, body: { ok: true } } : { status: 401 },
+      method === "DELETE" && path === "/api/devices/old" && headers.Authorization === "Bearer old-token"
+        ? { status: 200, body: { ok: true } }
+        : { status: 401 },
     );
     expect(await unpairPrevious("https://b", { deviceId: "old", token: "old-token" }, { deviceId: "new" }, { fetch })).toBe(true);
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["DELETE https://b/api/devices/old"]);

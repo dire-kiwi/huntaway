@@ -8,7 +8,21 @@ import * as db from "../db.ts";
 import type { Shared } from "../state.ts";
 import * as testing from "../testing.ts";
 import { new_id, sleep } from "../util.ts";
-import { RUN_FORMAT, SERVE_ENV, boot_id, follow_inner, pid_reused, prune, remove_finished, resume_reaping, run_dir, start, stop_orphan, timing, type Launch } from "./runs.ts";
+import {
+  RUN_FORMAT,
+  SERVE_ENV,
+  boot_id,
+  follow_inner,
+  pid_reused,
+  prune,
+  remove_finished,
+  resume_reaping,
+  run_dir,
+  start,
+  stop_orphan,
+  timing,
+  type Launch,
+} from "./runs.ts";
 import * as mcp_http from "../mcp/http.ts";
 
 // As Rust's are under cfg(test).
@@ -17,7 +31,18 @@ timing.REAP_GRACE = 1_000;
 
 function new_task(state: Shared, status: string): string {
   const p = db.list_profiles(state.db())[0] ?? db.insert_profile(state.db(), "p", [], null);
-  const t = { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status, use_worktree: false, model: null, effort: null, claude_config_id: null };
+  const t = {
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status,
+    use_worktree: false,
+    model: null,
+    effort: null,
+    claude_config_id: null,
+  };
   return db.insert_task(state.db(), t).id;
 }
 
@@ -44,7 +69,10 @@ function said(text: string): string {
 }
 
 function thread(state: Shared, task_id: string): any[] {
-  return testing.messages(state.db(), task_id).filter((m) => m.kind === "claude").map((m) => m.data);
+  return testing
+    .messages(state.db(), task_id)
+    .filter((m) => m.kind === "claude")
+    .map((m) => m.data);
 }
 
 function image_result(m: any): boolean {
@@ -324,8 +352,19 @@ test("an_agents_run_doesnt_get_the_servers_own_settings", async () => {
   const before = Object.fromEntries(Object.keys(set).map((k) => [k, process.env[k]]));
   Object.assign(process.env, set);
   try {
-    const l = { run_id: run.id, cwd: dir, args: [], env: [["IA_FROM_LAUNCH", "1"]] as Array<[string, string]>, config_dir: null, prompt: "hi", input: false,
-      review: false, mcp_servers: {}, github_account: null, codex: null };
+    const l = {
+      run_id: run.id,
+      cwd: dir,
+      args: [],
+      env: [["IA_FROM_LAUNCH", "1"]] as Array<[string, string]>,
+      config_dir: null,
+      prompt: "hi",
+      input: false,
+      review: false,
+      mcp_servers: {},
+      github_account: null,
+      codex: null,
+    };
     await start(state, l);
   } finally {
     for (const [k, v] of Object.entries(before)) {
@@ -333,7 +372,12 @@ test("an_agents_run_doesnt_get_the_servers_own_settings", async () => {
       else process.env[k] = v;
     }
   }
-  const env = new Map(readFileSync(join(run_dir(state, run.id), "env.txt"), "utf8").split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  const env = new Map(
+    readFileSync(join(run_dir(state, run.id), "env.txt"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+  );
   for (const k of SERVE_ENV) assert.equal(env.get(k), undefined, `${k} reached the agent`);
   assert.equal(env.get("HA185_KEPT"), "yes");
   assert.equal(env.get("IA_CLAUDE_BIN"), "/bin/true");
@@ -352,8 +396,20 @@ test("a_run_that_calls_the_board_on_its_output_has_no_board_server_in_its_mcp_co
   process.env.IA_SHIM_BIN = shim;
   const started = async (more: Partial<Launch>) => {
     const run = db.insert_run(state.db(), task, "prompt");
-    const l: Launch = { run_id: run.id, cwd: dir, args: [], env: [], config_dir: null, prompt: "hi", input: true, review: false,
-      mcp_servers: { own: { type: "stdio", command: "own" } }, github_account: null, codex: null, ...more };
+    const l: Launch = {
+      run_id: run.id,
+      cwd: dir,
+      args: [],
+      env: [],
+      config_dir: null,
+      prompt: "hi",
+      input: true,
+      review: false,
+      mcp_servers: { own: { type: "stdio", command: "own" } },
+      github_account: null,
+      codex: null,
+      ...more,
+    };
     await start(state, l);
     const read = (f: string) => JSON.parse(readFileSync(join(run_dir(state, run.id), f), "utf8"));
     return { servers: Object.keys(read("mcp.json").mcpServers).sort(), format: read("run.json").format, in_process: read(mcp_http.SETTINGS_FILE).in_process };

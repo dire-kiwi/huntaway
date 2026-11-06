@@ -44,9 +44,20 @@ test("reads files, hunks and line numbers", () => {
   assert.equal(a.hunks[0].heading, " function f() {");
   assert.deepEqual(
     a.hunks[0].lines.map((l) => [l.kind, l.text, l.old, l.new]),
-    [[" ", "one", 1, 1], ["-", "two", 2, undefined], ["+", "TWO", undefined, 2], [" ", "three", 3, 3]],
+    [
+      [" ", "one", 1, 1],
+      ["-", "two", 2, undefined],
+      ["+", "TWO", undefined, 2],
+      [" ", "three", 3, 3],
+    ],
   );
-  assert.deepEqual(a.hunks[1].lines.map((l) => [l.kind, l.noEol]), [[" ", false], ["+", true]]);
+  assert.deepEqual(
+    a.hunks[1].lines.map((l) => [l.kind, l.noEol]),
+    [
+      [" ", false],
+      ["+", true],
+    ],
+  );
   assert.deepEqual([n.path, n.oldPath, n.newPath, n.hunks[0].oldCount, n.hunks[0].newCount], ["new file", null, "new file", 0, 1]);
   assert.deepEqual([r.path, r.oldPath, r.hunks.length], ["renamed", "old", 0]);
   assert.deepEqual([img.path, img.newPath, img.binary], ["img.png", null, true]);
@@ -58,17 +69,23 @@ test("reads quoted paths and conflicts", () => {
   assert.equal(unquote('"a/caf\\303\\251 \\"x\\"\\ty"'), 'a/café "x"\ty');
   const [q] = parseDiff('diff --git "a/caf\\303\\251" "b/caf\\303\\251"\n--- "a/caf\\303\\251"\n+++ "b/caf\\303\\251"\n@@ -1 +1 @@\n-a\n+b\n');
   assert.equal(q.path, "café");
-  const [c] = parseDiff("diff --cc both\nindex 1,2..3\n--- a/both\n+++ b/both\n@@@ -1,1 -1,1 +1,5 @@@\n++<<<<<<< ours\n +a\n++=======\n+ b\n++>>>>>>> theirs\n");
+  const [c] = parseDiff(
+    "diff --cc both\nindex 1,2..3\n--- a/both\n+++ b/both\n@@@ -1,1 -1,1 +1,5 @@@\n++<<<<<<< ours\n +a\n++=======\n+ b\n++>>>>>>> theirs\n",
+  );
   assert.equal(c.combined, true);
   assert.equal(c.path, "both");
   assert.equal(c.raw.length, 6);
-  assert.equal(linesPatch(c, () => true, false), null);
+  assert.equal(
+    linesPatch(c, () => true, false),
+    null,
+  );
 });
 
 test("lists changed files as a tree, folders that only hold a folder run together", () => {
   const f = (path, x = " ", y = "M") => ({ path, orig_path: null, x, y });
   const files = [f("src/components/b.tsx"), f("src/components/a.tsx"), f("README.md"), f("src/x.ts"), f("deep/er/still/z")];
-  const rows = (collapsed = new Set()) => fileRows(files, true, collapsed).map((r) => `${"  ".repeat(r.depth)}${r.name}${r.file ? "" : ` (${r.files.length})`}`);
+  const rows = (collapsed = new Set()) =>
+    fileRows(files, true, collapsed).map((r) => `${"  ".repeat(r.depth)}${r.name}${r.file ? "" : ` (${r.files.length})`}`);
   assert.deepEqual(rows(), ["deep/er/still (1)", "  z", "src (3)", "  components (2)", "    a.tsx", "    b.tsx", "  x.ts", "README.md"]);
   assert.deepEqual(rows(new Set(["src/components/"])), ["deep/er/still (1)", "  z", "src (3)", "  components (2)", "  x.ts", "README.md"]);
   assert.deepEqual(

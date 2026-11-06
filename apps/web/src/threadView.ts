@@ -25,7 +25,12 @@ function draws(task: Task, supports: boolean, settings: Settings, missing: boole
 }
 
 export function useDrawsItems(task: Task): boolean {
-  const supports = useStore((s) => hostSupports(s.hosts.find((h) => h.id === task.host_id), THREAD_VIEW_API));
+  const supports = useStore((s) =>
+    hostSupports(
+      s.hosts.find((h) => h.id === task.host_id),
+      THREAD_VIEW_API,
+    ),
+  );
   const settings = useStore((s) => s.hostSettings[task.host_id]);
   const missing = useItemThreads((s) => !!s.missing[task.id]);
   return draws(task, supports, settings, missing);
@@ -34,7 +39,15 @@ export function useDrawsItems(task: Task): boolean {
 /** useDrawsItems, as things are now (outside a component). */
 export function drawsItems(task: Task): boolean {
   const s = useStore.getState();
-  return draws(task, hostSupports(s.hosts.find((h) => h.id === task.host_id), THREAD_VIEW_API), s.hostSettings[task.host_id], !!useItemThreads.getState().missing[task.id]);
+  return draws(
+    task,
+    hostSupports(
+      s.hosts.find((h) => h.id === task.host_id),
+      THREAD_VIEW_API,
+    ),
+    s.hostSettings[task.host_id],
+    !!useItemThreads.getState().missing[task.id],
+  );
 }
 
 /** The task's thread from its items while `on`, kept loaded and followed while the component is mounted (if `load`). */
@@ -97,7 +110,9 @@ export function stopAgent(task: Task): Promise<unknown> {
 /** Changes the thread's permission mode (null: back to the one it inherits, which only the board's route does). */
 export function setMode(task: Task, mode: BoardMode | null): Promise<Task> {
   const m = mode === null ? undefined : modeOf(mode);
-  return drawsItems(task) && m ? command<Task>(task, { type: "set_options", permission_mode: m }) : api.updateTask(task.host_id, task.id, { permission_mode: mode });
+  return drawsItems(task) && m
+    ? command<Task>(task, { type: "set_options", permission_mode: m })
+    : api.updateTask(task.host_id, task.id, { permission_mode: mode });
 }
 
 /** Answers one of the thread's requests with a `respond` command. */

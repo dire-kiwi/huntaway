@@ -53,7 +53,9 @@ test("<ia-html> is a page of its own: its scripts work as in a page, its styles 
   await show(page, themedPlan(plan, css));
   const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
   assert.ok(frame, "the component's frame");
-  await frame.waitForFunction(() => document.getElementById("loaded")?.textContent && document.getElementById("ext-module")?.textContent, null, { timeout: 5000 });
+  await frame.waitForFunction(() => document.getElementById("loaded")?.textContent && document.getElementById("ext-module")?.textContent, null, {
+    timeout: 5000,
+  });
   const text = (id) => frame.evaluate((id) => document.getElementById(id).textContent, id);
   assert.equal(await text("json"), "2");
   // A var, a let and a function from one script, in the next; page events; scripts with a src; modules.
@@ -65,7 +67,10 @@ test("<ia-html> is a page of its own: its scripts work as in a page, its styles 
   assert.equal(await text("ext-module"), "ext module");
   // A script that throws doesn't stop the next.
   assert.equal(await text("after-throw"), "after throw");
-  assert.deepEqual(errors.filter((e) => !/optional widget failed/.test(e)), []);
+  assert.deepEqual(
+    errors.filter((e) => !/optional widget failed/.test(e)),
+    [],
+  );
   // An inline handler reaches a script's function.
   await page.frameLocator("ia-html iframe").locator("#pick").click();
   assert.equal(await text("mode"), "dark");
@@ -87,7 +92,12 @@ test("an <ia-html> frame fits its content offscreen, absolutely positioned conte
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
   await show(page, themedPlan(plan, css));
   const heights = () => page.evaluate(() => [...document.querySelectorAll("ia-html iframe")].map((f) => f.getBoundingClientRect().height).join());
-  const expect = (want) => page.waitForFunction((want) => [...document.querySelectorAll("ia-html iframe")].map((f) => f.getBoundingClientRect().height).join() === want, want, { timeout: 3000 }).catch(async () => assert.equal(await heights(), want));
+  const expect = (want) =>
+    page
+      .waitForFunction((want) => [...document.querySelectorAll("ia-html iframe")].map((f) => f.getBoundingClientRect().height).join() === want, want, {
+        timeout: 3000,
+      })
+      .catch(async () => assert.equal(await heights(), want));
   await expect("600,180");
   assert.equal(await page.evaluate(() => scrollY), 0);
   const w = page.frames().filter((f) => f.parentFrame() === page.mainFrame())[1];
@@ -102,14 +112,21 @@ test("a reloaded plan goes back to where it was read, with a tall <ia-html> abov
   const paragraphs = Array.from({ length: 80 }, (_, i) => `<p id="b${i}">Paragraph ${i}</p>`).join("\n");
   const plan = (v) => themedPlan(`<h1>Version ${v}</h1><ia-html><template><div style="height: 600px">tall</div></template></ia-html>\n${paragraphs}`, css);
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-  await show(page, `<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>
-<script>addEventListener("message", (e) => typeof e.data?.iaScroll === "number" && (window.lastScroll = e.data.iaScroll));</script>`);
+  await show(
+    page,
+    `<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>
+<script>addEventListener("message", (e) => typeof e.data?.iaScroll === "number" && (window.lastScroll = e.data.iaScroll));</script>`,
+  );
   const load = async (doc) => {
-    await page.evaluate((doc) => new Promise((done) => {
-      const f = document.querySelector("iframe");
-      f.onload = done;
-      f.srcdoc = doc;
-    }), doc);
+    await page.evaluate(
+      (doc) =>
+        new Promise((done) => {
+          const f = document.querySelector("iframe");
+          f.onload = done;
+          f.srcdoc = doc;
+        }),
+      doc,
+    );
     return page.frames().find((f) => f.parentFrame() === page.mainFrame());
   };
   let frame = await load(frameDoc(plan(1), 0, 0));
@@ -143,11 +160,15 @@ test("a reloaded plan goes back to its place even when its load takes longer tha
     const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const started = Date.now();
-    await page.evaluate((doc) => new Promise((done) => {
-      const f = document.querySelector("iframe");
-      f.onload = done;
-      f.srcdoc = doc;
-    }), doc);
+    await page.evaluate(
+      (doc) =>
+        new Promise((done) => {
+          const f = document.querySelector("iframe");
+          f.onload = done;
+          f.srcdoc = doc;
+        }),
+      doc,
+    );
     assert.ok(Date.now() - started > 3500, `loaded after ${Date.now() - started}ms`);
     const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
     await page.waitForTimeout(200);
@@ -163,13 +184,20 @@ async function planPage(plan, form) {
   const page = await browser.newPage({ viewport: { width: 900, height: 1400 } });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await show(page, `<iframe sandbox="allow-scripts allow-forms" style="width: 880px; height: 1380px; border: 0"></iframe>
-<script>window.forms = []; addEventListener("message", (e) => e.data?.iaForm && window.forms.push(e.data));</script>`);
-  await page.evaluate((doc) => new Promise((done) => {
-    const f = document.querySelector("iframe");
-    f.onload = done;
-    f.srcdoc = doc;
-  }), frameDoc(themedPlan(plan, css, form), 0, 0));
+  await show(
+    page,
+    `<iframe sandbox="allow-scripts allow-forms" style="width: 880px; height: 1380px; border: 0"></iframe>
+<script>window.forms = []; addEventListener("message", (e) => e.data?.iaForm && window.forms.push(e.data));</script>`,
+  );
+  await page.evaluate(
+    (doc) =>
+      new Promise((done) => {
+        const f = document.querySelector("iframe");
+        f.onload = done;
+        f.srcdoc = doc;
+      }),
+    frameDoc(themedPlan(plan, css, form), 0, 0),
+  );
   const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
   const last = () => page.evaluate(() => window.forms.at(-1));
   return { page, frame, last, errors, post: (data) => page.evaluate((data) => document.querySelector("iframe").contentWindow.postMessage(data, "*"), data) };
@@ -245,7 +273,10 @@ test("a plan's questions become form fields, and the frame reports each named fi
   await frame.locator("input[name=owner]").fill("someone");
   // The report of the fill comes by postMessage too, so wait for it rather than read the last one at once.
   await page.waitForFunction(() => window.forms.at(-1).iaForm.find((f) => f.name === "owner").touched);
-  assert.deepEqual((await last()).iaForm.filter((f) => f.touched).map((f) => f.name), ["notes", "owner"]);
+  assert.deepEqual(
+    (await last()).iaForm.filter((f) => f.touched).map((f) => f.name),
+    ["notes", "owner"],
+  );
   await post({ iaFormReset: true });
   await page.waitForFunction(() => window.forms.at(-1).iaFormUser === false);
   assert.deepEqual(summary((await last()).iaForm), summary(first.iaForm));

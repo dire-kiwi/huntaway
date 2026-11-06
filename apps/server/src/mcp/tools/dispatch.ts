@@ -45,7 +45,18 @@ const fail = (m: string) => new Error(m);
  * record what they're given, or pick up where they left off (`wait` and `permission_prompt`, by their call id). A call to
  * another tool that was cut short may have taken effect, so it isn't run again.
  */
-const RERUNNABLE = ["permission_prompt", "request_user_input", "submit_review", "wait", "list_projects", "list_tasks", "get_task", "get_project", "list_automations", "list_workflows"];
+const RERUNNABLE = [
+  "permission_prompt",
+  "request_user_input",
+  "submit_review",
+  "wait",
+  "list_projects",
+  "list_tasks",
+  "get_task",
+  "get_project",
+  "list_automations",
+  "list_workflows",
+];
 
 type CallResult = { ok: any } | { err: string };
 
@@ -66,7 +77,12 @@ async function handle_mcp_result(s: Shared, c: McpCall): Promise<CallResult> {
     task_id = db.get_run(s.db(), call.run_id)?.task_id ?? "";
   } catch {}
   const record: Record = { id: call.call_id, run_id: call.run_id, task_id, tool: call.tool, args: call.args };
-  return at_most_once(s, record, () => rerunnable(s, call), () => execute_mcp(s, call));
+  return at_most_once(
+    s,
+    record,
+    () => rerunnable(s, call),
+    () => execute_mcp(s, call),
+  );
 }
 
 /**
@@ -86,7 +102,13 @@ export async function handle_control(s: Shared, c: McpCall, respond: (r: CallRes
     task_id = db.get_run(s.db(), call.run_id)?.task_id ?? "";
   } catch {}
   const record: Record = { id: call.call_id, run_id: call.run_id, task_id, tool: call.tool, args: saved === undefined ? call.args : saved };
-  await at_most_once(s, record, () => rerunnable(s, call), () => execute_mcp(s, call), respond);
+  await at_most_once(
+    s,
+    record,
+    () => rerunnable(s, call),
+    () => execute_mcp(s, call),
+    respond,
+  );
 }
 
 /** How a call is recorded in `mcp_calls`. */
@@ -425,18 +447,23 @@ const THREAD_TOOLS = ["permission_prompt", "request_user_input", "submit_review"
 export async function handle_up_call(s: Shared, host_id: string, c: ToolCall): Promise<any> {
   const [id, run_id] = [`up:${host_id}:${c.call_id}`, `up:${host_id}`];
   const record: Record = { id, run_id, task_id: "", tool: c.tool, args: c.args ?? null };
-  const r = await at_most_once(s, record, () => RERUNNABLE.includes(c.tool), async () => {
-    if (THREAD_TOOLS.includes(c.tool)) throw fail(`${c.tool} only works on the host the agent runs on`);
-    const bad = mcp.check_args(c.tool, c.args ?? null);
-    if (bad !== null) throw fail(bad);
-    const profiles = db.list_profiles(s.db());
-    const own = profiles.find((p) => p.name === c.profile);
-    if (!own && !profiles.some((p) => db.grants(p, c.profile))) {
-      throw fail(`not found: ${s.host_name} has no profile named ${c.profile}, and no profile there lets its agents in`);
-    }
-    const ctx: Ctx = { profile_id: own?.id ?? null, profile_name: c.profile, task: null, call_id: id, task_fields: c.task_fields, from_host: host_id };
-    return dispatch(s, ctx, c.tool, c.args ?? null);
-  });
+  const r = await at_most_once(
+    s,
+    record,
+    () => RERUNNABLE.includes(c.tool),
+    async () => {
+      if (THREAD_TOOLS.includes(c.tool)) throw fail(`${c.tool} only works on the host the agent runs on`);
+      const bad = mcp.check_args(c.tool, c.args ?? null);
+      if (bad !== null) throw fail(bad);
+      const profiles = db.list_profiles(s.db());
+      const own = profiles.find((p) => p.name === c.profile);
+      if (!own && !profiles.some((p) => db.grants(p, c.profile))) {
+        throw fail(`not found: ${s.host_name} has no profile named ${c.profile}, and no profile there lets its agents in`);
+      }
+      const ctx: Ctx = { profile_id: own?.id ?? null, profile_name: c.profile, task: null, call_id: id, task_fields: c.task_fields, from_host: host_id };
+      return dispatch(s, ctx, c.tool, c.args ?? null);
+    },
+  );
   if ("err" in r) throw fail(r.err);
   return r.ok;
 }
@@ -476,7 +503,9 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
       const link = hub.find_link(s, h);
       // Never back down: the calling host's own board is its own to ask, not ours to pass it to.
       if (link && ctx.from_host && link.id === ctx.from_host) {
-        throw fail(`${h} is the host this call came up from (${link.name}), and ${s.host_name} doesn't pass calls back down: leave out host to use that host's own board`);
+        throw fail(
+          `${h} is the host this call came up from (${link.name}), and ${s.host_name} doesn't pass calls back down: leave out host to use that host's own board`,
+        );
       }
       if (link) {
         const old = too_old(link.name, link.version.api_version, tool, args);

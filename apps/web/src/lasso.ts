@@ -68,6 +68,11 @@ export function reach(path: Point[]) {
 
 /** `rect` cut down to what `clip` shows of it, or null if none of it shows. */
 export function clipped(rect: Rect, clip: Rect): Rect | null {
-  const r = { left: Math.max(rect.left, clip.left), top: Math.max(rect.top, clip.top), right: Math.min(rect.right, clip.right), bottom: Math.min(rect.bottom, clip.bottom) };
+  const r = {
+    left: Math.max(rect.left, clip.left),
+    top: Math.max(rect.top, clip.top),
+    right: Math.min(rect.right, clip.right),
+    bottom: Math.min(rect.bottom, clip.bottom),
+  };
   return r.left < r.right && r.top < r.bottom ? r : null;
 }

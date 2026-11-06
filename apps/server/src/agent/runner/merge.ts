@@ -155,7 +155,10 @@ export function start_next_merge(state: Shared, project_id: string | null) {
         const reason = `Couldn't ask for a summary of the merge: ${err_str(e)}`;
         state.add_event(t.id, "error", reason);
         try {
-          state.update_task(t.id, [["status", "needs_attention"], ["attention_reason", reason]]);
+          state.update_task(t.id, [
+            ["status", "needs_attention"],
+            ["attention_reason", reason],
+          ]);
         } catch {}
       }
     }
@@ -167,7 +170,10 @@ export function start_next_merge(state: Shared, project_id: string | null) {
       const reason = `Couldn't start the merge: ${err_str(e)}`;
       state.add_event(next.id, "error", reason);
       try {
-        state.update_task(next.id, [["status", "needs_attention"], ["attention_reason", reason]]);
+        state.update_task(next.id, [
+          ["status", "needs_attention"],
+          ["attention_reason", reason],
+        ]);
       } catch {}
     }
   }

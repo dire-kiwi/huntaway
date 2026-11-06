@@ -98,14 +98,26 @@ export function taskMatcher(q: BoardQuery, key: (t: Task) => string, projectName
 /** Whether the board shows the column or section for `status`. */
 export const showsStatus = (q: BoardQuery, status: Status) => !q.statuses.length || q.statuses.includes(status);
 
-const by = <T>(f: (t: Task) => T, cmp: (a: T, b: T) => number) => (a: Task, b: Task) => cmp(f(a), f(b));
+const by =
+  <T>(f: (t: Task) => T, cmp: (a: T, b: T) => number) =>
+  (a: Task, b: Task) =>
+    cmp(f(a), f(b));
 const later = (a: string, b: string) => b.localeCompare(a);
 const COMPARE: Record<Exclude<SortKey, "manual">, (a: Task, b: Task) => number> = {
   activity: by((t) => t.last_activity_at, later),
   newest: by((t) => t.created_at, later),
-  oldest: by((t) => t.created_at, (a, b) => a.localeCompare(b)),
-  title: by((t) => t.title, (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })),
-  cost: by((t) => t.cost_usd, (a, b) => b - a),
+  oldest: by(
+    (t) => t.created_at,
+    (a, b) => a.localeCompare(b),
+  ),
+  title: by(
+    (t) => t.title,
+    (a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
+  ),
+  cost: by(
+    (t) => t.cost_usd,
+    (a, b) => b - a,
+  ),
 };
 
 /** `tasks` in the order of `sort`; ties, and "manual", keep the order they're in. */

@@ -5,9 +5,24 @@ import { err_str, new_id, now } from "../util.ts";
 import { available_configs } from "./profiles.ts";
 import { get_project, list_projects, type Project } from "./projects.ts";
 import {
-  AgentWait_from_json, Context_from_json, ExternalLink_from_json, PrChecks_from_json, Review_from_json, StartFrom_from_json, Steer_from_json,
-  json_opt, json_vec, summaries_column,
-  type AgentWait, type ChangeSummary, type Context, type ExternalLink, type PrChecks, type Review, type StartFrom, type Steer,
+  AgentWait_from_json,
+  Context_from_json,
+  ExternalLink_from_json,
+  PrChecks_from_json,
+  Review_from_json,
+  StartFrom_from_json,
+  Steer_from_json,
+  json_opt,
+  json_vec,
+  summaries_column,
+  type AgentWait,
+  type ChangeSummary,
+  type Context,
+  type ExternalLink,
+  type PrChecks,
+  type Review,
+  type StartFrom,
+  type Steer,
 } from "./task_data.ts";
 
 /** The key scratch tasks' numbers go with (see is_scratch), which no project can have. */
@@ -415,7 +430,8 @@ export function list_group_tasks(c: Conn, profile_id: string, assistant: boolean
     c,
     `SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
            ORDER BY position`,
-    profile_id, assistant,
+    profile_id,
+    assistant,
   );
 }
 
@@ -431,7 +447,9 @@ export function insert_group_task(c: Conn, t: NewTask, group: string): Task {
     c,
     `UPDATE tasks SET group_name=?2, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
            WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND group_name IS NOT NULL) WHERE id=?1`,
-    created.id, group, created.profile_id,
+    created.id,
+    group,
+    created.profile_id,
   );
   return get_task(c, created.id)!;
 }
@@ -443,7 +461,9 @@ export function insert_group_task(c: Conn, t: NewTask, group: string): Task {
 export function rename_group_tasks(c: Conn, profile_id: string, from: string, to: string | null): string[] {
   if (to == null) return [];
   if (group_projects(c, profile_id, from).length) return [];
-  return all(c, "UPDATE tasks SET group_name=?3 WHERE profile_id=?1 AND project_id IS NULL AND group_name=?2 RETURNING id", profile_id, from, to).map((r) => r.id);
+  return all(c, "UPDATE tasks SET group_name=?3 WHERE profile_id=?1 AND project_id IS NULL AND group_name=?2 RETURNING id", profile_id, from, to).map(
+    (r) => r.id,
+  );
 }
 
 /** A scratch task (in no project): numbered among its profile's, keyed `S-<n>`. */
@@ -453,7 +473,9 @@ export function insert_scratch_task(c: Conn, t: NewTask): Task {
     c,
     `UPDATE tasks SET task_type=?2, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
            WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type=?2) WHERE id=?1`,
-    created.id, SCRATCH, created.profile_id,
+    created.id,
+    SCRATCH,
+    created.profile_id,
   );
   return get_task(c, created.id)!;
 }
@@ -468,7 +490,10 @@ export function assistant_task_by_number(c: Conn, profile_id: string, number: nu
   return task(
     c,
     "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?3) AND number=?4",
-    profile_id, ASSISTANT, ROUTINE, number,
+    profile_id,
+    ASSISTANT,
+    ROUTINE,
+    number,
   );
 }
 
@@ -494,7 +519,13 @@ export function insert_routine_task(c: Conn, assistant: Task, title: string): Ta
       c,
       `UPDATE tasks SET task_type=?2, work_dir=?3, parent_id=?4, permission_mode=?5, title_pinned=1, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
            WHERE profile_id=?6 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?7)) WHERE id=?1`,
-      created.id, ROUTINE, assistant.work_dir, assistant.id, assistant.permission_mode, created.profile_id, ASSISTANT,
+      created.id,
+      ROUTINE,
+      assistant.work_dir,
+      assistant.id,
+      assistant.permission_mode,
+      created.profile_id,
+      ASSISTANT,
     );
     return get_task(c, created.id)!;
   });
@@ -521,7 +552,11 @@ export function insert_assistant_task(c: Conn, t: NewTask, work_dir: (id: string
       c,
       `UPDATE tasks SET task_type=?2, work_dir=?4, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
            WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?5)) WHERE id=?1`,
-      created.id, ASSISTANT, created.profile_id, work_dir(created.id), ROUTINE,
+      created.id,
+      ASSISTANT,
+      created.profile_id,
+      work_dir(created.id),
+      ROUTINE,
     );
     return get_task(c, created.id)!;
   });
@@ -576,7 +611,8 @@ export function list_tasks_for_profile(c: Conn, profile_id: string, assistant: b
     c,
     `SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
            ORDER BY project_id, position`,
-    profile_id, assistant,
+    profile_id,
+    assistant,
   );
 }
 
@@ -604,7 +640,8 @@ export function active_merge(c: Conn, project_id: string | null, parent_id: stri
     `SELECT * FROM tasks WHERE project_id IS ?1 AND parent_id IS ?2 AND kind='task' AND merging=1 AND (running=1 OR status='needs_attention')
            AND merge_approval IS NOT 'pending'
          ORDER BY position LIMIT 1`,
-    project_id, parent_id,
+    project_id,
+    parent_id,
   );
 }
 
@@ -615,7 +652,8 @@ export function queued_merges(c: Conn, project_id: string | null, parent_id: str
     `SELECT * FROM tasks WHERE project_id IS ?1 AND parent_id IS ?2 AND kind='task' AND merging=1 AND running=0 AND status='ready_for_merge'
            AND merge_approval IS NOT 'pending' AND (project_id IS NULL OR project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
          ORDER BY position, created_at`,
-    project_id, parent_id,
+    project_id,
+    parent_id,
   );
 }
 
@@ -789,7 +827,8 @@ export function user_wrote_since(c: Conn, task_id: string, since: string): boole
     // `+kind`: see db/messages.ts.
     `SELECT EXISTS (SELECT 1 FROM messages WHERE task_id=?1 AND +kind='user' AND created_at > ?2
            AND json_extract(data, '$.auto') IS NULL AND json_extract(data, '$.from_agent') IS NULL)`,
-    task_id, since,
+    task_id,
+    since,
   );
 }
 
@@ -924,16 +963,82 @@ function insert_task_now(c: Conn, t: NewTask): Task {
     c,
     `INSERT INTO tasks (id,profile_id,project_id,kind,number,title,description,status,position,use_worktree,model,effort,claude_config_id,last_activity_at,created_at,updated_at)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?14,?14)`,
-    id, t.profile_id, t.project_id, t.kind, number, t.title, t.description, t.status, position, t.use_worktree, t.model, t.effort, config, ts,
+    id,
+    t.profile_id,
+    t.project_id,
+    t.kind,
+    number,
+    t.title,
+    t.description,
+    t.status,
+    position,
+    t.use_worktree,
+    t.model,
+    t.effort,
+    config,
+    ts,
   );
   normalize_resolution(c, id);
   return get_task(c, id)!;
 }
 
 const TASK_COLUMNS = [
-  "title", "title_pinned", "description", "status", "resolution", "position", "use_worktree", "worktree_path", "branch",
-  "base_branch", "start_from", "worktree_state", "worktree_error", "session_id", "running", "run_started_at", "merging", "remerge", "merge_approval", "attention_reason",
-  "queued_message", "steering", "steerable", "depends_on", "waiting", "limit_reset_at", "agent_wait", "model", "effort", "permission_mode", "claude_config_id", "auto_allow", "preview_url", "pr_url", "pr_checks", "external_links", "fanout_id", "starred", "remind_at", "reminder", "now_at", "review", "summary", "context", "context_detail", "rewind", "parent_id", "subproject", "created_by", "task_type", "labels", "document_at", "work_dir", "cost_usd", "last_activity_at", "done_at",
+  "title",
+  "title_pinned",
+  "description",
+  "status",
+  "resolution",
+  "position",
+  "use_worktree",
+  "worktree_path",
+  "branch",
+  "base_branch",
+  "start_from",
+  "worktree_state",
+  "worktree_error",
+  "session_id",
+  "running",
+  "run_started_at",
+  "merging",
+  "remerge",
+  "merge_approval",
+  "attention_reason",
+  "queued_message",
+  "steering",
+  "steerable",
+  "depends_on",
+  "waiting",
+  "limit_reset_at",
+  "agent_wait",
+  "model",
+  "effort",
+  "permission_mode",
+  "claude_config_id",
+  "auto_allow",
+  "preview_url",
+  "pr_url",
+  "pr_checks",
+  "external_links",
+  "fanout_id",
+  "starred",
+  "remind_at",
+  "reminder",
+  "now_at",
+  "review",
+  "summary",
+  "context",
+  "context_detail",
+  "rewind",
+  "parent_id",
+  "subproject",
+  "created_by",
+  "task_type",
+  "labels",
+  "document_at",
+  "work_dir",
+  "cost_usd",
+  "last_activity_at",
+  "done_at",
 ];
 
 /** Update whitelisted task columns from a list of (column, json value) pairs. */
@@ -984,6 +1089,7 @@ function normalize_resolution(c: Conn, id: string): void {
     c,
     `UPDATE tasks SET resolution = CASE WHEN status='done' THEN COALESCE(resolution,'done') END,
            done_at = CASE WHEN status='done' THEN COALESCE(done_at,?2) END WHERE id=?1`,
-    id, now(),
+    id,
+    now(),
   );
 }

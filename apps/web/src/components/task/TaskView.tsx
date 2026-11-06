@@ -2,7 +2,26 @@ import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, canRunAgents, dependencyQueued, documentsOnly, hasApprovalRules, hasBrief, hasMemory, hasRoutines, isAssistant, isRoutine, isScratch, LABELS, taskLabels, type DocumentType, hostSupports, runningAgentSteers, stopTitle, type TerminalTool } from "../../api";
+import {
+  api,
+  canRunAgents,
+  dependencyQueued,
+  documentsOnly,
+  hasApprovalRules,
+  hasBrief,
+  hasMemory,
+  hasRoutines,
+  isAssistant,
+  isRoutine,
+  isScratch,
+  LABELS,
+  taskLabels,
+  type DocumentType,
+  hostSupports,
+  runningAgentSteers,
+  stopTitle,
+  type TerminalTool,
+} from "../../api";
 import { boardTaskUrl, closeTask, groupTaskUrl, href, navigate, profileTaskUrl, setPanelExpanded, subprojectTaskUrl, type Panel } from "../../router";
 import { isGroupTask, keyPrefix, useHost, useProfileName, useProject, useStore } from "../../store";
 import { useNarrow } from "../../narrow";
@@ -206,7 +225,16 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   if (!wide) tabs.push("details");
   // Until the effect above drops it, a details tab while wide shows the thread beside the column.
   // A label taken off shows the thread instead.
-  const shown = (wide && tab === "details") || (tab === "memory" && !tabs.includes("memory")) || (tab === "brief" && !tabs.includes("brief")) || (tab === "review" && !reviews) || (tab === "summary" && !summaries) || (isWorkflowTab(tab) && !wfTabs.includes(tab)) || (isLabel(tab) && !labels.includes(tab)) ? "thread" : tab;
+  const shown =
+    (wide && tab === "details") ||
+    (tab === "memory" && !tabs.includes("memory")) ||
+    (tab === "brief" && !tabs.includes("brief")) ||
+    (tab === "review" && !reviews) ||
+    (tab === "summary" && !summaries) ||
+    (isWorkflowTab(tab) && !wfTabs.includes(tab)) ||
+    (isLabel(tab) && !labels.includes(tab))
+      ? "thread"
+      : tab;
   const docShown = labels.find((l) => l === shown);
   const key = `${keyPrefix(task, project)}-${task.number}`;
   // Stopping the task also stops its review (API 33), so it can be stopped while only that runs.
@@ -242,7 +270,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   };
 
   // A subproject's task: its subproject's board, with this task still beside it.
-  const toSubproject = () => subproject && navigate(mode === "page" ? href({ name: "subproject", taskId: subproject.id }) : subprojectTaskUrl(subproject.id, task.id));
+  const toSubproject = () =>
+    subproject && navigate(mode === "page" ? href({ name: "subproject", taskId: subproject.id }) : subprojectTaskUrl(subproject.id, task.id));
 
   // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
   const run =
@@ -293,7 +322,10 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           <button
             key={t}
             onClick={() => selectTab(t)}
-            className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5", shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+            className={clsx(
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] capitalize narrow:py-1.5",
+              shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg",
+            )}
           >
             {t === "review" && <ReviewDot task={task} />}
             {isWorkflowTab(t) ? (

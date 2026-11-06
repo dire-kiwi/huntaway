@@ -13,10 +13,25 @@ import { FanoutBadge } from "./Fanout";
 import { TaskMarks } from "../task/Reminders";
 import { TaskTypeBadge } from "../task/Document";
 import { AgentIcon } from "../ui/AgentIcon";
-import { ActivityTime, BranchIcon, CARD_BADGE, CardState, ChecksMark, cost, PrIcon, PreviewDot, ProgressCount, ResolutionBadge, RunState, showsPreview, StatusIcon, WaitReason, Wide } from "../ui";
+import {
+  ActivityTime,
+  BranchIcon,
+  CARD_BADGE,
+  CardState,
+  ChecksMark,
+  cost,
+  PrIcon,
+  PreviewDot,
+  ProgressCount,
+  ResolutionBadge,
+  RunState,
+  showsPreview,
+  StatusIcon,
+  WaitReason,
+  Wide,
+} from "../ui";
 import { useNarrow, useTouch } from "../../narrow";
 import { resetsIn, resetTime } from "../../usageConfigs";
-
 
 /** How many of a subproject's tasks are done. */
 export type Progress = { done: number; total: number };
@@ -326,14 +341,19 @@ export const TaskCard = memo(function TaskCard({
           {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
           {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
           <ChecksMark task={task} />
-          {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
+          {task.external_links?.map((l) => (
+            <ExternalLinkIcon key={l.id} link={l} />
+          ))}
           {cost(task.cost_usd) && <span className="ml-auto shrink-0">{cost(task.cost_usd)}</span>}
         </div>
       )}
       {/* How much of a subproject's, plan's or group task's work is done, along the bottom edge. */}
       {!!progress?.total && (
         <div className="absolute inset-x-0 bottom-0 h-[3px] bg-line" title={`${progress.done} of ${progress.total} tasks done`}>
-          <div className={clsx("h-full", progress.done === progress.total ? "bg-st-done" : "bg-accent")} style={{ width: `${(100 * progress.done) / progress.total}%` }} />
+          <div
+            className={clsx("h-full", progress.done === progress.total ? "bg-st-done" : "bg-accent")}
+            style={{ width: `${(100 * progress.done) / progress.total}%` }}
+          />
         </div>
       )}
     </div>
@@ -382,7 +402,9 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
         {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         <ChecksMark task={task} />
-        {task.external_links?.map((l) => <ExternalLinkIcon key={l.id} link={l} />)}
+        {task.external_links?.map((l) => (
+          <ExternalLinkIcon key={l.id} link={l} />
+        ))}
         <AgentIcon task={task} />
         {cost(task.cost_usd) && <span>{cost(task.cost_usd)}</span>}
         <span className="w-14 text-right narrow:ml-auto narrow:w-auto narrow:shrink-0">
@@ -393,4 +415,3 @@ export const TaskRow = memo(function TaskRow({ task, project, progress, onMenu }
     </div>
   );
 });
-

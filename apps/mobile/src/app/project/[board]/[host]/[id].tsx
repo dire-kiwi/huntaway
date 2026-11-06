@@ -33,7 +33,9 @@ export default function ProjectScreen() {
 
   return (
     <View style={s.screen}>
-      <Stack.Screen options={{ title, headerRight: () => <Button title="New task" small kind="primary" onPress={() => setAdding(true)} style={{ marginRight: 8 }} /> }} />
+      <Stack.Screen
+        options={{ title, headerRight: () => <Button title="New task" small kind="primary" onPress={() => setAdding(true)} style={{ marginRight: 8 }} /> }}
+      />
       <SectionList
         sections={sections}
         keyExtractor={(t) => t.id}
@@ -98,7 +100,10 @@ function NewTask({ onClose, create }: { onClose: () => void; create: (b: { title
   };
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.5)" }}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.5)" }}
+      >
         <View style={{ backgroundColor: colors.panel, padding: 16, gap: 12, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: 32 }}>
           <Text style={[s.title, { fontSize: 17 }]}>New task</Text>
           <TextInput style={s.input} value={title} onChangeText={setTitle} placeholder="Title (optional)" placeholderTextColor={colors.faint} />

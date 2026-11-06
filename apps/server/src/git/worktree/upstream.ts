@@ -44,7 +44,8 @@ export async function upstream(repo: string, base: string): Promise<Upstream | n
         return "";
       }
     };
-    const remote = await config("remote"), merge = await config("merge");
+    const remote = await config("remote"),
+      merge = await config("merge");
     if (remote && merge) {
       let tracking: string;
       try {
@@ -63,7 +64,9 @@ export async function upstream(repo: string, base: string): Promise<Upstream | n
   } catch {
     return null;
   }
-  const remotes = lines(listed).map((r) => r.trim()).filter((r) => r);
+  const remotes = lines(listed)
+    .map((r) => r.trim())
+    .filter((r) => r);
   const remote = remotes.includes("origin") ? "origin" : remotes.length === 1 ? remotes[0] : null;
   if (remote === null) return null;
   const tracking = `refs/remotes/${remote}/${base}`;
@@ -75,7 +78,8 @@ export async function upstream(repo: string, base: string): Promise<Upstream | n
 export async function remote_branch(repo: string, name: string): Promise<[string, string] | null> {
   const i = name.indexOf("/");
   if (i <= 0 || i === name.length - 1) return null;
-  const remote = name.slice(0, i), rest = name.slice(i + 1);
+  const remote = name.slice(0, i),
+    rest = name.slice(i + 1);
   let remotes: string;
   try {
     remotes = await git_ok(repo, ["remote"]);
@@ -108,7 +112,14 @@ export async function fetch(repo: string, up: Upstream, account: string | null):
   const started = Date.now();
   await gh_mcp.authenticate_fetch(cmd, repo, up.remote, account);
   const left = Math.max(1, 60_000 - (Date.now() - started));
-  await run_fetch(cmd, repo, ["fetch", "--quiet", "--no-tags", up.remote, refspec], left, (e) => `git fetch ${up.remote} failed: ${e}`, `git fetch ${up.remote} timed out`);
+  await run_fetch(
+    cmd,
+    repo,
+    ["fetch", "--quiet", "--no-tags", up.remote, refspec],
+    left,
+    (e) => `git fetch ${up.remote} failed: ${e}`,
+    `git fetch ${up.remote} timed out`,
+  );
 }
 
 /** Fetch base branch `base`'s upstream (see `upstream`), returning its name (e.g. `origin/master`), or None when it has none. */

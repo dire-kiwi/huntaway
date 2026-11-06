@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "vite-plus/test";
 import { afterSend, answered, answersMessage, readFields, resetFields, withTouched } from "../src/components/task/planAnswers.ts";
 
-const field = (name, label, answer, extra = {}) => ({ name, label, type: "radio", value: { v: [] }, answer, touched: false, initial: { value: { v: [] }, answer: [] }, ...extra });
+const field = (name, label, answer, extra = {}) => ({
+  name,
+  label,
+  type: "radio",
+  value: { v: [] },
+  answer,
+  touched: false,
+  initial: { value: { v: [] }, answer: [] },
+  ...extra,
+});
 
 test("the answers go to the agent as a list of each question with its answer, by name", () => {
   const fields = [
@@ -57,7 +66,10 @@ test("a checkbox question left with none ticked is answered (none of them), unli
   const fields = [extras, field("later", "Later?", [], { type: "checkbox" }), field("notes", "Notes?", [], { type: "textarea", touched: true })];
   assert.equal(answered(fields), 1);
   assert.equal(answered([extras]), 1);
-  assert.match(answersMessage(fields), /- Which extras\? \(`extras`\): \(none of the choices\)\n- Later\? \(`later`\): \(no answer\)\n- Notes\? \(`notes`\): \(no answer\)/);
+  assert.match(
+    answersMessage(fields),
+    /- Which extras\? \(`extras`\): \(none of the choices\)\n- Later\? \(`later`\): \(no answer\)\n- Notes\? \(`notes`\): \(no answer\)/,
+  );
 });
 
 test("Reset puts back the plan's own values and answers, without the frame", () => {

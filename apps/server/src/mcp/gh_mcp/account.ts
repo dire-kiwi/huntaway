@@ -27,7 +27,8 @@ export class Account {
     const i = s.indexOf("/");
     const [host, login] = i >= 0 ? [s.slice(0, i), s.slice(i + 1)] : ["github.com", s];
     // Logins are letters, digits and hyphens (Enterprise managed users add `_shortcode`).
-    const login_ok = login.length > 0 && Buffer.byteLength(login) <= 100 && !login.startsWith("-") && [...login].every((c) => ascii_alnum(c) || c === "-" || c === "_");
+    const login_ok =
+      login.length > 0 && Buffer.byteLength(login) <= 100 && !login.startsWith("-") && [...login].every((c) => ascii_alnum(c) || c === "-" || c === "_");
     const host_ok = host.length > 0 && !host.startsWith("-") && !host.startsWith(".") && [...host].every((c) => ascii_alnum(c) || ".-:".includes(c));
     return login_ok && host_ok ? new Account(ascii_lower(host), login) : null;
   }

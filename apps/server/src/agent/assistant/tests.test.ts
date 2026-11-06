@@ -119,7 +119,10 @@ test("the_assistant_is_off_the_board_unless_asked_for", async () => {
   [, list] = await call(s, "GET", `/api/profiles/${p.id}/tasks?include_assistant=true`);
   assert.equal(list.length, 2);
   [, list] = await call(s, "GET", `/api/profiles/${p.id}/group-tasks`);
-  assert.deepEqual(list.map((t: any) => t.id), [scratch.id]);
+  assert.deepEqual(
+    list.map((t: any) => t.id),
+    [scratch.id],
+  );
   [, list] = await call(s, "GET", `/api/profiles/${p.id}/group-tasks?include_assistant=true`);
   assert.equal(list.length, 2);
   const [got_status, got] = await call(s, "GET", `/api/profiles/${p.id}/assistant`);
@@ -186,7 +189,17 @@ test("a_database_at_version_89_frees_the_key_a", () => {
   {
     const c = db.open(path);
     const p = db.insert_profile(c, "p", [], null);
-    db.insert_project(c, { id: "apps", profile_id: p.id, name: "Apps", key: "A", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+    db.insert_project(c, {
+      id: "apps",
+      profile_id: p.id,
+      name: "Apps",
+      key: "A",
+      repo_path: "/x",
+      scratch_path: "/s",
+      worktrees_root: "/w",
+      base_branch: null,
+      use_worktrees: false,
+    });
     c.exec("DROP INDEX tasks_one_assistant; PRAGMA user_version=89;");
     c.close();
   }
@@ -229,7 +242,11 @@ test("an_assistant_host_must_be_a_linked_host_with_assistants", async () => {
   db.upsert_link(hub_s.db(), "old", "old", "outbound", "http://x", null);
   const path = `/api/profiles/${p.id}`;
   const set = (v: any) => up.call_api(hub_s, "PATCH", path, { assistant_host: v });
-  for (const [bad, why] of [["nope", "must be a linked host"], [5, "must be a linked host's id or null"], ["old", "older build that can't be an assistant host"]] as const) {
+  for (const [bad, why] of [
+    ["nope", "must be a linked host"],
+    [5, "must be a linked host's id or null"],
+    ["old", "older build that can't be an assistant host"],
+  ] as const) {
     const [status, v] = await set(bad);
     assert.equal(status, 400, String(bad));
     assert.ok(v.error.includes(why), `${bad}: ${JSON.stringify(v)}`);

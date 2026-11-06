@@ -224,10 +224,7 @@ function Lightbox({ url, name, onClose }: { url: string; name: string; onClose: 
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
   return createPortal(
-    <div
-      className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-2 bg-black/80 p-6"
-      onMouseDown={(e) => (e.stopPropagation(), onClose())}
-    >
+    <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-2 bg-black/80 p-6" onMouseDown={(e) => (e.stopPropagation(), onClose())}>
       <img src={url} alt={name} className="max-h-[90vh] max-w-[90vw] rounded-md object-contain shadow-2xl" />
       <a href={url} download={name} onMouseDown={(e) => e.stopPropagation()} className="text-[12px] text-muted hover:text-fg">
         {name} · Download

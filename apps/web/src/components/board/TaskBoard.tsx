@@ -1,6 +1,19 @@
 import clsx from "clsx";
 import { Archive, ChevronLeft, ChevronRight, Inbox, Kanban, List, Network, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type MouseEvent, type ReactNode, type UIEvent, type WheelEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type DragEvent,
+  type MouseEvent,
+  type ReactNode,
+  type UIEvent,
+  type WheelEvent,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   api,
@@ -20,7 +33,18 @@ import {
 } from "../../api";
 import { groupTasks } from "../../projectGroups";
 import { dropPosition } from "./taskOrder";
-import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKinds, taskMatcher, type BoardQuery, type SortKey, type TaskKind } from "./boardQuery";
+import {
+  EMPTY_QUERY,
+  isFiltering,
+  isSortKey,
+  showsStatus,
+  sortTasks,
+  taskKinds,
+  taskMatcher,
+  type BoardQuery,
+  type SortKey,
+  type TaskKind,
+} from "./boardQuery";
 import { FilterBar, FilterMenu, SearchBox, SortMenu, type FilterOption } from "./BoardControls";
 import { isGroupTask, keyPrefix, useStore } from "../../store";
 import { useConfirmDone } from "./ConfirmDone";
@@ -77,7 +101,13 @@ function loadQuery(board: string): BoardQuery {
     const q = JSON.parse(sessionStorage.getItem(queryKey(board)) ?? "null");
     if (!q || typeof q !== "object") return EMPTY_QUERY;
     const list = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
-    return { search: typeof q.search === "string" ? q.search : "", statuses: list(q.statuses) as Status[], kinds: list(q.kinds) as TaskKind[], projects: list(q.projects), flags: list(q.flags) as BoardQuery["flags"] };
+    return {
+      search: typeof q.search === "string" ? q.search : "",
+      statuses: list(q.statuses) as Status[],
+      kinds: list(q.kinds) as TaskKind[],
+      projects: list(q.projects),
+      flags: list(q.flags) as BoardQuery["flags"],
+    };
   } catch {
     return EMPTY_QUERY;
   }
@@ -284,7 +314,10 @@ export function TaskBoard({
     return [...on];
   }, [columns, archived, query.kinds]);
   const projectOptions = useMemo(() => {
-    const options: FilterOption<string>[] = projects.map((p) => ({ id: `${p.host_id}:${p.id}`, label: hosts.length > 1 && !hostId ? `${p.name} (${hosts.find((h) => h.id === p.host_id)?.name ?? "?"})` : p.name }));
+    const options: FilterOption<string>[] = projects.map((p) => ({
+      id: `${p.host_id}:${p.id}`,
+      label: hosts.length > 1 && !hostId ? `${p.name} (${hosts.find((h) => h.id === p.host_id)?.name ?? "?"})` : p.name,
+    }));
     if (group || profiles) options.push({ id: "", label: group ? "Group tasks" : "No project" });
     return options;
   }, [projects, hosts, hostId, group, profiles]);
@@ -477,7 +510,14 @@ export function TaskBoard({
   // from render to render, so the (memoized) cards don't all redraw.
   const onMenu = useCallback(
     (e: MouseEvent, task: Task, move?: boolean) => {
-      if (!move && !hostSupports(hosts.find((h) => h.id === task.host_id), 19)) return;
+      if (
+        !move &&
+        !hostSupports(
+          hosts.find((h) => h.id === task.host_id),
+          19,
+        )
+      )
+        return;
       e.preventDefault();
       // From its menu button, under the button.
       const r = move ? (e.currentTarget as HTMLElement).getBoundingClientRect() : null;
@@ -542,7 +582,12 @@ export function TaskBoard({
   );
 
   const focusSwitch = (
-    <div role="group" aria-label="Show tasks in" className="mr-1 flex items-center rounded-md border border-line p-0.5" title="Hold Ctrl and right-drag on the board to lasso tasks, then move them to Now or Later">
+    <div
+      role="group"
+      aria-label="Show tasks in"
+      className="mr-1 flex items-center rounded-md border border-line p-0.5"
+      title="Hold Ctrl and right-drag on the board to lasso tasks, then move them to Now or Later"
+    >
       {FOCUSES.map(({ id, label, title }) => (
         <button
           key={id}
@@ -604,7 +649,15 @@ export function TaskBoard({
       {header({ controls, newTask: () => setNewIn("todo") })}
       {notice && <div className="border-b border-line bg-panel/60 px-5 py-2 text-[12.5px] text-muted narrow:px-3">{notice}</div>}
       {(filtering || !wide) && (
-        <FilterBar query={query} onChange={setQuery} tools={!wide && queryControls} shown={shownCount} total={total} statuses={statusOptions} projects={projectOptions} />
+        <FilterBar
+          query={query}
+          onChange={setQuery}
+          tools={!wide && queryControls}
+          shown={shownCount}
+          total={total}
+          statuses={statusOptions}
+          projects={projectOptions}
+        />
       )}
       {dropErr && (
         <div className="flex items-center gap-2 border-b border-line bg-red-500/10 px-5 py-2 text-[12.5px] text-red-300 narrow:px-3">
@@ -626,11 +679,7 @@ export function TaskBoard({
               // The backlog is open or collapsed in both views at once, and starts collapsed.
               const open = s.id === "backlog" ? backlogOpen : !collapsed.has(s.id);
               return (
-                <DropColumn
-                  key={s.id}
-                  status={s.id}
-                  drops={drops}
-                >
+                <DropColumn key={s.id} status={s.id} drops={drops}>
                   <div className="mb-2 flex items-center gap-2">
                     <button
                       onClick={() => (s.id === "backlog" ? toggleBacklog() : toggleCollapsed(s.id))}
@@ -710,7 +759,12 @@ export function TaskBoard({
         </div>
       ) : narrow ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div ref={columnTabsRef} role="tablist" aria-label="Columns" className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-line px-3 py-2 [scrollbar-width:none]">
+          <div
+            ref={columnTabsRef}
+            role="tablist"
+            aria-label="Columns"
+            className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-line px-3 py-2 [scrollbar-width:none]"
+          >
             {shownStatuses.map((s) => (
               <button
                 key={s.id}
@@ -728,7 +782,12 @@ export function TaskBoard({
               </button>
             ))}
           </div>
-          <div ref={columnsRef} onScroll={onColumnsScroll} onScrollEnd={onColumnsScrollEnd} className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
+          <div
+            ref={columnsRef}
+            onScroll={onColumnsScroll}
+            onScrollEnd={onColumnsScrollEnd}
+            className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]"
+          >
             {shownStatuses.map((s) => (
               <DropColumn
                 key={s.id}
@@ -853,8 +912,16 @@ export function TaskBoard({
       <LassoPath path={lassoPath} />
       <SelectionBar
         count={picked.length}
-        onNow={() => moveToFocus(picked, true).catch((e) => setDropErr((e as Error).message)).finally(() => useSelection.getState().clear())}
-        onLater={() => moveToFocus(picked, false).catch((e) => setDropErr((e as Error).message)).finally(() => useSelection.getState().clear())}
+        onNow={() =>
+          moveToFocus(picked, true)
+            .catch((e) => setDropErr((e as Error).message))
+            .finally(() => useSelection.getState().clear())
+        }
+        onLater={() =>
+          moveToFocus(picked, false)
+            .catch((e) => setDropErr((e as Error).message))
+            .finally(() => useSelection.getState().clear())
+        }
         onClear={() => useSelection.getState().clear()}
       />
       {newIn && canAdd && ready && (

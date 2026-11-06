@@ -77,8 +77,17 @@ const saved_events = () => EVENTS.filter((e) => e.type !== "delta");
  */
 function save_example(s: AppState, task: string, message_id?: number) {
   const events = saved_events();
-  store.append(s.db(), task, events.slice(0, 2).map((e) => for_task(e, task)), { message_id });
-  store.append(s.db(), task, events.slice(2).map((e) => for_task(e, task)));
+  store.append(
+    s.db(),
+    task,
+    events.slice(0, 2).map((e) => for_task(e, task)),
+    { message_id },
+  );
+  store.append(
+    s.db(),
+    task,
+    events.slice(2).map((e) => for_task(e, task)),
+  );
 }
 
 /** The example `v` (a snapshot or window) as task `task`'s: its thread is the task's own state. */
@@ -115,7 +124,11 @@ test("a thread is read whole, in windows and in pages, from this host and throug
 test("the thread's own state is its task's", async () => {
   const { s, task } = setup();
   save_example(s, task.id);
-  s.update_task(task.id, [["model", "sonnet"], ["permission_mode", "acceptEdits"], ["session_id", "sess_9"]]);
+  s.update_task(task.id, [
+    ["model", "sonnet"],
+    ["permission_mode", "acceptEdits"],
+    ["session_id", "sess_9"],
+  ]);
   const [, state] = await call(s, "GET", `/api/tasks/${task.id}/thread`);
   assert.deepEqual(
     [state.thread.id, state.thread.harness, state.thread.status, state.thread.model, state.thread.permission_mode, state.thread.session_id, state.thread.title],
@@ -159,9 +172,9 @@ test("event types a newer build saved are left out of a catch-up, and gone past"
   save_example(s, task.id);
   // 35-36 unknown, 37-38 known, 39 unknown, 40 known, 41-43 unknown: as a newer build would have saved them, before a rollback.
   const unknown = [35, 36, 39, 41, 42, 43];
-  const events = [...Array(9).keys()].map((i) => i + 35).map((seq) =>
-    unknown.includes(seq) ? ({ type: "thread.renamed" } as any) : ({ type: "turn.started", turn_id: `t${seq}` } as NewEvent),
-  );
+  const events = [...Array(9).keys()]
+    .map((i) => i + 35)
+    .map((seq) => (unknown.includes(seq) ? ({ type: "thread.renamed" } as any) : ({ type: "turn.started", turn_id: `t${seq}` } as NewEvent)));
   store.append(s.db(), task.id, events);
   const at = (q: string) => `/api/tasks/${task.id}/thread/events?${q}`;
   const [, first] = await call(s, "GET", at("after=34&limit=1"));
@@ -237,7 +250,10 @@ test("live events reach clients, with the text streamed so far in snapshots", as
   // The saved text ended what was streamed: the snapshot is the saved thread's.
   assert.deepEqual((await call(s, "GET", `/api/tasks/${task.id}/thread`))[1], as_task(s, task, SNAPSHOT));
   // A client applying them all, from a snapshot taken before any, ends up there too.
-  const client = apply_events(initial_state(live.thread_of(s, task)), got.map((v) => v.event));
+  const client = apply_events(
+    initial_state(live.thread_of(s, task)),
+    got.map((v) => v.event),
+  );
   assert.deepEqual(client.items, SNAPSHOT.items);
   // A delta for an item the thread doesn't have isn't sent.
   assert.equal(live.send_delta(s, task.id, "nope", "text", "x"), null);
@@ -314,7 +330,11 @@ function pending_permission(s: AppState, task: Task, id: string, tool = "Bash", 
   db.run(
     s.db(),
     "INSERT INTO permission_requests (id,task_id,message_id,tool_name,input,status,created_at,call_id) VALUES (?1,?2,?3,?4,?5,'pending','',?1)",
-    id, task.id, m.id, tool, JSON.stringify(input),
+    id,
+    task.id,
+    m.id,
+    tool,
+    JSON.stringify(input),
   );
   return m;
 }
@@ -325,7 +345,9 @@ test("respond answers permission prompts, plans and questions through the board'
   runs.TEST_CAN_RUN.set(true);
   t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   const cmd = `/api/tasks/${task.id}/thread/commands`;
-  const status = (id: string) => ({ ...db.one<{ status: string; note: string | null }>(s.db(), "SELECT status, note FROM permission_requests WHERE id=?1", id) });
+  const status = (id: string) => ({
+    ...db.one<{ status: string; note: string | null }>(s.db(), "SELECT status, note FROM permission_requests WHERE id=?1", id),
+  });
   const open = (request: any) => store.append(s.db(), task.id, [{ type: "request.opened", request }]);
 
   // A tool's prompt: allowed always, or denied with a reason.
@@ -345,7 +367,11 @@ test("respond answers permission prompts, plans and questions through the board'
   open({ id: "plan1", type: "plan", plan: "Do it" });
   pending_permission(s, task, "plan1", "ExitPlanMode", { plan: "Do it" });
   s.update_task(task.id, [["permission_mode", "plan"]]);
-  const [plan_code, plan_out] = await call(s, "POST", cmd, { type: "respond", request_id: "plan1", resolution: { outcome: "allow", permission_mode: "accept_edits" } });
+  const [plan_code, plan_out] = await call(s, "POST", cmd, {
+    type: "respond",
+    request_id: "plan1",
+    resolution: { outcome: "allow", permission_mode: "accept_edits" },
+  });
   assert.equal(plan_code, 200, JSON.stringify(plan_out));
   assert.equal(status("plan1")!.status, "allowed");
   assert.equal(db.get_task(s.db(), task.id)!.permission_mode, "acceptEdits");
@@ -368,7 +394,10 @@ test("respond answers permission prompts, plans and questions through the board'
   assert.equal(r_code, 200, JSON.stringify(r_out));
   const now = db.list_messages(s.db(), task.id);
   assert.deepEqual(now.find((x) => x.id === m.id)!.data.answer, { choices: ["Yes"], text: null });
-  assert.ok(now.some((x) => x.kind === "user" && x.data.text.includes("Yes")), JSON.stringify(now.map((x) => x.kind)));
+  assert.ok(
+    now.some((x) => x.kind === "user" && x.data.text.includes("Yes")),
+    JSON.stringify(now.map((x) => x.kind)),
+  );
 
   await idle(s, task.id);
   // A request the board isn't waiting on.
@@ -432,7 +461,13 @@ test("requests the translator makes from the board's prompts and questions are a
     store.append(s.db(), task.id, step.events, { message_id: m.id });
   }
   const reqs = store.open_requests(s.db(), task.id);
-  assert.deepEqual(reqs.map((r) => [r.type, r.id.startsWith("legacy:") ? "legacy" : r.id]), [["permission", "perm1"], ["question", "legacy"]]);
+  assert.deepEqual(
+    reqs.map((r) => [r.type, r.id.startsWith("legacy:") ? "legacy" : r.id]),
+    [
+      ["permission", "perm1"],
+      ["question", "legacy"],
+    ],
+  );
   const cmd = `/api/tasks/${task.id}/thread/commands`;
   const allowed = await call(s, "POST", cmd, { type: "respond", request_id: "perm1", resolution: { outcome: "allow" } });
   assert.equal(allowed[0], 200, JSON.stringify(allowed));
@@ -440,7 +475,8 @@ test("requests the translator makes from the board's prompts and questions are a
   const q = reqs[1]!;
   assert.equal(q.type, "question");
   const qid = (q as any).questions[0].id;
-  const respond = (answers: string[]) => call(s, "POST", cmd, { type: "respond", request_id: q.id, resolution: { outcome: "answer", answers: { [qid]: answers } } });
+  const respond = (answers: string[]) =>
+    call(s, "POST", cmd, { type: "respond", request_id: q.id, resolution: { outcome: "answer", answers: { [qid]: answers } } });
   // The route's own checks: a question that takes one answer.
   assert.deepEqual(await respond(["No", "Not yet"]), [400, { error: "this question takes one answer" }]);
   // Free text, which isn't one of its options.

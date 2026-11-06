@@ -70,15 +70,8 @@
             "NSExtensionActivationSupportsImageWithMaxCount": 5,
             "NSExtensionActivationSupportsFileWithMaxCount": 5
           },
-          "androidIntentFilters": [
-            "text/*",
-            "image/*",
-            "audio/*",
-            "application/pdf"
-          ],
-          "androidMultiIntentFilters": [
-            "image/*"
-          ]
+          "androidIntentFilters": ["text/*", "image/*", "audio/*", "application/pdf"],
+          "androidMultiIntentFilters": ["image/*"]
         }
       ],
       [
@@ -106,9 +99,7 @@
                   "targetName": "HuntawayShare",
                   "bundleIdentifier": "nz.net.ivan.huntaway.share-extension",
                   "entitlements": {
-                    "com.apple.security.application-groups": [
-                      "group.nz.net.ivan.huntaway"
-                    ]
+                    "com.apple.security.application-groups": ["group.nz.net.ivan.huntaway"]
                   }
                 }
               ]

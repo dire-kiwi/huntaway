@@ -25,7 +25,20 @@
 // database file (db/file.ts) backs up `huntaway-2.db`, so its backups go back there. On its first start there's none to
 // back up: making it only reads the older file, which stays as it was.
 import { DatabaseSync } from "node:sqlite";
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  statfsSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import { join } from "node:path";
@@ -120,7 +133,11 @@ export function schema_version(db_path: string): number | null {
 const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, "_");
 
 /** A UTC time for a file name: 2026-11-05T01-02-03Z. */
-const stamp = (d = new Date()) => d.toISOString().replace(/\.\d+Z$/, "Z").replaceAll(":", "-");
+const stamp = (d = new Date()) =>
+  d
+    .toISOString()
+    .replace(/\.\d+Z$/, "Z")
+    .replaceAll(":", "-");
 
 /** A backup's name: `huntaway-<from>-to-<to>-<time>.db`, then `.db.gz` once it's compressed. */
 const NAME = /^huntaway-(.+)-to-(.+)-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\dZ)\.db(\.gz)?$/;
@@ -320,7 +337,12 @@ export function explain(e: unknown, dir: string): [Reason, string] {
   const errcodes = causes.map((c) => Number(c?.errcode) & 0xff);
   const text = causes.map((c) => String(c?.message ?? c)).join(": ");
   // SQLite's FULL (13), its I/O errors from a full disk, and the file system's.
-  if (codes.includes("ENOSPC") || codes.includes("EDQUOT") || errcodes.includes(13) || /disk is full|no space left|quota exceeded|there isn't room for it/i.test(text)) {
+  if (
+    codes.includes("ENOSPC") ||
+    codes.includes("EDQUOT") ||
+    errcodes.includes(13) ||
+    /disk is full|no space left|quota exceeded|there isn't room for it/i.test(text)
+  ) {
     let free = "";
     try {
       free = ` (${mb(disk.free(dir))} free)`;
@@ -328,7 +350,12 @@ export function explain(e: unknown, dir: string): [Reason, string] {
     return ["space", `the disk with ${dir} is full${free}`];
   }
   // The file system's, and SQLite's READONLY (8) and CANTOPEN (14), which it gives when it can't create the file.
-  if (["EACCES", "EPERM", "EROFS"].some((c) => codes.includes(c)) || errcodes.includes(8) || errcodes.includes(14) || /permission denied|read-only file system/i.test(text)) {
+  if (
+    ["EACCES", "EPERM", "EROFS"].some((c) => codes.includes(c)) ||
+    errcodes.includes(8) ||
+    errcodes.includes(14) ||
+    /permission denied|read-only file system/i.test(text)
+  ) {
     return ["permissions", `Huntaway isn't allowed to write to ${dir} (${causes.at(-1)?.message ?? text})`];
   }
   return ["other", text];
@@ -349,7 +376,12 @@ function failed(e: unknown, what: string, data_dir: string): BackupFailed | null
       : reason === "permissions"
         ? `Let Huntaway write to ${dir}`
         : `Check that Huntaway can write to ${dir}`;
-  return new BackupFailed(`couldn't back up the database before ${what}, so it didn't go ahead: ${why}. ${advice}, or set ${SKIP_ENV}=1 to go ahead without a backup`, reason, why, dir);
+  return new BackupFailed(
+    `couldn't back up the database before ${what}, so it didn't go ahead: ${why}. ${advice}, or set ${SKIP_ENV}=1 to go ahead without a backup`,
+    reason,
+    why,
+    dir,
+  );
 }
 
 /**

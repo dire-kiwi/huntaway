@@ -116,7 +116,15 @@ export interface DiskUsageReport {
     repo: DiskSize | null;
     git: DiskSize | null;
     /** Task worktrees, biggest first. `task_id` is null for a worktree of the repository, in the worktrees folder, that no task on the host has. */
-    worktrees: { task_id: string | null; kind: string | null; number: number | null; title: string | null; status: Status | null; path: string; size: DiskSize }[];
+    worktrees: {
+      task_id: string | null;
+      kind: string | null;
+      number: number | null;
+      title: string | null;
+      status: Status | null;
+      path: string;
+      size: DiskSize;
+    }[];
     /** The scratch folder and the rest of the project's data folder. */
     other: DiskSize;
     /** Its tasks' agent runs' folders (API 59). */

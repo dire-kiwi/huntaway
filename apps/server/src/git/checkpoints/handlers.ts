@@ -315,7 +315,11 @@ async function rewind_now(state: AppState, task_id: string, b: RewindBody): Prom
     convo.kind === "Nothing"
       ? []
       : convo.kind === "Fresh"
-        ? [["session_id", null], ["rewind", null], ["context", null]]
+        ? [
+            ["session_id", null],
+            ["rewind", null],
+            ["context", null],
+          ]
         : [["rewind", convo.rewind]];
   state.update_task(task_id, fields);
   const branch = moved ? `; the branch is back at ${moved[0].slice(0, 8)} (from ${moved[1].slice(0, 8)})` : "";

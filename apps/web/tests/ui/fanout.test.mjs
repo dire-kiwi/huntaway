@@ -15,7 +15,12 @@ beforeAll(async () => {
   gitRepo(repo);
   [profile] = await server.api("GET", "/profiles");
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
-  plain = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Plain", repo_path: `${server.dataDir}/plain`, key: "PL", use_worktrees: false });
+  plain = await server.api("POST", `/profiles/${profile.id}/projects`, {
+    name: "Plain",
+    repo_path: `${server.dataDir}/plain`,
+    key: "PL",
+    use_worktrees: false,
+  });
   // A git repository whose tasks don't get worktrees unless they ask.
   mkdirSync(`${server.dataDir}/cart`);
   execFileSync("git", ["init", "-q", `${server.dataDir}/cart`]);
@@ -41,13 +46,10 @@ test("several models make a task each from one prompt, and their cards and detai
       "gone Reads as",
     ]);
     const tasks = await tasksIn(project, "Add a health check");
-    assert.deepEqual(
-      tasks.map((t) => [t.model, t.use_worktree]).sort(),
-      [
-        ["opus", true],
-        ["sonnet", true],
-      ],
-    );
+    assert.deepEqual(tasks.map((t) => [t.model, t.use_worktree]).sort(), [
+      ["opus", true],
+      ["sonnet", true],
+    ]);
     assert.ok(tasks[0].fanout_id && tasks[0].fanout_id === tasks[1].fanout_id);
     const [opus, sonnet] = tasks.sort((a, b) => a.model.localeCompare(b.model));
     await ui.run([
@@ -118,7 +120,15 @@ test("a subproject or a project that isn't a git repository takes one model", as
 
 test("one model, or none, makes one task as before", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${project.id}`, "click New task", "type Only one !opus", "press Escape", "wait Create task", "press Control+Enter", "gone Reads as"]);
+    await ui.run([
+      `goto /p/${project.id}`,
+      "click New task",
+      "type Only one !opus",
+      "press Escape",
+      "wait Create task",
+      "press Control+Enter",
+      "gone Reads as",
+    ]);
   });
   const [task] = await tasksIn(project, "Only one");
   assert.deepEqual([task.model, task.fanout_id ?? null], ["opus", null]);

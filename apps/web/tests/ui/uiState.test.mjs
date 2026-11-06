@@ -78,7 +78,8 @@ test("a refresh that ends after a newer one doesn't undo it", async () => {
       const res = await route.fetch();
       const list = await res.json();
       const n = answers.length;
-      if (n === 1) for (const t of list) if (t.id === task.id) Object.assign(t, { title: "Order: new", updated_at: new Date(Date.now() + 60_000).toISOString() });
+      if (n === 1)
+        for (const t of list) if (t.id === task.id) Object.assign(t, { title: "Order: new", updated_at: new Date(Date.now() + 60_000).toISOString() });
       await new Promise((r) => answers.push(r));
       await route.fulfill({ response: res, json: list });
     });
@@ -174,7 +175,12 @@ test("the composer keeps its draft across tabs, cards and a reload, and what's t
     await page.keyboard.press("Control+End");
     await page.keyboard.press("Enter");
     await page.keyboard.type(" and more");
-    await until(page, async () => (await composer.inputValue()) === "and more", "the sent text to go", async () => JSON.stringify({ value: await composer.inputValue(), sent }));
+    await until(
+      page,
+      async () => (await composer.inputValue()) === "and more",
+      "the sent text to go",
+      async () => JSON.stringify({ value: await composer.inputValue(), sent }),
+    );
     assert.equal(sent, "A draft for the agent");
   });
 });

@@ -109,7 +109,8 @@ export async function pick_start(state: AppState, task: Task, project: Project, 
       return picked(branch, `Stacked on ${key}: starting from its branch ${branch}, which this task's pull request targets`);
     }
     case "pull_request": {
-      const number = sf.number, named = sf.repo ?? null;
+      const number = sf.number,
+        named = sf.repo ?? null;
       // Where the project's tasks open their pull requests: its base branch's remote's repository.
       const def = await project_base(repo, project);
       const gh = await github(repo, def);
@@ -127,7 +128,9 @@ export async function pick_start(state: AppState, task: Task, project: Project, 
       }
       if (pr == null) throw new Error(`couldn't read pull request #${number} of ${gh.repo} with gh`);
       const text = (k: string): string | null => (typeof pr[k] === "string" && pr[k] ? pr[k] : null);
-      const head = text("headRefName"), base = text("baseRefName"), oid = text("headRefOid");
+      const head = text("headRefName"),
+        base = text("baseRefName"),
+        oid = text("headRefOid");
       if (head === null || base === null || oid === null) throw new Error(`gh didn't say where pull request #${number} of ${gh.repo} is`);
       if (pr.state === "MERGED") return picked(base, `Pull request #${number} is merged already, so starting from its base ${base}`);
       // Its branch, if the name alone follows the remote it's on (where this task's pull request goes too).
@@ -144,7 +147,8 @@ export async function pick_start(state: AppState, task: Task, project: Project, 
         throw context(`fetching pull request #${number}'s head ${oid}`, e);
       }
       let why: string;
-      if (pr.state === "OPEN") why = pr.isCrossRepository === false ? `has its branch on ${gh.remote}, which ${head} alone doesn't follow here` : "is from a fork";
+      if (pr.state === "OPEN")
+        why = pr.isCrossRepository === false ? `has its branch on ${gh.remote}, which ${head} alone doesn't follow here` : "is from a fork";
       else why = "is closed";
       const note =
         `Pull request #${number} ${why}, so starting from its head commit ${oid.slice(0, 12)} on top of ${base}: ` +
@@ -205,7 +209,10 @@ export async function unstack(state: AppState, gone: Task): Promise<void> {
     const key = (t: Task) => `${runner.key_prefix(t, project)}-${t.number}`;
     let fields: Array<[string, any]>, text: string;
     if (heir) {
-      fields = [["start_from", { type: "task", task_id: heir.id }], ["base_branch", t.branch != null ? base : null]];
+      fields = [
+        ["start_from", { type: "task", task_id: heir.id }],
+        ["base_branch", t.branch != null ? base : null],
+      ];
       text = `${key(gone)}, which this task was stacked on, was deleted: it's merged into ${key(heir)}, so this task is stacked on that now`;
     } else {
       const kept = project && t.branch != null ? await commit(expand_tilde(project.repo_path), start_ref(t.id)) : null;
@@ -213,7 +220,10 @@ export async function unstack(state: AppState, gone: Task): Promise<void> {
       if (t.branch != null) from = kept !== null ? { type: "commit", commit: kept } : (t.start_from ?? null);
       else from = null;
       const to = base ?? "the base branch";
-      fields = [["base_branch", base], ["start_from", from]];
+      fields = [
+        ["base_branch", base],
+        ["start_from", from],
+      ];
       text = `${key(gone)}, which this task was stacked on, was deleted: it's merged, so this task goes to ${to}`;
     }
     try {

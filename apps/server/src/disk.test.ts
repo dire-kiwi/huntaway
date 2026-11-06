@@ -122,7 +122,8 @@ test("shared_worktrees_folders_only_count_unowned_worktrees_of_the_repo_as_stray
   const tmp = testing.temp_dir();
   // One folder holds both repos and both projects' worktrees.
   const shared = join(tmp, "code");
-  const repo_a = join(shared, "a"), repo_b = join(shared, "b");
+  const repo_a = join(shared, "a"),
+    repo_b = join(shared, "b");
   write(join(repo_a, ".git/HEAD"), 10);
   write(join(repo_b, ".git/HEAD"), 10);
   fake_worktree(repo_a, join(shared, "a-1"), 1_000);

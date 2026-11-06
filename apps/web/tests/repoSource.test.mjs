@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "vite-plus/test";
-import { clonePath, defaultCloneDir, filterRepos, loadProjectSource, mergeRepos, repoFromInput, saveProjectSource } from "../src/components/settings/repoSource.ts";
+import {
+  clonePath,
+  defaultCloneDir,
+  filterRepos,
+  loadProjectSource,
+  mergeRepos,
+  repoFromInput,
+  saveProjectSource,
+} from "../src/components/settings/repoSource.ts";
 
 const repo = (full_name) => ({ full_name, name: full_name.split("/")[1] });
 const names = (repos) => repos.map((r) => r.full_name);
@@ -57,7 +65,14 @@ test("remembers where the last project was added from", () => {
   assert.equal(loadProjectSource(), "github");
   saveProjectSource("folder");
   assert.equal(loadProjectSource(), "folder");
-  globalThis.localStorage = { getItem: () => { throw new Error("no storage"); }, setItem: () => { throw new Error("no storage"); } };
+  globalThis.localStorage = {
+    getItem: () => {
+      throw new Error("no storage");
+    },
+    setItem: () => {
+      throw new Error("no storage");
+    },
+  };
   assert.equal(loadProjectSource(), "folder");
   saveProjectSource("github");
 });

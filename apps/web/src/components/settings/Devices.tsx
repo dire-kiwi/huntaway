@@ -24,7 +24,15 @@ function QrSvg({ text, size = 200 }: { text: string; size?: number }) {
     return { d, n: n + 8 };
   }, [text]);
   return (
-    <svg role="img" aria-label="Pairing QR code" width={size} height={size} viewBox={`0 0 ${path.n} ${path.n}`} shapeRendering="crispEdges" className="rounded-lg">
+    <svg
+      role="img"
+      aria-label="Pairing QR code"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${path.n} ${path.n}`}
+      shapeRendering="crispEdges"
+      className="rounded-lg"
+    >
       <rect width={path.n} height={path.n} fill="#fff" />
       <path d={path.d} fill="#000" />
     </svg>
@@ -111,9 +119,9 @@ export function DevicesPanel() {
         <Smartphone size={14} /> Phones
       </div>
       <p>
-        Pair the Huntaway app on a phone by scanning a QR code. It holds this board's address and a code that works once, for five minutes, and the
-        phone gets a token of its own, which you can revoke here at any time. The phone reaches the board over HTTPS, such as with{" "}
-        <code>tailscale serve</code> (see <i>The mobile app</i> in docs/guide/mobile.md).
+        Pair the Huntaway app on a phone by scanning a QR code. It holds this board's address and a code that works once, for five minutes, and the phone gets a
+        token of its own, which you can revoke here at any time. The phone reaches the board over HTTPS, such as with <code>tailscale serve</code> (see{" "}
+        <i>The mobile app</i> in docs/guide/mobile.md).
       </p>
       {!pairing ? (
         <Button size="sm" variant="primary" onClick={start}>

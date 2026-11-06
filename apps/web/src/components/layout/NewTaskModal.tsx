@@ -73,14 +73,19 @@ export function NewTaskModal({
     : noProject
       ? scratch!.name
       : asGroup
-        ? docType ? `the ${group} group` : group
+        ? docType
+          ? `the ${group} group`
+          : group
         : `${project!.name}${hostCount > 1 && projects?.some((p) => p.host_id !== project!.host_id) ? ` (${host?.name})` : ""}`;
 
   return (
     <Modal
       title={
         <span>
-          New {noun} <span className="font-normal text-muted">{asGroup ? "for" : "in"} {where}</span>
+          New {noun}{" "}
+          <span className="font-normal text-muted">
+            {asGroup ? "for" : "in"} {where}
+          </span>
         </span>
       }
       onClose={onClose}

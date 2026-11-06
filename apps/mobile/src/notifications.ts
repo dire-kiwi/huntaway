@@ -104,7 +104,10 @@ const handle = responseHandler({
   fetch: (url, init) => globalThis.fetch(url, init),
   open: (d) => (opener ? opener(d) : (pendingPush = d)),
   show: async (title, body, data) => {
-    await Notifications.scheduleNotificationAsync({ content: { title, body, data: { ...data } }, trigger: Platform.OS === "android" ? { channelId: "prompts" } : null });
+    await Notifications.scheduleNotificationAsync({
+      content: { title, body, data: { ...data } },
+      trigger: Platform.OS === "android" ? { channelId: "prompts" } : null,
+    });
   },
   dismiss: (id) => Notifications.dismissNotificationAsync(id),
   // Readable in the background and on the lock screen, as the taps come.
@@ -190,8 +193,7 @@ export const registrar = new PushRegistrar({
   store: secrets,
   expoToken,
   name: deviceName,
-  clientFor: (b, token) =>
-    token ? createClient({ baseUrl: b.url, getToken: () => token, setToken: () => {}, storage: memoryStorage() }) : clientFor(b),
+  clientFor: (b, token) => (token ? createClient({ baseUrl: b.url, getToken: () => token, setToken: () => {}, storage: memoryStorage() }) : clientFor(b)),
   later: (fn, ms) => {
     const t = setTimeout(fn, ms);
     return () => clearTimeout(t);

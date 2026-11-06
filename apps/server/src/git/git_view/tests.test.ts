@@ -98,7 +98,9 @@ test("stages_lines_and_files_and_discards_them", async () => {
   const s = testing.state();
   const [id, wt] = await task_repo(s);
   const at = (body: any) => req(id, { body });
-  const f = Array.from({ length: 20 }, (_, k) => k + 1).map((i) => (i === 2 ? "two\n" : i === 15 ? "fifteen\n" : `${i}\n`)).join("");
+  const f = Array.from({ length: 20 }, (_, k) => k + 1)
+    .map((i) => (i === 2 ? "two\n" : i === 15 ? "fifteen\n" : `${i}\n`))
+    .join("");
   writeFileSync(join(wt, "f.txt"), f);
   unlinkSync(join(wt, "gone.txt"));
   mkdirSync(join(wt, "new"), { recursive: true });
@@ -109,7 +111,10 @@ test("stages_lines_and_files_and_discards_them", async () => {
   assert.deepEqual(files, [" M f.txt", " D gone.txt", "?? new/u.txt"]);
   assert.deepEqual([st.base, st.branch], ["master", sh(wt, ["branch", "--show-current"]).trim()]);
   const commits = st.commits.map((c: any) => [c.subject, c.on_branch]);
-  assert.deepEqual(commits, [["branch work", true], ["init", false]]);
+  assert.deepEqual(commits, [
+    ["branch work", true],
+    ["init", false],
+  ]);
 
   // Two hunks: staging a patch of the first stages just that.
   const patch = await get_diff(s, id, "f.txt", false, false);
@@ -235,8 +240,14 @@ test("a_folder_inside_a_bigger_repository_is_all_that_is_touched", async () => {
   // Only the folder's files and commits.
   const st = await get_status(s, id);
   assert.equal(st.folder, "proj/");
-  assert.deepEqual(st.files.map((f: any) => f.path), ["proj/a.txt"]);
-  assert.deepEqual(st.commits.map((c: any) => c.subject), ["dotfiles"]);
+  assert.deepEqual(
+    st.files.map((f: any) => f.path),
+    ["proj/a.txt"],
+  );
+  assert.deepEqual(
+    st.commits.map((c: any) => c.subject),
+    ["dotfiles"],
+  );
   // Staging everything stages the folder's; files outside it can't be named.
   await stage(s, at(paths([])));
   assert.equal(sh(home, ["diff", "--cached", "--name-only"]), "proj/a.txt\n");
@@ -297,7 +308,10 @@ test("files_not_in_utf8_are_staged_whole_not_by_line", async () => {
   writeFileSync(join(wt, "f.txt"), f);
   const latin = Buffer.from([0x6e, 0x61, 0xef, 0x76, 0x65, 0x0a]);
   writeFileSync(join(wt, "latin.txt"), latin);
-  for (const [path, untracked, line] of [["f.txt", false, "+caf�\n"], ["latin.txt", true, "+na�ve\n"]] as const) {
+  for (const [path, untracked, line] of [
+    ["f.txt", false, "+caf�\n"],
+    ["latin.txt", true, "+na�ve\n"],
+  ] as const) {
     const d = await get(path, false, untracked);
     assert.deepEqual([d.patch, d.not_utf8], ["", true], `${path}: ${JSON.stringify(d)}`);
     assert.ok(d.preview.includes(line), `${path}: ${JSON.stringify(d)}`);

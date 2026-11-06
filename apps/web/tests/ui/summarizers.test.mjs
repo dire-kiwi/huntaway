@@ -11,7 +11,12 @@ afterAll(() => server?.stop());
 
 // HA-141: a project can have several summarizers, each with a name, skills and a prompt of its own, to compare them.
 test("edits a project's several summarizers, and keeps each one's text when another is removed", async () => {
-  await server.api("PATCH", `/projects/${project.id}`, { summarizers: [{ name: "One", skills: ["tldr", "changelog"] }, { name: "Two", skills: ["review"] }] });
+  await server.api("PATCH", `/projects/${project.id}`, {
+    summarizers: [
+      { name: "One", skills: ["tldr", "changelog"] },
+      { name: "Two", skills: ["review"] },
+    ],
+  });
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     const names = page.locator('input[placeholder="Name"]');
@@ -32,7 +37,10 @@ test("edits a project's several summarizers, and keeps each one's text when anot
     const saved = await server.api("GET", `/projects/${project.id}`);
     assert.deepEqual(
       saved.summarizers.map((s) => [s.name, s.skills]),
-      [["Two", ["review"]], ["Three", ["a"]]],
+      [
+        ["Two", ["review"]],
+        ["Three", ["a"]],
+      ],
     );
     // What hosts from before several summarizers read is the first.
     assert.equal(saved.summarizer.name, "Two");

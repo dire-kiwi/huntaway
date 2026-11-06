@@ -25,7 +25,14 @@ const args = process.argv.slice(2);
 const opt = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 const exe = args[0] && !args[0].startsWith("--") ? path.resolve(args[0]) : null;
 if (!exe || args.includes("-h") || args.includes("--help")) {
-  console.log(fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1, 15).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+  console.log(
+    fs
+      .readFileSync(fileURLToPath(import.meta.url), "utf8")
+      .split("\n")
+      .slice(1, 15)
+      .map((l) => l.replace(/^\/\/ ?/, ""))
+      .join("\n"),
+  );
   process.exit(exe ? 0 : 2);
 }
 const mac = process.platform === "darwin";
@@ -104,7 +111,11 @@ async function api(method, p, body) {
   if (!res.ok) throw new Error(`${method} ${p}: ${res.status} ${text}`);
   return text ? JSON.parse(text) : null;
 }
-const listening = () => fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000) }).then(() => true, () => false);
+const listening = () =>
+  fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000) }).then(
+    () => true,
+    () => false,
+  );
 const alive = () => {
   try {
     process.kill(-proc.pid, 0);
@@ -126,7 +137,7 @@ async function mcpTools() {
   const replies = new Map();
   helper.stdout.on("data", (d) => {
     buf += d;
-    for (let i; (i = buf.indexOf("\n")) >= 0; ) {
+    for (let i; (i = buf.indexOf("\n")) >= 0;) {
       const line = buf.slice(0, i);
       buf = buf.slice(i + 1);
       try {
@@ -172,14 +183,25 @@ try {
   log("  server:", JSON.stringify({ version: info.version, exe: server.release?.exe, bundled: server.release?.bundled }));
   const exeOf = server.release?.exe ?? "";
   check(fs.realpathSync(path.dirname(exeOf)) === fs.realpathSync(resources), "it's the server in the app's resources", exeOf);
-  const pid = Number(execFileSync("lsof", ["-nP", "-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).trim().split("\n")[0]);
+  const pid = Number(
+    execFileSync("lsof", ["-nP", "-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" })
+      .trim()
+      .split("\n")[0],
+  );
   const cmd = execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).trim();
-  check(cmd.startsWith(path.join(resources, "node", "bin", "node")) || cmd.includes(`${path.sep}node${path.sep}bin${path.sep}node `), "run by the Node in the app's resources", cmd);
+  check(
+    cmd.startsWith(path.join(resources, "node", "bin", "node")) || cmd.includes(`${path.sep}node${path.sep}bin${path.sep}node `),
+    "run by the Node in the app's resources",
+    cmd,
+  );
 
   log("an agent's run");
   const profile = await api("POST", "/profiles", { name: "test", claude_config_dir: path.join(dir, "claude"), default_model: "haiku" });
   const repo = path.join(dir, "repo");
-  execFileSync("sh", ["-c", `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add . && git -c user.name=t -c user.email=t@e.invalid commit -qm init`]);
+  execFileSync("sh", [
+    "-c",
+    `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add . && git -c user.name=t -c user.email=t@e.invalid commit -qm init`,
+  ]);
   const project = await api("POST", `/profiles/${profile.id}/projects`, { name: "Test", repo_path: repo });
   const task = await api("POST", `/projects/${project.id}/tasks`, { title: "A run in the desktop app" });
   await api("PATCH", `/tasks/${task.id}`, { status: "in_progress" });
@@ -205,7 +227,11 @@ try {
   check(exit.code === 0, "which recorded the agent's exit", exit);
 
   const tools = await mcpTools();
-  check(tools.some((t) => /create_task/.test(t)), "the agents' MCP helper (huntaway mcp) lists the board's tools", tools);
+  check(
+    tools.some((t) => /create_task/.test(t)),
+    "the agents' MCP helper (huntaway mcp) lists the board's tools",
+    tools,
+  );
 
   log("quitting");
   process.kill(-proc.pid, "SIGTERM");
@@ -214,7 +240,10 @@ try {
   ok = true;
 } catch (e) {
   console.error(`\nFAILED: ${e.message}`);
-  for (const [name, file] of [["app", appLog], ["server", path.join(data, "serve.log")]]) {
+  for (const [name, file] of [
+    ["app", appLog],
+    ["server", path.join(data, "serve.log")],
+  ]) {
     if (fs.existsSync(file)) console.error(`\n--- ${name} log (${file}), last lines:\n${fs.readFileSync(file, "utf8").split("\n").slice(-60).join("\n")}`);
   }
 } finally {

@@ -86,7 +86,8 @@ export function offset_str(secs: number): string {
 function parse_daily_time(t: string): number | null {
   const m = /^(\d{1,2}):(\d{1,2})$/.exec(t.trim());
   if (!m) return null;
-  const h = Number(m[1]), mi = Number(m[2]);
+  const h = Number(m[1]),
+    mi = Number(m[2]);
   return h < 24 && mi < 60 ? h * 60 + mi : null;
 }
 
@@ -143,7 +144,10 @@ export function check_trigger(t: Trigger): Trigger {
     return { kind: "daily", time: `${pad(Math.floor(at / 60))}:${pad(at % 60)}`, weekdays: check_weekdays(t.weekdays) };
   }
   if (t.kind === "cron") {
-    const expr = t.expr.split(/\s+/).filter((x) => x !== "").join(" ");
+    const expr = t.expr
+      .split(/\s+/)
+      .filter((x) => x !== "")
+      .join(" ");
     let cron;
     try {
       cron = Cron_parse(expr);
@@ -283,7 +287,17 @@ export function check_action(c: Conn, owner: Owner, a: Action): Action {
     if (!["todo", "backlog"].includes(status)) throw bad("status must be todo or backlog (a task that's started moves to in_progress)");
     const claude_config_id = api.pick_config(c, project.profile_id, project, blank(a.claude_config_id));
     return set_labels(
-      { kind: "create_task", title: title.trim(), description, task_type, claude_config_id: claude_config_id ?? null, model: blank(model), effort, status, start },
+      {
+        kind: "create_task",
+        title: title.trim(),
+        description,
+        task_type,
+        claude_config_id: claude_config_id ?? null,
+        model: blank(model),
+        effort,
+        status,
+        start,
+      },
       checked,
     );
   }

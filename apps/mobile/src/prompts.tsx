@@ -24,7 +24,14 @@ export function toolSummary(input: Any): string {
 }
 
 /** A question as AskUserQuestion asks it, with Codex's `isOther` (whether it takes an answer of the user's own) and `isSecret`. */
-type Asked = { question: string; header?: string; options: { label: string; description?: string }[]; multiSelect: boolean; takesText: boolean; secret: boolean };
+type Asked = {
+  question: string;
+  header?: string;
+  options: { label: string; description?: string }[];
+  multiSelect: boolean;
+  takesText: boolean;
+  secret: boolean;
+};
 
 /**
  * The questions of a question prompt: Claude's AskUserQuestion, or Codex's questions, which come as a prompt for
@@ -68,7 +75,13 @@ function Options({ options, picked, onPick }: { options: { label: string; descri
             accessibilityRole="button"
             accessibilityState={{ selected: on }}
             onPress={() => onPick(o.label)}
-            style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: on ? colors.accent : colors.line, backgroundColor: on ? "rgba(139,124,246,0.15)" : colors.raised }}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: on ? colors.accent : colors.line,
+              backgroundColor: on ? "rgba(139,124,246,0.15)" : colors.raised,
+            }}
           >
             <Text style={{ color: colors.fg, fontSize: 15 }}>{o.label}</Text>
             {!!o.description && <Text style={s.faint}>{o.description}</Text>}
@@ -127,7 +140,9 @@ export function PermissionCard({
               {q.header ? <Text style={s.faint}>{q.header} · </Text> : null}
               {q.question}
             </Text>
-            {q.options.length > 0 && <Options options={q.options} picked={drafts[i]?.picked ?? []} onPick={(label) => set(i, (a) => pickOption(a, label, q.multiSelect))} />}
+            {q.options.length > 0 && (
+              <Options options={q.options} picked={drafts[i]?.picked ?? []} onPick={(label) => set(i, (a) => pickOption(a, label, q.multiSelect))} />
+            )}
             {q.takesText && (
               <TextInput
                 style={[s.input, { minHeight: 44 }]}
@@ -190,7 +205,21 @@ export function typeAnswer(a: Answer, text: string, multi: boolean): Answer {
 }
 
 /** A question asked with request_user_input: its options, and a typed answer if it takes one. */
-export function QuestionCard({ client, hostId, taskId, messageId, data, onDone }: { client: Pick<Client, "answerQuestion">; hostId: string; taskId: string; messageId: number; data: Any; onDone: () => void }) {
+export function QuestionCard({
+  client,
+  hostId,
+  taskId,
+  messageId,
+  data,
+  onDone,
+}: {
+  client: Pick<Client, "answerQuestion">;
+  hostId: string;
+  taskId: string;
+  messageId: number;
+  data: Any;
+  onDone: () => void;
+}) {
   const options: { label: string; description?: string }[] = Array.isArray(data?.options) ? data.options : [];
   const multi = data?.multi_select === true;
   const allowOther = data?.allow_other !== false;
@@ -243,4 +272,3 @@ export function QuestionCard({ client, hostId, taskId, messageId, data, onDone }
     </View>
   );
 }
-

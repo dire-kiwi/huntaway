@@ -183,7 +183,8 @@ class Rows {
         const data = resultData(it);
         const last = this.items[this.items.length - 1];
         // A `/compact` run's turn is just the compaction.
-        if (last?.type === "compact" && data.num_turns === 0 && it.ok && data.subtype === "success") this.items[this.items.length - 1] = { ...last, result: data };
+        if (last?.type === "compact" && data.num_turns === 0 && it.ok && data.subtype === "success")
+          this.items[this.items.length - 1] = { ...last, result: data };
         else this.push({ type: "result", key, data });
         return;
       }
@@ -213,7 +214,8 @@ function before(r: ThreadRequest, rid: number | undefined, it: ThreadItem): bool
 function subagentOf(it: ToolCall, running: boolean, waiting: Set<string>): Subagent {
   const s = it.subagent;
   const input: Any = it.input ?? {};
-  let status: SubagentStatus = s?.status ?? (it.status === "running" || it.status === "pending" ? "running" : it.status === "completed" ? "completed" : "failed");
+  let status: SubagentStatus =
+    s?.status ?? (it.status === "running" || it.status === "pending" ? "running" : it.status === "completed" ? "completed" : "failed");
   // One that never said it ended, in a run that has: stopped with it.
   if (!running && status === "running") status = "stopped";
   // What its task_started said it's doing, over its call's input (a forked Skill's has neither).

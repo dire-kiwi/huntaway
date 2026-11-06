@@ -10,19 +10,7 @@
  * `sync_skills`), so its scripts and references come with it.
  */
 import { execFile } from "node:child_process";
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-} from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import * as db from "../../db.ts";
 import type { Conn } from "../../db.ts";
@@ -126,7 +114,8 @@ export function normalize_url(input: string): string {
   // `git@github.com:owner/repo`; a `::` is git's `ext::` and similar transports.
   const colon = url.indexOf(":");
   if (!url.includes("::") && colon >= 0) {
-    const host = url.slice(0, colon), path = url.slice(colon + 1);
+    const host = url.slice(0, colon),
+      path = url.slice(colon + 1);
     if (host.includes("@") && !host.includes("/") && path !== "") return url;
   }
   const g = github();
@@ -162,11 +151,16 @@ interface GitOut {
 
 function git(args: string[], env: NodeJS.ProcessEnv, timeout_s: number | null): Promise<GitOut> {
   return new Promise((resolve, reject) => {
-    const child = execFile("git", args, { env, timeout: timeout_s !== null ? timeout_s * 1000 : undefined, maxBuffer: 64 << 20, encoding: "utf8" }, (err: any, stdout, stderr) => {
-      if (err && typeof err.code === "string") return reject(err);
-      const timed_out = !!err?.killed && timeout_s !== null && err.signal != null;
-      resolve({ code: err ? (typeof err.code === "number" ? err.code : null) : 0, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), timed_out });
-    });
+    const child = execFile(
+      "git",
+      args,
+      { env, timeout: timeout_s !== null ? timeout_s * 1000 : undefined, maxBuffer: 64 << 20, encoding: "utf8" },
+      (err: any, stdout, stderr) => {
+        if (err && typeof err.code === "string") return reject(err);
+        const timed_out = !!err?.killed && timeout_s !== null && err.signal != null;
+        resolve({ code: err ? (typeof err.code === "number" ? err.code : null) : 0, stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), timed_out });
+      },
+    );
     child.stdin?.end();
   });
 }
@@ -187,9 +181,16 @@ async function clone(url: string, git_ref: string | null, dest: string): Promise
   }
   if (out.timed_out) throw new Error(`cloning ${url} took more than ${CLONE_TIMEOUT} seconds`);
   if (out.code !== 0) {
-    const why = out.stderr.split("\n").map((l) => l.trim()).filter((l) => l !== "").slice(-3).join(" ");
+    const why = out.stderr
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "")
+      .slice(-3)
+      .join(" ");
     // GitHub answers for a repository that isn't there as it does for a private one.
-    const hint = why.includes("terminal prompts disabled") ? " (the repository may not exist, or it's private and this host has no git credentials for it)" : "";
+    const hint = why.includes("terminal prompts disabled")
+      ? " (the repository may not exist, or it's private and this host has no git credentials for it)"
+      : "";
     throw new Error(`couldn't clone ${url}${git_ref !== null ? ` at ${git_ref}` : ""}: ${why}${hint}`);
   }
   const head = await git(["-C", dest, "rev-parse", "HEAD"], process.env, null);
@@ -333,7 +334,8 @@ export function copy_skill(from: string, to: string): void {
   }
   for (const e of readdirSync(from, { withFileTypes: true })) {
     if (!wanted(e.name)) continue;
-    const src = join(from, e.name), dst = join(to, e.name);
+    const src = join(from, e.name),
+      dst = join(to, e.name);
     if (e.isDirectory()) {
       copy_skill(src, dst);
       continue;
@@ -388,7 +390,8 @@ async function fetch(state: Shared, id: string, url: string, git_ref: string | n
 
 /** Puts a fetched clone where the source's is, in place of the one before. */
 function install(state: Shared, id: string, fetched: Fetched): void {
-  const live = join(sources_root(state), id), old = join(sources_root(state), `${id}.old`);
+  const live = join(sources_root(state), id),
+    old = join(sources_root(state), `${id}.old`);
   remove_dir_all(old);
   if (existsSync(live)) renameSync(live, old);
   try {

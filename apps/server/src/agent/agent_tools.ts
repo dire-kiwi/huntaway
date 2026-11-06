@@ -291,7 +291,11 @@ export function check_server_config(config: any): any {
   if (kind === "stdio" && !has("command")) throw ApiError.bad("a stdio server needs a command");
   if ((kind === "http" || kind === "sse") && !has("url")) throw ApiError.bad(`an ${kind} server needs a url`);
   if (!["stdio", "http", "sse"].includes(kind)) throw ApiError.bad("type must be stdio, http or sse");
-  for (const [key, what] of [["args", "a list of strings"], ["env", "an object of strings"], ["headers", "an object of strings"]]) {
+  for (const [key, what] of [
+    ["args", "a list of strings"],
+    ["env", "an object of strings"],
+    ["headers", "an object of strings"],
+  ]) {
     if (!Object.hasOwn(config, key)) continue;
     const v = config[key];
     const ok = Array.isArray(v)
@@ -443,7 +447,13 @@ export interface SwitchBody {
 export async function set_switch(s: AppState, r: Req): Promise<any> {
   const raw = body_of(r);
   for (const k of ["scope", "scope_id"]) if (typeof raw[k] !== "string") throw bad_body(`missing field \`${k}\``);
-  const b: SwitchBody = { scope: raw.scope, scope_id: raw.scope_id, item_id: opt_str(raw, "item_id"), source_id: opt_str(raw, "source_id"), enabled: opt_bool(raw, "enabled") };
+  const b: SwitchBody = {
+    scope: raw.scope,
+    scope_id: raw.scope_id,
+    item_id: opt_str(raw, "item_id"),
+    source_id: opt_str(raw, "source_id"),
+    enabled: opt_bool(raw, "enabled"),
+  };
   const c = s.db();
   let exists: boolean;
   if (b.scope === "profile") exists = db.get_profile(c, b.scope_id) !== null;
@@ -784,7 +794,8 @@ export function effective_with(c: Conn, project: Project, extra: string[]): [Ski
  * profile switches on.
  */
 export function effective_for_profile(c: Conn, profile_id: string): [Skill[], McpServer[]] {
-  const skills: Skill[] = [], servers: McpServer[] = [];
+  const skills: Skill[] = [],
+    servers: McpServer[] = [];
   add_global(c, profile_id, null, skills, servers);
   return [skills, servers];
 }
@@ -936,7 +947,8 @@ export function record_seen(c: Conn, project_id: string, config_id: string | nul
     }
     const key = (v: any) => (typeof nameOf(v) === "string" ? nameOf(v) : null);
     return all.sort((a, b) => {
-      const x = key(a), y = key(b);
+      const x = key(a),
+        y = key(b);
       if (x === y) return 0;
       if (x === null) return -1;
       if (y === null) return 1;
@@ -946,7 +958,11 @@ export function record_seen(c: Conn, project_id: string, config_id: string | nul
   const skills = (Array.isArray(init?.skills) ? init.skills : []).filter((s: any) => typeof s === "string").map((n: string) => ({ name: n }));
   const servers = (Array.isArray(init?.mcp_servers) ? init.mcp_servers : [])
     .filter((s: any) => !(isObj(s) && typeof s.name === "string" && runner.is_board_server(s.name)))
-    .map((s: any) => ({ name: isObj(s) ? (s.name ?? null) : null, status: isObj(s) ? (s.status ?? null) : null, source: isObj(s) ? (s.source ?? null) : null }));
+    .map((s: any) => ({
+      name: isObj(s) ? (s.name ?? null) : null,
+      status: isObj(s) ? (s.status ?? null) : null,
+      source: isObj(s) ? (s.source ?? null) : null,
+    }));
   // The board's own skills the run was given, so they can be told from others once they're turned off, renamed or
   // deleted.
   const project = db.get_project(c, project_id);
@@ -985,7 +1001,9 @@ export async function for_task(s: AppState, r: Req): Promise<any> {
   } else if (db.is_assistants(task)) {
     // A profile's assistant (and its routine threads) has the global skills its profile switches on (see for_task_run).
     board = effective_for_profile(c, task.profile_id)[0];
-    board_off = list_skills(c, null).map((s) => s.name).filter((n) => !board.some((s) => s.name === n));
+    board_off = list_skills(c, null)
+      .map((s) => s.name)
+      .filter((n) => !board.some((s) => s.name === n));
   }
   const repo = project ? expand_tilde(project.repo_path) : null;
   const is_codex = config !== null && db.is_codex(config);
@@ -1205,7 +1223,10 @@ function subdirs(dir: string): string[] {
   } catch {
     return [];
   }
-  return names.map((n) => join(dir, n)).filter(isDir).sort();
+  return names
+    .map((n) => join(dir, n))
+    .filter(isDir)
+    .sort();
 }
 
 /** The skills in `dir` (folders with a `SKILL.md`), looking `depth` folders down, named `<prefix><folder>`. */

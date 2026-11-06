@@ -63,7 +63,9 @@ describe("what a push carries", () => {
       answer: { url: "/api/permissions/r1/push-answer", token: "one-time" },
     });
     expect(pushData(notification({ dataString: JSON.stringify(promptData) }))?.request_id).toBe("r1");
-    expect(pushData({ request: { identifier: "x", content: { data: {} }, trigger: { remoteMessage: { data: { body: JSON.stringify(promptData) } } } } })?.board).toBe("work");
+    expect(
+      pushData({ request: { identifier: "x", content: { data: {} }, trigger: { remoteMessage: { data: { body: JSON.stringify(promptData) } } } } })?.board,
+    ).toBe("work");
     // Not a board's.
     expect(pushData(notification({ hello: 1 }))).toBeNull();
     expect(pushData(null)).toBeNull();
@@ -145,7 +147,9 @@ describe("where a tap goes", () => {
       expect(asked).toEqual([]);
     }
     // A board no longer paired here.
-    expect(await pushTarget({ ...reply, board: "gone" }, app().deps)).toEqual({ task: { pathname: "/task/[board]/[host]/[id]", params: { board: "gone", host: "h2", id: "a1" } } });
+    expect(await pushTarget({ ...reply, board: "gone" }, app().deps)).toEqual({
+      task: { pathname: "/task/[board]/[host]/[id]", params: { board: "gone", host: "h2", id: "a1" } },
+    });
   });
 
   test("a reply whose profile can't be found opens its thread", async () => {
@@ -190,7 +194,16 @@ function fakeBoard(id: string) {
       const { endpoint, kind, name } = body as { endpoint: string; kind: string; name: string };
       const old = b.subs.find((x) => x.endpoint === endpoint);
       if (old) return { status: 200, body: old };
-      const sub = { id: `s${b.subs.length + 1}`, endpoint, kind, name, events: { attention: true, review: true, merge: false, done: false }, created_at: "", last_sent_at: null, last_error: null } as PushDevice;
+      const sub = {
+        id: `s${b.subs.length + 1}`,
+        endpoint,
+        kind,
+        name,
+        events: { attention: true, review: true, merge: false, done: false },
+        created_at: "",
+        last_sent_at: null,
+        last_error: null,
+      } as PushDevice;
       b.subs.push(sub);
       return { status: 200, body: sub };
     }
@@ -213,7 +226,11 @@ function fakeBoard(id: string) {
 }
 
 /** A registrar over boards kept in `store`, talking to `fakes`, with its retries collected rather than waited for. */
-async function setup(list: Board[], fakes: Record<string, ReturnType<typeof fakeBoard>>, opts: { store?: ReturnType<typeof memoryStore>; token?: () => { token: string } | { retry: boolean } } = {}) {
+async function setup(
+  list: Board[],
+  fakes: Record<string, ReturnType<typeof fakeBoard>>,
+  opts: { store?: ReturnType<typeof memoryStore>; token?: () => { token: string } | { retry: boolean } } = {},
+) {
   const store = opts.store ?? memoryStore();
   const boards = new Boards(store);
   await boards.load();
@@ -253,7 +270,10 @@ describe("subscribing", () => {
     await registrar.sync();
     expect(Object.keys(registrar.subscribed).sort()).toEqual(["home", "work"]);
     expect(subscribeCalls(fakes.work)).toEqual([
-      expect.objectContaining({ body: { kind: "expo", endpoint: "ExponentPushToken[abc]", name: "Pixel" }, headers: expect.objectContaining({ Authorization: "Bearer device-work" }) }),
+      expect.objectContaining({
+        body: { kind: "expo", endpoint: "ExponentPushToken[abc]", name: "Pixel" },
+        headers: expect.objectContaining({ Authorization: "Bearer device-work" }),
+      }),
     ]);
     expect(fakes.old.calls).toEqual([]);
     expect(fakes.off.calls).toEqual([]);
@@ -266,7 +286,14 @@ describe("subscribing", () => {
     expect(subscribeCalls(fakes.work)).toHaveLength(2);
     await registrar.tokenChanged();
     expect(subscribeCalls(fakes.work)).toHaveLength(3);
-    expect((await subscriptionOn(createClient({ baseUrl: "https://w", getToken: () => "device-work", setToken: () => {}, storage: memoryStorage(), fetch: fakes.work.fetch }), "ExponentPushToken[abc]"))?.id).toBe("s1");
+    expect(
+      (
+        await subscriptionOn(
+          createClient({ baseUrl: "https://w", getToken: () => "device-work", setToken: () => {}, storage: memoryStorage(), fetch: fakes.work.fetch }),
+          "ExponentPushToken[abc]",
+        )
+      )?.id,
+    ).toBe("s1");
   });
 
   test("a board that couldn't be reached is subscribed once it can be, without anything done in the app", async () => {
@@ -406,7 +433,9 @@ describe("turning push off, and removing a board", () => {
     await registrar.removeBoard("work");
     expect(boards.board("work")).toBeUndefined();
     expect(store.data.get(tokenKey("work"))).toBeUndefined();
-    expect(JSON.parse(store.data.get(PENDING_KEY)!)).toEqual([{ kind: "revoke", board: "work", url: "https://work.tailnet.ts.net", deviceId: "dev-work", token: "device-work" }]);
+    expect(JSON.parse(store.data.get(PENDING_KEY)!)).toEqual([
+      { kind: "revoke", board: "work", url: "https://work.tailnet.ts.net", deviceId: "dev-work", token: "device-work" },
+    ]);
     fakes.work.state.down = false;
     await registrar.sync();
     expect(fakes.work.state.revoked).toEqual(["dev-work"]);
@@ -444,9 +473,17 @@ describe("Allow and Deny on the notification", () => {
 
   test("answer with the push's token alone, at the board it came from", async () => {
     const f = answering({ status: 200, body: { result: "allowed", message: "Allowed." } });
-    expect(await answerPrompt(f.fetch, "https://work.tailnet.ts.net/", pushData(notification(promptData))!, "allow")).toEqual({ result: "allowed", message: "Allowed." });
+    expect(await answerPrompt(f.fetch, "https://work.tailnet.ts.net/", pushData(notification(promptData))!, "allow")).toEqual({
+      result: "allowed",
+      message: "Allowed.",
+    });
     expect(f.calls).toEqual([
-      { method: "POST", url: "https://work.tailnet.ts.net/api/permissions/r1/push-answer", body: { token: "one-time", decision: "allow" }, headers: { "Content-Type": "application/json" } },
+      {
+        method: "POST",
+        url: "https://work.tailnet.ts.net/api/permissions/r1/push-answer",
+        body: { token: "one-time", decision: "allow" },
+        headers: { "Content-Type": "application/json" },
+      },
     ]);
   });
 
@@ -491,7 +528,9 @@ describe("Allow and Deny on the notification", () => {
     expect(t.f.calls[0].body).toEqual({ token: "one-time", decision: "deny" });
     expect(t.dismissed).toEqual(["n1"]);
     // The result opens the task when tapped, and can't answer again.
-    expect(t.shown).toEqual([{ title: "WEB-3 Fix the login", body: "Denied.", data: { board: "work", host: "h1", task_id: "t1", event: "prompt", request_id: "r1" } }]);
+    expect(t.shown).toEqual([
+      { title: "WEB-3 Fix the login", body: "Denied.", data: { board: "work", host: "h1", task_id: "t1", event: "prompt", request_id: "r1" } },
+    ]);
     expect(t.opened).toEqual([]);
   });
 
@@ -509,7 +548,10 @@ describe("Allow and Deny on the notification", () => {
     const handle = responseHandler(t.d);
     await handle({ actionIdentifier: DEFAULT_ACTION, notification: notification(promptData, "n2") });
     expect(t.opened).toEqual([pushData(notification(promptData))]);
-    expect(await handle({ actionIdentifier: ALLOW, notification: notification(promptData, "n3") })).toEqual({ result: "invalid", message: expect.stringMatching(/isn't paired/) });
+    expect(await handle({ actionIdentifier: ALLOW, notification: notification(promptData, "n3") })).toEqual({
+      result: "invalid",
+      message: expect.stringMatching(/isn't paired/),
+    });
     expect(t.f.calls).toEqual([]);
     // Something that isn't a board's push is left alone.
     expect(await handle({ actionIdentifier: ALLOW, notification: notification({}, "n4") })).toBeNull();

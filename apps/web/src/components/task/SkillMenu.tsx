@@ -79,7 +79,15 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
       args: "[instructions]",
     },
     ...(plans
-      ? [{ name: "plan", description: "Write a plan in the task's Plan tab and go over it with you before the work", prefix: "/" as const, builtin: true, args: "[what to plan]" }]
+      ? [
+          {
+            name: "plan",
+            description: "Write a plan in the task's Plan tab and go over it with you before the work",
+            prefix: "/" as const,
+            builtin: true,
+            args: "[what to plan]",
+          },
+        ]
       : []),
   ];
   // A skill named like a builtin can't be called with `/`: the board takes the message.

@@ -35,7 +35,10 @@ test("adds a git repository's skills, switches them on and updates and removes t
     await page.getByRole("textbox").first().fill(repo);
     await ui.run(["press Control+Enter", "gone Add skills from a git repository", "wait The first skill", "wait The second skill"]);
     const added = await server.api("GET", "/agent-tools");
-    assert.deepEqual(added.skills.map((s) => s.name), ["alpha", "beta"]);
+    assert.deepEqual(
+      added.skills.map((s) => s.name),
+      ["alpha", "beta"],
+    );
     assert.equal(added.skill_sources.length, 1);
     assert.deepEqual(added.profile_switches[profile.id] ?? {}, {}, "added skills are off until switched on");
 
@@ -58,7 +61,10 @@ test("adds a git repository's skills, switches them on and updates and removes t
     git("commit", "-q", "-m", "change");
     await ui.run(["goto /settings", "wait The first skill", "click Update", "wait The third skill", "gone The second skill"]);
     const updated = await server.api("GET", "/agent-tools");
-    assert.deepEqual(updated.skills.map((s) => s.name), ["alpha", "gamma"]);
+    assert.deepEqual(
+      updated.skills.map((s) => s.name),
+      ["alpha", "gamma"],
+    );
     const alpha = updated.skills.find((s) => s.name === "alpha");
     const gamma = updated.skills.find((s) => s.name === "gamma");
     assert.equal(updated.profile_switches[profile.id][alpha.id], true);

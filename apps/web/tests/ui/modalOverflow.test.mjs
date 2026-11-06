@@ -63,7 +63,11 @@ test("the new task editor's completion list isn't clipped by the dialog", async 
         const r = last.getBoundingClientRect();
         // On top where it is (not under the dialog's clipping), and inside the window.
         const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        return { inWindow: r.top >= 0 && r.bottom <= window.innerHeight, onTop: !!hit && last.contains(hit), count: l.querySelectorAll("[role=option]").length };
+        return {
+          inWindow: r.top >= 0 && r.bottom <= window.innerHeight,
+          onTop: !!hit && last.contains(hit),
+          count: l.querySelectorAll("[role=option]").length,
+        };
       });
     let s = await shown();
     assert.ok(s.count > 1, `options listed (${s.count})`);
@@ -72,7 +76,9 @@ test("the new task editor's completion list isn't clipped by the dialog", async 
     // With little room under the caret it opens above it, and the arrow keys still pick from it.
     await ui.run(["size 1200x480"]);
     // It moves on the window's resize event, which can come after the resize step returns.
-    await page.waitForFunction(() => document.querySelector("[role=listbox]").getBoundingClientRect().bottom <= window.innerHeight, null, { timeout: 2000 }).catch(() => {});
+    await page
+      .waitForFunction(() => document.querySelector("[role=listbox]").getBoundingClientRect().bottom <= window.innerHeight, null, { timeout: 2000 })
+      .catch(() => {});
     s = await shown();
     assert.ok(s.inWindow && s.onTop, `the last option shows in a short window: ${JSON.stringify(s)}`);
     await page.keyboard.press("ArrowUp");

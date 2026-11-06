@@ -1,13 +1,13 @@
 # apps/server: the server (HA-174)
 
 The `huntaway` server, in TypeScript. It's a port of the Rust server (`server/src/`), which it replaced and which was
-removed in HA-179 (`PORTING.md` says how to read that Rust in git history). Releases carry it (see *Release builds* in
+removed in HA-179 (`PORTING.md` says how to read that Rust in git history). Releases carry it (see _Release builds_ in
 [docs/guide/desktop.md](../../docs/guide/desktop.md)): `scripts/package-server.sh` packages it with the Node that runs it, `ia-shim` and the UI, for the
 server tarball and the desktop app. Checkouts run it too: test servers (`scripts/test-server.sh`), the install script,
 the desktop app (`pnpm run electron`) and Rebuild & restart. It runs on Node 24+ straight from the `.ts` files (Node
 strips the types; there's no build step), with `node:sqlite` for the database and `ws` for websockets as its only
 dependency. A release's package carries it compiled to `.js` (`tsconfig.build.json`), which saves the server Node's
-TypeScript compiler (see *Memory*).
+TypeScript compiler (see _Memory_).
 
 ```sh
 pnpm install                                               # at the top of the checkout
@@ -69,15 +69,15 @@ package (what `scripts/package-server.sh <dir>` puts together) rather than this 
 release build of the Rust server and a package of the TS server on Node 26.8, on a scrubbed copy of the live board
 (`--live`: 1,631 tasks, 286,590 messages, 680 MB of thread JSON):
 
-| | Rust | TypeScript | TypeScript before HA-181 |
-|---|---|---|---|
-| Idle after start (RSS) | 38 MB | 111 MB | 172 MB |
-| After loading every thread once | 331 MB | 198 MB (peak 236 MB) | 310 MB (peak 347 MB) |
-| After 5 rounds of that | 436 MB | 182 MB (peak 246 MB) | 322 MB (peak 414 MB) |
-| 10 s later, websockets closed | 437 MB | 173 MB | 321 MB |
-| A minute later | 437 MB | 98 MB | |
-| Each agent's `huntaway mcp` helper | 9 MB | none since HA-180 | 87 MB |
-| Each agent's `huntaway gh-mcp` helper | 7 MB | none since HA-180 | 90 MB |
+|                                       | Rust   | TypeScript           | TypeScript before HA-181 |
+| ------------------------------------- | ------ | -------------------- | ------------------------ |
+| Idle after start (RSS)                | 38 MB  | 111 MB               | 172 MB                   |
+| After loading every thread once       | 331 MB | 198 MB (peak 236 MB) | 310 MB (peak 347 MB)     |
+| After 5 rounds of that                | 436 MB | 182 MB (peak 246 MB) | 322 MB (peak 414 MB)     |
+| 10 s later, websockets closed         | 437 MB | 173 MB               | 321 MB                   |
+| A minute later                        | 437 MB | 98 MB                |                          |
+| Each agent's `huntaway mcp` helper    | 9 MB   | none since HA-180    | 87 MB                    |
+| Each agent's `huntaway gh-mcp` helper | 7 MB   | none since HA-180    | 90 MB                    |
 
 On the `--demo` data, idle is 20 MB against 85 MB (128 MB before), and loading the board keeps them at about 26 MB and
 87 MB. A checkout's `.ts` (test servers, `bin/huntaway` in `apps/server`) idles at 132 MB on the live copy: Node's
@@ -92,16 +92,16 @@ The Rust server's figures vary by 10 to 20% from run to run, the TS server's by 
 - Before HA-180 each agent run started its own `mcp` and `gh-mcp` helpers, so the TS port cost about 160 MB more per
   running agent: with ten agents at work, 1.6 GB more than the Rust helpers' 160 MB.
 - Since HA-180 runs have no helpers: the server serves both MCP servers itself, over HTTP (see `src/mcp/http.ts` and
-  *How runs reach the board's MCP servers* in the top README). Measured before choosing (Node 26.8, one helper after
+  _How runs reach the board's MCP servers_ in the top README). Measured before choosing (Node 26.8, one helper after
   `initialize` and `tools/list`, RSS / private memory):
 
-  | | RSS | Private |
-  |---|---|---|
-  | `mcp.ts` as it ran (type stripping) | 89 MB | 37 MB |
-  | the same, precompiled to `.js` | 59 MB | 16 MB |
-  | `.js` with `--jitless --max-semi-space-size=1 --max-old-space-size=32` | 52 MB | 12 MB |
-  | `--lite-mode` | 51 MB | – |
-  | Node's floor (`node -e` reading stdin, `--jitless`) | 45 MB | 9 MB |
+  |                                                                        | RSS   | Private |
+  | ---------------------------------------------------------------------- | ----- | ------- |
+  | `mcp.ts` as it ran (type stripping)                                    | 89 MB | 37 MB   |
+  | the same, precompiled to `.js`                                         | 59 MB | 16 MB   |
+  | `.js` with `--jitless --max-semi-space-size=1 --max-old-space-size=32` | 52 MB | 12 MB   |
+  | `--lite-mode`                                                          | 51 MB | –       |
+  | Node's floor (`node -e` reading stdin, `--jitless`)                    | 45 MB | 9 MB    |
 
   So lighter Node helpers would still have cost 90–100 MB of RSS per agent. With five agents at once on a test server,
   each agent's processes came to 424 MB RSS (242 MB PSS, of which its helpers were 187 MB RSS and 87 MB PSS) before and
@@ -190,18 +190,18 @@ Measured on 2026-11-05 with Node 26.8 on a fast desktop, on a scrubbed copy of t
 1,642 tasks, 887 MB of database), master's build against this one. "Held" is the longest the health check and the
 websocket ping waited.
 
-| | Held before | Held after |
-|---|---|---|
-| Disk usage, the live board's own folders (17 projects, read only) | 3.7–5.9 s | 3 ms (the walk takes as long, in a worker) |
-| Disk usage, a test project with an 88,000-file worktree | 166 ms | 2 ms (the request: 170 ms before, 300 ms after) |
-| Backup before an Update or Roll back (`VACUUM INTO`, 880 MB) | 0.7 s | 3 ms (as long, in a worker) |
-| Token stats, a year (3,600 runs, 1,550 reviews) | 116 ms | 51 ms |
-| Token stats, a week | 70 ms | 33 ms |
-| The longest thread's first page (4,586 messages, 13.6 MB) | 67 ms | 53 ms |
-| The same thread whole (legacy clients) | 61 ms | 65 ms |
-| Analytics, a year | 38 ms | 32 ms |
-| A profile's task list (4.4 MB) | 19 ms | 22 ms |
-| The git views (status, diffs, unmerged, turns) on a 258-file change | under 10 ms | the same |
+|                                                                     | Held before | Held after                                      |
+| ------------------------------------------------------------------- | ----------- | ----------------------------------------------- |
+| Disk usage, the live board's own folders (17 projects, read only)   | 3.7–5.9 s   | 3 ms (the walk takes as long, in a worker)      |
+| Disk usage, a test project with an 88,000-file worktree             | 166 ms      | 2 ms (the request: 170 ms before, 300 ms after) |
+| Backup before an Update or Roll back (`VACUUM INTO`, 880 MB)        | 0.7 s       | 3 ms (as long, in a worker)                     |
+| Token stats, a year (3,600 runs, 1,550 reviews)                     | 116 ms      | 51 ms                                           |
+| Token stats, a week                                                 | 70 ms       | 33 ms                                           |
+| The longest thread's first page (4,586 messages, 13.6 MB)           | 67 ms       | 53 ms                                           |
+| The same thread whole (legacy clients)                              | 61 ms       | 65 ms                                           |
+| Analytics, a year                                                   | 38 ms       | 32 ms                                           |
+| A profile's task list (4.4 MB)                                      | 19 ms       | 22 ms                                           |
+| The git views (status, diffs, unmerged, turns) on a 258-file change | under 10 ms | the same                                        |
 
 What changed:
 

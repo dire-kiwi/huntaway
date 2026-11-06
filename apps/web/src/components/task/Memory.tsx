@@ -77,7 +77,9 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
     );
 
   const loadedLogs = new Set([overview.today, yesterday(overview.today)]);
-  const groups = (["user", "memory", "log", "other"] as const).map((k) => ({ kind: k, files: files.filter((f) => f.kind === k) })).filter((g) => g.files.length);
+  const groups = (["user", "memory", "log", "other"] as const)
+    .map((k) => ({ kind: k, files: files.filter((f) => f.kind === k) }))
+    .filter((g) => g.files.length);
 
   return (
     <div className="flex h-full min-h-0 narrow:flex-col">
@@ -99,7 +101,10 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
                   <button
                     key={f.path}
                     onClick={() => setPath(f.path)}
-                    className={clsx("flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px]", f.path === path ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                    className={clsx(
+                      "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px]",
+                      f.path === path ? "bg-raised text-fg" : "text-muted hover:text-fg",
+                    )}
                     title={loaded ? "Loaded into each of the assistant's runs" : "Not loaded: the assistant reads it when it needs it"}
                   >
                     <FileText size={13} className={clsx("shrink-0", loaded ? "text-accent" : "text-faint")} />
@@ -118,7 +123,8 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
         </div>
         <p className="border-t border-line px-3 py-2 text-[11px] leading-snug text-faint narrow:hidden">
           Highlighted files go into every run, up to {n(overview.cap)} characters
-          {overview.cap_bytes !== undefined && ` (${n(Math.floor(overview.cap_bytes / 1024))} KB)`} each. The assistant keeps them up to date; you can edit them too.
+          {overview.cap_bytes !== undefined && ` (${n(Math.floor(overview.cap_bytes / 1024))} KB)`} each. The assistant keeps them up to date; you can edit them
+          too.
         </p>
       </aside>
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -298,7 +304,10 @@ function FileEditor({
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
         <span className="font-mono text-[13px] text-fg">{path}</span>
         {cap !== undefined && (
-          <span className={clsx("text-[11px] tabular-nums", over ? "text-amber-300" : "text-faint")} title="How much of it the assistant is told at the start of each run">
+          <span
+            className={clsx("text-[11px] tabular-nums", over ? "text-amber-300" : "text-faint")}
+            title="How much of it the assistant is told at the start of each run"
+          >
             {n(chars)} / {n(cap)} characters{chars <= cap && over && ` (over ${n(Math.floor(capBytes! / 1024))} KB)`}
             {over && (path.startsWith("memory/") ? ": only the end is loaded" : ": the rest isn't loaded")}
           </span>
@@ -491,7 +500,13 @@ function CommitView({
               key={i}
               className={clsx(
                 "whitespace-pre-wrap",
-                l.startsWith("+") ? "bg-emerald-500/10 text-emerald-200" : l.startsWith("-") ? "bg-red-500/10 text-red-200" : l.startsWith("@@") ? "text-faint" : "text-muted",
+                l.startsWith("+")
+                  ? "bg-emerald-500/10 text-emerald-200"
+                  : l.startsWith("-")
+                    ? "bg-red-500/10 text-red-200"
+                    : l.startsWith("@@")
+                      ? "text-faint"
+                      : "text-muted",
               )}
             >
               {l || " "}

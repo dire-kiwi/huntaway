@@ -58,7 +58,10 @@ test("a task on items shows its prompt on its Triage card, and it's answered the
   });
   await idle(t.id);
   const thread = await server.api("GET", `/tasks/${t.id}/thread`);
-  const said = thread.items.filter((i) => i.type === "assistant_message").map((i) => i.text).join("\n");
+  const said = thread.items
+    .filter((i) => i.type === "assistant_message")
+    .map((i) => i.text)
+    .join("\n");
   assert.match(said, /permission Bash: allow/);
 });
 

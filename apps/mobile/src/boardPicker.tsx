@@ -7,7 +7,17 @@ import { boards, statusOf, useBoards, useBoardStatuses } from "./session";
 import { colors } from "./theme";
 import { Chip } from "./ui";
 
-export function BoardPicker({ board, profiles, profile, only }: { board: Board; profiles?: BoardProfiles; profile: string | null; only?: (b: Board) => boolean }) {
+export function BoardPicker({
+  board,
+  profiles,
+  profile,
+  only,
+}: {
+  board: Board;
+  profiles?: BoardProfiles;
+  profile: string | null;
+  only?: (b: Board) => boolean;
+}) {
   const { boards: all } = useBoards();
   const statuses = useBoardStatuses();
   const list = only ? all.filter(only) : all;

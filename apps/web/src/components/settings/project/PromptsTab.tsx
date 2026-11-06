@@ -74,7 +74,9 @@ function ProjectPrompts({ project, onChange }: { project: Project; onChange: (fi
             <div key={field} className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-muted">{label}</span>
-                <span className={clsx("rounded px-1.5 text-[11px]", custom ? "bg-accent/15 text-accent" : "bg-line text-faint")}>{custom ? "Custom" : "Default"}</span>
+                <span className={clsx("rounded px-1.5 text-[11px]", custom ? "bg-accent/15 text-accent" : "bg-line text-faint")}>
+                  {custom ? "Custom" : "Default"}
+                </span>
                 {custom && (
                   <button type="button" className="ml-auto text-[12px] text-muted hover:text-fg" onClick={() => onChange(field, null)}>
                     Reset to default
@@ -139,8 +141,8 @@ function SystemPromptPreview({ project }: { project: Project }) {
       <div className="space-y-1">
         <span className="block text-xs font-medium text-muted">System prompt</span>
         <span className="block text-xs text-faint">
-          What the board adds to the agent's own system prompt for a new thread in this project, with the options picked here and the project's
-          saved settings. It's for the project's next task number, with a placeholder title and id. It isn't editable.
+          What the board adds to the agent's own system prompt for a new thread in this project, with the options picked here and the project's saved settings.
+          It's for the project's next task number, with a placeholder title and id. It isn't editable.
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">

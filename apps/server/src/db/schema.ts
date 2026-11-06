@@ -256,7 +256,11 @@ export function open(path: string): Conn {
     // Starred tasks, and reminders to come back to a task (see Task.starred, Task.remind_at). A database from a build
     // that had this as version 42 (PR previews of it) has the columns already.
     batch("BEGIN;");
-    for (const [column, kind] of [["starred", "INTEGER NOT NULL DEFAULT 0"], ["remind_at", "TEXT"], ["reminder", "TEXT"]]) {
+    for (const [column, kind] of [
+      ["starred", "INTEGER NOT NULL DEFAULT 0"],
+      ["remind_at", "TEXT"],
+      ["reminder", "TEXT"],
+    ]) {
       if (!has_column(conn, "tasks", column)) batch(`ALTER TABLE tasks ADD COLUMN ${column} ${kind};`);
     }
     batch("PRAGMA user_version=44; COMMIT;");
@@ -314,7 +318,11 @@ export function open(path: string): Conn {
     // Tasks' links to the tasks they're for elsewhere (see Task.external_links), and a profile's Asana token and who it's
     // for (see Profile.asana_token).
     batch("BEGIN;");
-    for (const [table, column] of [["tasks", "external_links"], ["profiles", "asana_token"], ["profiles", "asana_user"]]) {
+    for (const [table, column] of [
+      ["tasks", "external_links"],
+      ["profiles", "asana_token"],
+      ["profiles", "asana_user"],
+    ]) {
       if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT;`);
     }
     batch("PRAGMA user_version=51; COMMIT;");
@@ -373,7 +381,11 @@ export function open(path: string): Conn {
     // is (see git/checkpoints.rs). Columns added only if they aren't there, in case another migration takes this version
     // first.
     batch(`BEGIN; ${SCHEMA_V58}`);
-    for (const [table, column] of [["tasks", "rewind TEXT"], ["runs", "turn_message_id INTEGER"], ["runs", "agent_at TEXT"]]) {
+    for (const [table, column] of [
+      ["tasks", "rewind TEXT"],
+      ["runs", "turn_message_id INTEGER"],
+      ["runs", "agent_at TEXT"],
+    ]) {
       if (!has_column(conn, table, column.split(" ")[0])) batch(`ALTER TABLE ${table} ADD COLUMN ${column};`);
     }
     batch("PRAGMA user_version=58; COMMIT;");
@@ -445,7 +457,11 @@ export function open(path: string): Conn {
     // their config runs out (see Profile.limit_wait). Added only if they aren't there, in case another migration takes
     // this version first.
     batch("BEGIN;");
-    const cols = [["tasks", "limit_reset_at", "TEXT"], ["profiles", "limit_wait", "INTEGER NOT NULL DEFAULT 0"], ["profiles", "limit_switch", "INTEGER NOT NULL DEFAULT 0"]];
+    const cols = [
+      ["tasks", "limit_reset_at", "TEXT"],
+      ["profiles", "limit_wait", "INTEGER NOT NULL DEFAULT 0"],
+      ["profiles", "limit_switch", "INTEGER NOT NULL DEFAULT 0"],
+    ];
     for (const [table, column, kind] of cols) {
       if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
     }
@@ -464,7 +480,11 @@ export function open(path: string): Conn {
     // who writes them, and the task's latest. Added only if they aren't there, in case another migration takes this
     // version first.
     batch("BEGIN;");
-    const cols = [["projects", "auto_summary", "INTEGER NOT NULL DEFAULT 1"], ["projects", "summarizer", "TEXT"], ["tasks", "summary", "TEXT"]];
+    const cols = [
+      ["projects", "auto_summary", "INTEGER NOT NULL DEFAULT 1"],
+      ["projects", "summarizer", "TEXT"],
+      ["tasks", "summary", "TEXT"],
+    ];
     for (const [table, column, kind] of cols) {
       if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
     }
@@ -509,7 +529,11 @@ export function open(path: string): Conn {
     // Whether a profile's and a project's merges wait for the user's approval, and where a task's merge is with it (see
     // review/merge_gate.rs). Added only if they aren't there, in case another migration takes this version first.
     batch("BEGIN;");
-    const cols = [["profiles", "merge_approval", "INTEGER NOT NULL DEFAULT 0"], ["projects", "merge_approval", "INTEGER"], ["tasks", "merge_approval", "TEXT"]];
+    const cols = [
+      ["profiles", "merge_approval", "INTEGER NOT NULL DEFAULT 0"],
+      ["projects", "merge_approval", "INTEGER"],
+      ["tasks", "merge_approval", "TEXT"],
+    ];
     for (const [table, column, kind] of cols) {
       if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
     }
@@ -534,7 +558,10 @@ export function open(path: string): Conn {
   if (version < 75) {
     // Whether a task needs an approving review on its pull request to go to "Ready for merge".
     batch("BEGIN;");
-    for (const [table, kind] of [["profiles", "INTEGER NOT NULL DEFAULT 0"], ["projects", "INTEGER"]]) {
+    for (const [table, kind] of [
+      ["profiles", "INTEGER NOT NULL DEFAULT 0"],
+      ["projects", "INTEGER"],
+    ]) {
       if (!has_column(conn, table, "require_pr_approval")) batch(`ALTER TABLE ${table} ADD COLUMN require_pr_approval ${kind};`);
     }
     batch("PRAGMA user_version=75; COMMIT;");
@@ -706,7 +733,10 @@ export function open(path: string): Conn {
     // The linked host a profile's assistant runs on (see agent/assistant.ts), and whether a linked host's agents may use
     // this board's tools (see hosts/uplink.ts).
     batch("BEGIN;");
-    for (const [table, column, kind] of [["profiles", "assistant_host", "TEXT"], ["links", "uplink", "INTEGER NOT NULL DEFAULT 0"]]) {
+    for (const [table, column, kind] of [
+      ["profiles", "assistant_host", "TEXT"],
+      ["links", "uplink", "INTEGER NOT NULL DEFAULT 0"],
+    ]) {
       if (!has_column(conn, table, column)) batch(`ALTER TABLE ${table} ADD COLUMN ${column} ${kind};`);
     }
     batch("PRAGMA user_version=92; COMMIT;");
@@ -751,7 +781,10 @@ export function open(path: string): Conn {
     // unused), and the paired device that made it, whose subscriptions go when it's revoked. Each only if it isn't there,
     // in case another migration takes this version first.
     batch("BEGIN;");
-    for (const [column, kind] of [["kind", "TEXT NOT NULL DEFAULT 'web'"], ["device_id", "TEXT"]]) {
+    for (const [column, kind] of [
+      ["kind", "TEXT NOT NULL DEFAULT 'web'"],
+      ["device_id", "TEXT"],
+    ]) {
       if (!has_column(conn, "push_subscriptions", column)) batch(`ALTER TABLE push_subscriptions ADD COLUMN ${column} ${kind};`);
     }
     batch("PRAGMA user_version=97; COMMIT;");
@@ -904,7 +937,8 @@ function recount_run_costs(c: Conn): void {
         run(
           c,
           "UPDATE context_stats SET cost_usd=MAX(cost_usd-?1, 0) WHERE id=(SELECT MIN(id) FROM context_stats WHERE run_id=?2 AND kind='turn') AND cost_usd >= ?1",
-          before, r.id,
+          before,
+          r.id,
         );
       }
     }
@@ -938,7 +972,9 @@ function migrate_scratch_chats(c: Conn, data_dir: string): void {
                number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type='scratch'),
                position=(SELECT COALESCE(MAX(position),0)+1 FROM tasks WHERE project_id IS NULL AND status='done' AND kind='task')
              WHERE id=?1`,
-      id, dir, profile_id,
+      id,
+      dir,
+      profile_id,
     );
   }
 }

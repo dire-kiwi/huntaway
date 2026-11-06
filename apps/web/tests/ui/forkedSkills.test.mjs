@@ -24,16 +24,31 @@ test("an older review's forked Skill opens from Agents with its transcript and r
   const thread = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Review of work" });
   const messages = forkedSkillMessages(thread.id);
   messages.find((m) => m.kind === "permission").data.status = "allowed";
-  for (let n = 1; n <= 120; n++) messages.push({ task_id: thread.id, kind: "claude", created_at: new Date(n * 1000).toISOString(),
-    data: { type: "assistant", message: { content: [{ type: "text", text: `Review follow-up ${n}.` }] } } });
-  execFileSync("python3", ["-c", `
+  for (let n = 1; n <= 120; n++)
+    messages.push({
+      task_id: thread.id,
+      kind: "claude",
+      created_at: new Date(n * 1000).toISOString(),
+      data: { type: "assistant", message: { content: [{ type: "text", text: `Review follow-up ${n}.` }] } },
+    });
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      `
 import json, sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 c.execute("update tasks set kind='review', parent_id=? where id=?", (sys.argv[2], sys.argv[3]))
 for m in json.load(sys.stdin):
  c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (m['task_id'], m['kind'], json.dumps(m['data'], separators=(',', ':')), m['created_at']))
 c.commit()
-`, `${server.dataDir}/huntaway.db`, parent.id, thread.id], { input: JSON.stringify(messages) });
+`,
+      `${server.dataDir}/huntaway.db`,
+      parent.id,
+      thread.id,
+    ],
+    { input: JSON.stringify(messages) },
+  );
 
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
@@ -54,7 +69,10 @@ test("a streamed Skill launch becomes a running subagent, then completes with it
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     let socket;
-    await page.routeWebSocket(/\/api\/ws/, (ws) => { socket = ws; ws.connectToServer(); });
+    await page.routeWebSocket(/\/api\/ws/, (ws) => {
+      socket = ws;
+      ws.connectToServer();
+    });
     await ui.run([`goto /t/${task.id}`, "click Thread", "wait No agent has worked on this yet"]);
     socket.send(JSON.stringify({ type: "task", task: { ...task, running: true } }));
     const messages = forkedSkillMessages(task.id);

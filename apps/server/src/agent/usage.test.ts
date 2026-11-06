@@ -42,7 +42,10 @@ test("parses_limits_list", () => {
     ],
   };
   const l = parse_limits(v);
-  assert.deepEqual(l.map((l) => l.id), ["session", "weekly", "weekly:fable"]);
+  assert.deepEqual(
+    l.map((l) => l.id),
+    ["session", "weekly", "weekly:fable"],
+  );
   assert.equal(l[1].percent, 67.0);
   assert.equal(l[2].label, "Weekly · Fable");
 });
@@ -192,7 +195,11 @@ test("a_proxy_config_s_usage_is_its_claude_accounts", async () => {
   try {
     const c = s.db();
     const made = db.insert_claude_config(c, "pool", "", "claude");
-    let cfg = db.update_claude_config(c, made.id, [["show_usage", true], ["api_url", url], ["api_key", "k"]])!;
+    let cfg = db.update_claude_config(c, made.id, [
+      ["show_usage", true],
+      ["api_url", url],
+      ["api_key", "k"],
+    ])!;
     // Without the management key, it says what's missing (and doesn't read ~/.claude's login).
     assert.ok(!(await refresh(s, cfg)));
     assert.ok(s.usage.get(cfg.id).error.includes("management key"), s.usage.get(cfg.id).error);
@@ -206,12 +213,27 @@ test("a_proxy_config_s_usage_is_its_claude_accounts", async () => {
     assert.equal(u.error, null);
     assert.equal(u.plan, "2 accounts");
     const accounts: Account[] = u.accounts;
-    assert.deepEqual(accounts.map((a) => a.name), ["one@example.com", "claude-two.json"]);
-    assert.deepEqual(accounts[0].limits.map((l) => [l.id, l.percent]), [["session", 40.0], ["weekly", 10.0]]);
+    assert.deepEqual(
+      accounts.map((a) => a.name),
+      ["one@example.com", "claude-two.json"],
+    );
+    assert.deepEqual(
+      accounts[0].limits.map((l) => [l.id, l.percent]),
+      [
+        ["session", 40.0],
+        ["weekly", 10.0],
+      ],
+    );
     assert.deepEqual(accounts[1].limits, []);
     assert.equal(accounts[1].error, "Usage request failed (401): token expired");
     // The pool is the accounts that have numbers.
-    assert.deepEqual(u.limits.map((l: Limit) => [l.id, l.percent]), [["session", 40.0], ["weekly", 10.0]]);
+    assert.deepEqual(
+      u.limits.map((l: Limit) => [l.id, l.percent]),
+      [
+        ["session", 40.0],
+        ["weekly", 10.0],
+      ],
+    );
     // Each account's usage was asked for with its own token, by the proxy.
     assert.equal(seen.length, 2);
     assert.equal(seen[0].url, USAGE_URL);

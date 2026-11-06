@@ -63,7 +63,14 @@ export function DiskUsage() {
   const hosts = useStore((s) => s.hosts);
   const [confirming, setConfirming] = useState(false);
   const [reclaimed, setReclaimed] = useState<{ results: Reclaimed[]; errors: string[] } | null>(null);
-  const targets = data ? reclaimTargets(data).filter((p) => hostSupports(hosts.find((h) => h.id === p.hostId), 39)) : [];
+  const targets = data
+    ? reclaimTargets(data).filter((p) =>
+        hostSupports(
+          hosts.find((h) => h.id === p.hostId),
+          39,
+        ),
+      )
+    : [];
   // Removes the done tasks' worktrees that are merged and clean, then measures again.
   const reclaim = async () => {
     if (!data) return;
@@ -125,12 +132,12 @@ export function DiskUsage() {
           <p className="text-[11.5px] leading-relaxed text-faint">
             Sizes are the space files take up on disk, as <span className="font-mono">du</span> counts them. Worktrees share their repository's{" "}
             <span className="font-mono">.git</span> folder, which counts toward the repository. Worktrees of done tasks, and worktrees of a project's repository
-            in its worktrees folder that no task on the host has, can usually go: Reclaim space removes the merged, clean worktrees of done tasks, or remove a task's worktree from its details.
-            Agent runs are the folders with each run's output and logs, which a host removes some days after the run ends, and with its task.
+            in its worktrees folder that no task on the host has, can usually go: Reclaim space removes the merged, clean worktrees of done tasks, or remove a
+            task's worktree from its details. Agent runs are the folders with each run's output and logs, which a host removes some days after the run ends, and
+            with its task.
             {data?.filesystems.map((f) => (
               <span key={f.hostName} className="block">
-                {f.hostName}'s data disk: {bytes(f.free)} free of {bytes(f.total)}.
-                {f.database != null && ` Its database takes ${bytes(f.database)}.`}
+                {f.hostName}'s data disk: {bytes(f.free)} free of {bytes(f.total)}.{f.database != null && ` Its database takes ${bytes(f.database)}.`}
                 {f.backups != null &&
                   f.backups.files > 0 &&
                   ` ${f.backups.files === 1 ? "A backup of it, made when its version changed, takes" : `${f.backups.files} backups of it, made when its version changed, take`} ${bytes(f.backups.bytes)} (in the backups folder of its data dir, where older ones can be deleted).`}
@@ -218,7 +225,11 @@ function Tiles({ data }: { data: Disk }) {
       {tile("Total", bytes(sum((p) => p.total) + data.scratch + data.runs), `${plural(data.projects.length, "project")}, scratch included`, true)}
       {tile("Repositories", bytes(repo), `${bytes(git)} of it in .git`)}
       {tile("Worktrees", bytes(sum((p) => p.worktreeTotal)), plural(worktrees.length, "worktree"))}
-      {tile("Agent runs", bytes(sum((p) => p.runs.bytes) + data.runs), databases ? `Output and logs; the database takes ${bytes(databases)}` : "Output and logs")}
+      {tile(
+        "Agent runs",
+        bytes(sum((p) => p.runs.bytes) + data.runs),
+        databases ? `Output and logs; the database takes ${bytes(databases)}` : "Output and logs",
+      )}
       {tile("Reclaimable", bytes(spare.reduce((n, w) => n + w.size.bytes, 0)), `${plural(spare.length, "worktree")} of done tasks or no task`)}
     </div>
   );

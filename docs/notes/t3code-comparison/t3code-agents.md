@@ -5,7 +5,7 @@ Part of the T3 Code inventory: [t3code-overview.md](t3code-overview.md) has the 
 Feature inventory of how T3 Code runs and talks to coding agents. Source: shallow clone of
 `pingdotgg/t3code` at commit 9b1d351 (2026-10-30, latest release v0.1.5). Paths are relative to the
 repository root. "(from code)" marks facts read from source rather than docs; "(design doc)" marks
-statements from `docs/orchestration-v2/`, which describes the *target* architecture and is not
+statements from `docs/orchestration-v2/`, which describes the _target_ architecture and is not
 always a description of shipped behaviour.
 
 Vocabulary used below (from `docs/internals/glossary.md`): an **environment** is one running T3 server
@@ -40,18 +40,18 @@ default/plan.
 
 ### Summary
 
-| Provider | How T3 connects (from code unless noted) | Auth | Permission modes offered | Plan mode | Native rollback / fork |
-| --- | --- | --- | --- | --- | --- |
-| Codex | `codex app-server` JSON-RPC over stdio | ChatGPT sign-in via T3 (managed runtime) or existing `codex login` | all four | yes (proposed plan) | yes / yes (`thread/fork`) |
-| Claude | `@anthropic-ai/claude-agent-sdk` `query()` driving the installed `claude` binary | `claude auth login` per `CLAUDE_CONFIG_DIR` | all four | yes (`plan` permission mode) | yes / yes (`forkSession`, `resumeSessionAt`) |
-| Cursor | `@cursor/sdk` local-agent runtime (not ACP) | browser sign-in from T3 or `CURSOR_API_KEY`; paid plan | all four (sandbox-based) | emits plans | no / no (portable handoff) |
-| Grok Build | ACP: `grok agent stdio` | `grok login` or `XAI_API_KEY` | Supervised, Auto, Full access | no proposed-plan card (ACP base, from code) | no native fork; files-only rollback |
-| OpenCode (1.x / 2.x) | `opencode` HTTP server (local per thread on 1.x, per instance on 2.x) or external server URL | `opencode auth login`; server password | all four, Auto behaves as Supervised | OpenCode `plan` agent | yes / yes |
-| Antigravity | Google's ACP agent, T3-managed runtime | Google account, Gemini Enterprise, Gemini API key, Vertex AI | asks in Auto (no reviewer) | no (use native `/plan`) | no rewind |
-| Pi | `pi --mode rpc` plus a T3 extension | Pi's own `/login` | Supervised, Auto-accept edits, Full access | no | yes / yes (Pi session files) |
-| Muse Code (Meta) | `muse serve` (MSP protocol) | `muse login` or `META_API_KEY` | Supervised, Full access | no | no / no |
-| fx (Vercel Labs) | ACP: `fx acp` | `fx login` (shared per machine) | Supervised, Auto | no | n/a |
-| ACP Registry / local ACP | generic ACP v2 preview, negotiates v1 | agent's own (browser, terminal, env API key) | answered by T3 per mode | follows Plan/Build toggle if agent has modes | conversation rewind no (fresh session after rollback) |
+| Provider                 | How T3 connects (from code unless noted)                                                     | Auth                                                               | Permission modes offered                   | Plan mode                                    | Native rollback / fork                                |
+| ------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------ | -------------------------------------------- | ----------------------------------------------------- |
+| Codex                    | `codex app-server` JSON-RPC over stdio                                                       | ChatGPT sign-in via T3 (managed runtime) or existing `codex login` | all four                                   | yes (proposed plan)                          | yes / yes (`thread/fork`)                             |
+| Claude                   | `@anthropic-ai/claude-agent-sdk` `query()` driving the installed `claude` binary             | `claude auth login` per `CLAUDE_CONFIG_DIR`                        | all four                                   | yes (`plan` permission mode)                 | yes / yes (`forkSession`, `resumeSessionAt`)          |
+| Cursor                   | `@cursor/sdk` local-agent runtime (not ACP)                                                  | browser sign-in from T3 or `CURSOR_API_KEY`; paid plan             | all four (sandbox-based)                   | emits plans                                  | no / no (portable handoff)                            |
+| Grok Build               | ACP: `grok agent stdio`                                                                      | `grok login` or `XAI_API_KEY`                                      | Supervised, Auto, Full access              | no proposed-plan card (ACP base, from code)  | no native fork; files-only rollback                   |
+| OpenCode (1.x / 2.x)     | `opencode` HTTP server (local per thread on 1.x, per instance on 2.x) or external server URL | `opencode auth login`; server password                             | all four, Auto behaves as Supervised       | OpenCode `plan` agent                        | yes / yes                                             |
+| Antigravity              | Google's ACP agent, T3-managed runtime                                                       | Google account, Gemini Enterprise, Gemini API key, Vertex AI       | asks in Auto (no reviewer)                 | no (use native `/plan`)                      | no rewind                                             |
+| Pi                       | `pi --mode rpc` plus a T3 extension                                                          | Pi's own `/login`                                                  | Supervised, Auto-accept edits, Full access | no                                           | yes / yes (Pi session files)                          |
+| Muse Code (Meta)         | `muse serve` (MSP protocol)                                                                  | `muse login` or `META_API_KEY`                                     | Supervised, Full access                    | no                                           | no / no                                               |
+| fx (Vercel Labs)         | ACP: `fx acp`                                                                                | `fx login` (shared per machine)                                    | Supervised, Auto                           | no                                           | n/a                                                   |
+| ACP Registry / local ACP | generic ACP v2 preview, negotiates v1                                                        | agent's own (browser, terminal, env API key)                       | answered by T3 per mode                    | follows Plan/Build toggle if agent has modes | conversation rewind no (fresh session after rollback) |
 
 Sources: `apps/server/src/provider/codexLaunchArgs.ts`, `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`,
 `packages/provider-grok/src/server/acpSupport.ts`, `packages/provider-muse/src/server/sdk.ts`,
@@ -68,7 +68,7 @@ Sources: `apps/server/src/provider/codexLaunchArgs.ts`, `apps/server/src/orchest
 - **Existing CLI login**: uses installed `codex` and `codex login`. `docs/user/providers-codex.md`
 - **Multiple accounts**: add more ChatGPT accounts or more Codex instances; pick the account from the
   thread's model picker. **Shadow homes** let two CLI logins share one `CODEX_HOME` (sessions, config)
-  while keeping separate `auth.json`, so work and personal accounts can continue the *same* thread.
+  while keeping separate `auth.json`, so work and personal accounts can continue the _same_ thread.
   Settings: Binary path, `CODEX_HOME` path, Shadow home path, Launch arguments (passed to
   `codex app-server`). `docs/user/providers-codex.md`, `packages/contracts/src/settings.ts`
 - **Switch accounts mid-thread** among instances sharing the thread's `CODEX_HOME`.
@@ -556,8 +556,8 @@ Sources: `apps/server/src/provider/codexLaunchArgs.ts`, `apps/server/src/orchest
   **Supervised** to **Full access** that also allows start/message/stop threads in every project; a
   thread it starts or steers can't exceed the chosen mode.
 - Setup commands: `claude mcp add --transport http t3 …` + `claude mcp login t3`; `codex mcp add t3 --url …`
-  + `codex mcp login t3`; ChatGPT custom MCP app with OAuth via the T3 Connect address. Only `https`
-  or `localhost` completes sign-in. Sign-ins last 30 days; revoke under Sharing & access.
+  - `codex mcp login t3`; ChatGPT custom MCP app with OAuth via the T3 Connect address. Only `https`
+    or `localhost` completes sign-in. Sign-ins last 30 days; revoke under Sharing & access.
 - **`t3 thread` CLI on the host** uses the same tools without sign-in: `t3 thread start <project> <msg>
   [--worktree <base>] [--branch] [--provider --model] [--title]`, `t3 thread send <id> <msg> [--wait]
   [--json]` (exit 1 on failure, 2 when waiting on the user; `-` reads stdin; never interrupts), `t3
@@ -715,6 +715,6 @@ Sources: `apps/server/src/provider/codexLaunchArgs.ts`, `apps/server/src/orchest
 - Linked environments (cross-machine delegation) and review guides are beta/off by default; Claude
   "Before the cache expires" idle compaction is beta.
 - Agent-started subagent threads can't be messaged directly; approvals are never routed to a parent
-  *agent*, only questions are.
+  _agent_, only questions are.
 - Permission enforcement is native for most providers but "client-boundary" for Pi and the generic ACP
   adapter (T3 answers the agent's approval requests), which is weaker than native enforcement.

@@ -22,10 +22,25 @@ import type { OnMenu } from "./TaskCard";
 
 type BucketId = "answer" | "review" | "due" | "stalled" | "start" | "working";
 const BUCKETS: { id: BucketId; title: string; icon: ReactNode; hint: string }[] = [
-  { id: "answer", title: "Waiting for your answer", icon: <CircleAlert size={14} className="text-st-attention" />, hint: "The agent asked something or hit a prompt" },
-  { id: "review", title: "Ready for your review", icon: <Eye size={14} className="text-st-review" />, hint: "The agent finished; look over its work and merge it, or send it back" },
+  {
+    id: "answer",
+    title: "Waiting for your answer",
+    icon: <CircleAlert size={14} className="text-st-attention" />,
+    hint: "The agent asked something or hit a prompt",
+  },
+  {
+    id: "review",
+    title: "Ready for your review",
+    icon: <Eye size={14} className="text-st-review" />,
+    hint: "The agent finished; look over its work and merge it, or send it back",
+  },
   { id: "due", title: "Reminders", icon: <BellRing size={14} className="text-amber-300" />, hint: "Reminders that have come round" },
-  { id: "stalled", title: "Stopped before finishing", icon: <Square size={13} className="text-faint" />, hint: "In progress, but its agent isn't running; or in review, and its review didn't finish" },
+  {
+    id: "stalled",
+    title: "Stopped before finishing",
+    icon: <Square size={13} className="text-faint" />,
+    hint: "In progress, but its agent isn't running; or in review, and its review didn't finish",
+  },
   { id: "start", title: "Not started", icon: <PlayCircle size={14} className="text-st-todo" />, hint: "In To do" },
   { id: "working", title: "Agents at work", icon: <StatusIcon status="in_progress" size={14} />, hint: "Nothing to do until they finish" },
 ];
@@ -70,7 +85,21 @@ function useLastMessage(task: Task, enabled: boolean) {
   return text;
 }
 
-function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: Task; project?: Project; bucket: BucketId; picked: boolean; onPick: () => void; onMenu?: OnMenu }) {
+function TriageItem({
+  task,
+  project,
+  bucket,
+  picked,
+  onPick,
+  onMenu,
+}: {
+  task: Task;
+  project?: Project;
+  bucket: BucketId;
+  picked: boolean;
+  onPick: () => void;
+  onMenu?: OnMenu;
+}) {
   const detailed = DETAILED.has(bucket);
   const selectable = useSelectable(task.id);
   const last = useLastMessage(task, detailed);
@@ -148,7 +177,11 @@ function TriageItem({ task, project, bucket, picked, onPick, onMenu }: { task: T
       data-triage={task.id}
       {...selectable}
       onContextMenu={onMenu && ((e) => onMenu(e, task))}
-      className={clsx("rounded-lg border bg-panel-2 transition-colors", picked ? "border-accent/50" : "border-line hover:border-line-strong", open && "ring-1 ring-accent/60")}
+      className={clsx(
+        "rounded-lg border bg-panel-2 transition-colors",
+        picked ? "border-accent/50" : "border-line hover:border-line-strong",
+        open && "ring-1 ring-accent/60",
+      )}
     >
       <div onClick={onPick} className="flex cursor-pointer items-center gap-2.5 px-3 pt-2.5 pb-1.5">
         <StatusIcon status={task.status} size={13} />
@@ -235,7 +268,14 @@ export function TriageView({ tasks, projectOf, onMenu }: { tasks: Task[]; projec
   const current = picked && order.includes(picked) ? picked : null;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || (e.target as Element).closest?.("input, textarea, select, [contenteditable]") || document.querySelector("[data-modal]")) return;
+      if (
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey ||
+        (e.target as Element).closest?.("input, textarea, select, [contenteditable]") ||
+        document.querySelector("[data-modal]")
+      )
+        return;
       if (e.key !== "j" && e.key !== "k" && e.key !== "Enter") return;
       if (e.key === "Enter") {
         // Not a press of the button or link that has the focus.
@@ -260,7 +300,9 @@ export function TriageView({ tasks, projectOf, onMenu }: { tasks: Task[]; projec
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-4xl space-y-5 p-6">
         <div className="flex items-baseline gap-3">
-          <h2 className="text-[15px] font-semibold">{needs ? `${needs} task${needs === 1 ? "" : "s"} need${needs === 1 ? "s" : ""} you` : "Nothing needs you"}</h2>
+          <h2 className="text-[15px] font-semibold">
+            {needs ? `${needs} task${needs === 1 ? "" : "s"} need${needs === 1 ? "s" : ""} you` : "Nothing needs you"}
+          </h2>
           <span className="text-[12px] text-faint">
             {working} agent{working === 1 ? "" : "s"} at work · <Kbd>j</Kbd> <Kbd>k</Kbd> to move, <Kbd>Enter</Kbd> to open the thread
           </span>
@@ -278,7 +320,15 @@ export function TriageView({ tasks, projectOf, onMenu }: { tasks: Task[]; projec
                 (DETAILED.has(b.id) ? (
                   <div className="space-y-2">
                     {b.tasks.map((t) => (
-                      <TriageItem key={t.id} task={t} project={projectOf(t)} bucket={b.id} picked={current === t.id} onPick={() => setPicked(current === t.id ? null : t.id)} onMenu={onMenu} />
+                      <TriageItem
+                        key={t.id}
+                        task={t}
+                        project={projectOf(t)}
+                        bucket={b.id}
+                        picked={current === t.id}
+                        onPick={() => setPicked(current === t.id ? null : t.id)}
+                        onMenu={onMenu}
+                      />
                     ))}
                   </div>
                 ) : (

@@ -124,7 +124,15 @@ test("a device turns push on in Settings and gets the board's notifications", as
     assert.equal(subscriptions[0].endpoint, endpoint);
     assert.match(subscriptions[0].name, /^Chrome on \w+$/);
     // The events this browser notifies of, to start with.
-    assert.deepEqual(subscriptions[0].events, { attention: true, review: true, merge: false, done: false, prompts: "assistant", replies: false, reports: true });
+    assert.deepEqual(subscriptions[0].events, {
+      attention: true,
+      review: true,
+      merge: false,
+      done: false,
+      prompts: "assistant",
+      replies: false,
+      reports: true,
+    });
 
     // A test.
     await ui.run(["click Send a test", "wait It should show on this device"]);
@@ -152,11 +160,19 @@ test("a device turns push on in Settings and gets the board's notifications", as
     assert.equal(await service.next(1500), null);
 
     // The device's own events: Done too, and not attention.
-    await ui.run(["click role=group[name^='Events pushed to'] >> text=Done", "click role=group[name^='Events pushed to'] >> text=Needs attention", "sleep 300"]);
+    await ui.run([
+      "click role=group[name^='Events pushed to'] >> text=Done",
+      "click role=group[name^='Events pushed to'] >> text=Needs attention",
+      "sleep 300",
+    ]);
     const events = { attention: false, review: true, merge: false, done: true, prompts: "assistant", replies: false, reports: true };
     assert.deepEqual((await server.api("GET", "/push")).subscriptions[0].events, events);
     // The assistant's replies (HA-162) and its routines' reports, kept over a reload.
-    await ui.run(["click role=group[name^='Events pushed to'] >> text=Routine reports", "click role=group[name^='Events pushed to'] >> text=Assistant's replies", "sleep 300"]);
+    await ui.run([
+      "click role=group[name^='Events pushed to'] >> text=Routine reports",
+      "click role=group[name^='Events pushed to'] >> text=Assistant's replies",
+      "sleep 300",
+    ]);
     assert.deepEqual((await server.api("GET", "/push")).subscriptions[0].events, { ...events, replies: true, reports: false });
     await ui.run(["goto /settings", "wait On for this device"]);
     assert.equal(await ui.page.getByRole("checkbox", { name: /Routine reports/ }).isChecked(), false);
@@ -228,18 +244,21 @@ test("a push shows a notification, and a tap opens its task", async () => {
     await page.evaluate(() => (window.loadedOnce = true));
     const errors = [];
     sw.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-    await sw.evaluate(async ([id]) => {
-      self.__errors = [];
-      self.addEventListener("error", (e) => self.__errors.push(String(e.message)));
-      self.addEventListener("unhandledrejection", (e) => self.__errors.push(String(e.reason)));
-      await self.registration.showNotification("DEMO-1 A task", { body: "Needs attention", tag: "tap", data: { url: `/t/${id}`, task_id: id } });
-      const [n] = await self.registration.getNotifications({ tag: "tap" });
-      const waits = [];
-      const e = new Event("notificationclick");
-      Object.assign(e, { notification: n, action: "", waitUntil: (p) => waits.push(p) });
-      self.dispatchEvent(e);
-      await Promise.all(waits);
-    }, [t.id]);
+    await sw.evaluate(
+      async ([id]) => {
+        self.__errors = [];
+        self.addEventListener("error", (e) => self.__errors.push(String(e.message)));
+        self.addEventListener("unhandledrejection", (e) => self.__errors.push(String(e.reason)));
+        await self.registration.showNotification("DEMO-1 A task", { body: "Needs attention", tag: "tap", data: { url: `/t/${id}`, task_id: id } });
+        const [n] = await self.registration.getNotifications({ tag: "tap" });
+        const waits = [];
+        const e = new Event("notificationclick");
+        Object.assign(e, { notification: n, action: "", waitUntil: (p) => waits.push(p) });
+        self.dispatchEvent(e);
+        await Promise.all(waits);
+      },
+      [t.id],
+    );
     // Not its title, which its card on the board already shows.
     await page.waitForURL((url) => url.searchParams.get("task") === t.id);
     assert.equal(await page.evaluate(() => window.loadedOnce), true);
@@ -300,7 +319,11 @@ test("a prompt's notification answers it with its token, and says how that went"
 
     // Allowed: what the board answers is shown.
     await page.context().unroute(/\/push-answer$/);
-    await page.context().route(/\/push-answer$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ result: "allowed", message: "Allowed." }) }));
+    await page
+      .context()
+      .route(/\/push-answer$/, (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ result: "allowed", message: "Allowed." }) }),
+      );
     await sw.evaluate((data) => answer(data, "allow"), msg);
     [n] = await notes();
     assert.deepEqual([n.body, n.actions], ["Allowed.", []]);

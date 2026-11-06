@@ -18,7 +18,20 @@ test("a file's language, by extension or name", () => {
 
 test("each hunk's old and new sides, and where each line is in them", () => {
   const [f] = parseDiff(
-    ["diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -1,3 +1,3 @@", " const a = 1;", "-let b = 2;", "+const b = 2;", " export { a };", "@@ -9 +9 @@", "-x", "+y", ""].join("\n"),
+    [
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      "@@ -1,3 +1,3 @@",
+      " const a = 1;",
+      "-let b = 2;",
+      "+const b = 2;",
+      " export { a };",
+      "@@ -9 +9 @@",
+      "-x",
+      "+y",
+      "",
+    ].join("\n"),
   );
   const s = sidesOf(f);
   assert.deepEqual(s.texts, ["const a = 1;\nlet b = 2;\nexport { a };", "const a = 1;\nconst b = 2;\nexport { a };", "x", "y"]);
@@ -40,7 +53,14 @@ test("each hunk's old and new sides, and where each line is in them", () => {
 
 test("files that aren't highlighted: no language, binary, or too big", () => {
   const big = parseDiff(
-    ["diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", `@@ -0,0 +1,${MAX_LINES + 1} @@`, ...Array.from({ length: MAX_LINES + 1 }, (_, i) => `+line ${i}`), ""].join("\n"),
+    [
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
+      "+++ b/a.ts",
+      `@@ -0,0 +1,${MAX_LINES + 1} @@`,
+      ...Array.from({ length: MAX_LINES + 1 }, (_, i) => `+line ${i}`),
+      "",
+    ].join("\n"),
   )[0];
   assert.equal(highlightable(big), null);
   const [bin] = parseDiff(["diff --git a/a.ts b/a.ts", "Binary files a/a.ts and b/a.ts differ", ""].join("\n"));

@@ -25,13 +25,18 @@ async function drag(page, from, to, { dx = 0, dy = 0 } = {}) {
 test("a workflow made in its editor saves the graph it shows", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}/settings/workflows`, "wait No workflows yet", "click role=button[name=/Review and summarise/]", "wait [data-testid=workflow-canvas]"]);
+    await ui.run([
+      `goto /p/${project.id}/settings/workflows`,
+      "wait No workflows yet",
+      "click role=button[name=/Review and summarise/]",
+      "wait [data-testid=workflow-canvas]",
+    ]);
     // A loop is refused: the summary can't lead back into the check.
     await drag(page, "[data-port='summary.done']", "[data-node=changed]");
     await ui.run(["wait That would make a loop"]);
     await ui.run(["click role=button[name=/^Agent$/]", "wait [data-node=agent1]"]);
     await drag(page, "[data-port='reviewer.failed']", "[data-node=agent1]");
-    await ui.run(["click [data-testid=workflow-inspector] >> role=textbox[name=\"Name\"s]", "press Control+a", "type Notes"]);
+    await ui.run(['click [data-testid=workflow-inspector] >> role=textbox[name="Name"s]', "press Control+a", "type Notes"]);
     // Removes the check's connection to the reviewer by clicking its line.
     await page.locator("[data-edge='changed.yes->reviewer']").dispatchEvent("pointerdown", { button: 0 });
     await ui.run(["wait text=Connection", "click [data-testid=workflow-inspector] >> role=button[name=/Remove/]"]);
@@ -74,7 +79,13 @@ test("a task's workflow runs show in the tabs its steps name", async () => {
   const tasks = await server.api("GET", `/projects/${project.id}/tasks`);
   const task = tasks.find((t) => t.kind === "task" && !t.running && t.status !== "done");
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait Notes by hand", "click role=button[name=\"Run Notes by hand\"s]", "wait role=button[name=\"Notes\"s]", "click role=button[name=\"Notes\"s]"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "wait Notes by hand",
+      'click role=button[name="Run Notes by hand"s]',
+      'wait role=button[name="Notes"s]',
+      'click role=button[name="Notes"s]',
+    ]);
     // Agents can't run on this server, so the step fails; it still shows where its output goes.
     await ui.run(["wait Release notes", "wait Notes by hand"]);
   });

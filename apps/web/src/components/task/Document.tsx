@@ -1,10 +1,37 @@
 import clsx from "clsx";
-import { ChevronDown, ChevronUp, ClipboardList, Code, Copy, Download, Eye, ListChecks, Loader2, MessagesSquare, NotebookPen, Sparkles, Workflow, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  Code,
+  Copy,
+  Download,
+  Eye,
+  ListChecks,
+  Loader2,
+  MessagesSquare,
+  NotebookPen,
+  Sparkles,
+  Workflow,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { api, hostSupports, type DocumentType, type Message, type Task, type TaskDocument, type TaskType } from "../../api";
 import { frameDoc } from "./htmlFrame";
 import { diagramImage, renderMermaid, svgWidth, withPlanDiagrams } from "./mermaid";
-import { afterSend, answered, answersMessage, loadAnswers, readFields, resetFields, saveAnswers, withTouched, type PlanAnswers, type PlanField } from "./planAnswers";
+import {
+  afterSend,
+  answered,
+  answersMessage,
+  loadAnswers,
+  readFields,
+  resetFields,
+  saveAnswers,
+  withTouched,
+  type PlanAnswers,
+  type PlanField,
+} from "./planAnswers";
 import { isWholePage, themedPlan } from "./planTheme";
 import planCss from "./planTheme.css?raw";
 import { useHost, useThreadMessages } from "../../store";
@@ -47,12 +74,18 @@ export function TaskTypeBadge({ type, progress, compact }: { type: TaskType | Do
   const info = taskTypeInfo(type);
   if (compact)
     return (
-      <span className={clsx(CARD_BADGE, "text-accent")} title={progress?.total ? `${info.label}: ${progress.done} of the ${progress.total} tasks it created are done` : `${info.label}: ${info.hint}`}>
+      <span
+        className={clsx(CARD_BADGE, "text-accent")}
+        title={progress?.total ? `${info.label}: ${progress.done} of the ${progress.total} tasks it created are done` : `${info.label}: ${info.hint}`}
+      >
         {info.icon} {progress?.total ? <ProgressCount progress={progress} /> : <Wide>{info.label.toLowerCase()}</Wide>}
       </span>
     );
   return (
-    <span className="flex items-center gap-1 text-accent" title={progress?.total ? `${info.label}: ${progress.done} of the ${progress.total} tasks it created are done` : info.hint}>
+    <span
+      className="flex items-center gap-1 text-accent"
+      title={progress?.total ? `${info.label}: ${progress.done} of the ${progress.total} tasks it created are done` : info.hint}
+    >
       {info.icon} {progress?.total ? `${progress.done}/${progress.total} done` : info.label.toLowerCase()}
     </span>
   );
@@ -307,7 +340,10 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
                   key={m.label}
                   onClick={() => setSource(m.on)}
                   aria-label={m.label}
-                  className={clsx("flex h-5 items-center gap-1 rounded px-1.5 text-[11.5px] narrow:h-7 narrow:px-2", source === m.on ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                  className={clsx(
+                    "flex h-5 items-center gap-1 rounded px-1.5 text-[11.5px] narrow:h-7 narrow:px-2",
+                    source === m.on ? "bg-raised text-fg" : "text-muted hover:text-fg",
+                  )}
                 >
                   {m.icon} <span className="narrow:hidden">{m.label}</span>
                 </button>
@@ -377,7 +413,10 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
             </span>
           )}
           {questions && (
-            <span className="pointer-events-auto flex items-center gap-2" title="The plan's questions: answer them in the plan, then send the answers to the agent">
+            <span
+              className="pointer-events-auto flex items-center gap-2"
+              title="The plan's questions: answer them in the plan, then send the answers to the agent"
+            >
               <ListChecks size={12} />
               {sent ? "Answers sent" : `${done} of ${fields.length} ${fields.length === 1 ? "question" : "questions"} answered`}
               {fields.some((f) => f.touched) && (
@@ -406,7 +445,11 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
               {showReply ? <ChevronDown size={12} /> : <ChevronUp size={12} />} Summary
             </button>
           )}
-          <button className={clsx("pointer-events-auto flex items-center gap-1 hover:text-fg", !reply && "ml-auto")} onClick={onShowThread} title="The whole conversation with its agent">
+          <button
+            className={clsx("pointer-events-auto flex items-center gap-1 hover:text-fg", !reply && "ml-auto")}
+            onClick={onShowThread}
+            title="The whole conversation with its agent"
+          >
             <MessagesSquare size={12} /> Thread
           </button>
         </div>
@@ -436,7 +479,12 @@ function HtmlFrame({
   html: string;
   title: string;
   inset: number;
-  plan?: { readOnly: boolean; key: string | null; answers: () => PlanAnswers; onForm: (fields: PlanField[], user: boolean, key: string | null, dropped: string[]) => void };
+  plan?: {
+    readOnly: boolean;
+    key: string | null;
+    answers: () => PlanAnswers;
+    onForm: (fields: PlanField[], user: boolean, key: string | null, dropped: string[]) => void;
+  };
 }) {
   const scroll = useRef(0);
   const bottom = useRef(inset);
@@ -552,7 +600,10 @@ function MermaidView({ source, inset, onSvg, onFix }: { source: string; inset: n
           )}
         </div>
         {svg && (
-          <div style={{ bottom: inset + 12 }} className="absolute right-3 flex items-center gap-0.5 rounded-md border border-line bg-panel/90 p-0.5 text-[11.5px] text-muted">
+          <div
+            style={{ bottom: inset + 12 }}
+            className="absolute right-3 flex items-center gap-0.5 rounded-md border border-line bg-panel/90 p-0.5 text-[11.5px] text-muted"
+          >
             <IconButton title="Zoom out" onClick={() => step(-1)}>
               <ZoomOut size={13} />
             </IconButton>

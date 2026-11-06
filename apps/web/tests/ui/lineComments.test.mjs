@@ -34,9 +34,15 @@ beforeAll(async () => {
   task = await server.api("POST", `/tasks/${task.id}/worktree/setup`);
   wt = task.worktree_path;
   // A commit on the branch (line 10), and an uncommitted change (line 3).
-  writeFileSync(`${wt}/src/app.ts`, lines(30, (i) => (i === 10 ? "export const ten = 10;" : `export const line${i} = ${i};`)));
+  writeFileSync(
+    `${wt}/src/app.ts`,
+    lines(30, (i) => (i === 10 ? "export const ten = 10;" : `export const line${i} = ${i};`)),
+  );
   git(wt, "commit", "-qam", "Name ten");
-  writeFileSync(`${wt}/src/app.ts`, lines(30, (i) => (i === 3 ? "export const three = 3;" : i === 10 ? "export const ten = 10;" : `export const line${i} = ${i};`)));
+  writeFileSync(
+    `${wt}/src/app.ts`,
+    lines(30, (i) => (i === 3 ? "export const three = 3;" : i === 10 ? "export const ten = 10;" : `export const line${i} = ${i};`)),
+  );
 });
 afterAll(() => server?.stop());
 
@@ -68,7 +74,15 @@ async function commitRows(ui) {
 test("comments on a file's lines and a commit's reach the agent in one message", async () => {
   await withBrowser(server, {}, async (ui) => {
     // The cursor's line (the removed line 3): n, a note, Enter.
-    await ui.run([...openFile(), "press n", `wait ${DRAFT}`, "type Name it after its value.", "press Enter", `gone ${DRAFT}`, "wait Comment for the agent on removed line 3"]);
+    await ui.run([
+      ...openFile(),
+      "press n",
+      `wait ${DRAFT}`,
+      "type Name it after its value.",
+      "press Enter",
+      `gone ${DRAFT}`,
+      "wait Comment for the agent on removed line 3",
+    ]);
     // The commit's lines 10 (removed and added), picked by their numbers: a click, then a shift-click.
     await slowPatches(ui);
     await ui.run(["press 3", "press Enter"]);
@@ -82,7 +96,10 @@ test("comments on a file's lines and a commit's reach the agent in one message",
     const prompt = prompts().find((p) => p.includes("Keep the old name too."));
     assert.match(prompt, /2 comments on the diff:/);
     assert.match(prompt, /\*\*src\/app\.ts\*\*, removed line 3 \(unstaged changes\):\n```diff\n-export const line3 = 3;\n```\nName it after its value\./);
-    assert.match(prompt, /\*\*src\/app\.ts\*\*, line 10 \(commit [0-9a-f]{8}\):\n```diff\n-export const line10 = 10;\n\+export const ten = 10;\n```\nKeep the old name too\./);
+    assert.match(
+      prompt,
+      /\*\*src\/app\.ts\*\*, line 10 \(commit [0-9a-f]{8}\):\n```diff\n-export const line10 = 10;\n\+export const ten = 10;\n```\nKeep the old name too\./,
+    );
   });
 });
 
@@ -92,7 +109,16 @@ test("unsent comments and drafts survive switching tabs and a reload, and show i
     // Away to the thread and back: the draft's still there.
     await ui.run(["click thread", "click changes", "wait Half a thought"]);
     // A reload: still there. Finished and added.
-    await ui.run([`goto /t/${task.id}`, "click changes", "wait Half a thought", "click Half a thought", "press End", "type , finished.", "press Enter", "wait Half a thought, finished."]);
+    await ui.run([
+      `goto /t/${task.id}`,
+      "click changes",
+      "wait Half a thought",
+      "click Half a thought",
+      "press End",
+      "type , finished.",
+      "press Enter",
+      "wait Half a thought, finished.",
+    ]);
     await ui.run(["wait 1 comment for the agent"]);
     // In the thread's composer, which can take it off again.
     await ui.run(["click thread", "wait A comment on the diff, sent with this message", "wait app.ts:3", "click Remove the comment", "gone app.ts:3"]);
@@ -123,12 +149,21 @@ test("a line's comment button comments on that line, or on the lines picked if i
       await ui.page.locator(`${diff} button[title^="Comment for the agent"]`).click();
     };
     // Outside what's picked: just its line.
-    await ui.page.locator(`${diff} [data-i="${at(/^\s*8\s*8\s/)}"] > span`).first().click();
+    await ui.page
+      .locator(`${diff} [data-i="${at(/^\s*8\s*8\s/)}"] > span`)
+      .first()
+      .click();
     await button(at(/^\s*12\s*12\s/));
     await ui.run([`wait ${DRAFT}`, "wait Comment for the agent on line 12", "click Discard", `gone ${DRAFT}`]);
     // In it: all of them (lines 8 to 12, the removed line 10 too).
-    await ui.page.locator(`${diff} [data-i="${at(/^\s*8\s*8\s/)}"] > span`).first().click();
-    await ui.page.locator(`${diff} [data-i="${at(/^\s*12\s*12\s/)}"] > span`).first().click({ modifiers: ["Shift"] });
+    await ui.page
+      .locator(`${diff} [data-i="${at(/^\s*8\s*8\s/)}"] > span`)
+      .first()
+      .click();
+    await ui.page
+      .locator(`${diff} [data-i="${at(/^\s*12\s*12\s/)}"] > span`)
+      .first()
+      .click({ modifiers: ["Shift"] });
     await button(at(/^\s*10\s*-/));
     await ui.run([`wait ${DRAFT}`, "wait Comment for the agent on lines 8–12", "type All of these.", "press Enter", "wait 1 comment for the agent"]);
     const draft = await ui.page.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith("ia.review."))[1]));
@@ -148,8 +183,14 @@ test("diffs are highlighted, and the split layout is remembered", async () => {
     await ui.run([...openFile()]);
     // Coloured runs, once the worker has the grammar.
     await waitFor(async () => (await ui.page.locator('[data-diff="src/app.ts"] span[style*="color"]').count()) > 0, 10000);
-    const keyword = await ui.page.locator('[data-diff="src/app.ts"] span[style*="color"]', { hasText: /^export$/ }).first().evaluate((e) => getComputedStyle(e).color);
-    const name = await ui.page.locator('[data-diff="src/app.ts"] span[style*="color"]', { hasText: /^line3$/ }).first().evaluate((e) => getComputedStyle(e).color);
+    const keyword = await ui.page
+      .locator('[data-diff="src/app.ts"] span[style*="color"]', { hasText: /^export$/ })
+      .first()
+      .evaluate((e) => getComputedStyle(e).color);
+    const name = await ui.page
+      .locator('[data-diff="src/app.ts"] span[style*="color"]', { hasText: /^line3$/ })
+      .first()
+      .evaluate((e) => getComputedStyle(e).color);
     assert.notEqual(keyword, name);
     // Side by side: the removed line on the left, the added one on the right, in one row.
     await ui.run(["press |"]);

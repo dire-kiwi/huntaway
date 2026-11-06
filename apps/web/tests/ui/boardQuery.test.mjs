@@ -19,13 +19,27 @@ const tasks = async () => Object.fromEntries((await server.api("GET", `/projects
 test("the search narrows the board and the list, and stays with its board", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}`, "wait Something being worked on", "press /", "type dark mode", "wait Plan a dark mode", "gone Something being worked on"]);
+    await ui.run([
+      `goto /p/${project.id}`,
+      "wait Something being worked on",
+      "press /",
+      "type dark mode",
+      "wait Plan a dark mode",
+      "gone Something being worked on",
+    ]);
     await ui.run(["wait 1 of 11 tasks", "gone 1 archived"]);
     // Searched by key, the archived task shows in the list view, and the Done column links to it.
     await ui.run(["click Clear the search", "wait Something being worked on", "press /", "type demo-8", "wait 1 archived", "gone Merged and closed"]);
     await ui.run(["click List view", "click css=#archived-tasks button", `wait ${ARCHIVED}`, "gone Merged and closed"]);
     // Kept over a reload on this board, but not on another one.
-    await ui.run([`goto /p/${project.id}`, `wait ${ARCHIVED}`, "wait 1 of 11 tasks", "goto /profile/Default", "wait Something being worked on", "gone of 11 tasks"]);
+    await ui.run([
+      `goto /p/${project.id}`,
+      `wait ${ARCHIVED}`,
+      "wait 1 of 11 tasks",
+      "goto /profile/Default",
+      "wait Something being worked on",
+      "gone of 11 tasks",
+    ]);
     await ui.run([`goto /p/${project.id}`, `wait ${ARCHIVED}`, "click Search tasks", "press Escape", "wait Merged and closed", "gone 1 of 11 tasks"]);
     assert.equal(await page.getByLabel("Search tasks").inputValue(), "");
     await ui.run(["click Board view"]);
@@ -37,7 +51,12 @@ test("filters leave out columns and cards, and come off one by one", async () =>
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await ui.run([`goto /p/${project.id}`, "wait Something being worked on", "click Filter", "click css=[role=menuitemcheckbox] >> text=In review"]);
-    await ui.run(["click css=[role=menuitemcheckbox] >> text=Plan", "click css=[role=menuitemcheckbox] >> text=Diagram", "press Escape", "gone Has a reminder"]);
+    await ui.run([
+      "click css=[role=menuitemcheckbox] >> text=Plan",
+      "click css=[role=menuitemcheckbox] >> text=Diagram",
+      "press Escape",
+      "gone Has a reminder",
+    ]);
     await ui.run(["wait 2 of 11 tasks", "gone Something being worked on", "gone Show the backlog", "gone A release notes card", "wait Plan a dark mode"]);
     assert.deepEqual(await titles(page, "In review"), ["How a task moves across the board", "Plan a dark mode for the demo site"]);
     assert.equal(await page.locator("section").count(), 1);
@@ -103,7 +122,13 @@ test("a sort orders the columns, and a drop then only changes the column", async
     assert.equal(moved["A release notes card"].status, "todo");
     assert.ok(moved["A release notes card"].position > moved["Edit this task's title and description"].position);
     // The sort is kept, and back on Manual the column is in the board's order again.
-    await ui.run([`goto /p/${project.id}`, "wait css=button[title^='Sorted by title']", "click Sort", "click Manual", "wait css=button[title^='Sort the board']"]);
+    await ui.run([
+      `goto /p/${project.id}`,
+      "wait css=button[title^='Sorted by title']",
+      "click Sort",
+      "click Manual",
+      "wait css=button[title^='Sort the board']",
+    ]);
     assert.deepEqual(await titles(page, "To do"), ["Edit this task's title and description", "A release notes card"]);
   });
 });
@@ -116,7 +141,17 @@ test("a board's header keeps its title and buttons on screen at any width, with 
     const { page } = ui;
     // The widest the controls get: the longest sort's name on the button, and the search focused.
     await ui.run([`goto /t/${sp.id}/board`, "wait Checkout rework", "click Sort", "click Latest activity", "wait css=button[title^='Sorted by latest']"]);
-    for (const [w, h] of [[900, 700], [1000, 800], [1100, 800], [1280, 800], [1440, 900], [1500, 900], [1560, 900], [1620, 900], [1900, 1000]]) {
+    for (const [w, h] of [
+      [900, 700],
+      [1000, 800],
+      [1100, 800],
+      [1280, 800],
+      [1440, 900],
+      [1500, 900],
+      [1560, 900],
+      [1620, 900],
+      [1900, 1000],
+    ]) {
       await page.setViewportSize({ width: w, height: h });
       await page.getByLabel("Search tasks").focus();
       await page.waitForTimeout(250); // the search field's width transition

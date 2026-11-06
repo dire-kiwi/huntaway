@@ -8,8 +8,28 @@ import { createServer as createTcpServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import * as testing from "../../testing.ts";
 import {
-  Account, READ_ONLY, WRITES, ACCOUNT_ENV, MAX_OUTPUT, TOKEN_VARS, TEST_BOARD, TEST_GH_PROGRAM, accounts_from_status, authenticate_fetch, clip,
-  command, extra_header_resets, gh_program, handle, hook_denial, merges, pr_from_url, push_urls, run, tools, url_host,
+  Account,
+  READ_ONLY,
+  WRITES,
+  ACCOUNT_ENV,
+  MAX_OUTPUT,
+  TOKEN_VARS,
+  TEST_BOARD,
+  TEST_GH_PROGRAM,
+  accounts_from_status,
+  authenticate_fetch,
+  clip,
+  command,
+  extra_header_resets,
+  gh_program,
+  handle,
+  hook_denial,
+  merges,
+  pr_from_url,
+  push_urls,
+  run,
+  tools,
+  url_host,
 } from "../gh_mcp.ts";
 import { CommandHelp } from "./targets.ts";
 
@@ -36,7 +56,11 @@ test("every_tool_builds_and_read_only_ones_exist", () => {
   assert.deepEqual([...READ_ONLY, ...WRITES].sort(), [...names].sort(), "every tool is in READ_ONLY or WRITES");
   for (const t of tools()) assert.equal(t.annotations.readOnlyHint, READ_ONLY.includes(t.name), t.name);
   const full = { pr: "3", repo: "o/r", issue: "4", body: "b", title: "t", run_id: "5", endpoint: "user", args: ["status"] };
-  for (const n of names) assert.ok(ok(() => command(n, full)), n);
+  for (const n of names)
+    assert.ok(
+      ok(() => command(n, full)),
+      n,
+    );
 });
 
 test("builds_commands", () => {
@@ -57,7 +81,11 @@ test("builds_commands", () => {
   assert.deepEqual(args("pr_edit", { pr: "1", title: "T" }), ["pr", "edit", "1", "--title=T"]);
   assert.deepEqual(command("pr_checks", {}).ok_codes, [0, 8]);
   assert.deepEqual(args("api", { endpoint: "repos/{owner}/{repo}/issues", fields: { title: "@x" }, paginate: true }), [
-    "api", "repos/{owner}/{repo}/issues", "--raw-field", "title=@x", "--paginate",
+    "api",
+    "repos/{owner}/{repo}/issues",
+    "--raw-field",
+    "title=@x",
+    "--paginate",
   ]);
   assert.deepEqual(args("api", { endpoint: "graphql", fields: { n: 2 } }), ["api", "graphql", "--field", "n=2"]);
   assert.ok(!ok(() => command("api", { endpoint: "x", fields: { a: [1] } })));
@@ -87,13 +115,35 @@ test("builds_commands", () => {
     assert.ok(e.includes("isn't available to agents") || e.includes("put gh's command first") || e.includes("put the subcommand"), `${refused}: ${e}`);
   }
   for (const allowed of [["release", "list"], ["--version"], ["alias", "list"], ["config", "get", "editor"], ["issue", "create", "--title", "auth"]]) {
-    assert.ok(ok(() => command("gh", { args: allowed })), String(allowed));
+    assert.ok(
+      ok(() => command("gh", { args: allowed })),
+      String(allowed),
+    );
   }
   const push = command("git_push", { repo: "ignored" });
   assert.deepEqual([push.program, push.args], ["git", ["push", "-u", "origin", "HEAD"]]);
   assert.deepEqual(command("git_push", { branch: "ia/x-1_fix.it" }).args, ["push", "-u", "origin", "ia/x-1_fix.it"]);
   // A branch name, not a refspec that would push (or force-push) another ref.
-  for (const bad of ["+HEAD:refs/heads/master", "HEAD:master", ":master", "-f", "a b", "a..b", "x^", "*", "+master", "a[b", "@", "a@{1}", "a/.b", "a.lock", "a/", "a.", "a//b", "a\tb"]) {
+  for (const bad of [
+    "+HEAD:refs/heads/master",
+    "HEAD:master",
+    ":master",
+    "-f",
+    "a b",
+    "a..b",
+    "x^",
+    "*",
+    "+master",
+    "a[b",
+    "@",
+    "a@{1}",
+    "a/.b",
+    "a.lock",
+    "a/",
+    "a.",
+    "a//b",
+    "a\tb",
+  ]) {
     assert.ok(!ok(() => command("git_push", { branch: bad })), JSON.stringify(bad));
   }
   for (const good of ["feature/c++", "HEAD", "v1.2", "a@b", "x+"]) assert.deepEqual(command("git_push", { branch: good }).args, ["push", "-u", "origin", good]);
@@ -111,17 +161,34 @@ test("reads_accounts", () => {
   for (const bad of ["", "-x", "a b", "a/b/c", "/x", "x/", "o;rm", "--user=x"]) assert.equal(a(bad), null, bad);
   const status = {
     hosts: {
-      "github.com": [{ login: "me", active: true, state: "success" }, { login: "work-me", active: false, state: "error" }],
+      "github.com": [
+        { login: "me", active: true, state: "success" },
+        { login: "work-me", active: false, state: "error" },
+      ],
       "ghe.example.com": [{ login: "me", active: true, state: "success" }],
     },
   };
   const names = accounts_from_status(status).map((x) => [x.account, x.active === true, x.ok === true]);
-  assert.deepEqual(names, [["ghe.example.com/me", true, true], ["me", true, true], ["work-me", false, false]]);
+  assert.deepEqual(names, [
+    ["ghe.example.com/me", true, true],
+    ["me", true, true],
+    ["work-me", false, false],
+  ]);
 });
 
 test("gh_acts_as_the_account_and_no_other", () => {
-  for (const [account, host] of [["me", "github.com"], ["acme.ghe.com/me", "acme.ghe.com"], ["ghe.example.com/me", "ghe.example.com"]]) {
-    const vars: NodeJS.ProcessEnv = { GH_TOKEN: "ambient", GITHUB_TOKEN: "ambient", GH_ENTERPRISE_TOKEN: "ambient", GH_HOST: "elsewhere", GH_REPO: "evil.example.com/o/r" };
+  for (const [account, host] of [
+    ["me", "github.com"],
+    ["acme.ghe.com/me", "acme.ghe.com"],
+    ["ghe.example.com/me", "ghe.example.com"],
+  ]) {
+    const vars: NodeJS.ProcessEnv = {
+      GH_TOKEN: "ambient",
+      GITHUB_TOKEN: "ambient",
+      GH_ENTERPRISE_TOKEN: "ambient",
+      GH_HOST: "elsewhere",
+      GH_REPO: "evil.example.com/o/r",
+    };
     const env = Account.parse(account)!.env("tok_123");
     env.apply(vars);
     assert.equal(vars.GH_HOST, host, account);
@@ -194,7 +261,12 @@ test("gh_sends_the_token_to_the_accounts_host_only", { timeout: 120_000 }, async
   const own = await requests(["api", "user"]);
   if (own === null) return;
   assert.deepEqual(own, [["ghe.invalid", true]]);
-  for (const a of [["api", "https://evil.invalid/user"], ["repo", "clone", "evil.invalid:o/r"], ["repo", "view", "evil.invalid/o/r"], ["api", "--hostname", "evil.invalid", "user"]]) {
+  for (const a of [
+    ["api", "https://evil.invalid/user"],
+    ["repo", "clone", "evil.invalid:o/r"],
+    ["repo", "view", "evil.invalid/o/r"],
+    ["api", "--hostname", "evil.invalid", "user"],
+  ]) {
     const sent = (await requests(a))!;
     assert.ok(sent.length > 0 && sent.every(([host, token]) => host === "evil.invalid" && !token), `${a}: ${JSON.stringify(sent)}`);
   }
@@ -202,7 +274,9 @@ test("gh_sends_the_token_to_the_accounts_host_only", { timeout: 120_000 }, async
 
 /** Parts of gh 2.102's help for some of its commands. */
 const HELP: Array<[string, string]> = [
-  ["pr view", `USAGE
+  [
+    "pr view",
+    `USAGE
   gh pr view [<number> | <url> | <branch>] [flags]
 
 FLAGS
@@ -213,8 +287,11 @@ FLAGS
 
 INHERITED FLAGS
   -R, --repo [HOST/]OWNER/REPO   Select another repository using the [HOST/]OWNER/REPO format
-`],
-  ["issue comment", `USAGE
+`,
+  ],
+  [
+    "issue comment",
+    `USAGE
   gh issue comment {<number> | <url>} [flags]
 
 FLAGS
@@ -224,14 +301,20 @@ FLAGS
 
 INHERITED FLAGS
   -R, --repo [HOST/]OWNER/REPO   Select another repository using the [HOST/]OWNER/REPO format
-`],
-  ["issue transfer", `USAGE
+`,
+  ],
+  [
+    "issue transfer",
+    `USAGE
   gh issue transfer {<number> | <url>} <destination-repo> [flags]
 
 INHERITED FLAGS
   -R, --repo [HOST/]OWNER/REPO   Select another repository using the [HOST/]OWNER/REPO format
-`],
-  ["repo edit", `USAGE
+`,
+  ],
+  [
+    "repo edit",
+    `USAGE
   gh repo edit [<repository>] [flags]
 
 FLAGS
@@ -240,16 +323,22 @@ FLAGS
       --enable-wiki                              Enable wiki in the repository
   -h, --homepage URL                             Repository home page URL
       --template                                 Make the repository available as a template repository
-`],
-  ["search code", `USAGE
+`,
+  ],
+  [
+    "search code",
+    `USAGE
   gh search code <query> [flags]
 
 FLAGS
   -q, --jq expression      Filter JSON output using a jq expression
   -R, --repo OWNER/REPO    Filter on repository, in OWNER/REPO format
   -w, --web                Open the search query in the web browser
-`],
-  ["api", `USAGE
+`,
+  ],
+  [
+    "api",
+    `USAGE
   gh api <endpoint> [flags]
 
 FLAGS
@@ -260,27 +349,37 @@ FLAGS
   -X, --method string            The HTTP method for the request (default "GET")
       --paginate                 Make additional HTTP requests to fetch all pages of results
   -f, --raw-field key=value      Add a string parameter in key=value format
-`],
-  ["repo clone", `USAGE
+`,
+  ],
+  [
+    "repo clone",
+    `USAGE
   gh repo clone <repository> [<directory>] [-- <gitflags>...]
 
 FLAGS
   -u, --upstream-remote-name string   Upstream remote name when cloning a fork (default "upstream")
-`],
-  ["repo sync", `USAGE
+`,
+  ],
+  [
+    "repo sync",
+    `USAGE
   gh repo sync [<destination-repository>] [flags]
 
 FLAGS
   -b, --branch string   Branch to sync (default [default branch])
       --force           Hard reset the branch of the destination repository to match the source repository
   -s, --source string   Source repository
-`],
-  ["release upload", `USAGE
+`,
+  ],
+  [
+    "release upload",
+    `USAGE
   gh release upload <tag> <files>... [flags]
 
 FLAGS
       --clobber   Delete and re-upload existing assets of the same name
-`],
+`,
+  ],
 ];
 
 const has = (opts: CommandHelp["options"], o: [string | null, string, boolean]) => opts.some((x) => x[0] === o[0] && x[1] === o[1] && x[2] === o[2]);
@@ -352,7 +451,10 @@ test("gh_reads_its_own_help_for_the_check", () => {
   // With gh's real help, where there's a gh.
   if (spawnSync(gh_program(), ["--version"], { stdio: "ignore" }).error) return;
   const account = Account.parse("me")!;
-  for (const a of [["repo", "edit", "o/r", "--homepage", "https://example.com"], ["search", "code", "https://example.com", "--repo", "o/r"]]) {
+  for (const a of [
+    ["repo", "edit", "o/r", "--homepage", "https://example.com"],
+    ["search", "code", "https://example.com", "--repo", "o/r"],
+  ]) {
     account.check_targets(a, null);
   }
   assert.ok(!ok(() => account.check_targets(["pr", "view", "https://evil.example.com/o/r/pull/1"], null)));
@@ -531,7 +633,10 @@ test("pushes_send_no_configured_authorization_header", async () => {
     // ...and git_push's resets leave none.
     const resets = await extra_header_resets(dir);
     const sent = await send(resets);
-    assert.ok(sent.every((h) => !h.includes("b3RoZXI6")), `${sent} with ${resets}`);
+    assert.ok(
+      sent.every((h) => !h.includes("b3RoZXI6")),
+      `${sent} with ${resets}`,
+    );
   } finally {
     server.close();
   }
@@ -605,8 +710,16 @@ test("the_hook_turns_away_gh_in_bash", async () => {
   const { runs_program } = await import("../../git/changes.ts");
   const call = (tool: string, command: string) => hook_denial({ tool_name: tool, tool_input: { command } }, runs_program);
   for (const c of [
-    "gh pr view 3", "cd /x && gh pr create --fill", "GH_TOKEN=x /usr/bin/gh api user", "echo $(gh pr list)", "timeout 60 gh run watch", "bash -c 'gh pr checks'",
-    "env -u; gh api user", "$'g\\x68' api user", "builtin command gh api user", "eval 'gh api user'",
+    "gh pr view 3",
+    "cd /x && gh pr create --fill",
+    "GH_TOKEN=x /usr/bin/gh api user",
+    "echo $(gh pr list)",
+    "timeout 60 gh run watch",
+    "bash -c 'gh pr checks'",
+    "env -u; gh api user",
+    "$'g\\x68' api user",
+    "builtin command gh api user",
+    "eval 'gh api user'",
   ]) {
     assert.ok(call("Bash", c)?.includes("mcp__gh__pr_view"), c);
   }
@@ -641,7 +754,8 @@ test("knows_which_calls_merge", () => {
 // HA-86 review: `pr --repo=o/r merge` got past the check and merged while approval was pending.
 test("a_merge_the_board_hasnt_approved_never_runs_gh", async () => {
   const dir = testing.temp_dir();
-  const gh = join(dir, "gh"), ran = join(dir, "ran");
+  const gh = join(dir, "gh"),
+    ran = join(dir, "ran");
   writeFileSync(gh, `#!/bin/sh\necho "$*" >> '${ran}'\n`);
   chmodSync(gh, 0o755);
   TEST_GH_PROGRAM.set(gh);

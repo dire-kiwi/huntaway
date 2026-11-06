@@ -132,14 +132,18 @@ test("a_rating_goes_under_its_heading_once_and_the_rest_of_memory_stays", () => 
   const two = apply(one, "down", "calendar", "1:1s with Sam", "2026-11-04");
   const three = apply(two, "down", "mail", "newsletters from substack", "2026-11-05");
   const lines = three.split("\n").filter((l) => l.startsWith("- ") && l.includes(" — "));
-  assert.deepEqual(lines, ["- Less like this — calendar: 1:1s with Sam (rated 2026-11-04)", "- Less like this — mail: newsletters from substack (rated 2026-11-05)"]);
+  assert.deepEqual(lines, [
+    "- Less like this — calendar: 1:1s with Sam (rated 2026-11-04)",
+    "- Less like this — mail: newsletters from substack (rated 2026-11-05)",
+  ]);
   assert.equal(three.split(HEADING).length - 1, 1);
   assert.ok(three.includes("- The cat is called Mog"));
   // Taken back.
   const four = apply(three, "clear", "calendar", "1:1s with Sam", "2026-11-05");
   assert.ok(!four.includes("1:1s with Sam") && four.includes("newsletters from substack"));
   // A section after it stays where it is, and so does what the user wrote in it.
-  const between = "# Memory\n\n## Morning brief preferences\n\nKeep it short.\n- More like this — board: Reviews (rated 2026-11-01)\n\n## People\n- Sam is my manager\n";
+  const between =
+    "# Memory\n\n## Morning brief preferences\n\nKeep it short.\n- More like this — board: Reviews (rated 2026-11-01)\n\n## People\n- Sam is my manager\n";
   assert.equal(
     apply(between, "up", "drive", "Budget sheet", "2026-11-04"),
     "# Memory\n\n## Morning brief preferences\n\nKeep it short.\n\n- More like this — board: Reviews (rated 2026-11-01)\n- More like this — drive: Budget sheet (rated 2026-11-04)\n\n## People\n- Sam is my manager\n",

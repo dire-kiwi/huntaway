@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "vite-plus/test";
-import { EMPTY_QUERY, filterCount, isFiltering, showsStatus, sortTasks, taskKind, taskKinds, taskMatcher, toggled } from "../src/components/board/boardQuery.ts";
+import {
+  EMPTY_QUERY,
+  filterCount,
+  isFiltering,
+  showsStatus,
+  sortTasks,
+  taskKind,
+  taskKinds,
+  taskMatcher,
+  toggled,
+} from "../src/components/board/boardQuery.ts";
 
 let n = 0;
 const task = (fields) => ({

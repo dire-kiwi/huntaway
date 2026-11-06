@@ -222,7 +222,13 @@ function host_routes(r: Router) {
 function tokens(headers: Record<string, any>, query_string: string): string[] {
   const auth = headers["authorization"];
   const bearer = typeof auth === "string" && auth.startsWith("Bearer ") ? [auth.slice(7)] : [];
-  return [...bearer, ...query_string.split("&").filter((kv) => kv.startsWith("token=")).map((kv) => decodeURIComponentSafe(kv.slice(6)))];
+  return [
+    ...bearer,
+    ...query_string
+      .split("&")
+      .filter((kv) => kv.startsWith("token="))
+      .map((kv) => decodeURIComponentSafe(kv.slice(6))),
+  ];
 }
 
 /** Whether a request carries the board's token, in its Authorization header or as `?token=`. */
@@ -236,7 +242,13 @@ export function authorized(s: AppState, headers: Record<string, any>, query_stri
  * on. What it returns: `{ok: true, device}` (`device` null for the board's token), or the status and error to answer.
  * A device's request carries its `DeviceAuth` (`Req.device`), which its websockets use to close when it's revoked.
  */
-export function auth(s: AppState, method: string, path: string, headers: Record<string, any>, query_string: string): { ok: true; device: devices.DeviceAuth | null } | { ok: false; status: number; error: string } {
+export function auth(
+  s: AppState,
+  method: string,
+  path: string,
+  headers: Record<string, any>,
+  query_string: string,
+): { ok: true; device: devices.DeviceAuth | null } | { ok: false; status: number; error: string } {
   const ts = tokens(headers, query_string);
   if (ts.some((t) => same_secret(t, s.token))) return { ok: true, device: null };
   for (const t of ts) {
@@ -300,7 +312,13 @@ export async function dispatch(s: AppState, req: Req, trusted = false): Promise<
  * is Rust's `local_request_as` (hosts/hub/dial_out.rs): a paired device's request through the hub's proxy, which carries
  * the device along, so the handlers that never serve one (`devices.board_only`) know it's one.
  */
-export async function local_request(s: AppState, method: string, path: string, body: Buffer | null, device: devices.DeviceAuth | null = null): Promise<[number, any]> {
+export async function local_request(
+  s: AppState,
+  method: string,
+  path: string,
+  body: Buffer | null,
+  device: devices.DeviceAuth | null = null,
+): Promise<[number, any]> {
   const req = makeReq(method, path, { authorization: `Bearer ${s.token}`, "content-type": "application/json" }, body ?? Buffer.alloc(0));
   req.device = device;
   const a = await dispatch(s, req, true);

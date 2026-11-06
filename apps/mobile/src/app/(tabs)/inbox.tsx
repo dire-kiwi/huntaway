@@ -11,7 +11,11 @@ import { BoardLabel, Button, Empty, ErrorText, s } from "../../ui";
 
 /** Events that can change what's waiting: a task's status, a prompt or question asked or answered, a reconnect. */
 const relevant = (ev: { type: string; message?: { kind?: string } }) =>
-  ev.type === "task" || ev.type === "task_deleted" || ev.type === "resync" || ev.type === "profiles_changed" || ev.type === "hosts_changed" ||
+  ev.type === "task" ||
+  ev.type === "task_deleted" ||
+  ev.type === "resync" ||
+  ev.type === "profiles_changed" ||
+  ev.type === "hosts_changed" ||
   ((ev.type === "message" || ev.type === "message_updated") && ["permission", "question", "user"].includes(ev.message?.kind ?? ""));
 
 export default function Inbox() {
@@ -24,10 +28,13 @@ export default function Inbox() {
   useRefetchOn((_, ev) => relevant(ev), inbox.reload);
   // Answered here: gone at once, before the board's events say so.
   const [answered, setAnswered] = useState<Set<string>>(new Set());
-  const done = useCallback((k: string) => {
-    setAnswered((a) => new Set(a).add(k));
-    inbox.reload();
-  }, [inbox]);
+  const done = useCallback(
+    (k: string) => {
+      setAnswered((a) => new Set(a).add(k));
+      inbox.reload();
+    },
+    [inbox],
+  );
 
   if (!list.length) {
     return (
@@ -55,7 +62,9 @@ export default function Inbox() {
                 <Pressable key={b.id} onPress={() => router.push("/boards")} style={[s.card, { borderColor: colors.amber }]}>
                   <BoardLabel name={b.name} />
                   <Text style={s.muted}>
-                    {statusOf(statuses, b.id).unauthorized ? "This phone was unpaired from this board. Pair it again." : "This board's Huntaway is too old for the app. Update it."}
+                    {statusOf(statuses, b.id).unauthorized
+                      ? "This phone was unpaired from this board. Pair it again."
+                      : "This board's Huntaway is too old for the app. Update it."}
                   </Text>
                 </Pressable>
               ))}
@@ -77,7 +86,13 @@ export default function Inbox() {
                   <BoardLabel name={item.board.name} />
                   {!!item.taskKey && <Text style={s.faint}>{item.taskKey}</Text>}
                   <Text style={[s.faint, { marginLeft: "auto", color: item.kind === "attention" ? colors.amber : colors.accent }]}>
-                    {item.kind === "permission" ? (isQuestionTool(item.permission.tool_name) ? "Question" : "Permission") : item.kind === "question" ? "Question" : "Needs attention"}
+                    {item.kind === "permission"
+                      ? isQuestionTool(item.permission.tool_name)
+                        ? "Question"
+                        : "Permission"
+                      : item.kind === "question"
+                        ? "Question"
+                        : "Needs attention"}
                   </Text>
                 </View>
                 <Text style={s.title} numberOfLines={2}>
@@ -95,7 +110,14 @@ export default function Inbox() {
                 />
               )}
               {item.kind === "question" && (
-                <QuestionCard client={client} hostId={item.hostId} taskId={item.taskId} messageId={item.message.id} data={item.message.data} onDone={() => done(item.key)} />
+                <QuestionCard
+                  client={client}
+                  hostId={item.hostId}
+                  taskId={item.taskId}
+                  messageId={item.message.id}
+                  data={item.message.data}
+                  onDone={() => done(item.key)}
+                />
               )}
               {item.kind === "attention" && !!item.reason && (
                 <Text style={s.muted} numberOfLines={4}>

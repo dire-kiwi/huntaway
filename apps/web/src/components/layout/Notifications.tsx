@@ -63,8 +63,8 @@ export function NotificationsPanel() {
       <h2 className="mb-3 text-[13px] font-semibold">Notifications</h2>
       <div className="space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted">
         <p>
-          Tell me when a task needs me, from this browser, while the board is open in it. One of its tabs or windows notifies, and none do for the
-          task open in a focused window. These settings are kept in this browser.
+          Tell me when a task needs me, from this browser, while the board is open in it. One of its tabs or windows notifies, and none do for the task open in
+          a focused window. These settings are kept in this browser.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex w-fit items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5" role="radiogroup" aria-label="Notify with">
@@ -99,7 +99,11 @@ export function NotificationsPanel() {
             )}
           </div>
         )}
-        {playsSound(settings.mode) && <p className="text-faint">The sound plays once you've clicked or typed on the page since it loaded: browsers don't let a page play sound before that.</p>}
+        {playsSound(settings.mode) && (
+          <p className="text-faint">
+            The sound plays once you've clicked or typed on the page since it loaded: browsers don't let a page play sound before that.
+          </p>
+        )}
         <div className={clsx("space-y-2", settings.mode === "off" && "opacity-50")}>
           <div className="text-[12px] font-medium text-fg">When a task</div>
           {NOTIFY_EVENTS.map((e) => (
@@ -183,9 +187,9 @@ function PushPanel() {
           <Smartphone size={14} /> Push to this device
         </div>
         <p>
-          The board pushes notifications of these events to the devices that turn this on, even while the board isn't open on them: a phone with
-          the board on its home screen, say. Tapping one opens the task. Each device picks its own events, whatever the setting above, and whose
-          permission prompts it gets, which you can allow or deny from the notification.
+          The board pushes notifications of these events to the devices that turn this on, even while the board isn't open on them: a phone with the board on
+          its home screen, say. Tapping one opens the task. Each device picks its own events, whatever the setting above, and whose permission prompts it gets,
+          which you can allow or deny from the notification.
         </p>
       </div>
       {support !== "ok" ? (
@@ -319,16 +323,16 @@ function PushNote({ support }: { support: ReturnType<typeof pushSupport> }) {
     case "insecure":
       return (
         <>
-          Push needs the board on HTTPS, and this page is plain HTTP on <span className="font-mono">{window.location.hostname}</span>. Serve the board
-          over HTTPS at an address the device can reach, such as with <code>tailscale serve</code> (see <i>Push notifications on a phone</i> in docs/guide/mobile.md), and
-          open it there.
+          Push needs the board on HTTPS, and this page is plain HTTP on <span className="font-mono">{window.location.hostname}</span>. Serve the board over
+          HTTPS at an address the device can reach, such as with <code>tailscale serve</code> (see <i>Push notifications on a phone</i> in
+          docs/guide/mobile.md), and open it there.
         </>
       );
     case "install":
       return (
         <>
-          On an iPhone or iPad, push works for the board on the Home Screen: tap Share, then <i>Add to Home Screen</i>, open Huntaway from there, sign
-          in with the board's token, and turn push on here.
+          On an iPhone or iPad, push works for the board on the Home Screen: tap Share, then <i>Add to Home Screen</i>, open Huntaway from there, sign in with
+          the board's token, and turn push on here.
         </>
       );
     default:

@@ -67,7 +67,12 @@ async function fakes(): Promise<Map<string, Proc>> {
   const out = new Map<string, Proc>();
   for (const p of (await list()) ?? []) {
     // An agent's command line has its helper's tag in it too, before its own.
-    const tag = [...p.cmd.matchAll(/\/\* fake:(\S+) \*\//g)].pop()?.[1] ?? /--name (\S+)|-- agent (\S+)$/.exec(p.cmd)?.slice(1).find((t) => t);
+    const tag =
+      [...p.cmd.matchAll(/\/\* fake:(\S+) \*\//g)].pop()?.[1] ??
+      /--name (\S+)|-- agent (\S+)$/
+        .exec(p.cmd)
+        ?.slice(1)
+        .find((t) => t);
     if (tag && p.cmd.includes(process.execPath) && (await this_runs(p.pid))) out.set(tag, p);
   }
   return out;
@@ -155,7 +160,11 @@ test("a_tasks_servers_shims_and_agents_are_stopped_and_nothing_else", async () =
     const scope = { tmp: [join(link, "aaaaaaaaaaaa")], worktrees: [wt], data_dir: board, tmp_root: link };
     // What `ps` lists (as on macOS) picks the same processes as /proc.
     const by_tag = new Map([...(await fakes())].map(([t, p]) => [p.pid, t]));
-    const tags = async (procs: Proc[]) => (await find(procs, scope)).map((p) => by_tag.get(p.pid)).filter((t) => t !== undefined).sort();
+    const tags = async (procs: Proc[]) =>
+      (await find(procs, scope))
+        .map((p) => by_tag.get(p.pid))
+        .filter((t) => t !== undefined)
+        .sort();
     const want = all.filter(ours).sort();
     assert.deepEqual(await tags((await list())!), want);
     assert.deepEqual(await tags(await list_ps()), want);
@@ -164,7 +173,11 @@ test("a_tasks_servers_shims_and_agents_are_stopped_and_nothing_else", async () =
     assert.ok(gone.length >= want.length);
     const left = await fakes();
     assert.deepEqual([...left.keys()].filter(ours), [], "the task's processes are stopped");
-    assert.deepEqual(all.filter((t) => !ours(t) && !left.has(t)), [], "the others are left alone");
+    assert.deepEqual(
+      all.filter((t) => !ours(t) && !left.has(t)),
+      [],
+      "the others are left alone",
+    );
   });
 });
 
@@ -287,6 +300,9 @@ test("each_gone_folders_processes_are_listed_afresh", async () => {
     }
     await sweep(s);
     const left = await fakes();
-    assert.deepEqual([...left].filter(([t]) => tags.some((g) => t === g || t.startsWith(`${g}-`))).map(([t, p]) => `${t} ${p.pid} ${p.start}`), []);
+    assert.deepEqual(
+      [...left].filter(([t]) => tags.some((g) => t === g || t.startsWith(`${g}-`))).map(([t, p]) => `${t} ${p.pid} ${p.start}`),
+      [],
+    );
   });
 });

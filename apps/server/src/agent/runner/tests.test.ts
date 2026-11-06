@@ -159,14 +159,20 @@ test("caches_are_writable_before_their_first_use", () => {
   const home = testing.temp_dir();
   // A bare home directory: no `~/.cargo` (a system Cargo) or `~/.local/share` yet.
   let found = cache_dirs_in(home, () => null);
-  assert.deepEqual(found, [".cache", ".npm", ".cargo/registry", ".cargo/git", ".local/share/pnpm"].map((d) => path_str(join(home, d))));
+  assert.deepEqual(
+    found,
+    [".cache", ".npm", ".cargo/registry", ".cargo/git", ".local/share/pnpm"].map((d) => path_str(join(home, d))),
+  );
   assert.ok(found.every((d) => existsSync(d)));
   // Where the environment moves them.
   const env = (k: string) =>
     ({ XDG_CACHE_HOME: path_str(join(home, "xdg/cache")), XDG_DATA_HOME: path_str(join(home, "xdg/data")), CARGO_HOME: path_str(join(home, "cargo")) })[k] ??
     "";
   found = cache_dirs_in(home, env);
-  assert.deepEqual(found, ["xdg/cache", ".npm", "cargo/registry", "cargo/git", "xdg/data/pnpm"].map((d) => path_str(join(home, d))));
+  assert.deepEqual(
+    found,
+    ["xdg/cache", ".npm", "cargo/registry", "cargo/git", "xdg/data/pnpm"].map((d) => path_str(join(home, d))),
+  );
   assert.ok(found.every((d) => existsSync(d)));
 });
 
@@ -210,7 +216,8 @@ test("a_reviewer_may_write_the_directories_git_ignores_whole", async () => {
   const dir = testing.temp_dir();
   for (const d of ["target/debug", "app/node_modules/x", "build", ".claude", "src"]) mkdirSync(join(dir, d), { recursive: true });
   writeFileSync(join(dir, ".gitignore"), "target\nnode_modules\nbuild\n.claude\n.env\n");
-  for (const f of ["build/tracked", "build/untracked", ".env", "src/a.rs", "app/node_modules/x/i", ".claude/settings.local.json"]) writeFileSync(join(dir, f), "1");
+  for (const f of ["build/tracked", "build/untracked", ".env", "src/a.rs", "app/node_modules/x/i", ".claude/settings.local.json"])
+    writeFileSync(join(dir, f), "1");
   git_in(dir, ["init", "-q", "."]);
   git_in(dir, ["add", ".gitignore", "src"]);
   git_in(dir, ["add", "-f", "build/tracked"]);
@@ -246,7 +253,11 @@ test("a_message_queued_during_a_run_waits_for_new_dependencies", () => {
   // B's agent is running; it gets a dependency on A and a message is queued meanwhile.
   const run = db.insert_run(state.db(), b.id, "prompt");
   state.runs.set(b.id, { run_id: run.id, cancel: null });
-  state.update_task(b.id, [["running", true], ["status", "in_progress"], ["depends_on", [a.id]]]);
+  state.update_task(b.id, [
+    ["running", true],
+    ["status", "in_progress"],
+    ["depends_on", [a.id]],
+  ]);
   send(state, b.id, "and then this");
   finish(state, run.id, "Ok");
 
@@ -259,7 +270,11 @@ test("a_message_queued_during_a_run_waits_for_new_dependencies", () => {
 test("an_effort_a_codex_model_doesnt_take_gives_way_to_its_default", async () => {
   const model = (id: string, is_default: boolean, efforts: string[], default_effort: string | null): codex.Model =>
     ({ id, name: id, is_default, efforts, default_effort }) as codex.Model;
-  const models = [model("gpt-5.5", true, ["low", "medium", "high", "xhigh"], "medium"), model("gpt-6", false, ["low", "max"], null), model("odd", false, [], null)];
+  const models = [
+    model("gpt-5.5", true, ["low", "medium", "high", "xhigh"], "medium"),
+    model("gpt-6", false, ["low", "max"], null),
+    model("odd", false, [], null),
+  ];
   const e = (effort: string, m: string | null) => codex_effort(effort, m, models);
   assert.equal(e("max", "gpt-5.5"), "medium");
   assert.equal(e("high", "gpt-5.5"), "high");
@@ -364,9 +379,15 @@ const error_of = (f: () => unknown): any => {
 
 test("a_merge_that_needs_changes_lets_the_queue_go_and_rejoins_it", async () => {
   let [state, a, run] = running(false);
-  a = state.update_task(a.id, [["status", "ready_for_merge"], ["merging", true]])!;
+  a = state.update_task(a.id, [
+    ["status", "ready_for_merge"],
+    ["merging", true],
+  ])!;
   let b = new_task(state.db(), { profile_id: a.profile_id, title: "b", status: "ready_for_merge" });
-  b = state.update_task(b.id, [["merging", true], ["position", a.position + 1.0]])!;
+  b = state.update_task(b.id, [
+    ["merging", true],
+    ["position", a.position + 1.0],
+  ])!;
   const slot = (s: Shared) => db.active_merge(s.db(), null, null)?.id ?? null;
   const queue = (s: Shared) => db.queued_merges(s.db(), null, null).map((t) => t.id);
   assert.deepEqual([slot(state), queue(state)], [a.id, [b.id]]);
@@ -396,7 +417,10 @@ test("a_merge_that_needs_changes_lets_the_queue_go_and_rejoins_it", async () => 
   // Moved to another column meanwhile, it's out of the queue for good.
   {
     const [state, c, run] = running(false);
-    state.update_task(c.id, [["status", "ready_for_merge"], ["merging", true]]);
+    state.update_task(c.id, [
+      ["status", "ready_for_merge"],
+      ["merging", true],
+    ]);
     await update(state, c.id, { status: "in_progress", remerge: true });
     const t = await update(state, c.id, { status: "todo" });
     assert.deepEqual([t.merging, t.remerge], [false, false]);
@@ -408,14 +432,20 @@ test("a_merge_that_needs_changes_lets_the_queue_go_and_rejoins_it", async () => 
   // A run that fails leaves it for the user, still to rejoin once its agent is done.
   {
     const [state, d, run] = running(false);
-    state.update_task(d.id, [["status", "ready_for_merge"], ["merging", true]]);
+    state.update_task(d.id, [
+      ["status", "ready_for_merge"],
+      ["merging", true],
+    ]);
     await update(state, d.id, { status: "in_progress", remerge: true });
     finish(state, run.id, { Failed: "boom" });
     let t = reload(state, d.id);
     assert.deepEqual([t.status, t.merging, t.remerge], ["needs_attention", false, true]);
     // Moved on by the board rather than the user (a review starting puts it in In review), it drops its place all the
     // same: work after that goes to review, not to the queue.
-    state.update_task(d.id, [["status", "in_review"], ["attention_reason", null]]);
+    state.update_task(d.id, [
+      ["status", "in_review"],
+      ["attention_reason", null],
+    ]);
     assert.ok(!reload(state, d.id).remerge);
     await update(state, d.id, { status: "in_progress" });
     const next = db.insert_run(state.db(), d.id, "prompt");
@@ -632,7 +662,13 @@ test("messages_the_agent_never_took_in_go_to_the_next_run", () => {
   assert.deepEqual(t.steering, []);
   assert.equal(t.queued_message, "first\n\nsecond\n\nthird");
   // Not all of it came from other agents, so it counts as the user's.
-  assert.deepEqual(db.take_queued(state.db(), task.id), { text: "first\n\nsecond\n\nthird", from_agent: false, user_text: "first\n\nthird", routine: false, routine_runs: [] });
+  assert.deepEqual(db.take_queued(state.db(), task.id), {
+    text: "first\n\nsecond\n\nthird",
+    from_agent: false,
+    user_text: "first\n\nthird",
+    routine: false,
+    routine_runs: [],
+  });
 });
 
 test("the_users_messages_retitle_the_task", async () => {
@@ -1124,7 +1160,10 @@ test("an_archived_projects_queued_messages_wait_for_it", () => {
   // Archived after start_unblocked picked it: it waits again, message and all.
   db.update_project(state.db(), "pr", [["archived_at", null]]);
   db.queue(state.db(), blocked.id, db.Queued_new("Go", false));
-  state.update_task(blocked.id, [["waiting", true], ["status", "in_progress"]]);
+  state.update_task(blocked.id, [
+    ["waiting", true],
+    ["status", "in_progress"],
+  ]);
   const picked = get(blocked.id);
   db.update_project(state.db(), "pr", [["archived_at", "2026-01-02T00:00:00.000Z"]]);
   start_waiting(state, picked);
@@ -1173,10 +1212,7 @@ test("starts_with_the_projects_instructions", () => {
  */
 function assert_paragraphs(text: string) {
   assert.ok(text.includes("\n\n") && !text.includes("\n\n\n"), text);
-  assert.ok(
-    text.split("\n").every((l) => l.trim() === l) && text.split("\n\n").every((p) => p.trim() !== ""),
-    JSON.stringify(text),
-  );
+  assert.ok(text.split("\n").every((l) => l.trim() === l) && text.split("\n\n").every((p) => p.trim() !== ""), JSON.stringify(text));
 }
 
 test("a_group_task_is_told_its_groups_projects", () => {
@@ -1186,7 +1222,18 @@ test("a_group_task_is_told_its_groups_projects", () => {
   db.update_project(c, "pr", [["group_name", "Shop"]]);
   const task = db.insert_group_task(
     c,
-    { profile_id: p.id, project_id: null, kind: "task", title: "Plan it", description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null },
+    {
+      profile_id: p.id,
+      project_id: null,
+      kind: "task",
+      title: "Plan it",
+      description: "",
+      status: "todo",
+      use_worktree: false,
+      model: null,
+      effort: null,
+      claude_config_id: null,
+    },
     "Shop",
   );
   const group = db.group_projects(c, p.id, "Shop");
@@ -1299,7 +1346,11 @@ test("agents_are_told_to_ask_rather_than_leave_a_question_in_their_summary", () 
   const task = new_task(c, { profile_id: p.id, project_id: "pr", title: "Fix it" });
   const scratch = { ...task, task_type: "scratch", project_id: null };
   const group = { ...task, project_id: null, group_name: "Shop" };
-  for (const [t, pr] of [[task, project], [scratch, null], [group, null]] as const) {
+  for (const [t, pr] of [
+    [task, project],
+    [scratch, null],
+    [group, null],
+  ] as const) {
     const text = system_prompt(t, pr, null, [], [], null, true);
     assert.ok(text.includes("You must call `request_user_input` before you end a turn whose last message needs something from the user"), text);
     assert.ok(text.includes("The one exception is an offer of something extra once everything the user asked for is done"), text);
@@ -1340,10 +1391,18 @@ test("a_stacked_task_targets_the_branch_it_stacks_on_until_that_task_is_merged",
   const project = new_project(s.db(), { profile_id: p.id, name: "Web", key: "WEB", repo_path: "/src/web", base_branch: "main", use_worktrees: true });
   const make = (title: string) => new_task(s.db(), { profile_id: p.id, project_id: "pr", title, status: "in_review", use_worktree: true });
   let first = make("First");
-  first = s.update_task(first.id, [["branch", "ia/web-1-first"], ["base_branch", "main"]])!;
+  first = s.update_task(first.id, [
+    ["branch", "ia/web-1-first"],
+    ["base_branch", "main"],
+  ])!;
   let second = make("Second");
   const sf = { type: "task", task_id: first.id };
-  second = s.update_task(second.id, [["branch", "ia/web-2-second"], ["base_branch", "ia/web-1-first"], ["start_from", sf], ["worktree_path", "/w/2-second"]])!;
+  second = s.update_task(second.id, [
+    ["branch", "ia/web-2-second"],
+    ["base_branch", "ia/web-1-first"],
+    ["start_from", sf],
+    ["worktree_path", "/w/2-second"],
+  ])!;
   const gh: Github = { remote: "origin", repo: "o/web" };
   let text = system_prompt(second, project, null, [], [], gh, true);
   assert.ok(text.includes("stacked on another task: `ia/web-1-first` is that task's branch"), text);
@@ -1447,7 +1506,10 @@ test("a_plan_task_from_before_labels_is_told_to_make_only_its_plan", () => {
   project.start_prompt = "Write a failing test first.";
   let task = new_task(c, { profile_id: p.id, project_id: "pr", title: "Plan search" });
   // As the migration to labels leaves it.
-  task = db.update_task(c, task.id, [["labels", ["plan"]], ["work_dir", `documents/${task.id}`]])!;
+  task = db.update_task(c, task.id, [
+    ["labels", ["plan"]],
+    ["work_dir", `documents/${task.id}`],
+  ])!;
   const docs: Array<[string, string]> = [["plan", "/data/documents/t/plan.html"]];
   const text = system_prompt(task, project, null, [], docs, null, true);
   assert.ok(text.includes('task WEB-1 ("Plan search"') && text.includes("a plan (HTML) to /data/documents/t/plan.html"), text);
@@ -1543,11 +1605,17 @@ test("a_scratch_task_in_a_project_reads_it", () => {
   let task = t("Ask");
   task = db.update_task(c, task.id, [["task_type", "scratch"]])!;
   let text = system_prompt(task, project, null, [], [], null, true);
-  assert.ok(text.includes('scratch task WEB-2 ("Ask"') && text.includes("in the project Web") && text.includes("repository /src/web, which you can read"), text);
+  assert.ok(
+    text.includes('scratch task WEB-2 ("Ask"') && text.includes("in the project Web") && text.includes("repository /src/web, which you can read"),
+    text,
+  );
   assert.ok(text.includes("Don't change the repository") && !text.includes("subproject") && !text.includes("isn't in a project"), text);
   // In a subproject, it's told about the subproject's branch and worktree.
   text = system_prompt(task, project, sp, [], [], null, true);
-  assert.ok(text.includes('part of the subproject WEB-1 ("Search"), whose branch `ia/web-1-search`') && text.includes("worktree at /w/1, which you can read"), text);
+  assert.ok(
+    text.includes('part of the subproject WEB-1 ("Search"), whose branch `ia/web-1-search`') && text.includes("worktree at /w/1, which you can read"),
+    text,
+  );
   assert_paragraphs(text);
   assert.ok(start_prompt(task, project, "").startsWith("# WEB-2: Ask"));
 });
@@ -1599,7 +1667,10 @@ test("in_auto_mode_claude_reviews_waits_itself", () => {
 function start_next(state: Shared, task_id: string, call: string): string {
   const b = db.insert_run(state.db(), task_id, "prompt");
   state.runs.set(task_id, { run_id: b.id, cancel: null });
-  state.update_task(task_id, [["running", true], ["status", "in_progress"]]);
+  state.update_task(task_id, [
+    ["running", true],
+    ["status", "in_progress"],
+  ]);
   ask(state, task_id, b.id, call);
   const wait = { since: "", until: "", call_id: `${call}-wait`, run_id: b.id };
   state.update_task(task_id, [["agent_wait", wait]]);
@@ -1672,7 +1743,11 @@ test(
     const path = path_str(dir);
     new_project(s.db(), { profile_id: thread.profile_id, repo_path: path, scratch_path: path, worktrees_root: path, use_worktrees: true });
     const parent = new_task(s.db(), { profile_id: thread.profile_id, project_id: "pr", title: "parent", status: "in_review" });
-    s.update_task(parent.id, [["worktree_path", path], ["worktree_state", "ready"], ["branch", "ia/x"]]);
+    s.update_task(parent.id, [
+      ["worktree_path", path],
+      ["worktree_state", "ready"],
+      ["branch", "ia/x"],
+    ]);
     db.run(s.db(), "UPDATE tasks SET kind='review', parent_id=?1, project_id='pr' WHERE id=?2", parent.id, thread.id);
     db.run(s.db(), "UPDATE runs SET kind='review' WHERE id=?1", run.id);
     // A round from before reviewers' runs were kept.
@@ -1937,7 +2012,10 @@ function out_of_usage_setup(state: Shared, agent: string, wait: boolean, sw: boo
     configs.map((c) => c.id),
     null,
   );
-  db.update_profile(c, p.id, [["limit_wait", wait], ["limit_switch", sw]]);
+  db.update_profile(c, p.id, [
+    ["limit_wait", wait],
+    ["limit_switch", sw],
+  ]);
   return [new_task(c, { profile_id: p.id, claude_config_id: configs[0].id }), configs];
 }
 
@@ -1979,7 +2057,10 @@ function refused_lines(resets: number): any[] {
 function run_out(state: Shared, task: Task, resets: number) {
   const run = db.insert_run(state.db(), task.id, "prompt");
   state.runs.set(task.id, { run_id: run.id, cancel: null });
-  state.update_task(task.id, [["running", true], ["status", "in_progress"]]);
+  state.update_task(task.id, [
+    ["running", true],
+    ["status", "in_progress"],
+  ]);
   for (const line of refused_lines(resets)) handle_line(state, run, JSON.stringify(line));
   on_exit(state, run.id, 0, null, null, "");
 }
@@ -2105,7 +2186,10 @@ test("a_codex_turn_out_of_usage_waits_for_its_limits_reset", () => {
   const [resets, at] = reset_in(3);
   const run = db.insert_run(state.db(), task.id, "prompt");
   state.runs.set(task.id, { run_id: run.id, cancel: null });
-  state.update_task(task.id, [["running", true], ["status", "in_progress"]]);
+  state.update_task(task.id, [
+    ["running", true],
+    ["status", "in_progress"],
+  ]);
   const line = (method: string, params: any) => handle_line(state, run, JSON.stringify({ method, params }));
   line("thread/started", { thread: { id: "main" } });
   line("account/rateLimits/updated", {
@@ -2209,7 +2293,11 @@ test("a_merge_out_of_usage_keeps_its_place_in_the_merge_queue", async () => {
   const [resets] = reset_in(2);
   const run = db.insert_run(state.db(), task.id, "prompt");
   state.runs.set(task.id, { run_id: run.id, cancel: null });
-  state.update_task(task.id, [["running", true], ["status", "ready_for_merge"], ["merging", true]]);
+  state.update_task(task.id, [
+    ["running", true],
+    ["status", "ready_for_merge"],
+    ["merging", true],
+  ]);
   for (const line of refused_lines(resets)) handle_line(state, run, JSON.stringify(line));
   on_exit(state, run.id, 0, null, null, "");
   let t = db.get_task(state.db(), task.id)!;
@@ -2579,8 +2667,14 @@ test("an_automations_message_that_waits_in_the_queue_still_starts_a_routine_run"
 test("a_session_the_model_never_answered_is_not_resumed", () => {
   const [state, task, first] = running(true);
   const not_logged_in = (session: string) => ({
-    type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: session,
-    duration_api_ms: 0, total_cost_usd: 0, num_turns: 1,
+    type: "result",
+    subtype: "success",
+    is_error: true,
+    result: "Not logged in · Please run /login",
+    session_id: session,
+    duration_api_ms: 0,
+    total_cost_usd: 0,
+    num_turns: 1,
   });
   const init = (session: string) => ({ type: "system", subtype: "init", session_id: session });
   const next = () => {
@@ -2623,7 +2717,13 @@ test("a_session_the_model_never_answered_is_not_resumed", () => {
   output(state, stopped, [init("s4")]);
   db.run(state.db(), "UPDATE runs SET stop_requested=1 WHERE id=?1", stopped.id);
   const interrupted = {
-    type: "result", subtype: "error_during_execution", is_error: true, session_id: "s4", duration_api_ms: 0, total_cost_usd: 0, num_turns: 0,
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    session_id: "s4",
+    duration_api_ms: 0,
+    total_cost_usd: 0,
+    num_turns: 0,
     errors: ["[Request interrupted by user]"],
   };
   output(state, stopped, [interrupted]);
@@ -2637,8 +2737,14 @@ test("a_review_threads_unanswered_session_is_kept", () => {
   const [state, task, run] = running(true);
   db.run(state.db(), "UPDATE tasks SET kind='review' WHERE id=?1", task.id);
   const r = {
-    type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: "r1", duration_api_ms: 0,
-    total_cost_usd: 0, num_turns: 1,
+    type: "result",
+    subtype: "success",
+    is_error: true,
+    result: "Not logged in · Please run /login",
+    session_id: "r1",
+    duration_api_ms: 0,
+    total_cost_usd: 0,
+    num_turns: 1,
   };
   output(state, run, [{ type: "system", subtype: "init", session_id: "r1" }, r]);
   assert.equal(reload(state, task.id).session_id, "r1");

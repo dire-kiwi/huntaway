@@ -14,13 +14,13 @@ tailscale serve --bg 7878     # https://<machine>.<tailnet>.ts.net → 127.0.0.1
 (or any TLS reverse proxy in front of port 7878, such as Caddy's `reverse_proxy`). Open
 `https://<machine>.<tailnet>.ts.net/?token=<huntaway token>` on the phone, then install it:
 
-- **Android** (Chrome): menu → *Install app* (or *Add to Home screen*).
-- **iPhone and iPad** (iOS 16.4 or later): Safari's Share → *Add to Home Screen*. iOS only pushes
+- **Android** (Chrome): menu → _Install app_ (or _Add to Home screen_).
+- **iPhone and iPad** (iOS 16.4 or later): Safari's Share → _Add to Home Screen_. iOS only pushes
   to the board opened from the Home Screen, which keeps its own storage, so paste the token there
   when it asks.
 
-Then, in the installed app, Settings → Notifications → *Push to this device* → **Turn on push for
-this device** (it asks for permission) and *Send a test*. Each device picks its own events (the
+Then, in the installed app, Settings → Notifications → _Push to this device_ → **Turn on push for
+this device** (it asks for permission) and _Send a test_. Each device picks its own events (the
 same ones as the browser's notifications: needs attention, ready to review, ready for merge,
 done; and, API 110, the assistant's replies, which say only that it replied, and its routines'
 reports, which say their first line); the list there shows the other devices, with their last error,
@@ -42,8 +42,8 @@ is a PWA (`manifest.webmanifest`, `sw.js`): its service worker caches nothing, s
 the board's current UI.
 
 **Permission prompts** (API 115) are pushed too, with **Allow** and **Deny** on the notification, so
-you can answer one from the lock screen. Each device picks whose: *None*, *The assistant's* (the
-default) or *Every task's*. A device that gets a task's prompt isn't also told the task needs
+you can answer one from the lock screen. Each device picks whose: _None_, _The assistant's_ (the
+default) or _Every task's_. A device that gets a task's prompt isn't also told the task needs
 attention. Questions, plans and approvals of changes to the board (projects, deletions,
 automations) are pushed without the buttons: tapping opens the thread. A push carries the task's
 key and title and the tool's name, but never the tool's input, as it passes through the push
@@ -80,7 +80,7 @@ analytics). It keeps a websocket to each board, and reconnects when it comes bac
 the network changes.
 
 What you **share** from another app (a link, text, photos or a file, from Android's share sheet or
-the iOS share extension, *Huntaway Share*) opens the Assistant with its composer filled in, after
+the iOS share extension, _Huntaway Share_) opens the Assistant with its composer filled in, after
 whatever was typed there, and the files uploading as attachments to the assistant's host. With
 several boards that can take it, the app asks which, with the last one picked first. A share only
 ever becomes a draft: it's never taken as an address or a token. Every composer (the assistant's and
@@ -93,7 +93,7 @@ four minutes, well under an attachment's 10 MB.
 **Installing it.** Nothing needs building:
 
 - **Android**: each GitHub release has the app as `huntaway-<version>.apk`, once the repository has
-  its signing key (see *Building the mobile app*: until then, releases have no APK). Open the release page on
+  its signing key (see _Building the mobile app_: until then, releases have no APK). Open the release page on
   the phone, download it, and allow your browser to install apps when Android asks (Settings →
   Apps → Special app access → Install unknown apps). A later release's APK installs over it, keeping
   the paired boards; Android refuses one signed with another key, or an older version.
@@ -181,7 +181,7 @@ uninstalled) is dropped, and other failures show as the subscription's last erro
 tests), and `IA_EXPO_ACCESS_TOKEN` is the token for a project with Expo's enhanced push security
 on. The app needs a build with its EAS project id (`extra.eas.projectId` in `app.json`, from
 `eas init`) for its push token, and Android builds need Firebase Cloud Messaging set up for it (a
-`google-services.json`, and FCM's key given to Expo: see *Building the mobile app*).
+`google-services.json`, and FCM's key given to Expo: see _Building the mobile app_).
 
 Revoking a phone stops the phone, not what was done with it before: whoever held it could have
 started an agent that read the board's files, `auth_token` among them, as any agent can. If a lost
@@ -228,8 +228,8 @@ set GOOGLE_SERVICES_JSON < google-services.json`). The `android` job writes it i
 names it in `app.json` (`android.googleServicesFile`) for that build only, since it isn't
 committed. Then give Expo the project's FCM V1 key, so it can send: Firebase → Project settings →
 Service accounts → **Generate new private key**, and `npx eas-cli credentials --platform android`
-→ production → Google Service Account → *Manage your Google Service Account Key for Push
-Notifications (FCM V1)*, with that file. Without the secret the APK builds with a warning, but
+→ production → Google Service Account → _Manage your Google Service Account Key for Push
+Notifications (FCM V1)_, with that file. Without the secret the APK builds with a warning, but
 can't register for push.
 
 **iOS** isn't built yet: TestFlight builds through EAS wait for an Apple Developer Program

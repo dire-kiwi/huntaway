@@ -123,7 +123,11 @@ export function DirPicker({ hostId, value, onChange }: { hostId: string; value: 
       />
       <div ref={listRef} className="h-56 overflow-y-auto rounded-md border border-line bg-bg/60">
         {listing?.parent && !prefix && (
-          <button type="button" onClick={() => pick(listing.parent!)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-muted hover:bg-white/[0.04]">
+          <button
+            type="button"
+            onClick={() => pick(listing.parent!)}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-muted hover:bg-white/[0.04]"
+          >
             <ArrowUp size={13} /> ..
           </button>
         )}

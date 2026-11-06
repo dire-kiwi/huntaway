@@ -33,7 +33,8 @@ export interface Options {
   back: boolean;
 }
 
-const USAGE = "Usage: huntaway threads-rebuild [--db <file or data dir>] (<task id or key>... | --all | --batch) [--check] [--json] | --back <task id or key>...";
+const USAGE =
+  "Usage: huntaway threads-rebuild [--db <file or data dir>] (<task id or key>... | --all | --batch) [--check] [--json] | --back <task id or key>...";
 
 export function parse_args(args: string[]): Options {
   const o: Options = { db: null, tasks: [], all: false, batch: false, check: false, json: false, back: false };
@@ -124,7 +125,9 @@ export function run(o: Options, c: Conn, print: (s: string) => void = (s) => pro
     const failed = out.filter((r) => r.error).length;
     const differ = out.filter((r) => r.differences?.length).length;
     const s = ((performance.now() - start) / 1000).toFixed(1);
-    print(`${out.length} tasks${o.check ? `, ${differ} differ from a rebuild` : o.back ? " moved back onto their messages" : " rebuilt"}${failed ? `, ${failed} failed` : ""}, in ${s} s\n`);
+    print(
+      `${out.length} tasks${o.check ? `, ${differ} differ from a rebuild` : o.back ? " moved back onto their messages" : " rebuilt"}${failed ? `, ${failed} failed` : ""}, in ${s} s\n`,
+    );
   }
   return out;
 }
@@ -132,7 +135,8 @@ export function run(o: Options, c: Conn, print: (s: string) => void = (s) => pro
 function line(r: Result): string {
   if (r.error) return `${r.task_id}: failed: ${r.error}`;
   if (r.back) return `${r.task_id}: on its messages again`;
-  if (r.differences) return `${r.task_id}: ${r.differences.length ? `${r.differences.length} differences\n  ${r.differences.join("\n  ")}` : "same as a rebuild"}`;
+  if (r.differences)
+    return `${r.task_id}: ${r.differences.length ? `${r.differences.length} differences\n  ${r.differences.join("\n  ")}` : "same as a rebuild"}`;
   const b = r.rebuilt!;
   const w = b.warnings.length ? `, ${b.warnings.length} warnings (${[...new Set(b.warnings.map((w) => w.code))].join(", ")})` : "";
   return `${r.task_id}: ${b.messages} messages, ${b.items} items, ${b.requests} requests${w}`;

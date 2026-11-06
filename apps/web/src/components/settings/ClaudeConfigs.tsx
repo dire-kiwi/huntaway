@@ -32,11 +32,34 @@ function useUsedBy(c: ClaudeConfig) {
   return useStore(useShallow((s) => s.profiles.filter((p) => p.host_id === c.host_id && p.claude_config_ids?.includes(c.id)).map((p) => p.name)));
 }
 
-function ConfigRow({ config, label, canCopy, onEdit, onCopy }: { config: ClaudeConfig; label: string; canCopy: boolean; onEdit: () => void; onCopy: () => void }) {
+function ConfigRow({
+  config,
+  label,
+  canCopy,
+  onEdit,
+  onCopy,
+}: {
+  config: ClaudeConfig;
+  label: string;
+  canCopy: boolean;
+  onEdit: () => void;
+  onCopy: () => void;
+}) {
   const usedBy = useUsedBy(config);
-  const canShowUsage = useStore((s) => hostSupports(s.hosts.find((h) => h.id === config.host_id), 52));
+  const canShowUsage = useStore((s) =>
+    hostSupports(
+      s.hosts.find((h) => h.id === config.host_id),
+      52,
+    ),
+  );
   // Through a proxy, which picks the account, there's no one window to restart.
-  const canRestart = useStore((s) => hostSupports(s.hosts.find((h) => h.id === config.host_id), 91)) && !config.api_url;
+  const canRestart =
+    useStore((s) =>
+      hostSupports(
+        s.hosts.find((h) => h.id === config.host_id),
+        91,
+      ),
+    ) && !config.api_url;
   // Usage that's been fetched and has no session limit: a plan without the 5-hour window.
   const noWindow = useStore((s) => {
     const u = s.usage[usageKey(config.host_id, config.id)];
@@ -135,8 +158,8 @@ export function ClaudeConfigsPanel() {
         </Button>
       </div>
       <p className="mb-3 text-[12.5px] text-muted">
-        A Claude Code or Codex config directory on a host, with its own login, settings and history. Profiles pick which configs their agents can use,
-        and a project can pick its own; a thread's config decides which agent runs it. Configs with the same name on different hosts appear together.
+        A Claude Code or Codex config directory on a host, with its own login, settings and history. Profiles pick which configs their agents can use, and a
+        project can pick its own; a thread's config decides which agent runs it. Configs with the same name on different hosts appear together.
       </p>
       <div className="space-y-3">
         {names.map((name) => {
@@ -192,7 +215,14 @@ export function HostClaudeConfigs({ hostId, canCopy }: { hostId: string; canCopy
       </div>
       <div className="divide-y divide-line rounded-xl border border-line">
         {configs.map((c) => (
-          <ConfigRow key={c.id} config={c} label={c.name} canCopy={canCopy} onEdit={() => setEditing({ host: hostId, config: c })} onCopy={() => setCopying(c)} />
+          <ConfigRow
+            key={c.id}
+            config={c}
+            label={c.name}
+            canCopy={canCopy}
+            onEdit={() => setEditing({ host: hostId, config: c })}
+            onCopy={() => setCopying(c)}
+          />
         ))}
         {configs.length === 0 && <div className="px-4 py-3 text-[12.5px] text-faint">No agent configs yet.</div>}
       </div>
@@ -252,7 +282,11 @@ function ConfigForm({
   const proxyFields = (): ProxyFields => {
     if (!proxies) return {};
     if (!proxied) return initial?.api_url ? { api_url: null, api_key: null, management_key: null } : {};
-    return { api_url: apiUrl.trim(), ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}), ...(managementKey.trim() ? { management_key: managementKey.trim() } : {}) };
+    return {
+      api_url: apiUrl.trim(),
+      ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      ...(managementKey.trim() ? { management_key: managementKey.trim() } : {}),
+    };
   };
   const submit = () =>
     run(async () => {
@@ -289,9 +323,18 @@ function ConfigForm({
         label="Config directory"
         hint={`On that host. Passed as ${info.env}, so each config has its own login, settings and history. Run \`${info.env}=… ${agent}\` there once to log in, or copy a login from another host.`}
       >
-        <Input className="font-mono text-[12px]" value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && submit()} />
+        <Input
+          className="font-mono text-[12px]"
+          value={dir}
+          onChange={(e) => setDir(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && name.trim() && submit()}
+        />
       </Field>
-      {initial && <div className="text-[12px] text-faint">Changing the directory moves agents to it, but threads already started keep their conversation in the old one.</div>}
+      {initial && (
+        <div className="text-[12px] text-faint">
+          Changing the directory moves agents to it, but threads already started keep their conversation in the old one.
+        </div>
+      )}
       {proxies && agent === "claude" && (
         <Field
           label="Proxy (optional)"
@@ -380,7 +423,11 @@ export function ConfigPicker({ hostId, value, onChange }: { hostId: string; valu
           </label>
         );
       })}
-      <button type="button" className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[12px] text-faint hover:text-fg" onClick={() => setAdding(true)}>
+      <button
+        type="button"
+        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[12px] text-faint hover:text-fg"
+        onClick={() => setAdding(true)}
+      >
         <Plus size={12} /> New config…
       </button>
       {adding && <ConfigModal host={hostId} onClose={() => setAdding(false)} onCreated={(c) => onChange([...picked, c.id])} />}
@@ -389,7 +436,17 @@ export function ConfigPicker({ hostId, value, onChange }: { hostId: string; valu
 }
 
 /** Which of several agent configs a thread uses. */
-export function ConfigSelect({ configs, value, onChange, className }: { configs: ClaudeConfig[]; value: string; onChange: (id: string) => void; className?: string }) {
+export function ConfigSelect({
+  configs,
+  value,
+  onChange,
+  className,
+}: {
+  configs: ClaudeConfig[];
+  value: string;
+  onChange: (id: string) => void;
+  className?: string;
+}) {
   const usage = useStore((s) => s.usage);
   // Which are running low or out, so another can be picked before the work starts.
   const alert = (c: ClaudeConfig) => usageAlert(usage[usageKey(c.host_id, c.id)]);

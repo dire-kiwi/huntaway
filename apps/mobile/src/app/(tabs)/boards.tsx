@@ -46,7 +46,11 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
   };
 
   return (
-    <Pressable style={[s.card, selected && { borderColor: colors.accent }]} onPress={() => void boards.select(board.id)} accessibilityLabel={`Board ${board.name}`}>
+    <Pressable
+      style={[s.card, selected && { borderColor: colors.accent }]}
+      onPress={() => void boards.select(board.id)}
+      accessibilityLabel={`Board ${board.name}`}
+    >
       <View style={s.row}>
         <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: st.color }} />
         <Text style={[s.title, { flex: 1 }]} numberOfLines={1}>
@@ -58,9 +62,7 @@ function BoardCard({ board, status, selected }: { board: Board; status: BoardSta
         {board.url}
       </Text>
       <Text style={[s.faint, { color: st.color }]}>{st.text}</Text>
-      {push?.final && board.push !== false && (
-        <Text style={[s.faint, { color: colors.amber }]}>It turned this phone's push down: {push.error}</Text>
-      )}
+      {push?.final && board.push !== false && <Text style={[s.faint, { color: colors.amber }]}>It turned this phone's push down: {push.error}</Text>}
       {(profiles.data?.names.length ?? 0) > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
           {profiles.data!.names.map((n) => (
@@ -91,8 +93,8 @@ export default function BoardsScreen() {
       <View style={{ padding: 12, gap: 10 }}>
         <Button title={list.length ? "Pair another board" : "Pair a board"} kind="primary" onPress={() => router.push("/pair")} />
         <Text style={s.faint}>
-          The inbox shows every board's prompts and tasks that need you, for the profile picked on each. Terminals, diffs, settings and analytics are on
-          the web board.
+          The inbox shows every board's prompts and tasks that need you, for the profile picked on each. Terminals, diffs, settings and analytics are on the web
+          board.
         </Text>
       </View>
     </ScrollView>

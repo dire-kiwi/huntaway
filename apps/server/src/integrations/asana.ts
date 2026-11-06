@@ -141,16 +141,22 @@ export async function search(token: string, q: string): Promise<AsanaTask[]> {
   const count = String(SEARCH_RESULTS);
   const found = await Promise.allSettled(
     user.workspaces.map((w) =>
-      get(token, `/workspaces/${w}/typeahead`, [["resource_type", "task"], ["query", q], ["count", count], ["opt_fields", TASK_FIELDS]]),
+      get(token, `/workspaces/${w}/typeahead`, [
+        ["resource_type", "task"],
+        ["query", q],
+        ["count", count],
+        ["opt_fields", TASK_FIELDS],
+      ]),
     ),
   );
   const tasks: AsanaTask[] = [];
   for (const f of found) {
     if (f.status === "rejected") throw f.reason;
-    if (Array.isArray(f.value)) for (const v of f.value) {
-      const t = AsanaTask_from_json(v);
-      if (t) tasks.push(t);
-    }
+    if (Array.isArray(f.value))
+      for (const v of f.value) {
+        const t = AsanaTask_from_json(v);
+        if (t) tasks.push(t);
+      }
   }
   // Stable, so each workspace's keep Asana's order.
   tasks.sort((a, b) => Number(a.completed) - Number(b.completed));

@@ -14,17 +14,38 @@ import { QUEUES } from "./status_script.ts";
 function project_and_task(s: Shared, repo: string): [Project, Task] {
   const c = s.db();
   const p = db.insert_profile(c, "p", [], null);
-  const np = { id: "pr", profile_id: p.id, name: "x", key: "X", repo_path: repo, scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false };
+  const np = {
+    id: "pr",
+    profile_id: p.id,
+    name: "x",
+    key: "X",
+    repo_path: repo,
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  };
   const project = db.insert_project(c, np);
   const t = {
-    profile_id: p.id, project_id: "pr", kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null,
+    profile_id: p.id,
+    project_id: "pr",
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+    model: null,
+    effort: null,
     claude_config_id: null,
   };
   return [project, db.insert_task(c, t as any)];
 }
 
 function events(s: Shared, task_id: string): any[] {
-  return testing.messages(s.db(), task_id).filter((m: any) => m.kind === "event").map((m: any) => m.data);
+  return testing
+    .messages(s.db(), task_id)
+    .filter((m: any) => m.kind === "event")
+    .map((m: any) => m.data);
 }
 
 async function settled(task_id: string) {

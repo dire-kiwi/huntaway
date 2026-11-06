@@ -51,7 +51,9 @@ test("adds a project from GitHub into the profile's clone folder", async () => {
     await page.route(/\/github-repos(\?|$)/, (route) => {
       const q = new URL(route.request().url()).searchParams.get("q");
       if (q) searches.push(q);
-      const repos = q ? [repo("acme/search-hit"), repo("o/r")] : [repo("o/r", { private: true, description: "The one" }), repo("me/taken"), repo("me/website"), repo("o/slow")];
+      const repos = q
+        ? [repo("acme/search-hit"), repo("o/r")]
+        : [repo("o/r", { private: true, description: "The one" }), repo("me/taken"), repo("me/website"), repo("o/slow")];
       return route.fulfill({ contentType: "application/json", body: JSON.stringify({ account: "me", repos, error: null }) });
     });
     await ui.run(["goto /", "click [title='Add project']", "wait Repository folder", "click role=radio[name=/GitHub/]", "wait me/website"]);
@@ -79,7 +81,11 @@ test("adds a project from GitHub into the profile's clone folder", async () => {
     await ui.run([`assert location.pathname === '/p/${added.id}'`, `wait css=aside >> role=button[name=/${added.key} r/]`]);
 
     // The dialog opens on the GitHub tab next time.
-    await ui.run(["click [title='Add project']", "wait me/website", "assert document.querySelector('[role=radio][aria-checked=true]').textContent.includes('GitHub')"]);
+    await ui.run([
+      "click [title='Add project']",
+      "wait me/website",
+      "assert document.querySelector('[role=radio][aria-checked=true]').textContent.includes('GitHub')",
+    ]);
 
     // Closed while it clones, the project is still added, but the board stays where it is.
     await page.route("**/projects/clone", async (route) => {
@@ -113,7 +119,7 @@ async function startDevServer(server) {
     const read = (d) => {
       log += d;
       // With $CI set (as on GitHub's runners) Vite's colours are on, and it prints the port in bold.
-      if (log.replace(/\x1b\[[0-9;]*m/g, "").includes(`127.0.0.1:${port}`)) clearTimeout(timer), resolve();
+      if (log.replace(/\x1b\[[0-9;]*m/g, "").includes(`127.0.0.1:${port}`)) (clearTimeout(timer), resolve());
     };
     vite.stdout.on("data", read);
     vite.stderr.on("data", read);

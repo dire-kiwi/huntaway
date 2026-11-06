@@ -10,18 +10,30 @@ import { limits, title_model, type Model } from "./queries.ts";
 test("rate_limit_windows_go_by_their_length", () => {
   const ids = (rl: any) => limits(rl).map((l) => [l.id, l.label]);
   const w = (mins: number | null) => ({ usedPercent: 10, windowDurationMins: mins, resetsAt: 1793521800 });
-  assert.deepEqual(ids({ primary: w(300), secondary: w(10080) }), [["session", "Session"], ["weekly", "Weekly"]]);
+  assert.deepEqual(ids({ primary: w(300), secondary: w(10080) }), [
+    ["session", "Session"],
+    ["weekly", "Weekly"],
+  ]);
   // A weekly-only plan's primary window is its weekly one.
   assert.deepEqual(ids({ primary: w(10080), secondary: null }), [["weekly", "Weekly"]]);
-  assert.deepEqual(ids({ primary: w(null), secondary: w(null) }), [["session", "Session"], ["weekly", "Weekly"]]);
-  assert.deepEqual(ids({ primary: w(120), secondary: w(43200) }), [["window:120", "2-hour"], ["window:43200", "30-day"]]);
+  assert.deepEqual(ids({ primary: w(null), secondary: w(null) }), [
+    ["session", "Session"],
+    ["weekly", "Weekly"],
+  ]);
+  assert.deepEqual(ids({ primary: w(120), secondary: w(43200) }), [
+    ["window:120", "2-hour"],
+    ["window:43200", "30-day"],
+  ]);
 });
 
 test("unwraps_shell_commands", () => {
   assert.equal(display_command("/usr/bin/bash -lc 'ls -la && printf hi > hello.txt'"), "ls -la && printf hi > hello.txt");
   assert.equal(display_command("/bin/zsh -lc 'echo '\\''hi'\\'''"), "echo 'hi'");
   assert.equal(display_command('bash -c "make"'), "make");
-  assert.equal(display_command(String.raw`/usr/bin/bash -lc "printf 'hi\\n' && git commit -m \"Add it\""`), String.raw`printf 'hi\n' && git commit -m "Add it"`);
+  assert.equal(
+    display_command(String.raw`/usr/bin/bash -lc "printf 'hi\\n' && git commit -m \"Add it\""`),
+    String.raw`printf 'hi\n' && git commit -m "Add it"`,
+  );
   assert.equal(display_command("git status"), "git status");
   assert.equal(display_command("python -c 'print(1)'"), "python -c 'print(1)'");
   assert.equal(display_command(`/usr/bin/bash -lc "cat <<'EOF'\n#"'!/bin/sh'"\nEOF"`), "cat <<'EOF'\n#!/bin/sh\nEOF");
@@ -38,7 +50,15 @@ test("maps_permission_modes", () => {
 test("a_reviewer_writes_only_its_build_output_and_temp_directories", () => {
   const spec = (sandbox: string, fs: Array<[string, string]>): Spec =>
     Spec_default({ sandbox, approval_policy: "never", writable_roots: ["/repo/.git"], filesystem: Object.fromEntries(fs) });
-  let p = thread_params(spec("read-only", [["/w", "read"], ["/w/target", "write"], ["/home/me/.npm", "write"]]), "/w", {});
+  let p = thread_params(
+    spec("read-only", [
+      ["/w", "read"],
+      ["/w/target", "write"],
+      ["/home/me/.npm", "write"],
+    ]),
+    "/w",
+    {},
+  );
   assert.equal(p.sandbox, undefined);
   assert.equal(p.config.sandbox_workspace_write, undefined);
   assert.equal(p.config.default_permissions, REVIEW_PROFILE);
@@ -97,7 +117,12 @@ test("shows_items_as_tools", () => {
 
 test("titles_use_a_cheap_model_at_low_effort", () => {
   const m = (id: string, description: string, is_default = false, efforts = ["low", "medium", "high"]): Model => ({
-    id, name: id, description, is_default, efforts, default_effort: "medium",
+    id,
+    name: id,
+    description,
+    is_default,
+    efforts,
+    default_effort: "medium",
   });
   // HA-196: the config's default here is its biggest model.
   const list = [

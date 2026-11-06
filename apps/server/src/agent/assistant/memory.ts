@@ -20,19 +20,7 @@
  * files over `MAX_COMMITTED` aren't committed. The API here reads and writes only files in the workspace: a path that
  * leads out of it, through `..` or a symlink, is refused.
  */
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  writeSync,
-  type Stats,
-} from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync, writeSync, type Stats } from "node:fs";
 import { basename, dirname, join, resolve as absolute } from "node:path";
 import * as db from "../../db.ts";
 import type { Task } from "../../db.ts";
@@ -679,8 +667,7 @@ export function prompt(dir: string, today: NaiveDate): string {
       const [shown, cut] = cap(text, CAP, CAP_BYTES, tail);
       if (cut) {
         s += tail
-          ? `(\`${rel}\` is ${total} characters, over the ${cap_text} (or ${cap_kb} KB) that are loaded: this is its ` +
-            "end, and the start is left out.)\n\n"
+          ? `(\`${rel}\` is ${total} characters, over the ${cap_text} (or ${cap_kb} KB) that are loaded: this is its ` + "end, and the start is left out.)\n\n"
           : `(\`${rel}\` is ${total} characters, over the ${cap_text} (or ${cap_kb} KB) that are loaded: the rest is ` +
             "cut off below. Make it shorter, moving details to other files.)\n\n";
       }

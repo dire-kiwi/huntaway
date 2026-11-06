@@ -101,7 +101,10 @@ export function ChecksMark({ task, className }: { task: Task; className?: string
   const n = c.failed.length + c.more_failed;
   const names = c.failed.map((f) => f.name).join(", ") + (c.more_failed ? ` and ${c.more_failed} more` : "");
   return (
-    <span title={`${n} check${n === 1 ? "" : "s"} failed on ${prLabel(c.url)}: ${names}`} className={clsx("inline-flex shrink-0 items-center text-red-400", className)}>
+    <span
+      title={`${n} check${n === 1 ? "" : "s"} failed on ${prLabel(c.url)}: ${names}`}
+      className={clsx("inline-flex shrink-0 items-center text-red-400", className)}
+    >
       <CircleX size={11} />
     </span>
   );

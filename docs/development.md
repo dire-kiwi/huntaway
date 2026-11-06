@@ -4,14 +4,14 @@ The repository is a [pnpm](https://pnpm.io) workspace (`pnpm-workspace.yaml`: `a
 `pnpm-lock.yaml`) with [Vite+](https://viteplus.dev) as its toolchain, and a Cargo workspace (the root's `Cargo.toml`)
 for the Rust in `rust/`. [structure.md](structure.md) says where code goes inside each package.
 
-| Package | Name | What it is |
-|---|---|---|
-| `apps/server` | `huntaway-server` | the server, TypeScript run by Node 24+ from its sources (`bin/huntaway`) |
-| `apps/web` | `huntaway-app` | the UI (React, built by Vite) and the desktop app's Electron shell (`electron/`) |
-| `apps/mobile` | `huntaway-mobile` | the mobile app (Expo, React Native) |
-| `packages/client` | `@huntaway/client` | the API client, linked into the UI and the mobile app with `workspace:*` |
-| `rust/shim` | `ia-shim` | the per-run supervisor agents run under |
-| `rust/broker` | `huntaway-broker` | the connection broker for hosts |
+| Package           | Name               | What it is                                                                       |
+| ----------------- | ------------------ | -------------------------------------------------------------------------------- |
+| `apps/server`     | `huntaway-server`  | the server, TypeScript run by Node 24+ from its sources (`bin/huntaway`)         |
+| `apps/web`        | `huntaway-app`     | the UI (React, built by Vite) and the desktop app's Electron shell (`electron/`) |
+| `apps/mobile`     | `huntaway-mobile`  | the mobile app (Expo, React Native)                                              |
+| `packages/client` | `@huntaway/client` | the API client, linked into the UI and the mobile app with `workspace:*`         |
+| `rust/shim`       | `ia-shim`          | the per-run supervisor agents run under                                          |
+| `rust/broker`     | `huntaway-broker`  | the connection broker for hosts                                                  |
 
 The web package keeps the name `huntaway-app`: Electron names the desktop app's storage and window after it when it runs
 from a checkout.
@@ -32,15 +32,15 @@ elsewhere run it as `pnpm exec vp`, or install [the global `vp`](https://viteplu
 
 ## Checks and tests
 
-| Command (at the top) | What it runs |
-|---|---|
-| `pnpm check` | `vp check`: Oxfmt, Oxlint and the type check (tsgolint, TypeScript 7) over every package, with each file's tsconfig.json |
-| `pnpm fix` | `vp check --fix`: formats, and applies lint fixes |
-| `pnpm typecheck` | the type check alone (`vp check --no-fmt --no-lint`); `pnpm typecheck` in a package checks only its files |
-| `pnpm test` | `vp test`: the server's and the UI's unit tests (Vitest; the root's vite.config.ts lists them as projects) |
-| `pnpm test:ui` | the browser checks in `apps/web/tests/ui` (see below) |
-| `pnpm test:mobile` | the mobile app's Jest tests (`pnpm typecheck` in `apps/mobile` is its `tsc`, with the TypeScript Expo uses) |
-| `cargo test` | ia-shim's and the broker's tests |
+| Command (at the top) | What it runs                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm check`         | `vp check`: Oxfmt, Oxlint and the type check (tsgolint, TypeScript 7) over every package, with each file's tsconfig.json |
+| `pnpm fix`           | `vp check --fix`: formats, and applies lint fixes                                                                        |
+| `pnpm typecheck`     | the type check alone (`vp check --no-fmt --no-lint`); `pnpm typecheck` in a package checks only its files                |
+| `pnpm test`          | `vp test`: the server's and the UI's unit tests (Vitest; the root's vite.config.ts lists them as projects)               |
+| `pnpm test:ui`       | the browser checks in `apps/web/tests/ui` (see below)                                                                    |
+| `pnpm test:mobile`   | the mobile app's Jest tests (`pnpm typecheck` in `apps/mobile` is its `tsc`, with the TypeScript Expo uses)              |
+| `cargo test`         | ia-shim's and the broker's tests                                                                                         |
 
 The format and lint settings are in the root's `vite.config.ts` (lines of up to 160 characters; test fixtures aren't
 formatted). Oxlint's warnings don't fail a check; its errors and type errors do.
@@ -89,7 +89,7 @@ dependencies' debuginfo out, which keeps each worktree's `target/` smaller. `car
 
 ## Releases and updates from a checkout
 
-A checkout updates itself with **Rebuild & restart** (see *Restarting after a merge* in
+A checkout updates itself with **Rebuild & restart** (see _Restarting after a merge_ in
 [Running a server](guide/server.md)): `pnpm install --frozen-lockfile` for the server and the UI, the UI's build and
 `cargo build --release -p ia-shim`, then the server restarts under its running agents. `scripts/package-server.sh`
 packages the server for releases: the server compiled to `.js` by tsrs, its production dependencies (from

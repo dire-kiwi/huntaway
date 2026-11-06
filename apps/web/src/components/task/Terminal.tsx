@@ -45,8 +45,7 @@ const THEME: ITheme = {
 const FONT_FAMILY = '"JetBrains Mono Variable", "Symbols Nerd Font Mono", monospace';
 
 /** Wait for the bundled font before xterm measures its cells. */
-const terminalFont: Promise<unknown> =
-  document.fonts?.load('13px "JetBrains Mono Variable"').catch(() => {}) ?? Promise.resolve();
+const terminalFont: Promise<unknown> = document.fonts?.load('13px "JetBrains Mono Variable"').catch(() => {}) ?? Promise.resolve();
 
 type Conn = { state: "connecting" } | { state: "open" } | { state: "ended" } | { state: "error"; message: string };
 
@@ -208,10 +207,13 @@ export function TerminalPane({ task, active, tool, onClose }: { task: Task; acti
             // Dropped (network, server restart): tmux repaints the screen when we re-attach.
             retries++;
             setConn({ state: "connecting" });
-            retryTimer = setTimeout(() => {
-              term.reset();
-              connect();
-            }, Math.min(250 * 2 ** retries, 2000));
+            retryTimer = setTimeout(
+              () => {
+                term.reset();
+                connect();
+              },
+              Math.min(250 * 2 ** retries, 2000),
+            );
           };
         };
         connect();

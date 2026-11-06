@@ -51,21 +51,37 @@ export function floating_promises(root = ROOT): string[] {
         if (ts.isVoidExpression(e)) e = e.expression;
         // Kept (`x = p`): whoever reads it handles it.
         const kept = ts.isBinaryExpression(e) && e.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && e.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
-        if (!kept && !ts.isAwaitExpression(e) && is_promise(tc.getTypeAtLocation(e)) && !handled_call(e) && !(ts.isCallExpression(e) && handled_fn(e.expression)))
+        if (
+          !kept &&
+          !ts.isAwaitExpression(e) &&
+          is_promise(tc.getTypeAtLocation(e)) &&
+          !handled_call(e) &&
+          !(ts.isCallExpression(e) && handled_fn(e.expression))
+        )
           found.push(`${at(n)} not awaited or handled: ${n.getText().split("\n")[0].slice(0, 100)}`);
       }
       // An async function given where a function returning nothing goes (a timer, an event's listener), so whatever
       // calls it drops its promise.
       const parent = n.parent as ts.Node | undefined;
       const as_arg = !!parent && ts.isCallOrNewExpression(parent) && !!parent.arguments?.includes(n as ts.Expression);
-      const as_value = !!parent && ((ts.isPropertyAssignment(parent) && parent.initializer === n) || (ts.isBinaryExpression(parent) && parent.right === n && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken));
+      const as_value =
+        !!parent &&
+        ((ts.isPropertyAssignment(parent) && parent.initializer === n) ||
+          (ts.isBinaryExpression(parent) && parent.right === n && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken));
       if ((as_arg || as_value) && !ts.isCallExpression(n) && !handled_fn(n)) {
         const own = tc.getTypeAtLocation(n).getCallSignatures();
         if (own.length && own.every((sig) => is_promise(tc.getReturnTypeOfSignature(sig)))) {
           const ctx = tc.getContextualType(n as ts.Expression);
-          const want = ctx ? tc.getNonNullableType(ctx).getCallSignatures().map((sig) => tc.getReturnTypeOfSignature(sig)) : [];
+          const want = ctx
+            ? tc
+                .getNonNullableType(ctx)
+                .getCallSignatures()
+                .map((sig) => tc.getReturnTypeOfSignature(sig))
+            : [];
           if (want.length && want.every((t) => !!(t.flags & TypeFlags.Void)))
-            found.push(`${at(n)} async function where its promise is dropped: ${(as_arg ? (parent as ts.CallExpression).expression : parent!).getText().split("\n")[0].slice(0, 80)}`);
+            found.push(
+              `${at(n)} async function where its promise is dropped: ${(as_arg ? (parent as ts.CallExpression).expression : parent!).getText().split("\n")[0].slice(0, 80)}`,
+            );
         }
       }
       n.forEachChild(visit);

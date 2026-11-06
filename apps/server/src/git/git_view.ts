@@ -209,7 +209,9 @@ export function parse_status(out: string): Status {
       continue;
     }
     // Ordinary (1), renamed or copied (2, followed by the path it came from), unmerged (u), untracked (?).
-    let xy: string, path: string, orig: string | null = null;
+    let xy: string,
+      path: string,
+      orig: string | null = null;
     const field = (n: number) => {
       const parts = splitn(rec, n, " ");
       return parts.length >= 3 ? [parts[1], parts[parts.length - 1]] : null;
@@ -498,8 +500,7 @@ export async function discard(s: AppState, r: Req): Promise<any> {
   check_paths(rp, paths);
   const t = rp.top;
   const in_index = listed(await run_ok(t, with_paths(["ls-files", "-z"], paths), null), paths);
-  const in_head =
-    staged && (await has_head(t)) ? listed(await run_ok(t, with_paths(["ls-tree", "-r", "-z", "--name-only", "HEAD"], paths), null), paths) : [];
+  const in_head = staged && (await has_head(t)) ? listed(await run_ok(t, with_paths(["ls-tree", "-r", "-z", "--name-only", "HEAD"], paths), null), paths) : [];
   const untracked = paths.filter((p) => !in_index.includes(p) && !in_head.includes(p));
   if (staged) {
     const added = in_index.filter((p) => !in_head.includes(p));

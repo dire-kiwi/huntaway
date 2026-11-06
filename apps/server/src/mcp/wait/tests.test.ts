@@ -14,14 +14,27 @@ import * as pr_watch from "../pr_watch.ts";
 import { Target, response } from "../pr_watch.ts";
 import { err_str, now, sleep } from "../../util.ts";
 import {
-  TICK, Request_default, is_activity, is_wait_tool, name, note, period, resumed, spawn_command, subagent_finished, wait, type Ended, type Request,
+  TICK,
+  Request_default,
+  is_activity,
+  is_wait_tool,
+  name,
+  note,
+  period,
+  resumed,
+  spawn_command,
+  subagent_finished,
+  wait,
+  type Ended,
+  type Request,
 } from "../wait.ts";
 
 /** A task whose agent is running, with another task it can watch. */
 function running(): [Shared, Task, Run, Task] {
   const s = testing.state();
   const p = db.insert_profile(s.db(), "p", [], null);
-  const fresh = (title: string) => db.insert_task(s.db(), { profile_id: p.id, project_id: null, kind: "task", title, description: "", status: "in_progress", use_worktree: false });
+  const fresh = (title: string) =>
+    db.insert_task(s.db(), { profile_id: p.id, project_id: null, kind: "task", title, description: "", status: "in_progress", use_worktree: false });
   const task = fresh("planner");
   const other = fresh("other");
   const run = db.insert_run(s.db(), task.id, "prompt");
@@ -163,7 +176,12 @@ test("only_a_subagents_terminal_status_wakes_its_own_run", async () => {
   // An Agent call needn't be the first content block.
   s.add_message(task.id, "claude", {
     type: "assistant",
-    message: { content: [{ type: "text", text: "Starting a worker" }, { type: "tool_use", name: "Agent", id: "child" }] },
+    message: {
+      content: [
+        { type: "text", text: "Starting a worker" },
+        { type: "tool_use", name: "Agent", id: "child" },
+      ],
+    },
   });
   const other_run = db.insert_run(s.db(), other.id, "prompt");
   const stale_run = db.insert_run(s.db(), task.id, "prompt");
@@ -388,7 +406,18 @@ test("ends_on_news_about_its_pull_request", () =>
     when_waiting(s, task.id, (s) => {
       shown = reload(s, task.id).agent_wait?.pull_request ?? null;
       // A check fails, someone comments, and so does the agent's own account.
-      gh.set({ ok: response("me", "a1", [["test", "COMPLETED", "FAILURE", true]], [["01", "alice", "old"], ["02", "me", "mine"], ["03", "bob", "Looks off"]]) });
+      gh.set({
+        ok: response(
+          "me",
+          "a1",
+          [["test", "COMPLETED", "FAILURE", true]],
+          [
+            ["01", "alice", "old"],
+            ["02", "me", "mine"],
+            ["03", "bob", "Looks off"],
+          ],
+        ),
+      });
     });
     const [ended, w] = await wait(s, run, task, "c1", on_pr(30));
     assert.deepEqual(pr_events(ended), ["checks_failed", "comments"]);
@@ -406,7 +435,18 @@ test("ends_on_news_about_its_pull_request", () =>
     // Told, it isn't news again.
     assert.deepEqual(await ended_of(wait(s, run, task, "c2", on_pr(0.5))), { kind: "Timeout" });
     // A review left while the agent worked between waits ends the next one straight away.
-    gh.set({ ok: response("me", "a1", [["test", "COMPLETED", "FAILURE", true]], [["01", "alice", "old"], ["03", "bob", "Looks off"], ["04", "carol", "Approve?"]]) });
+    gh.set({
+      ok: response(
+        "me",
+        "a1",
+        [["test", "COMPLETED", "FAILURE", true]],
+        [
+          ["01", "alice", "old"],
+          ["03", "bob", "Looks off"],
+          ["04", "carol", "Approve?"],
+        ],
+      ),
+    });
     const started = performance.now();
     const e3 = await ended_of(wait(s, run, task, "c3", on_pr(30)));
     assert.deepEqual([pr_events(e3), authors(e3)], [["comments"], ["carol"]]);
@@ -490,7 +530,17 @@ test("a_pull_request_wait_carried_on_after_a_restart_keeps_what_was_seen", () =>
       pull_request: pr_watch.stored(on_pr(1).pull_request!, news),
     });
     let task = s.update_task(t0.id, [["agent_wait", stored_wait(null)]])!;
-    gh.set({ ok: response("me", "a1", [], [["01", "alice", "old"], ["02", "bob", "new"]]) });
+    gh.set({
+      ok: response(
+        "me",
+        "a1",
+        [],
+        [
+          ["01", "alice", "old"],
+          ["02", "bob", "new"],
+        ],
+      ),
+    });
     const started = performance.now();
     const ended = await ended_of(wait(s, run, task, "c2", secs(30)));
     assert.deepEqual(authors(ended), ["bob"]);
@@ -512,7 +562,12 @@ test("news_that_doesnt_reach_the_agent_is_reported_again", () =>
     const news = await w.poll(s, t0.id, "c1", [...pr_watch.EVENTS]);
     assert.ok(news !== null);
     const stored_wait: AgentWait = {
-      reason: null, since: now(), until: new Date(Date.now() + 30_000).toISOString(), tasks: [], call_id: "c1", run_id: run.id,
+      reason: null,
+      since: now(),
+      until: new Date(Date.now() + 30_000).toISOString(),
+      tasks: [],
+      call_id: "c1",
+      run_id: run.id,
       pull_request: pr_watch.stored(on_pr(1).pull_request!, news),
     };
     const task = s.update_task(t0.id, [["agent_wait", stored_wait]])!;

@@ -13,7 +13,10 @@ test("lists starred tasks by project in sidebar order, then by number, without r
     task("5", { starred: true, kind: "review" }),
     task("6", { starred: true, project_id: null, number: 1 }),
   ];
-  assert.deepEqual(starredTasks(tasks, ["a", "b"]).map((t) => t.id), ["3", "2", "1", "6"]);
+  assert.deepEqual(
+    starredTasks(tasks, ["a", "b"]).map((t) => t.id),
+    ["3", "2", "1", "6"],
+  );
 });
 
 test("lists reminders soonest first, and tells which are due", () => {
@@ -22,9 +25,15 @@ test("lists reminders soonest first, and tells which are due", () => {
     task("none", { remind_at: null }),
     task("soon", { remind_at: "2026-10-26T09:00:00.000Z" }),
   ];
-  assert.deepEqual(reminderTasks(tasks).map((t) => t.id), ["soon", "late"]);
+  assert.deepEqual(
+    reminderTasks(tasks).map((t) => t.id),
+    ["soon", "late"],
+  );
   const now = Date.parse("2026-10-26T12:00:00.000Z");
-  assert.deepEqual(tasks.map((t) => isDue(t, now)), [false, false, true]);
+  assert.deepEqual(
+    tasks.map((t) => isDue(t, now)),
+    [false, false, true],
+  );
   // The next one to come round, for the sidebar to look again then.
   assert.equal(nextDue(tasks, now), 21 * 3600_000);
   assert.equal(nextDue([tasks[2]], now), null);
@@ -49,7 +58,10 @@ test("offers the next hours, tomorrow morning and next Monday", () => {
   const local = (d) => [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()].join(" ");
   // A Monday afternoon: next Monday is a week on.
   const monday = new Date(2026, 9, 26, 15, 30);
-  assert.deepEqual(reminderPresets(monday).map((p) => local(p.at)), ["2026 10 26 16 30", "2026 10 26 18 30", "2026 10 27 9 0", "2026 11 2 9 0"]);
+  assert.deepEqual(
+    reminderPresets(monday).map((p) => local(p.at)),
+    ["2026 10 26 16 30", "2026 10 26 18 30", "2026 10 27 9 0", "2026 11 2 9 0"],
+  );
   // From a Sunday it's the next day.
   assert.equal(local(reminderPresets(new Date(2026, 10, 1, 20, 0))[3].at), "2026 11 2 9 0");
 });

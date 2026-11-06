@@ -26,7 +26,11 @@ export function useNewUiBuild() {
   const connected = useStore((s) => s.connected);
   useEffect(() => {
     if (found) return;
-    const check = () => newBuildServed().then((n) => n && setFound(true), () => {});
+    const check = () =>
+      newBuildServed().then(
+        (n) => n && setFound(true),
+        () => {},
+      );
     check();
     const id = setInterval(check, 5 * 60_000);
     window.addEventListener("focus", check);

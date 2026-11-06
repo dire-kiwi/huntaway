@@ -93,14 +93,24 @@ test("a staged release is offered in the sidebar, and Update restarts onto it", 
     const calls = await fakeReleases(page, () =>
       restarted
         ? { boot_id: "after-update", running_agents: 2, release: release({ running: "0.2.0", staged: null, latest: { ...release().latest, newer: false } }) }
-        : { running_agents: 2, release: release({ shell: { ...release().shell, outdated: true, package: { name: "p", url: PACKAGE, size: 1, sha256: null } } }) },
+        : {
+            running_agents: 2,
+            release: release({ shell: { ...release().shell, outdated: true, package: { name: "p", url: PACKAGE, size: 1, sha256: null } } }),
+          },
     );
     let socket;
     await page.routeWebSocket(/\/api\/ws/, (ws) => {
       socket = ws;
       ws.connectToServer();
     });
-    await ui.run(["goto /", "click v0.2.0 · Update", "wait Update Huntaway", "wait Release notes", "wait 2 agents are running", "wait The desktop app itself has an update too"]);
+    await ui.run([
+      "goto /",
+      "click v0.2.0 · Update",
+      "wait Update Huntaway",
+      "wait Release notes",
+      "wait 2 agents are running",
+      "wait The desktop app itself has an update too",
+    ]);
     const dialog = page.getByRole("dialog");
     // The notes are markdown, and link to the release.
     assert.equal(await dialog.locator(".prose-chat strong").textContent(), "Faster");
@@ -244,7 +254,13 @@ test("an earlier failed restart doesn't stand in for Update's or Roll back's con
     await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
     await ui.run(["gone Update Huntaway"]);
     // Roll back still asks, with its warning, and isn't a retry of the update.
-    await ui.run(["click Roll back to v0.1.0", "wait Roll back Huntaway", "wait v0.2.0 may have migrated the database", "gone sha256 mismatch", "gone Try again"]);
+    await ui.run([
+      "click Roll back to v0.1.0",
+      "wait Roll back Huntaway",
+      "wait v0.2.0 may have migrated the database",
+      "gone sha256 mismatch",
+      "gone Try again",
+    ]);
     await dialog.getByRole("button", { name: "Roll back to v0.1.0" }).click();
     await ui.run(["wait Starting…"]);
     assert.deepEqual([calls.update, calls.rollback], [[{ version: "0.3.0" }], 1]);

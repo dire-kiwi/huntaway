@@ -21,7 +21,10 @@ test("buckets turns by the context they left, with what they cost", () => {
   assert.deepEqual(b[0], { from: 0, to: 25_000, turns: 1, cost: 0.5 });
   assert.deepEqual(b[1], { from: 25_000, to: 50_000, turns: 1, cost: 1 });
   assert.deepEqual(b.at(-1), { from: 750_000, to: null, turns: 1, cost: 2 });
-  assert.equal(b.reduce((n, x) => n + x.turns, 0), 3);
+  assert.equal(
+    b.reduce((n, x) => n + x.turns, 0),
+    3,
+  );
 });
 
 test("says how often a limit would have been passed, and what turns started past it cost", () => {

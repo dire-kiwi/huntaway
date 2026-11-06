@@ -114,7 +114,9 @@ async function serve_host(s: AppState, extra: Extra = {}): Promise<Server> {
         r.pre = await found.route.pre(s, r);
       } catch (e) {
         const a = errorAnswer(e);
-        return void socket.end(`HTTP/1.1 ${a.status} ${STATUS_CODES[a.status] ?? ""}\r\ncontent-type: application/json\r\ncontent-length: ${a.body.length}\r\n\r\n${a.body}`);
+        return void socket.end(
+          `HTTP/1.1 ${a.status} ${STATUS_CODES[a.status] ?? ""}\r\ncontent-type: application/json\r\ncontent-length: ${a.body.length}\r\n\r\n${a.body}`,
+        );
       }
     }
     wss.handleUpgrade(req, socket, head, (ws) => found.route.ws!(s, r, ws));
@@ -457,9 +459,7 @@ test("hub_links_resolve_before_authenticating_and_survive_a_broker_outage", asyn
   assert.equal((await link.request("GET", "/api/info"))[1].host_id, "remote");
   assert.equal((await inbound.request("GET", "/api/info"))[1].host_id, "caller");
   remote.events.send({ type: "after_broker_stopped" });
-  await until("the event after the broker stopped", 5000, () =>
-    frames.some((f) => f?.type === "text" && f.text.includes("after_broker_stopped")),
-  );
+  await until("the event after the broker stopped", 5000, () => frames.some((f) => f?.type === "text" && f.text.includes("after_broker_stopped")));
 });
 
 // ---------- relaying through the broker (legacy relay mode) ----------
@@ -549,7 +549,15 @@ test("keeps_the_open_token_from_clients_of_the_broker", needs_broker, async () =
   assert.ok((await raw(s.internal_url, "/api/open-token")).includes("desktop-tok"));
   const marked = await call("GET", `${s.internal_url}/api/open-token`, [[VIA_BROKER, "1"]]);
   assert.deepEqual(marked, [404, { error: "no such API route: GET /api/open-token" }]);
-  for (const p of ["/api/open-token", "/api/./open-token", "/api/%2e/open-token", "/api/x/../open-token", "/api/%2E%2E/api/open-token", "/api\\open-token", "/api/open-token/"]) {
+  for (const p of [
+    "/api/open-token",
+    "/api/./open-token",
+    "/api/%2e/open-token",
+    "/api/x/../open-token",
+    "/api/%2E%2E/api/open-token",
+    "/api\\open-token",
+    "/api/open-token/",
+  ]) {
     for (const path of [p, `/_broker/h/desktop${p}`]) {
       const res = await raw(b, path);
       assert.ok(!res.includes("desktop-tok"), `${path} gave the token away: ${res}`);

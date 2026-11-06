@@ -24,7 +24,10 @@ export function repoFromInput(text: string): string | null {
 
 /** The repositories with every word of `query` in their `OWNER/NAME`, in the order they're in. */
 export function filterRepos(repos: GithubRepo[], query: string) {
-  const words = query.toLowerCase().split(/[\s/]+/).filter(Boolean);
+  const words = query
+    .toLowerCase()
+    .split(/[\s/]+/)
+    .filter(Boolean);
   return repos.filter((r) => words.every((w) => r.full_name.toLowerCase().includes(w)));
 }
 

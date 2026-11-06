@@ -16,7 +16,8 @@ test("a plan, artifact or diagram task opens on the thread until its document is
       assert.equal(openingTab(t({ status: "in_progress", running: true, document_at: at })), "thread", `${type} being written`);
       assert.equal(openingTab(t({ status: "in_progress", document_at: at })), "thread", `${type} queued`);
       assert.equal(openingTab(t({ status: "needs_attention", document_at: at })), "thread", `${type} waiting on the user`);
-      for (const status of ["in_review", "done", "todo", "backlog"]) assert.equal(openingTab(t({ status, document_at: at })), type, `${type} ready in ${status}`);
+      for (const status of ["in_review", "done", "todo", "backlog"])
+        assert.equal(openingTab(t({ status, document_at: at })), type, `${type} ready in ${status}`);
     }
   }
 });

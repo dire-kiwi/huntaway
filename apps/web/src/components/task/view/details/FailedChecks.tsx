@@ -17,7 +17,12 @@ export function FailedChecks({ task }: { task: Task }) {
   const checks = failedChecks(task);
   const fix = () => run(async () => setSent((await api.fixChecks(task.host_id, task.id)).pr_checks?.head ?? null));
   const button = (
-    <Button size="sm" disabled={busy} onClick={fix} title="Read the pull request's checks now and send the agent the failed ones, with the ends of their logs, asking it to fix them and push">
+    <Button
+      size="sm"
+      disabled={busy}
+      onClick={fix}
+      title="Read the pull request's checks now and send the agent the failed ones, with the ends of their logs, asking it to fix them and push"
+    >
       {busy && <Loader2 size={12} className="animate-spin" />}
       Fix broken checks
     </Button>

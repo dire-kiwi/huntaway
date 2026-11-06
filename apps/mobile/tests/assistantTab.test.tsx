@@ -12,7 +12,13 @@ jest.mock("expo-router", () => ({
 }));
 jest.mock("../src/secrets", () => {
   const m = new Map<string, string>();
-  return { secrets: { get: async (k: string) => m.get(k) ?? null, set: async (k: string, v: string) => void m.set(k, v), delete: async (k: string) => void m.delete(k) } };
+  return {
+    secrets: {
+      get: async (k: string) => m.get(k) ?? null,
+      set: async (k: string, v: string) => void m.set(k, v),
+      delete: async (k: string) => void m.delete(k),
+    },
+  };
 });
 jest.mock("expo-router/react-navigation", () => ({ useHeaderHeight: () => 0 }));
 

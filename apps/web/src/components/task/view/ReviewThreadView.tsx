@@ -40,7 +40,10 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
         <IconButton className="no-drag narrow:-ml-1.5" title="Back" onClick={back}>
           <ChevronLeft size={16} />
         </IconButton>
-        <button className="no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden" onClick={() => project && navigate({ name: "board", projectId: project.id })}>
+        <button
+          className="no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden"
+          onClick={() => project && navigate({ name: "board", projectId: project.id })}
+        >
           {project?.name}
         </button>
         <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
@@ -58,7 +61,10 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
           ) : summary ? (
             "Summary"
           ) : (
-            <>Review{reviewer && parent?.review?.reviewers && parent.review.reviewers.length > 1 && <span className="font-normal text-muted"> · {reviewer}</span>}</>
+            <>
+              Review
+              {reviewer && parent?.review?.reviewers && parent.review.reviewers.length > 1 && <span className="font-normal text-muted"> · {reviewer}</span>}
+            </>
           )}
         </h1>
         <div className="no-drag ml-auto flex items-center gap-2">

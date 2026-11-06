@@ -32,18 +32,7 @@ import {
   task,
   withf,
 } from "./testing.ts";
-import {
-  STOPPED,
-  authorization,
-  encrypt,
-  encrypt_with,
-  REPLY_EVENT,
-  notification_text,
-  report_text,
-  start,
-  task_event,
-  vapid,
-} from "../push.ts";
+import { STOPPED, authorization, encrypt, encrypt_with, REPLY_EVENT, notification_text, report_text, start, task_event, vapid } from "../push.ts";
 
 const b64 = (s: string) => Buffer.from(s, "base64url");
 import { enc } from "./testing.ts";
@@ -101,7 +90,6 @@ test("the_vapid_key_is_made_once_and_signs_tokens_for_the_push_service", () => {
   assert.ok(verify("sha256", Buffer.from(`${parts[0]}.${parts[1]}`), { key, dsaEncoding: "ieee-p1363" }, sig));
   assert.ok(!verify("sha256", Buffer.from("something else"), { key, dsaEncoding: "ieee-p1363" }, sig));
 });
-
 
 test("task_changes_notify_as_the_ui_does", () => {
   const working = withf(task("in_progress"), { running: true });
@@ -238,9 +226,27 @@ test("task_events_are_pushed_encrypted_to_the_devices_that_want_them", async () 
     await call(s, "POST", "/api/push/subscriptions", { endpoint: `${service.url}-other`, keys: other, events: none });
     const profile = db.insert_profile(s.db(), "work", [], null);
     const x = "/x";
-    const p = { id: "p1", profile_id: profile.id, name: "Web", key: "WEB", repo_path: x, scratch_path: x, worktrees_root: x, base_branch: null, use_worktrees: false };
+    const p = {
+      id: "p1",
+      profile_id: profile.id,
+      name: "Web",
+      key: "WEB",
+      repo_path: x,
+      scratch_path: x,
+      worktrees_root: x,
+      base_branch: null,
+      use_worktrees: false,
+    };
     const project = db.insert_project(s.db(), p);
-    const newt = { profile_id: profile.id, project_id: project.id, kind: "task", title: "Fix the login", description: "", status: "in_progress", use_worktree: false };
+    const newt = {
+      profile_id: profile.id,
+      project_id: project.id,
+      kind: "task",
+      title: "Fix the login",
+      description: "",
+      status: "in_progress",
+      use_worktree: false,
+    };
     const t = JSON.parse(JSON.stringify(db.insert_task(s.db(), newt)));
     start(s);
 
@@ -248,7 +254,14 @@ test("task_events_are_pushed_encrypted_to_the_devices_that_want_them", async () 
     let got = await service.recv();
     let msg = JSON.parse(decrypt(ua, Buffer.alloc(16, 9), got.body).toString());
     const id = t.id;
-    const want = { title: `WEB-${t.number} Fix the login`, body: "Needs attention: Approve Bash?", url: `/t/${id}`, tag: `h:${id}`, task_id: id, event: "attention" };
+    const want = {
+      title: `WEB-${t.number} Fix the login`,
+      body: "Needs attention: Approve Bash?",
+      url: `/t/${id}`,
+      tag: `h:${id}`,
+      task_id: id,
+      event: "attention",
+    };
     assert.deepEqual(msg, want);
     const header = (k: string) => String(got.headers[k]);
     assert.deepEqual([header("content-encoding"), header("ttl"), header("urgency")], ["aes128gcm", "86400", "high"]);
@@ -277,7 +290,15 @@ test("task_events_are_pushed_encrypted_to_the_devices_that_want_them", async () 
 test("a_move_the_user_makes_through_the_board_is_noted", async () => {
   const s = testing.state();
   const profile = db.insert_profile(s.db(), "work", [], null);
-  const id = db.insert_task(s.db(), { profile_id: profile.id, project_id: null, kind: "task", title: "Scratch", description: "", status: "todo", use_worktree: false }).id;
+  const id = db.insert_task(s.db(), {
+    profile_id: profile.id,
+    project_id: null,
+    kind: "task",
+    title: "Scratch",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+  }).id;
   const key = `h:${id}`;
   assert.ok(!s.push.moved(key, "merge"));
   // The UI's requests for a host go through the hub's proxy.
@@ -383,7 +404,15 @@ test("the_assistants_replies_are_pushed_to_the_devices_that_want_them", async ()
   const s = testing.state();
   const service = await push_service({ code: 201 });
   try {
-    const ua = await subscribe_device(s, service.url, { attention: false, review: false, merge: false, done: false, prompts: "assistant", replies: true, reports: false });
+    const ua = await subscribe_device(s, service.url, {
+      attention: false,
+      review: false,
+      merge: false,
+      done: false,
+      prompts: "assistant",
+      replies: true,
+      reports: false,
+    });
     // A device that never chose replies isn't sent them.
     await subscribe_device(s, `${service.url}-quiet`, { attention: false, review: false, merge: false, done: false, reports: false });
     const profile = db.insert_profile(s.db(), "personal", [], null);
@@ -429,7 +458,15 @@ test("events_left_out_keep_what_they_were", async () => {
   // One stored before (with HA-8's events only) gets neither replies nor reports.
   db.run(s.db(), "UPDATE push_subscriptions SET events=?1 WHERE id=?2", JSON.stringify({ attention: true, review: true, merge: false, done: false }), sub.id);
   const [, info] = await call(s, "GET", "/api/push");
-  assert.deepEqual(info.subscriptions[0].events, { attention: true, review: true, merge: false, done: false, prompts: "assistant", replies: false, reports: false });
+  assert.deepEqual(info.subscriptions[0].events, {
+    attention: true,
+    review: true,
+    merge: false,
+    done: false,
+    prompts: "assistant",
+    replies: false,
+    reports: false,
+  });
 });
 
 // ---------- permission prompts (HA-126 and HA-123, ported by HA-206) ----------
@@ -472,8 +509,14 @@ test("a_prompt_is_pushed_with_a_token_that_answers_it_once", async () => {
     const msg = await next_push(service, ua);
     const token = msg.answer.token;
     assert.deepEqual(msg, {
-      title: `T-${task.number} Send the invoice`, body: "Approve Bash?", url: `/t/${task.id}`, tag: `${s.host_id}:${task.id}:${request}`,
-      task_id: task.id, event: "prompt", request_id: request, answer: { url: `/api/permissions/${request}/push-answer`, token },
+      title: `T-${task.number} Send the invoice`,
+      body: "Approve Bash?",
+      url: `/t/${task.id}`,
+      tag: `${s.host_id}:${task.id}:${request}`,
+      task_id: task.id,
+      event: "prompt",
+      request_id: request,
+      answer: { url: `/api/permissions/${request}/push-answer`, token },
     });
     // The other device gets the task's needs-attention; this one isn't told twice.
     assert.equal((await next_push(other_service, other)).event, "attention");
@@ -711,7 +754,10 @@ test("a_token_answers_only_its_own_prompt_and_only_on_its_own_host", async () =>
   assert.equal(permissions.pending(s, null).length, 2);
   assert.equal((await answer_from_push(s, ra, ta, "allow"))[0], 200);
   assert.equal((await told_a).behavior, "allow");
-  assert.deepEqual(permissions.pending(s, null).map((p: any) => p.id), [rb]);
+  assert.deepEqual(
+    permissions.pending(s, null).map((p: any) => p.id),
+    [rb],
+  );
   // Tokens are kept hashed, not as they are.
   assert.equal(db.value(s.db(), "SELECT COUNT(*) FROM push_answer_tokens WHERE token_hash=?1", ta), 0);
   permissions.expire_for_task(s, b.id);

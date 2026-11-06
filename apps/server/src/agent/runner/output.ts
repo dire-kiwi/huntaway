@@ -594,5 +594,5 @@ export function settle_plans(state: Shared) {
 
 /** Rust's `s.lines().next()`. */
 function first_line(s: string): string | null {
-  return s ? lines(s)[0] ?? null : null;
+  return s ? (lines(s)[0] ?? null) : null;
 }

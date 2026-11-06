@@ -31,7 +31,13 @@ test("lists the active profile's projects and the pinned ones", async () => {
     await ui.run(["goto /", `wait ${testRow}`, "assert location.pathname === '/profile/Default'"]);
 
     // Opening a project the sidebar doesn't list moves to its profile.
-    await ui.run([`rclick ${testRow}`, "click [role=menu] >> text=Unpin", `gone ${testRow}`, "click css=aside >> role=button[name=/^t test/]", `wait ${testRow}`]);
+    await ui.run([
+      `rclick ${testRow}`,
+      "click [role=menu] >> text=Unpin",
+      `gone ${testRow}`,
+      "click css=aside >> role=button[name=/^t test/]",
+      `wait ${testRow}`,
+    ]);
     await ui.run([`goto /p/${demo.id}`, `wait ${demoRow}`, `gone ${testRow}`, `assert ${current}.startsWith('DDefault')`]);
   });
 });

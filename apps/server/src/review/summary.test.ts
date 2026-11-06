@@ -21,7 +21,18 @@ const R = (r: Partial<Reviewer>): Reviewer => ({ ...db.Reviewer_default(), ...r 
 function plain_task(): Task {
   const c = db.open(":memory:");
   const p = db.insert_profile(c, "p", [], null);
-  const t = { profile_id: p.id, project_id: null, kind: "task", title: "Fix it", description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null };
+  const t = {
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "Fix it",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+    model: null,
+    effort: null,
+    claude_config_id: null,
+  };
   return db.insert_task(c, t);
 }
 
@@ -29,7 +40,13 @@ test("the_prompt_locates_the_work_and_asks_for_only_the_summary", () => {
   const task = plain_task();
   task.review = { ...db.Review_default(), state: "passed", summary: "Looks good." };
   let text = prompt("X-1", task, "ia/x-1", "master", "abc", false, false, null, db.Reviewer_default(), false);
-  for (const want of ['task X-1: "Fix it"', "`pr_view` tool (pr `ia/x-1`)", "`git diff master...HEAD`", "> Looks good.", "end your turn with only the summary"]) {
+  for (const want of [
+    'task X-1: "Fix it"',
+    "`pr_view` tool (pr `ia/x-1`)",
+    "`git diff master...HEAD`",
+    "> Looks good.",
+    "end your turn with only the summary",
+  ]) {
     assert.ok(text.includes(want), `${JSON.stringify(want)} not in ${text}`);
   }
   text = prompt("X-1", task, "ia/x-1", "master", "abc", true, false, "Done in o/deploy#4.", db.Reviewer_default(), false);
@@ -52,9 +69,30 @@ test("the_prompt_asks_for_a_summarizers_skills_and_prompt", () => {
 /** A task in review whose review passed, in a project that summarises, with a worktree branch with a commit. */
 function passed(s: AppState): Task {
   const p = db.insert_profile(s.db(), "p", [], null);
-  const np = { id: "pr", profile_id: p.id, name: "x", key: "X", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: true };
+  const np = {
+    id: "pr",
+    profile_id: p.id,
+    name: "x",
+    key: "X",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: true,
+  };
   db.insert_project(s.db(), np);
-  const fresh = { profile_id: p.id, project_id: "pr", kind: "task", title: "t", description: "", status: "in_review", use_worktree: true, model: null, effort: null, claude_config_id: null };
+  const fresh = {
+    profile_id: p.id,
+    project_id: "pr",
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "in_review",
+    use_worktree: true,
+    model: null,
+    effort: null,
+    claude_config_id: null,
+  };
   const task = db.insert_task(s.db(), fresh);
   const dir = testing.temp_dir();
   execFileSync("git", ["-C", dir, "init", "-q"]);

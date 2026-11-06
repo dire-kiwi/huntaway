@@ -7,7 +7,15 @@ import type { MenuItem } from "../ui";
 /** The tasks of `tasks` that moving to Now (or Later) would change, on hosts that keep which tasks are in Now. */
 export function movable(tasks: Task[], now: boolean) {
   const hosts = useStore.getState().hosts;
-  return tasks.filter((t) => t.kind === "task" && isNow(t) !== now && hostSupports(hosts.find((h) => h.id === t.host_id), NOW_API));
+  return tasks.filter(
+    (t) =>
+      t.kind === "task" &&
+      isNow(t) !== now &&
+      hostSupports(
+        hosts.find((h) => h.id === t.host_id),
+        NOW_API,
+      ),
+  );
 }
 
 /**
@@ -34,7 +42,12 @@ export async function moveToFocus(tasks: Task[], now: boolean) {
 }
 
 /** Whether the task's host keeps which tasks are in Now. */
-export const canFocus = (t: Task) => t.kind === "task" && hostSupports(useStore.getState().hosts.find((h) => h.id === t.host_id), NOW_API);
+export const canFocus = (t: Task) =>
+  t.kind === "task" &&
+  hostSupports(
+    useStore.getState().hosts.find((h) => h.id === t.host_id),
+    NOW_API,
+  );
 
 /**
  * The menu items that move a task to Now or Later: all the picked tasks if it's one of several, else just it.

@@ -83,7 +83,8 @@ test("a phone's task header keeps Start on screen", async () => {
 /** A thread of `n` short replies, enough to scroll, its messages' ids after `from`. */
 function longThread(taskId, from = 0, n = 80) {
   const out = [];
-  const add = (kind, data) => out.push({ id: from + out.length + 1, task_id: taskId, kind, data, created_at: new Date(Date.UTC(2026, 9, 27, 7, 0, out.length)).toISOString() });
+  const add = (kind, data) =>
+    out.push({ id: from + out.length + 1, task_id: taskId, kind, data, created_at: new Date(Date.UTC(2026, 9, 27, 7, 0, out.length)).toISOString() });
   add("user", { text: "Talk for a while." });
   for (let i = 1; i <= n; i++) add("claude", { type: "assistant", message: { content: [{ type: "text", text: `Line ${i} of ${taskId.slice(0, 4)}.` }] } });
   return out;

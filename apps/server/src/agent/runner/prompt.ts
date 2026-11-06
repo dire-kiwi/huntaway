@@ -41,9 +41,7 @@ export interface Told {
  */
 export function instructions(s: string, task: Task, to: Told): string {
   if (to.codex && to.plan) {
-    s +=
-      "\n\nYou are in plan mode: investigate and propose a plan, but don't change any files. The user will " +
-      "switch modes once they approve it.";
+    s += "\n\nYou are in plan mode: investigate and propose a plan, but don't change any files. The user will " + "switch modes once they approve it.";
   }
   if (to.gh_tools && to.codex) {
     // Codex's sandbox may keep `gh` in the shell off the network, and its GitHub app (the codex_apps server's github
@@ -339,9 +337,7 @@ export function system_prompt(
   } else if (task.kind === "task" && db.is_scratch(task)) {
     // One from a scratch chat works in the chat's folder, which may be shared.
     const dir =
-      task.work_dir != null
-        ? "a scratch folder, for notes and experiments"
-        : "the task's own folder, for notes and experiments, where you can write freely";
+      task.work_dir != null ? "a scratch folder, for notes and experiments" : "the task's own folder, for notes and experiments, where you can write freely";
     const key = key_prefix(task, p);
     // In a project (API 51) it reads the repository; in a subproject, the subproject's worktree too.
     let place: string;
@@ -389,12 +385,12 @@ export function system_prompt(
         "board. Don't call `request_user_input`. Each message says what the step is to do and how to report: call " +
         "`submit_review` only when it asks for a verdict."
       : is_summary
-      ? "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
-        "board. Don't call `request_user_input` or `submit_review`. Your last message is the summary of the changes " +
-        "the user reads before merging them."
-      : "\n\nReview only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
-        "board. Don't call `request_user_input`. When the review is complete, call `submit_review` exactly once " +
-        "with your verdict, then end your turn with a short summary of the review.";
+        ? "\n\nRead only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
+          "board. Don't call `request_user_input` or `submit_review`. Your last message is the summary of the changes " +
+          "the user reads before merging them."
+        : "\n\nReview only: don't edit files, commit, push, merge, comment on pull requests, or change tasks on the " +
+          "board. Don't call `request_user_input`. When the review is complete, call `submit_review` exactly once " +
+          "with your verdict, then end your turn with a short summary of the review.";
   } else if (task.kind === "task" && documents.documents_only(task)) {
     const key = key_prefix(task, p);
     s =

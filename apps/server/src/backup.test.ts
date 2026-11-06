@@ -248,7 +248,8 @@ test("a_backup_that_isnt_allowed_says_so", { skip: process.getuid?.() === 0 }, (
   try {
     assert.throws(
       () => backup.on_start(dir, path, "0.4.1", 87),
-      (e: any) => e instanceof backup.BackupFailed && e.reason === "permissions" && e.why.startsWith(`Huntaway isn't allowed to write to ${backup.backup_dir(dir)}`),
+      (e: any) =>
+        e instanceof backup.BackupFailed && e.reason === "permissions" && e.why.startsWith(`Huntaway isn't allowed to write to ${backup.backup_dir(dir)}`),
     );
   } finally {
     chmodSync(backup.backup_dir(dir), 0o700);

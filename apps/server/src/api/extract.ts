@@ -139,7 +139,8 @@ export function canonical_or(p: string, f: (p: string) => string = (x) => x): st
 
 /** Rust's `Path::starts_with`: whether `root`'s components begin `p`'s. */
 export function path_starts_with(p: string, root: string): boolean {
-  const a = components(p), b = components(root);
+  const a = components(p),
+    b = components(root);
   if (a === b) return true;
   if (b === "/") return a.startsWith("/");
   return a.startsWith(`${b}/`);

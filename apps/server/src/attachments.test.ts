@@ -17,7 +17,16 @@ test("messages_the_agent_hasnt_read_yet_are_referred_to", () => {
   const state = testing.state();
   const p = db.insert_profile(state.db(), "p", [], null);
   const task = db.insert_task(state.db(), {
-    profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null,
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+    model: null,
+    effort: null,
+    claude_config_id: null,
   });
   const a = "0123456789abcdef0123456789abcdef";
   const steer = [{ id: "s", text: `Attached files:\n- /data/attachments/${a}/x.png`, from_agent: false, run_id: "r", written: true }];

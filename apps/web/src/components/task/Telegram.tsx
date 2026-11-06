@@ -155,7 +155,8 @@ export function TelegramSection({ task }: { task: Task }) {
       {code ? (
         <div className="space-y-1.5 rounded-md border border-line bg-panel-2/60 p-2.5" aria-label="Linking code">
           <div>
-            Send this to {bot} from a private chat with it, within ten minutes (until {new Date(code.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}):
+            Send this to {bot} from a private chat with it, within ten minutes (until{" "}
+            {new Date(code.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}):
           </div>
           <div className="flex items-center gap-1.5">
             <code className="rounded bg-panel px-2 py-1 font-mono text-[12.5px] whitespace-nowrap text-fg select-all">{code.command}</code>
@@ -200,15 +201,20 @@ export function TelegramSection({ task }: { task: Task }) {
           </label>
         ))}
         <div className="text-faint">
-          Push goes to the devices that chose these in Settings → Notifications (replies are off there until chosen). Replies to what you send
-          here aren't pushed.
+          Push goes to the devices that chose these in Settings → Notifications (replies are off there until chosen). Replies to what you send here aren't
+          pushed.
         </div>
       </div>
 
       {tg.last_error && (
         <div className="rounded bg-red-500/10 p-2 text-[12px] text-red-300">
           Telegram: {tg.last_error}
-          {tg.queued > 0 && <> ({tg.queued} message{tg.queued === 1 ? "" : "s"} waiting, to be tried again)</>}
+          {tg.queued > 0 && (
+            <>
+              {" "}
+              ({tg.queued} message{tg.queued === 1 ? "" : "s"} waiting, to be tried again)
+            </>
+          )}
         </div>
       )}
       {tg.dropped && (

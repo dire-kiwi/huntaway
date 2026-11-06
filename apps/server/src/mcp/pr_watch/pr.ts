@@ -167,24 +167,50 @@ export function Pr_parse(v: any): Pr {
   const nodes = (x: any): any[] => (Array.isArray(x?.nodes) ? x.nodes : []);
   for (const n of nodes(pr.comments)) {
     remarks.push({
-      id: id(n), author: author(n), bot: bot(n), association: association(n), kind: "comment", review_state: null, path: null, line: null,
-      body: body(n), url: string(n?.url), at: string(n?.createdAt),
+      id: id(n),
+      author: author(n),
+      bot: bot(n),
+      association: association(n),
+      kind: "comment",
+      review_state: null,
+      path: null,
+      line: null,
+      body: body(n),
+      url: string(n?.url),
+      at: string(n?.createdAt),
     });
   }
   for (const n of nodes(pr.reviews)) {
     // A review being written is its author's own.
     if (n?.state === "PENDING") continue;
     remarks.push({
-      id: id(n), author: author(n), bot: bot(n), association: association(n), kind: "review", review_state: lower(n?.state), path: null, line: null,
-      body: body(n), url: string(n?.url), at: string(n?.submittedAt),
+      id: id(n),
+      author: author(n),
+      bot: bot(n),
+      association: association(n),
+      kind: "review",
+      review_state: lower(n?.state),
+      path: null,
+      line: null,
+      body: body(n),
+      url: string(n?.url),
+      at: string(n?.submittedAt),
     });
   }
   for (const t of nodes(pr.reviewThreads)) {
     for (const n of nodes(t?.comments)) {
       remarks.push({
-        id: id(n), author: author(n), bot: bot(n), association: association(n), kind: "review_comment", review_state: null,
-        path: string(n?.path) ?? string(t?.path), line: u64(n?.line) ?? u64(n?.originalLine),
-        body: body(n), url: string(n?.url), at: string(n?.createdAt),
+        id: id(n),
+        author: author(n),
+        bot: bot(n),
+        association: association(n),
+        kind: "review_comment",
+        review_state: null,
+        path: string(n?.path) ?? string(t?.path),
+        line: u64(n?.line) ?? u64(n?.originalLine),
+        body: body(n),
+        url: string(n?.url),
+        at: string(n?.createdAt),
       });
     }
   }
@@ -363,7 +389,11 @@ export function note(news: any): string {
 
 /** What happened, for each of `events` in `news`. */
 export function what(news: any, events: string[]): string[] {
-  const names = (list: any) => (Array.isArray(list) ? list : []).map((c: any) => c?.name).filter((x: any) => typeof x === "string").join(", ");
+  const names = (list: any) =>
+    (Array.isArray(list) ? list : [])
+      .map((c: any) => c?.name)
+      .filter((x: any) => typeof x === "string")
+      .join(", ");
   const parts: string[] = [];
   for (const e of events) {
     switch (e) {

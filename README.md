@@ -6,8 +6,8 @@ Done**, usually in its own git worktree. Click a card to see the full thread, re
 and review, stage and commit its changes.
 
 - **Tasks are agents.** Starting a task starts its agent in a worktree of its own; it asks when it needs you (the
-  card moves to *Needs attention*), opens a pull request when it's done, and merges when you move it to *Ready for
-  merge*. Reviews, a merge queue, subprojects, plans and documents build on that.
+  card moves to _Needs attention_), opens a pull request when it's done, and merges when you move it to _Ready for
+  merge_. Reviews, a merge queue, subprojects, plans and documents build on that.
 - **Agents survive restarts.** Each run is supervised by `ia-shim`, so the server can restart (or update itself) under
   running agents.
 - **One board, several machines.** Each machine runs `huntaway serve` and keeps its own data; boards link to each
@@ -27,7 +27,7 @@ and review, stage and commit its changes.
   ```
 
 - **A server on its own**, for a machine you reach from another board: `scripts/install-release-host.sh` installs a
-  release's server tarball, which updates itself from releases (see *Release builds* and *Updating the desktop app* in
+  release's server tarball, which updates itself from releases (see _Release builds_ and _Updating the desktop app_ in
   [the desktop app and releases](docs/guide/desktop.md), and [Hosts](docs/guide/hosts.md)).
 
 Agents need `claude` (Claude Code) or `codex` on the machine's `PATH`, and task terminals need `tmux`.
@@ -68,15 +68,15 @@ scripts/          the install scripts, release packaging, and tools for testing 
 docs/             the guide (docs/guide/), design notes, and dated research and reviews (docs/notes/)
 ```
 
-| Command | What it does |
-|---|---|
-| `pnpm check` | format, lint and type checks over the workspace (`vp check`); `pnpm fix` formats and applies fixes |
-| `pnpm typecheck` | type checks only |
-| `pnpm test` | the server's and the UI's tests (`vp test`, Vitest) |
-| `pnpm test:ui` | the browser checks: builds the UI and drives test servers in Chromium |
-| `pnpm test:mobile` | the mobile app's tests (Jest) |
-| `pnpm dev` | the UI with hot reload, against the server on `127.0.0.1:7878` (`IA_SERVER` changes it) |
-| `cargo test` | ia-shim's and the broker's tests |
+| Command            | What it does                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `pnpm check`       | format, lint and type checks over the workspace (`vp check`); `pnpm fix` formats and applies fixes |
+| `pnpm typecheck`   | type checks only                                                                                   |
+| `pnpm test`        | the server's and the UI's tests (`vp test`, Vitest)                                                |
+| `pnpm test:ui`     | the browser checks: builds the UI and drives test servers in Chromium                              |
+| `pnpm test:mobile` | the mobile app's tests (Jest)                                                                      |
+| `pnpm dev`         | the UI with hot reload, against the server on `127.0.0.1:7878` (`IA_SERVER` changes it)            |
+| `cargo test`       | ia-shim's and the broker's tests                                                                   |
 
 [Development](docs/development.md) covers the workspace, the tests and CI, and how to try changes on a test server.
 [CLAUDE.md](CLAUDE.md) is the same for agents working on this repository.

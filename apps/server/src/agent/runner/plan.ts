@@ -63,11 +63,18 @@ export async function settle(state: Shared, task: Task, run: Run, entered: (t: T
     console.error(`task ${task.id}: telling whether its run changed only the plan: ${err_str(e)}`);
   }
   const [status, reason] = waits ? ["needs_attention", PLAN_READY] : ["in_review", null];
-  const updated = state.update_task_if(task.id, [["status", status], ["attention_reason", reason]], (c) => {
-    if (db.later_run(c, task.id, run.id)) return false;
-    const t = db.get_task(c, task.id);
-    return t != null && !t.running && t.status === task.status;
-  });
+  const updated = state.update_task_if(
+    task.id,
+    [
+      ["status", status],
+      ["attention_reason", reason],
+    ],
+    (c) => {
+      if (db.later_run(c, task.id, run.id)) return false;
+      const t = db.get_task(c, task.id);
+      return t != null && !t.running && t.status === task.status;
+    },
+  );
   if (updated) entered(updated);
 }
 

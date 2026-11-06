@@ -30,7 +30,10 @@ const SEQ = 100_000;
 function snapshot(taskId, messages) {
   const c = convert(messages, { finished: false });
   const thread = { id: taskId, harness: "claude", status: "idle", created_at: "2026-10-26T07:00:00.000Z" };
-  const s = apply_events(initial_state(thread), c.events.map((e, i) => ({ ...e, thread_id: taskId, seq: i + 1 })));
+  const s = apply_events(
+    initial_state(thread),
+    c.events.map((e, i) => ({ ...e, thread_id: taskId, seq: i + 1 })),
+  );
   return { ...s, seq: SEQ };
 }
 
@@ -66,26 +69,32 @@ const shot = (page) => page.locator("[data-thread] [data-autoscroll]").screensho
  */
 function differences(page, a, b) {
   const url = (png) => `data:image/png;base64,${png.toString("base64")}`;
-  return page.evaluate(async ([a, b]) => {
-    const load = (src) => new Promise((ok, fail) => Object.assign(new Image(), { onload: (e) => ok(e.target), onerror: fail, src }));
-    const pixels = (img) => {
-      const c = Object.assign(document.createElement("canvas"), { width: img.width, height: img.height });
-      const g = c.getContext("2d");
-      g.drawImage(img, 0, 0);
-      return g.getImageData(0, 0, img.width, img.height).data;
-    };
-    const [x, y] = await Promise.all([load(a), load(b)]);
-    if (x.width !== y.width || x.height !== y.height) return { n: -1, size: [x.width, x.height, y.width, y.height] };
-    const p = pixels(x), q = pixels(y);
-    let n = 0, box = null;
-    for (let i = 0; i < p.length; i += 4) {
-      if (Math.max(Math.abs(p[i] - q[i]), Math.abs(p[i + 1] - q[i + 1]), Math.abs(p[i + 2] - q[i + 2])) <= 2) continue;
-      const px = (i / 4) % x.width, py = Math.floor(i / 4 / x.width);
-      n++;
-      box = box ? [Math.min(box[0], px), Math.min(box[1], py), Math.max(box[2], px), Math.max(box[3], py)] : [px, py, px, py];
-    }
-    return { n, box };
-  }, [url(a), url(b)]);
+  return page.evaluate(
+    async ([a, b]) => {
+      const load = (src) => new Promise((ok, fail) => Object.assign(new Image(), { onload: (e) => ok(e.target), onerror: fail, src }));
+      const pixels = (img) => {
+        const c = Object.assign(document.createElement("canvas"), { width: img.width, height: img.height });
+        const g = c.getContext("2d");
+        g.drawImage(img, 0, 0);
+        return g.getImageData(0, 0, img.width, img.height).data;
+      };
+      const [x, y] = await Promise.all([load(a), load(b)]);
+      if (x.width !== y.width || x.height !== y.height) return { n: -1, size: [x.width, x.height, y.width, y.height] };
+      const p = pixels(x),
+        q = pixels(y);
+      let n = 0,
+        box = null;
+      for (let i = 0; i < p.length; i += 4) {
+        if (Math.max(Math.abs(p[i] - q[i]), Math.abs(p[i + 1] - q[i + 1]), Math.abs(p[i + 2] - q[i + 2])) <= 2) continue;
+        const px = (i / 4) % x.width,
+          py = Math.floor(i / 4 / x.width);
+        n++;
+        box = box ? [Math.min(box[0], px), Math.min(box[1], py), Math.max(box[2], px), Math.max(box[3], py)] : [px, py, px, py];
+      }
+      return { n, box };
+    },
+    [url(a), url(b)],
+  );
 }
 
 /** The two shots are the same picture; if not, both are saved for a look. */
@@ -132,7 +141,10 @@ test("a thread drawn from its items looks as it does drawn from its messages", a
     await setting(true);
     await ui.run(["wait [data-thread=items]", `goto /p/${project.id}?task=${task.id}`, "click Thread", "wait [data-thread=items]"]);
     const fromItems = await look();
-    assert.ok(asked.some((a) => a.startsWith("thread?limit=")), "a window of its items");
+    assert.ok(
+      asked.some((a) => a.startsWith("thread?limit=")),
+      "a window of its items",
+    );
     await same(page, fromMessages[0], fromItems[0], "the thread");
     await same(page, fromMessages[1], fromItems[1], "with rows opened");
 
@@ -154,7 +166,13 @@ test("a long thread drawn from its items loads its earlier items as it's scrolle
   // 400 replies: more than a window (300 items) and a page.
   const messages = [];
   for (let i = 0; i < 400; i++)
-    messages.push({ id: i + 1, task_id: task.id, kind: "claude", data: { type: "assistant", message: { content: [{ type: "text", text: `Reply ${i}` }] } }, created_at: "2026-10-26T07:00:00.000Z" });
+    messages.push({
+      id: i + 1,
+      task_id: task.id,
+      kind: "claude",
+      data: { type: "assistant", message: { content: [{ type: "text", text: `Reply ${i}` }] } },
+      created_at: "2026-10-26T07:00:00.000Z",
+    });
   const snap = snapshot(task.id, messages);
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
@@ -180,7 +198,14 @@ test("a task's first message flags it, and the composer keeps its focus and what
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Flagged by its first message" });
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait [data-thread=messages]", "click css=textarea", "type First message", "press Enter"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait [data-thread=messages]",
+      "click css=textarea",
+      "type First message",
+      "press Enter",
+    ]);
     await ui.run(["type follow", "wait [data-thread=items]", "wait First message", "type up"]);
     assert.equal(await page.locator("textarea").inputValue(), "followup");
     assert.equal(await page.evaluate(() => document.activeElement?.tagName), "TEXTAREA");

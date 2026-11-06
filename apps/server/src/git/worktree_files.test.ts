@@ -46,7 +46,8 @@ interface Fixture {
 
 async function fixture(s: AppState, copy_files: string, link_folders: string): Promise<Fixture> {
   const root = testing.temp_dir();
-  const repo = join(root, "repo"), outside = join(root, "outside");
+  const repo = join(root, "repo"),
+    outside = join(root, "outside");
   mkdirSync(repo, { recursive: true });
   write(join(outside, "passwd"), "outside");
   sh(repo, ["init", "-q", "-b", "master"]);
@@ -73,7 +74,10 @@ async function fixture(s: AppState, copy_files: string, link_folders: string): P
   symlinkSync(outside, join(repo, "out-dir"));
   const profile = db.insert_profile(s.db(), "p", [], null);
   const p = await api.create_project_inner(s, profile.id, { name: "x", repo_path: path_str(repo), key: "X", base_branch: "master", use_worktrees: null });
-  db.update_project(s.db(), p.id, [["copy_files", copy_files], ["link_folders", link_folders]]);
+  db.update_project(s.db(), p.id, [
+    ["copy_files", copy_files],
+    ["link_folders", link_folders],
+  ]);
   return { root, repo, outside, project_id: p.id };
 }
 
@@ -269,7 +273,10 @@ test("checks_what_the_settings_name", () => {
   assert.equal(check_pattern("!/config/*.json"), null);
   assert.ok(check_pattern("a/../b") !== null && check_pattern("!../b") !== null);
   assert.doesNotThrow(() => check("copy_files", ".env\n# ../comment\n"));
-  assert.throws(() => check("link_folders", "models\n/abs\n"), (e: any) => e.message.includes("link_folders: /abs"));
+  assert.throws(
+    () => check("link_folders", "models\n/abs\n"),
+    (e: any) => e.message.includes("link_folders: /abs"),
+  );
   assert.throws(() => check("copy_files", "x\n".repeat(201)));
 });
 

@@ -83,17 +83,17 @@ BROKER_TOKEN=$(openssl rand -hex 32) target/release/huntaway-broker --port 8080 
 
 ## Shared settings and name reservations
 
-| Flag / env | Default | |
-|---|---|---|
-| `--host` / `BROKER_HOST` | `0.0.0.0` | Address to listen on |
-| `--port` / `BROKER_PORT` | `8080` | |
-| `--token` / `BROKER_TOKEN` | (required) | What hosts connect with (`huntaway serve --broker-token`), at least 16 characters |
-| `--default-host` / `BROKER_DEFAULT_HOST` | | The host for requests that don't pick one |
-| `--state` / `BROKER_STATE` | | Name reservations across restarts; required with managed tunnels |
-| `--tunnel-domain` / `BROKER_TUNNEL_DOMAIN` | | Enable managed tunnels below this DNS domain |
-| `--cloudflare-account` / `BROKER_CLOUDFLARE_ACCOUNT` | | Cloudflare account id for managed tunnels |
-| `--cloudflare-zone` / `BROKER_CLOUDFLARE_ZONE` | | Cloudflare DNS zone id |
-| `--cloudflare-token` / `BROKER_CLOUDFLARE_TOKEN` | | API token for tunnel and DNS provisioning (prefer env) |
+| Flag / env                                           | Default    |                                                                                   |
+| ---------------------------------------------------- | ---------- | --------------------------------------------------------------------------------- |
+| `--host` / `BROKER_HOST`                             | `0.0.0.0`  | Address to listen on                                                              |
+| `--port` / `BROKER_PORT`                             | `8080`     |                                                                                   |
+| `--token` / `BROKER_TOKEN`                           | (required) | What hosts connect with (`huntaway serve --broker-token`), at least 16 characters |
+| `--default-host` / `BROKER_DEFAULT_HOST`             |            | The host for requests that don't pick one                                         |
+| `--state` / `BROKER_STATE`                           |            | Name reservations across restarts; required with managed tunnels                  |
+| `--tunnel-domain` / `BROKER_TUNNEL_DOMAIN`           |            | Enable managed tunnels below this DNS domain                                      |
+| `--cloudflare-account` / `BROKER_CLOUDFLARE_ACCOUNT` |            | Cloudflare account id for managed tunnels                                         |
+| `--cloudflare-zone` / `BROKER_CLOUDFLARE_ZONE`       |            | Cloudflare DNS zone id                                                            |
+| `--cloudflare-token` / `BROKER_CLOUDFLARE_TOKEN`     |            | API token for tunnel and DNS provisioning (prefer env)                            |
 
 The broker speaks plain HTTP, so serve it behind a TLS proxy (Caddy, nginx, a Cloudflare tunnel) on a public address, and
 give hosts the `https://` URL. It keeps no data but its `--state` file, if it has one (on a volume, in a container).

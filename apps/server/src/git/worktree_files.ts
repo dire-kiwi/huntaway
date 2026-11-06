@@ -48,7 +48,10 @@ export function Report_default(): Report {
 
 /** The event for the task's log (level, text, detail), or None when nothing was asked for. */
 export function event(r: Report): [string, string, string] | null {
-  const c = r.copied.length, l = r.linked.length, e = r.existing.length, s = r.skipped.length;
+  const c = r.copied.length,
+    l = r.linked.length,
+    e = r.existing.length,
+    s = r.skipped.length;
   if (c + l + e + s === 0 && !r.include_file) return null;
   const parts: string[] = [];
   if (c > 0 || l === 0) parts.push(`Copied ${c} file${plural(c)}`);

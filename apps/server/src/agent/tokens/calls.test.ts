@@ -80,13 +80,22 @@ test("calls_are_in_the_token_report_of_their_tasks_or_their_configs_profile", ()
   record(s, "window", null, unused, two);
   const from = "2000-01-01T00:00:00.000Z";
   const to = "2999-01-01T00:00:00.000Z";
-  const calls = analytics.token_report(s.db(), first.id, from, to).usage.filter((u: any) => u.output_tokens >= 32).map((u: any) => u.call_id);
+  const calls = analytics
+    .token_report(s.db(), first.id, from, to)
+    .usage.filter((u: any) => u.output_tokens >= 32)
+    .map((u: any) => u.call_id);
   assert.equal(calls.length, 4);
   assert.equal(new Set(calls).size, 2, JSON.stringify(calls));
   db.run(s.db(), "DELETE FROM call_usage WHERE output_tokens >= 32");
   const report = (p: string) => analytics.token_report(s.db(), p, from, to).usage.map((u: any) => [u.kind, u.task_id, u.run_id, u.output_tokens]);
-  assert.deepEqual(report(first.id), [["window", null, null, 4], ["window", null, null, 8]]);
-  assert.deepEqual(report(second.id), [["title", task.id, null, 1], ["window", null, null, 2]]);
+  assert.deepEqual(report(first.id), [
+    ["window", null, null, 4],
+    ["window", null, null, 8],
+  ]);
+  assert.deepEqual(report(second.id), [
+    ["title", task.id, null, 1],
+    ["window", null, null, 2],
+  ]);
   // Deleting the task takes its titles' rows.
   db.run(s.db(), "DELETE FROM tasks WHERE id=?1", task.id);
   assert.deepEqual(report(second.id), [["window", null, null, 2]]);

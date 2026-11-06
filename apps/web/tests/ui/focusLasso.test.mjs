@@ -9,7 +9,11 @@ beforeAll(async () => {
 });
 afterAll(() => server?.stop());
 
-const nowIds = async () => (await server.api("GET", `/projects/${project.id}/tasks`)).filter((t) => t.now_at).map((t) => t.id).sort();
+const nowIds = async () =>
+  (await server.api("GET", `/projects/${project.id}/tasks`))
+    .filter((t) => t.now_at)
+    .map((t) => t.id)
+    .sort();
 const boxOf = (page, id) =>
   page.evaluate((id) => {
     const r = document.querySelector(`[data-task="${id}"]`).getBoundingClientRect();
@@ -58,7 +62,13 @@ test("the menu and the lasso move tasks to Now and Later, and the switch shows t
     await page.keyboard.down("Control");
     await page.mouse.move(left, top);
     await page.mouse.down({ button: "right" });
-    for (const [x, y] of [[right, top], [right, bottom], [left, bottom], [left, top + 4]]) await page.mouse.move(x, y, { steps: 6 });
+    for (const [x, y] of [
+      [right, top],
+      [right, bottom],
+      [left, bottom],
+      [left, top + 4],
+    ])
+      await page.mouse.move(x, y, { steps: 6 });
     await page.waitForSelector("[data-lasso]");
     await page.mouse.up({ button: "right" });
     await page.keyboard.up("Control");

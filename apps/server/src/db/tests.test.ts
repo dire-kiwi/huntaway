@@ -8,13 +8,67 @@ import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
 import { path_str } from "../util.ts";
 import {
-  PAGE_BYTES, PrChecks_default, Queued_new, Reviewer_default, SCRATCH, VERSION, add_cost, api_env, available_configs, check_dependencies, check_resolution,
-  clear_queued, clone_dir_or_default, default_clone_dir, delete_claude_config, drop_dependency, ensure_profile, get_claude_config, get_profile, get_project,
-  get_task, idle_sessions, insert_claude_config, insert_message, insert_profile, insert_project, insert_run, insert_scratch_task, insert_task, is_scratch,
-  list_claude_configs, list_messages, list_profiles, message_page, migrate_claude_configs, open, preview_for, proxy, queue, scratch_task_by_number, set_run_config_dir, set_run_session, set_setting,
-  subagent_messages, subproject_status, summarizers_for, take_queued, task_claude_config, task_config_dir, unmet_dependencies, update_claude_config,
-  update_profile, update_project, update_task, user_replies,
-  type Message, type NewProject, type NewTask, type Project, type Task, type UserReplies,
+  PAGE_BYTES,
+  PrChecks_default,
+  Queued_new,
+  Reviewer_default,
+  SCRATCH,
+  VERSION,
+  add_cost,
+  api_env,
+  available_configs,
+  check_dependencies,
+  check_resolution,
+  clear_queued,
+  clone_dir_or_default,
+  default_clone_dir,
+  delete_claude_config,
+  drop_dependency,
+  ensure_profile,
+  get_claude_config,
+  get_profile,
+  get_project,
+  get_task,
+  idle_sessions,
+  insert_claude_config,
+  insert_message,
+  insert_profile,
+  insert_project,
+  insert_run,
+  insert_scratch_task,
+  insert_task,
+  is_scratch,
+  list_claude_configs,
+  list_messages,
+  list_profiles,
+  message_page,
+  migrate_claude_configs,
+  open,
+  preview_for,
+  proxy,
+  queue,
+  scratch_task_by_number,
+  set_run_config_dir,
+  set_run_session,
+  set_setting,
+  subagent_messages,
+  subproject_status,
+  summarizers_for,
+  take_queued,
+  task_claude_config,
+  task_config_dir,
+  unmet_dependencies,
+  update_claude_config,
+  update_profile,
+  update_project,
+  update_task,
+  user_replies,
+  type Message,
+  type NewProject,
+  type NewTask,
+  type Project,
+  type Task,
+  type UserReplies,
 } from "../db.ts";
 
 // testing.ts's temp_dir, without importing testing.ts: it brings in AppState and with it every module, and the db tests
@@ -51,10 +105,28 @@ test("commits_dont_sync_to_disk_one_by_one", () => {
 });
 
 const np = (profile_id: string, id = "pr", key = "X"): NewProject => ({
-  id, profile_id, name: id === "pr" ? "x" : id, key, repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false,
+  id,
+  profile_id,
+  name: id === "pr" ? "x" : id,
+  key,
+  repo_path: "/x",
+  scratch_path: "/s",
+  worktrees_root: "/w",
+  base_branch: null,
+  use_worktrees: false,
 });
 const nt = (profile_id: string, o: Partial<NewTask> = {}): NewTask => ({
-  profile_id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null, ...o,
+  profile_id,
+  project_id: null,
+  kind: "task",
+  title: "t",
+  description: "",
+  status: "todo",
+  use_worktree: false,
+  model: null,
+  effort: null,
+  claude_config_id: null,
+  ...o,
 });
 
 // HA-37: a failed insert used up its project's next key number.
@@ -118,7 +190,15 @@ function thread(c: Conn): string {
 test("user_replies_are_the_users_own_messages_after_what_the_agent_said", () => {
   const c = open(":memory:");
   const t = thread(c);
-  const said = (text: string) => ({ type: "assistant", message: { content: [{ type: "thinking", thinking: "hm" }, { type: "text", text }] } });
+  const said = (text: string) => ({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "thinking", thinking: "hm" },
+        { type: "text", text },
+      ],
+    },
+  });
   insert_message(c, t, "user", { text: "Start working on this task.", auto: true, start: true });
   insert_message(c, t, "user", { text: "Also do the docs" });
   insert_message(c, t, "claude", said("Working on it."));
@@ -253,13 +333,25 @@ test("done_tasks_and_only_done_tasks_have_a_resolution", () => {
   assert.equal(set([["status", "done"]]), "done");
   // A done task's resolution can change, and stays put through other updates.
   assert.equal(set([["resolution", "wont_fix"]]), "wont_fix");
-  assert.equal(set([["status", "done"], ["title", "x"]]), "wont_fix");
+  assert.equal(
+    set([
+      ["status", "done"],
+      ["title", "x"],
+    ]),
+    "wont_fix",
+  );
   // Clearing it falls back to done.
   assert.equal(set([["resolution", null]]), "done");
   // Out of done clears it, whatever it was.
   set([["resolution", "not_done"]]);
   assert.equal(set([["status", "todo"]]), null);
-  assert.equal(set([["status", "done"], ["resolution", "not_done"]]), "not_done");
+  assert.equal(
+    set([
+      ["status", "done"],
+      ["resolution", "not_done"],
+    ]),
+    "not_done",
+  );
 
   // Created done, it's done.
   const t = get_task(c, id)!;
@@ -277,7 +369,13 @@ test("done_tasks_keep_when_they_were_done", () => {
   assert.ok(done, "moving it into done sets the time");
   // Staying done keeps the time it was done, through other updates and a new resolution.
   update_task(c, id, [["done_at", "2026-01-01T00:00:00Z"]]);
-  assert.equal(set([["status", "done"], ["title", "x"]]), "2026-01-01T00:00:00Z");
+  assert.equal(
+    set([
+      ["status", "done"],
+      ["title", "x"],
+    ]),
+    "2026-01-01T00:00:00Z",
+  );
   assert.equal(set([["resolution", "wont_fix"]]), "2026-01-01T00:00:00Z");
   // Out of done clears it, and done again starts over.
   assert.equal(set([["status", "in_review"]]), null);
@@ -325,7 +423,11 @@ test("a_database_from_version_58_has_its_plan_artifact_and_diagram_tasks_labelle
   assert.deepEqual([chat.task_type, chat.labels.length, chat.work_dir], [SCRATCH, 0, "/chat"]);
   assert.deepEqual([code.task_type, code.labels.length, code.work_dir], [null, 0, null]);
   const docs = db.all(c, "SELECT task_id, label, version FROM documents ORDER BY task_id, version").map((r) => [r.task_id, r.label, r.version]);
-  assert.deepEqual(docs, [["art", "artifact", 1], ["plan", "plan", 1], ["plan", "plan", 2]]);
+  assert.deepEqual(docs, [
+    ["art", "artifact", 1],
+    ["plan", "plan", 1],
+    ["plan", "plan", 2],
+  ]);
   // Another label's version 1 can sit beside the plan's.
   db.run(c, "INSERT INTO documents (task_id,label,version,content,created_at,updated_at) VALUES ('plan','diagram',1,'x','1','1')");
   c.close();
@@ -336,7 +438,10 @@ test("a_database_that_had_start_from_as_an_earlier_version_gets_the_columns_it_s
   // restart_window), then 73 (skipping the runs' sessions), then 74 (skipping pr_checks), then 75 (skipping
   // require_pr_approval); the first two had no merge_approval (72) either, and none before 74 had pr_checks.
   const skipped: Array<[number, string]> = [
-    [65, "ALTER TABLE tasks DROP COLUMN limit_reset_at; ALTER TABLE profiles DROP COLUMN limit_wait; ALTER TABLE profiles DROP COLUMN limit_switch; ALTER TABLE profiles DROP COLUMN merge_approval;"],
+    [
+      65,
+      "ALTER TABLE tasks DROP COLUMN limit_reset_at; ALTER TABLE profiles DROP COLUMN limit_wait; ALTER TABLE profiles DROP COLUMN limit_switch; ALTER TABLE profiles DROP COLUMN merge_approval;",
+    ],
     [71, "ALTER TABLE claude_configs DROP COLUMN restart_window; ALTER TABLE profiles DROP COLUMN merge_approval;"],
     [73, "ALTER TABLE runs DROP COLUMN session_id; ALTER TABLE runs DROP COLUMN session_cost; ALTER TABLE tasks DROP COLUMN pr_checks;"],
     [74, "ALTER TABLE tasks DROP COLUMN pr_checks;"],
@@ -578,11 +683,20 @@ test("push_subscriptions_from_before_version_97_are_web_push", () => {
   );
   const c = open(path);
   assert.equal(user_version(c), VERSION);
-  assert.deepEqual({ ...db.one<object>(c, "SELECT kind, device_id, name FROM push_subscriptions WHERE id='s'") }, { kind: "web", device_id: null, name: "Chrome" });
+  assert.deepEqual(
+    { ...db.one<object>(c, "SELECT kind, device_id, name FROM push_subscriptions WHERE id='s'") },
+    { kind: "web", device_id: null, name: "Chrome" },
+  );
   // New rows are web unless they say otherwise.
   db.run(c, "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at) VALUES ('t','https://push.example.com/2','k','a','{}','1')");
-  db.run(c, "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at,kind,device_id) VALUES ('u','ExponentPushToken[x]','','','{}','1','expo','d')");
-  assert.deepEqual(db.all<{ kind: string }>(c, "SELECT kind FROM push_subscriptions ORDER BY id").map((r) => r.kind), ["web", "web", "expo"]);
+  db.run(
+    c,
+    "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,events,created_at,kind,device_id) VALUES ('u','ExponentPushToken[x]','','','{}','1','expo','d')",
+  );
+  assert.deepEqual(
+    db.all<{ kind: string }>(c, "SELECT kind FROM push_subscriptions ORDER BY id").map((r) => r.kind),
+    ["web", "web", "expo"],
+  );
   // Run again over the columns (as when another migration took the version first), it leaves them as they are.
   c.exec("PRAGMA user_version=96;");
   c.close();
@@ -657,9 +771,16 @@ test("a_database_from_version_86_gets_configs_without_a_proxy", () => {
 test("a_config_with_a_proxy_sends_claude_there", () => {
   const c = open(":memory:");
   let cfg = insert_claude_config(c, "pool", "~/.claude-personal", "claude");
-  cfg = update_claude_config(c, cfg.id, [["api_url", "http://10.0.0.5:8317/"], ["api_key", "sk-1"]])!;
+  cfg = update_claude_config(c, cfg.id, [
+    ["api_url", "http://10.0.0.5:8317/"],
+    ["api_key", "sk-1"],
+  ])!;
   assert.equal(proxy(cfg), "http://10.0.0.5:8317/");
-  assert.deepEqual(api_env(cfg), [["ANTHROPIC_BASE_URL", "http://10.0.0.5:8317"], ["ANTHROPIC_AUTH_TOKEN", "sk-1"], ["ANTHROPIC_API_KEY", ""]]);
+  assert.deepEqual(api_env(cfg), [
+    ["ANTHROPIC_BASE_URL", "http://10.0.0.5:8317"],
+    ["ANTHROPIC_AUTH_TOKEN", "sk-1"],
+    ["ANTHROPIC_API_KEY", ""],
+  ]);
   // The keys stay on the host.
   const v = JSON.parse(JSON.stringify(cfg));
   assert.deepEqual([v.api_key, v.management_key, v.has_api_key, v.has_management_key], [undefined, undefined, true, false]);
@@ -733,7 +854,10 @@ test("a_database_from_version_47_gets_show_usage_off", () => {
   );
   const c = open(path);
   assert.equal(user_version(c), VERSION);
-  assert.deepEqual(list_claude_configs(c).map((c) => [c.id, c.show_usage]), [["c", false]]);
+  assert.deepEqual(
+    list_claude_configs(c).map((c) => [c.id, c.show_usage]),
+    [["c", false]],
+  );
   c.close();
 });
 
@@ -793,7 +917,10 @@ test("a_database_at_version_83_keeps_its_summarizer_as_the_only_one", () => {
   const c = open(path);
   assert.equal(user_version(c), VERSION);
   const p = get_project(c, "pr")!;
-  assert.deepEqual(p.summarizers.map((r) => r.model), ["sonnet"]);
+  assert.deepEqual(
+    p.summarizers.map((r) => r.model),
+    ["sonnet"],
+  );
   assert.equal(get_profile(c, "p")!.summarizers.length, 1);
   assert.equal(summarizers_for(c, p).length, 1);
   c.close();
@@ -854,7 +981,13 @@ test("a_database_that_had_token_usage_as_an_earlier_version_gets_the_columns_it_
     );
     const c = open(path);
     assert.equal(user_version(c), VERSION);
-    const cols = [["tasks", "pr_checks"], ["tasks", "start_from"], ["profiles", "require_pr_approval"], ["projects", "require_pr_approval"], ["runs", "usage_tail"]];
+    const cols = [
+      ["tasks", "pr_checks"],
+      ["tasks", "start_from"],
+      ["profiles", "require_pr_approval"],
+      ["projects", "require_pr_approval"],
+      ["runs", "usage_tail"],
+    ];
     for (const [table, column] of cols) assert.ok(has_column(c, table, column), `version ${version}: ${table}.${column}`);
     // The demo seed, which is what failed on such a database.
     const p = insert_profile(c, "p", [], null);
@@ -921,7 +1054,10 @@ test("a_database_at_version_65_gets_projects_copy_files_and_link_folders", () =>
   assert.equal(user_version(c), VERSION);
   let p = get_project(c, "pr")!;
   assert.deepEqual([p.copy_files, p.link_folders], ["", ""]);
-  p = update_project(c, "pr", [["copy_files", ".env"], ["link_folders", "models"]])!;
+  p = update_project(c, "pr", [
+    ["copy_files", ".env"],
+    ["link_folders", "models"],
+  ])!;
   assert.deepEqual([p.copy_files, p.link_folders], [".env", "models"]);
   c.close();
 });
@@ -1141,15 +1277,34 @@ test("profile_config_dirs_become_claude_configs", () => {
              ALTER TABLE tasks DROP COLUMN claude_config_id;
              PRAGMA user_version=17;`,
   );
-  for (const [id, name, dir, at] of [["a", "work", "~/.claude-work", "1"], ["b", "personal", "~/.claude-me", "2"], ["c", "work2", "~/.claude-work", "3"]]) {
+  for (const [id, name, dir, at] of [
+    ["a", "work", "~/.claude-work", "1"],
+    ["b", "personal", "~/.claude-me", "2"],
+    ["c", "work2", "~/.claude-work", "3"],
+  ]) {
     db.run(c, "INSERT INTO profiles (id,name,claude_config_dir,created_at) VALUES (?1,?2,?3,?4)", id, name, dir, at);
   }
-  for (const [id, profile, session] of [["t1", "a", "s1"], ["t2", "b", null]]) {
-    db.run(c, "INSERT INTO tasks (id,profile_id,kind,title,session_id,last_activity_at,created_at,updated_at) VALUES (?1,?2,'scratch','t',?3,'1','1','1')", id, profile, session);
+  for (const [id, profile, session] of [
+    ["t1", "a", "s1"],
+    ["t2", "b", null],
+  ]) {
+    db.run(
+      c,
+      "INSERT INTO tasks (id,profile_id,kind,title,session_id,last_activity_at,created_at,updated_at) VALUES (?1,?2,'scratch','t',?3,'1','1','1')",
+      id,
+      profile,
+      session,
+    );
   }
   migrate_claude_configs(c);
   const configs = list_claude_configs(c);
-  assert.deepEqual(configs.map((c) => [c.name, c.config_dir]), [["personal", "~/.claude-me"], ["work", "~/.claude-work"]]);
+  assert.deepEqual(
+    configs.map((c) => [c.name, c.config_dir]),
+    [
+      ["personal", "~/.claude-me"],
+      ["work", "~/.claude-work"],
+    ],
+  );
   const a = get_profile(c, "a")!;
   // Profiles that shared a directory share its config.
   assert.deepEqual(a.claude_config_ids, get_profile(c, "c")!.claude_config_ids);
@@ -1257,9 +1412,21 @@ test("threads_load_in_pages_of_main_conversation_messages", () => {
   const text = (s: string) => ({ type: "assistant", message: { content: [{ type: "text", text: s }] } });
   const first = add("user", { text: "go" });
   // A background subagent, then its own messages, a progress line from it and a shell's.
-  add("claude", { type: "assistant", message: { content: [{ type: "text", text: "on it" }, { type: "tool_use", id: "a1", name: "Agent", input: { description: "look", prompt: "p".repeat(300) } }] } });
+  add("claude", {
+    type: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "on it" },
+        { type: "tool_use", id: "a1", name: "Agent", input: { description: "look", prompt: "p".repeat(300) } },
+      ],
+    },
+  });
   const report = "Async agent launched successfully. ".repeat(20);
-  add("claude", { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a1", content: report }] }, tool_use_result: { isAsync: true, content: ["big"] } });
+  add("claude", {
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "a1", content: report }] },
+    tool_use_result: { isAsync: true, content: ["big"] },
+  });
   add("claude", { type: "system", subtype: "task_started", task_id: "k1", tool_use_id: "a1", is_backgrounded: true });
   add("claude", { type: "system", subtype: "task_started", task_id: "sh", tool_use_id: "b1" });
   const child = add("claude", { type: "assistant", parent_tool_use_id: "a1", message: { content: [{ type: "text", text: "reading" }] } });
@@ -1328,7 +1495,10 @@ test("a_threads_queries_read_only_its_own_messages", () => {
   db.has_assistant_block(spy, t.id, "a1");
   assert.ok(prepared.length >= 9, prepared.join("\n"));
   for (const sql of prepared) {
-    const plan = db.all(c, `EXPLAIN QUERY PLAN ${sql}`).map((r) => r.detail).join("; ");
+    const plan = db
+      .all(c, `EXPLAIN QUERY PLAN ${sql}`)
+      .map((r) => r.detail)
+      .join("; ");
     assert.match(plan, /messages_task/, `${sql}\n${plan}`);
     assert.doesNotMatch(plan, /messages_kind_time/, `${sql}\n${plan}`);
   }
@@ -1342,7 +1512,8 @@ test("per_task_message_lookups_read_only_that_tasks_messages", () => {
   const at = (id: number, created_at: string) => db.run(c, "UPDATE messages SET created_at=?1 WHERE id=?2", created_at, id);
   const call = (task: string, id: string, name: string) =>
     insert_message(c, task, "claude", { type: "assistant", message: { content: [{ type: "tool_use", id, name, input: {} }] } }).id;
-  const started = (task: string, sub: string, call_id: string) => insert_message(c, task, "claude", { type: "system", subtype: "task_started", task_id: sub, tool_use_id: call_id }).id;
+  const started = (task: string, sub: string, call_id: string) =>
+    insert_message(c, task, "claude", { type: "system", subtype: "task_started", task_id: sub, tool_use_id: call_id }).id;
 
   // Another task's messages, of every kind these look for, don't count.
   at(insert_message(c, other.id, "user", { text: "hi" }).id, "2026-01-02");
@@ -1391,27 +1562,45 @@ test("subagent_summaries_include_forked_skills_and_their_launch_calls", () => {
       ],
     },
   });
-  const start = add({ type: "system", subtype: "task_started", task_type: "local_agent", tool_use_id: "fork", task_id: "child", prompt: "p".repeat(300), description: "/code-review" });
+  const start = add({
+    type: "system",
+    subtype: "task_started",
+    task_type: "local_agent",
+    tool_use_id: "fork",
+    task_id: "child",
+    prompt: "p".repeat(300),
+    description: "/code-review",
+  });
   add({ type: "assistant", parent_tool_use_id: "fork", message: { content: [{ type: "text", text: "child transcript" }] } });
   add({ type: "system", subtype: "task_started", task_type: "local_bash", tool_use_id: "shell", task_id: "shell-task" });
   const end = add({ type: "system", subtype: "task_notification", task_id: "child", status: "completed", summary: "done" });
   const result = add({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "fork", content: "review report" }] } });
   const last = add({ type: "assistant", message: { content: [{ type: "text", text: "main summary" }] } });
   const subs = subagent_messages(c, t.id, last);
-  assert.deepEqual(subs.map((m) => m.id), [call, start, end, result]);
+  assert.deepEqual(
+    subs.map((m) => m.id),
+    [call, start, end, result],
+  );
   assert.equal(subs[0].data.message.content.length, 1);
   assert.equal(subs[0].data.message.content[0].id, "fork");
   assert.equal(subs[0].data.parent_tool_use_id, "outer");
   assert.equal(subs[1].data.prompt.length, 200);
   // A page can start between the Skill call and its task_started event.
   const split = subagent_messages(c, t.id, start);
-  assert.deepEqual(split.map((m) => m.id), [call]);
+  assert.deepEqual(
+    split.map((m) => m.id),
+    [call],
+  );
 });
 
 test("dependencies_stay_in_the_project_and_never_loop", () => {
   const c = open(":memory:");
   const p = insert_profile(c, "p", [], null);
-  for (const [id, key] of [["a", "A"], ["b", "B"]]) insert_project(c, np(p.id, id, key));
+  for (const [id, key] of [
+    ["a", "A"],
+    ["b", "B"],
+  ])
+    insert_project(c, np(p.id, id, key));
   const task = (project: string) => insert_task(c, nt(p.id, { project_id: project }));
   const [one, two, three, other] = [task("a"), task("a"), task("a"), task("b")];
   const check = (t: Task, ids: string[]) => check_dependencies(c, t.id, t.project_id, ids);
@@ -1427,7 +1616,10 @@ test("dependencies_stay_in_the_project_and_never_loop", () => {
   const unmet = (t: Task) => unmet_dependencies(c, get_task(c, t.id)!).map((t) => t.id);
   assert.deepEqual(unmet(three), [two.id]);
   // Closed without being merged doesn't count.
-  update_task(c, two.id, [["status", "done"], ["resolution", "wont_fix"]]);
+  update_task(c, two.id, [
+    ["status", "done"],
+    ["resolution", "wont_fix"],
+  ]);
   assert.deepEqual(unmet(three), [two.id]);
   update_task(c, two.id, [["resolution", "done"]]);
   assert.deepEqual(unmet(three), []);
@@ -1454,8 +1646,14 @@ test("a_database_from_version_72_counts_each_runs_cost_once", () => {
     // session, then one that ended before its first result, then a new session (its total is lower). The thread's: two
     // review rounds, the first with a reply.
     const runs: Array<[string, string, string, number]> = [
-      [task, "a", "prompt", 1.0], [task, "b", "prompt", 1.5], [task, "c", "compact", 0.0], [task, "d", "prompt", 0.4], [task, "e", "prompt", 0.9],
-      [thread, "f", "review", 0.5], [thread, "g", "prompt", 0.7], [thread, "h", "review", 0.6],
+      [task, "a", "prompt", 1.0],
+      [task, "b", "prompt", 1.5],
+      [task, "c", "compact", 0.0],
+      [task, "d", "prompt", 0.4],
+      [task, "e", "prompt", 0.9],
+      [thread, "f", "review", 0.5],
+      [thread, "g", "prompt", 0.7],
+      [thread, "h", "review", 0.6],
     ];
     for (const [task_id, id, kind, cost] of runs) {
       db.run(c, "INSERT INTO runs (id,task_id,kind,status,cost_usd,created_at) VALUES (?1,?2,?3,'exited',?4,'1')", id, task_id, kind, cost);
@@ -1463,7 +1661,11 @@ test("a_database_from_version_72_counts_each_runs_cost_once", () => {
     // 0.2 of the task's is from runs before runs had a cost.
     db.run(c, "UPDATE tasks SET cost_usd=4.0, session_id='s2' WHERE id=?1", task);
     db.run(c, "UPDATE tasks SET cost_usd=1.8, session_id='r2' WHERE id=?1", thread);
-    for (const [r, cost] of [["b", 1.5], ["b", 0.1], ["e", 0.9]] as const) {
+    for (const [r, cost] of [
+      ["b", 1.5],
+      ["b", 0.1],
+      ["e", 0.9],
+    ] as const) {
       db.run(c, "INSERT INTO context_stats (task_id,run_id,kind,at,cost_usd) VALUES (?1,?2,'turn','1',?3)", task, r, cost);
     }
   });
@@ -1471,11 +1673,17 @@ test("a_database_from_version_72_counts_each_runs_cost_once", () => {
   assert.equal(user_version(c), VERSION);
   const costs = (sql: string): number[] => db.all(c, sql).map((r) => r.cost_usd);
   const runs = costs("SELECT cost_usd FROM runs ORDER BY rowid");
-  assert.ok([1.0, 0.5, 0.0, 0.4, 0.5, 0.5, 0.2, 0.6].every((b, i) => close(runs[i], b)), JSON.stringify(runs));
+  assert.ok(
+    [1.0, 0.5, 0.0, 0.4, 0.5, 0.5, 0.2, 0.6].every((b, i) => close(runs[i], b)),
+    JSON.stringify(runs),
+  );
   const tasks = [get_task(c, task)!.cost_usd, get_task(c, thread)!.cost_usd];
   assert.ok(close(tasks[0], 2.6) && close(tasks[1], 1.3), JSON.stringify(tasks));
   const turns = costs("SELECT cost_usd FROM context_stats ORDER BY id");
-  assert.ok([0.5, 0.1, 0.5].every((b, i) => close(turns[i], b)), JSON.stringify(turns));
+  assert.ok(
+    [0.5, 0.1, 0.5].every((b, i) => close(turns[i], b)),
+    JSON.stringify(turns),
+  );
   // The runs of each thread's current session are in it, for the next run's cost to go on from.
   const sessions = db.all(c, "SELECT id, session_id, session_cost FROM runs ORDER BY rowid").map((r) => [r.id, r.session_id, r.session_cost]);
   const s = (id: string, session: string | null, cost: number | null) => [id, session, cost];
@@ -1499,15 +1707,31 @@ test("a_database_from_version_72_keeps_new_sessions_apart", () => {
     // first); then a run of it that hadn't said its total yet. The other's checkpoints say its runs were in different
     // sessions, then the same.
     const runs: Array<[string, string, number, string]> = [
-      [rewound, "a", 1.0, "1"], [rewound, "b", 2.0, "3"], [rewound, "c", 0.0, "4"], [checkpointed, "d", 1.0, "1"], [checkpointed, "e", 2.0, "2"], [checkpointed, "f", 2.5, "3"],
+      [rewound, "a", 1.0, "1"],
+      [rewound, "b", 2.0, "3"],
+      [rewound, "c", 0.0, "4"],
+      [checkpointed, "d", 1.0, "1"],
+      [checkpointed, "e", 2.0, "2"],
+      [checkpointed, "f", 2.5, "3"],
     ];
     for (const [task_id, id, cost, at] of runs) {
       db.run(c, "INSERT INTO runs (id,task_id,kind,status,cost_usd,created_at) VALUES (?1,?2,'prompt','exited',?3,?4)", id, task_id, cost, at);
     }
     const text = "Rewound to before turn 1: 1 file restored, 0 files removed; the next message starts a new conversation";
     db.run(c, "INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,'event',?2,'2')", rewound, JSON.stringify({ level: "info", text }));
-    for (const [n, r, session] of [[1, "d", "k1"], [2, "e", "k2"], [3, "f", "k2"]] as const) {
-      db.run(c, "INSERT INTO checkpoints (task_id,n,kind,sha,tree,run_id,session,created_at) VALUES (?1,?2,'turn','s','t',?3,?4,'1')", checkpointed, n, r, session);
+    for (const [n, r, session] of [
+      [1, "d", "k1"],
+      [2, "e", "k2"],
+      [3, "f", "k2"],
+    ] as const) {
+      db.run(
+        c,
+        "INSERT INTO checkpoints (task_id,n,kind,sha,tree,run_id,session,created_at) VALUES (?1,?2,'turn','s','t',?3,?4,'1')",
+        checkpointed,
+        n,
+        r,
+        session,
+      );
     }
     db.run(c, "UPDATE tasks SET cost_usd=3.0, session_id='new' WHERE id=?1", rewound);
     db.run(c, "UPDATE tasks SET cost_usd=5.5, session_id='k2' WHERE id=?1", checkpointed);
@@ -1515,12 +1739,20 @@ test("a_database_from_version_72_keeps_new_sessions_apart", () => {
   const c = open(path);
   const runs = db.all(c, "SELECT id, cost_usd, session_id, session_cost FROM runs ORDER BY rowid");
   const want: Array<[string, number, string | null, number | null]> = [
-    ["a", 1.0, null, null], ["b", 2.0, "new", 2.0], ["c", 0.0, "new", null], ["d", 1.0, null, null], ["e", 2.0, "k2", 2.0], ["f", 0.5, "k2", 2.5],
+    ["a", 1.0, null, null],
+    ["b", 2.0, "new", 2.0],
+    ["c", 0.0, "new", null],
+    ["d", 1.0, null, null],
+    ["e", 2.0, "k2", 2.0],
+    ["f", 0.5, "k2", 2.5],
   ];
   assert.equal(runs.length, want.length);
   runs.forEach((got, i) => {
     const w = want[i];
-    assert.ok(got.id === w[0] && close(got.cost_usd, w[1]) && got.session_id === w[2] && got.session_cost === w[3], `${JSON.stringify(got)} ${JSON.stringify(w)}`);
+    assert.ok(
+      got.id === w[0] && close(got.cost_usd, w[1]) && got.session_id === w[2] && got.session_cost === w[3],
+      `${JSON.stringify(got)} ${JSON.stringify(w)}`,
+    );
   });
   const tasks = [get_task(c, rewound)!.cost_usd, get_task(c, checkpointed)!.cost_usd];
   assert.ok(close(tasks[0], 3.0) && close(tasks[1], 3.5), JSON.stringify(tasks));
@@ -1541,10 +1773,16 @@ test("a_database_from_version_93_keeps_its_prompts_waiting_without_an_expiry", (
   const c = open(path);
   assert.equal(user_version(c), VERSION);
   // A prompt from before has no expiry or rule, so it waits as it did.
-  assert.deepEqual({ ...(db.one(c, "SELECT status, expires_at, rule FROM permission_requests WHERE id='p'") as any) }, { status: "pending", expires_at: null, rule: null });
+  assert.deepEqual(
+    { ...(db.one(c, "SELECT status, expires_at, rule FROM permission_requests WHERE id='p'") as any) },
+    { status: "pending", expires_at: null, rule: null },
+  );
   db.run(c, "INSERT INTO push_answer_tokens (token_hash,request_id,host_id,task_id,created_at,expires_at) VALUES ('h','p','x','t','1','2')");
   assert.equal(db.value(c, "SELECT status FROM push_answer_tokens WHERE token_hash='h'"), "pending");
-  db.run(c, "INSERT INTO approval_log (id,profile_id,task_id,tool_name,summary,rule,decision,outcome,created_at) VALUES ('l','p','t','x','','x','ask','pending','1')");
+  db.run(
+    c,
+    "INSERT INTO approval_log (id,profile_id,task_id,tool_name,summary,rule,decision,outcome,created_at) VALUES ('l','p','t','x','','x','ask','pending','1')",
+  );
   c.close();
   // A database that has some of it already (another migration took the number first) gets the rest.
   const partial = db_path();
@@ -1562,7 +1800,12 @@ test("a_database_from_version_99_has_its_workflows_approvals_say_workflow", () =
     const p = insert_profile(c, "p", [], null);
     task = insert_task(c, nt(p.id, {})).id;
     const ask = (kind: string, input: any) =>
-      db.run(c, "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'permission', ?2, '1')", task, JSON.stringify({ kind, tool_name: "t", input, status: "allowed" }));
+      db.run(
+        c,
+        "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'permission', ?2, '1')",
+        task,
+        JSON.stringify({ kind, tool_name: "t", input, status: "allowed" }),
+      );
     ask("automation", { op: "create", workflow: { name: "W" } });
     ask("automation", { op: "create", automation: { name: "A" } });
     ask("project", { workflow: "not one" });
@@ -1570,7 +1813,10 @@ test("a_database_from_version_99_has_its_workflows_approvals_say_workflow", () =
       db.run(
         c,
         "INSERT INTO thread_requests (task_id, id, pos, type, open, data, created_at, updated_at) VALUES (?1, ?2, ?3, 'permission', 0, ?4, '1', '1')",
-        task, id, id === "r1" ? 1 : 2, JSON.stringify({ id, type: "permission", input, metadata: { kind, tool_name: "t", status: "allowed" } }),
+        task,
+        id,
+        id === "r1" ? 1 : 2,
+        JSON.stringify({ id, type: "permission", input, metadata: { kind, tool_name: "t", status: "allowed" } }),
       );
     request("r1", "automation", { op: "delete", workflow: { name: "W" } });
     request("r2", "automation", { op: "delete", automation: { name: "A" } });

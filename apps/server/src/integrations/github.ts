@@ -123,7 +123,8 @@ export function latest_first(repos: any[]): any[] {
   // ISO times, which sort as text; those never pushed to go last.
   const key = (r: any) => (typeof r.pushed_at === "string" ? r.pushed_at : null);
   out.sort((a, b) => {
-    const x = key(a), y = key(b);
+    const x = key(a),
+      y = key(b);
     if (x === y) return 0;
     if (x === null) return 1;
     if (y === null) return -1;
@@ -162,7 +163,8 @@ export function search_query(text: string, owners: string[]): string | null {
   let os: string[], name: string[];
   const slash = text.indexOf("/");
   if (slash >= 0) {
-    const owner = text.slice(0, slash), rest = text.slice(slash + 1);
+    const owner = text.slice(0, slash),
+      rest = text.slice(slash + 1);
     if (words(owner).length) [os, name] = [words(owner), words(rest)];
     else [os, name] = [[...owners], words(rest)];
   } else [os, name] = [[...owners], words(text)];
@@ -226,7 +228,11 @@ function spawn_error(e: any): string {
  * Runs `program` with `args` and collects its output. Past `timeout` it's killed (with its process group when `group`,
  * so the git it started doesn't carry on) and this throws `on_timeout`; it throws spawn_error's message if it can't start.
  */
-function run(program: string, args: string[], o: { env: NodeJS.ProcessEnv; cwd?: string; timeout: number; group: boolean; on_timeout: string }): Promise<Output> {
+function run(
+  program: string,
+  args: string[],
+  o: { env: NodeJS.ProcessEnv; cwd?: string; timeout: number; group: boolean; on_timeout: string },
+): Promise<Output> {
   return new Promise((resolve, reject) => {
     let child;
     try {
@@ -234,7 +240,8 @@ function run(program: string, args: string[], o: { env: NodeJS.ProcessEnv; cwd?:
     } catch (e) {
       return reject(new Error(spawn_error(e)));
     }
-    const out: Buffer[] = [], err: Buffer[] = [];
+    const out: Buffer[] = [],
+      err: Buffer[] = [];
     let timed_out = false;
     const kill = () => {
       try {
@@ -283,13 +290,22 @@ async function gh_json(env: GhEnv | null, args: string[]): Promise<any> {
  * git it started doesn't carry on: its output, or why it didn't finish.
  */
 function run_in_group(gh: string, args: string[], env: NodeJS.ProcessEnv, limit: number, cwd?: string): Promise<Output> {
-  return run(gh, args, { env, cwd, timeout: limit, group: true, on_timeout: `it was still running after ${Math.floor(limit / 60_000)} minutes, so it was stopped` });
+  return run(gh, args, {
+    env,
+    cwd,
+    timeout: limit,
+    group: true,
+    on_timeout: `it was still running after ${Math.floor(limit / 60_000)} minutes, so it was stopped`,
+  });
 }
 
 /** What gh said when it failed: its last few lines, less git's "Cloning into …". */
 export function gh_error(stderr: Buffer | string): string {
   const text = typeof stderr === "string" ? stderr : stderr.toString("utf8");
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("Cloning into"));
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("Cloning into"));
   return lines.length ? lines.slice(Math.max(0, lines.length - 6)).join(" ") : "gh failed";
 }
 
@@ -305,7 +321,8 @@ export function check_repo(s: string): string | null {
   const base = s.endsWith(".git") ? s.slice(0, -4) : s;
   const i = base.indexOf("/");
   if (i < 0) return null;
-  const owner = base.slice(0, i), name = base.slice(i + 1);
+  const owner = base.slice(0, i),
+    name = base.slice(i + 1);
   const good = name_chars(owner) && !/^[-_.]/.test(owner) && name_chars(name) && name !== "." && name !== "..";
   return good ? `${owner}/${name}` : null;
 }
@@ -394,8 +411,7 @@ export async function clone(gh: string, account: string | null, repo: string, de
   try {
     // The account's own gh config (see GhEnv) clones over HTTPS, so SSH is asked for by URL when
     // that's what gh is set up to use.
-    const target =
-      env && (await git_protocol(host)) === "ssh" ? `git@${host}:${repo}.git` : host !== "github.com" ? `${host}/${repo}` : repo;
+    const target = env && (await git_protocol(host)) === "ssh" ? `git@${host}:${repo}.git` : host !== "github.com" ? `${host}/${repo}` : repo;
     let exited: boolean, failed: string;
     try {
       const out = await run_in_group(gh, ["repo", "clone", target, dest], gh_vars(env, { GIT_TERMINAL_PROMPT: "0" }), CLONE_TIMEOUT);
@@ -521,7 +537,8 @@ export async function create(gh: string, account: string | null, given_dir: stri
     if (host !== "github.com") target = `${host}/${target}`;
     const args = ["repo", "create", target, priv ? "--private" : "--public", "--source", dir, "--remote", "origin"];
     if (has_commits) args.push("--push");
-    let stdout = "", failed: string | null = null;
+    let stdout = "",
+      failed: string | null = null;
     try {
       const out = await run_in_group(gh, args, gh_vars(env, { GIT_TERMINAL_PROMPT: "0" }), CREATE_TIMEOUT, dir);
       if (ok(out)) stdout = out.stdout.toString("utf8");

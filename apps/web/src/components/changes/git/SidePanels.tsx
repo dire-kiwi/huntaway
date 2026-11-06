@@ -32,7 +32,26 @@ export function SidePanels({
   focusSide: (s: Side) => void;
   setMenu: (m: { x: number; y: number; title: string; items: MenuItem[] }) => void;
 }) {
-  const { side, inMain, setInMain, rows, fileIdx, setFileKey, collapsed, setCollapsed, files, commits, commitIdx, setCommitSha, stashes, stashIdx, setStashSha, turnList, turnIdx, setTurnN } = sel;
+  const {
+    side,
+    inMain,
+    setInMain,
+    rows,
+    fileIdx,
+    setFileKey,
+    collapsed,
+    setCollapsed,
+    files,
+    commits,
+    commitIdx,
+    setCommitSha,
+    stashes,
+    stashIdx,
+    setStashSha,
+    turnList,
+    turnIdx,
+    setTurnN,
+  } = sel;
   const { toggleRow, discardRow, copy, resetMenu, reword, stashDo, rewindTo } = actions;
   const repoName = status.dir?.split("/").filter(Boolean).at(-1) ?? "";
   const branchCommits = commits.filter((c) => c.on_branch).length;
@@ -103,7 +122,10 @@ export function SidePanels({
           }}
           empty={status.truncated ? "" : "No changes"}
         />,
-        { grow: grow("files", "flex-[3]", "flex-[2]"), right: status.truncated ? <span className="text-amber-300">first {files.length}</span> : files.length ? <span>{files.length}</span> : null },
+        {
+          grow: grow("files", "flex-[3]", "flex-[2]"),
+          right: status.truncated ? <span className="text-amber-300">first {files.length}</span> : files.length ? <span>{files.length}</span> : null,
+        },
       )}
       {sidePanel(
         "commits",
@@ -132,8 +154,13 @@ export function SidePanels({
             });
           }}
           render={(c, i) => (
-            <div className={clsx("flex gap-2 px-1.5", status.merge_base && !c.on_branch && i > 0 && commits[i - 1].on_branch && "border-t border-line")} title={`${c.subject}\n${c.author}, ${new Date(c.time * 1000).toLocaleString()}`}>
-              <span className={clsx("shrink-0", c.unpushed ? "text-red-400" : status.merge_base && !c.on_branch ? "text-emerald-500" : "text-amber-300")}>{short(c.sha)}</span>
+            <div
+              className={clsx("flex gap-2 px-1.5", status.merge_base && !c.on_branch && i > 0 && commits[i - 1].on_branch && "border-t border-line")}
+              title={`${c.subject}\n${c.author}, ${new Date(c.time * 1000).toLocaleString()}`}
+            >
+              <span className={clsx("shrink-0", c.unpushed ? "text-red-400" : status.merge_base && !c.on_branch ? "text-emerald-500" : "text-amber-300")}>
+                {short(c.sha)}
+              </span>
               <span className={clsx("min-w-0 flex-1 truncate", status.merge_base && !c.on_branch ? "text-faint" : "text-fg")}>{c.subject}</span>
               <span className="shrink-0 text-faint">{ago(c.time)}</span>
             </div>
@@ -185,7 +212,9 @@ export function SidePanels({
             items={turnList}
             selected={turnIdx}
             active={side === "turns"}
-            empty={turns.error ? `Couldn't load: ${turns.error}` : turns.data && !turns.data.available ? `No checkpoints: ${turns.data.reason}` : "No turns yet"}
+            empty={
+              turns.error ? `Couldn't load: ${turns.error}` : turns.data && !turns.data.available ? `No checkpoints: ${turns.data.reason}` : "No turns yet"
+            }
             onSelect={(t) => {
               setTurnN(t.n);
               if (side !== "turns" || inMain) focusSide("turns");
@@ -204,7 +233,10 @@ export function SidePanels({
               });
             }}
             render={(t, i) => (
-              <div className={clsx("flex gap-2 px-1.5", t.stale && "opacity-50")} title={`Turn ${t.turn}: ${t.text}\n${turnStat(t)}${t.stale ? "\nRewound: a rewind went back to before it" : ""}`}>
+              <div
+                className={clsx("flex gap-2 px-1.5", t.stale && "opacity-50")}
+                title={`Turn ${t.turn}: ${t.text}\n${turnStat(t)}${t.stale ? "\nRewound: a rewind went back to before it" : ""}`}
+              >
                 <span className={clsx("shrink-0", t.review_round ? "text-st-review" : "text-amber-300")}>#{t.turn}</span>
                 <span className={clsx("min-w-0 flex-1 truncate", t.auto ? "text-muted" : "text-fg", t.stale && "line-through")}>
                   {i === 0 && !t.stale && <span className="text-accent">latest · </span>}

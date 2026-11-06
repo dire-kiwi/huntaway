@@ -72,7 +72,13 @@ function parsed(v: unknown): Record<string, unknown> | null {
  */
 export function pushData(notification: Any): PushData | null {
   const req = notification?.request;
-  const candidates = [req?.content?.data, req?.content?.data?.dataString, req?.trigger?.remoteMessage?.data?.body, req?.trigger?.payload?.body, notification?.data?.dataString];
+  const candidates = [
+    req?.content?.data,
+    req?.content?.data?.dataString,
+    req?.trigger?.remoteMessage?.data?.body,
+    req?.trigger?.payload?.body,
+    notification?.data?.dataString,
+  ];
   for (const c of candidates) {
     const d = parsed(c);
     if (d && typeof d.board === "string" && d.board) {
@@ -235,7 +241,9 @@ export function responseHandler(deps: ResponseDeps) {
     }
     const title: string = r.notification?.request?.content?.title ?? "Huntaway";
     const url = await deps.boardUrl(d.board);
-    const answered: Answered = url ? await answerPrompt(deps.fetch, url, d, r.actionIdentifier) : { result: "invalid", message: "That board isn't paired with this phone any more." };
+    const answered: Answered = url
+      ? await answerPrompt(deps.fetch, url, d, r.actionIdentifier)
+      : { result: "invalid", message: "That board isn't paired with this phone any more." };
     if (id) await deps.dismiss(id).catch(() => {});
     const { answer: _, ...rest } = d;
     await deps.show(title, answered.message, rest).catch(() => {});

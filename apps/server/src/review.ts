@@ -551,7 +551,10 @@ export function submit(state: AppState, thread: Task, run_id: string, args: any)
   if (!reviewed_by(state, part, run_id)) throw ApiError.conflict("the review this run was asked for has ended, so there's nothing to submit");
   const si = args?.serious_issues;
   const issues: string[] = Array.isArray(si)
-    ? si.filter((i) => typeof i === "string").map((i: string) => i.trim()).filter((i) => i !== "")
+    ? si
+        .filter((i) => typeof i === "string")
+        .map((i: string) => i.trim())
+        .filter((i) => i !== "")
     : typeof si === "string" && si.trim() !== ""
       ? [si.trim()]
       : [];

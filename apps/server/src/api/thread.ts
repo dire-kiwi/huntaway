@@ -241,7 +241,8 @@ export async function fix_checks(s: AppState, r: Req) {
 export async function setup_worktree(s: AppState, r: Req) {
   const id = r.params.id;
   // Reviewers work in the worktree too.
-  if (worktree.agent_in_worktree(s, id)) throw ApiError.conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it");
+  if (worktree.agent_in_worktree(s, id))
+    throw ApiError.conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it");
   try {
     return await worktree.setup(s, id);
   } catch (e) {
@@ -252,10 +253,12 @@ export async function setup_worktree(s: AppState, r: Req) {
 export async function teardown_worktree(s: AppState, r: Req) {
   const id = r.params.id;
   // Reviewers work in the worktree too.
-  if (worktree.agent_in_worktree(s, id)) throw ApiError.conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it");
+  if (worktree.agent_in_worktree(s, id))
+    throw ApiError.conflict("an agent is working in the worktree (the task's or a reviewer's); wait for it to finish or stop it");
   // The body is optional: `{force, delete_branch}`, both false by default.
   const b = r.body !== null && typeof r.body === "object" && !Array.isArray(r.body) ? r.body : {};
-  const force = def_bool(b, "force"), delete_branch = def_bool(b, "delete_branch");
+  const force = def_bool(b, "force"),
+    delete_branch = def_bool(b, "delete_branch");
   try {
     return await worktree.teardown(s, id, force, delete_branch);
   } catch (e) {

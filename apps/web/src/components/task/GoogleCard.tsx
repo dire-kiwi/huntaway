@@ -58,7 +58,13 @@ export function GoogleCard({ assistant }: { assistant: Task }) {
       <div className="flex items-center gap-2">
         <span className={clsx("h-2 w-2 shrink-0 rounded-full", st.connected ? (st.verified === false ? "bg-amber-400" : "bg-emerald-400") : "bg-faint")} />
         <span className="min-w-0 flex-1 truncate text-fg">{st.connected ? `Connected as ${st.account}` : "Not connected"}</span>
-        <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => act("check")} title={st.connected ? "Check with Google that its sign-in still works" : "Look again"}>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={!!busy}
+          onClick={() => act("check")}
+          title={st.connected ? "Check with Google that its sign-in still works" : "Look again"}
+        >
           {busy === "check" && <Loader2 size={12} className="animate-spin" />} {st.connected ? "Test" : "Check again"}
         </Button>
       </div>

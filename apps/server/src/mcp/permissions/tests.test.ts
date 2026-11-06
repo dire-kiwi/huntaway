@@ -111,8 +111,14 @@ test("answers_to_claudes_questions_go_back_as_its_tool_takes_them", async () => 
   let t = db.get_task(s.db(), task.id)!;
   assert.deepEqual([t.status, t.attention_reason], ["needs_attention", "Which season? (and 1 more question)"]);
   // Answers are checked against the questions.
-  assert.equal(status_of(() => answer(s, id, true, false, null, answers([["Summer"]]))), 400);
-  assert.equal(status_of(() => answer(s, id, true, false, null, answers([["Summer", "Winter"], []]))), 400);
+  assert.equal(
+    status_of(() => answer(s, id, true, false, null, answers([["Summer"]]))),
+    400,
+  );
+  assert.equal(
+    status_of(() => answer(s, id, true, false, null, answers([["Summer", "Winter"], []]))),
+    400,
+  );
 
   assert.equal(answer(s, id, true, false, null, answers([[" Summer "], ["Cats", "Birds", "a lizard"]])), "allowed");
   const updated = { ...input, answers: { "Which season?": "Summer", "Which pets?": "Cats, Birds, a lizard" } };
@@ -151,7 +157,10 @@ test("answers_to_codexs_questions_go_back_by_question_id", async () => {
 test("questions_are_asked_whatever_the_threads_mode_unless_it_asks_nothing", async () => {
   const s = testing.state();
   const [task0] = running_task(s, null);
-  const task = s.update_task(task0.id, [["permission_mode", "bypassPermissions"], ["auto_allow", '["AskUserQuestion"]']])!;
+  const task = s.update_task(task0.id, [
+    ["permission_mode", "bypassPermissions"],
+    ["auto_allow", '["AskUserQuestion"]'],
+  ])!;
   // Bypass allows a tool call, but a question is still the user's to answer.
   assert.equal((await prompt(s, task, "b", "Bash", { command: "ls" }, null)).behavior, "allow");
   const [id, told] = await asked(s, task, "q", ASK_USER, two_questions());
@@ -206,7 +215,10 @@ test("an_approved_plan_carries_on_in_the_mode_picked", async () => {
 
   // Approved, into Accept edits: the agent's Claude Code switches to it too.
   [id, told] = await asked(s, task, "p2", EXIT_PLAN, plan);
-  assert.equal(status_of(() => answer(s, id, true, false, null, { mode: "plan" })), 400);
+  assert.equal(
+    status_of(() => answer(s, id, true, false, null, { mode: "plan" })),
+    400,
+  );
   answer(s, id, true, false, null, { mode: "acceptEdits" });
   assert.deepEqual(await told, {
     behavior: "allow",
@@ -241,7 +253,10 @@ test("a_question_or_plan_whose_run_ended_is_answered_by_message", async () => {
   expire_for_task(s, task.id);
   assert.deepEqual(await told, { behavior: "deny", message: EXPIRED });
   // A tool call can't be allowed once its run has ended.
-  assert.equal(status_of(() => decide(s, bash, true, false, null)), 409);
+  assert.equal(
+    status_of(() => decide(s, bash, true, false, null)),
+    409,
+  );
 
   // Without a run to take it (and no agents here to start one), the answer isn't sent, and can be given again.
   s.runs.delete(task.id);
@@ -261,7 +276,10 @@ test("a_question_or_plan_whose_run_ended_is_answered_by_message", async () => {
   assert.throws(() => answer(s, id, true, false, null, answers([["Summer"], []])));
 
   // The plan, approved: out of Plan mode, with a message to carry on.
-  s.update_task(task.id, [["permission_mode", "plan"], ["queued_message", null]]);
+  s.update_task(task.id, [
+    ["permission_mode", "plan"],
+    ["queued_message", null],
+  ]);
   answer(s, id_of(s, "c3"), true, false, null, { mode: "acceptEdits" });
   const t = db.get_task(s.db(), task.id)!;
   assert.deepEqual([t.permission_mode, t.queued_message], ["acceptEdits", "Your plan is approved: go ahead and implement it."]);
@@ -279,8 +297,14 @@ test("a_question_or_plan_the_conversation_has_moved_past_isnt_answered", async (
   const m = db.insert_message(s.db(), task.id, "user", { text: "Never mind, do this instead" });
   s.emit_message(m);
 
-  assert.equal(status_of(() => answer(s, question, true, false, null, answers([["Summer"], []]))), 409);
-  assert.equal(status_of(() => answer(s, plan, true, false, null, { mode: "acceptEdits" })), 409);
+  assert.equal(
+    status_of(() => answer(s, question, true, false, null, answers([["Summer"], []]))),
+    409,
+  );
+  assert.equal(
+    status_of(() => answer(s, plan, true, false, null, { mode: "acceptEdits" })),
+    409,
+  );
   assert.throws(() => answer(s, plan, false, false, null, { feedback: "More" }));
   // Nothing was sent, and the thread's still planning.
   const t = db.get_task(s.db(), task.id)!;
@@ -445,7 +469,14 @@ function call_in_turn(s: Shared, task: Task, run: db.Run, call_id: string, routi
   if (routine) data.routine = true;
   const m = s.add_message(task.id, "user", data);
   db.run(s.db(), "UPDATE runs SET turn_message_id=?1 WHERE id=?2", m.id, run.id);
-  db.run(s.db(), "INSERT INTO mcp_calls (id,run_id,task_id,tool,args,created_at) VALUES (?1,?2,?3,'permission_prompt','{}',?4)", call_id, run.id, task.id, now());
+  db.run(
+    s.db(),
+    "INSERT INTO mcp_calls (id,run_id,task_id,tool,args,created_at) VALUES (?1,?2,?3,'permission_prompt','{}',?4)",
+    call_id,
+    run.id,
+    task.id,
+    now(),
+  );
 }
 
 const deny = (message: string) => ({ behavior: "deny", message });
@@ -453,7 +484,14 @@ const expires_at = (s: Shared, id: string) => db.value<string | null>(s.db(), "S
 
 test("an_ask_rule_asks_the_user_even_in_bypass_and_each_time", async () => {
   const s = testing.state();
-  const [task] = assistant(s, [["mcp__g__send*", "ask"], ["mcp__g__get*", "allow"]], "bypassPermissions");
+  const [task] = assistant(
+    s,
+    [
+      ["mcp__g__send*", "ask"],
+      ["mcp__g__get*", "allow"],
+    ],
+    "bypassPermissions",
+  );
   // Bypass allows what no rule asks about, and what a rule allows.
   assert.equal((await prompt(s, task, "a", "Bash", {}, null)).behavior, "allow");
   assert.equal((await prompt(s, task, "b", "mcp__g__get_mail", {}, null)).behavior, "allow");
@@ -482,7 +520,14 @@ test("an_ask_rule_asks_the_user_even_in_bypass_and_each_time", async () => {
 
 test("never_rules_block_and_dont_ask_denies_what_a_rule_asks", async () => {
   const s = testing.state();
-  const [task0] = assistant(s, [["mcp__g__send*", "ask"], ["mcp__g__*delete*", "never"]], "default");
+  const [task0] = assistant(
+    s,
+    [
+      ["mcp__g__send*", "ask"],
+      ["mcp__g__*delete*", "never"],
+    ],
+    "default",
+  );
   const told = await prompt(s, task0, "a", "mcp__g__delete_mail", { id: "m1" }, null);
   assert.equal(told.behavior, "deny");
   assert.ok(told.message.startsWith(approval_rules.BLOCKED));
@@ -490,7 +535,10 @@ test("never_rules_block_and_dont_ask_denies_what_a_rule_asks", async () => {
   assert.deepEqual(await prompt(s, task, "b", "mcp__g__send_mail", {}, null), deny(DONT_ASK_DENIAL));
   // Neither was asked.
   assert.equal(db.value(s.db(), "SELECT COUNT(*) FROM permission_requests"), 0);
-  assert.deepEqual(log(s, task), [["mcp__g__delete_mail", "never", "blocked", "rule"], ["mcp__g__send_mail", "ask", "denied", "mode"]]);
+  assert.deepEqual(log(s, task), [
+    ["mcp__g__delete_mail", "never", "blocked", "rule"],
+    ["mcp__g__send_mail", "ask", "denied", "mode"],
+  ]);
   // Another thread of the profile isn't the assistant's: its mode decides.
   const [other0] = running_task(s, null);
   db.run(s.db(), "UPDATE tasks SET profile_id=?1 WHERE id=?2", task.profile_id, other0.id);

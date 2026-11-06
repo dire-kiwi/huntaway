@@ -20,8 +20,30 @@ import * as permissions from "../mcp/permissions.ts";
 import * as pr_watch from "../mcp/pr_watch.ts";
 import * as terminal from "../hosts/terminal.ts";
 import * as attachments from "../attachments.ts";
-import { canonical_or, char_count, components, debug_list, def_str, drop_guard, file_name, json_map, opt_bool, opt_str, path_starts_with, query_bool, req_str } from "./extract.ts";
-import { check_base_branch, check_config_ids, check_github_account, legacy_summarizer, reviewers_value, summarizer_mirror, summarizers_value } from "./profiles.ts";
+import {
+  canonical_or,
+  char_count,
+  components,
+  debug_list,
+  def_str,
+  drop_guard,
+  file_name,
+  json_map,
+  opt_bool,
+  opt_str,
+  path_starts_with,
+  query_bool,
+  req_str,
+} from "./extract.ts";
+import {
+  check_base_branch,
+  check_config_ids,
+  check_github_account,
+  legacy_summarizer,
+  reviewers_value,
+  summarizer_mirror,
+  summarizers_value,
+} from "./profiles.ts";
 import { ascii_lower } from "./new_task.ts";
 
 const is_dir = (p: string) => {
@@ -320,7 +342,10 @@ export async function update_project_inner(s: AppState, id: string, b: Record<st
         relocated.push(["repo_path", moved.repo_path]);
         relocated.push(["repo_root", moved.repo_root]);
         // Folders kept inside the repository moved with it, unless they're being set too.
-        for (const [k, v] of [["worktrees_root", moved.worktrees_root], ["scratch_path", moved.scratch_path]] as Array<[string, string | null]>) {
+        for (const [k, v] of [
+          ["worktrees_root", moved.worktrees_root],
+          ["scratch_path", moved.scratch_path],
+        ] as Array<[string, string | null]>) {
           if (v != null) relocated.push([k, v]);
         }
         for (const [k, v] of relocated) if (!fields.some(([f]) => f === k)) fields.push([k, v]);
@@ -405,8 +430,29 @@ function archive(s: AppState, p: Project) {
 }
 
 const PROJECT_FIELDS = [
-  "name", "key", "repo_path", "base_branch", "setup_script", "teardown_script", "status_script", "status_scripts", "use_worktrees", "permission_mode", "model",
-  "worktrees_root", "auto_review", "review_rounds", "reviewers", "auto_summary", "summarizer", "summarizers", "claude_config_ids", "start_prompt", "review_prompt", "merge_prompt", "group_name",
+  "name",
+  "key",
+  "repo_path",
+  "base_branch",
+  "setup_script",
+  "teardown_script",
+  "status_script",
+  "status_scripts",
+  "use_worktrees",
+  "permission_mode",
+  "model",
+  "worktrees_root",
+  "auto_review",
+  "review_rounds",
+  "reviewers",
+  "auto_summary",
+  "summarizer",
+  "summarizers",
+  "claude_config_ids",
+  "start_prompt",
+  "review_prompt",
+  "merge_prompt",
+  "group_name",
   "archived",
   "merge_approval",
   "require_pr_approval",
@@ -514,7 +560,8 @@ export async function project_fields(s: AppState, before: Project, b: Record<str
         break;
       }
       case "watch_pull_requests":
-        if (!(typeof v === "string" && pr_watch.WATCH_MODES.includes(v))) throw ApiError.bad(`watch_pull_requests must be one of ${debug_list(pr_watch.WATCH_MODES)}`);
+        if (!(typeof v === "string" && pr_watch.WATCH_MODES.includes(v)))
+          throw ApiError.bad(`watch_pull_requests must be one of ${debug_list(pr_watch.WATCH_MODES)}`);
         break;
       // null follows the profile's.
       case "merge_approval":
@@ -557,7 +604,8 @@ export async function project_fields(s: AppState, before: Project, b: Record<str
       }
       // null (or an empty list) uses the profile's configs.
       case "claude_config_ids": {
-        if (v !== null && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) throw ApiError.bad("claude_config_ids must be null or a list of config ids");
+        if (v !== null && !(Array.isArray(v) && v.every((x) => typeof x === "string")))
+          throw ApiError.bad("claude_config_ids must be null or a list of config ids");
         const ids = v === null ? null : check_config_ids(s.db(), v);
         f[1] = ids && ids.length ? JSON.stringify(ids) : null;
         break;
@@ -715,4 +763,3 @@ export async function project_branches(s: AppState, r: Req) {
   if (!project) throw ApiError.not_found("project");
   return { branches: await worktree.branches(expand_tilde(project.repo_path)) };
 }
-

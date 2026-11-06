@@ -100,7 +100,11 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
 
   const change = (i: number, r: Partial<ApprovalRule>) => setDraft((d) => d.map((x, j) => (j === i ? { ...x, ...r } : x)));
   const setCreates = (on: boolean) =>
-    setDraft((d) => (on ? [...d.filter((r) => !creates.includes(r.tool)), ...creates.map((tool) => ({ tool, decision: "ask" as const }))] : d.filter((r) => !creates.includes(r.tool))));
+    setDraft((d) =>
+      on
+        ? [...d.filter((r) => !creates.includes(r.tool)), ...creates.map((tool) => ({ tool, decision: "ask" as const }))]
+        : d.filter((r) => !creates.includes(r.tool)),
+    );
   const submit = () =>
     save.run(async () => {
       if (!expiryOk) throw new Error("The expiry is a whole number of minutes, at most a week (10080)");
@@ -121,10 +125,10 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
       <div className="space-y-3 text-[12.5px]" data-draft={dirty ? "" : undefined}>
         <p className="text-muted">
           For each tool or MCP server, the assistant may use it (<span className={DECISION_STYLE.allow}>allow</span>), asks you first each time (
-          <span className={DECISION_STYLE.ask}>ask</span>) or never does (<span className={DECISION_STYLE.never}>never</span>), whatever its
-          thread's mode. Name a tool (<code>mcp__{rules.google_server}__send_gmail_message</code>), a server for all its tools (
-          <code>mcp__{rules.google_server}</code>) or a pattern (<code>mcp__{rules.google_server}__*delete*</code>). When several match, never
-          beats ask, and ask beats allow. They hold from the assistant's next run.
+          <span className={DECISION_STYLE.ask}>ask</span>) or never does (<span className={DECISION_STYLE.never}>never</span>), whatever its thread's mode. Name
+          a tool (<code>mcp__{rules.google_server}__send_gmail_message</code>), a server for all its tools (<code>mcp__{rules.google_server}</code>) or a
+          pattern (<code>mcp__{rules.google_server}__*delete*</code>). When several match, never beats ask, and ask beats allow. They hold from the assistant's
+          next run.
         </p>
         <div className="max-h-[42vh] space-y-1 overflow-y-auto pr-1" aria-label="Rules">
           {draft.map((r, i) => (
@@ -206,19 +210,18 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
         </label>
         <div className="rounded-md border border-line bg-panel-2/60 p-2.5 text-[11.5px] text-faint">
           <p>
-            <span className="text-muted">Claude:</span> ask and never hold in every mode, Bypass included; in Don't ask, what a rule asks about
-            is denied.
+            <span className="text-muted">Claude:</span> ask and never hold in every mode, Bypass included; in Don't ask, what a rule asks about is denied.
           </p>
           <p className="mt-1">
-            <span className="text-muted">Codex:</span> for MCP tools, you answer its approvals yourself in Auto (not its reviewer); in Bypass
-            and Don't ask it can't ask, so what a rule asks about is refused, as is a tool that only a pattern allows. For its own tools (
-            <code>Bash</code>, <code>ApplyPatch</code>), an ask rule makes it ask about every command and file change in any mode, except
-            commands it takes as safe (reading files, listing them), which it runs without asking. It can't be kept from its own tools, so
-            with a never rule on them (or <code>*</code>) the assistant won't run on Codex.
+            <span className="text-muted">Codex:</span> for MCP tools, you answer its approvals yourself in Auto (not its reviewer); in Bypass and Don't ask it
+            can't ask, so what a rule asks about is refused, as is a tool that only a pattern allows. For its own tools (<code>Bash</code>,{" "}
+            <code>ApplyPatch</code>), an ask rule makes it ask about every command and file change in any mode, except commands it takes as safe (reading files,
+            listing them), which it runs without asking. It can't be kept from its own tools, so with a never rule on them (or <code>*</code>) the assistant
+            won't run on Codex.
           </p>
           <p className="mt-1">
-            <span className="text-muted">The board's tools</span> (<code>mcp__{rules.board_server}__…</code>) are held by the board, for
-            both. Deleting tasks, adding projects and changing automations always ask you, so an ask rule doesn't ask about them twice.
+            <span className="text-muted">The board's tools</span> (<code>mcp__{rules.board_server}__…</code>) are held by the board, for both. Deleting tasks,
+            adding projects and changing automations always ask you, so an ask rule doesn't ask about them twice.
           </p>
         </div>
         <ModalFooter className="flex items-center justify-end gap-2">

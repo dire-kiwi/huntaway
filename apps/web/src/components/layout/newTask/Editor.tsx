@@ -33,7 +33,9 @@ export function Editor({
   const highlighted: ReactNode[] = [];
   {
     let at = 0;
-    const marks = [...found.map((t) => ({ at: t.start, token: t })), ...(listOpen ? [{ at: completing!.start, token: null }] : [])].sort((a, b) => a.at - b.at || (a.token ? 1 : -1));
+    const marks = [...found.map((t) => ({ at: t.start, token: t })), ...(listOpen ? [{ at: completing!.start, token: null }] : [])].sort(
+      (a, b) => a.at - b.at || (a.token ? 1 : -1),
+    );
     for (const { token: t, at: s } of marks) {
       highlighted.push(description.slice(at, s));
       if (!t) {
@@ -49,7 +51,9 @@ export function Editor({
           key={t.start}
           className={clsx(
             settled && "rounded-[3px]",
-            known?.value !== undefined ? "bg-accent/20 text-[#c8c8ff] ring-1 ring-accent/30" : settled && "bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/30",
+            known?.value !== undefined
+              ? "bg-accent/20 text-[#c8c8ff] ring-1 ring-accent/30"
+              : settled && "bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/30",
           )}
         >
           {description.slice(t.start, t.end)}
@@ -124,7 +128,10 @@ export function Editor({
           }
         }}
         onPaste={attach.onPaste}
-        className={clsx(EDITOR_TEXT, "relative block w-full resize-y bg-transparent text-transparent caret-fg outline-none selection:bg-accent/30 placeholder:text-faint")}
+        className={clsx(
+          EDITOR_TEXT,
+          "relative block w-full resize-y bg-transparent text-transparent caret-fg outline-none selection:bg-accent/30 placeholder:text-faint",
+        )}
       />
       {listOpen && (
         <div

@@ -82,7 +82,11 @@ export function ActionLog({ task }: { task: Task }) {
                   <span className="min-w-0 truncate font-mono text-fg">{a.tool_name}</span>
                   <span className={clsx("ml-auto shrink-0 rounded px-1.5 py-0.5 text-[11px]", OUTCOME_STYLE[a.outcome])}>{a.outcome}</span>
                 </div>
-                {a.summary && <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted" title={a.summary}>{a.summary}</div>}
+                {a.summary && (
+                  <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted" title={a.summary}>
+                    {a.summary}
+                  </div>
+                )}
                 <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
                   <span>{outcomeText(a)}</span>
                   <span>

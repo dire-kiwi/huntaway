@@ -24,7 +24,11 @@ export function FanoutSection({ task }: { task: Task }) {
       title="Same prompt"
       right={
         compares && (
-          <button className="flex items-center gap-1 text-[11.5px] text-faint hover:text-fg" onClick={() => openCompare(task.id)} title="Compare their work side by side, and pick one">
+          <button
+            className="flex items-center gap-1 text-[11.5px] text-faint hover:text-fg"
+            onClick={() => openCompare(task.id)}
+            title="Compare their work side by side, and pick one"
+          >
             <GitCompareArrows size={12} /> Compare all {tasks.length}
           </button>
         )
@@ -79,17 +83,25 @@ export function CreatedTasksSection({ task }: { task: Task }) {
     </div>
   );
   return (
-    <Section title="Tasks" right={<span className="text-[11.5px]">{groupTask ? <GroupTaskBadge progress={progress} /> : <TaskTypeBadge type="plan" progress={progress} />}</span>}>
+    <Section
+      title="Tasks"
+      right={<span className="text-[11.5px]">{groupTask ? <GroupTaskBadge progress={progress} /> : <TaskTypeBadge type="plan" progress={progress} />}</span>}
+    >
       {inGroup.length === 0 ? (
         <div className="text-[12.5px] text-muted">
-          {groupTask ? "None yet. Its agent plans the work and creates tasks in the group's projects." : "None yet. Once you're happy with the plan, ask its agent to break it into tasks."}
+          {groupTask
+            ? "None yet. Its agent plans the work and creates tasks in the group's projects."
+            : "None yet. Once you're happy with the plan, ask its agent to break it into tasks."}
         </div>
       ) : (
         list(inGroup)
       )}
       {elsewhere.length > 0 && (
         <>
-          <div className="mt-2 mb-0.5 text-[11.5px] text-faint" title="Tasks its agent created outside the group's projects. They don't count towards its progress.">
+          <div
+            className="mt-2 mb-0.5 text-[11.5px] text-faint"
+            title="Tasks its agent created outside the group's projects. They don't count towards its progress."
+          >
             Outside the group
           </div>
           {list(elsewhere)}

@@ -60,7 +60,15 @@ function test_config(dir: string, email: string | null): any {
 const CLIENT = '{"installed": {"client_id": "id.apps.googleusercontent.com", "client_secret": "shh", "redirect_uris": ["http://localhost"]}}';
 
 function creds(refresh: string | null, scopes: string[]): string {
-  return JSON.stringify({ token: "at", refresh_token: refresh, token_uri: "https://oauth2.googleapis.com/token", client_id: "id", client_secret: "shh", scopes, expiry: null });
+  return JSON.stringify({
+    token: "at",
+    refresh_token: refresh,
+    token_uri: "https://oauth2.googleapis.com/token",
+    client_id: "id",
+    client_secret: "shh",
+    scopes,
+    expiry: null,
+  });
 }
 
 const set_config = (s: AppState, id: string, c: any) => db.run(s.db(), "UPDATE agent_mcp_servers SET config=?1 WHERE id=?2", JSON.stringify(c), id);
@@ -134,7 +142,10 @@ test("the_card_says_what_is_missing_until_google_is_connected", async () => {
   [, v] = await call(s, "GET", url);
   assert.deepEqual([v.connected, v.account], [true, "sam@example.com"], JSON.stringify(v));
   const warnings = JSON.stringify(v.warnings);
-  assert.ok(warnings.includes("chmod 600") && warnings.includes("gmail.readonly") && warnings.includes("drive.readonly") && !warnings.includes("calendar.readonly"), warnings);
+  assert.ok(
+    warnings.includes("chmod 600") && warnings.includes("gmail.readonly") && warnings.includes("drive.readonly") && !warnings.includes("calendar.readonly"),
+    warnings,
+  );
   assert.equal(status_line(s, p.id), "connected as sam@example.com");
   chmodSync(file, 0o600);
   writeFileSync(file, creds("rt", SCOPES));

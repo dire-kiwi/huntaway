@@ -9,7 +9,7 @@ import { SubagentRow } from "./subagents";
 type Any = any;
 
 export function toolMeta(name: string, input: Any, cwd?: string | null): { icon: ReactNode; label: string; summary: string } {
-  const rel = (p?: string) => (p && cwd && p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : p ?? "");
+  const rel = (p?: string) => (p && cwd && p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : (p ?? ""));
   const s = 13;
   switch (name) {
     case "Bash":
@@ -47,7 +47,11 @@ export function toolMeta(name: string, input: Any, cwd?: string | null): { icon:
   const board = /^mcp__(huntaway|issue_agent)__/;
   if (board.test(name)) {
     const tool = name.replace(board, "");
-    return { icon: <LayoutGrid size={s} />, label: "Board", summary: `${tool}${input?.title ? `  “${input.title}”` : input?.question ? `  ${input.question}` : ""}` };
+    return {
+      icon: <LayoutGrid size={s} />,
+      label: "Board",
+      summary: `${tool}${input?.title ? `  “${input.title}”` : input?.question ? `  ${input.question}` : ""}`,
+    };
   }
   return { icon: <Wrench size={s} />, label: name.replace(/^mcp__/, "").replace(/__/g, " · "), summary: "" };
 }
@@ -79,7 +83,9 @@ function PatchDiff({ change }: { change: Any }) {
         : l.startsWith("@@")
           ? "text-faint"
           : "text-[#c9c9d6]";
-  const lines = String(change.diff ?? "").replace(/\n$/, "").split("\n");
+  const lines = String(change.diff ?? "")
+    .replace(/\n$/, "")
+    .split("\n");
   return (
     <div>
       <div className="mb-1 font-mono text-[11.5px] text-muted">
@@ -161,10 +167,7 @@ function PlainToolRow({ call, running, cwd }: { call: Call; running: boolean; cw
   const pending = !call.result;
   return (
     <div data-tool-row>
-      <button
-        onClick={() => setOpen(!open)}
-        className="group flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12.5px] hover:bg-white/[0.03]"
-      >
+      <button onClick={() => setOpen(!open)} className="group flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12.5px] hover:bg-white/[0.03]">
         <ChevronRight size={12} className={clsx("shrink-0 text-faint transition-transform", open && "rotate-90")} />
         <span className="shrink-0 text-muted">{m.icon}</span>
         <span className="shrink-0 text-muted">{m.label}</span>

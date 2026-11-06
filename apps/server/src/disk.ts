@@ -149,7 +149,8 @@ function clean(p: string): string {
 
 /** `inner` is `outer` or inside it. */
 function within(inner: string, outer: string): boolean {
-  const i = clean(inner), o = clean(outer);
+  const i = clean(inner),
+    o = clean(outer);
   return i === o || i.startsWith(o === "/" ? "/" : `${o}/`);
 }
 
@@ -321,7 +322,11 @@ export function measure(plan: Plan, data_dir: string): Report {
   walks.push(...plan.runs.map(leaf));
   const sizes = walk_all(walks);
   const size = (w: Walk) => sizes.get(walk_key(w)) ?? null;
-  const runs_size = (dirs: string[]) => dirs.map((d) => size(leaf(d))).filter((s): s is Size => s !== null).reduce(add, Size_default());
+  const runs_size = (dirs: string[]) =>
+    dirs
+      .map((d) => size(leaf(d)))
+      .filter((s): s is Size => s !== null)
+      .reduce(add, Size_default());
 
   const projects: ProjectUsage[] = plan.projects.map((p) => {
     const git = size(p.git);
@@ -347,7 +352,10 @@ export function measure(plan: Plan, data_dir: string): Report {
       repo: repo !== null ? add(repo, git ?? Size_default()) : null,
       git,
       worktrees,
-      other: p.other.map(size).filter((s): s is Size => s !== null).reduce(add, Size_default()),
+      other: p.other
+        .map(size)
+        .filter((s): s is Size => s !== null)
+        .reduce(add, Size_default()),
       runs: runs_size(p.runs),
     };
   });

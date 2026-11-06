@@ -198,8 +198,23 @@ test("a_devices_websockets_are_checked_on_their_path", async () => {
   const addr = await serve(s);
   const [phone] = await pair_device(s, "phone");
   const p = db.insert_profile(s.db(), "work", [], null);
-  const t = db.insert_task(s.db(), { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
-  for (const path of [`/h/h/tasks/${t.id}/terminal/ws`, `/tasks/${t.id}/terminal/ws`, "/host/ws", "/h/h/ws", "/h/other/ws", `/h/h/tasks/${t.id}%2Fterminal%2Fws`]) {
+  const t = db.insert_task(s.db(), {
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "in_progress",
+    use_worktree: false,
+  });
+  for (const path of [
+    `/h/h/tasks/${t.id}/terminal/ws`,
+    `/tasks/${t.id}/terminal/ws`,
+    "/host/ws",
+    "/h/h/ws",
+    "/h/other/ws",
+    `/h/h/tasks/${t.id}%2Fterminal%2Fws`,
+  ]) {
     await assert.rejects(connect(`ws://${addr}/api${path}?token=${phone}`), /refused: 403/, path);
   }
   // The board's token still opens them.
@@ -213,7 +228,15 @@ test("the_inbox_lists_one_profiles_prompts", async () => {
   const work = db.insert_profile(s.db(), "work", [], null);
   const home = db.insert_profile(s.db(), "home", [], null);
   for (const p of [work, home]) {
-    const t = db.insert_task(s.db(), { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
+    const t = db.insert_task(s.db(), {
+      profile_id: p.id,
+      project_id: null,
+      kind: "task",
+      title: "t",
+      description: "",
+      status: "in_progress",
+      use_worktree: false,
+    });
     db.run(
       s.db(),
       "INSERT INTO permission_requests (id, task_id, message_id, tool_name, input, status, created_at) VALUES (?1, ?2, 0, 'Bash', '{}', 'pending', ?3)",
@@ -234,7 +257,15 @@ test("the_inbox_lists_one_profiles_prompts", async () => {
 /** A task, and a Claude login with a credentials file, for a device to try to reach. */
 function task_and_login(s: AppState, dir: string): [string, string] {
   const p = db.insert_profile(s.db(), "work", [], null);
-  const t = db.insert_task(s.db(), { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
+  const t = db.insert_task(s.db(), {
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "in_progress",
+    use_worktree: false,
+  });
   writeFileSync(join(dir, ".credentials.json"), "SECRET-LOGIN");
   const id = new_id();
   db.run(s.db(), "INSERT INTO claude_configs (id, name, config_dir, created_at) VALUES (?1, 'login', ?2, ?3)", id, dir, now());
@@ -300,7 +331,15 @@ test("a_device_cant_get_the_boards_tokens_or_a_shell", async () => {
   // As ?token= too.
   assert.equal((await call(s, "GET", `/api/hosts/join?token=${phone}`, ""))[0], 403);
   // What the app uses works.
-  for (const p of ["/api/hosts", "/api/devices", "/api/profiles", "/api/h/h/profiles", "/api/h/h/permissions", "/api/h/h/tasks/{task}", "/api/h/h/tasks/{task}/messages"]) {
+  for (const p of [
+    "/api/hosts",
+    "/api/devices",
+    "/api/profiles",
+    "/api/h/h/profiles",
+    "/api/h/h/permissions",
+    "/api/h/h/tasks/{task}",
+    "/api/h/h/tasks/{task}/messages",
+  ]) {
     const path = p.replace("{task}", task);
     assert.equal((await call(s, "GET", path, phone))[0], 200, path);
   }
@@ -364,7 +403,10 @@ test("credential_handlers_refuse_a_device_themselves", async () => {
   const r = api.makeReq("GET", `/api/tasks/${task}/terminal/ws`, {}, Buffer.alloc(0));
   r.params = { id: task };
   r.device = { id: "d", revoked: s.devices.revoked };
-  assert.throws(() => api.terminal_ws_check(s, r), (e: any) => e.status === 403);
+  assert.throws(
+    () => api.terminal_ws_check(s, r),
+    (e: any) => e.status === 403,
+  );
 });
 
 /** Another profile's routes, a revoked token and an unlisted route, through the proxy to a linked host too (HA-208). */

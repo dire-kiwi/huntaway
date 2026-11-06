@@ -22,9 +22,17 @@ test("a plan's sandboxed frame raises no errors, and errors in the page and the 
     await page.waitForTimeout(300);
     assert.deepEqual(ui.errors, []);
 
-    await page.evaluate(() => setTimeout(() => { throw new Error("boom in the page"); }));
+    await page.evaluate(() =>
+      setTimeout(() => {
+        throw new Error("boom in the page");
+      }),
+    );
     const child = page.frames().find((f) => f !== page.mainFrame());
-    await child.evaluate(() => setTimeout(() => { throw new Error("boom in the frame"); }));
+    await child.evaluate(() =>
+      setTimeout(() => {
+        throw new Error("boom in the frame");
+      }),
+    );
     await page.waitForTimeout(300);
     assert.equal(ui.errors.length, 2, ui.errors.join("\n"));
     assert.match(ui.errors.join("\n"), /boom in the page[^]*boom in the frame|boom in the frame[^]*boom in the page/);

@@ -10,8 +10,7 @@ export type SidebarEntry =
 export const groupKey = (hostId: string, name: string) => `${hostId}:${name}`;
 
 /** The projects of a group, in sidebar order. */
-export const groupProjects = (projects: Project[], hostId: string, name: string) =>
-  projects.filter((p) => p.host_id === hostId && p.group_name === name);
+export const groupProjects = (projects: Project[], hostId: string, name: string) => projects.filter((p) => p.host_id === hostId && p.group_name === name);
 
 /** A host's group names, in sidebar order. */
 export const groupNames = (projects: Project[], hostId: string) => [

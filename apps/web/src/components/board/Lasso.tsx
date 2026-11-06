@@ -56,7 +56,13 @@ export function useLasso(root: HTMLElement | null): Point[] | null {
       setPath(null);
     };
     const down = (e: PointerEvent) => {
-      if (e.button !== 2 || !e.ctrlKey || e.pointerType === "touch" || (e.target as Element).closest("input, textarea, select, [contenteditable], [data-modal]")) return;
+      if (
+        e.button !== 2 ||
+        !e.ctrlKey ||
+        e.pointerType === "touch" ||
+        (e.target as Element).closest("input, textarea, select, [contenteditable], [data-modal]")
+      )
+        return;
       e.preventDefault();
       drawing = { points: [{ x: e.clientX, y: e.clientY }], base: useSelection.getState().ids, add: e.shiftKey, target: e.target as Element };
       document.body.classList.add("select-none");
@@ -125,7 +131,8 @@ export function useClearSelection(active: boolean) {
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector("[data-modal]") && !(e.target as Element).closest?.("input, textarea, select, [contenteditable]")) useSelection.getState().clear();
+      if (e.key === "Escape" && !document.querySelector("[data-modal]") && !(e.target as Element).closest?.("input, textarea, select, [contenteditable]"))
+        useSelection.getState().clear();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

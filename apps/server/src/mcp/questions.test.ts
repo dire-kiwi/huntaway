@@ -88,12 +88,27 @@ test("a_question_with_options_is_answered_from_its_card", async () => {
   assert.equal(db.get_run(s.db(), run.id)!.attention, "Which colour?");
   const id = asked[0].id;
 
-  assert.equal(status_of(() => answer(s, task.id, id, pick(["Blue"], null))), 400);
-  assert.equal(status_of(() => answer(s, task.id, id, pick(["Red", "Green"], null))), 400);
-  assert.equal(status_of(() => answer(s, task.id, id, pick(["Red"], "and blue"))), 400);
-  assert.equal(status_of(() => answer(s, task.id, id, pick([], "  "))), 400);
+  assert.equal(
+    status_of(() => answer(s, task.id, id, pick(["Blue"], null))),
+    400,
+  );
+  assert.equal(
+    status_of(() => answer(s, task.id, id, pick(["Red", "Green"], null))),
+    400,
+  );
+  assert.equal(
+    status_of(() => answer(s, task.id, id, pick(["Red"], "and blue"))),
+    400,
+  );
+  assert.equal(
+    status_of(() => answer(s, task.id, id, pick([], "  "))),
+    400,
+  );
   // Not another thread's.
-  assert.equal(status_of(() => answer(s, "other", id, pick(["Red"], null))), 404);
+  assert.equal(
+    status_of(() => answer(s, "other", id, pick(["Red"], null))),
+    404,
+  );
 
   const t = answer(s, task.id, id, pick(["Red"], null));
   assert.equal(t.queued_message, "> Which colour?\n\nRed");
@@ -102,7 +117,10 @@ test("a_question_with_options_is_answered_from_its_card", async () => {
   const data = questions(s, task.id)[0].data;
   assert.deepEqual([data.status, data.answer], ["answered", { choices: ["Red"], text: null }]);
   // A second answer (another tab's) isn't sent.
-  assert.equal(status_of(() => answer(s, task.id, id, pick(["Green"], null))), 409);
+  assert.equal(
+    status_of(() => answer(s, task.id, id, pick(["Green"], null))),
+    409,
+  );
   assert.equal(db.get_task(s.db(), task.id)!.queued_message, "> Which colour?\n\nRed");
 });
 
@@ -152,7 +170,10 @@ test("a_question_the_conversation_has_moved_past_isnt_answered", async () => {
   // A message that doesn't settle it as the user's reply does (the board's own, say).
   db.insert_message(s.db(), task.id, "user", { text: "Merge it", auto: true });
   const id = questions(s, task.id)[0].id;
-  assert.equal(status_of(() => answer(s, task.id, id, pick(["A"], null))), 409);
+  assert.equal(
+    status_of(() => answer(s, task.id, id, pick(["A"], null))),
+    409,
+  );
   assert.equal(db.get_task(s.db(), task.id)!.queued_message, null);
 });
 
@@ -162,5 +183,8 @@ test("a_reply_in_the_thread_settles_its_questions", async () => {
   await ask_with(s, run, "c1", { question: "Which?", options: ["A", "B"] });
   replied(s, task.id);
   assert.equal(questions(s, task.id)[0].data.status, "replied");
-  assert.equal(status_of(() => answer(s, task.id, questions(s, task.id)[0].id, pick(["A"], null))), 409);
+  assert.equal(
+    status_of(() => answer(s, task.id, questions(s, task.id)[0].id, pick(["A"], null))),
+    409,
+  );
 });

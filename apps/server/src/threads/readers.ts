@@ -81,7 +81,8 @@ export interface Report {
 }
 
 /** JSON with objects' keys sorted, to compare. */
-const json = (v: unknown) => JSON.stringify(v ?? null, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x));
+const json = (v: unknown) =>
+  JSON.stringify(v ?? null, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x));
 
 export class Comparer {
   readers: Report["readers"] = {};
@@ -137,7 +138,9 @@ export function compare_task(cmp: Comparer, c: Conn, task_id: string): void {
   }
   cmp.check("last_turn_end", task_id, "", (from) => history.last_turn_end(c, task_id, from));
 
-  const times = db.all<{ created_at: string }>(c, "SELECT created_at FROM messages WHERE task_id=?1 AND kind='user' ORDER BY id", task_id).map((r) => r.created_at);
+  const times = db
+    .all<{ created_at: string }>(c, "SELECT created_at FROM messages WHERE task_id=?1 AND kind='user' ORDER BY id", task_id)
+    .map((r) => r.created_at);
   const all = db.all<{ created_at: string }>(c, "SELECT created_at FROM messages WHERE task_id=?1 ORDER BY id", task_id);
   const middle = all[Math.floor(all.length / 2)]?.created_at ?? "";
   for (const since of [null, middle]) {
@@ -149,7 +152,9 @@ export function compare_task(cmp: Comparer, c: Conn, task_id: string): void {
     cmp.check("user_wrote_since", task_id, t, (from) => history.user_wrote_since(c, task_id, t, from));
     cmp.check("user_messaged_since", task_id, t, (from) => history.user_messaged_since(c, task_id, t, from));
   }
-  const asked = db.all<{ id: number }>(c, "SELECT id FROM messages WHERE task_id=?1 AND kind IN ('question', 'permission') ORDER BY id", task_id).map((r) => r.id);
+  const asked = db
+    .all<{ id: number }>(c, "SELECT id FROM messages WHERE task_id=?1 AND kind IN ('question', 'permission') ORDER BY id", task_id)
+    .map((r) => r.id);
   for (const id of asked) cmp.check("moved_on", task_id, id, (from) => history.moved_on(c, task_id, id, from));
   cmp.check("open_questions", task_id, "", (from) => history.open_questions(c, task_id, from).map((q) => q.id));
   cmp.check("first_user_message", task_id, "", (from) => history.first_user_message(c, task_id, from));
@@ -249,7 +254,7 @@ export function compare(c: Conn, only: string[] = []): Report {
 function compare_board(cmp: Comparer, c: Conn): void {
   const s = { db: () => c } as unknown as Shared;
   cmp.check("pending_approvals", null, "", (from) => permissions.pending_approvals(s, true, true, true, from));
-  const by_time = (a: any, b: any) => json(a) < json(b) ? -1 : json(a) > json(b) ? 1 : 0;
+  const by_time = (a: any, b: any) => (json(a) < json(b) ? -1 : json(a) > json(b) ? 1 : 0);
   for (const { id } of db.all<{ id: string }>(c, "SELECT id FROM profiles ORDER BY id")) {
     cmp.check("analytics", null, `profile ${id}`, (from) => analytics.report(c, id, "", "9999", from).events.sort(by_time));
   }
@@ -294,4 +299,3 @@ export async function main(args: string[]): Promise<void> {
     c.close();
   }
 }
-

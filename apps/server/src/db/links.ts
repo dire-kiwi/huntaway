@@ -41,7 +41,12 @@ export function upsert_link(c: Conn, id: string, name: string, mode: string, url
     c,
     `INSERT INTO links (id,name,mode,url,token,last_seen,created_at) VALUES (?1,?2,?3,?4,?5,?6,?6)
          ON CONFLICT(id) DO UPDATE SET name=?2, mode=?3, url=COALESCE(?4,url), token=COALESCE(?5,token), last_seen=?6`,
-    id, name, mode, url, token, now(),
+    id,
+    name,
+    mode,
+    url,
+    token,
+    now(),
   );
   return get_link(c, id)!;
 }
@@ -55,6 +60,8 @@ export function note_inbound_link(c: Conn, id: string, name: string): void {
     c,
     `INSERT INTO links (id,name,mode,last_seen,created_at) VALUES (?1,?2,'inbound',?3,?3)
          ON CONFLICT(id) DO UPDATE SET name=?2, last_seen=?3`,
-    id, name, now(),
+    id,
+    name,
+    now(),
   );
 }

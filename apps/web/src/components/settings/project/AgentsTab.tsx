@@ -49,11 +49,7 @@ function ProjectConfigs({ project, onChange }: { project: Project; onChange: (id
   return (
     <div className="space-y-3 rounded-xl border border-line p-4">
       <div className="space-y-1.5">
-        <Toggle
-          checked={own}
-          onChange={(v) => onChange(v ? (profile?.claude_config_ids ?? []) : null)}
-          label="Use its own agent configs"
-        />
+        <Toggle checked={own} onChange={(v) => onChange(v ? (profile?.claude_config_ids ?? []) : null)} label="Use its own agent configs" />
         <div className="text-[12px] text-faint">
           {own ? "New tasks pick from these; with more than one, they ask which, starting with the default." : `Uses the profile's: ${label}.`}
         </div>

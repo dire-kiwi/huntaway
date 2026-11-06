@@ -10,7 +10,21 @@ import type { Opened, Origin, Where } from "./useWhere";
 import { isLabelWord } from "./words";
 
 /** A value in the "Reads as" row: one a token set has an × that takes the token out; a dashed one is the default. */
-function ReadsChip({ icon, label, title, onRemove, removeTitle = "Remove", dashed }: { icon?: ReactNode; label: ReactNode; title?: string; onRemove?: () => void; removeTitle?: string; dashed?: boolean }) {
+function ReadsChip({
+  icon,
+  label,
+  title,
+  onRemove,
+  removeTitle = "Remove",
+  dashed,
+}: {
+  icon?: ReactNode;
+  label: ReactNode;
+  title?: string;
+  onRemove?: () => void;
+  removeTitle?: string;
+  dashed?: boolean;
+}) {
   return (
     <span
       title={title}
@@ -22,7 +36,13 @@ function ReadsChip({ icon, label, title, onRemove, removeTitle = "Remove", dashe
       {icon && <span className="shrink-0 text-accent">{icon}</span>}
       <span className="truncate">{label}</span>
       {onRemove && (
-        <button type="button" className="-mr-0.5 shrink-0 rounded p-0.5 text-faint hover:bg-white/5 hover:text-fg" title={removeTitle} aria-label={removeTitle} onClick={onRemove}>
+        <button
+          type="button"
+          className="-mr-0.5 shrink-0 rounded p-0.5 text-faint hover:bg-white/5 hover:text-fg"
+          title={removeTitle}
+          aria-label={removeTitle}
+          onClick={onRemove}
+        >
           <X size={11} />
         </button>
       )}
@@ -36,7 +56,26 @@ export function ReadsAs({ opened, origin, where, agent, tok }: { opened: Opened;
   const { group } = origin;
   const { typeTabs, noProject, asGroup, project } = where;
   const { model, setModel, codex, inherited, efforts, setEffort, hostSettings, modelList } = agent;
-  const { tokens, taskType, labels, labelling, untoken, docType, named, runLabel, harnessOf, fanout, runs, pickedEffort, dependsOn, depTasks, depKey, startFrom, fromTask, codeTask } = tok;
+  const {
+    tokens,
+    taskType,
+    labels,
+    labelling,
+    untoken,
+    docType,
+    named,
+    runLabel,
+    harnessOf,
+    fanout,
+    runs,
+    pickedEffort,
+    dependsOn,
+    depTasks,
+    depKey,
+    startFrom,
+    fromTask,
+    codeTask,
+  } = tok;
   // What the tokens set, and what a token set (its × takes it out).
   const setBy = (prefix: TokenPrefix) => tokens.some((t) => t.prefix === prefix && t.value !== undefined);
   const removeKind = (prefix: TokenPrefix) => () => untoken((t) => t.prefix === prefix && !(prefix === "/" && isLabelWord(t.value)));
@@ -112,7 +151,11 @@ export function ReadsAs({ opened, origin, where, agent, tok }: { opened: Opened;
         <ReadsChip
           icon={<GitBranch size={12} />}
           label={`from ${startFrom}`}
-          title={fromTask ? `Its worktree starts from ${startFrom}'s branch (${fromTask.title}), which its pull request targets` : `Its worktree starts from ${startFrom}`}
+          title={
+            fromTask
+              ? `Its worktree starts from ${startFrom}'s branch (${fromTask.title}), which its pull request targets`
+              : `Its worktree starts from ${startFrom}`
+          }
           onRemove={removeKind("from:")}
           removeTitle="Start from the base branch"
         />

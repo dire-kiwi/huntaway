@@ -333,7 +333,13 @@ export interface Steer {
 
 export function Steer_from_json(v: any): Steer {
   obj(v, "Steer");
-  const s: Steer = { id: de_str(v, "id"), text: de_str(v, "text"), from_agent: de_def_bool(v, "from_agent"), run_id: de_str(v, "run_id"), written: de_def_bool(v, "written") };
+  const s: Steer = {
+    id: de_str(v, "id"),
+    text: de_str(v, "text"),
+    from_agent: de_def_bool(v, "from_agent"),
+    run_id: de_str(v, "run_id"),
+    written: de_def_bool(v, "written"),
+  };
   return Steer_with(s, Array.isArray(v.routine_runs) ? v.routine_runs.filter((x: any) => typeof x === "string") : [], v.routine === true);
 }
 

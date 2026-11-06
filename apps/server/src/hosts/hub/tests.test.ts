@@ -271,7 +271,10 @@ test("a_host_dialled_in_over_a_dead_connection_reconnects", async () => {
   // then, rather than after the request timeout.
   p.freeze();
   const waiting = await Promise.race([
-    first.request("GET", "/api/info").then(() => null, (e) => e),
+    first.request("GET", "/api/info").then(
+      () => null,
+      (e) => e,
+    ),
     sleep(relay.SILENCE * 3).then(() => "timeout"),
   ]);
   assert.notEqual(waiting, "timeout", "the request still waits");
@@ -353,7 +356,13 @@ test("a_host_dialling_in_keeps_its_link_and_a_second_one_is_refused", async () =
 
   // Another host with the same id is turned away, and the first stays connected.
   const twin = node("host", "twin");
-  const refused = await Promise.race([tunnel_to(twin, url, "hub-hub").then(() => null, (e) => e), sleep(5000).then(() => "timeout")]);
+  const refused = await Promise.race([
+    tunnel_to(twin, url, "hub-hub").then(
+      () => null,
+      (e) => e,
+    ),
+    sleep(5000).then(() => "timeout"),
+  ]);
   assert.notEqual(refused, "timeout", "the twin's tunnel stays up");
   assert.ok(err_str(refused).includes("already connected"), err_str(refused));
   assert.equal(find_link(hub, "host"), first);
@@ -396,9 +405,21 @@ test("a_linked_hosts_thread_and_its_events_are_relayed", async () => {
     }
     await until(`the ${kind} link`, () => find_link(hub, "host"));
     const p = db.insert_profile(host.db(), "personal", [], null);
-    const t = db.insert_task(host.db(), { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
+    const t = db.insert_task(host.db(), {
+      profile_id: p.id,
+      project_id: null,
+      kind: "task",
+      title: "t",
+      description: "",
+      status: "in_progress",
+      use_worktree: false,
+    });
     const events = read_jsonl("thread.events.jsonl").filter((e: any) => e.type !== "delta" && e.type !== "thread.updated");
-    store.append(host.db(), t.id, events.map(({ thread_id: _t, seq: _s, ...e }: any) => e));
+    store.append(
+      host.db(),
+      t.id,
+      events.map(({ thread_id: _t, seq: _s, ...e }: any) => e),
+    );
 
     // Its routes, through the hub's path for the host.
     const [status, state] = await call(hub, "GET", `/api/h/host/tasks/${t.id}/thread?limit=8`);
@@ -424,11 +445,15 @@ test("a_linked_hosts_thread_and_its_events_are_relayed", async () => {
     live.send_resync(host, t.id);
     await until(`${kind}: the events at the hub`, () => got.length >= 3);
     off();
-    assert.deepEqual(got.map((v) => [v.type, v.host_id, v.task_id, v.event?.type ?? null, v.event?.seq ?? null]), [
-      ["thread_event", "host", t.id, "item.added", saved[0].seq],
-      ["thread_event", "host", t.id, "delta", saved[0].seq],
-      ["thread_resync", "host", t.id, null, null],
-    ], kind);
+    assert.deepEqual(
+      got.map((v) => [v.type, v.host_id, v.task_id, v.event?.type ?? null, v.event?.seq ?? null]),
+      [
+        ["thread_event", "host", t.id, "item.added", saved[0].seq],
+        ["thread_event", "host", t.id, "delta", saved[0].seq],
+        ["thread_resync", "host", t.id, null, null],
+      ],
+      kind,
+    );
     for (const f of cleanups.splice(0)) f();
   }
 });

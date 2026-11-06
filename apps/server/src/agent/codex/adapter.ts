@@ -373,7 +373,10 @@ function decline(reply: Responder, msg: any) {
     case "item/tool/requestUserInput":
       return reply.result(id, { answers: {} });
     case "item/tool/call":
-      return reply.result(id, { contentItems: [{ type: "inputText", text: `The board's ${str(p.tool) ?? ""} tool isn't available in this run.` }], success: false });
+      return reply.result(id, {
+        contentItems: [{ type: "inputText", text: `The board's ${str(p.tool) ?? ""} tool isn't available in this run.` }],
+        success: false,
+      });
     default:
       reply.error(id, `Method not supported by Huntaway: ${str(msg.method) ?? ""}`);
   }
@@ -467,7 +470,11 @@ function read_stdin(): Promise<string> {
 /** A stream-json user message's text: a string, or text blocks. */
 function user_text(content: any): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((b) => str(b?.text)).filter((t) => t !== null).join("\n\n");
+  if (Array.isArray(content))
+    return content
+      .map((b) => str(b?.text))
+      .filter((t) => t !== null)
+      .join("\n\n");
   return "";
 }
 

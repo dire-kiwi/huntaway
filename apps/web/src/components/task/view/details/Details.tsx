@@ -1,7 +1,22 @@
 import clsx from "clsx";
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { api, CHECKS_API, documentsOnly, hasApprovalRules, hasBrief, hasTelegram, hostSupports, isAssistant, isScratch, LABELS_API, START_FROM_API, taskLabels, type Host, type Task } from "../../../../api";
+import {
+  api,
+  CHECKS_API,
+  documentsOnly,
+  hasApprovalRules,
+  hasBrief,
+  hasTelegram,
+  hostSupports,
+  isAssistant,
+  isScratch,
+  LABELS_API,
+  START_FROM_API,
+  taskLabels,
+  type Host,
+  type Task,
+} from "../../../../api";
 import { RulesSection } from "../../ApprovalRules";
 import { GoogleCard } from "../../GoogleCard";
 import { TelegramSection } from "../../Telegram";
@@ -99,8 +114,8 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         <Section title="Assistant">
           <div className="space-y-1">
             <div className="text-[12.5px] text-muted">
-              This profile's assistant: one lasting conversation, outside every project. It has the profile's skills and MCP servers and the
-              board's tools, and hands code work to project tasks. Its agent works in its own folder.
+              This profile's assistant: one lasting conversation, outside every project. It has the profile's skills and MCP servers and the board's tools, and
+              hands code work to project tasks. Its agent works in its own folder.
             </div>
             {task.work_dir && (
               <Row label="Folder">
@@ -179,7 +194,11 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             <div className="space-y-2">
               <div className="text-[12.5px] text-muted">Runs directly in the project repository.</div>
               {project?.use_worktrees !== undefined && project.is_git !== false && (
-                <Toggle checked={false} onChange={(v) => api.updateTask(task.host_id, task.id, { use_worktree: v }).catch((e) => setErr("worktree", e.message))} label="Use a worktree" />
+                <Toggle
+                  checked={false}
+                  onChange={(v) => api.updateTask(task.host_id, task.id, { use_worktree: v }).catch((e) => setErr("worktree", e.message))}
+                  label="Use a worktree"
+                />
               )}
             </div>
           ) : (
@@ -223,7 +242,9 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
                   </span>
                 </Row>
               )}
-              {task.worktree_error && <div className="rounded bg-red-500/10 p-2 font-mono text-[11px] whitespace-pre-wrap text-red-300">{task.worktree_error}</div>}
+              {task.worktree_error && (
+                <div className="rounded bg-red-500/10 p-2 font-mono text-[11px] whitespace-pre-wrap text-red-300">{task.worktree_error}</div>
+              )}
               <div className="flex flex-wrap gap-2 pt-2">
                 {task.worktree_state !== "ready" && (
                   <Button size="sm" disabled={wtBusy || task.running} onClick={() => run(() => api.setupWorktree(task.host_id, task.id))}>
@@ -236,7 +257,11 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
                   </Button>
                 )}
                 {task.worktree_state === "none" && (
-                  <Button size="sm" variant="ghost" onClick={() => api.updateTask(task.host_id, task.id, { use_worktree: false }).catch((e) => setErr("worktree", e.message))}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => api.updateTask(task.host_id, task.id, { use_worktree: false }).catch((e) => setErr("worktree", e.message))}
+                  >
                     Don't use a worktree
                   </Button>
                 )}

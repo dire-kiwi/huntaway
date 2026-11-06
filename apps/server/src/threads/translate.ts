@@ -24,7 +24,20 @@
 // warns about them as if they never came (see `from`). `finish` says what a history that has ended leaves undone.
 
 import type {
-  Item, NewEvent, PermissionMode, PermissionRequest, Question, QuestionRequest, Resolution, Snapshot, SubagentState, SubagentStatus, ThreadRequest, ToolCall, ToolKind, ToolStatus,
+  Item,
+  NewEvent,
+  PermissionMode,
+  PermissionRequest,
+  Question,
+  QuestionRequest,
+  Resolution,
+  Snapshot,
+  SubagentState,
+  SubagentStatus,
+  ThreadRequest,
+  ToolCall,
+  ToolKind,
+  ToolStatus,
 } from "./protocol.ts";
 
 /**
@@ -361,7 +374,8 @@ export class Translator {
       }
     }
     for (const [call, list] of this.waiting_prompts) {
-      for (const p of list.filter((p) => !p.linked)) this.warn(p.message_id, "ambiguous_call", `a prompt for call ${call}, which no call with the id and its input asked`);
+      for (const p of list.filter((p) => !p.linked))
+        this.warn(p.message_id, "ambiguous_call", `a prompt for call ${call}, which no call with the id and its input asked`);
     }
     for (const [parent, list] of this.missing_parents) {
       for (const id of list) this.warn(id, "missing_parent", `its parent call ${parent} isn't in the thread`);
@@ -616,7 +630,10 @@ export class Translator {
     const tool = typeof d.tool_name === "string" ? d.tool_name : "";
     const input = d.input ?? {};
     const call = str(d, "tool_use_id");
-    const base: { id: string; created_at: string; tool_call_id?: string; parent_id?: string; metadata?: { [k: string]: unknown } } = { id, created_at: m.created_at };
+    const base: { id: string; created_at: string; tool_call_id?: string; parent_id?: string; metadata?: { [k: string]: unknown } } = {
+      id,
+      created_at: m.created_at,
+    };
     // The call it's for, the first time the thread sees it.
     if (call !== undefined && !this.requests.has(id)) {
       const c = this.prompted(m.id, id, call, input);
@@ -624,7 +641,8 @@ export class Translator {
       else if (c) {
         base.tool_call_id = c.item;
         const p = this.calls.get(c.item)!;
-        const parent = p.parent_raw === null ? undefined : (this.calls_with(p.parent_raw).find((x) => same_session(x.session, p.session))?.item ?? p.parent_raw);
+        const parent =
+          p.parent_raw === null ? undefined : (this.calls_with(p.parent_raw).find((x) => same_session(x.session, p.session))?.item ?? p.parent_raw);
         if (parent !== undefined) base.parent_id = parent;
       }
     } else if (this.requests.has(id)) {
@@ -784,7 +802,18 @@ export class Translator {
     const session = str(m.data, "session_id");
     this.set_meta(id, { call_id: id !== call_id ? call_id : undefined, session });
     const parent_raw = str(m.data, "parent_tool_use_id") ?? null;
-    const c: Call = { item: id, call_id, kind: fields.kind, status: "running", title: fields.title, has_result: false, model: str(block.input, "model"), parent_raw, session, input: fields.input };
+    const c: Call = {
+      item: id,
+      call_id,
+      kind: fields.kind,
+      status: "running",
+      title: fields.title,
+      has_result: false,
+      model: str(block.input, "model"),
+      parent_raw,
+      session,
+      input: fields.input,
+    };
     this.add_call(c);
     // What was stored before it: its subagent's messages named it already, and its prompt or result may have come.
     this.missing_parents.delete(call_id);
@@ -1067,7 +1096,10 @@ export function convert(messages: Iterable<Message>, o: { finished?: boolean; fr
 }
 
 /** The items and requests `events` make, from none (protocol.ts's reducer, without a thread). */
-export function fold(events: Iterable<NewEvent>, from: Pick<Snapshot, "items" | "requests"> = { items: [], requests: [] }): { items: Item[]; requests: ThreadRequest[] } {
+export function fold(
+  events: Iterable<NewEvent>,
+  from: Pick<Snapshot, "items" | "requests"> = { items: [], requests: [] },
+): { items: Item[]; requests: ThreadRequest[] } {
   // A Map by id keeps this linear on long threads; protocol.ts's apply_event is the reference, and the tests compare.
   const items = new Map<string, Item>(from.items.map((i) => [i.id, i]));
   const requests = new Map<string, ThreadRequest>(from.requests.map((r) => [r.id, r]));
@@ -1106,7 +1138,14 @@ export function fold(events: Iterable<NewEvent>, from: Pick<Snapshot, "items" | 
 
 /** The board's permission mode (db.PERMISSION_MODES) in the protocol's terms. */
 export function permission_mode(mode: string): PermissionMode | undefined {
-  const modes: Record<string, PermissionMode> = { default: "default", acceptEdits: "accept_edits", auto: "auto", plan: "plan", dontAsk: "dont_ask", bypassPermissions: "bypass" };
+  const modes: Record<string, PermissionMode> = {
+    default: "default",
+    acceptEdits: "accept_edits",
+    auto: "auto",
+    plan: "plan",
+    dontAsk: "dont_ask",
+    bypassPermissions: "bypass",
+  };
   return modes[mode];
 }
 
@@ -1375,7 +1414,14 @@ function subagent_task(s: SubagentState, m: any, at: string): SubagentState {
  * A subagent call's subagent, as its result says (`meta`: the result's tool_use_result, which the board keeps for Agent
  * calls); undefined for a call whose subagent never started.
  */
-function subagent_result(s: SubagentState | undefined, is_error: boolean, interrupted: boolean, meta: any, text: string, at: string): SubagentState | undefined {
+function subagent_result(
+  s: SubagentState | undefined,
+  is_error: boolean,
+  interrupted: boolean,
+  meta: any,
+  text: string,
+  at: string,
+): SubagentState | undefined {
   if (!s && is_error) return undefined;
   const next: SubagentState = { ...(s ?? { status: "running" }) };
   const model = str(meta, "resolvedModel");

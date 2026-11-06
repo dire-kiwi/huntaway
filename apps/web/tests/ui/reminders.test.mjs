@@ -121,7 +121,7 @@ test("overlapping failed saves end up as the server has the task", async () => {
     await page.route("**/tasks/*", (route) => (route.request().method() === "PATCH" ? held.push(route) : route.continue()));
     await ui.run([`rclick ${card}`, "click [role=menu] >> text=Star", "wait css=aside >> text=Starred"]);
     await ui.run([`rclick ${card}`, "click [role=menu] >> text=Unstar", "gone css=aside >> text=Starred"]);
-    for (const until = Date.now() + 5000; held.length < 2 && Date.now() < until; ) await page.waitForTimeout(20);
+    for (const until = Date.now() + 5000; held.length < 2 && Date.now() < until;) await page.waitForTimeout(20);
     assert.equal(held.length, 2);
     const fail = (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"save failed"}' });
     await fail(held[0]);
@@ -147,14 +147,14 @@ test("a failed snooze doesn't bring back a reminder cleared meanwhile", async ()
     const row = "css=aside >> text=An idea for later";
     await ui.run([`rclick ${row}`, "click [role=menu] >> text=Remind me in 1 hour", "wait css=aside >> text=in 1h"]);
     await ui.run([`rclick ${row}`, "click [role=menu] >> text=Clear reminder", "gone css=aside >> text=Reminders"]);
-    for (const until = Date.now() + 5000; held.length < 2 && Date.now() < until; ) await page.waitForTimeout(20);
+    for (const until = Date.now() + 5000; held.length < 2 && Date.now() < until;) await page.waitForTimeout(20);
     assert.equal(held.length, 2);
     await held[0].fulfill({ status: 503, contentType: "application/json", body: '{"error":"snooze failed"}' });
     await ui.run(["wait snooze failed", "sleep 300"]);
     assert.doesNotMatch(await sidebar(page), /Reminders/i, "the pending clear still shows");
     await held[1].continue();
     await page.unrouteAll();
-    for (const until = Date.now() + 5000; (await taskNamed(card)).remind_at && Date.now() < until; ) await page.waitForTimeout(50);
+    for (const until = Date.now() + 5000; (await taskNamed(card)).remind_at && Date.now() < until;) await page.waitForTimeout(50);
     const saved = await taskNamed(card);
     assert.equal(saved.remind_at, null);
     assert.equal(saved.reminder, null);

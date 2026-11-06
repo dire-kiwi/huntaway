@@ -320,9 +320,19 @@ export function Analytics() {
                 </select>
                 {preset === "custom" && (
                   <span className="flex items-center gap-1.5 text-[12px] text-faint">
-                    <input type="date" className={selectClass} value={custom.from} onChange={(e) => e.target.value && setCustom({ ...custom, from: e.target.value })} />
+                    <input
+                      type="date"
+                      className={selectClass}
+                      value={custom.from}
+                      onChange={(e) => e.target.value && setCustom({ ...custom, from: e.target.value })}
+                    />
                     to
-                    <input type="date" className={selectClass} value={custom.to} onChange={(e) => e.target.value && setCustom({ ...custom, to: e.target.value })} />
+                    <input
+                      type="date"
+                      className={selectClass}
+                      value={custom.to}
+                      onChange={(e) => e.target.value && setCustom({ ...custom, to: e.target.value })}
+                    />
                   </span>
                 )}
                 {preset !== "custom" && <span className="text-[12px] text-faint tabular-nums">{rangeLabel(range)}</span>}
@@ -431,27 +441,26 @@ export function Analytics() {
               )}
               {tab === "tokens" ? (
                 <p className="text-[11.5px] leading-relaxed text-faint">
-                  Tokens are counted from each agent run's output once it ends, for the model that used them (subagents' included), and go to the day
-                  the run started. A review or summary thread's tokens count towards the task it's for, and a subproject's tasks' towards the
-                  subproject. Tokens are uncached input, cache reads and writes, and output. Cost is what Claude Code reports; Codex doesn't say.
-                  Runs from before this version are counted from the output the board still keeps (two weeks of it); older runs show only what they
-                  cost, marked *. Reviews count each reviewer's verdict in a round once. A task's first round and its rounds of fixes are all of its
-                  rounds, those outside the range too, for the tasks reviewed in it; a round found issues if any of its reviewers did. Minor issues
-                  are listed by reviews from this version on; earlier ones count as noting minor issues when their summary mentions some.
-                  Follow-ups are tasks the reviewed task's agent created after such a review.
+                  Tokens are counted from each agent run's output once it ends, for the model that used them (subagents' included), and go to the day the run
+                  started. A review or summary thread's tokens count towards the task it's for, and a subproject's tasks' towards the subproject. Tokens are
+                  uncached input, cache reads and writes, and output. Cost is what Claude Code reports; Codex doesn't say. Runs from before this version are
+                  counted from the output the board still keeps (two weeks of it); older runs show only what they cost, marked *. Reviews count each reviewer's
+                  verdict in a round once. A task's first round and its rounds of fixes are all of its rounds, those outside the range too, for the tasks
+                  reviewed in it; a round found issues if any of its reviewers did. Minor issues are listed by reviews from this version on; earlier ones count
+                  as noting minor issues when their summary mentions some. Follow-ups are tasks the reviewed task's agent created after such a review.
                 </p>
               ) : tab === "context" ? (
                 <p className="text-[11.5px] leading-relaxed text-faint">
                   A turn's context is what its agent's session held when the turn ended, which the next prompt starts from: the system prompt, tools and the
-                  conversation so far. Compactions are Idle (the board's, after a session sat idle for a while), /compact (sent by someone) and the agent's
-                  own (as its context filled up). Turn sizes are recorded from this version on; compactions go back further, from what threads show.
+                  conversation so far. Compactions are Idle (the board's, after a session sat idle for a while), /compact (sent by someone) and the agent's own
+                  (as its context filled up). Turn sizes are recorded from this version on; compactions go back further, from what threads show.
                 </p>
               ) : (
                 <p className="text-[11.5px] leading-relaxed text-faint">
-                  Active time credits each prompt with the time since your previous prompt on any task, so reading an agent's output and writing the next
-                  prompt counts toward the task you prompted. Gaps over {hm(rules.idleMin * 60_000)} are breaks; the first prompt after one counts{" "}
-                  {hm(rules.leadMin * 60_000)}. Prompts are the messages you send, plus starting a task and moving it to Ready for merge. Agent time is how
-                  long agents ran, including reviews.
+                  Active time credits each prompt with the time since your previous prompt on any task, so reading an agent's output and writing the next prompt
+                  counts toward the task you prompted. Gaps over {hm(rules.idleMin * 60_000)} are breaks; the first prompt after one counts{" "}
+                  {hm(rules.leadMin * 60_000)}. Prompts are the messages you send, plus starting a task and moving it to Ready for merge. Agent time is how long
+                  agents ran, including reviews.
                 </p>
               )}
             </div>
@@ -623,7 +632,11 @@ function TaskTable({ view }: { view: View }) {
     groups.set(p.id, g);
   }
   const sorted = [...groups.values()].sort((x, y) => y.active - x.active || y.agent - x.agent);
-  const total = sorted.reduce((n, g) => ({ active: n.active + g.active, agent: n.agent + g.agent, prompts: n.prompts + g.prompts }), { active: 0, agent: 0, prompts: 0 });
+  const total = sorted.reduce((n, g) => ({ active: n.active + g.active, agent: n.agent + g.agent, prompts: n.prompts + g.prompts }), {
+    active: 0,
+    agent: 0,
+    prompts: 0,
+  });
   const when = (t: number | null) =>
     t === null ? "" : new Date(t).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
@@ -647,7 +660,12 @@ function TaskTable({ view }: { view: View }) {
             </thead>
             <tbody className="divide-y divide-line">
               {sorted.map((g) => (
-                <ProjectRows key={g.project.id} collapsed={!!collapsed[g.project.id]} onToggle={() => setCollapsed({ ...collapsed, [g.project.id]: !collapsed[g.project.id] })} g={g}>
+                <ProjectRows
+                  key={g.project.id}
+                  collapsed={!!collapsed[g.project.id]}
+                  onToggle={() => setCollapsed({ ...collapsed, [g.project.id]: !collapsed[g.project.id] })}
+                  g={g}
+                >
                   {g.rows
                     .sort((x, y) => y.active - x.active || y.agent - x.agent)
                     .map((r) => {
@@ -655,7 +673,7 @@ function TaskTable({ view }: { view: View }) {
                       return (
                         <tr key={r.taskId} className={clsx("bg-bg/40", t && "cursor-pointer hover:bg-raised")} onClick={() => openTask(t)}>
                           <td className="py-1.5 pr-3 pl-9">
-                            <span className="mr-2 font-mono text-[11.5px] text-faint">{t?.kind === "scratch" ? "chat" : t?.key ?? ""}</span>
+                            <span className="mr-2 font-mono text-[11.5px] text-faint">{t?.kind === "scratch" ? "chat" : (t?.key ?? "")}</span>
                             <span className={clsx(!t && "text-faint italic")}>{t?.title || (t ? "Untitled" : "Deleted task")}</span>
                           </td>
                           <td className="px-3 py-1.5 text-right tabular-nums text-muted">{r.prompts || ""}</td>
@@ -740,7 +758,11 @@ function PromptLog({ events, a, open: initiallyOpen = false, title = "Prompt log
             {shown.map((e, i) => {
               const t = a.tasks[e.taskId];
               return (
-                <button key={`${e.at}-${i}`} onClick={() => openTask(t)} className="flex w-full items-start gap-3 bg-panel/60 px-3 py-2 text-left hover:bg-raised">
+                <button
+                  key={`${e.at}-${i}`}
+                  onClick={() => openTask(t)}
+                  className="flex w-full items-start gap-3 bg-panel/60 px-3 py-2 text-left hover:bg-raised"
+                >
                   <span className="w-28 shrink-0 pt-px text-[11.5px] text-faint tabular-nums">
                     {multiDay ? new Date(e.at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : clock(e.at)}
                   </span>
@@ -789,7 +811,9 @@ function DayTimeline({ view, day }: { view: View; day: number }) {
     const e = Math.min(s.end, end);
     return e > start ? { ...s, start, end: e } : null;
   };
-  const mine = mergeSpans(view.spans).map(clipTo).filter((s): s is Span => !!s);
+  const mine = mergeSpans(view.spans)
+    .map(clipTo)
+    .filter((s): s is Span => !!s);
   const runs = view.runs.map(clipTo).filter((s): s is RunSpan => !!s);
   const events = view.events.filter((e) => e.at >= day && e.at < end);
   const runLanes = lanes(runs).slice(0, 6);
@@ -818,7 +842,11 @@ function DayTimeline({ view, day }: { view: View; day: number }) {
         <div />
         <div className="relative h-4">
           {hoursShown.map((h) => (
-            <span key={h} className="absolute -translate-x-1/2 text-[10.5px] whitespace-nowrap text-faint tabular-nums" style={{ left: `${((h - startH) * 100) / span}%` }}>
+            <span
+              key={h}
+              className="absolute -translate-x-1/2 text-[10.5px] whitespace-nowrap text-faint tabular-nums"
+              style={{ left: `${((h - startH) * 100) / span}%` }}
+            >
               {hourLabel(day, h)}
             </span>
           ))}
@@ -880,7 +908,11 @@ function HourLines({ hours, startH, span }: { hours: number[]; startH: number; s
   return (
     <>
       {hours.map((h) => (
-        <div key={h} className="pointer-events-none absolute -top-1 -bottom-1 border-l border-white/[0.05]" style={{ left: `${((h - startH) * 100) / span}%` }} />
+        <div
+          key={h}
+          className="pointer-events-none absolute -top-1 -bottom-1 border-l border-white/[0.05]"
+          style={{ left: `${((h - startH) * 100) / span}%` }}
+        />
       ))}
     </>
   );
@@ -1121,7 +1153,9 @@ function DayDetail({ view, day }: { view: View; day: number }) {
 
   return (
     <section className="space-y-4">
-      <h2 className="text-[13px] font-medium">{new Date(day).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</h2>
+      <h2 className="text-[13px] font-medium">
+        {new Date(day).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+      </h2>
       <DayTimeline view={dayView} day={day} />
       {(dayView.events.length > 0 || dayView.runs.length > 0) && (
         <>

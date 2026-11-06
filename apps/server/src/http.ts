@@ -121,13 +121,16 @@ export class Router {
 
   /** The route for `path`, with its parameters. Static segments win over parameters. */
   find(path: string): { route: Route; params: Record<string, string> } | null {
-    const parts = path.split("/").filter(Boolean).map((p) => {
-      try {
-        return decodeURIComponent(p);
-      } catch {
-        return p;
-      }
-    });
+    const parts = path
+      .split("/")
+      .filter(Boolean)
+      .map((p) => {
+        try {
+          return decodeURIComponent(p);
+        } catch {
+          return p;
+        }
+      });
     const rawParts = path.split("/").filter(Boolean);
     let best: { route: Route; params: Record<string, string>; score: number } | null = null;
     for (const route of this.routes) {
@@ -142,7 +145,10 @@ export class Router {
             ok = false;
             break;
           }
-          params[seg.slice(2, -1)] = rawParts.slice(i).map((p) => safeDecode(p)).join("/");
+          params[seg.slice(2, -1)] = rawParts
+            .slice(i)
+            .map((p) => safeDecode(p))
+            .join("/");
           i = parts.length;
           break;
         }

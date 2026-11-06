@@ -13,7 +13,14 @@ test("a prompt's questions are read whatever the agent sent", () => {
     },
   };
   assert.deepEqual(questionsOf(data), [
-    { question: "Which?", header: "Pick", options: [{ label: "A", description: "first", preview: undefined }, { label: "B" }], multiSelect: true, isOther: undefined, isSecret: false },
+    {
+      question: "Which?",
+      header: "Pick",
+      options: [{ label: "A", description: "first", preview: undefined }, { label: "B" }],
+      multiSelect: true,
+      isOther: undefined,
+      isSecret: false,
+    },
     { question: "(no question)", header: undefined, options: [], multiSelect: false, isOther: false, isSecret: true },
   ]);
   assert.deepEqual(questionsOf({ input: { plan: "x" } }), []);

@@ -14,9 +14,34 @@ import * as codex from "../codex.ts";
 import * as runner from "../runner.ts";
 import * as permissions from "../../mcp/permissions.ts";
 import {
-  BLOCKED, BOARD_SERVER_NAMES, HOOK_FAILED, MAX_EXPIRY_MINUTES, Rules_default, applies_to, blocked_reason, checked, claude_disallowed, claude_hook, claude_matcher,
-  codex_needs_user_reviewer, codex_own_tools, codex_policy, codex_server, decide, default_rules, for_mode, for_task, get, hook_decision, list,
-  matches, needs_prompt_tool, on_tool_results, parse_rule_list, set, summarize,
+  BLOCKED,
+  BOARD_SERVER_NAMES,
+  HOOK_FAILED,
+  MAX_EXPIRY_MINUTES,
+  Rules_default,
+  applies_to,
+  blocked_reason,
+  checked,
+  claude_disallowed,
+  claude_hook,
+  claude_matcher,
+  codex_needs_user_reviewer,
+  codex_own_tools,
+  codex_policy,
+  codex_server,
+  decide,
+  default_rules,
+  for_mode,
+  for_task,
+  get,
+  hook_decision,
+  list,
+  matches,
+  needs_prompt_tool,
+  on_tool_results,
+  parse_rule_list,
+  set,
+  summarize,
 } from "../approval_rules.ts";
 import type { Decision, Rule, Rules } from "../approval_rules.ts";
 
@@ -56,7 +81,11 @@ test("a_rule_names_a_tool_a_server_or_a_pattern", () => {
 });
 
 test("the_strongest_matching_rule_decides", () => {
-  const r = rules([["mcp__google", "allow"], ["mcp__google__*send*", "ask"], ["mcp__google__*delete*", "never"]]);
+  const r = rules([
+    ["mcp__google", "allow"],
+    ["mcp__google__*send*", "ask"],
+    ["mcp__google__*delete*", "never"],
+  ]);
   assert.equal(decided(r, "mcp__google__search"), "allow");
   assert.equal(decided(r, "mcp__google__send_mail"), "ask");
   assert.equal(decided(r, "mcp__google__send_then_delete"), "never");
@@ -72,18 +101,37 @@ test("the_google_defaults_read_and_draft_ask_to_send_and_never_delete", () => {
   const r = Rules_default();
   const g = (t: string) => decided(r, `mcp__google__${t}`);
   for (const t of [
-    "search_gmail_messages", "get_gmail_message_content", "list_calendars", "get_events", "search_drive_files", "get_drive_file_content", "draft_gmail_message",
-    "list_drive_items", "get_drive_file_permissions",
+    "search_gmail_messages",
+    "get_gmail_message_content",
+    "list_calendars",
+    "get_events",
+    "search_drive_files",
+    "get_drive_file_content",
+    "draft_gmail_message",
+    "list_drive_items",
+    "get_drive_file_permissions",
   ]) {
     assert.equal(g(t), "allow", t);
   }
   for (const t of [
-    "send_gmail_message", "create_event", "modify_event", "delete_event", "share_drive_file", "modify_gmail_message_labels", "batch_modify_gmail_message_labels",
-    "update_drive_permission", "manage_event", "update_drive_file", "create_gmail_filter", "transfer_drive_ownership", "manage_gmail_label",
+    "send_gmail_message",
+    "create_event",
+    "modify_event",
+    "delete_event",
+    "share_drive_file",
+    "modify_gmail_message_labels",
+    "batch_modify_gmail_message_labels",
+    "update_drive_permission",
+    "manage_event",
+    "update_drive_file",
+    "create_gmail_filter",
+    "transfer_drive_ownership",
+    "manage_gmail_label",
   ]) {
     assert.equal(g(t), "ask", t);
   }
-  for (const t of ["delete_gmail_message", "trash_gmail_message", "delete_drive_file", "trash_drive_file", "gmail_deleteMessage"]) assert.equal(g(t), "never", t);
+  for (const t of ["delete_gmail_message", "trash_gmail_message", "delete_drive_file", "trash_drive_file", "gmail_deleteMessage"])
+    assert.equal(g(t), "never", t);
   // Another server's tools, and the board's, are left to the thread's mode.
   assert.equal(decided(r, "mcp__other__send_gmail_message"), null);
   assert.equal(decided(r, "mcp__huntaway__create_task"), null);
@@ -99,14 +147,34 @@ test("the_google_defaults_fit_the_google_servers_own_tools", () => {
   const r = Rules_default();
   const g = (t: string) => decided(r, `mcp__${google.SERVER}__${t}`);
   const allow = [
-    "search_gmail_messages", "get_gmail_message_content", "get_gmail_messages_content_batch", "get_gmail_attachment_content", "get_gmail_thread_content",
-    "list_gmail_labels", "draft_gmail_message", "list_gmail_filters", "list_calendars", "get_events", "query_freebusy", "search_drive_files",
-    "get_drive_file_content", "get_drive_file_download_url", "list_drive_items",
+    "search_gmail_messages",
+    "get_gmail_message_content",
+    "get_gmail_messages_content_batch",
+    "get_gmail_attachment_content",
+    "get_gmail_thread_content",
+    "list_gmail_labels",
+    "draft_gmail_message",
+    "list_gmail_filters",
+    "list_calendars",
+    "get_events",
+    "query_freebusy",
+    "search_drive_files",
+    "get_drive_file_content",
+    "get_drive_file_download_url",
+    "list_drive_items",
   ];
   for (const t of allow) assert.equal(g(t), "allow", t);
   const ask = [
-    "send_gmail_message", "modify_gmail_message_labels", "manage_gmail_label", "manage_gmail_filter", "manage_event", "manage_out_of_office",
-    "manage_focus_time", "update_drive_file", "manage_drive_access", "set_drive_file_permissions",
+    "send_gmail_message",
+    "modify_gmail_message_labels",
+    "manage_gmail_label",
+    "manage_gmail_filter",
+    "manage_event",
+    "manage_out_of_office",
+    "manage_focus_time",
+    "update_drive_file",
+    "manage_drive_access",
+    "set_drive_file_permissions",
     // It reads a link, but may make the file shareable to give one.
     "get_drive_shareable_link",
   ];
@@ -115,10 +183,29 @@ test("the_google_defaults_fit_the_google_servers_own_tools", () => {
 });
 
 test("rules_are_tidied_and_checked_for_saving", () => {
-  const r = checked(rules([[" mcp__a ", "allow"], ["", "ask"], ["mcp__b", "ask"]]));
+  const r = checked(
+    rules([
+      [" mcp__a ", "allow"],
+      ["", "ask"],
+      ["mcp__b", "ask"],
+    ]),
+  );
   assert.deepEqual(r.rules, [rule("mcp__a", "allow"), rule("mcp__b", "ask")]);
   // A pattern twice is refused, whatever its case or decisions, rather than one of them dropped.
-  const dups: Array<Array<[string, Decision]>> = [[["Bash", "allow"], ["Bash", "never"]], [[" mcp__a ", "never"], ["MCP__A", "allow"]], [["x", "ask"], ["x", "ask"]]];
+  const dups: Array<Array<[string, Decision]>> = [
+    [
+      ["Bash", "allow"],
+      ["Bash", "never"],
+    ],
+    [
+      [" mcp__a ", "never"],
+      ["MCP__A", "allow"],
+    ],
+    [
+      ["x", "ask"],
+      ["x", "ask"],
+    ],
+  ];
   for (const dup of dups) assert.throws(() => checked(rules(dup)), /more than one rule/);
   assert.throws(() => checked(rules([["send mail", "ask"]])));
   assert.throws(() => checked({ ...rules([]), expiry_minutes: MAX_EXPIRY_MINUTES + 1 }));
@@ -127,7 +214,11 @@ test("rules_are_tidied_and_checked_for_saving", () => {
 });
 
 test("plan_mode_takes_no_allow_rules", () => {
-  const r = rules([["mcp__g__get*", "allow"], ["mcp__g__send*", "ask"], ["mcp__g__del*", "never"]]);
+  const r = rules([
+    ["mcp__g__get*", "allow"],
+    ["mcp__g__send*", "ask"],
+    ["mcp__g__del*", "never"],
+  ]);
   assert.equal(decided(for_mode(r, "plan"), "mcp__g__get_mail"), null);
   assert.equal(decided(for_mode(r, "plan"), "mcp__g__send_mail"), "ask");
   assert.equal(decided(for_mode(r, "default"), "mcp__g__get_mail"), "allow");
@@ -138,7 +229,12 @@ function call(tool: string): any {
 }
 
 test("the_hook_allows_asks_or_blocks_by_the_rules", () => {
-  const r = rules([["mcp__g__get*", "allow"], ["mcp__g__send*", "ask"], ["mcp__g__del*", "never"], ["mcp__huntaway__create_task", "ask"]]);
+  const r = rules([
+    ["mcp__g__get*", "allow"],
+    ["mcp__g__send*", "ask"],
+    ["mcp__g__del*", "never"],
+    ["mcp__huntaway__create_task", "ask"],
+  ]);
   const out = (tool: string) => hook_decision(r, call(tool))?.hookSpecificOutput.permissionDecision ?? null;
   assert.equal(out("mcp__g__get_mail"), "allow");
   assert.equal(out("mcp__g__send_mail"), "ask");
@@ -153,7 +249,13 @@ test("the_hook_allows_asks_or_blocks_by_the_rules", () => {
 });
 
 test("claude_gets_the_hook_the_prompt_tool_and_the_tools_that_are_never", () => {
-  const r = rules([["mcp__g__get*", "allow"], ["mcp__g__send_mail", "ask"], ["mcp__g__delete_mail", "never"], ["mcp__x", "never"], ["mcp__g__*trash*", "never"]]);
+  const r = rules([
+    ["mcp__g__get*", "allow"],
+    ["mcp__g__send_mail", "ask"],
+    ["mcp__g__delete_mail", "never"],
+    ["mcp__x", "never"],
+    ["mcp__g__*trash*", "never"],
+  ]);
   const hook = claude_hook("/opt/it's/huntaway", r);
   assert.equal(hook.matcher, "^(?:[mM][cC][pP]__[gG](?:__[\\s\\S]*)?|[mM][cC][pP]__[xX](?:__[\\s\\S]*)?)$");
   const command: string = hook.hooks[0].command;
@@ -173,21 +275,56 @@ test("claude_gets_the_hook_the_prompt_tool_and_the_tools_that_are_never", () => 
   const board = rules([["mcp__huntaway__create_task", "ask"]]);
   assert.equal(claude_hook("/h", board), null);
   assert.ok(!needs_prompt_tool(board) && claude_disallowed(board).length === 0);
-  assert.ok(!needs_prompt_tool(rules([["mcp__g__get*", "allow"], ["mcp__g__x", "never"]])));
+  assert.ok(
+    !needs_prompt_tool(
+      rules([
+        ["mcp__g__get*", "allow"],
+        ["mcp__g__x", "never"],
+      ]),
+    ),
+  );
 });
 
 // The hook runs only for the calls its matcher matches, and a call it misses goes through as though no rule matched it:
 // the matcher must match every tool a rule does, whatever its case (HA-245).
 test("the_hooks_matcher_matches_every_tool_a_rule_does_and_only_the_servers_they_name", () => {
   const patterns = [
-    "mcp__google", "mcp__Google__send_gmail_message", "mcp__google__*send*", "mcp__goo*", "mcp__*", "mcp__*__delete*", "mcp__g___x",
-    "mcp__a.b-c(1)+[x]{2}|y^$\\z/w", "MCP__Work", " mcp__kit__x ", "mcp__", "mcp____x", "mcp__k*__x",
+    "mcp__google",
+    "mcp__Google__send_gmail_message",
+    "mcp__google__*send*",
+    "mcp__goo*",
+    "mcp__*",
+    "mcp__*__delete*",
+    "mcp__g___x",
+    "mcp__a.b-c(1)+[x]{2}|y^$\\z/w",
+    "MCP__Work",
+    " mcp__kit__x ",
+    "mcp__",
+    "mcp____x",
+    "mcp__k*__x",
   ];
   const tools = [
-    "mcp__google", "mcp__google__send_gmail_message", "mcp__GOOGLE__Send_Gmail_Message", "mcp__gOoGlE__list", "mcp__googlex__send",
-    "mcp__goober__x", "mcp__g___x", "mcp__g__x", "mcp__a.b-c(1)+[x]{2}|y^$\\z/w__t", "mcp__aXb-c(1)+[x]{2}|y^$\\z/w__t", "mcp__work__x",
-    "Mcp__WORK", "mcp__\u212Ait__x", "mcp__k\u0130t__x", "mcp__kit__x", "mcp____x", "mcp__", "mcp__other__x", "mcp__huntaway__create_task",
-    "Bash", "mcp__google__line\nbreak",
+    "mcp__google",
+    "mcp__google__send_gmail_message",
+    "mcp__GOOGLE__Send_Gmail_Message",
+    "mcp__gOoGlE__list",
+    "mcp__googlex__send",
+    "mcp__goober__x",
+    "mcp__g___x",
+    "mcp__g__x",
+    "mcp__a.b-c(1)+[x]{2}|y^$\\z/w__t",
+    "mcp__aXb-c(1)+[x]{2}|y^$\\z/w__t",
+    "mcp__work__x",
+    "Mcp__WORK",
+    "mcp__\u212Ait__x",
+    "mcp__k\u0130t__x",
+    "mcp__kit__x",
+    "mcp____x",
+    "mcp__",
+    "mcp__other__x",
+    "mcp__huntaway__create_task",
+    "Bash",
+    "mcp__google__line\nbreak",
   ];
   for (const pattern of patterns) {
     const matcher = claude_matcher([{ tool: pattern, decision: "ask" }]);
@@ -204,12 +341,24 @@ test("the_hooks_matcher_matches_every_tool_a_rule_does_and_only_the_servers_they
   assert.ok(google.test("mcp__google__send_gmail_message") && google.test("mcp__Google__x"));
   for (const tool of ["mcp__huntaway__list_tasks", "mcp__gh__pr_view", "mcp__googlex__send", "Bash"]) assert.ok(!google.test(tool), tool);
   // Every tool for a rule that isn't an MCP server's, or one a non-ASCII letter's other cases could match.
-  assert.equal(claude_matcher([{ tool: "mcp__g__x", decision: "ask" }, { tool: "Bash", decision: "never" }]), "*");
+  assert.equal(
+    claude_matcher([
+      { tool: "mcp__g__x", decision: "ask" },
+      { tool: "Bash", decision: "never" },
+    ]),
+    "*",
+  );
   assert.equal(claude_matcher([{ tool: "mcp__é__x", decision: "ask" }]), "*");
 });
 
 test("codex_asks_about_every_call_of_a_server_a_rule_may_match", () => {
-  const r = rules([["mcp__g__get*", "allow"], ["mcp__g__read_mail", "allow"], ["mcp__g__send_mail", "ask"], ["mcp__g__delete_mail", "never"], ["mcp__off", "never"]]);
+  const r = rules([
+    ["mcp__g__get*", "allow"],
+    ["mcp__g__read_mail", "allow"],
+    ["mcp__g__send_mail", "ask"],
+    ["mcp__g__delete_mail", "never"],
+    ["mcp__off", "never"],
+  ]);
   const g: any = { command: "g", default_tools_approval_mode: "approve", disabled_tools: ["x"] };
   assert.ok(codex_server(r, "g", g));
   assert.equal(g.default_tools_approval_mode, "prompt");
@@ -227,11 +376,29 @@ test("codex_asks_about_every_call_of_a_server_a_rule_may_match", () => {
   assert.equal(any.default_tools_approval_mode, "prompt");
   // Only allow rules: nothing asks that didn't before.
   const allowed: any = {};
-  assert.ok(codex_server(rules([["mcp__g__get_mail", "allow"], ["mcp__g__list*", "allow"]]), "g", allowed));
+  assert.ok(
+    codex_server(
+      rules([
+        ["mcp__g__get_mail", "allow"],
+        ["mcp__g__list*", "allow"],
+      ]),
+      "g",
+      allowed,
+    ),
+  );
   assert.deepEqual(allowed, { tools: { get_mail: { approval_mode: "approve" } } });
   // An exact allow that a stronger pattern overrules isn't approved up front.
   const overruled: any = {};
-  assert.ok(codex_server(rules([["mcp__g__delete_draft", "allow"], ["mcp__g__*delete*", "never"]]), "g", overruled));
+  assert.ok(
+    codex_server(
+      rules([
+        ["mcp__g__delete_draft", "allow"],
+        ["mcp__g__*delete*", "never"],
+      ]),
+      "g",
+      overruled,
+    ),
+  );
   assert.deepEqual(overruled.tools, {});
   // The board's own server is the board's to hold.
   const board: any = {};
@@ -250,7 +417,15 @@ test("inputs_are_summed_up_in_a_line", () => {
 
 function new_task(s: ReturnType<typeof testing.state>, profile_id: string, parent: string | null): Task {
   const t = db.insert_task(s.db(), {
-    profile_id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null,
+    profile_id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+    model: null,
+    effort: null,
     claude_config_id: null,
   });
   return parent !== null ? db.update_task(s.db(), t.id, [["parent_id", parent]])! : t;
@@ -292,7 +467,10 @@ test("calls_the_hook_blocked_go_in_the_action_log", () => {
   on_tool_results(s, task, result);
   // Not another tool's output that quotes the reason (mail about the rules, say), nor a board tool's refusal, which the
   // board logs itself.
-  for (const [id, name] of [["toolu_3", "mcp__google__search_gmail_messages"], ["toolu_4", "mcp__huntaway__delete_task"]]) {
+  for (const [id, name] of [
+    ["toolu_3", "mcp__google__search_gmail_messages"],
+    ["toolu_4", "mcp__huntaway__delete_task"],
+  ]) {
     s.add_message(task.id, "claude", use(id, name, {}));
   }
   set(s.db(), profile.id, { rules: [...default_rules(), rule("mcp__huntaway__delete_task", "never")], expiry_minutes: 30 });
@@ -317,7 +495,15 @@ test("calls_the_hook_blocked_go_in_the_action_log", () => {
 
 test("codex_asks_about_its_own_tools_for_an_ask_rule_and_wont_run_with_a_never_rule", () => {
   assert.equal(codex_own_tools(Rules_default()), false);
-  assert.equal(codex_own_tools(rules([["mcp__g__x", "never"], ["Bash", "ask"]])), true);
+  assert.equal(
+    codex_own_tools(
+      rules([
+        ["mcp__g__x", "never"],
+        ["Bash", "ask"],
+      ]),
+    ),
+    true,
+  );
   assert.equal(codex_own_tools(rules([["Bash", "allow"]])), false);
   for (const never of ["Bash", "*", "ApplyPatch"]) {
     assert.throws(
@@ -380,7 +566,11 @@ const STRICT = '[{"tool": "mcp__google__*send*", "decision": "ask"}, {"tool": "m
 const hook_call = (tool: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: {} });
 
 test("the_hook_decides_by_the_rules", () => {
-  for (const [tool, want] of [["mcp__google__send_mail", "ask"], ["mcp__google__delete_mail", "deny"], ["mcp__google__get_mail", null]] as const) {
+  for (const [tool, want] of [
+    ["mcp__google__send_mail", "ask"],
+    ["mcp__google__delete_mail", "deny"],
+    ["mcp__google__get_mail", null],
+  ] as const) {
     const out = hook(STRICT, hook_call(tool));
     assert.equal(out.status, 0, `${tool}: ${out.stderr}`);
     assert.equal(hook_out(out), want, tool);
@@ -389,7 +579,12 @@ test("the_hook_decides_by_the_rules", () => {
 
 test("the_hook_refuses_what_it_cant_check_while_rules_ask_or_refuse", () => {
   // Input it can't read, rules it can't read: refused, which exit code 2 is for a PreToolUse hook.
-  const cases: Array<[string, string]> = [[STRICT, "not json"], [STRICT, "{}"], ["not rules", hook_call("mcp__google__get_mail")], [STRICT, ""]];
+  const cases: Array<[string, string]> = [
+    [STRICT, "not json"],
+    [STRICT, "{}"],
+    ["not rules", hook_call("mcp__google__get_mail")],
+    [STRICT, ""],
+  ];
   for (const [rules, input] of cases) {
     const out = hook(rules, input);
     assert.equal(out.status, 2, `${rules} ${input}`);
@@ -437,7 +632,11 @@ registerHooks({
 test("the_hook_runs_without_import_meta_main", () => {
   const env = old_node();
   const run = (args: string[], input: string) => spawnSync(BIN, args, { input, encoding: "utf8", env });
-  for (const [rules, input] of [[STRICT, "not json"], [STRICT, "{}"], ["not rules", hook_call("mcp__google__get_mail")]]) {
+  for (const [rules, input] of [
+    [STRICT, "not json"],
+    [STRICT, "{}"],
+    ["not rules", hook_call("mcp__google__get_mail")],
+  ]) {
     const out = run(["approval-hook", rules], input);
     assert.equal(out.status, 2, `${rules} ${input}: ${out.stderr}`);
     assert.ok(out.stderr.includes("couldn't be checked"), out.stderr);
@@ -491,11 +690,20 @@ test("hook_main_refuses_calls_with_hook_faileds_message_when_hook_ts_cant_be_loa
 // code 2, as from hook_main.ts, rather than 1, which lets it through.
 test("the_hook_through_main_ts_decides_and_refuses_as_through_bin_huntaway", () => {
   const main = (args: string[], input: string) => node_run([join(SRC, "main.ts"), "approval-hook", ...args], input);
-  for (const [tool, want] of [["mcp__google__send_mail", "ask"], ["mcp__google__delete_mail", "deny"], ["mcp__google__get_mail", null]] as const) {
+  for (const [tool, want] of [
+    ["mcp__google__send_mail", "ask"],
+    ["mcp__google__delete_mail", "deny"],
+    ["mcp__google__get_mail", null],
+  ] as const) {
     const out = main([STRICT], hook_call(tool));
     assert.deepEqual([out.status, hook_out(out)], [0, want], `${tool}: ${out.stderr}`);
   }
-  for (const [args, input] of [[[STRICT], "not json"], [[STRICT], "{}"], [["not rules"], hook_call("mcp__google__get_mail")], [[], hook_call("x")]] as const) {
+  for (const [args, input] of [
+    [[STRICT], "not json"],
+    [[STRICT], "{}"],
+    [["not rules"], hook_call("mcp__google__get_mail")],
+    [[], hook_call("x")],
+  ] as const) {
     const out = main([...args], input);
     assert.equal(out.status, 2, `${args.join(" ")} ${input}`);
     assert.equal(out.stderr.trim(), HOOK_FAILED);

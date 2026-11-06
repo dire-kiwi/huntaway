@@ -117,7 +117,15 @@ test("every kind of message, and every update in place, writes what a rebuild ma
   s.add_message(id, "user", { text: "Fix it", auto: true, start: true });
   s.add_event(id, "info", "Worktree ready", "on branch x");
   const sys = (v: any) => s.add_message(id, "claude", { session_id: "S", ...v });
-  sys({ type: "assistant", message: { content: [{ type: "thinking", thinking: "Hmm" }, { type: "text", text: "Looking" }] } });
+  sys({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "thinking", thinking: "Hmm" },
+        { type: "text", text: "Looking" },
+      ],
+    },
+  });
   sys({ type: "assistant", message: { content: [{ type: "tool_use", id: "bash1", name: "Bash", input: { command: "ls" } }] } });
   // A prompt for it, allowed.
   const p = s.add_message(id, "permission", { tool_name: "Bash", input: { command: "ls" }, tool_use_id: "bash1", request_id: "perm1", status: "pending" });
@@ -127,7 +135,10 @@ test("every kind of message, and every update in place, writes what a rebuild ma
   assert.equal(store.open_requests(s.db(), id).length, 0);
   sys({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "bash1", content: "a\nb" }] } });
   // A subagent, and what it does under its call.
-  sys({ type: "assistant", message: { content: [{ type: "tool_use", id: "agent1", name: "Task", input: { description: "Look", prompt: "Look around", subagent_type: "x" } }] } });
+  sys({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id: "agent1", name: "Task", input: { description: "Look", prompt: "Look around", subagent_type: "x" } }] },
+  });
   sys({ type: "system", subtype: "task_started", task_id: "job1", tool_use_id: "agent1", description: "Look" });
   sys({ type: "assistant", parent_tool_use_id: "agent1", message: { content: [{ type: "tool_use", id: "read1", name: "Read", input: { file_path: "/a" } }] } });
   sys({ type: "user", parent_tool_use_id: "agent1", message: { content: [{ type: "tool_result", tool_use_id: "read1", content: "text" }] } });
@@ -140,11 +151,22 @@ test("every kind of message, and every update in place, writes what a rebuild ma
   update(plan.id, { ...plan.data, status: "denied", note: "Not yet" });
   const denied = s.add_message(id, "permission", { tool_name: "Write", input: { file_path: "/x" }, request_id: "perm2", status: "pending" });
   update(denied.id, { ...denied.data, status: "denied" });
-  const ask = s.add_message(id, "permission", { tool_name: "AskUserQuestion", input: { questions: [{ question: "Which?", options: [{ label: "A" }] }] }, request_id: "q1", status: "pending" });
+  const ask = s.add_message(id, "permission", {
+    tool_name: "AskUserQuestion",
+    input: { questions: [{ question: "Which?", options: [{ label: "A" }] }] },
+    request_id: "q1",
+    status: "pending",
+  });
   update(ask.id, { ...ask.data, status: "expired" });
   update(ask.id, { ...ask.data, status: "allowed", answers: { "Which?": "A" }, late: true });
   // The board's own approvals.
-  const approval = s.add_message(id, "permission", { tool_name: "mcp__huntaway__delete_task", kind: "delete_task", input: { task: "X-1" }, request_id: "del1", status: "pending" });
+  const approval = s.add_message(id, "permission", {
+    tool_name: "mcp__huntaway__delete_task",
+    kind: "delete_task",
+    input: { task: "X-1" },
+    request_id: "del1",
+    status: "pending",
+  });
   update(approval.id, { ...approval.data, status: "allowed" });
   // The turn ends, the conversation is compacted, and a routine's report comes (kept only in messages).
   sys({ type: "assistant", message: { content: [{ type: "text", text: "Done" }] } });
@@ -167,10 +189,16 @@ test("every kind of message, and every update in place, writes what a rebuild ma
   assert.equal(replaced.length, 1);
   assert.equal(store.open_requests(s.db(), id).length, 1);
   const warnings = convert(db.list_messages(s.db(), id), { finished: false }).warnings;
-  assert.deepEqual(warnings.map((w) => w.code), []);
+  assert.deepEqual(
+    warnings.map((w) => w.code),
+    [],
+  );
   // Each message's events went out after it, numbered with no gaps.
   const sent = thread_events(events, id);
-  assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1));
+  assert.deepEqual(
+    sent.map((e) => e.seq),
+    sent.map((_, i) => i + 1),
+  );
   assert.equal(sent.at(-1).seq, store.last_seq(s.db(), id));
   // And they're what a client folding them from nothing has.
   assert.deepEqual(new Set(sent.filter((e) => e.type === "item.added").map((e) => e.item.id)), new Set(store.items(s.db(), id).map((i) => i.id)));
@@ -190,8 +218,14 @@ test("a question that becomes answerable again reopens its request", () => {
   matches_rebuild(s, t.id);
   // The thread's events say so: resolved, then opened again, sent with no gap.
   const sent = thread_events(events, t.id);
-  assert.deepEqual(sent.slice(-2).map((e) => e.type), ["request.resolved", "request.opened"]);
-  assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1));
+  assert.deepEqual(
+    sent.slice(-2).map((e) => e.type),
+    ["request.resolved", "request.opened"],
+  );
+  assert.deepEqual(
+    sent.map((e) => e.seq),
+    sent.map((_, i) => i + 1),
+  );
 });
 
 test("answering a question sends its thread's events in order: the answer's, then the reply's or the merge decision's", async () => {
@@ -200,7 +234,11 @@ test("answering a question sends its thread's events in order: the answer's, the
     const { s, events, task } = setup();
     const in_order = (id: string) => {
       const sent = thread_events(events, id).filter((e) => e.type !== "delta");
-      assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1), sent.map((e) => `${e.seq}:${e.type}`).join(" "));
+      assert.deepEqual(
+        sent.map((e) => e.seq),
+        sent.map((_, i) => i + 1),
+        sent.map((e) => `${e.seq}:${e.type}`).join(" "),
+      );
       assert.equal(sent.at(-1).seq, store.last_seq(s.db(), id));
     };
     // A request_user_input question, whose answer is the agent's next prompt (a run of its own starts with it).
@@ -261,7 +299,10 @@ test("start_run's writes are the thread's first: the start message flags the tas
     assert.ok(db.list_messages(s.db(), t.id).length > 1);
     matches_rebuild(s, t.id);
     const sent = thread_events(events, t.id);
-    assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1));
+    assert.deepEqual(
+      sent.map((e) => e.seq),
+      sent.map((_, i) => i + 1),
+    );
   } finally {
     runs.TEST_CAN_RUN.set(false);
   }
@@ -293,7 +334,10 @@ test("a write rolled back leaves neither the message nor its items, and the next
   matches_rebuild(s, t.id);
   // Nothing was sent for the write that was rolled back.
   const sent = thread_events(events, t.id);
-  assert.deepEqual(sent.map((e) => e.seq), sent.map((_, i) => i + 1));
+  assert.deepEqual(
+    sent.map((e) => e.seq),
+    sent.map((_, i) => i + 1),
+  );
 });
 
 test("a throw between the message and its items rolls both back", () => {
@@ -331,8 +375,14 @@ test("a server that dies between the message and its items leaves neither", () =
   const task_id = r.stdout.trim();
   const c = db.open(file);
   try {
-    assert.deepEqual(db.list_messages(c, task_id).map((m) => m.data.text), ["kept"]);
-    assert.deepEqual(store.items(c, task_id).map((i: any) => i.text), ["kept"]);
+    assert.deepEqual(
+      db.list_messages(c, task_id).map((m) => m.data.text),
+      ["kept"],
+    );
+    assert.deepEqual(
+      store.items(c, task_id).map((i: any) => i.text),
+      ["kept"],
+    );
     assert.deepEqual(write.compare(c, task_id), []);
   } finally {
     c.close();
@@ -356,7 +406,10 @@ test("a translator failure keeps the message, and stops the thread's live writes
   } finally {
     console.error = orig;
   }
-  assert.ok(logged.some((l) => l.includes("stops being written as items") && l.includes("a bug")), logged.join("\n"));
+  assert.ok(
+    logged.some((l) => l.includes("stops being written as items") && l.includes("a bug")),
+    logged.join("\n"),
+  );
   assert.equal(db.list_messages(c, t.id).at(-1)!.id, m.id);
   // None of its items were written.
   assert.equal(store.items(c, t.id).length, 1);
@@ -371,7 +424,10 @@ test("a translator failure keeps the message, and stops the thread's live writes
   assert.equal(thread_events(events, t.id).length, n);
   assert.equal(store.has_thread(c, t.id), true);
   s.add_message(t.id, "user", { text: "after" });
-  assert.deepEqual(store.items(c, t.id).map((i: any) => i.text), ["go", "kept", "later", "after"]);
+  assert.deepEqual(
+    store.items(c, t.id).map((i: any) => i.text),
+    ["go", "kept", "later", "after"],
+  );
   matches_rebuild(s, t.id);
 });
 
@@ -387,11 +443,20 @@ test("a rebuild from another connection: the server's translator notices, and cl
     db.insert_message(a, t.id, "user", { text: "go" });
     db.insert_message(a, t.id, "claude", { type: "assistant", message: { content: [{ type: "tool_use", id: "c1", name: "Bash", input: { command: "ls" } }] } });
     // A call written to the database by something without the hook (an older build, say), which the rebuild takes in.
-    db.run(b, "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'claude', ?2, ?3)", t.id, JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "c2", name: "Read", input: { file_path: "/a" } }] } }), new Date().toISOString());
+    db.run(
+      b,
+      "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'claude', ?2, ?3)",
+      t.id,
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "c2", name: "Read", input: { file_path: "/a" } }] } }),
+      new Date().toISOString(),
+    );
     const seq = store.last_seq(a, t.id);
     const out: string[] = [];
     const results = rebuild_cli.run(rebuild_cli.parse_args(["--all"]), b, (x) => void out.push(x));
-    assert.deepEqual(results.map((r) => [r.task_id, r.rebuilt?.messages, r.rebuilt?.items]), [[t.id, 3, 3]]);
+    assert.deepEqual(
+      results.map((r) => [r.task_id, r.rebuilt?.messages, r.rebuilt?.items]),
+      [[t.id, 3, 3]],
+    );
     assert.match(out.join(""), /1 tasks rebuilt/);
     assert.equal(store.last_seq(a, t.id), seq + 1);
     assert.equal(store.events_after(a, t.id, seq), null);
@@ -401,7 +466,10 @@ test("a rebuild from another connection: the server's translator notices, and cl
     assert.deepEqual(write.compare(a, t.id), []);
     // --check changes nothing, and says it's the same.
     const checked = rebuild_cli.run(rebuild_cli.parse_args([t.id, "--check"]), b, () => {});
-    assert.deepEqual(checked.map((r) => r.differences), [[]]);
+    assert.deepEqual(
+      checked.map((r) => r.differences),
+      [[]],
+    );
     // A difference shows.
     db.run(a, "UPDATE thread_items SET data=json_set(data, '$.text', 'changed') WHERE task_id=?1 AND type='user_message'", t.id);
     const [diff] = rebuild_cli.run(rebuild_cli.parse_args([t.id, "--check"]), b, () => {});
@@ -415,7 +483,10 @@ test("a rebuild from another connection: the server's translator notices, and cl
     rebuild_cli.run(rebuild_cli.parse_args([u.id]), b, () => {});
     assert.equal(store.has_thread(a, u.id), true);
     db.insert_message(a, u.id, "user", { text: "new" });
-    assert.deepEqual(store.items(a, u.id).map((i: any) => i.text), ["old", "new"]);
+    assert.deepEqual(
+      store.items(a, u.id).map((i: any) => i.text),
+      ["old", "new"],
+    );
     assert.throws(() => rebuild_cli.parse_args([]), /name the tasks, or --all/);
   } finally {
     a.close();
@@ -432,7 +503,13 @@ test("streamed text is a delta for a preview item the thread doesn't have, for t
   s.emit_delta(t.id, "lo");
   let d = thread_events(events, t.id).filter((e) => e.type === "delta");
   assert.equal(d.length, 2);
-  assert.deepEqual(d.map((e) => [e.seq, e.kind, e.offset, e.text]), [[seq, "text", 0, "Hel"], [seq, "text", 3, "lo"]]);
+  assert.deepEqual(
+    d.map((e) => [e.seq, e.kind, e.offset, e.text]),
+    [
+      [seq, "text", 0, "Hel"],
+      [seq, "text", 3, "lo"],
+    ],
+  );
   assert.equal(d[0].item_id, d[1].item_id);
   assert.match(d[0].item_id, /^stream:/);
   assert.equal(store.get_item(s.db(), t.id, d[0].item_id), null);
@@ -446,7 +523,13 @@ test("streamed text is a delta for a preview item the thread doesn't have, for t
   s.emit_delta(t.id, "Third");
   d = thread_events(events, t.id).filter((e) => e.type === "delta");
   assert.equal(new Set(d.map((e) => e.item_id)).size, 3);
-  assert.deepEqual(d.slice(2).map((e) => [e.offset, e.seq]), [[0, store.last_seq(s.db(), t.id)], [0, store.last_seq(s.db(), t.id)]]);
+  assert.deepEqual(
+    d.slice(2).map((e) => [e.offset, e.seq]),
+    [
+      [0, store.last_seq(s.db(), t.id)],
+      [0, store.last_seq(s.db(), t.id)],
+    ],
+  );
   // Not for a task without items.
   const { s: off, events: off_events, task: off_task } = setup(false);
   const u = off_task();

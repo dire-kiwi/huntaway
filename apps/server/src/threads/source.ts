@@ -131,7 +131,9 @@ export function flip(c: Conn, task_id: string): Flip {
           let mine = failed;
           if (!mine) unbuilt.set(c, (mine = new Map()));
           mine.set(task_id, rebuilt_at(c, task_id));
-          console.error(`${now()} ERROR huntaway: task ${task_id} stays on its messages: its thread couldn't be rebuilt as items to move onto them: ${err_str(e)}`);
+          console.error(
+            `${now()} ERROR huntaway: task ${task_id} stays on its messages: its thread couldn't be rebuilt as items to move onto them: ${err_str(e)}`,
+          );
           return null;
         }
         unbuilt.get(c)?.delete(task_id);
@@ -161,7 +163,9 @@ export function flip_back(c: Conn, task_id: string): void {
     if (r.thread_source !== "items") throw new Error(`task ${task_id}'s thread is on its messages already`);
     if (r.flipped_writes == null) throw new Error(`task ${task_id}'s thread started on items: it has no messages to go back to`);
     if (r.writes !== r.flipped_writes) {
-      throw new Error(`task ${task_id}'s thread has been written since it moved onto items (${(r.writes ?? 0) - r.flipped_writes} times), and its messages don't have that`);
+      throw new Error(
+        `task ${task_id}'s thread has been written since it moved onto items (${(r.writes ?? 0) - r.flipped_writes} times), and its messages don't have that`,
+      );
     }
     db.run(c, "UPDATE tasks SET thread_source='messages' WHERE id=?1", task_id);
     db.run(c, "UPDATE threads SET flipped_at=NULL, flipped_writes=NULL WHERE task_id=?1", task_id);
@@ -244,7 +248,9 @@ export async function flip_all(s: AppState): Promise<{ moved: number; rebuilt: n
   }
   if (ids.length) {
     const ms = Math.round(performance.now() - t0);
-    console.log(`${now()} huntaway: ${out.moved + out.rebuilt} tasks moved onto items (${out.rebuilt} rebuilt first) in ${ms} ms; ${out.deferred} wait until they're quiet`);
+    console.log(
+      `${now()} huntaway: ${out.moved + out.rebuilt} tasks moved onto items (${out.rebuilt} rebuilt first) in ${ms} ms; ${out.deferred} wait until they're quiet`,
+    );
   }
   return out;
 }
@@ -268,7 +274,12 @@ export function kept(c: Conn, task_id: string, id: number): Message | null {
   // A question's request is `legacy:<its message's id>`, a prompt's has the board's request id.
   let request: ThreadRequest | null = store.get_request(c, task_id, `legacy:${id}`);
   if (request?.metadata?.message_id !== id) {
-    const row = db.one<{ data: string }>(c, "SELECT data FROM thread_requests WHERE task_id=?1 AND json_extract(data, '$.metadata.message_id')=?2", task_id, id);
+    const row = db.one<{ data: string }>(
+      c,
+      "SELECT data FROM thread_requests WHERE task_id=?1 AND json_extract(data, '$.metadata.message_id')=?2",
+      task_id,
+      id,
+    );
     request = row ? parse(row.data) : null;
   }
   if (request?.metadata) {
@@ -279,7 +290,8 @@ export function kept(c: Conn, task_id: string, id: number): Message | null {
     return { id, task_id, kind, data, created_at: request.created_at ?? "" };
   }
   const item = store.get_item(c, task_id, `legacy:${id}`);
-  if (item?.type === "notice" && item.code === "routine_report") return { id, task_id, kind: "report", data: { ...(item.metadata ?? {}) }, created_at: item.created_at ?? "" };
+  if (item?.type === "notice" && item.code === "routine_report")
+    return { id, task_id, kind: "report", data: { ...(item.metadata ?? {}) }, created_at: item.created_at ?? "" };
   return null;
 }
 

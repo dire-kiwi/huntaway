@@ -255,7 +255,10 @@ export function ask_permission(state: Shared, run_id: string, call_id: string, a
     else write(state, run_id, { subtype: "success", request_id: asked.request_id, response });
   };
   const call = tools.handle_control(state, { run_id, call_id, tool: "permission_prompt", args: asked }, respond);
-  background(`run ${run_id}: permission prompt ${asked.request_id}`, call.finally(() => cancelled.delete(call_id)));
+  background(
+    `run ${run_id}: permission prompt ${asked.request_id}`,
+    call.finally(() => cancelled.delete(call_id)),
+  );
 }
 
 /**
@@ -272,7 +275,10 @@ export function call_tool(state: Shared, run_id: string, call_id: string, name: 
   const saved: Called = { request_id: c.request_id, rpc_id: c.rpc_id, arguments: c.arguments };
   if (c.codex) saved.codex = c.codex;
   const p = tools.handle_control(state, { run_id, call_id, tool: name, args: c.arguments, task_fields: true }, respond, saved);
-  background(`run ${run_id}: board call ${name} (${c.request_id})`, p.finally(() => cancelled.delete(call_id)));
+  background(
+    `run ${run_id}: board call ${name} (${c.request_id})`,
+    p.finally(() => cancelled.delete(call_id)),
+  );
 }
 
 function write(state: Shared, run_id: string, response: any): void {

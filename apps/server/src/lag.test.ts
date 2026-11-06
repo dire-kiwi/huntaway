@@ -38,7 +38,10 @@ test("a_route_that_holds_the_thread_is_counted_and_its_stall_logged_with_it", as
     const stall = snap.stalls.find((s) => s.ms >= 100);
     assert.ok(stall, JSON.stringify(snap.stalls));
     assert.equal(stall.busy, "GET /tasks/{id}/messages /api/tasks/t1/messages");
-    assert.ok(logged.some((l) => /the event loop was blocked for \d+ ms \(GET \/tasks\/\{id\}\/messages \/api\/tasks\/t1\/messages\)/.test(l)), logged.join("\n"));
+    assert.ok(
+      logged.some((l) => /the event loop was blocked for \d+ ms \(GET \/tasks\/\{id\}\/messages \/api\/tasks\/t1\/messages\)/.test(l)),
+      logged.join("\n"),
+    );
     assert.ok(snap.delay_ms && snap.delay_ms.max >= 100, JSON.stringify(snap.delay_ms));
     lag.reset();
     assert.deepEqual([lag.snapshot().routes, lag.snapshot().stalls], [[], []]);

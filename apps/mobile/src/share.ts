@@ -49,8 +49,17 @@ const EXT: Record<string, string> = {
 export function sharedFileName(fileName: string | null | undefined, mime: string | null | undefined, n: number, now = Date.now()) {
   const raw = (fileName ?? "").split(/[/\\]/).pop() ?? "";
   const dot = raw.lastIndexOf(".");
-  const ext = dot > 0 ? raw.slice(dot + 1).replace(/[^A-Za-z0-9]/g, "").slice(0, 10) : "";
-  const base = (dot > 0 ? raw.slice(0, dot) : raw).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|-+$/g, "").slice(0, 80);
+  const ext =
+    dot > 0
+      ? raw
+          .slice(dot + 1)
+          .replace(/[^A-Za-z0-9]/g, "")
+          .slice(0, 10)
+      : "";
+  const base = (dot > 0 ? raw.slice(0, dot) : raw)
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[-.]+|-+$/g, "")
+    .slice(0, 80);
   const kind = mime?.split("/")[0];
   const fallback = `${kind === "image" ? "photo" : kind === "audio" ? "audio" : "shared"}-${now}${n ? `-${n}` : ""}`;
   return `${base || fallback}.${ext || EXT[mime ?? ""] || "bin"}`;
@@ -71,7 +80,12 @@ export function sharedDraft(intent: SharedIntent | null | undefined, now = Date.
   if (title && url && out === url && title !== url) out = `${title}\n${url}`;
   const files = (intent.files ?? [])
     .filter((f): f is NonNullable<typeof f> & { path: string } => !!f?.path)
-    .map((f, i) => ({ uri: f.path, name: sharedFileName(f.fileName, f.mimeType, i, now), mime: f.mimeType || "application/octet-stream", size: f.size ?? null }));
+    .map((f, i) => ({
+      uri: f.path,
+      name: sharedFileName(f.fileName, f.mimeType, i, now),
+      mime: f.mimeType || "application/octet-stream",
+      size: f.size ?? null,
+    }));
   return out || files.length ? { text: out, files } : null;
 }
 
@@ -87,7 +101,11 @@ export function withDraft(current: string, added: string): string {
  * Which boards a share can go to (paired, usable and with the assistant), and the one to use without asking: the only
  * one, if there's just one. Otherwise the last one picked comes first.
  */
-export function shareTargets(list: Board[], status: (id: string) => { unauthorized: boolean; tooOld: boolean }, last: string | null): { only?: Board; boards: Board[] } {
+export function shareTargets(
+  list: Board[],
+  status: (id: string) => { unauthorized: boolean; tooOld: boolean },
+  last: string | null,
+): { only?: Board; boards: Board[] } {
   const boards = list.filter((b) => showsAssistant(b, status(b.id)));
   const sorted = [...boards.filter((b) => b.id === last), ...boards.filter((b) => b.id !== last)];
   return { only: sorted.length === 1 ? sorted[0] : undefined, boards: sorted };

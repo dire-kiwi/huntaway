@@ -109,7 +109,10 @@ export function reason(tool_name: string, input: any): string {
     // The plan's title, if it starts with one ("# Plan: add a cache").
     let title: string | null = null;
     if (typeof input?.plan === "string") {
-      const line = input.plan.split("\n").map((l: string) => l.trim()).find((l: string) => l !== "");
+      const line = input.plan
+        .split("\n")
+        .map((l: string) => l.trim())
+        .find((l: string) => l !== "");
       if (line?.startsWith("#")) {
         const t = one_line(line.slice(1).replace(/^#+/, ""));
         title = t.startsWith("Plan:") ? t.slice(5).trim() : t;
@@ -206,7 +209,15 @@ export function asked(s: Shared, call_id: string): any | null {
  * `expiry`).
  */
 function request_ruled(
-  s: Shared, task: Task, call_id: string, kind: string, tool_name: string, input: any, data: any, reason: string, rule: Rule | null,
+  s: Shared,
+  task: Task,
+  call_id: string,
+  kind: string,
+  tool_name: string,
+  input: any,
+  data: any,
+  reason: string,
+  rule: Rule | null,
 ): string {
   // By tool too: one call can ask more than once, an approval rule first and then the tool itself (an update_project, or
   // a wait's command), and each has its own answer.

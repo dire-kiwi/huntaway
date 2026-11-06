@@ -6,7 +6,8 @@ import { useAsyncAction } from "./hooks";
 
 /** The fields, buttons and links in `el` that Tab stops at, in order. */
 function focusables(el: HTMLElement): HTMLElement[] {
-  const sel = "a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+  const sel =
+    "a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
   return [...el.querySelectorAll<HTMLElement>(sel)].filter((f) => !f.hidden && f.getClientRects().length > 0);
 }
 
@@ -22,7 +23,11 @@ const InModal = createContext(false);
 export function ModalFooter({ className, children }: { className?: string; children: ReactNode }) {
   const inModal = useContext(InModal);
   // The negative margins and matching padding keep its place at rest, and cover the dialog's padding when it's stuck.
-  return <div className={clsx(inModal && "sticky bottom-0 -mx-4 -mt-3 -mb-4 bg-panel px-4 pt-3 pb-4 narrow:-mx-3 narrow:-mb-3 narrow:px-3 narrow:pb-3", className)}>{children}</div>;
+  return (
+    <div className={clsx(inModal && "sticky bottom-0 -mx-4 -mt-3 -mb-4 bg-panel px-4 pt-3 pb-4 narrow:-mx-3 narrow:-mb-3 narrow:px-3 narrow:pb-3", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function Modal({
@@ -105,7 +110,10 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={clsx("flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-2xl shadow-black/50 outline-none", width)}
+        className={clsx(
+          "flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-2xl shadow-black/50 outline-none",
+          width,
+        )}
         onMouseDown={(e) => e.stopPropagation()}
         onFocus={(e) => {
           const f = e.target;

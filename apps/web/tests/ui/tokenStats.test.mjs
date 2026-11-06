@@ -49,8 +49,34 @@ const report = {
     usage("r4", "solo", "claude-sonnet-5-5", 500),
   ],
   reviews: [
-    { task_id: "child", thread_id: "thread", at, verdict: "issues", serious: 2, minor: 1, minor_noted: true, label: "codex · xhigh", model: "gpt-6.1-sol", round: 2, effort: "high", task_model: "claude-opus-5-5" },
-    { task_id: "solo", thread_id: "thread2", at, verdict: "pass", serious: 0, minor: null, minor_noted: false, label: null, model: "claude-opus-5-5", round: 1, effort: null, task_model: "claude-sonnet-5-5" },
+    {
+      task_id: "child",
+      thread_id: "thread",
+      at,
+      verdict: "issues",
+      serious: 2,
+      minor: 1,
+      minor_noted: true,
+      label: "codex · xhigh",
+      model: "gpt-6.1-sol",
+      round: 2,
+      effort: "high",
+      task_model: "claude-opus-5-5",
+    },
+    {
+      task_id: "solo",
+      thread_id: "thread2",
+      at,
+      verdict: "pass",
+      serious: 0,
+      minor: null,
+      minor_noted: false,
+      label: null,
+      model: "claude-opus-5-5",
+      round: 1,
+      effort: null,
+      task_model: "claude-sonnet-5-5",
+    },
   ],
   // Its task's first round was before the range.
   rounds: [
@@ -128,8 +154,14 @@ test("titles and window restarts show as calls of their own, outside tasks' tota
     assert.match(await page.locator("tr", { hasText: "Titles" }).innerText(), /Titles\s+· 2 calls/);
     assert.match(await page.locator("tr", { hasText: "Window restarts" }).innerText(), /Window restarts\s+· 1 call/);
     // A model only titles and window restarts used was used in calls, not in no runs.
-    assert.equal(await page.locator("tr", { hasText: "claude-haiku-5-5 · Claude" }).locator("td").first().getAttribute("title"), "claude-haiku-5-5, in 3 calls");
-    assert.equal(await page.locator("tr", { hasText: "claude-sonnet-5-5 · Claude" }).locator("td").first().getAttribute("title"), "claude-sonnet-5-5, in 1 run");
+    assert.equal(
+      await page.locator("tr", { hasText: "claude-haiku-5-5 · Claude" }).locator("td").first().getAttribute("title"),
+      "claude-haiku-5-5, in 3 calls",
+    );
+    assert.equal(
+      await page.locator("tr", { hasText: "claude-sonnet-5-5 · Claude" }).locator("td").first().getAttribute("title"),
+      "claude-sonnet-5-5, in 1 run",
+    );
     // The task's own row has its run alone (with its titles it would be 4k).
     assert.match(await page.locator("tr", { hasText: "On its own" }).innerText(), /On its own\s+2k\s+2k\s+claude-sonnet-5-5$/);
   });

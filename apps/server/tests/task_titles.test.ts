@@ -10,8 +10,11 @@ import { HUNTAWAY, TempDir_new, fixture } from "./common.ts";
 
 function check(dir: string, tasks: string[], mode: string): SpawnSyncReturns<string> {
   const env: NodeJS.ProcessEnv = {
-    ...process.env, IA_CLAUDE_BIN: join(dir, "agent"), IA_CODEX_BIN: join(dir, "agent"),
-    IA_TITLE_LOG: join(dir, "calls.jsonl"), IA_TITLE_MODE: mode,
+    ...process.env,
+    IA_CLAUDE_BIN: join(dir, "agent"),
+    IA_CODEX_BIN: join(dir, "agent"),
+    IA_TITLE_LOG: join(dir, "calls.jsonl"),
+    IA_TITLE_MODE: mode,
   };
   // Don't let the test inherit the running agent's login directory.
   delete env.CODEX_HOME;
@@ -36,11 +39,14 @@ test("titles_use_the_tasks_runtime_and_login_for_generation_and_refresh", () => 
       ('default-codex','Default Codex','','codex','now'),
       ('claude','Claude','~/.claude-title-test','claude','now');
       INSERT INTO profiles (id,name,claude_config_ids,created_at) VALUES ('p','Test','["codex"]','now');`);
-    for (const [id, config] of [["inherited", null], ["default-codex", "default-codex"], ["override", "claude"]]) {
+    for (const [id, config] of [
+      ["inherited", null],
+      ["default-codex", "default-codex"],
+      ["override", "claude"],
+    ]) {
       c.prepare(`INSERT INTO tasks (id,profile_id,title,description,claude_config_id,last_activity_at,created_at,updated_at)
         VALUES (?1,'p','Original title','Fix task naming',?2,'now','now','now')`).run(id, config);
-      c.prepare("INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,'user',?2,'now')")
-        .run(id, JSON.stringify({ text: "Also support Codex" }));
+      c.prepare("INSERT INTO messages (task_id,kind,data,created_at) VALUES (?1,'user',?2,'now')").run(id, JSON.stringify({ text: "Also support Codex" }));
     }
   } finally {
     c.close();
@@ -51,7 +57,10 @@ test("titles_use_the_tasks_runtime_and_login_for_generation_and_refresh", () => 
   assert.equal(count(stdout, "description: Fix Codex task naming"), 2, stdout);
   assert.equal(count(stdout, "message 1 (Also support Codex): Fix Codex task naming"), 2, stdout);
   assert.ok(stdout.includes("description: Fix the Claude title"), stdout);
-  const calls: any[] = readFileSync(join(dir, "calls.jsonl"), "utf8").split("\n").filter((l) => l).map((l) => JSON.parse(l));
+  const calls: any[] = readFileSync(join(dir, "calls.jsonl"), "utf8")
+    .split("\n")
+    .filter((l) => l)
+    .map((l) => JSON.parse(l));
   const homes = calls.filter((v) => v.agent === "codex").map((v) => v.home);
   const home = process.env.HOME;
   assert.deepEqual(homes, [`${home}/.codex-title-test`, `${home}/.codex-title-test`, `${home}/.codex`, `${home}/.codex`]);

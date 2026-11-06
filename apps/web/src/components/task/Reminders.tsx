@@ -8,7 +8,14 @@ import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, Wide, type 
 
 /** Whether the task's host can star it and set reminders on it. */
 export function useCanMark(task: Task | undefined) {
-  return useStore((s) => !!task && hostSupports(s.hosts.find((h) => h.id === task.host_id), REMINDERS_API));
+  return useStore(
+    (s) =>
+      !!task &&
+      hostSupports(
+        s.hosts.find((h) => h.id === task.host_id),
+        REMINDERS_API,
+      ),
+  );
 }
 
 type Marks = Pick<Partial<Task>, "starred" | "remind_at" | "reminder">;
@@ -89,7 +96,11 @@ export function useReminderClock(tasks: Task[]) {
 export function reminderItems(task: Task, onPick: () => void, onError: (msg: string) => void, divider = false): MenuItem[] {
   const save = (patch: Parameters<typeof saveMarks>[1]) => saveMarks(task, patch).catch((e) => onError((e as Error).message));
   return [
-    ...reminderPresets(new Date()).map((p, i) => ({ label: `Remind me ${p.label[0].toLowerCase()}${p.label.slice(1)}`, divider: divider && i === 0, onSelect: () => save({ remind_at: p.at.toISOString() }) })),
+    ...reminderPresets(new Date()).map((p, i) => ({
+      label: `Remind me ${p.label[0].toLowerCase()}${p.label.slice(1)}`,
+      divider: divider && i === 0,
+      onSelect: () => save({ remind_at: p.at.toISOString() }),
+    })),
     { label: "Remind me at…", onSelect: onPick },
     ...(task.remind_at ? [{ label: "Clear reminder", onSelect: () => save({ remind_at: null }) }] : []),
   ];
@@ -217,7 +228,8 @@ export function TaskMarks({ task, compact }: { task: Task; compact?: boolean }) 
           className={clsx("flex shrink-0 items-center gap-1 whitespace-nowrap", isDue(task, now) ? "text-amber-300" : "text-muted")}
           title={`Reminder: ${reminderLabel(task.remind_at, now)}, ${new Date(task.remind_at).toLocaleString()}${task.reminder ? ` · ${task.reminder}` : ""}`}
         >
-          {isDue(task, now) ? <BellRing size={11} /> : <Bell size={11} />} {compact ? <Wide>{reminderLabel(task.remind_at, now)}</Wide> : reminderLabel(task.remind_at, now)}
+          {isDue(task, now) ? <BellRing size={11} /> : <Bell size={11} />}{" "}
+          {compact ? <Wide>{reminderLabel(task.remind_at, now)}</Wide> : reminderLabel(task.remind_at, now)}
         </span>
       )}
     </>

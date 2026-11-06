@@ -5,14 +5,19 @@
 `~/.config/huntaway/desktop.json` (all optional):
 
 ```json
-{ "port": 7878, "dataDir": "~/.local/share/huntaway", "host": "127.0.0.1",
+{
+  "port": 7878,
+  "dataDir": "~/.local/share/huntaway",
+  "host": "127.0.0.1",
   "serverBin": "/path/to/huntaway",
-  "serverUrl": "http://other-machine:7878", "token": "…",
-  "skipDbBackup": false }
+  "serverUrl": "http://other-machine:7878",
+  "token": "…",
+  "skipDbBackup": false
+}
 ```
 
 `skipDbBackup` starts the server without the database backup it makes when its version changes, when
-that backup can't be made (see *Release builds*).
+that backup can't be made (see _Release builds_).
 
 Setting `serverUrl` makes the desktop app a client of a remote server instead of starting one.
 An `http:` one counts as a secure page in the app, so it can show notifications.
@@ -57,14 +62,14 @@ and attaches these files to it. The tag is the version, as `v1.2.3` or `1.2.3`. 
 it: pull requests don't build the release (their tests are `test.yml`'s), and Actions → Release → Run
 workflow builds an existing release's tag again and replaces its files.
 
-| File | What |
-|---|---|
-| `huntaway-<version>-linux-x86_64.AppImage` | The desktop app for Linux |
-| `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
-| `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
-| `huntaway-<version>.apk` | The mobile app for Android, once its signing key is set (see *The mobile app*) |
-| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`, and `issue-agent`, which runs it under its old name) and `ia-shim`, with the UI in `ui/` |
-| `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
+| File                                           | What                                                                                                                                                                                                                                                              |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `huntaway-<version>-linux-x86_64.AppImage`     | The desktop app for Linux                                                                                                                                                                                                                                         |
+| `huntaway-<version>-linux-x64.pacman`          | The desktop app as an Arch package (`sudo pacman -U <file>`)                                                                                                                                                                                                      |
+| `huntaway-<version>-mac-arm64.dmg`, `.zip`     | The desktop app for Apple silicon Macs                                                                                                                                                                                                                            |
+| `huntaway-<version>.apk`                       | The mobile app for Android, once its signing key is set (see _The mobile app_)                                                                                                                                                                                    |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`, and `issue-agent`, which runs it under its old name) and `ia-shim`, with the UI in `ui/`                                                      |
+| `huntaway-<version>-release.json`              | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
 
@@ -95,7 +100,7 @@ marked bad). The error says why (a full disk, or no permission to write to `back
 a backup** does that once, and `"skipDbBackup": true` in `desktop.json` always. To go back to a
 backup: stop the server, move `huntaway.db` (with any `huntaway.db-wal` and `huntaway.db-shm`) aside,
 and `gunzip -c` the backup to `huntaway.db` (or copy it there, if it isn't gzipped yet). A server that
-keeps the board in `huntaway-2.db` (see *The database file*) backs that up instead, so its backups go
+keeps the board in `huntaway-2.db` (see _The database file_) backs that up instead, so its backups go
 back to `huntaway-2.db`.
 
 The desktop app carries the server, `ia-shim` and the UI, and starts the server as above. It takes

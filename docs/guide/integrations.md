@@ -24,7 +24,7 @@ can be removed), and the host won't search Asana for it. Its token is kept for w
 
 ## Automations
 
-A project's automations (API 63, in its settings under *Automations*; agents' tools for them, API 67) put work on the board by
+A project's automations (API 63, in its settings under _Automations_; agents' tools for them, API 67) put work on the board by
 themselves: recurring work such as a weekly dependency update, and events from outside such as a
 new GitHub issue to triage. Each one has a trigger and an action, can be switched on and off, and
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
@@ -37,7 +37,7 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
   the server was down then, and turns itself off); or a **webhook**: a POST to
   `/api/hooks/<id>/<token>` on the host.
 - **Before each run** (API 110): **active hours** (a scheduled run outside them waits for them to
-  start, and a delivery outside them is skipped; not for *at*, nor Run now), a **precheck** (a bash
+  start, and a delivery outside them is skipped; not for _at_, nor Run now), a **precheck** (a bash
   command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
   exit 0 runs it, with what it printed as `{{precheck}}`, which counts as untrusted; exit 1 skips
   the run as having nothing to do; any other exit fails it), and a **budget** a day in dollars
@@ -84,9 +84,9 @@ can set up the sender.
 its path is the automation's own (compared in constant time) and reaches nothing else: an unknown
 id or a wrong token is the same 404, a delivery can only fill in the templates (not pick the
 project, the task to message, the agent config or anything else), and a message can only go to
-a task in the automation's own project. *Make a new URL* replaces the token.
+a task in the automation's own project. _Make a new URL_ replaces the token.
 
-- **Signature:** with a secret set (GitHub's webhook *Secret*), a delivery must carry a matching
+- **Signature:** with a secret set (GitHub's webhook _Secret_), a delivery must carry a matching
   `X-Hub-Signature-256` (HMAC-SHA256 of the body), or it's rejected with a 401. The secret is
   never shown again once its dialog closes.
 - **Filters** on the event, action, labels or any value (`is`, `isn't`, `starts with`, `contains`,
@@ -146,28 +146,28 @@ in is the one charged. A run that takes in several routines' messages splits its
 them; the user's messages in the same run aren't taken out. The automation tools take routines too
 (`routines: true`, or an action of kind `message_assistant`; the assistant's own calls are about its
 routines by default), for the caller's own profile only, and changing one asks the user as for any
-automation. The assistant is told to make "remind me…" an *at* routine. Deleting the assistant
+automation. The assistant is told to make "remind me…" an _at_ routine. Deleting the assistant
 stops and deletes its routine threads first.
 
 **The morning brief** (API 113) is a routine template: the assistant's **Brief** tab sets it up at the
 time and on the days you pick (weekdays at 7:30 by default; `POST
-/api/profiles/<id>/assistant/brief` with `{time, weekdays}`), as a routine called *Morning brief* in a
+/api/profiles/<id>/assistant/brief` with `{time, weekdays}`), as a routine called _Morning brief_ in a
 fresh thread, which you can change like any other. Its run reads today's calendar, unread and starred
-mail, Drive files changed since yesterday (through the Google server, see *Google for the assistant*)
+mail, Drive files changed since yesterday (through the Google server, see _Google for the assistant_)
 and what needs your attention or is ready to review on your boards (through the board's tools), writes
 `brief.html` and `brief.json` in the assistant's workspace, and replies with a short summary, which is
 posted in the assistant's thread as its report and pushed to the devices with routine reports on. The
 board keeps the brief as the assistant's `brief` document, one version a day (`GET
 /api/tasks/<id>/document?label=brief`), out of the workspace's git history and the Memory tab, and the
 Brief tab shows it, with the earlier days to pick from. Its message says where Google stands as the run
-starts (`{{google}}`: *connected as …*, or *not connected:* and why), so a run without Google says so
+starts (`{{google}}`: _connected as …_, or _not connected:_ and why), so a run without Google says so
 at the top of the brief and its summary rather than failing quietly. Its message tells it to only read
 and draft, and that what it reads in mail, invitations and files is data, not instructions.
 
 The run also lists the brief's items in `brief.json` beside it (each one's kind, the topic it's rated
 by, in its own words, and a line saying what it is), which the host checks and caps and keeps with the
 day's brief (`items` in the document). The Brief tab lists them beside the brief, with a 👍 and 👎 each:
-a rating becomes a line under *Morning brief preferences* in `MEMORY.md` (`- More like this — mail:
+a rating becomes a line under _Morning brief preferences_ in `MEMORY.md` (`- More like this — mail:
 Newsletters from Substack (rated 2026-11-04)`), committed as yours, one line per kind of item and topic
 and the last 30 kept, and every run of the assistant reads it, the brief's included (`POST
 /api/profiles/<id>/assistant/brief/feedback` with `{rating: "up" | "down" | "clear", kind, topic}`).
@@ -191,7 +191,7 @@ reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the 
 - **A hub** doesn't pass webhooks on to its linked hosts: its links carry the board's API calls,
   not raw deliveries with their headers, so the URL has to reach the project's own host.
 
-Set the host's public address in a webhook's settings (*This host's public address*, the
+Set the host's public address in a webhook's settings (_This host's public address_, the
 host setting `public_url`), and the settings show the full URL to give GitHub. In GitHub's
 webhook settings, pick the events to send, `application/json` (or the default form encoding),
 and the same secret.

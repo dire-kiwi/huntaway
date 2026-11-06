@@ -69,7 +69,12 @@ export function Board({ projectId, subproject }: { projectId: string; subproject
             )}
             <div className="no-drag ml-auto flex items-center gap-1.5">
               {controls}
-              <Button size="sm" variant="ghost" onClick={() => openTask(subproject.id)} title="The subproject's own agent, which plans and coordinates its tasks">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => openTask(subproject.id)}
+                title="The subproject's own agent, which plans and coordinates its tasks"
+              >
                 {subproject.running ? <RunningDot /> : <MessagesSquare size={14} />} <span className="narrow:hidden">Thread</span>
               </Button>
               <NewTaskButton onClick={newTask} />

@@ -253,7 +253,15 @@ export function summarizers_column(list: string | null | undefined, single: stri
 
 export function insert_profile(c: Conn, name: string, config_ids: string[], model: string | null): Profile {
   const id = new_id();
-  run(c, "INSERT INTO profiles (id,name,claude_config_ids,default_model,created_at) VALUES (?1,?2,?3,?4,?5)", id, name, JSON.stringify(config_ids), model, now());
+  run(
+    c,
+    "INSERT INTO profiles (id,name,claude_config_ids,default_model,created_at) VALUES (?1,?2,?3,?4,?5)",
+    id,
+    name,
+    JSON.stringify(config_ids),
+    model,
+    now(),
+  );
   return get_profile(c, id)!;
 }
 
@@ -370,8 +378,22 @@ export function task_is_codex(c: Conn, task: Task): boolean {
 }
 
 const PROFILE_COLUMNS = [
-  "name", "claude_config_ids", "default_model", "agent_access", "github_account", "clone_dir", "asana_token", "asana_user", "asana_enabled",
-  "limit_wait", "limit_switch", "reviewers", "summarizer", "summarizers", "merge_approval", "require_pr_approval",
+  "name",
+  "claude_config_ids",
+  "default_model",
+  "agent_access",
+  "github_account",
+  "clone_dir",
+  "asana_token",
+  "asana_user",
+  "asana_enabled",
+  "limit_wait",
+  "limit_switch",
+  "reviewers",
+  "summarizer",
+  "summarizers",
+  "merge_approval",
+  "require_pr_approval",
   "assistant_host",
 ];
 

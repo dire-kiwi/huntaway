@@ -80,7 +80,9 @@ export function MainPanel({
                 >
                   {!f ? (
                     // Shown as it is, never as lines to stage.
-                    (p === "unstaged" ? unstagedPreview : stagedPreview).length > 0 && <PatchView files={p === "unstaged" ? unstagedPreview : stagedPreview} empty="" layout={layout} />
+                    (p === "unstaged" ? unstagedPreview : stagedPreview).length > 0 && (
+                      <PatchView files={p === "unstaged" ? unstagedPreview : stagedPreview} empty="" layout={layout} />
+                    )
                   ) : linesStageable(f) ? (
                     <DiffLines
                       file={f}
@@ -123,10 +125,16 @@ export function MainPanel({
                 <>
                   {diffs.error && <Note error>{diffs.error}</Note>}
                   {diffs.tooLarge && <Note>Some of the diffs are too big to show.</Note>}
-                  {unstagedFiles.length > 0 && <PatchView files={unstagedFiles} head={<Section>Unstaged</Section>} empty="" layout={layout} source={UNSTAGED} />}
-                  {unstagedPreview.length > 0 && <PatchView files={unstagedPreview} head={!unstagedFiles.length && <Section>Unstaged</Section>} empty="" layout={layout} />}
+                  {unstagedFiles.length > 0 && (
+                    <PatchView files={unstagedFiles} head={<Section>Unstaged</Section>} empty="" layout={layout} source={UNSTAGED} />
+                  )}
+                  {unstagedPreview.length > 0 && (
+                    <PatchView files={unstagedPreview} head={!unstagedFiles.length && <Section>Unstaged</Section>} empty="" layout={layout} />
+                  )}
                   {stagedFiles.length > 0 && <PatchView files={stagedFiles} head={<Section>Staged</Section>} empty="" layout={layout} source={STAGED} />}
-                  {stagedPreview.length > 0 && <PatchView files={stagedPreview} head={!stagedFiles.length && <Section>Staged</Section>} empty="" layout={layout} />}
+                  {stagedPreview.length > 0 && (
+                    <PatchView files={stagedPreview} head={!stagedFiles.length && <Section>Staged</Section>} empty="" layout={layout} />
+                  )}
                 </>
               )
             ) : (

@@ -1,7 +1,16 @@
 import { Boards, tokenKey, type Board } from "../src/boards";
 import { memoryStore } from "./helpers";
 
-const b = (id: string, extra: Partial<Board> = {}): Board => ({ id, url: `https://${id}.ts.net`, name: id, deviceId: `dev-${id}`, apiVersion: 100, profile: null, pairedAt: "", ...extra });
+const b = (id: string, extra: Partial<Board> = {}): Board => ({
+  id,
+  url: `https://${id}.ts.net`,
+  name: id,
+  deviceId: `dev-${id}`,
+  apiVersion: 100,
+  profile: null,
+  pairedAt: "",
+  ...extra,
+});
 
 describe("the board switcher", () => {
   test("adds boards with their own tokens, and selects the newest", async () => {

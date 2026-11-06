@@ -67,7 +67,9 @@ export function run_after(c: Conn, task_id: string, run_id: string, after: strin
   return !!value(
     c,
     "SELECT EXISTS(SELECT 1 FROM runs WHERE id=?1 AND task_id=?2 AND rowid > COALESCE((SELECT rowid FROM runs WHERE id=?3), -1))",
-    run_id, task_id, after,
+    run_id,
+    task_id,
+    after,
   );
 }
 
@@ -94,7 +96,8 @@ export function add_cost(c: Conn, run_id: string, session: string | null, total:
     `SELECT o.session_cost FROM runs r JOIN runs o ON o.task_id=r.task_id AND o.rowid <= r.rowid
              WHERE r.id=?1 AND o.session_cost IS NOT NULL AND (o.session_id=?2 OR (o.id=r.id AND ?2 IS NULL))
              ORDER BY o.rowid DESC LIMIT 1`,
-    run_id, session,
+    run_id,
+    session,
   );
   let before = 0;
   if (b !== undefined && b > total && !counted) return 0;
@@ -165,6 +168,7 @@ export function idle_sessions(c: Conn, idle_since: string, not_before: string): 
            AND (t.review IS NULL OR json_extract(t.review, '$.state') != 'running')
            AND (t.project_id IS NULL OR t.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
            AND r.kind='prompt' AND r.status='exited' AND r.ended_at <= ?1 AND r.ended_at > ?2`,
-    idle_since, not_before,
+    idle_since,
+    not_before,
   ).map((r) => r.id);
 }

@@ -1,7 +1,18 @@
 import clsx from "clsx";
 import { ChevronDown, ChevronRight, GitBranch, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, canRunAgents, hostSupports, type AgentTools, type GlobalAgentTools, type McpServerConfig, type Project, type ProjectMcpServer, type ProjectSkill, type SkillSource } from "../../api";
+import {
+  api,
+  canRunAgents,
+  hostSupports,
+  type AgentTools,
+  type GlobalAgentTools,
+  type McpServerConfig,
+  type Project,
+  type ProjectMcpServer,
+  type ProjectSkill,
+  type SkillSource,
+} from "../../api";
 import { useShallow } from "zustand/react/shallow";
 import { useStore } from "../../store";
 import { HostSelect } from "./Hosts";
@@ -61,7 +72,10 @@ export function ProjectAgentTools({ project }: { project: Project }) {
   };
   if (!tools) return err ? <div className="text-xs text-red-400">{err}</div> : null;
   const seen = Object.values(tools.seen);
-  const lastSeen = seen.map((s) => s.at).sort().pop();
+  const lastSeen = seen
+    .map((s) => s.at)
+    .sort()
+    .pop();
   const toggleOther = (key: DisabledKey, name: string, on: boolean) => {
     const set = (off: boolean) => {
       wanted.current = { ...wanted.current!, [key]: toggleIn(wanted.current![key], name, off) };
@@ -268,7 +282,11 @@ function OtherList<T extends { name: string }>({
   };
   return (
     <div className="rounded-md border border-line/70">
-      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-[12.5px] text-muted hover:text-fg">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-[12.5px] text-muted hover:text-fg"
+      >
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         {label} from Claude configs, plugins and the repository
         <span className="ml-auto text-[11.5px] text-faint">{all.length ? `${all.length - off} on${off > 0 ? `, ${off} off` : ""}` : "none seen yet"}</span>
@@ -303,7 +321,12 @@ function OtherList<T extends { name: string }>({
               add();
             }}
           >
-            <Input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder={`Turn off another by name, e.g. ${placeholder}`} className="h-7 font-mono text-[12px]" />
+            <Input
+              value={adding}
+              onChange={(e) => setAdding(e.target.value)}
+              placeholder={`Turn off another by name, e.g. ${placeholder}`}
+              className="h-7 font-mono text-[12px]"
+            />
             <Button size="sm" disabled={!adding.trim()}>
               Turn off
             </Button>
@@ -381,7 +404,15 @@ function SkillsSection({
   );
 }
 
-function SkillEditor({ skill, onSave, onClose }: { skill: ProjectSkill | null; onSave: (skill: ProjectSkill | null, content: string) => Promise<void>; onClose: () => void }) {
+function SkillEditor({
+  skill,
+  onSave,
+  onClose,
+}: {
+  skill: ProjectSkill | null;
+  onSave: (skill: ProjectSkill | null, content: string) => Promise<void>;
+  onClose: () => void;
+}) {
   const [content, setContent] = useState(skill?.content ?? SKILL_TEMPLATE);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -403,8 +434,8 @@ function SkillEditor({ skill, onSave, onClose }: { skill: ProjectSkill | null; o
           label="SKILL.md"
           hint={
             <>
-              The frontmatter's <code>name</code> (lowercase letters, numbers and hyphens) names the skill, and Claude reads its <code>description</code>{" "}
-              to decide when to use it. Other frontmatter, such as <code>allowed-tools</code>, works as in any skill.
+              The frontmatter's <code>name</code> (lowercase letters, numbers and hyphens) names the skill, and Claude reads its <code>description</code> to
+              decide when to use it. Other frontmatter, such as <code>allowed-tools</code>, works as in any skill.
             </>
           }
         >
@@ -509,7 +540,10 @@ const toLines = (o: Record<string, string> | undefined, sep: string) =>
 
 function fromLines(text: string, sep: string, what: string): Record<string, string> | undefined {
   const out: Record<string, string> = {};
-  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+  for (const line of text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)) {
     const i = line.indexOf(sep.trim());
     if (i <= 0) throw new Error(`Each ${what} line needs ${sep.trim()}: ${line}`);
     out[line.slice(0, i).trim()] = line.slice(i + sep.trim().length).trim();
@@ -534,8 +568,17 @@ function toForm(c: McpServerConfig): Form {
 function fromForm(f: Form, base: McpServerConfig): McpServerConfig {
   const rest = Object.fromEntries(Object.entries(base).filter(([k]) => !["type", "command", "args", "env", "url", "headers"].includes(k)));
   if (f.type === "stdio") {
-    const args = f.args.split("\n").map((a) => a.trim()).filter(Boolean);
-    return { ...rest, type: "stdio", command: f.command.trim(), ...(args.length ? { args } : {}), ...(f.env.trim() ? { env: fromLines(f.env, "=", "environment") } : {}) };
+    const args = f.args
+      .split("\n")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    return {
+      ...rest,
+      type: "stdio",
+      command: f.command.trim(),
+      ...(args.length ? { args } : {}),
+      ...(f.env.trim() ? { env: fromLines(f.env, "=", "environment") } : {}),
+    };
   }
   return { ...rest, type: f.type, url: f.url.trim(), ...(f.headers.trim() ? { headers: fromLines(f.headers, ": ", "header") } : {}) };
 }
@@ -591,7 +634,11 @@ function McpEditor({
           </Field>
           {json === null && (
             <Field label="Transport">
-              <select value={form.type} onChange={(e) => set("type", e.target.value as Form["type"])} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+              <select
+                value={form.type}
+                onChange={(e) => set("type", e.target.value as Form["type"])}
+                className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+              >
                 <option value="stdio">stdio</option>
                 <option value="http">HTTP</option>
                 <option value="sse">SSE</option>
@@ -600,7 +647,14 @@ function McpEditor({
           )}
         </div>
         {json !== null ? (
-          <Field label="Config" hint={<>An entry of <code>mcpServers</code>, as in <code>.mcp.json</code>.</>}>
+          <Field
+            label="Config"
+            hint={
+              <>
+                An entry of <code>mcpServers</code>, as in <code>.mcp.json</code>.
+              </>
+            }
+          >
             <Textarea rows={12} className="font-mono text-[12px]" value={json} onChange={(e) => setJson(e.target.value)} spellCheck={false} />
           </Field>
         ) : form.type === "stdio" ? (
@@ -609,19 +663,45 @@ function McpEditor({
               <Input value={form.command} onChange={(e) => set("command", e.target.value)} placeholder="npx" className="font-mono text-[12px]" />
             </Field>
             <Field label="Arguments" hint="One per line.">
-              <Textarea rows={3} value={form.args} onChange={(e) => set("args", e.target.value)} placeholder={"-y\n@modelcontextprotocol/server-github"} className="font-mono text-[12px]" spellCheck={false} />
+              <Textarea
+                rows={3}
+                value={form.args}
+                onChange={(e) => set("args", e.target.value)}
+                placeholder={"-y\n@modelcontextprotocol/server-github"}
+                className="font-mono text-[12px]"
+                spellCheck={false}
+              />
             </Field>
             <Field label="Environment" hint="KEY=value, one per line.">
-              <Textarea rows={3} value={form.env} onChange={(e) => set("env", e.target.value)} placeholder="GITHUB_TOKEN=…" className="font-mono text-[12px]" spellCheck={false} />
+              <Textarea
+                rows={3}
+                value={form.env}
+                onChange={(e) => set("env", e.target.value)}
+                placeholder="GITHUB_TOKEN=…"
+                className="font-mono text-[12px]"
+                spellCheck={false}
+              />
             </Field>
           </>
         ) : (
           <>
             <Field label="URL">
-              <Input value={form.url} onChange={(e) => set("url", e.target.value)} placeholder="https://mcp.example.com/mcp" className="font-mono text-[12px]" />
+              <Input
+                value={form.url}
+                onChange={(e) => set("url", e.target.value)}
+                placeholder="https://mcp.example.com/mcp"
+                className="font-mono text-[12px]"
+              />
             </Field>
             <Field label="Headers" hint="Name: value, one per line.">
-              <Textarea rows={3} value={form.headers} onChange={(e) => set("headers", e.target.value)} placeholder="Authorization: Bearer …" className="font-mono text-[12px]" spellCheck={false} />
+              <Textarea
+                rows={3}
+                value={form.headers}
+                onChange={(e) => set("headers", e.target.value)}
+                placeholder="Authorization: Bearer …"
+                className="font-mono text-[12px]"
+                spellCheck={false}
+              />
             </Field>
           </>
         )}
@@ -766,8 +846,8 @@ export function GlobalAgentToolsPanel() {
         </div>
       </div>
       <p className="mb-3 text-[12.5px] text-muted">
-        Skills and MCP servers for agents, kept on the host rather than in a repository. Each profile switches them on or off by default for its projects,
-        and a project can override that in its settings, or add its own.
+        Skills and MCP servers for agents, kept on the host rather than in a repository. Each profile switches them on or off by default for its projects, and a
+        project can override that in its settings, or add its own.
         {supportsSources && " Skills can also come from a git repository, as with npx skills: add the repository, then switch on the skills you want."}
       </p>
       {allHosts > 1 && (
@@ -903,7 +983,11 @@ function SourceCard({
               </div>
               <div className="truncate font-mono text-[11.5px] text-faint">{source.url}</div>
               <div className="truncate text-[11.5px] text-faint">
-                {[source.ref && `branch ${source.ref}`, source.commit && `commit ${source.commit.slice(0, 7)}`, source.synced_at && `updated ${timeAgo(source.synced_at)}`]
+                {[
+                  source.ref && `branch ${source.ref}`,
+                  source.commit && `commit ${source.commit.slice(0, 7)}`,
+                  source.synced_at && `updated ${timeAgo(source.synced_at)}`,
+                ]
                   .filter(Boolean)
                   .join(" · ")}
               </div>
@@ -944,7 +1028,11 @@ function SourceCard({
                     "rounded-full border px-2 py-0.5 transition-colors",
                     all ? "border-accent/50 bg-accent/15 text-fg" : count ? "border-accent/30 text-muted" : "border-line text-faint hover:text-muted",
                   )}
-                  title={all ? `All on by default in ${p.name}'s projects. Click to turn them all off.` : `${count} of ${skills.length} on in ${p.name}. Click to turn them all on.`}
+                  title={
+                    all
+                      ? `All on by default in ${p.name}'s projects. Click to turn them all off.`
+                      : `${count} of ${skills.length} on in ${p.name}. Click to turn them all on.`
+                  }
                 >
                   {p.name}
                   {count > 0 && !all ? ` (${count})` : ""}
@@ -984,8 +1072,8 @@ function SourceAdder({ onAdd, onClose }: { onAdd: (url: string, ref: string) => 
           hint={
             <>
               A git URL, or <code>owner/repo</code> for GitHub, as in <code>npx skills add</code>. It's cloned on this host with its git setup, so a private
-              repository needs credentials there. Every folder with a <code>SKILL.md</code> in it becomes a skill, off until you switch it on. Skills are instructions (and
-              scripts) your agents follow, so only add repositories you trust.
+              repository needs credentials there. Every folder with a <code>SKILL.md</code> in it becomes a skill, off until you switch it on. Skills are
+              instructions (and scripts) your agents follow, so only add repositories you trust.
             </>
           }
         >

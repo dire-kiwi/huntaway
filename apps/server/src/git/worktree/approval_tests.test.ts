@@ -11,10 +11,39 @@ function pr(decision: any, reviews: Array<[string, string]>): any {
 test("a_reviewers_standing_verdict_survives_their_comments", () => {
   assert.ok(approved_by_reviews(pr("APPROVED", [])));
   assert.ok(!approved_by_reviews(pr("CHANGES_REQUESTED", [["a", "APPROVED"]])));
-  assert.ok(approved_by_reviews(pr("", [["a", "APPROVED"], ["a", "COMMENTED"]])));
-  assert.ok(!approved_by_reviews(pr(null, [["a", "CHANGES_REQUESTED"], ["a", "COMMENTED"], ["b", "APPROVED"]])));
-  assert.ok(approved_by_reviews(pr(null, [["a", "CHANGES_REQUESTED"], ["a", "APPROVED"]])));
-  assert.ok(!approved_by_reviews(pr(null, [["a", "APPROVED"], ["a", "DISMISSED"]])));
+  assert.ok(
+    approved_by_reviews(
+      pr("", [
+        ["a", "APPROVED"],
+        ["a", "COMMENTED"],
+      ]),
+    ),
+  );
+  assert.ok(
+    !approved_by_reviews(
+      pr(null, [
+        ["a", "CHANGES_REQUESTED"],
+        ["a", "COMMENTED"],
+        ["b", "APPROVED"],
+      ]),
+    ),
+  );
+  assert.ok(
+    approved_by_reviews(
+      pr(null, [
+        ["a", "CHANGES_REQUESTED"],
+        ["a", "APPROVED"],
+      ]),
+    ),
+  );
+  assert.ok(
+    !approved_by_reviews(
+      pr(null, [
+        ["a", "APPROVED"],
+        ["a", "DISMISSED"],
+      ]),
+    ),
+  );
   assert.ok(!approved_by_reviews(pr(null, [["a", "COMMENTED"]])));
   // Required reviews not met: an approval GitHub doesn't count is no approval.
   assert.ok(!approved_by_reviews(pr("REVIEW_REQUIRED", [["a", "APPROVED"]])));

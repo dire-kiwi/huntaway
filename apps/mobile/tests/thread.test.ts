@@ -8,7 +8,14 @@ const m = (id: number, kind: Message["kind"], data: unknown) => ({ id, task_id: 
 describe("the thread", () => {
   test("shows a routine's report with its name, outcome, text and its thread", () => {
     // As routines.ts posts them in the assistant's thread ("t").
-    const brief = m(7, "report", { automation_id: "a1", automation: "Morning brief", task_id: "r9", key: "A-9", outcome: "reported", text: "3 mails need you." });
+    const brief = m(7, "report", {
+      automation_id: "a1",
+      automation: "Morning brief",
+      task_id: "r9",
+      key: "A-9",
+      outcome: "reported",
+      text: "3 mails need you.",
+    });
     const failed = m(8, "report", { automation: "Inbox sweep", task_id: "r10", key: "A-10", outcome: "failed", text: "Out of usage" });
     const old = m(9, "report", { outcome: "asked", text: "Which one?" });
     expect(threadItems([brief, failed, old])).toEqual([
@@ -21,7 +28,15 @@ describe("the thread", () => {
   test("shows the user's messages, the agent's text and tool calls with their results, and prompts", () => {
     const msgs = [
       m(1, "user", { text: "Fix it" }),
-      m(2, "claude", { type: "assistant", message: { content: [{ type: "text", text: "On it" }, { type: "tool_use", id: "c1", name: "Bash", input: { command: "ls" } }] } }),
+      m(2, "claude", {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "On it" },
+            { type: "tool_use", id: "c1", name: "Bash", input: { command: "ls" } },
+          ],
+        },
+      }),
       m(3, "claude", { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "c1", is_error: true }] } }),
       m(4, "claude", { type: "assistant", parent_tool_use_id: "x", message: { content: [{ type: "text", text: "subagent" }] } }),
       m(5, "permission", { request_id: "r1", status: "pending", tool_name: "Write", input: { file_path: "a" } }),

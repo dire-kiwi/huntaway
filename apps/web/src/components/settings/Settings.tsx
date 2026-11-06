@@ -15,7 +15,11 @@ export function Settings() {
   const [info, setInfo] = useState<HostInfo | null>(null);
   const [showToken, setShowToken] = useState(false);
   useEffect(() => {
-    if (localHostId) api.info(localHostId).then(setInfo).catch(() => {});
+    if (localHostId)
+      api
+        .info(localHostId)
+        .then(setInfo)
+        .catch(() => {});
   }, [localHostId]);
   const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
   const networkUrl = info ? `http://${info.hostname}:${port}/?token=${getToken()}` : "";
@@ -46,9 +50,8 @@ export function Settings() {
             <h2 className="mb-3 text-[13px] font-semibold">Network access</h2>
             <div className="space-y-3 rounded-xl border border-line p-4 text-[12.5px] text-muted">
               <p>
-                The server listens on all interfaces by default (<code>--host</code> / <code>IA_HOST</code> to change). Open this URL from another
-                machine. The token in it grants full control, including running agents, so only share it over a trusted network such as a VPN or
-                Tailscale.
+                The server listens on all interfaces by default (<code>--host</code> / <code>IA_HOST</code> to change). Open this URL from another machine. The
+                token in it grants full control, including running agents, so only share it over a trusted network such as a VPN or Tailscale.
               </p>
               <div className="flex items-center gap-2">
                 <Input readOnly className="font-mono text-[11.5px]" value={showToken ? networkUrl : networkUrl.replace(/token=.*/, "token=••••••••")} />

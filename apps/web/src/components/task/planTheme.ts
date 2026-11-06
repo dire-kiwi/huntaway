@@ -47,7 +47,8 @@ function iaHtml(fit: string) {
   const head = `<!doctype html><meta charset="utf-8"><style>:root{color-scheme:dark;${theme}}html,body{margin:0;background:transparent}body{position:relative;display:flow-root;color:var(--fg);font:16px/1.6 var(--font-sans)}</style>${sizer}\n`;
   addEventListener("message", (e) => {
     if (typeof e.data?.iaHtmlHeight !== "number") return;
-    for (const f of document.querySelectorAll<HTMLIFrameElement>("ia-html > iframe")) if (f.contentWindow === e.source) f.style.height = `${e.data.iaHtmlHeight}px`;
+    for (const f of document.querySelectorAll<HTMLIFrameElement>("ia-html > iframe"))
+      if (f.contentWindow === e.source) f.style.height = `${e.data.iaHtmlHeight}px`;
   });
   const up = () => {
     for (const host of document.querySelectorAll("ia-html")) {

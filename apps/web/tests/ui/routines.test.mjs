@@ -41,7 +41,12 @@ test("a routine's report links to its thread, which opens though no list has it"
     assert.equal(await page.getByText("Task not found.").count(), 0);
     assert.match(new URL(page.url()).pathname, new RegExp(`/t/${threadId}$`));
     // The assistant's Routines tab shows the run and how it went.
-    await ui.run(["goto /assistant/Default", "click routines", "wait css=[data-testid=routine] >> text=Inbox", "wait css=[data-testid=routine] >> text=Failed"]);
+    await ui.run([
+      "goto /assistant/Default",
+      "click routines",
+      "wait css=[data-testid=routine] >> text=Inbox",
+      "wait css=[data-testid=routine] >> text=Failed",
+    ]);
     // Not on the profile's board.
     await ui.run(["goto /profile/Default", "wait Try a scratch task"]);
     assert.equal(await page.getByText("Inbox ·").count(), 0);

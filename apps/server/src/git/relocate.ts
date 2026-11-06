@@ -6,18 +6,7 @@
  * Claude conversations that ran in the old folders are copied to where Claude looks for them in the new ones, so those
  * tasks can still be resumed.
  */
-import {
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize as norm, relative as rel_path } from "node:path";
 import * as db from "../db.ts";
 import type { Project, Task } from "../db.ts";
@@ -418,10 +407,14 @@ async function check_same_repo(project: Project, old: string, new_: string, task
   const worktrees = tasks
     .map((t) => t.worktree_path)
     .filter((wt): wt is string => wt != null)
-    .filter((wt) => existsSync(wt) || (() => {
-      const to = mapping.map(wt);
-      return to !== null && existsSync(to);
-    })());
+    .filter(
+      (wt) =>
+        existsSync(wt) ||
+        (() => {
+          const to = mapping.map(wt);
+          return to !== null && existsSync(to);
+        })(),
+    );
   if (worktrees.length) {
     if (!is_git_root(new_)) throw not_it("it isn't a git repository");
     const listed = await worktree_list(new_);
@@ -475,7 +468,8 @@ function canonical(p: string): string {
 }
 
 function same_dir(a: string, b: string): boolean {
-  const x = canonicalize(a), y = canonicalize(b);
+  const x = canonicalize(a),
+    y = canonicalize(b);
   return x !== null && y !== null && x === y;
 }
 
@@ -504,7 +498,8 @@ function copy_session(s: AppState, t: Task, from: string[], to: string) {
   const sid = t.session_id;
   if (sid == null) return;
   const c = s.db();
-  let dir: string | null = null, codex = false;
+  let dir: string | null = null,
+    codex = false;
   try {
     dir = db.task_config_dir(c, t) ?? null;
   } catch {}
@@ -519,7 +514,8 @@ function copy_session(s: AppState, t: Task, from: string[], to: string) {
     if (src === dest || !existsSync(join(src, `${sid}.jsonl`))) continue;
     // The transcript, and its folder of subagents' transcripts and tool results.
     for (const name of [`${sid}.jsonl`, sid]) {
-      const a = join(src, name), b = join(dest, name);
+      const a = join(src, name),
+        b = join(dest, name);
       if (!existsSync(a)) continue;
       try {
         copy_newer(a, b);

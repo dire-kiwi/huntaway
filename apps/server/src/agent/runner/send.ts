@@ -93,14 +93,7 @@ function send_run(state: Shared, task_id: string, text: string, auto: boolean, f
  * Send `message` on a thread. A message the user (or another agent) sent goes with the one queued there, if any.
  * Without one, it sends just that, and nothing if another run has (see `send_queued`).
  */
-export function send_message(
-  state: Shared,
-  task_id: string,
-  message_in: Queued | null,
-  auto: boolean,
-  kind: string,
-  review_round: number | null,
-): Task {
+export function send_message(state: Shared, task_id: string, message_in: Queued | null, auto: boolean, kind: string, review_round: number | null): Task {
   const only_queued = message_in == null;
   const message = message_in ?? db.Queued_empty();
   const task = db.get_task(state.db(), task_id);

@@ -29,7 +29,16 @@ import {
 function task_of(state: Shared, ls: string[]): Task {
   const p = db.insert_profile(state.db(), "p", [], null);
   const t = db.insert_task(state.db(), {
-    profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model: null, effort: null, claude_config_id: null,
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "in_progress",
+    use_worktree: false,
+    model: null,
+    effort: null,
+    claude_config_id: null,
   });
   return db.update_task(state.db(), t.id, [["labels", ls]])!;
 }
@@ -90,7 +99,13 @@ test("a_version_follows_the_file_during_a_turn_and_the_next_turn_starts_another"
   write(file, "flowchart LR\n  a --> c", 3);
   turn_ended(state, task.id);
   const v = versions(state, task.id);
-  assert.deepEqual(v.map(([n, , open]) => [n, open]), [[1, false], [2, false]]);
+  assert.deepEqual(
+    v.map(([n, , open]) => [n, open]),
+    [
+      [1, false],
+      [2, false],
+    ],
+  );
   assert.equal(v[1][1], "flowchart LR\n  a --> c");
 
   // A task with no labels has no documents.
@@ -105,7 +120,8 @@ test("a_task_keeps_a_document_for_each_label", () => {
   const state = testing.state();
   let task = task_of(state, ["diagram", "plan"]);
   assert.deepEqual(labels(task), ["plan", "diagram"]);
-  const plan = path(state, task, "plan")!, diagram = path(state, task, "diagram")!;
+  const plan = path(state, task, "plan")!,
+    diagram = path(state, task, "diagram")!;
   write(plan, "<h1>Plan</h1>", 1);
   write(diagram, "flowchart LR", 1);
   follow(state, task.id);
@@ -138,14 +154,35 @@ test("its_shell_and_wait_commands_run_in_its_folder", () => {
   const state = testing.state();
   const p = db.insert_profile(state.db(), "p", [], null);
   db.insert_project(state.db(), {
-    id: "pr", profile_id: p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false,
+    id: "pr",
+    profile_id: p.id,
+    name: "Web",
+    key: "WEB",
+    repo_path: "/src/web",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
   });
   db.update_project(state.db(), "pr", [["group_name", "Shop"]]);
   const new_task = (project_id: string | null): NewTask => ({
-    profile_id: p.id, project_id, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null,
+    profile_id: p.id,
+    project_id,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+    model: null,
+    effort: null,
+    claude_config_id: null,
   });
   // A task made as a diagram task before they were labels, as the migration leaves it.
-  const typed = (t: Task) => db.update_task(state.db(), t.id, [["labels", ["diagram"]], ["work_dir", `documents/${t.id}`]])!;
+  const typed = (t: Task) =>
+    db.update_task(state.db(), t.id, [
+      ["labels", ["diagram"]],
+      ["work_dir", `documents/${t.id}`],
+    ])!;
   const in_project = typed(db.insert_task(state.db(), new_task("pr")));
   const in_group = typed(db.insert_group_task(state.db(), new_task(null), "Shop"));
   for (const t of [in_project, in_group]) {

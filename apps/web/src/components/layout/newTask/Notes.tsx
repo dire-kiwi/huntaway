@@ -27,14 +27,14 @@ export function Notes({
     <>
       {asGroup && !docType && (
         <div className="text-[12px] text-muted">
-          In no project: it shows on this group's board, and its agent breaks the work into tasks in{" "}
-          {projects?.map((p) => p.name).join(", ")} and follows them. It doesn't change the repositories itself.
+          In no project: it shows on this group's board, and its agent breaks the work into tasks in {projects?.map((p) => p.name).join(", ")} and follows them.
+          It doesn't change the repositories itself.
         </div>
       )}
       {noProject && (
         <div className="text-[12px] text-muted">
-          In no project: it shows on the {scratch!.name} board{hostCount > 1 ? ` and runs on ${host?.name}` : ""}. Its agent works in the task's own folder, with
-          no repository, and can look across the board and create and start tasks.
+          In no project: it shows on the {scratch!.name} board{hostCount > 1 ? ` and runs on ${host?.name}` : ""}. Its agent works in the task's own folder,
+          with no repository, and can look across the board and create and start tasks.
         </div>
       )}
       {taskType === "scratch" && inProject && (

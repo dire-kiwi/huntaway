@@ -28,9 +28,19 @@ function board(): { s: AppState; c: db.Conn; profile: string; task: (rows: Row[]
   const profile = db.insert_profile(c, "p", [], null).id;
   /** A task with the history `rows` (its messages, made a second apart), translated into items unless `translate` is false. */
   const task = (rows: Row[], o: { translate?: boolean; kind?: string; parent?: string } = {}) => {
-    const t = db.insert_task(c, { profile_id: profile, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
+    const t = db.insert_task(c, {
+      profile_id: profile,
+      project_id: null,
+      kind: "task",
+      title: "t",
+      description: "",
+      status: "in_progress",
+      use_worktree: false,
+    });
     if (o.kind) db.run(c, "UPDATE tasks SET kind=?2, parent_id=?3 WHERE id=?1", t.id, o.kind, o.parent ?? null);
-    rows.forEach(([kind, data], i) => db.run(c, "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, ?2, ?3, ?4)", t.id, kind, JSON.stringify(data), at(i)));
+    rows.forEach(([kind, data], i) =>
+      db.run(c, "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, ?2, ?3, ?4)", t.id, kind, JSON.stringify(data), at(i)),
+    );
     if (o.translate !== false) write.rebuild(c, t.id);
     return t.id;
   };
@@ -50,7 +60,10 @@ const text = (t: string) => ({ type: "text", text: t });
 const call = (id: string, name: string, input: object) => ({ type: "tool_use", id, name, input });
 const results = (blocks: any[], more: object = {}): Row => ["claude", { type: "user", message: { content: blocks }, session_id: "s1", ...more }];
 const result = (id: string, content: string, is_error = false) => ({ type: "tool_result", tool_use_id: id, content, is_error });
-const done = (text?: string, more: object = {}): Row => ["claude", { type: "result", subtype: "success", is_error: false, ...(text !== undefined ? { result: text } : {}), session_id: "s1", ...more }];
+const done = (text?: string, more: object = {}): Row => [
+  "claude",
+  { type: "result", subtype: "success", is_error: false, ...(text !== undefined ? { result: text } : {}), session_id: "s1", ...more },
+];
 
 test("readers read items only for a flagged task whose thread this converter wrote, with no error", () => {
   const { c, task } = board();
@@ -71,7 +84,13 @@ test("readers read items only for a flagged task whose thread this converter wro
   assert.equal(history.source(c, legacy), "messages");
   // The callers read items when it says so: a task whose items differ from its messages (by hand) shows which.
   db.run(c, "UPDATE thread_items SET data=json_set(data, '$.text', 'from items') WHERE task_id=?1", id);
-  db.run(c, "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'claude', ?2, ?3)", id, JSON.stringify({ type: "assistant", message: { content: [text("from messages")] } }), at(1));
+  db.run(
+    c,
+    "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'claude', ?2, ?3)",
+    id,
+    JSON.stringify({ type: "assistant", message: { content: [text("from messages")] } }),
+    at(1),
+  );
   assert.equal(history.user_replies(c, id, null).replies[0]?.[1], "from items");
   assert.equal(history.last_assistant_text(c, id), null);
   db.run(c, "UPDATE threads SET error='boom' WHERE task_id=?1", id);
@@ -111,7 +130,11 @@ test("what the agent said: its messages' text, results' and API errors", () => {
     "one\ntwo",
   );
   // An API error in the agent's place.
-  const limited = task([user("go"), assistant([text("Before.")]), assistant([text("You've hit your limit.")], { is_api_error_message: true, error: "rate_limit" })]);
+  const limited = task([
+    user("go"),
+    assistant([text("Before.")]),
+    assistant([text("You've hit your limit.")], { is_api_error_message: true, error: "rate_limit" }),
+  ]);
   assert.equal(
     same((from) => history.last_assistant_text(c, limited, from)),
     "You've hit your limit.",
@@ -142,7 +165,11 @@ test("what the agent said: its messages' text, results' and API errors", () => {
     "Trying.",
   );
   // HA-218: a routine's report, a notice in items (an error one for a failed run), is the board's, not the agent's.
-  const reported = task([user("go"), assistant([text("Mine.")]), ["report", { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "failed", text: "It broke" }]]);
+  const reported = task([
+    user("go"),
+    assistant([text("Mine.")]),
+    ["report", { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "failed", text: "It broke" }],
+  ]);
   assert.equal(
     same((from) => history.last_assistant_text(c, reported, from)),
     "Mine.",
@@ -174,7 +201,11 @@ test("Telegram's: what the agent said in a turn, and how the latest turn ended",
     user("Late"),
     assistant([text("After the turn.")]),
   ]);
-  const ends = db.all<{ id: number; data: string }>(c, "SELECT id, data FROM messages WHERE task_id=?1 AND json_extract(data, '$.type')='result' ORDER BY id", id);
+  const ends = db.all<{ id: number; data: string }>(
+    c,
+    "SELECT id, data FROM messages WHERE task_id=?1 AND json_extract(data, '$.type')='result' ORDER BY id",
+    id,
+  );
   assert.deepEqual(
     ends.map((e) => same((from) => history.said_in_turn(c, id, e.id, from))),
     ["Looking.\nFound it.", null, "All finished.", null, "Partly.", null],
@@ -186,13 +217,27 @@ test("Telegram's: what the agent said in a turn, and how the latest turn ended",
     ["reply", "reply", "reply", "compact", "failed", "failed"],
   );
   // The latest: an interrupted turn, then each before it as the latest.
-  assert.deepEqual(same((from) => history.last_turn_end(c, id, from)), { id: ends[5]!.id, end: "failed" });
-  for (const [n, end] of [[4, "failed"], [3, "compact"], [2, "reply"]] as const) {
-    const cut = task(db.all<{ kind: string; data: string }>(c, "SELECT kind, data FROM messages WHERE task_id=?1 AND id<=?2 ORDER BY id", id, ends[n]!.id).map((m) => [m.kind, JSON.parse(m.data)]));
+  assert.deepEqual(
+    same((from) => history.last_turn_end(c, id, from)),
+    { id: ends[5]!.id, end: "failed" },
+  );
+  for (const [n, end] of [
+    [4, "failed"],
+    [3, "compact"],
+    [2, "reply"],
+  ] as const) {
+    const cut = task(
+      db
+        .all<{ kind: string; data: string }>(c, "SELECT kind, data FROM messages WHERE task_id=?1 AND id<=?2 ORDER BY id", id, ends[n]!.id)
+        .map((m) => [m.kind, JSON.parse(m.data)]),
+    );
     const last = same((from) => history.last_turn_end(c, cut, from));
     assert.equal(last?.end, end);
   }
-  assert.equal(same((from) => history.last_turn_end(c, task([user("go")]), from)), null);
+  assert.equal(
+    same((from) => history.last_turn_end(c, task([user("go")]), from)),
+    null,
+  );
 });
 
 test("the user's replies: their own words, with what the agent said before each, and limits", () => {
@@ -221,7 +266,14 @@ test("the user's replies: their own words, with what the agent said before each,
     earlier: 0,
   });
   assert.deepEqual(history.user_replies(c, id, 1), { replies: [[null, "Also round corners."]], since: "Will do.", earlier: 2 });
-  assert.deepEqual(history.user_replies(c, id, 2), { replies: [["Fixed.", "Large."], [null, "Also round corners."]], since: "Will do.", earlier: 1 });
+  assert.deepEqual(history.user_replies(c, id, 2), {
+    replies: [
+      ["Fixed.", "Large."],
+      [null, "Also round corners."],
+    ],
+    since: "Will do.",
+    earlier: 1,
+  });
 });
 
 test("tool calls since a time, and whether they changed code", () => {
@@ -240,7 +292,9 @@ test("tool calls since a time, and whether they changed code", () => {
     assistant([call("e3", "Edit", { file_path: "/c" })], { parent_tool_use_id: "x1" }),
     assistant([call("b2", "Bash", { command: "git commit -m x" })]),
   ]);
-  const calls = same((from) => history.tool_calls_since(c, id, null, from).map(([call, res]) => [call.id, call.name, res?.is_error ?? null, changes.changes_code(call, res)]));
+  const calls = same((from) =>
+    history.tool_calls_since(c, id, null, from).map(([call, res]) => [call.id, call.name, res?.is_error ?? null, changes.changes_code(call, res)]),
+  );
   assert.deepEqual(calls, [
     ["e1", "Edit", true, false],
     ["b1", "Bash", true, false],
@@ -287,7 +341,11 @@ test("a subagent's call, from what its lifecycle messages say", () => {
   const job = (subtype: string, more: object): Row => ["claude", { type: "system", subtype, session_id: "s1", ...more }];
   const id = task([
     user("go"),
-    assistant([call("ag1", "Agent", { description: "look", prompt: "look around" }), call("sk1", "Skill", { skill: "x" }), call("bg1", "Bash", { command: "sleep 9", run_in_background: true })]),
+    assistant([
+      call("ag1", "Agent", { description: "look", prompt: "look around" }),
+      call("sk1", "Skill", { skill: "x" }),
+      call("bg1", "Bash", { command: "sleep 9", run_in_background: true }),
+    ]),
     job("task_started", { task_id: "T1", tool_use_id: "ag1", task_type: "local_agent", description: "look" }),
     job("task_started", { task_id: "T2", tool_use_id: "sk1", task_type: "local_agent", description: "a skill" }),
     job("task_started", { task_id: "T3", tool_use_id: "bg1", task_type: "local_bash" }),
@@ -344,9 +402,17 @@ test("a question's conversation moving on, the first user message and turns' mes
     null,
   );
   // What the checkpoints and routine_call read of a turn's message.
-  const pick = (d: any) => (d === undefined ? "none" : { text: d?.text, user_text: d?.user_text, auto: d?.auto, review_round: d?.review_round, routine: d?.routine, start: d?.start });
+  const pick = (d: any) =>
+    d === undefined ? "none" : { text: d?.text, user_text: d?.user_text, auto: d?.auto, review_round: d?.review_round, routine: d?.routine, start: d?.start };
   for (const m of ids.filter((m) => m.kind === "user")) same((from) => pick(history.user_message(c, id, m.id, from)));
-  assert.deepEqual(pick(history.user_message(c, id, ids[4]!.id, "items")), { text: "Fix these", user_text: undefined, auto: true, review_round: 2, routine: undefined, start: undefined });
+  assert.deepEqual(pick(history.user_message(c, id, ids[4]!.id, "items")), {
+    text: "Fix these",
+    user_text: undefined,
+    auto: true,
+    review_round: 2,
+    routine: undefined,
+    start: undefined,
+  });
   assert.equal(history.user_message(c, id, 99999, "items"), undefined);
   // A routine run's calls: its turn's message says so.
   const run = db.insert_run(c, id, "prompt");
@@ -368,7 +434,10 @@ test("the questions still waiting for an answer", () => {
     q("Merge?", "pending", { merge_approval: true, multi_select: false, allow_other: false }),
     q("Expired?", "expired"),
     // A question prompt (AskUserQuestion) is a question request too, but no question message.
-    ["permission", { tool_name: "AskUserQuestion", input: { questions: [{ question: "Pick", options: [{ label: "x" }] }] }, request_id: "r1", status: "pending" }],
+    [
+      "permission",
+      { tool_name: "AskUserQuestion", input: { questions: [{ question: "Pick", options: [{ label: "x" }] }] }, request_id: "r1", status: "pending" },
+    ],
   ]);
   const open = same((from) => history.open_questions(c, id, from).map((m) => JSON.parse(m.data).question));
   assert.deepEqual(open, ["Open?", "Merge?"]);
@@ -398,19 +467,43 @@ test("pending approvals, from the thread's request and the request's row", () =>
       c,
       `INSERT INTO permission_requests (id, task_id, message_id, tool_name, input, status, created_at, call_id, kind, expires_at, rule)
        VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9, ?10)`,
-      rid, id, m.id, tool, JSON.stringify(input), at(rid.length), `call-${rid}`, kind, (extra as any).expires_at ?? null, (extra as any).rule?.tool ?? null,
+      rid,
+      id,
+      m.id,
+      tool,
+      JSON.stringify(input),
+      at(rid.length),
+      `call-${rid}`,
+      kind,
+      (extra as any).expires_at ?? null,
+      (extra as any).rule?.tool ?? null,
     );
   };
   ask("p1", "project", "create_project", { name: "New" });
-  ask("p22", "delete_task", "delete_task", { task: "X-1" }, { expires_at: "2026-12-01T00:00:00.000Z", rule: { tool: "mcp__huntaway__delete_task", decision: "ask" } });
+  ask(
+    "p22",
+    "delete_task",
+    "delete_task",
+    { task: "X-1" },
+    { expires_at: "2026-12-01T00:00:00.000Z", rule: { tool: "mcp__huntaway__delete_task", decision: "ask" } },
+  );
   ask("p333", "automation", "create_automation", { name: "nightly", workflow: { nodes: [] } });
   ask("p4444", "tool", "Bash", { command: "ls" });
   assert.equal(history.source(c, id), "items");
-  for (const [d, a, w] of [[true, true, true], [false, false, false], [true, true, false]] as const) same((from) => permissions.pending_approvals(s, d, a, w, from));
+  for (const [d, a, w] of [
+    [true, true, true],
+    [false, false, false],
+    [true, true, false],
+  ] as const)
+    same((from) => permissions.pending_approvals(s, d, a, w, from));
   const all = permissions.pending_approvals(s, true, true, true);
   assert.deepEqual(
     all.map((v) => [v.request_id, v.kind, v.input]),
-    [["p1", "project", { name: "New" }], ["p22", "delete_task", { task: "X-1" }], ["p333", "automation", { name: "nightly", workflow: { nodes: [] } }]],
+    [
+      ["p1", "project", { name: "New" }],
+      ["p22", "delete_task", { task: "X-1" }],
+      ["p333", "automation", { name: "nightly", workflow: { nodes: [] } }],
+    ],
   );
 });
 
@@ -427,20 +520,17 @@ test("prompt analytics and review stats' submissions", () => {
   // Each task from where its readers read it, and every one from messages (the legacy one has no items to read).
   // (In time order: events of different tasks made at once may come in either order.)
   const report = (from: history.Source, f = "", t = "9999") =>
-    analytics.report(c, profile, f, t, from === "items" ? "auto" : "messages").events.sort((x, y) => JSON.stringify(x) < JSON.stringify(y) ? -1 : 1);
+    analytics.report(c, profile, f, t, from === "items" ? "auto" : "messages").events.sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
   same((from) => report(from));
   same((from) => report(from, at(1), at(3)));
   const events = report("items");
-  assert.deepEqual(
-    events.map((e) => [e.at, e.task_id === id ? "items" : e.task_id === legacy ? "legacy" : e.task_id, e.kind, e.text]).sort(),
-    [
-      [at(0), "items", "start", ""],
-      [at(0), "legacy", "start", ""],
-      [at(1), "items", "prompt", "A prompt"],
-      [at(1), "legacy", "prompt", "Another prompt"],
-      [at(3), "items", "merge", ""],
-    ],
-  );
+  assert.deepEqual(events.map((e) => [e.at, e.task_id === id ? "items" : e.task_id === legacy ? "legacy" : e.task_id, e.kind, e.text]).sort(), [
+    [at(0), "items", "start", ""],
+    [at(0), "legacy", "start", ""],
+    [at(1), "items", "prompt", "A prompt"],
+    [at(1), "legacy", "prompt", "Another prompt"],
+    [at(3), "items", "merge", ""],
+  ]);
 
   const review = task(
     [
@@ -453,7 +543,10 @@ test("prompt analytics and review stats' submissions", () => {
     { kind: "review", parent: id },
   );
   const subs = same((from) => history.submissions(c, from));
-  assert.deepEqual(subs.map((x) => [x.thread_id === review, x.parent_id === id, x.id, x.at]), [[true, true, "s2", at(3)]]);
+  assert.deepEqual(
+    subs.map((x) => [x.thread_id === review, x.parent_id === id, x.id, x.at]),
+    [[true, true, "s2", at(3)]],
+  );
 });
 
 test("attachments a thread kept as items links are referenced, after its messages are gone too", () => {
@@ -474,7 +567,9 @@ test("attachments a thread kept as items links are referenced, after its message
   assert.deepEqual([...attachments.of_task(c, id)].sort(), [a, b].sort());
   assert.deepEqual([...attachments.of_task(c, legacy)], [b]);
   // In a request too (a permission prompt's input).
-  const asked = task([["permission", { tool_name: "Read", input: { file_path: `/data/attachments/${"a".repeat(32)}/y` }, request_id: "r9", status: "pending" }]]);
+  const asked = task([
+    ["permission", { tool_name: "Read", input: { file_path: `/data/attachments/${"a".repeat(32)}/y` }, request_id: "r9", status: "pending" }],
+  ]);
   db.run(c, "DELETE FROM messages WHERE task_id=?1", asked);
   assert.deepEqual([...attachments.of_task(c, asked)], ["a".repeat(32)]);
 });
@@ -498,7 +593,17 @@ test("threads-readers finds no differences on these histories, and writes nothin
   assert.deepEqual(r.failed, []);
   assert.equal(r.tasks, 2);
   assert.equal(r.translated, 1);
-  for (const reader of ["last_message", "user_replies", "said_in_turn", "last_turn_end", "tool_calls_since", "subagent_call", "moved_on", "analytics", "attachments.referenced"]) {
+  for (const reader of [
+    "last_message",
+    "user_replies",
+    "said_in_turn",
+    "last_turn_end",
+    "tool_calls_since",
+    "subagent_call",
+    "moved_on",
+    "analytics",
+    "attachments.referenced",
+  ]) {
     assert.ok(r.readers[reader]?.checked, reader);
   }
   // The translation was rolled back.
@@ -508,5 +613,8 @@ test("threads-readers finds no differences on these histories, and writes nothin
   // A difference is found: items changed by hand.
   db.run(c, "UPDATE thread_items SET data=json_set(data, '$.text', 'changed') WHERE task_id=?1 AND type='assistant_message'", translated);
   const changed = readers.compare(c, [translated]);
-  assert.ok(changed.differences.some((d) => d.reader === "user_replies" && (d.items as any).since === "changed" && (d.messages as any).since === "hi"), JSON.stringify(changed.differences));
+  assert.ok(
+    changed.differences.some((d) => d.reader === "user_replies" && (d.items as any).since === "changed" && (d.messages as any).since === "hi"),
+    JSON.stringify(changed.differences),
+  );
 });

@@ -98,7 +98,14 @@ export function Usage_new(config_id: string): Usage {
 
 /** A copy of `u` as serde serializes it (`accounts` left out when there are none). */
 function usage_clone(u: Usage): Usage {
-  const c: Usage = { config_id: u.config_id, limits: u.limits.map((l) => ({ ...l })), plan: u.plan, updated_at: u.updated_at, error: u.error, out_until: u.out_until };
+  const c: Usage = {
+    config_id: u.config_id,
+    limits: u.limits.map((l) => ({ ...l })),
+    plan: u.plan,
+    updated_at: u.updated_at,
+    error: u.error,
+    out_until: u.out_until,
+  };
   if (u.accounts) c.accounts = structuredClone(u.accounts);
   return c;
 }
@@ -410,7 +417,10 @@ function on_rate_limit(s: Shared, config_id: string, v: any, windows: boolean) {
   if (!windows) return;
   const w = info.unifiedWindows ?? {};
   const limits: Limit[] = [];
-  for (const [key, id, label] of [["five_hour", "session", "Session"], ["seven_day", "weekly", "Weekly"]]) {
+  for (const [key, id, label] of [
+    ["five_hour", "session", "Session"],
+    ["seven_day", "weekly", "Weekly"],
+  ]) {
     const util = w[key]?.utilization;
     if (typeof util !== "number") continue;
     const r = w[key].resetsAt;
@@ -421,7 +431,10 @@ function on_rate_limit(s: Shared, config_id: string, v: any, windows: boolean) {
 
 /** A Unix time as chrono's `to_rfc3339()` writes it (`+00:00`, no fraction for whole seconds). */
 export function rfc3339(secs: number): string {
-  return new Date(secs * 1000).toISOString().replace(/\.000Z$/, "Z").replace(/Z$/, "+00:00");
+  return new Date(secs * 1000)
+    .toISOString()
+    .replace(/\.000Z$/, "Z")
+    .replace(/Z$/, "+00:00");
 }
 
 /** A Unix time, as the board writes times that are compared as text (`limit_reset_at`). */

@@ -87,7 +87,19 @@ export function start(s: AppState): Progress {
   const c = s.db();
   const started_at = db.get_setting(c, SETTING) ?? now();
   db.set_setting(c, SETTING, started_at);
-  const p: Progress = { started_at, total: 0, done: 0, rebuilt: 0, messages: 0, failed: [], current: null, running: true, stopping: false, finished_at: null, ms: 0 };
+  const p: Progress = {
+    started_at,
+    total: 0,
+    done: 0,
+    rebuilt: 0,
+    messages: 0,
+    failed: [],
+    current: null,
+    running: true,
+    stopping: false,
+    finished_at: null,
+    ms: 0,
+  };
   batches.set(s, p);
   background("the threads' batch rebuild", go(s, p));
   return p;
@@ -145,7 +157,9 @@ async function go(s: AppState, p: Progress): Promise<void> {
     try {
       db.set_setting(s.db(), SETTING, null);
     } catch {}
-    console.log(`${now()} huntaway: the threads' batch rebuild ${p.stopping ? "stopped" : "finished"}: ${p.rebuilt} of ${p.total} tasks rebuilt in ${Math.round(p.ms)} ms, ${p.failed.length} failed`);
+    console.log(
+      `${now()} huntaway: the threads' batch rebuild ${p.stopping ? "stopped" : "finished"}: ${p.rebuilt} of ${p.total} tasks rebuilt in ${Math.round(p.ms)} ms, ${p.failed.length} failed`,
+    );
   }
 }
 

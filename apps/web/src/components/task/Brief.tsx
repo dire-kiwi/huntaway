@@ -179,7 +179,11 @@ export function BriefView({ assistant }: { assistant: Task }) {
         {routine && (
           <span className="ml-auto flex min-w-0 items-center gap-2 text-faint">
             <span className="truncate" title={routine.enabled && routine.next_run_at ? new Date(routine.next_run_at).toLocaleString() : undefined}>
-              {routine.enabled ? (routine.next_run_at ? `Next ${timeUntil(routine.next_run_at)} (${localTime(routine.next_run_at)})` : triggerText(routine.trigger, routines?.tz ?? null)) : "Paused"}
+              {routine.enabled
+                ? routine.next_run_at
+                  ? `Next ${timeUntil(routine.next_run_at)} (${localTime(routine.next_run_at)})`
+                  : triggerText(routine.trigger, routines?.tz ?? null)
+                : "Paused"}
             </span>
             <Button size="sm" variant="ghost" disabled={running || !!working} onClick={runNow} title="Write today's brief now">
               {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run now
@@ -233,7 +237,11 @@ export function BriefView({ assistant }: { assistant: Task }) {
                           onClick={() => void rate(it, v)}
                           className={clsx(
                             "flex h-6 w-6 shrink-0 items-center justify-center rounded",
-                            r === v ? (v === "up" ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300") : "text-faint hover:bg-raised hover:text-fg",
+                            r === v
+                              ? v === "up"
+                                ? "bg-emerald-500/20 text-emerald-300"
+                                : "bg-red-500/20 text-red-300"
+                              : "text-faint hover:bg-raised hover:text-fg",
                           )}
                         >
                           {v === "up" ? <ThumbsUp size={13} /> : <ThumbsDown size={13} />}
@@ -285,9 +293,9 @@ function BriefSetup({ hostId, profileId, onAdded }: { hostId: string; profileId:
     <div className="space-y-3 rounded-xl border border-line p-5 text-[13px]" data-testid="brief-setup">
       <div className="text-fg">A morning brief</div>
       <p className="text-muted">
-        Each morning your assistant reads today's calendar, unread and starred mail, Drive files changed lately and what's waiting for you on the
-        board, writes a brief here, and sends you a short summary. Rate its items with 👍 and 👎, and later briefs follow your ratings. It needs
-        Google (the assistant's Details → Google) for mail, calendar and Drive; it only reads and drafts.
+        Each morning your assistant reads today's calendar, unread and starred mail, Drive files changed lately and what's waiting for you on the board, writes
+        a brief here, and sends you a short summary. Rate its items with 👍 and 👎, and later briefs follow your ratings. It needs Google (the assistant's
+        Details → Google) for mail, calendar and Drive; it only reads and drafts.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-muted">
@@ -307,7 +315,10 @@ function BriefSetup({ hostId, profileId, onAdded }: { hostId: string; profileId:
               type="button"
               aria-pressed={days.includes(d)}
               onClick={() => setDays(days.includes(d) ? days.filter((x) => x !== d) : WEEKDAYS.filter((x) => x === d || days.includes(x)))}
-              className={clsx("h-7 rounded-md border px-2 text-[12px] capitalize", days.includes(d) ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-muted hover:text-fg")}
+              className={clsx(
+                "h-7 rounded-md border px-2 text-[12px] capitalize",
+                days.includes(d) ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-muted hover:text-fg",
+              )}
             >
               {d}
             </button>

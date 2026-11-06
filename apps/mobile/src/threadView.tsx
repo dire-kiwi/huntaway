@@ -36,13 +36,22 @@ async function loadThread(client: Client, host: string, id: string): Promise<Loa
   const task = (await client.task(host, id)).task;
   if (task?.thread_source !== "items") return client.messagePage(host, id, { limit: PAGE });
   const w = await client.thread<Any>(host, id, ITEMS);
-  return { messages: [], more: (w.start ?? 0) > 0, subagents: [], items: itemThreadItems(w.items ?? [], w.requests ?? [], w.context?.length ?? 0), start: w.start ?? 0 };
+  return {
+    messages: [],
+    more: (w.start ?? 0) > 0,
+    subagents: [],
+    items: itemThreadItems(w.items ?? [], w.requests ?? [], w.context?.length ?? 0),
+    start: w.start ?? 0,
+  };
 }
 
 /** Task `id` on host `host` of board `boardId`, and its thread, kept current. */
 export function useThread(boardId: string, client: Client | undefined, host: string, id: string) {
   const detail = useLoad(async () => (client && id ? (await client.task(host, id)).task : undefined), [boardId, host, id]);
-  const thread = useLoad(async (): Promise<Loaded> => (client && id ? loadThread(client, host, id) : { messages: [], more: false, subagents: [] }), [boardId, host, id]);
+  const thread = useLoad(
+    async (): Promise<Loaded> => (client && id ? loadThread(client, host, id) : { messages: [], more: false, subagents: [] }),
+    [boardId, host, id],
+  );
   // A thread kept as items is loaded again as its messages are written (they come as events too, but its rows are its
   // items'), at most every half a second.
   const again = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,8 +94,7 @@ export function useThread(boardId: string, client: Client | undefined, host: str
       detail.setData(ev.task as Task);
       // It moved onto items: its rows are its items' from now on.
       if ((ev.task as Task).thread_source === "items" && thread.data && !thread.data.items) reloadSoon();
-    }
-    else if ((ev.type === "message" || ev.type === "message_updated") && ev.task_id === id) {
+    } else if ((ev.type === "message" || ev.type === "message_updated") && ev.task_id === id) {
       const m = ev.message as Message;
       if (endsDelta(m)) setDelta(() => "");
       if (thread.data?.items) reloadSoon();
@@ -185,7 +193,9 @@ export function ThreadMessages({
             <Text style={[s.faint, { padding: 12 }]}>The agent is working…</Text>
           ) : undefined
         }
-        ListFooterComponent={thread.data?.more ? <Button title="Earlier messages" small kind="ghost" busy={t.olderBusy} onPress={t.older} style={{ margin: 12 }} /> : undefined}
+        ListFooterComponent={
+          thread.data?.more ? <Button title="Earlier messages" small kind="ghost" busy={t.olderBusy} onPress={t.older} style={{ margin: 12 }} /> : undefined
+        }
         renderItem={({ item }) => <Row item={item} client={client} host={host} taskId={taskId} onAnswered={() => thread.reload()} onOpenTask={onOpenTask} />}
       />
     </>
@@ -210,7 +220,17 @@ function Row({
   switch (item.type) {
     case "user":
       return (
-        <View style={{ alignSelf: "flex-end", maxWidth: "85%", margin: 6, marginHorizontal: 12, padding: 10, borderRadius: 12, backgroundColor: "rgba(109,90,230,0.35)" }}>
+        <View
+          style={{
+            alignSelf: "flex-end",
+            maxWidth: "85%",
+            margin: 6,
+            marginHorizontal: 12,
+            padding: 10,
+            borderRadius: 12,
+            backgroundColor: "rgba(109,90,230,0.35)",
+          }}
+        >
           <Text style={{ color: colors.fg, fontSize: 15 }} selectable>
             {item.text}
           </Text>
@@ -225,11 +245,14 @@ function Row({
     case "tool":
       return (
         <Text style={[s.faint, { paddingHorizontal: 14, paddingVertical: 2 }]} numberOfLines={2}>
-          <Text style={{ color: item.failed ? colors.red : item.done ? colors.muted : colors.blue, fontWeight: "600" }}>{item.name}</Text> {toolSummary(item.input)}
+          <Text style={{ color: item.failed ? colors.red : item.done ? colors.muted : colors.blue, fontWeight: "600" }}>{item.name}</Text>{" "}
+          {toolSummary(item.input)}
         </Text>
       );
     case "event":
-      return <Text style={[s.faint, { paddingHorizontal: 14, paddingVertical: 4, color: item.level === "error" ? colors.red : colors.faint }]}>{item.text}</Text>;
+      return (
+        <Text style={[s.faint, { paddingHorizontal: 14, paddingVertical: 4, color: item.level === "error" ? colors.red : colors.faint }]}>{item.text}</Text>
+      );
     case "result":
       return <ErrorText>{item.text}</ErrorText>;
     case "permission":

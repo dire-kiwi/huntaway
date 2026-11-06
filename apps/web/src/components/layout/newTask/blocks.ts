@@ -22,7 +22,10 @@ export function submitBlocks({ asGroup, inProject, host }: Where, { config, conf
           ? `${inProject.name} isn't a git repository, so its tasks can't each have their own worktree: pick one model, or make it a scratch task.`
           : null;
   // A host before API 71 makes a task of one label's type.
-  const labelBlock = labelTypes && labels.length > 1 ? `${host?.name ?? "This host"} makes a task of one of plan, artifact or diagram, not several: update it for labels.` : null;
+  const labelBlock =
+    labelTypes && labels.length > 1
+      ? `${host?.name ?? "This host"} makes a task of one of plan, artifact or diagram, not several: update it for labels.`
+      : null;
   // What a Codex config's models say waits for them: which model a `!` that names none yet is (so a harness isn't left
   // out, with its token sent as text); which config a `!` names a model of, when a config of the same agent before it
   // (the picked one, then in order) may have the model too (so it doesn't depend on which answers first); and whether the effort picked

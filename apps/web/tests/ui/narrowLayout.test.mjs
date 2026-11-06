@@ -38,7 +38,13 @@ test("on a phone the sidebar is a drawer", async () => {
     await ui.run(["click Menu", "wait role=button[name='Settings's]"]);
     // A press beside it closes it, and so does Escape.
     await page.mouse.click(370, 400);
-    await ui.run(["gone role=button[name='Settings's]", "click Menu", "wait role=button[name='Settings's]", "press Escape", "gone role=button[name='Settings's]"]);
+    await ui.run([
+      "gone role=button[name='Settings's]",
+      "click Menu",
+      "wait role=button[name='Settings's]",
+      "press Escape",
+      "gone role=button[name='Settings's]",
+    ]);
     // Going somewhere from it closes it.
     await ui.run(["click Menu", "click role=button[name='Settings's]", "wait role=heading[name='Settings']", "gone role=button[name='Analytics']"]);
     assert.equal(new URL(page.url()).pathname, "/settings");
@@ -155,7 +161,13 @@ test("on a phone a task's Start button is on screen", async () => {
 test("on a phone a card's menu brings an archived task back into Done", async () => {
   await withBrowser(server, PHONE, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^Done/]", "click 1 archived", `wait ${ARCHIVED}`, `click [aria-label="Move ${ARCHIVED} to…"]`]);
+    await ui.run([
+      `goto /p/${project.id}`,
+      "click role=tab[name=/^Done/]",
+      "click 1 archived",
+      `wait ${ARCHIVED}`,
+      `click [aria-label="Move ${ARCHIVED} to…"]`,
+    ]);
     // It isn't in Done (nothing's ticked), and picking Done brings it back.
     const done = page.getByRole("menuitemradio", { name: /^\W*Done$/ });
     assert.equal(await done.getAttribute("aria-checked"), "false");

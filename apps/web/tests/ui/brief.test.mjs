@@ -29,7 +29,13 @@ test("the Brief tab adds the morning brief routine", async () => {
 test("the Google card adds the Google server and says what's still missing", async () => {
   const [profile] = await server.api("GET", "/profiles");
   await withBrowser(server, {}, async (ui) => {
-    await ui.run(["goto /assistant/Default", "wait Message your assistant", "wait Not connected", "wait no Google server on this host", "click Add the Google server"]);
+    await ui.run([
+      "goto /assistant/Default",
+      "wait Message your assistant",
+      "wait Not connected",
+      "wait no Google server on this host",
+      "click Add the Google server",
+    ]);
     await ui.run(["gone Add the Google server", "wait How to connect", "wait huntaway google-auth --client-secret"]);
     const st = await server.api("GET", `/profiles/${profile.id}/assistant/google`);
     assert.equal(st.server.on, true);
@@ -62,7 +68,14 @@ test("a brief's items are rated from the board's list, and nothing in the page c
     { kind: "calendar", topic: "Medical appointments", title: "Dentist at 9:30" },
   ];
   const now = new Date().toISOString();
-  const doc = { label: "brief", file: "/brief.html", versions: [{ version: 1, open: false, created_at: now, updated_at: now, size: html.length }], version: 1, content: html, items };
+  const doc = {
+    label: "brief",
+    file: "/brief.html",
+    versions: [{ version: 1, open: false, created_at: now, updated_at: now, size: html.length }],
+    version: 1,
+    content: html,
+    items,
+  };
   await withBrowser(server, { allowErrors: [/Content Security Policy/, /Refused to/, /net::ERR/, /Blocked script execution/] }, async (ui) => {
     const { page, context } = ui;
     const rated = [];

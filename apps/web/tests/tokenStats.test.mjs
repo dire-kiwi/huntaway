@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "vite-plus/test";
-import { byDay, byImplementer, byReviewer, byTask, groupBy, issuesByModelAndEffort, purposeOf, reviewsByTask, summarise, ticks, tokens, total } from "../src/tokenStats.ts";
+import {
+  byDay,
+  byImplementer,
+  byReviewer,
+  byTask,
+  groupBy,
+  issuesByModelAndEffort,
+  purposeOf,
+  reviewsByTask,
+  summarise,
+  ticks,
+  tokens,
+  total,
+} from "../src/tokenStats.ts";
 
 const row = (threadId, at, model, output, extra = {}) => ({
   at,
@@ -20,7 +33,20 @@ const row = (threadId, at, model, output, extra = {}) => ({
   ...extra,
 });
 const thread = (kind, extra = {}) => ({ parentId: null, taskType: null, subproject: false, groupName: null, model: null, kind, ...extra });
-const review = (taskId, threadId, at, verdict, extra = {}) => ({ at, taskId, threadId, verdict, serious: verdict === "issues" ? 1 : 0, minor: null, minorNoted: false, reviewer: "Claude · opus", model: "opus", effort: null, taskModel: null, ...extra });
+const review = (taskId, threadId, at, verdict, extra = {}) => ({
+  at,
+  taskId,
+  threadId,
+  verdict,
+  serious: verdict === "issues" ? 1 : 0,
+  minor: null,
+  minorNoted: false,
+  reviewer: "Claude · opus",
+  model: "opus",
+  effort: null,
+  taskModel: null,
+  ...extra,
+});
 
 // A subproject S with task C, which has a review thread and a summary thread; and task T on its own.
 const data = (extra = {}) => ({
@@ -74,7 +100,13 @@ test("totals count each run once and group by model", () => {
 
 test("a task's tokens include its threads', and a subproject lists its tasks", () => {
   const d = data();
-  const rows = [row("S", 1, "opus", 10), row("C", 2, "opus", 100), row("R", 3, "gpt", 40, { runKind: "review" }), row("M", 4, "haiku", 5), row("T", 5, "gpt", 50)];
+  const rows = [
+    row("S", 1, "opus", 10),
+    row("C", 2, "opus", 100),
+    row("R", 3, "gpt", 40, { runKind: "review" }),
+    row("M", 4, "haiku", 5),
+    row("T", 5, "gpt", 50),
+  ];
   const tasks = byTask(d, rows, "output");
   assert.deepEqual(
     tasks.map((t) => [t.taskId, t.totals.output]),
@@ -100,7 +132,14 @@ test("titles and window restarts are calls of their own, counted in totals but n
   const d = data();
   const title = (callId, threadId, at, model, output) => row(threadId, at, model, output, { runId: null, callId, runKind: "title" });
   const window = (callId, at, model, output) => row(null, at, model, output, { runId: null, callId, runKind: "window" });
-  const rows = [row("T", 1, "gpt", 50), title("a", "T", 2, "haiku", 3), title("b", "T", 3, "haiku", 4), title("c", "C", 3, "haiku", 2), window("d", 4, "haiku", 1), window("d", 4, "gpt-mini", 1)];
+  const rows = [
+    row("T", 1, "gpt", 50),
+    title("a", "T", 2, "haiku", 3),
+    title("b", "T", 3, "haiku", 4),
+    title("c", "C", 3, "haiku", 2),
+    window("d", 4, "haiku", 1),
+    window("d", 4, "gpt-mini", 1),
+  ];
   assert.equal(purposeOf(d, rows[1]), "title");
   assert.equal(purposeOf(d, rows[4]), "window");
   const t = total(rows);
@@ -118,7 +157,10 @@ test("titles and window restarts are calls of their own, counted in totals but n
       ["window", 2, 0, 1],
     ],
   );
-  assert.deepEqual(byDay(d, rows, [0]).map((x) => [x.parts.title.output, x.parts.window.output]), [[9, 2]]);
+  assert.deepEqual(
+    byDay(d, rows, [0]).map((x) => [x.parts.title.output, x.parts.window.output]),
+    [[9, 2]],
+  );
   // Two calls in the same millisecond, for the same task or for no task, are two calls.
   assert.deepEqual(total([title("e", "T", 5, "haiku", 1), title("f", "T", 5, "haiku", 1), window("g", 5, "haiku", 1), window("h", 5, "haiku", 1)]).calls, 4);
 });
@@ -237,7 +279,11 @@ test("serious issues are counted by the model that did the work and its effort, 
   assert.deepEqual(r.total.byEffort.high, { tasks: 1, reviews: 3, withIssues: 3, serious: 7 });
   assert.equal(r.total.byEffort.default.serious, 1);
   assert.deepEqual(r.total.all, { tasks: 2, reviews: 7, withIssues: 5, serious: 11 });
-  assert.deepEqual(issuesByModelAndEffort(d, []), { efforts: [], models: [], total: { model: "All models", all: { tasks: 0, reviews: 0, withIssues: 0, serious: 0 }, byEffort: {} } });
+  assert.deepEqual(issuesByModelAndEffort(d, []), {
+    efforts: [],
+    models: [],
+    total: { model: "All models", all: { tasks: 0, reviews: 0, withIssues: 0, serious: 0 }, byEffort: {} },
+  });
 });
 
 test("axis ticks are round numbers", () => {

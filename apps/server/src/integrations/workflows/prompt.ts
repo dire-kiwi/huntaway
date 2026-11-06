@@ -179,9 +179,7 @@ export function agent(
       for (const i of recheck) p += `\n- ${i}`;
     }
   } else {
-    p +=
-      "\nDon't change anything. Your last message is this step's output, shown as it is on the task: end your turn with only " +
-      "that, without a preamble.";
+    p += "\nDon't change anything. Your last message is this step's output, shown as it is on the task: end your turn with only " + "that, without a preamble.";
   }
   return p;
 }

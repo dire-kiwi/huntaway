@@ -40,7 +40,10 @@ function denied(result: any): boolean {
     typeof content === "string"
       ? content
       : Array.isArray(content)
-        ? content.filter((p: any) => typeof p?.text === "string").map((p: any) => p.text).join("\n")
+        ? content
+            .filter((p: any) => typeof p?.text === "string")
+            .map((p: any) => p.text)
+            .join("\n")
         : "";
   return result?.is_error === true && DENIALS.some((d) => text.includes(d));
 }
@@ -101,7 +104,7 @@ export function tokenize(command: string): Token[] {
       in_word = true;
       for (let d = next(); d !== undefined; d = next()) {
         if (d === '"') break;
-        if (d === "\\" && peek() !== undefined && "\"\\$`\n".includes(peek()!)) word += next();
+        if (d === "\\" && peek() !== undefined && '"\\$`\n'.includes(peek()!)) word += next();
         else word += d;
       }
     } else if (c === "\\") {
@@ -217,22 +220,46 @@ function ansi_c_quoted(chars: string[], pos: { i: number }): string {
     };
     let code: number | null;
     switch (e) {
-      case "a": code = 7; break;
-      case "b": code = 8; break;
+      case "a":
+        code = 7;
+        break;
+      case "b":
+        code = 8;
+        break;
       case "e":
-      case "E": code = 27; break;
-      case "f": code = 12; break;
-      case "n": code = 10; break;
-      case "r": code = 13; break;
-      case "t": code = 9; break;
-      case "v": code = 11; break;
+      case "E":
+        code = 27;
+        break;
+      case "f":
+        code = 12;
+        break;
+      case "n":
+        code = 10;
+        break;
+      case "r":
+        code = 13;
+        break;
+      case "t":
+        code = 9;
+        break;
+      case "v":
+        code = 11;
+        break;
       case "\\":
       case "'":
       case '"':
-      case "?": code = e.codePointAt(0)!; break;
-      case "x": code = number(16, 2, null); break;
-      case "u": code = number(16, 4, null); break;
-      case "U": code = number(16, 8, null); break;
+      case "?":
+        code = e.codePointAt(0)!;
+        break;
+      case "x":
+        code = number(16, 2, null);
+        break;
+      case "u":
+        code = number(16, 4, null);
+        break;
+      case "U":
+        code = number(16, 8, null);
+        break;
       case "c": {
         const x = next();
         code = x === undefined ? null : (x.length === 1 && x >= "a" && x <= "z" ? x.toUpperCase() : x).codePointAt(0)! & 0x1f;

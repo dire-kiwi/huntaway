@@ -27,14 +27,14 @@ repository's git directory and package caches such as `~/.npm`, `~/.cargo/regist
 `~/.local/share/pnpm` (or where `CARGO_HOME`, `XDG_CACHE_HOME` and `XDG_DATA_HOME` put them),
 which are made before the run if they don't exist yet, with network access):
 
-| Mode | Codex |
-|---|---|
-| Ask | asks before anything but known-safe commands (`untrusted`) |
+| Mode         | Codex                                                          |
+| ------------ | -------------------------------------------------------------- |
+| Ask          | asks before anything but known-safe commands (`untrusted`)     |
 | Accept edits | edits in the sandbox go ahead, asks to leave it (`on-request`) |
-| Auto | Codex's own reviewer decides (`on-request`, `auto_review`) |
-| Plan | read-only sandbox, Codex's plan mode |
-| Don't ask | never asks; what the sandbox blocks fails (`never`) |
-| Bypass | no sandbox, never asks (`danger-full-access`) |
+| Auto         | Codex's own reviewer decides (`on-request`, `auto_review`)     |
+| Plan         | read-only sandbox, Codex's plan mode                           |
+| Don't ask    | never asks; what the sandbox blocks fails (`never`)            |
+| Bypass       | no sandbox, never asks (`danger-full-access`)                  |
 
 Reviewers run in a read-only sandbox that can still write the temp directories, the package caches
 and the worktree's git-ignored directories (such as `target` or `node_modules`, but not `.claude`
@@ -49,17 +49,17 @@ skipped. Auto-compacting idle sessions is Claude-only.
 Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs,
 as dynamic tools (a `huntaway` namespace, answered on the run's input) for Codex sessions started
 since they were, and over HTTP for older Codex sessions (Codex can't give a session it resumes new
-dynamic tools), sessions whose Codex wouldn't take dynamic tools, and compactions (see *How runs reach the board's MCP
-servers* below). A newer Codex session's subagents don't have them (Codex doesn't pass a thread's dynamic tools on to the
+dynamic tools), sessions whose Codex wouldn't take dynamic tools, and compactions (see _How runs reach the board's MCP
+servers_ below). A newer Codex session's subagents don't have them (Codex doesn't pass a thread's dynamic tools on to the
 threads it spawns): their parent does. The tools:
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
-*Waiting*), plus the internal `permission_prompt` (for compactions). Review threads
+_Waiting_), plus the internal `permission_prompt` (for compactions). Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
 `list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see
-*Starting from elsewhere*), and task summaries say what a task started from.
+_Starting from elsewhere_), and task summaries say what a task started from.
 
 From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:
 small fields stay inline, `field_lengths` lists every available field's length, and
@@ -87,7 +87,7 @@ directory (or `dir`, or against `repo`): `pr_create`, `pr_view`, `pr_list`, `pr_
 `issue_comment`, `run_list`, `run_view`, `api` (`gh api`), `gh` (any gh command) and `git_push`.
 The read-only ones run without asking; the rest go through permission prompts like any tool, and
 review threads don't get them. The exception is `pr_merge` while a Claude task is merging (moved
-to *Ready for merge*, including while that merge waits in *Needs attention*): it runs without
+to _Ready for merge_, including while that merge waits in _Needs attention_): it runs without
 asking then, so a merge doesn't stall when auto mode's check fails to answer. Reviewers find the
 pull request with these tools rather than `gh` in the shell, and Codex agents are told to use them
 for GitHub: `gh` in Codex's sandbox may not reach GitHub or the user's login, and Codex's own
@@ -103,7 +103,7 @@ tools instead. Codex has no such hook, so Codex agents are only told. A project 
 server off, or has its own `gh`, gets neither.
 
 **GitHub accounts.** gh can be signed in to several accounts on a host (`gh auth login` once for
-each), and each profile can pick which one its agents act as there (*GitHub account* in Settings →
+each), and each profile can pick which one its agents act as there (_GitHub account_ in Settings →
 Profiles → Edit, per host); a project can pick its own in its settings, overriding the profile's.
 The default is gh's active account. The run's launch records the account for the `gh` server
 (or passes it as `IA_GH_ACCOUNT` to a `huntaway gh-mcp` helper), which runs each call with that account's token (`gh auth token --user`) and no

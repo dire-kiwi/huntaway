@@ -33,7 +33,10 @@ export default function BoardNotifications() {
   const ok = !!board && usable(status) && board.apiVersion >= EXPO_PUSH_API;
   const subscribed = push.subscribed[boardId];
   // What the board has for this phone: what subscribing gave, or else read from it.
-  const loaded = useLoad(async () => (ok && on && push.token ? subscriptionOn(clientFor(board!), push.token) : null), [boardId, ok, on, push.token, subscribed?.device?.id]);
+  const loaded = useLoad(
+    async () => (ok && on && push.token ? subscriptionOn(clientFor(board!), push.token) : null),
+    [boardId, ok, on, push.token, subscribed?.device?.id],
+  );
   const [device, setDevice] = useState<PushDevice | null>(null);
   useEffect(() => setDevice(subscribed?.device ?? loaded.data ?? null), [subscribed?.device, loaded.data]);
   const [busy, setBusy] = useState(false);
@@ -72,8 +75,7 @@ export default function BoardNotifications() {
         <Text style={s.muted}>{problemText("unsupported")}</Text>
       ) : board.apiVersion < EXPO_PUSH_API ? (
         <Text style={s.muted}>
-          {board.name} runs an older Huntaway (API {board.apiVersion}), which can't push to the app. Update it to push here (API {EXPO_PUSH_API} or
-          later).
+          {board.name} runs an older Huntaway (API {board.apiVersion}), which can't push to the app. Update it to push here (API {EXPO_PUSH_API} or later).
         </Text>
       ) : (
         <>
@@ -105,7 +107,11 @@ export default function BoardNotifications() {
             </View>
           )}
           {on && !ok && !push.problem && <Text style={s.muted}>{board.name} isn't reachable now: its notifications can be set once it is.</Text>}
-          {on && subscribed?.error && <ErrorText>Couldn't subscribe on {board.name}: {subscribed.error}</ErrorText>}
+          {on && subscribed?.error && (
+            <ErrorText>
+              Couldn't subscribe on {board.name}: {subscribed.error}
+            </ErrorText>
+          )}
           {on && device && (
             <>
               <View style={[s.card, { marginHorizontal: 0 }]}>
@@ -144,12 +150,17 @@ export default function BoardNotifications() {
               <View style={[s.card, { marginHorizontal: 0 }]}>
                 <Text style={s.title}>Permission prompts</Text>
                 <Text style={s.faint}>
-                  With Allow and Deny on the notification, which answer without opening the app (allowing asks you to unlock the phone). It names the tool,
-                  not what it's run with: questions and plans open the task.
+                  With Allow and Deny on the notification, which answer without opening the app (allowing asks you to unlock the phone). It names the tool, not
+                  what it's run with: questions and plans open the task.
                 </Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                   {PUSH_PROMPTS.map((p) => (
-                    <Chip key={p.id} label={p.label} selected={(device.events.prompts ?? "assistant") === p.id} onPress={() => change({ ...device.events, prompts: p.id })} />
+                    <Chip
+                      key={p.id}
+                      label={p.label}
+                      selected={(device.events.prompts ?? "assistant") === p.id}
+                      onPress={() => change({ ...device.events, prompts: p.id })}
+                    />
                   ))}
                 </View>
               </View>

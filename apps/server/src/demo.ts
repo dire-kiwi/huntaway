@@ -170,7 +170,13 @@ export async function seed(s: AppState) {
   // Done for longer than the board keeps it in Done, so it's archived.
   const old = db.insert_task(
     s.db(),
-    new_task(profile.id, project.id, "Shipped last week", "Tasks done for two days are archived: they leave the board for the list view's Archived section.", "done"),
+    new_task(
+      profile.id,
+      project.id,
+      "Shipped last week",
+      "Tasks done for two days are archived: they leave the board for the list view's Archived section.",
+      "done",
+    ),
   );
   const week_ago = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   db.update_task(s.db(), old.id, [["done_at", week_ago]]);

@@ -20,7 +20,12 @@ describe("live updates", () => {
     const sockets: FakeSocket[] = [];
     const events: string[] = [];
     const status: boolean[] = [];
-    const s = new BoardSocket(() => "wss://b/api/ws?token=t", (e) => events.push(e.type), (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]), (c) => status.push(c));
+    const s = new BoardSocket(
+      () => "wss://b/api/ws?token=t",
+      (e) => events.push(e.type),
+      (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]),
+      (c) => status.push(c),
+    );
     s.start();
     sockets[0].onopen!();
     sockets[0].onmessage!({ data: JSON.stringify({ type: "hello" }) });
@@ -40,7 +45,11 @@ describe("live updates", () => {
 
   test("kick reconnects at once (back in front, new network), unless forced only when connected", () => {
     const sockets: FakeSocket[] = [];
-    const s = new BoardSocket(() => "u", () => {}, (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]));
+    const s = new BoardSocket(
+      () => "u",
+      () => {},
+      (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]),
+    );
     s.start();
     sockets[0].onclose!();
     s.kick();
@@ -65,7 +74,11 @@ describe("live updates", () => {
   test("back in front, a socket that still looks open is opened again, and what was missed is read again", () => {
     const sockets: FakeSocket[] = [];
     const events: string[] = [];
-    const s = new BoardSocket(() => "u", (e) => events.push(e.type), (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]));
+    const s = new BoardSocket(
+      () => "u",
+      (e) => events.push(e.type),
+      (u) => (sockets.push(new FakeSocket(u)), sockets[sockets.length - 1]),
+    );
     s.start();
     sockets[0].onopen!();
     // Suspended in the background: the connection died, but no close came.

@@ -24,6 +24,7 @@ Settings → Hosts offers three ways to link a host:
   command). The host never listens beyond localhost or needs to reach the hub. The first connection
   trusts the machine's SSH host key, and a changed one is refused later. If the tunnel drops, agents
   keep running and the hub reconnects. The hub needs `ssh` and `ssh-keygen`.
+
 - **Add host → By URL and token** (the hub connects to the host): enter the host's URL and its token
   (`huntaway token` on that machine). This works whenever the hub can reach the host,
   e.g. over Tailscale.
@@ -43,14 +44,14 @@ The UI reaches each host via `/api/h/<host_id>/…` on the hub, and events from 
 arrive on one websocket tagged with `host_id`. Agents' board tools act on their own host. A
 project or task that isn't found there is looked up on linked hosts, and `list_projects` covers
 every host, so an orchestrating agent can work across machines. On each host they reach their
-own profile's board and those that let them in (see *Agents across profiles*).
+own profile's board and those that let them in (see _Agents across profiles_).
 
 A linked host's agents can use the hub's board too, once the hub lets them: switch on **Let this
 host's agents use this board** for it under Settings → Hosts (off by default; hub and host need API
 112). A board tool call the host can't resolve on its own board or the hosts it links itself then
 goes up the link to the hub (on `/api/host/ws` for hosts linked over SSH or by URL, through the
 tunnel for one that dials in). The hub takes it only from an agent in one of its profiles whose
-**Assistant host** is that host (see *An assistant host*): the host names the caller's profile, and
+**Assistant host** is that host (see _An assistant host_): the host names the caller's profile, and
 whoever controls it could name any. It runs with that profile's access (its board, and those that
 let that profile in), looking on its other linked hosts too, but never back on the calling host or
 further up, and at most once per call id, and only if it came the way the hub links that host: a
@@ -96,7 +97,7 @@ checkout (it refuses if the checkout is dirty, on another branch, or has diverge
 rebuilds and restarts like Rebuild & restart; agents keep running. Hosts from before
 versioning need one manual update (`git pull`, then Rebuild & restart).
 
-A host installed from a release (with `--release-updates`, see *Release updates*; `/api/info`
+A host installed from a release (with `--release-updates`, see _Release updates_; `/api/info`
 reports `updates_from: "releases"` rather than `"checkout"`, API 89) goes by version instead: when
 the hub runs a newer release, Settings → Hosts offers **Update to v<version>**, and the host restarts
 onto that release as its own Update would, checking for releases first if it hasn't seen it yet. It

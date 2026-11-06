@@ -2,30 +2,30 @@
 
 ## Server options
 
-| Flag / env | Default | |
-|---|---|---|
-| `--host` / `IA_HOST` | `0.0.0.0` | Use `127.0.0.1` to disable network access |
-| `--port` / `IA_PORT` | `7878` | `0` picks a free port (printed in the `IA_READY {"port": …}` line on stdout) |
-| `--data-dir` / `IA_DATA_DIR` | `~/.local/share/huntaway` (`…/issue-agent` if only that exists) | DB, auth token, scratch folders, worktrees |
-| `--ui-dir` / `IA_UI_DIR` | auto | Built UI (`apps/web/dist`) |
-| `IA_CLAUDE_BIN` | `claude` | Claude Code binary |
-| `IA_CODEX_BIN` | `codex` | Codex binary |
-| `--token` / `IA_TOKEN` | generated | Use this access token instead of the one in the data dir (a secret shared by deployments) |
-| `--name` / `IA_NAME` | hostname | Name this host shows on boards |
-| `--hub` / `IA_HUB` | | Hub(s) to dial out to (comma-separated or repeated) |
-| `--hub-token` / `IA_HUB_TOKEN` | | Token for `--hub`, from that hub's Settings → Hosts |
-| `--broker` / `IA_BROKER` | | Broker to dial out to, to be reachable through it (see *Reaching a host from anywhere*) |
-| `--broker-token` / `IA_BROKER_TOKEN` | | Token for `--broker` (the broker's `BROKER_TOKEN`) |
-| `--broker-name` / `IA_BROKER_NAME` | host name, as a slug | Name to reach this host by on the broker |
-| `IA_CLOUDFLARED_BIN` (env only) | `cloudflared` | Connector binary for a broker with managed tunnels |
-| `--source-dir` / `IA_SOURCE_DIR` | checkout the binary was built in | Repository to rebuild from on restart |
-| `--update-from` / `IA_UPDATE_FROM` | | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65) |
-| `--release-updates` / `IA_RELEASE_UPDATES` | | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88) |
-| `--demo` / `IA_DEMO` | off | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews) |
-| `--open-token` / `IA_OPEN_TOKEN` | off | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
-| `IA_NEW_DB_FILE` | on | The board is kept in `huntaway-2.db`, copied from `huntaway.db` on the first start (see *The database file*); `0` keeps it in `huntaway.db`, where threads stay on their messages |
-| `--recopy-db` / `IA_RECOPY_DB` | off | With `IA_NEW_DB_FILE`: copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see *The database file*). Only for the start it's given to: a restart, Update or Roll back from the board leaves it out |
-| `--profile NAME=DIR` / `IA_PROFILES` | | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host |
+| Flag / env                                 | Default                                                         |                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--host` / `IA_HOST`                       | `0.0.0.0`                                                       | Use `127.0.0.1` to disable network access                                                                                                                                                                                                                                                                 |
+| `--port` / `IA_PORT`                       | `7878`                                                          | `0` picks a free port (printed in the `IA_READY {"port": …}` line on stdout)                                                                                                                                                                                                                              |
+| `--data-dir` / `IA_DATA_DIR`               | `~/.local/share/huntaway` (`…/issue-agent` if only that exists) | DB, auth token, scratch folders, worktrees                                                                                                                                                                                                                                                                |
+| `--ui-dir` / `IA_UI_DIR`                   | auto                                                            | Built UI (`apps/web/dist`)                                                                                                                                                                                                                                                                                |
+| `IA_CLAUDE_BIN`                            | `claude`                                                        | Claude Code binary                                                                                                                                                                                                                                                                                        |
+| `IA_CODEX_BIN`                             | `codex`                                                         | Codex binary                                                                                                                                                                                                                                                                                              |
+| `--token` / `IA_TOKEN`                     | generated                                                       | Use this access token instead of the one in the data dir (a secret shared by deployments)                                                                                                                                                                                                                 |
+| `--name` / `IA_NAME`                       | hostname                                                        | Name this host shows on boards                                                                                                                                                                                                                                                                            |
+| `--hub` / `IA_HUB`                         |                                                                 | Hub(s) to dial out to (comma-separated or repeated)                                                                                                                                                                                                                                                       |
+| `--hub-token` / `IA_HUB_TOKEN`             |                                                                 | Token for `--hub`, from that hub's Settings → Hosts                                                                                                                                                                                                                                                       |
+| `--broker` / `IA_BROKER`                   |                                                                 | Broker to dial out to, to be reachable through it (see _Reaching a host from anywhere_)                                                                                                                                                                                                                   |
+| `--broker-token` / `IA_BROKER_TOKEN`       |                                                                 | Token for `--broker` (the broker's `BROKER_TOKEN`)                                                                                                                                                                                                                                                        |
+| `--broker-name` / `IA_BROKER_NAME`         | host name, as a slug                                            | Name to reach this host by on the broker                                                                                                                                                                                                                                                                  |
+| `IA_CLOUDFLARED_BIN` (env only)            | `cloudflared`                                                   | Connector binary for a broker with managed tunnels                                                                                                                                                                                                                                                        |
+| `--source-dir` / `IA_SOURCE_DIR`           | checkout the binary was built in                                | Repository to rebuild from on restart                                                                                                                                                                                                                                                                     |
+| `--update-from` / `IA_UPDATE_FROM`         |                                                                 | A deployment of the board (e.g. `https://board.example`) to offer updates to (API 65)                                                                                                                                                                                                                     |
+| `--release-updates` / `IA_RELEASE_UPDATES` |                                                                 | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs (API 88)                                                                                                                                                                   |
+| `--demo` / `IA_DEMO`                       | off                                                             | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews)                                                                                                                                                                                              |
+| `--open-token` / `IA_OPEN_TOKEN`           | off                                                             | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews)                                                                                                                             |
+| `IA_NEW_DB_FILE`                           | on                                                              | The board is kept in `huntaway-2.db`, copied from `huntaway.db` on the first start (see _The database file_); `0` keeps it in `huntaway.db`, where threads stay on their messages                                                                                                                         |
+| `--recopy-db` / `IA_RECOPY_DB`             | off                                                             | With `IA_NEW_DB_FILE`: copy `huntaway.db` into `huntaway-2.db` again if an older build has changed it since the first copy, discarding what's been done in `huntaway-2.db` since (see _The database file_). Only for the start it's given to: a restart, Update or Roll back from the board leaves it out |
+| `--profile NAME=DIR` / `IA_PROFILES`       |                                                                 | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated). Used by PR previews, to give them a `personal` profile on a Claude login mounted from their host                                                         |
 
 ## Agents survive restarts
 
@@ -40,8 +40,9 @@ the run ends (`runs::KEEP_DAYS`), or as soon as its task is deleted. It checks e
 also removes the recorded MCP calls of runs that ended over an hour ago.
 
 The pieces that cross a restart are durable too:
+
 - A Claude run calls the board's tools on its own output and gets their answers on its input
-  (see *Agent tools (MCP)*): a call still going when the server restarts (a `wait`, an approval)
+  (see _Agent tools (MCP)_): a call still going when the server restarts (a `wait`, an approval)
   is found again in the recorded calls and answered when it's done. Codex runs and compactions
   reach the board's tools over HTTP, and the gh server's over HTTP too, answered on an event
   stream: when a restart breaks it, the agent (Claude Code or Codex) reconnects for the call's
@@ -84,7 +85,7 @@ as by default:
   discarding what's been done in `huntaway-2.db` since; that's kept in `huntaway-2.db.replaced` until
   the next copy. Nothing is copied again without asking. A copy that fails (the older file isn't a
   database, or the disk is full) is logged, and the server carries on with `huntaway-2.db` as it was.
-- **Backups** around updates (see *Release builds*) are of `huntaway-2.db` once it's there. The first
+- **Backups** around updates (see _Release builds_) are of `huntaway-2.db` once it's there. The first
   start needs none, since the older file isn't written: it is the backup.
 - Each machine copies its own: linked hosts and a hub each have their own data dir.
 - The copy takes as much disk space again as the older file, which isn't removed: delete `huntaway.db`
@@ -164,5 +165,5 @@ ssh -N -L 7878:127.0.0.1:7878 you@that-machine    # leave it running
 
 Then open `http://localhost:7878/?token=<huntaway token>` there (`huntaway token`, or
 `<data-dir>/auth_token`, on that machine), or point the desktop app at it with `"serverUrl":
-"http://localhost:7878"` and the token (see *Desktop config*). To show that machine's board next to
-the other computer's own, link it as a host over SSH instead (see *Hosts*).
+"http://localhost:7878"` and the token (see _Desktop config_). To show that machine's board next to
+the other computer's own, link it as a host over SSH instead (see _Hosts_).

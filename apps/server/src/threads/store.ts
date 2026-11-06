@@ -14,8 +14,15 @@
 import { all, one, run, tx, value, type Conn } from "../db.ts";
 import { now } from "../util.ts";
 import {
-  is_running_subagent, patched,
-  type Item, type ItemPage, type NewEvent, type SavedEvent, type Snapshot, type Thread, type ThreadRequest,
+  is_running_subagent,
+  patched,
+  type Item,
+  type ItemPage,
+  type NewEvent,
+  type SavedEvent,
+  type Snapshot,
+  type Thread,
+  type ThreadRequest,
 } from "./protocol.ts";
 
 /**
@@ -58,7 +65,15 @@ export function append(c: Conn, task_id: string, events: NewEvent[], o: AppendOp
       // type, thread_id and seq first, as in the examples, whatever the event was given.
       const numbered = { thread_id: task_id, seq: ++seq };
       const event = Object.assign({ type: e.type, ...numbered }, e, numbered) as SavedEvent;
-      run(c, "INSERT INTO thread_events (task_id, seq, type, data, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", task_id, seq, event.type, JSON.stringify(event), at);
+      run(
+        c,
+        "INSERT INTO thread_events (task_id, seq, type, data, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        task_id,
+        seq,
+        event.type,
+        JSON.stringify(event),
+        at,
+      );
       apply(c, task_id, event, at, o.message_id);
       saved.push(event);
     }
@@ -111,7 +126,10 @@ function put_item(c: Conn, task_id: string, item: Item, at: string): void {
     c,
     `INSERT INTO thread_items (task_id, id, pos, type, parent_id, turn_id, live, data, updated_at, created_at)
      VALUES (?1, ?2, (SELECT COALESCE(MAX(pos) + 1, 0) FROM thread_items WHERE task_id=?1), ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
-    task_id, item.id, ...fields, item.created_at ?? at,
+    task_id,
+    item.id,
+    ...fields,
+    item.created_at ?? at,
   );
 }
 
@@ -124,7 +142,10 @@ function put_request(c: Conn, task_id: string, r: ThreadRequest, at: string): vo
     c,
     `INSERT INTO thread_requests (task_id, id, pos, type, tool_call_id, turn_id, open, data, updated_at, created_at)
      VALUES (?1, ?2, (SELECT COALESCE(MAX(pos) + 1, 0) FROM thread_requests WHERE task_id=?1), ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
-    task_id, r.id, ...fields, r.created_at ?? at,
+    task_id,
+    r.id,
+    ...fields,
+    r.created_at ?? at,
   );
 }
 
@@ -321,7 +342,7 @@ function context_of(c: Conn, task_id: string, need: Set<string>, from: number): 
   const out = new Map<number, string>();
   const seen = new Set<string>();
   for (const first of need) {
-    for (let id: string | null = first; id && !seen.has(id); ) {
+    for (let id: string | null = first; id && !seen.has(id);) {
       seen.add(id);
       const r = one<{ pos: number; parent_id: string | null }>(c, "SELECT pos, parent_id FROM thread_items WHERE task_id=?1 AND id=?2", task_id, id);
       if (!r) break;
@@ -359,7 +380,8 @@ export function items_from(c: Conn, task_id: string, message_id: number): string
     c,
     `SELECT i.id FROM thread_item_origins o JOIN thread_items i ON i.task_id=o.task_id AND i.id=o.item_id
      WHERE o.task_id=?1 AND o.message_id=?2 ORDER BY i.pos`,
-    task_id, message_id,
+    task_id,
+    message_id,
   ).map((r) => r.id);
 }
 

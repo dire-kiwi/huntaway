@@ -53,7 +53,18 @@ const LABELS: Record<string, string> = {
 };
 
 /** Settings shown as blocks of text rather than inline. */
-const LONG = ["start_prompt", "review_prompt", "merge_prompt", "setup_script", "teardown_script", "copy_files", "link_folders", "status_script", "status_scripts", "reviewers"];
+const LONG = [
+  "start_prompt",
+  "review_prompt",
+  "merge_prompt",
+  "setup_script",
+  "teardown_script",
+  "copy_files",
+  "link_folders",
+  "status_script",
+  "status_scripts",
+  "reviewers",
+];
 
 function valueText(field: string, v: unknown): string {
   if (v === null || v === undefined) return field === "group_name" ? "(none)" : "(default)";
@@ -235,7 +246,8 @@ export function TaskDeletionDetail({ deletion }: { deletion: TaskDeletion }) {
       {d.branch && (
         <p className="text-muted">
           The branch <span className="font-mono text-fg">{d.branch}</span>
-          {others.length > 0 && " and its tasks' branches"} {deletion.delete_branch ? (others.length > 0 ? "are deleted too." : "is deleted too.") : others.length > 0 ? "are kept." : "is kept."}
+          {others.length > 0 && " and its tasks' branches"}{" "}
+          {deletion.delete_branch ? (others.length > 0 ? "are deleted too." : "is deleted too.") : others.length > 0 ? "are kept." : "is kept."}
         </p>
       )}
     </div>
@@ -297,11 +309,7 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
             </Row>
           )}
           <Row label="Signature">
-            {a.signed ? (
-              "Deliveries must be signed with its secret"
-            ) : (
-              <span className="text-amber-200/90">Not checked: anyone with its URL can run it</span>
-            )}
+            {a.signed ? "Deliveries must be signed with its secret" : <span className="text-amber-200/90">Not checked: anyone with its URL can run it</span>}
           </Row>
         </>
       )}
@@ -315,7 +323,7 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
           </Row>
           <Row label="Settings">
             {[
-              act.task_type ? TYPE_NAMES[act.task_type] ?? act.task_type : "Code task",
+              act.task_type ? (TYPE_NAMES[act.task_type] ?? act.task_type) : "Code task",
               act.labels?.length ? `labelled ${act.labels.join(", ")}` : null,
               a.config ? a.config.name : "project's agent config",
               act.model ? `model ${act.model}` : null,
@@ -326,12 +334,18 @@ export function AutomationSummary({ a, tz, tone = "to" }: { a: AutomationView; t
               .join(" · ")}
           </Row>
           <Row label="Agent">
-            {act.start ? <span className="text-amber-200/90">Starts straight away, with the project's permission mode</span> : "Not started: the task waits on the board"}
+            {act.start ? (
+              <span className="text-amber-200/90">Starts straight away, with the project's permission mode</span>
+            ) : (
+              "Not started: the task waits on the board"
+            )}
           </Row>
         </>
       ) : act.kind === "message_assistant" ? (
         <>
-          <Row label="Wakes">{act.mode === "thread" ? "The assistant, in its own thread" : "The assistant, in a fresh thread whose report is posted to it"}</Row>
+          <Row label="Wakes">
+            {act.mode === "thread" ? "The assistant, in its own thread" : "The assistant, in a fresh thread whose report is posted to it"}
+          </Row>
           <Row label={act.mode === "thread" ? "Message" : "To do"}>
             <Block text={act.message} tone={tone} />
           </Row>
@@ -669,7 +683,11 @@ export function AutomationChangeCard({ data, hostId }: { data: AutomationApprova
         )}
         <span className={clsx("min-w-0 truncate", pending ? "text-fg" : "text-muted")}>
           {AUTOMATION_CARD[op]} <span className="font-medium">{a.name}</span>
-          {data.input.profile ? ` (a routine of ${data.input.profile.name})` : op === "create" ? ` to ${data.input.project?.name}` : ` in ${data.input.project?.name}`}
+          {data.input.profile
+            ? ` (a routine of ${data.input.profile.name})`
+            : op === "create"
+              ? ` to ${data.input.project?.name}`
+              : ` in ${data.input.project?.name}`}
         </span>
         {!pending && <Answer status={data.status} deletion={deletion} />}
       </div>

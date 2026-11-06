@@ -203,7 +203,9 @@ export function open(data_dir: string, recopy: boolean): { conn: Conn; status: S
     if (changed === null) {
       if (recopy) {
         const o = older(data_dir);
-        console.error(`not copying the database again: ${o ? `${o} hasn't changed since it was copied into ${FILE}` : `there's no older database to copy into ${FILE}`}`);
+        console.error(
+          `not copying the database again: ${o ? `${o} hasn't changed since it was copied into ${FILE}` : `there's no older database to copy into ${FILE}`}`,
+        );
         remove(marker);
       }
       return { conn, status: st };
@@ -300,7 +302,14 @@ export function copy(data_dir: string, source: string): string {
   }
   try {
     c.exec(ORIGIN_TABLE);
-    run(c, "INSERT OR REPLACE INTO db_origin (id, source, source_version, source_state, copied_at) VALUES (1, ?1, ?2, ?3, ?4)", source, version, JSON.stringify(state), now());
+    run(
+      c,
+      "INSERT OR REPLACE INTO db_origin (id, source, source_version, source_state, copied_at) VALUES (1, ?1, ?2, ?3, ?4)",
+      source,
+      version,
+      JSON.stringify(state),
+      now(),
+    );
     // So the file is complete without its log when it's renamed.
     const mode = value<string>(c, "PRAGMA journal_mode=DELETE");
     if (mode !== "delete") throw new Error(`the copy of ${source} stayed in ${mode} mode`);

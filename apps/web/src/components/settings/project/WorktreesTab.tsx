@@ -26,7 +26,12 @@ export function WorktreesTab({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Base branch" hint="New worktree branches start from here">
-          <Input className="font-mono text-[12px]" value={form.base_branch ?? ""} placeholder="current HEAD" onChange={(e) => set("base_branch", e.target.value)} />
+          <Input
+            className="font-mono text-[12px]"
+            value={form.base_branch ?? ""}
+            placeholder="current HEAD"
+            onChange={(e) => set("base_branch", e.target.value)}
+          />
         </Field>
         <Field label="Worktrees folder">
           <Input className="font-mono text-[12px]" value={form.worktrees_root} onChange={(e) => set("worktrees_root", e.target.value)} />
@@ -38,9 +43,9 @@ export function WorktreesTab({
             label="Files to copy"
             hint={
               <>
-                Git-ignored files copied from the repository folder into each new worktree, before the setup script. One .gitignore-style pattern
-                per line: <code>.env</code> at any depth, <code>/.env</code> only at the top. A <code>.worktreeinclude</code> in the repository is
-                read too. Files the worktree has already are left alone.
+                Git-ignored files copied from the repository folder into each new worktree, before the setup script. One .gitignore-style pattern per line:{" "}
+                <code>.env</code> at any depth, <code>/.env</code> only at the top. A <code>.worktreeinclude</code> in the repository is read too. Files the
+                worktree has already are left alone.
               </>
             }
           >
@@ -70,8 +75,8 @@ export function WorktreesTab({
         label="Setup script"
         hint={
           <>
-            Runs with bash in each new worktree, e.g. installing dependencies. Available variables: $IA_REPO_PATH,
-            $IA_WORKTREE_PATH, $IA_BRANCH, $IA_TASK_ID, $IA_TASK_NUMBER, $IA_PROJECT_KEY.
+            Runs with bash in each new worktree, e.g. installing dependencies. Available variables: $IA_REPO_PATH, $IA_WORKTREE_PATH, $IA_BRANCH, $IA_TASK_ID,
+            $IA_TASK_NUMBER, $IA_PROJECT_KEY.
           </>
         }
       >
@@ -128,8 +133,8 @@ function RemoveMergedWorktrees({ project }: { project: Project }) {
         )}
       </div>
       <div className="text-[12px] text-faint">
-        Removes the worktrees of done tasks whose work is merged and that have no uncommitted or untracked files (ignored files, such as build output,
-        go with them). The tasks and branches are kept, and a task's worktree is set up again if its agent runs again.
+        Removes the worktrees of done tasks whose work is merged and that have no uncommitted or untracked files (ignored files, such as build output, go with
+        them). The tasks and branches are kept, and a task's worktree is set up again if its agent runs again.
       </div>
       {err && <div className="text-xs text-red-400">{err}</div>}
       {results && results.length > 0 && (

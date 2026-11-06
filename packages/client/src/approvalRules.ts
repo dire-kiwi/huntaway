@@ -66,7 +66,13 @@ export function ruleMatches(pattern: string, tool: string): boolean {
   const t = tool.toLowerCase();
   if (!p) return false;
   if (!p.includes("*")) return t === p || (p.startsWith("mcp__") && !p.slice(5).includes("__") && t.startsWith(`${p}__`));
-  const re = new RegExp(`^${p.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "s");
+  const re = new RegExp(
+    `^${p
+      .split("*")
+      .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+      .join(".*")}$`,
+    "s",
+  );
   return re.test(t);
 }
 

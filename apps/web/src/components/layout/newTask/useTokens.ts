@@ -175,7 +175,8 @@ function useHarnesses({ resolve, inProject }: Where, agent: AgentChoice, { descr
   const runConfig = (h: Harness) => configs.find((c) => c.id === h.config);
   // The efforts any of them takes; one that doesn't take the effort picked gets its default.
   // The model one on its default model runs with: the project's, profile's or host's (as runner::launch picks it), else its agent's.
-  const runInherits = (h: Harness) => inheritedModel(runConfig(h), configModels[h.config] ?? null, inProject?.model, profile?.default_model, hostSettings?.default_model);
+  const runInherits = (h: Harness) =>
+    inheritedModel(runConfig(h), configModels[h.config] ?? null, inProject?.model, profile?.default_model, hostSettings?.default_model);
   const runEfforts = (h: Harness) => effortOptions(runConfig(h), configModels[h.config] ?? null, h.model || runInherits(h) || "");
   // Those of the tasks already made too, so a `^` that only they take is still read as one when the rest are made.
   const effortList = efforts ? [...new Set([...runs.flatMap(runEfforts), ...(pending?.efforts ?? [])])] : [];

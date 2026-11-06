@@ -17,13 +17,17 @@ const { buildModel } = await import("../src/threadModel.ts");
 /** A thread with a bit of everything a model is made of, in the order an agent stores it. */
 function thread() {
   const out = [];
-  const add = (kind, data) => out.push({ id: out.length + 1, task_id: "t", kind, data, created_at: `2026-10-26T07:${String(out.length).padStart(2, "0")}:00.000Z` });
+  const add = (kind, data) =>
+    out.push({ id: out.length + 1, task_id: "t", kind, data, created_at: `2026-10-26T07:${String(out.length).padStart(2, "0")}:00.000Z` });
   const assistant = (content, parent = null) => add("claude", { type: "assistant", parent_tool_use_id: parent, message: { content } });
   const call = (id, name, input = {}, parent = null) => assistant([{ type: "tool_use", id, name, input }], parent);
   const result = (id, text, parent = null) =>
     add("claude", { type: "user", parent_tool_use_id: parent, message: { content: [{ type: "tool_result", tool_use_id: id, content: text }] } });
   add("user", { text: "Look into the config." });
-  assistant([{ type: "thinking", thinking: "Hmm." }, { type: "text", text: "Starting." }]);
+  assistant([
+    { type: "thinking", thinking: "Hmm." },
+    { type: "text", text: "Starting." },
+  ]);
   call("r1", "Read", { file_path: "/a" });
   call("r2", "Read", { file_path: "/b" });
   result("r1", "a");
@@ -71,7 +75,8 @@ test("a Skill's lifecycle discovers a subagent as messages arrive, keeping its l
 test("a model built as messages come is the same as one built from them all", () => {
   const all = thread();
   for (const step of [1, 2, 5]) {
-    let model, list = [];
+    let model,
+      list = [];
     for (let i = 0; i < all.length; i += step) {
       list = [...list, ...all.slice(i, i + step)];
       model = buildModel(list, true, model);
@@ -88,7 +93,10 @@ test("a prompt stored before its subagent's call is in the subagent's messages, 
   const i = all.findIndex((m) => m.kind === "claude" && m.data.message?.content?.[0]?.id === "b1");
   let model = buildModel(all.slice(0, i), true);
   model = buildModel(all.slice(0, i + 1), true, model);
-  assert.deepStrictEqual(model.children.get("A1").map((m) => m.kind), ["claude", "permission", "claude"]);
+  assert.deepStrictEqual(
+    model.children.get("A1").map((m) => m.kind),
+    ["claude", "permission", "claude"],
+  );
   // That one's answered; the next one, stored after its call, isn't.
   assert.equal(model.subagents.get("A1").awaitingApproval, undefined);
   const p2 = all.findIndex((m) => m.data?.request_id === "p2");
@@ -116,7 +124,10 @@ test("what a new message leaves as it was stays the same objects", () => {
   const add = (msgs, m) => [...msgs, { id: msgs.length + 1, task_id: "t", created_at: "2026-10-26T08:00:00.000Z", ...m }];
 
   // A subagent's message: the main conversation's items are all as they were.
-  let list = add(all.slice(0, upTo), { kind: "claude", data: { type: "assistant", parent_tool_use_id: "A1", message: { content: [{ type: "text", text: "Hi" }] } } });
+  let list = add(all.slice(0, upTo), {
+    kind: "claude",
+    data: { type: "assistant", parent_tool_use_id: "A1", message: { content: [{ type: "text", text: "Hi" }] } },
+  });
   let next = buildModel(list, true, model);
   assert.equal(next.items, model.items);
   assert.equal(next.results, model.results);
@@ -135,11 +146,20 @@ test("what a new message leaves as it was stays the same objects", () => {
   const done = buildModel(list, true, next);
   next.items.forEach((it, i) => (i === tools ? assert.notEqual(done.items[i], it) : assert.equal(done.items[i], it)));
   assert.equal(done.items[tools].calls.find((c) => c.id === "A1").result.content, "Done");
-  for (const c of next.items[tools].calls) if (c.id !== "A1") assert.equal(done.items[tools].calls.find((x) => x.id === c.id), c);
+  for (const c of next.items[tools].calls)
+    if (c.id !== "A1")
+      assert.equal(
+        done.items[tools].calls.find((x) => x.id === c.id),
+        c,
+      );
   assert.equal(done.subagents.get("A1").status, "completed");
 
   // A full build (here after a reload) keeps them too.
-  const reloaded = buildModel(list.map((m) => m), true, done);
+  const reloaded = buildModel(
+    list.map((m) => m),
+    true,
+    done,
+  );
   assert.equal(reloaded.items, done.items);
   assert.equal(reloaded.subagents.get("A1"), done.subagents.get("A1"));
 });

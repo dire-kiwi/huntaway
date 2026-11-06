@@ -18,7 +18,12 @@ function opus(input: number, output: number, read: number, cost: number): any {
 }
 
 function usage(thread: string, total: [number, number, number], last: [number, number, number]): string {
-  const u = ([input, cached, output]: [number, number, number]) => ({ inputTokens: input, cachedInputTokens: cached, outputTokens: output, totalTokens: input + output });
+  const u = ([input, cached, output]: [number, number, number]) => ({
+    inputTokens: input,
+    cachedInputTokens: cached,
+    outputTokens: output,
+    totalTokens: input + output,
+  });
   return JSON.stringify({ method: "thread/tokenUsage/updated", params: { threadId: thread, tokenUsage: { total: u(total), last: u(last) } } });
 }
 
@@ -28,7 +33,18 @@ const clone = (b: Before): Before => structuredClone(b);
 
 function new_task(state: Shared, model: string | null): string {
   const p = db.insert_profile(state.db(), "p", [], null);
-  const t = { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false, model, effort: null, claude_config_id: null };
+  const t = {
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "in_progress",
+    use_worktree: false,
+    model,
+    effort: null,
+    claude_config_id: null,
+  };
   return db.insert_task(state.db(), t).id;
 }
 
@@ -119,7 +135,9 @@ test("counts_runs_once_from_their_output_or_their_cost", () => {
   assert.equal(count_pending(state, null), 0);
 
   const rows = (id: string) =>
-    db.all(state.db(), "SELECT model, output_tokens, cost_usd, estimated FROM token_usage WHERE run_id=?1", id).map((r: any) => [r.model, r.output_tokens, r.cost_usd, !!r.estimated]);
+    db
+      .all(state.db(), "SELECT model, output_tokens, cost_usd, estimated FROM token_usage WHERE run_id=?1", id)
+      .map((r: any) => [r.model, r.output_tokens, r.cost_usd, !!r.estimated]);
   assert.deepEqual(rows(runs[0]), [["claude-opus-5-5", 100, 1.0, false]]);
   // It went on from the first, though counted after the third.
   assert.deepEqual(rows(runs[1]), [["claude-opus-5-5", 60, 0.25, false]]);
@@ -148,7 +166,10 @@ test("a_codex_subagents_tokens_go_to_its_own_model", () => {
       method: "item/started",
       params: { threadId: "main", item: { type: "collabAgentToolCall", tool: "spawnAgent", receiverThreadIds: ["child"], model: "gpt-6-luna" } },
     }),
-    JSON.stringify({ method: "item/started", params: { threadId: "main", item: { type: "subAgentActivity", kind: "started", agentThreadId: "hosted", model: "gpt-6-astra" } } }),
+    JSON.stringify({
+      method: "item/started",
+      params: { threadId: "main", item: { type: "subAgentActivity", kind: "started", agentThreadId: "hosted", model: "gpt-6-astra" } },
+    }),
     usage("main", [100, 0, 10], [100, 0, 10]),
     usage("child", [1000, 0, 200], [1000, 0, 200]),
     usage("hosted", [50, 0, 7], [50, 0, 7]),
@@ -157,7 +178,11 @@ test("a_codex_subagents_tokens_go_to_its_own_model", () => {
   ];
   const c = count_codex(lines, "codex", none);
   const out = Object.entries(c.models).map(([m, n]) => [m, n.output]);
-  assert.deepEqual(out, [["gpt-6-astra", 7], ["gpt-6-luna", 200], ["gpt-6.1-sol", 13]]);
+  assert.deepEqual(out, [
+    ["gpt-6-astra", 7],
+    ["gpt-6-luna", 200],
+    ["gpt-6.1-sol", 13],
+  ]);
 });
 
 /** An `assistant` message of request `id`, as Claude Code prints one for each of its content blocks. */
@@ -188,7 +213,10 @@ test("a_claude_run_that_ends_without_a_result_counts_its_requests", () => {
   ];
   const c = count_claude(lines, none);
   const out = Object.entries(c.models).map(([m, n]) => [m, n.input, n.output]);
-  assert.deepEqual(out, [["claude-haiku-5-5", 50, 5], ["claude-opus-5-5", 1200, 300]]);
+  assert.deepEqual(out, [
+    ["claude-haiku-5-5", 50, 5],
+    ["claude-opus-5-5", 1200, 300],
+  ]);
   assert.ok(c.estimated);
   assert.equal(c.session, "s1");
   assert.equal(c.tail["claude-opus-5-5"].output, 300);
@@ -252,7 +280,10 @@ test("a_resumed_claude_run_with_no_result_goes_on_from_the_sessions_totals", () 
   const b2 = [init(), reply("m2", "claude-opus-5-5", 1, 20, null)];
   const kept = [init(), reply("m3", "claude-opus-5-5", 701, 30, null), result("s1", { "claude-opus-5-5": opus(9, 190, 2000, 1.5) })];
   const lost = [init(), result("s1", { "claude-opus-5-5": opus(9, 130, 2000, 1.5) })];
-  for (const [last, want] of [[kept, 30], [lost, 30]] as Array<[string[], number]>) {
+  for (const [last, want] of [
+    [kept, 30],
+    [lost, 30],
+  ] as Array<[string[], number]>) {
     const counted = in_turn([a, b, b2, last]);
     assert.deepEqual(outputs(counted), [100, 40, 20, want]);
     assert.equal(counted[2].tail["claude-opus-5-5"].output, 60);
@@ -267,7 +298,10 @@ test("a_resumed_claude_run_goes_on_without_an_unkept_tail_on_a_model_the_session
   const c = [init(), result("s1", { "claude-opus-5-5": opus(9, 130, 2000, 1.5) })];
   const counted = in_turn([a, b, c]);
   assert.equal(counted[1].models["claude-haiku-5-5"].output, 40);
-  assert.deepEqual(Object.entries(counted[2].models).map(([m, n]) => [m, n.output]), [["claude-opus-5-5", 30]]);
+  assert.deepEqual(
+    Object.entries(counted[2].models).map(([m, n]) => [m, n.output]),
+    [["claude-opus-5-5", 30]],
+  );
   assert.ok(near(counted[2].models["claude-opus-5-5"].cost, 0.5));
 });
 
@@ -302,14 +336,22 @@ test("a_run_killed_before_its_result_doesnt_hide_its_sessions_totals", () => {
     [init(), reply("m1", "claude-opus-5-5", 2, 40, null)],
     [init(), reply("m2", "claude-opus-5-5", 802, 30, null), result("s1", { "claude-opus-5-5": opus(9, 170, 2000, 1.5) })],
   ];
-  assert_counted_in_db(outs, 0.5, [[100, false], [40, true], [30, false]]);
+  assert_counted_in_db(outs, 0.5, [
+    [100, false],
+    [40, true],
+    [30, false],
+  ]);
   // The killed run used a model the session hadn't, and Claude Code didn't keep it.
   outs = [
     [init(), result("s1", { "claude-opus-5-5": opus(5, 100, 1000, 1.0) })],
     [init(), reply("m1", "claude-haiku-5-5", 2, 40, null)],
     [init(), result("s1", { "claude-opus-5-5": opus(9, 130, 2000, 1.5) })],
   ];
-  assert_counted_in_db(outs, 0.5, [[100, false], [40, true], [30, false]]);
+  assert_counted_in_db(outs, 0.5, [
+    [100, false],
+    [40, true],
+    [30, false],
+  ]);
 });
 
 test("a_resumed_claude_runs_own_requests_say_whether_an_unkept_tail_is_in_totals_that_go_on_from_it", () => {
@@ -328,7 +370,11 @@ test("a_resumed_claude_runs_own_requests_say_whether_an_unkept_tail_is_in_totals
     assert.ok(near(counted[2].models["claude-opus-5-5"].cost, 0.5));
   }
   // Saved so, through the database.
-  assert_counted_in_db([a, b, lost], 0.5, [[100, false], [40, true], [100, false]]);
+  assert_counted_in_db([a, b, lost], 0.5, [
+    [100, false],
+    [40, true],
+    [100, false],
+  ]);
 
   // Requests that don't match either (the totals have some that print no message) go with the closer, estimated.
   const unsure = [init(), reply("m2", "claude-opus-5-5", 600, 100, null), result("s1", { "claude-opus-5-5": opus(905, 200, 1100, 1.5) })];

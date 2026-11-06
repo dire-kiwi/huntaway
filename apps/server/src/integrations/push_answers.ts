@@ -44,7 +44,13 @@ export function mint(c: Conn, host_id: string, request_id: string, task_id: stri
   db.run(
     c,
     "INSERT INTO push_answer_tokens (token_hash, request_id, host_id, task_id, status, created_at, expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-    hash(token), request_id, host_id, task_id, status, now(), expires_at,
+    hash(token),
+    request_id,
+    host_id,
+    task_id,
+    status,
+    now(),
+    expires_at,
   );
   return token;
 }
@@ -57,11 +63,7 @@ export function mint(c: Conn, host_id: string, request_id: string, task_id: stri
  */
 export function settle(c: Conn, host_id: string, request_id: string, status: string, note: unknown = null): void {
   if (status === "expired" && note === permissions.EXPIRED_UNANSWERED) status = "timed_out";
-  db.run(
-    c,
-    "UPDATE push_answer_tokens SET status=?1 WHERE request_id=?2 AND host_id=?3 AND status IN ('pending','answering')",
-    status, request_id, host_id,
-  );
+  db.run(c, "UPDATE push_answer_tokens SET status=?1 WHERE request_id=?2 AND host_id=?3 AND status IN ('pending','answering')", status, request_id, host_id);
 }
 
 /**
@@ -133,7 +135,10 @@ export async function answer(s: AppState, r: Req): Promise<Reply> {
     s.db(),
     `UPDATE push_answer_tokens SET status='answering', claimed_at=?3 WHERE request_id=?1 AND host_id=?2
      AND (status='pending' OR (status='answering' AND (claimed_at IS NULL OR claimed_at < ?4)))`,
-    id, host, now(), stale,
+    id,
+    host,
+    now(),
+    stale,
   ).changes;
   if (claimed === 0) {
     const status = db.value<string>(s.db(), "SELECT status FROM push_answer_tokens WHERE request_id=?1 AND host_id=?2", id, host);
@@ -153,11 +158,7 @@ export function recover(c: Conn): void {
 async function forward(s: AppState, host: string, id: string, allow: boolean): Promise<Reply> {
   const release = (status: string) => {
     try {
-      db.run(
-        s.db(),
-        "UPDATE push_answer_tokens SET status=?1, claimed_at=NULL WHERE request_id=?2 AND host_id=?3 AND status='answering'",
-        status, id, host,
-      );
+      db.run(s.db(), "UPDATE push_answer_tokens SET status=?1, claimed_at=NULL WHERE request_id=?2 AND host_id=?3 AND status='answering'", status, id, host);
     } catch {}
   };
   const offline = () => reply(503, "offline", "Its host is offline: try again once it's back, or answer it on the board.");

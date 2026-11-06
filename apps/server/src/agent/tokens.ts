@@ -131,7 +131,12 @@ export function Counts_from_codex(u: any): Counts {
 }
 
 const counts_eq = (a: Counts, b: Counts) =>
-  a.input === b.input && a.output === b.output && a.cache_read === b.cache_read && a.cache_write === b.cache_write && a.reasoning === b.reasoning && a.cost === b.cost;
+  a.input === b.input &&
+  a.output === b.output &&
+  a.cache_read === b.cache_read &&
+  a.cache_write === b.cache_write &&
+  a.reasoning === b.reasoning &&
+  a.cost === b.cost;
 
 /** `m`'s entry for `k`, made (zero) if there's none (`entry(k).or_default()`). */
 function at(m: ByModel, k: string): Counts {

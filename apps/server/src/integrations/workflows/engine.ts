@@ -667,7 +667,9 @@ function step_of(s: Shared, thread: Task): [Run, string] | null {
     return null;
   }
   for (const r of rs) {
-    const id = Object.keys(r.nodes).sort().find((k) => r.nodes[k].state === "running" && r.nodes[k].thread_id === thread.id);
+    const id = Object.keys(r.nodes)
+      .sort()
+      .find((k) => r.nodes[k].state === "running" && r.nodes[k].thread_id === thread.id);
     if (id !== undefined) return [r, id];
   }
   return null;
@@ -695,7 +697,10 @@ export function submit(s: Shared, thread: Task, run_id: string, args: any): any 
   if (!asked(s, thread, run_node(run, id), run_id)) throw ApiError.conflict("the step this run was asked for has ended, so there's nothing to submit");
   const si = args?.serious_issues;
   const issues: string[] = Array.isArray(si)
-    ? si.filter((i: any) => typeof i === "string").map((i: string) => i.trim()).filter((i: string) => i)
+    ? si
+        .filter((i: any) => typeof i === "string")
+        .map((i: string) => i.trim())
+        .filter((i: string) => i)
     : typeof si === "string" && si.trim()
       ? [si.trim()]
       : [];

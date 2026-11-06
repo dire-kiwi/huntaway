@@ -125,8 +125,7 @@ export function resolve_project(s: Shared, ctx: Ctx, r: string, profile: string 
   const found: Array<[db.Profile, db.Project]> = [];
   for (const b of bs) {
     const projects = db.list_projects(s.db(), b.id);
-    const p =
-      projects.find((p) => eq_ic(p.key, key) || eq_ic(p.name, key)) ?? projects.find((p) => p.former_keys.some((f: string) => eq_ic(f, key)));
+    const p = projects.find((p) => eq_ic(p.key, key) || eq_ic(p.name, key)) ?? projects.find((p) => p.former_keys.some((f: string) => eq_ic(f, key)));
     if (p) found.push([b, p]);
   }
   return pick_one(ctx, `project ${r}`, found, (b) => `${b.name}:${key}`);

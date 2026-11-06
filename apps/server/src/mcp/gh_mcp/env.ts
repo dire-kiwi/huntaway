@@ -39,7 +39,8 @@ export function url_host(s: string): string | null {
   s = ascii_lower(s.trim());
   const i = s.indexOf("://");
   if (i < 0) return null;
-  const scheme = s.slice(0, i), rest = s.slice(i + 3);
+  const scheme = s.slice(0, i),
+    rest = s.slice(i + 3);
   if (!scheme || !/^[a-z0-9+.\-]+$/i.test(scheme)) return null;
   const authority = rest.split(/[/?#]/)[0];
   const at = authority.split("@");
@@ -65,11 +66,7 @@ export interface CmdOutput {
  * Run `program` with `args` (stdin empty) and collect its output, as tokio's `Command::output()` under a timeout
  * (with `kill_on_drop`). Rejects if it couldn't be started.
  */
-export function command_output(
-  program: string,
-  args: string[],
-  opts: { env?: NodeJS.ProcessEnv; cwd?: string; timeout?: number } = {},
-): Promise<CmdOutput> {
+export function command_output(program: string, args: string[], opts: { env?: NodeJS.ProcessEnv; cwd?: string; timeout?: number } = {}): Promise<CmdOutput> {
   return new Promise((resolve, reject) => {
     let child;
     try {
@@ -77,7 +74,8 @@ export function command_output(
     } catch (e) {
       return reject(e);
     }
-    const out: Buffer[] = [], err: Buffer[] = [];
+    const out: Buffer[] = [],
+      err: Buffer[] = [];
     let done = false;
     const timer = opts.timeout
       ? setTimeout(() => {
@@ -122,7 +120,11 @@ export async function push_urls(dir: string | null, remote: string): Promise<str
   } catch {
     return null;
   }
-  const urls = out.stdout.toString().split("\n").map((l) => l.trim()).filter((l) => l);
+  const urls = out.stdout
+    .toString()
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l);
   return out.code === 0 && urls.length ? urls : null;
 }
 
@@ -137,7 +139,11 @@ export async function extra_header_resets(dir: string | null): Promise<string[]>
   try {
     text = (await command_output("git", ["config", "--get-regexp", "^http\\..*extraheader$"], { cwd: dir ?? undefined })).stdout.toString();
   } catch {}
-  const keys = text.split("\n").filter((l) => l.length).map((l) => l.split(" ")[0]).filter((k) => k);
+  const keys = text
+    .split("\n")
+    .filter((l) => l.length)
+    .map((l) => l.split(" ")[0])
+    .filter((k) => k);
   keys.push("http.extraheader");
   const sorted = [...new Set(keys)].sort();
   return sorted.flatMap((k) => ["-c", `${k}=`]);

@@ -238,8 +238,20 @@ function create_in(s: Shared, o: Owner, b: Record<string, any>): Automation {
     c,
     `INSERT INTO automations (id,profile_id,project_id,name,enabled,trigger,action,token,secret,next_run_at,active_hours,precheck,budget_usd,created_at,updated_at)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?14)`,
-    id, owner_profile_id(o), owner_project_id(o), name, enabled, sorted_json(trigger), sorted_json(action), new_token(), secret, next,
-    active === null ? null : JSON.stringify(active), precheck, budget, fmt(now),
+    id,
+    owner_profile_id(o),
+    owner_project_id(o),
+    name,
+    enabled,
+    sorted_json(trigger),
+    sorted_json(action),
+    new_token(),
+    secret,
+    next,
+    active === null ? null : JSON.stringify(active),
+    precheck,
+    budget,
+    fmt(now),
   );
   const a = automation(c, id);
   changed(s, a);
@@ -290,7 +302,17 @@ export function update(s: Shared, id: string, b: Record<string, any>): Automatio
     c,
     `UPDATE automations SET name=?2, enabled=?3, trigger=?4, action=?5, secret=?6, token=?7, next_run_at=?8, active_hours=?9, precheck=?10, budget_usd=?11,
                updated_at=?12 WHERE id=?1`,
-    a.id, name, enabled, sorted_json(trigger), sorted_json(action), secret, token, next, active === null ? null : JSON.stringify(active), precheck, budget,
+    a.id,
+    name,
+    enabled,
+    sorted_json(trigger),
+    sorted_json(action),
+    secret,
+    token,
+    next,
+    active === null ? null : JSON.stringify(active),
+    precheck,
+    budget,
     fmt(now),
   );
   const updated = automation(c, id);
@@ -337,8 +359,7 @@ export async function run_handler(s: Shared, r: Req): Promise<any> {
 export async function run_now(s: Shared, a: Automation, b: RunNow): Promise<Run> {
   if (is_webhook(a)) {
     const latest = latest_delivery(s.db(), a.id);
-    const delivery: Delivery =
-      b.payload !== undefined && b.payload !== null ? Delivery_default(b.payload) : (latest ?? Delivery_default({}));
+    const delivery: Delivery = b.payload !== undefined && b.payload !== null ? Delivery_default(b.payload) : (latest ?? Delivery_default({}));
     const e = b.event?.trim();
     if (e) delivery.headers["x-github-event"] = e;
     // The same delivery id would be a duplicate of the real one.

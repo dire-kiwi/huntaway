@@ -57,9 +57,9 @@ export function ProjectWorkflows({ project }: { project: Project }) {
   return (
     <div className="space-y-3" data-testid="workflows">
       <p className="text-[12.5px] text-muted">
-        A workflow starts when a task enters a column (or when you run it from the task), and runs its steps in order: checks, agents that
-        read the work in threads of their own and write their output to a tab of the task, messages to the task's agent, and moves to
-        another column. The review and summary in the Review tab can be set up as one: start from <i>Review and summarise</i>.
+        A workflow starts when a task enters a column (or when you run it from the task), and runs its steps in order: checks, agents that read the work in
+        threads of their own and write their output to a tab of the task, messages to the task's agent, and moves to another column. The review and summary in
+        the Review tab can be set up as one: start from <i>Review and summarise</i>.
       </p>
       <div className="flex flex-wrap gap-2">
         {PRESETS.map((p) => (
@@ -178,7 +178,16 @@ export const KIND_STYLE: Record<WorkflowNodeKindName, { icon: ReactNode; tone: s
   set_status: { icon: <ArrowRightLeft size={12} />, tone: "text-violet-400" },
 };
 
-export const PORT_LABELS: Record<string, string> = { out: "then", yes: "yes", no: "no", done: "done", failed: "failed", pass: "pass", issues: "issues", exhausted: "out of rounds" };
+export const PORT_LABELS: Record<string, string> = {
+  out: "then",
+  yes: "yes",
+  no: "no",
+  done: "done",
+  failed: "failed",
+  pass: "pass",
+  issues: "issues",
+  exhausted: "out of rounds",
+};
 
 /** Starting points for a new workflow. */
 const PRESETS: { name: string; graph: () => WorkflowGraph }[] = [
@@ -255,7 +264,8 @@ function freeSpot(g: WorkflowGraph, h: number, view: HTMLElement | null) {
   const top = view?.scrollTop ?? 0;
   const right = left + (view?.clientWidth ?? 800) - NODE_W - 20;
   const bottom = top + (view?.clientHeight ?? 460) - h - 20;
-  const clear = (x: number, y: number) => g.nodes.every((n) => x + NODE_W + 20 <= n.x || n.x + NODE_W + 20 <= x || y + h + 20 <= n.y || n.y + nodeH(n) + 20 <= y);
+  const clear = (x: number, y: number) =>
+    g.nodes.every((n) => x + NODE_W + 20 <= n.x || n.x + NODE_W + 20 <= x || y + h + 20 <= n.y || n.y + nodeH(n) + 20 <= y);
   for (let y = Math.ceil((top + 20) / 10) * 10; y <= bottom; y += 30)
     for (let x = Math.ceil((left + 20) / 10) * 10; x <= right; x += 40) if (clear(x, y)) return { x, y };
   return { x: 20, y: Math.max(0, ...g.nodes.map((n) => n.y + nodeH(n))) + 30 };
@@ -335,7 +345,8 @@ function WorkflowEditor({
     if (!target || to === from) return;
     if (target.kind === "trigger") return setErr("Nothing goes into the start: it's where a run begins.");
     if (graph.edges.some((e) => e.from === from && e.port === port && e.to === to)) return;
-    if (reaches(graph.edges, to, from)) return setErr("That would make a loop. To go round again, send to the task's agent: its next turn starts the workflow again.");
+    if (reaches(graph.edges, to, from))
+      return setErr("That would make a loop. To go round again, send to the task's agent: its next turn starts the workflow again.");
     setGraph((g) => ({ ...g, edges: [...g.edges, { from, port, to }] }));
   };
   const addNode = (spec: (typeof NEW_NODES)[number]) => {
@@ -381,7 +392,13 @@ function WorkflowEditor({
   };
   const close = () =>
     dirty
-      ? confirm.ask({ title: "Discard changes", body: "Close the workflow without saving your changes?", action: "Discard", danger: true, onConfirm: async () => onClose() })
+      ? confirm.ask({
+          title: "Discard changes",
+          body: "Close the workflow without saving your changes?",
+          action: "Discard",
+          danger: true,
+          onConfirm: async () => onClose(),
+        })
       : onClose();
 
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -431,7 +448,11 @@ function WorkflowEditor({
                   const d = edgePath(p.x, p.y, b.x, b.y + IN_Y);
                   const on = sel && "edge" in sel && sel.edge === i;
                   return (
-                    <g key={`${e.from}-${e.port}-${e.to}`} className="pointer-events-auto cursor-pointer" onPointerDown={(ev) => (ev.stopPropagation(), setSel({ edge: i }))}>
+                    <g
+                      key={`${e.from}-${e.port}-${e.to}`}
+                      className="pointer-events-auto cursor-pointer"
+                      onPointerDown={(ev) => (ev.stopPropagation(), setSel({ edge: i }))}
+                    >
                       <path d={d} fill="none" stroke="transparent" strokeWidth={12} data-edge={`${e.from}.${e.port}->${e.to}`} />
                       <path d={d} fill="none" className={on ? "stroke-accent" : "stroke-line-strong"} strokeWidth={on ? 2.5 : 1.75} />
                     </g>
@@ -480,7 +501,11 @@ function WorkflowEditor({
                       </div>
                     </div>
                     {portsOf(n).map((p, i) => (
-                      <div key={p} className="absolute right-0 flex items-center gap-1.5 text-[11px] text-muted" style={{ top: portY(i) - PORT_H / 2, height: PORT_H }}>
+                      <div
+                        key={p}
+                        className="absolute right-0 flex items-center gap-1.5 text-[11px] text-muted"
+                        style={{ top: portY(i) - PORT_H / 2, height: PORT_H }}
+                      >
                         <span>{PORT_LABELS[p] ?? p}</span>
                         <span
                           role="button"
@@ -530,12 +555,12 @@ function WorkflowEditor({
               <div className="space-y-2 text-[12px] text-faint">
                 <p>Click a step to change it.</p>
                 <p>
-                  A step runs once a step before it ends on an outcome connected to it, or once all of them have (<i>all inputs</i>). One
-                  whose inputs can't come is skipped.
+                  A step runs once a step before it ends on an outcome connected to it, or once all of them have (<i>all inputs</i>). One whose inputs can't
+                  come is skipped.
                 </p>
                 <p>
-                  <b>Send to the task's agent</b> ends the run. Once the agent's turn ends and the task enters the start's column again,
-                  the workflow runs again; after its rounds, its <i>out of rounds</i> outcome runs instead, or the task moves to Needs attention.
+                  <b>Send to the task's agent</b> ends the run. Once the agent's turn ends and the task enters the start's column again, the workflow runs
+                  again; after its rounds, its <i>out of rounds</i> outcome runs instead, or the task moves to Needs attention.
                 </p>
               </div>
             )}
@@ -557,7 +582,8 @@ function WorkflowEditor({
 }
 
 const selectClass = "h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none";
-const TEMPLATES = "{{task.key}}, {{task.title}}, {{task.description}}, {{branch}}, {{commit}}, {{workflow}}, {{issues}}, and {{<step id>.text}} or {{<step id>.issues}}";
+const TEMPLATES =
+  "{{task.key}}, {{task.title}}, {{task.description}}, {{branch}}, {{commit}}, {{workflow}}, {{issues}}, and {{<step id>.text}} or {{<step id>.issues}}";
 
 /** The selected node's settings. */
 function NodeInspector({
@@ -658,8 +684,7 @@ function NodeInspector({
           )}
           {n.check === "changed" && (
             <p className="text-[11.5px] text-faint">
-              Yes when the task's branch or its agent's last run differ from the workflow's last finished run on it, and always when it's
-              run by hand.
+              Yes when the task's branch or its agent's last run differ from the workflow's last finished run on it, and always when it's run by hand.
             </p>
           )}
         </>
@@ -706,7 +731,12 @@ function NodeInspector({
               placeholder="e.g. security-review"
               onChange={(e) => {
                 setSkills(e.target.value);
-                onChange({ skills: e.target.value.split(",").map((s) => s.trim().replace(/^[/$]/, "")).filter(Boolean) });
+                onChange({
+                  skills: e.target.value
+                    .split(",")
+                    .map((s) => s.trim().replace(/^[/$]/, ""))
+                    .filter(Boolean),
+                });
               }}
             />
           </Field>
@@ -715,10 +745,20 @@ function NodeInspector({
       )}
       {n.kind === "send_to_task" && (
         <>
-          <Field label="Message" hint={<>Blank sends the serious issues the verdict steps found. Templates: <code className="text-[11px]">{TEMPLATES}</code>.</>}>
+          <Field
+            label="Message"
+            hint={
+              <>
+                Blank sends the serious issues the verdict steps found. Templates: <code className="text-[11px]">{TEMPLATES}</code>.
+              </>
+            }
+          >
             <Textarea rows={5} className="text-[12.5px]" value={n.message} onChange={(e) => onChange({ message: e.target.value })} />
           </Field>
-          <Field label="Rounds" hint="How many times in a row it sends before its out of rounds outcome runs (or, with nothing connected, the task moves to Needs attention).">
+          <Field
+            label="Rounds"
+            hint="How many times in a row it sends before its out of rounds outcome runs (or, with nothing connected, the task moves to Needs attention)."
+          >
             <div className="w-24">
               <Input
                 type="number"

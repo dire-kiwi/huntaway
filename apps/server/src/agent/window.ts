@@ -87,12 +87,15 @@ export function start(s: Shared) {
       await check(s, c, w, Date.now());
     }
   };
-  background("restarting 5-hour windows", (async () => {
-    for (;;) {
-      await tick().catch((e) => log.warn(`restarting 5-hour windows: ${err_str(e)}`));
-      await new Promise((r) => setTimeout(r, TICK).unref());
-    }
-  })());
+  background(
+    "restarting 5-hour windows",
+    (async () => {
+      for (;;) {
+        await tick().catch((e) => log.warn(`restarting 5-hour windows: ${err_str(e)}`));
+        await new Promise((r) => setTimeout(r, TICK).unref());
+      }
+    })(),
+  );
 }
 
 export function window(s: Shared, c: ClaudeConfig, w: Watch, now: number): Window {
@@ -185,7 +188,11 @@ async function send(s: Shared, c: ClaudeConfig, spent: { value: Spent | null }):
   const args = ["-p", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config"];
   args.push("--no-session-persistence", "--disable-slash-commands", "--system-prompt", SYSTEM_PROMPT);
   const out = await new Promise<{ code: number | null; signal: string | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(program, args, { cwd: s.data_dir, env: { ...process.env, CLAUDE_CONFIG_DIR: expand_tilde(db.dir(c)) }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(program, args, {
+      cwd: s.data_dir,
+      env: { ...process.env, CLAUDE_CONFIG_DIR: expand_tilde(db.dir(c)) },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     const timer = setTimeout(() => {

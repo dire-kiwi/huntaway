@@ -9,9 +9,8 @@ globalThis.localStorage = {
   setItem: (k, v) => store.set(k, String(v)),
   removeItem: (k) => store.delete(k),
 };
-const { commentLines, editComment, getReview, lineRange, openDraft, removeComments, reviewMessage, saveDraft, setDraftNote, withComments, clearReview } = await import(
-  "../src/components/changes/lineComments.ts"
-);
+const { commentLines, editComment, getReview, lineRange, openDraft, removeComments, reviewMessage, saveDraft, setDraftNote, withComments, clearReview } =
+  await import("../src/components/changes/lineComments.ts");
 
 const [file] = parseDiff(
   [
@@ -84,7 +83,10 @@ test("the message for the agent: each comment's file, lines, diff and note, in o
     ].join("\n"),
   );
   assert.equal(withComments("  Please fix these.  ", []), "Please fix these.");
-  assert.match(withComments("Please fix these.", [{ ...commentLines(file, src, at(0, 1)), id: "a", note: "x" }]), /^Please fix these\.\n\nA comment on the diff:\n\n\*\*src/);
+  assert.match(
+    withComments("Please fix these.", [{ ...commentLines(file, src, at(0, 1)), id: "a", note: "x" }]),
+    /^Please fix these\.\n\nA comment on the diff:\n\n\*\*src/,
+  );
 });
 
 test("a fence longer than the backticks in the lines", () => {
@@ -116,7 +118,10 @@ test("drafts: opened once per line, saved with a note, edited in place, kept in 
   setDraftNote("h", "t", e, "Lower case.");
   saveDraft("h", "t", e);
   r = getReview("h", "t");
-  assert.deepEqual(r.comments.map((c) => [c.id, c.note]), [[id, "Lower case."]]);
+  assert.deepEqual(
+    r.comments.map((c) => [c.id, c.note]),
+    [[id, "Lower case."]],
+  );
   // Sent (or deleted): gone, with any draft changing it.
   editComment("h", "t", id);
   removeComments("h", "t", [id]);

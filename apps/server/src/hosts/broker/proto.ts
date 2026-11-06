@@ -83,7 +83,15 @@ export function Ctl_from_json(text: string): Ctl {
       if (!is_str(v.error)) throw bad();
       return v;
     case "req":
-      if (!is_u64(v.id) || !is_str(v.method) || !is_str(v.path) || !is_headers(v.headers) || !opt(v.body, (b) => typeof b === "boolean") || !opt(v.ws, (b) => typeof b === "boolean")) throw bad();
+      if (
+        !is_u64(v.id) ||
+        !is_str(v.method) ||
+        !is_str(v.path) ||
+        !is_headers(v.headers) ||
+        !opt(v.body, (b) => typeof b === "boolean") ||
+        !opt(v.ws, (b) => typeof b === "boolean")
+      )
+        throw bad();
       return { t: "req", id: v.id, method: v.method, path: v.path, headers: v.headers, body: v.body ?? false, ws: v.ws ?? false };
     case "head":
       if (!is_u64(v.id) || !is_u64(v.status) || !is_headers(v.headers)) throw bad();
@@ -177,8 +185,18 @@ export class Window {
 export function hop_by_hop(name: string): boolean {
   const n = name.toLowerCase();
   return (
-    ["connection", "keep-alive", "proxy-connection", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host"].includes(n) ||
-    n.startsWith("sec-websocket-")
+    [
+      "connection",
+      "keep-alive",
+      "proxy-connection",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+      "host",
+    ].includes(n) || n.startsWith("sec-websocket-")
   );
 }
 

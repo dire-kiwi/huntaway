@@ -110,7 +110,10 @@ async function setup_locked(state: AppState, task_id: string, within: string[]):
   const wt = join(project.worktrees_root, name);
   await git(repo, ["worktree", "prune"]).catch(() => {});
   const branch_exists = (await git(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).ok;
-  state.update_task(task_id, [["worktree_state", "setting_up"], ["worktree_error", null]]);
+  state.update_task(task_id, [
+    ["worktree_state", "setting_up"],
+    ["worktree_error", null],
+  ]);
   // What it was asked to start from counts until its branch exists: that's where it started. Its base branch is saved
   // with the branch (see below), but one made before that was (a setup cut short) is worked out again.
   const fresh = !branch_exists && !existsSync(wt);
@@ -161,7 +164,11 @@ async function setup_locked(state: AppState, task_id: string, within: string[]):
     // Saved as soon as git has them, so a setup script that fails (or a restart meanwhile) doesn't lose where the branch
     // started: setting up again keeps it, and so does the API, which only lets what it starts from change before there's
     // a branch.
-    state.update_task(task_id, [["worktree_path", path_str(wt)], ["branch", branch], ["base_branch", base]]);
+    state.update_task(task_id, [
+      ["worktree_path", path_str(wt)],
+      ["branch", branch],
+      ["base_branch", base],
+    ]);
     state.add_event(task_id, "info", `Worktree ready at ${wt} on branch ${branch} (from ${from})`, null);
 
     // Before the setup script, which can rely on them. Nothing already there is overwritten, so a setup that didn't
@@ -195,7 +202,10 @@ async function setup_locked(state: AppState, task_id: string, within: string[]):
 function setup_failed(state: AppState, task_id: string, e: unknown): Error {
   const msg = err_str(e);
   try {
-    state.update_task(task_id, [["worktree_state", "error"], ["worktree_error", msg]]);
+    state.update_task(task_id, [
+      ["worktree_state", "error"],
+      ["worktree_error", msg],
+    ]);
   } catch (e) {
     console.warn(`task ${task_id}: couldn't record the failed worktree setup: ${err_str(e)}`);
   }

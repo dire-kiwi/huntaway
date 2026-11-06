@@ -51,8 +51,19 @@ test("a loop that stops short of a card leaves it out, and an empty path takes n
 
 test("a press that hardly moved is a click", () => {
   assert.equal(reach([]), 0);
-  assert.ok(reach([{ x: 10, y: 10 }, { x: 12, y: 11 }]) < 6);
-  assert.ok(reach([{ x: 10, y: 10 }, { x: 50, y: 10 }, { x: 11, y: 10 }]) >= 40);
+  assert.ok(
+    reach([
+      { x: 10, y: 10 },
+      { x: 12, y: 11 },
+    ]) < 6,
+  );
+  assert.ok(
+    reach([
+      { x: 10, y: 10 },
+      { x: 50, y: 10 },
+      { x: 11, y: 10 },
+    ]) >= 40,
+  );
 });
 
 test("a card is only as big as what shows of it", () => {

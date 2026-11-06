@@ -65,7 +65,8 @@ export function parse_rule_list(v: any): Rule[] | null {
 
 /** Whether `pattern` matches tool `tool` (see Rule.tool). */
 export function matches(pattern: string, tool: string): boolean {
-  const p = pattern.trim().toLowerCase(), t = tool.toLowerCase();
+  const p = pattern.trim().toLowerCase(),
+    t = tool.toLowerCase();
   if (p === "") return false;
   if (!p.includes("*")) return t === p || (p.startsWith("mcp__") && !p.slice(5).includes("__") && t.startsWith(p) && t.slice(p.length).startsWith("__"));
   return glob(p, t);
@@ -73,8 +74,10 @@ export function matches(pattern: string, tool: string): boolean {
 
 /** `*` matches any run of characters, everything else itself. */
 function glob(p: string, t: string): boolean {
-  let pi = 0, ti = 0;
-  let star = -1, mark = 0;
+  let pi = 0,
+    ti = 0;
+  let star = -1,
+    mark = 0;
   while (ti < t.length) {
     if (pi < p.length && p[pi] === "*") {
       star = pi;
@@ -126,8 +129,7 @@ export const BLOCKED = "Blocked by the user's approval rules";
 /** The reason a call that rule `pattern` sets to never is turned away with. */
 export function blocked_reason(pattern: string): string {
   return (
-    `${BLOCKED} (never: ${pattern}). Don't retry it or try another way to do the same thing: carry on without it, and tell the user ` +
-    "what you couldn't do."
+    `${BLOCKED} (never: ${pattern}). Don't retry it or try another way to do the same thing: carry on without it, and tell the user ` + "what you couldn't do."
   );
 }
 

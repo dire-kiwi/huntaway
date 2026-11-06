@@ -81,14 +81,25 @@ export default function TaskScreen() {
           <ErrorText>{err ?? thread.error ?? detail.error ?? t.olderError}</ErrorText>
         </View>
       )}
-      <ThreadMessages t={t} client={client} host={host} onOpenTask={(task) => router.push({ pathname: "/task/[board]/[host]/[id]", params: { board: boardId, host, id: task } })} taskId={id} />
+      <ThreadMessages
+        t={t}
+        client={client}
+        host={host}
+        onOpenTask={(task) => router.push({ pathname: "/task/[board]/[host]/[id]", params: { board: boardId, host, id: task } })}
+        taskId={id}
+      />
       <Composer client={client} host={host} taskId={id} bottom={insets.bottom} onSent={t.settled} />
       <Modal visible={moving} transparent animationType="fade" onRequestClose={() => setMoving(false)}>
         <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }} onPress={() => setMoving(false)}>
           <View style={{ backgroundColor: colors.panel, padding: 12, paddingBottom: 32, gap: 4, borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
             <Text style={[s.title, { padding: 8 }]}>Move to</Text>
             {STATUSES.map((st) => (
-              <Pressable key={st.id} accessibilityRole="button" onPress={() => move(st.id)} style={[s.row, { padding: 12, borderRadius: 8, backgroundColor: st.id === task?.status ? colors.raised : undefined }]}>
+              <Pressable
+                key={st.id}
+                accessibilityRole="button"
+                onPress={() => move(st.id)}
+                style={[s.row, { padding: 12, borderRadius: 8, backgroundColor: st.id === task?.status ? colors.raised : undefined }]}
+              >
                 <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: STATUS_COLOR[st.id] }} />
                 <Text style={{ color: colors.fg, fontSize: 16 }}>{st.label}</Text>
               </Pressable>

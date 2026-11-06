@@ -109,7 +109,12 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
     await sendMessage(task, body);
     // Off the saved draft as well, for when no composer shows it.
     const d = loadComposerDraft(key);
-    if (d) saveComposerDraft(key, afterSent(d.text, sent), d.files.filter((f) => !files.some((x) => x.id === f.id)));
+    if (d)
+      saveComposerDraft(
+        key,
+        afterSent(d.text, sent),
+        d.files.filter((f) => !files.some((x) => x.id === f.id)),
+      );
     removeComments(task.host_id, task.id, comments);
     end = { sent, files };
   } catch (e) {
@@ -302,7 +307,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
                       ? "Queued: sends when the agent starts, once the tasks it depends on are merged"
                       : limitQueued(task)
                         ? "Queued: sends when the agent carries on, once its usage limit resets"
-                      : "Queued: sends with the next message"}
+                        : "Queued: sends with the next message"}
                 </div>
               </div>
               <button
@@ -342,16 +347,16 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
               comments.length && !blocked
                 ? `Add a message to the comment${comments.length === 1 ? "" : "s"}, or press Enter to send ${comments.length === 1 ? "it" : "them"}…`
                 : task.running
-                ? canQueue
-                  ? task.queued_message
-                    ? "Add to the queued message…"
-                    : canSteer
-                      ? "Message the agent: it reads it after its current step…"
-                      : "Queue a message for when the agent finishes…"
-                  : "Agent is working…"
-                : dependencyQueued(task) || limitQueued(task)
-                  ? "Queue a message for when its agent starts…"
-                  : (placeholder ?? (canStartEmpty ? "Add extra instructions, or press Enter to start" : "Reply to the agent…"))
+                  ? canQueue
+                    ? task.queued_message
+                      ? "Add to the queued message…"
+                      : canSteer
+                        ? "Message the agent: it reads it after its current step…"
+                        : "Queue a message for when the agent finishes…"
+                    : "Agent is working…"
+                  : dependencyQueued(task) || limitQueued(task)
+                    ? "Queue a message for when its agent starts…"
+                    : (placeholder ?? (canStartEmpty ? "Add extra instructions, or press Enter to start" : "Reply to the agent…"))
             }
             className="block max-h-[260px] w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[13.5px] text-fg placeholder:text-faint outline-none"
           />

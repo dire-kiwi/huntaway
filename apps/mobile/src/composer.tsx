@@ -110,7 +110,13 @@ export function Composer({
       setErr(from === "camera" ? "Camera access is off for Huntaway: allow it in Settings." : "Photo access is off for Huntaway: allow it in Settings.");
       return;
     }
-    const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], base64: true, quality: 0.7, allowsMultipleSelection: from === "library", selectionLimit: 5 };
+    const opts: ImagePicker.ImagePickerOptions = {
+      mediaTypes: ["images"],
+      base64: true,
+      quality: 0.7,
+      allowsMultipleSelection: from === "library",
+      selectionLimit: 5,
+    };
     const picked = from === "camera" ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
     if (picked.canceled) return;
     await upload(picked.assets.filter((a) => a.base64).map((a) => ({ name: photoName(a.fileName, a.mimeType), data: async () => a.base64! })));
@@ -156,7 +162,12 @@ export function Composer({
       {files.length > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {files.map((f) => (
-            <Pressable key={f.id} onPress={() => setFiles((x) => x.filter((y) => y.id !== f.id))} accessibilityLabel={`Remove ${f.name}`} style={[s.chip, { height: 28 }]}>
+            <Pressable
+              key={f.id}
+              onPress={() => setFiles((x) => x.filter((y) => y.id !== f.id))}
+              accessibilityLabel={`Remove ${f.name}`}
+              style={[s.chip, { height: 28 }]}
+            >
               <Text style={s.faint}>
                 {/^voice-note-/.test(f.name) ? "🎙" : "📎"} {f.name} ✕
               </Text>

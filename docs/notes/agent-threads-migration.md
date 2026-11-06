@@ -13,11 +13,11 @@ measurement or a prediction of migration time.
 
 ## Three different migrations
 
-| Goal | Feasibility | Requirement |
-|---|---|---|
-| Display existing tasks and conversations through the new schema | Yes, with the qualifications below | Convert stored rows into saved protocol events; keep board state and source rows |
-| Continue an idle task with the same agent memory | Conditional | Preserve its native session id, runtime, profile config directory and working directory; the native session files must still exist |
-| Adopt a process already running under Huntaway's shim | Not a history import | Keep the legacy follower until that process exits; do not invent an agent-threads run record for it |
+| Goal                                                            | Feasibility                        | Requirement                                                                                                                        |
+| --------------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Display existing tasks and conversations through the new schema | Yes, with the qualifications below | Convert stored rows into saved protocol events; keep board state and source rows                                                   |
+| Continue an idle task with the same agent memory                | Conditional                        | Preserve its native session id, runtime, profile config directory and working directory; the native session files must still exist |
+| Adopt a process already running under Huntaway's shim           | Not a history import               | Keep the legacy follower until that process exits; do not invent an agent-threads run record for it                                |
 
 The normalized history is the application's record of the conversation. Claude's session files and Codex's thread
 store are the agent's memory. Writing `user_message` and `assistant_message` items does not feed them to the model.
@@ -47,18 +47,18 @@ Read full `messages` rows in ascending `id`, not API pages or `subagent_messages
 Message ids are globally allocated; new saved events need their own contiguous sequence starting at 1 per thread.
 One row can produce several items/events. Preserve `created_at` and a mapping from source row/block to item ids.
 
-| Stored Huntaway data | New representation | Qualifications |
-|---|---|---|
-| `kind=user`, `data.text` | `user_message` | Preserve `steered`; retain `auto`, `from_agent` and other app provenance in a Huntaway mapping/source record |
-| `kind=claude`, assistant text/thinking blocks | `assistant_message` / `reasoning` | One item per block, in order; final saved text is enough without streaming deltas |
-| Assistant `tool_use` | `tool_call` | Preserve the call id where unique; classify by tool name/input, with `other` for unknown tools |
-| User `tool_result` blocks | `item.updated` on the matching call | Text/blocks become result content; `is_error` determines failure. These are not new user messages |
-| `parent_tool_use_id` | `parent_id` pointing at a subagent call | Pre-index calls and parents; preserve nested relationships, including calls whose results arrive later |
-| `system/compact_boundary` and a synthetic compaction summary | `compaction` and optional update | Preserve available trigger/token metadata and summary; do not turn the summary into a user's instruction |
-| Stored `result` | `turn_result` | Preserve known outcome/duration. Retain cost and original result text separately where the target fields cannot express them |
-| `kind=event` | `notice` | Normalize levels to info/warning/error; keep detail and source data |
-| Permission/question cards and their stored answers | Request events where equivalent, otherwise Huntaway history cards | Historical cards must not become actionable live approvals; see below |
-| `task_started/progress/updated/notification` | Subagent state where supported, otherwise notices plus retained source | Background completion and Skill-forked agents need explicit handling beyond `parent_tool_use_id` |
+| Stored Huntaway data                                         | New representation                                                     | Qualifications                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `kind=user`, `data.text`                                     | `user_message`                                                         | Preserve `steered`; retain `auto`, `from_agent` and other app provenance in a Huntaway mapping/source record                 |
+| `kind=claude`, assistant text/thinking blocks                | `assistant_message` / `reasoning`                                      | One item per block, in order; final saved text is enough without streaming deltas                                            |
+| Assistant `tool_use`                                         | `tool_call`                                                            | Preserve the call id where unique; classify by tool name/input, with `other` for unknown tools                               |
+| User `tool_result` blocks                                    | `item.updated` on the matching call                                    | Text/blocks become result content; `is_error` determines failure. These are not new user messages                            |
+| `parent_tool_use_id`                                         | `parent_id` pointing at a subagent call                                | Pre-index calls and parents; preserve nested relationships, including calls whose results arrive later                       |
+| `system/compact_boundary` and a synthetic compaction summary | `compaction` and optional update                                       | Preserve available trigger/token metadata and summary; do not turn the summary into a user's instruction                     |
+| Stored `result`                                              | `turn_result`                                                          | Preserve known outcome/duration. Retain cost and original result text separately where the target fields cannot express them |
+| `kind=event`                                                 | `notice`                                                               | Normalize levels to info/warning/error; keep detail and source data                                                          |
+| Permission/question cards and their stored answers           | Request events where equivalent, otherwise Huntaway history cards      | Historical cards must not become actionable live approvals; see below                                                        |
+| `task_started/progress/updated/notification`                 | Subagent state where supported, otherwise notices plus retained source | Background completion and Skill-forked agents need explicit handling beyond `parent_tool_use_id`                             |
 
 The existing UI already proves the basic data is present: `app/src/threadModel.ts` extracts text/thinking/calls,
 joins results by `tool_use_id`, groups child messages, and renders compactions and outcomes from those rows. We can

@@ -47,7 +47,12 @@ export function useShownDiffs(h: string, id: string, sel: GitSelection, status: 
   const shownFiles = useMemo(() => parseDiff(shown?.patch ?? ""), [shown]);
   const stashIndex = side === "stash" ? stash?.index : undefined;
   const shownSource = useMemo<CommentSource | undefined>(
-    () => (!shown ? undefined : stashIndex !== undefined ? { key: `stash:${shown.sha}`, label: `stash@{${stashIndex}}` } : { key: `commit:${shown.sha}`, label: `commit ${short(shown.sha)}` }),
+    () =>
+      !shown
+        ? undefined
+        : stashIndex !== undefined
+          ? { key: `stash:${shown.sha}`, label: `stash@{${stashIndex}}` }
+          : { key: `commit:${shown.sha}`, label: `commit ${short(shown.sha)}` },
     [shown, stashIndex],
   );
   useEffect(() => {

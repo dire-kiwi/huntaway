@@ -15,7 +15,10 @@ export function useConfirmDone() {
   const confirmDone = useCallback(async (task: Task) => {
     const host = useStore.getState().hosts.find((h) => h.id === task.host_id);
     if (task.status === "done" || task.kind !== "task" || !task.project_id || task.task_type || !hostSupports(host, UNMERGED_API)) return true;
-    const unmerged = await api.unmerged(task.host_id, task.id).then((r) => r.unmerged, () => false);
+    const unmerged = await api.unmerged(task.host_id, task.id).then(
+      (r) => r.unmerged,
+      () => false,
+    );
     if (!unmerged) return true;
     return new Promise<boolean>((answer) =>
       setAsking((before) => {
@@ -45,8 +48,8 @@ function UnmergedModal({ task, onClose, onConfirm }: { task: Task; onClose: () =
             {key} {task.title}
           </span>{" "}
           has work that isn't merged into {base}
-          {task.pr_url && <> (its pull request {prLabel(task.pr_url)} isn't merged)</>}. Moving it to Done doesn't merge it: Ready for merge has its
-          agent do that. Its branch and worktree are kept.
+          {task.pr_url && <> (its pull request {prLabel(task.pr_url)} isn't merged)</>}. Moving it to Done doesn't merge it: Ready for merge has its agent do
+          that. Its branch and worktree are kept.
         </p>
         <ModalFooter className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>

@@ -72,10 +72,11 @@ export function buildSubagents(messages: Message[], running: boolean): Subagent[
   const callParent = new Map<string, string>();
   for (const m of messages) {
     const d = m.kind === "claude" && m.data?.type === "assistant" ? m.data : null;
-    for (const b of d?.message?.content ?? []) if (b.type === "tool_use") {
-      callMessages.set(b.id, m);
-      if (d.parent_tool_use_id) callParent.set(b.id, d.parent_tool_use_id);
-    }
+    for (const b of d?.message?.content ?? [])
+      if (b.type === "tool_use") {
+        callMessages.set(b.id, m);
+        if (d.parent_tool_use_id) callParent.set(b.id, d.parent_tool_use_id);
+      }
   }
   const finish = (s: Subagent, status: SubagentStatus, at: string) => {
     s.status = status;
@@ -116,8 +117,16 @@ export function buildSubagents(messages: Message[], running: boolean): Subagent[
       let s = d.tool_use_id ? byId.get(d.tool_use_id) : byTaskId.get(d.task_id) ? byId.get(byTaskId.get(d.task_id)!) : undefined;
       if (!s && d.subtype === "task_started" && d.task_type === "local_agent" && d.tool_use_id) {
         const launch = callMessages.get(d.tool_use_id) ?? m;
-        s = { id: d.tool_use_id, description: "", prompt: "", background: false, status: "running",
-          startedAt: launch.created_at, messageId: launch.id, parent: launch.data.parent_tool_use_id ?? null };
+        s = {
+          id: d.tool_use_id,
+          description: "",
+          prompt: "",
+          background: false,
+          status: "running",
+          startedAt: launch.created_at,
+          messageId: launch.id,
+          parent: launch.data.parent_tool_use_id ?? null,
+        };
         byId.set(s.id, s);
       }
       if (!s) continue;

@@ -110,7 +110,10 @@ function RoutineReport({ data }: { data: { automation?: string; task_id?: string
   const outcome = data.outcome ?? "reported";
   return (
     <div
-      className={clsx("rounded-lg border px-3.5 py-2.5", outcome === "failed" ? "border-red-500/30" : outcome === "asked" ? "border-st-attention/40" : "border-line")}
+      className={clsx(
+        "rounded-lg border px-3.5 py-2.5",
+        outcome === "failed" ? "border-red-500/30" : outcome === "asked" ? "border-st-attention/40" : "border-line",
+      )}
       data-testid="routine-report"
     >
       <div className="mb-1 flex items-center gap-1.5 text-[12px] text-muted">
@@ -119,7 +122,12 @@ function RoutineReport({ data }: { data: { automation?: string; task_id?: string
           Routine <span className="text-fg">{data.automation ?? "?"}</span> {REPORT_SAYS[outcome] ?? outcome}
         </span>
         {data.task_id && (
-          <button type="button" className="ml-auto shrink-0 font-mono text-faint hover:text-fg hover:underline" onClick={() => openTask(data.task_id!)} title="Open its thread">
+          <button
+            type="button"
+            className="ml-auto shrink-0 font-mono text-faint hover:text-fg hover:underline"
+            onClick={() => openTask(data.task_id!)}
+            title="Open its thread"
+          >
             {data.key}
           </button>
         )}

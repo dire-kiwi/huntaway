@@ -367,7 +367,13 @@ export function byImplementer(d: TokenData, tasks: TaskReviews[]) {
     groups.set(m, [...(groups.get(m) ?? []), t]);
   }
   return [...groups]
-    .map(([model, ts]) => ({ model, summary: summarise(ts.flatMap((t) => d.reviews.filter((r) => r.taskId === t.taskId)), ts) }))
+    .map(([model, ts]) => ({
+      model,
+      summary: summarise(
+        ts.flatMap((t) => d.reviews.filter((r) => r.taskId === t.taskId)),
+        ts,
+      ),
+    }))
     .sort((a, b) => b.summary.tasks - a.summary.tasks);
 }
 
@@ -443,6 +449,8 @@ export function issuesByModelAndEffort(d: Pick<TokenData, "threads">, reviews: U
     all: cell(g.all),
     byEffort: Object.fromEntries([...g.byEffort].map(([e, a]) => [e, cell(a)])),
   });
-  const models = [...rows].map(([m, g]) => out(m, g)).sort((a, b) => b.all.serious - a.all.serious || b.all.reviews - a.all.reviews || a.model.localeCompare(b.model));
+  const models = [...rows]
+    .map(([m, g]) => out(m, g))
+    .sort((a, b) => b.all.serious - a.all.serious || b.all.reviews - a.all.reviews || a.model.localeCompare(b.model));
   return { efforts, models, total: out("All models", total) };
 }

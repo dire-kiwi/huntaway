@@ -30,7 +30,7 @@ export function useGitSelection(status: GitStatus | null, turns: Turn[] | undefi
   const turnList = useMemo(() => [...(turns ?? [])].reverse(), [turns]);
 
   const lastIdx = useRef({ files: 0, commits: 0, stash: 0, turns: 0 });
-  const pick = <T,>(list: T[], which: "files" | "commits" | "stash" | "turns", at: (t: T) => boolean) => {
+  const pick = <T>(list: T[], which: "files" | "commits" | "stash" | "turns", at: (t: T) => boolean) => {
     let i = list.findIndex(at);
     if (i < 0) i = Math.min(lastIdx.current[which], list.length - 1);
     lastIdx.current[which] = Math.max(0, i);

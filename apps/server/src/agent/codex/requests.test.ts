@@ -42,9 +42,15 @@ function running(mode: string | null = null): [Shared, Task, Run] {
   writeFileSync(join(dir, "out.jsonl"), "");
   writeFileSync(join(dir, "input.jsonl"), "");
   writeFileSync(join(dir, "run.json"), JSON.stringify({ format: runs.RUN_FORMAT }));
-  writeFileSync(join(dir, "codex.json"), JSON.stringify({ cwd: "/w", approval_policy: "untrusted", approvals_reviewer: "user", sandbox: "workspace-write", requests_on_output: true }));
+  writeFileSync(
+    join(dir, "codex.json"),
+    JSON.stringify({ cwd: "/w", approval_policy: "untrusted", approvals_reviewer: "user", sandbox: "workspace-write", requests_on_output: true }),
+  );
   state.runs.set(task.id, { run_id: run.id, cancel: null });
-  const t = state.update_task(task.id, [["running", true], ["permission_mode", mode]])!;
+  const t = state.update_task(task.id, [
+    ["running", true],
+    ["permission_mode", mode],
+  ])!;
   return [state, t, db.get_run(state.db(), run.id)!];
 }
 
@@ -114,7 +120,9 @@ test("an_approval_on_the_output_is_a_prompt_answered_on_the_input", async () => 
   assert.deepEqual(JSON.parse(fc.input), { changes: [{ path: "/w/a", kind: "add", move_path: null, diff: "+x" }], reason: "New file" });
   permissions.decide(state, fc.id, true, false, null);
   assert.deepEqual((await answered(state, run, 3))[2].result, { decision: "accept" });
-  output(state, run, [{ id: 3, method: "item/permissions/requestApproval", params: { threadId: "main", itemId: "p", permissions: { network: true }, reason: "fetch" } }]);
+  output(state, run, [
+    { id: 3, method: "item/permissions/requestApproval", params: { threadId: "main", itemId: "p", permissions: { network: true }, reason: "fetch" } },
+  ]);
   permissions.decide(state, request_of(state, run, 3)!.id, true, false, null);
   assert.deepEqual((await answered(state, run, 4))[3].result, { permissions: { network: true }, scope: "turn" });
   // A request read again (its offset wasn't saved) finds the same call, which was answered: it isn't answered again.
@@ -125,7 +133,9 @@ test("an_approval_on_the_output_is_a_prompt_answered_on_the_input", async () => 
 
 test("codex_questions_are_the_request_user_input_prompt", async () => {
   const [state, , run] = running();
-  const questions = [{ id: "color", header: "Color", question: "Which color?", isOther: true, isSecret: false, options: [{ label: "Red" }, { label: "Blue" }] }];
+  const questions = [
+    { id: "color", header: "Color", question: "Which color?", isOther: true, isSecret: false, options: [{ label: "Red" }, { label: "Blue" }] },
+  ];
   output(state, run, [{ id: 7, method: "item/tool/requestUserInput", params: { threadId: "main", itemId: "call_q", questions } }]);
   const req = request_of(state, run, 7)!;
   assert.equal(req.tool_name, permissions.CODEX_QUESTIONS);
@@ -138,7 +148,10 @@ test("the_boards_tools_are_dynamic_tools_called_through_its_dispatch", async () 
   // One namespace, named for the board's server, with every tool the board's MCP server has.
   const ns = board_tools(false);
   assert.deepEqual([ns.type, ns.name], ["namespace", MCP_SERVER_NAME]);
-  assert.deepEqual(ns.tools.map((t: any) => t.name), mcp.tool_names(false).filter((n) => n !== "permission_prompt"));
+  assert.deepEqual(
+    ns.tools.map((t: any) => t.name),
+    mcp.tool_names(false).filter((n) => n !== "permission_prompt"),
+  );
   assert.ok(ns.tools.every((t: any) => t.type === "function" && typeof t.description === "string" && t.inputSchema));
   assert.ok(board_tools(true).tools.some((t: any) => t.name === "submit_review"));
 
@@ -175,7 +188,14 @@ test("a_wait_codex_leaves_to_the_user_is_asked_about_as_its_command", async () =
   const [state, , run] = running();
   const elicit = (id: number, tool: string, params: any) => {
     const message = `Allow the ${MCP_SERVER_NAME} MCP server to run tool "${tool}"?`;
-    const p = { threadId: "main", serverName: MCP_SERVER_NAME, mode: "form", message, requestedSchema: { type: "object", properties: {} }, _meta: { tool_params: params } };
+    const p = {
+      threadId: "main",
+      serverName: MCP_SERVER_NAME,
+      mode: "form",
+      message,
+      requestedSchema: { type: "object", properties: {} },
+      _meta: { tool_params: params },
+    };
     output(state, run, [{ id, method: "mcpServer/elicitation/request", params: p }]);
   };
   elicit(1, "wait", { reason: "waiting for CI", command: " gh pr checks 1 " });
@@ -187,7 +207,13 @@ test("a_wait_codex_leaves_to_the_user_is_asked_about_as_its_command", async () =
   elicit(2, "wait", { seconds: 60, command: "" });
   elicit(3, "get_task", { task: "IA-1" });
   const [, a, b] = await answered(state, run, 3);
-  assert.deepEqual([a.result, b.result], [{ action: "accept", content: {} }, { action: "accept", content: {} }]);
+  assert.deepEqual(
+    [a.result, b.result],
+    [
+      { action: "accept", content: {} },
+      { action: "accept", content: {} },
+    ],
+  );
   assert.equal(request_of(state, run, 2), undefined);
   // Without its arguments, a wait is asked about as itself.
   elicit(4, "wait", null);

@@ -53,7 +53,10 @@ export function root_in(temp: string, data: string): string {
 
 /** The name of task `id`'s folder: the first 12 hex digits of its id (a UUID, see util::new_id). */
 export function folder(id: string): string {
-  return [...id].filter((c) => /^[A-Za-z0-9]$/.test(c)).slice(0, 12).join("");
+  return [...id]
+    .filter((c) => /^[A-Za-z0-9]$/.test(c))
+    .slice(0, 12)
+    .join("");
 }
 
 /** FNV-1a: a hash that stays the same across builds, so a new build finds the folders an older one made. */

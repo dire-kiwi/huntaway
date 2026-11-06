@@ -81,14 +81,7 @@ function Assistant({ board }: { board: Board }) {
         // One assistant's thread, its composer (and the sends under way from it), its earlier pages and its Stop: another
         // assistant's (another profile's, or the same one's on another host) mounts afresh, so nothing late from this one
         // can land there.
-        <AssistantThread
-          key={`${board.id}/${task.host_id}/${task.id}`}
-          board={board}
-          client={client}
-          task={task}
-          profile={profile ?? ""}
-          prefill={prefill}
-        />
+        <AssistantThread key={`${board.id}/${task.host_id}/${task.id}`} board={board} client={client} task={task} profile={profile ?? ""} prefill={prefill} />
       ) : (
         <View style={{ flex: 1 }} />
       )}
@@ -115,7 +108,14 @@ function AssistantThread({ board, client, task, profile, prefill }: { board: Boa
           <ErrorText>{t.thread.error ?? t.detail.error ?? t.olderError}</ErrorText>
         </View>
       )}
-      <ThreadMessages t={t} client={client} host={host} taskId={task.id} onOpenTask={openTask} emptyTitle={`Ask ${profile}'s assistant anything: it remembers you, and works outside every project.`} />
+      <ThreadMessages
+        t={t}
+        client={client}
+        host={host}
+        taskId={task.id}
+        onOpenTask={openTask}
+        emptyTitle={`Ask ${profile}'s assistant anything: it remembers you, and works outside every project.`}
+      />
       <Composer
         client={client}
         host={host}

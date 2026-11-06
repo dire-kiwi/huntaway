@@ -40,7 +40,11 @@ const SILENCE = 60_000;
 export const CLOSE_GRACE = 2000;
 
 /** What the broker sent on one of our streams. */
-type Incoming = { type: "data"; bytes: Buffer } | { type: "text"; text: string } | { type: "end" } | { type: "close"; code: number | null; reason: string | null };
+type Incoming =
+  | { type: "data"; bytes: Buffer }
+  | { type: "text"; text: string }
+  | { type: "end" }
+  | { type: "close"; code: number | null; reason: string | null };
 
 /**
  * An unbounded channel with an async receiver (tokio's mpsc): `next()` gives what's sent in order, then `null` once
@@ -241,31 +245,34 @@ export function dial_with_origin(s: AppState, url: string, token: string, name: 
   connect_tunnel(connector.subscribe(), connector_bin).catch((e) => log.warn(`tunnel connector: ${err_str(e)}`));
   let stopped = false;
   let abort: (() => void) | null = null;
-  background("keeping the broker connected", (async () => {
-    let backoff = 1;
-    while (!stopped) {
-      const started = Date.now();
-      try {
-        await session(s, url, token, name, key, origin_port, connector, (a) => (abort = a));
-      } catch (e) {
-        if (!stopped) log.warn(`broker ${url}: ${err_str(e)}`);
+  background(
+    "keeping the broker connected",
+    (async () => {
+      let backoff = 1;
+      while (!stopped) {
+        const started = Date.now();
+        try {
+          await session(s, url, token, name, key, origin_port, connector, (a) => (abort = a));
+        } catch (e) {
+          if (!stopped) log.warn(`broker ${url}: ${err_str(e)}`);
+        }
+        abort = null;
+        // A connection that lasted a while starts over at a quick retry.
+        if (Date.now() - started > 60_000) backoff = 1;
+        if (stopped) break;
+        await new Promise<void>((r) => {
+          const t = setTimeout(r, backoff * 1000);
+          abort = () => {
+            clearTimeout(t);
+            r();
+          };
+        });
+        abort = null;
+        backoff = Math.min(backoff * 2, 30);
       }
-      abort = null;
-      // A connection that lasted a while starts over at a quick retry.
-      if (Date.now() - started > 60_000) backoff = 1;
-      if (stopped) break;
-      await new Promise<void>((r) => {
-        const t = setTimeout(r, backoff * 1000);
-        abort = () => {
-          clearTimeout(t);
-          r();
-        };
-      });
-      abort = null;
-      backoff = Math.min(backoff * 2, 30);
-    }
-    connector.close();
-  })());
+      connector.close();
+    })(),
+  );
   return () => {
     stopped = true;
     abort?.();
@@ -559,15 +566,18 @@ function start_stream(s: AppState, streams: Streams, tx: (m: string | Buffer) =>
   const out = new Out(req.id, tx, window);
   const ac = new AbortController();
   entry.abort = () => ac.abort();
-  background("a stream from the broker", (async () => {
-    try {
-      if (req.ws) await websocket(s, req.path, req.headers, in_q, out, ac.signal);
-      else await request(s, req.method, req.path, req.headers, req.body ? in_q : null, out, ac.signal);
-    } catch (e) {
-      if (!ac.signal.aborted) log.warn(`stream ${req.id}: ${err_str(e)}`);
-    }
-    if (streams.get(req.id) === entry) streams.delete(req.id);
-  })());
+  background(
+    "a stream from the broker",
+    (async () => {
+      try {
+        if (req.ws) await websocket(s, req.path, req.headers, in_q, out, ac.signal);
+        else await request(s, req.method, req.path, req.headers, req.body ? in_q : null, out, ac.signal);
+      } catch (e) {
+        if (!ac.signal.aborted) log.warn(`stream ${req.id}: ${err_str(e)}`);
+      }
+      if (streams.get(req.id) === entry) streams.delete(req.id);
+    })(),
+  );
 }
 
 function incoming(streams: Streams, id: number, msg: Incoming, last: boolean) {
@@ -682,7 +692,7 @@ function percent_decode(s: string): string {
   const b = Buffer.from(s, "utf8");
   const out: number[] = [];
   const hex = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102);
-  for (let i = 0; i < b.length; ) {
+  for (let i = 0; i < b.length;) {
     if (b[i] === 37 && i + 2 < b.length && hex(b[i + 1]) && hex(b[i + 2])) {
       out.push(parseInt(String.fromCharCode(b[i + 1], b[i + 2]), 16));
       i += 3;
@@ -697,9 +707,7 @@ const LOCAL = new http.Agent({ keepAlive: true });
 /** Pass the client's headers on, but not the ones that belong to the hop to the broker. */
 function passed_on(headers: Array<[string, string]>): Array<[string, string]> {
   // A client's own is dropped: ours says the request came through the broker.
-  return headers
-    .filter(([k]) => !proto.hop_by_hop(k) && k.toLowerCase() !== "content-length" && k.toLowerCase() !== VIA_BROKER)
-    .concat([[VIA_BROKER, "1"]]);
+  return headers.filter(([k]) => !proto.hop_by_hop(k) && k.toLowerCase() !== "content-length" && k.toLowerCase() !== VIA_BROKER).concat([[VIA_BROKER, "1"]]);
 }
 
 /** Headers as node takes them: repeated ones as arrays. */
@@ -721,7 +729,15 @@ function header_pairs(raw: string[]): Array<[string, string]> {
 }
 
 /** Make an HTTP request on our own server and send the response back. */
-async function request(s: AppState, method: string, path: string, headers: Array<[string, string]>, body: Queue<Incoming> | null, out: Out, signal: AbortSignal) {
+async function request(
+  s: AppState,
+  method: string,
+  path: string,
+  headers: Array<[string, string]>,
+  body: Queue<Incoming> | null,
+  out: Out,
+  signal: AbortSignal,
+) {
   const url = local_url(s.internal_url, path);
   if (!url) return out.json(404, no_route_error(method, path));
   if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(method)) return out.json(400, { error: `bad method ${method}` });

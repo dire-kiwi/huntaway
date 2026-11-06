@@ -35,7 +35,16 @@ async function taskWith(page, title, checks) {
   return { task, calls };
 }
 
-const snapshot = (outcome, failed = []) => ({ url: PR, head: "c0ffee1234", outcome, failed, more_failed: 0, pending: 0, passed: 2, since: new Date().toISOString() });
+const snapshot = (outcome, failed = []) => ({
+  url: PR,
+  head: "c0ffee1234",
+  outcome,
+  failed,
+  more_failed: 0,
+  pending: 0,
+  passed: 2,
+  since: new Date().toISOString(),
+});
 
 // HA-53 review: the button was only there once a background read had found failures, so a pull request no read
 // watches (or one whose last read was before its checks failed) had no way to send them to the agent.

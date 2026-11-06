@@ -2,8 +2,24 @@ import type { Message, PendingPermission, Task } from "@huntaway/client";
 import { hostItems, loadBoardInbox, mergeInbox, openQuestion, taskKey } from "../src/inbox";
 
 const task = (id: string, extra: Partial<Task> = {}) =>
-  ({ id, number: 1, title: `Task ${id}`, status: "in_progress", kind: "task", project_id: "p1", attention_reason: null, updated_at: "2026-11-03T10:00:00Z", ...extra }) as Task;
-const perm = (id: string, taskId: string, at: string): PendingPermission => ({ id, task_id: taskId, tool_name: "Bash", input: { command: "ls" }, created_at: at });
+  ({
+    id,
+    number: 1,
+    title: `Task ${id}`,
+    status: "in_progress",
+    kind: "task",
+    project_id: "p1",
+    attention_reason: null,
+    updated_at: "2026-11-03T10:00:00Z",
+    ...extra,
+  }) as Task;
+const perm = (id: string, taskId: string, at: string): PendingPermission => ({
+  id,
+  task_id: taskId,
+  tool_name: "Bash",
+  input: { command: "ls" },
+  created_at: at,
+});
 const msg = (id: number, kind: Message["kind"], data: unknown, at = "2026-11-03T10:00:00Z") => ({ id, task_id: "t", kind, data, created_at: at }) as Message;
 const work = { id: "work", name: "work-hub" };
 const home = { id: "home", name: "home" };
@@ -16,7 +32,14 @@ describe("the inbox", () => {
       task("c", { status: "needs_attention" }),
       task("d"),
     ];
-    const items = hostItems(work, "h1", tasks, [{ id: "p1", key: "HA" }], [perm("r1", "a", "2026-11-03T11:00:00Z")], new Map([["c", msg(9, "question", { question: "Which?", status: "pending" })]]));
+    const items = hostItems(
+      work,
+      "h1",
+      tasks,
+      [{ id: "p1", key: "HA" }],
+      [perm("r1", "a", "2026-11-03T11:00:00Z")],
+      new Map([["c", msg(9, "question", { question: "Which?", status: "pending" })]]),
+    );
     expect(items.map((i) => [i.kind, i.taskId, i.taskKey])).toEqual([
       ["permission", "a", "HA-3"],
       ["question", "c", "HA-1"],
@@ -68,7 +91,10 @@ describe("the inbox", () => {
         { id: "h2", local: false, connected: true, agents: true },
         { id: "h3", local: false, connected: false },
       ],
-      profiles: async (h: string) => [{ id: `${h}-work`, name: "Work" }, { id: `${h}-home`, name: "Home" }],
+      profiles: async (h: string) => [
+        { id: `${h}-work`, name: "Work" },
+        { id: `${h}-home`, name: "Home" },
+      ],
       profileTasks: async (h: string, p: string) => (calls.push(`tasks ${h} ${p}`), [task(`${h}-t`, { status: "needs_attention" })]),
       projects: async () => [{ id: "p1", key: "HA" }],
       pendingPermissions: async (h: string, q: { profile_id: string }) => (calls.push(`perms ${h} ${q.profile_id}`), []),
@@ -84,7 +110,13 @@ describe("the inbox", () => {
 
   // HA-222: a task whose items are its thread's source has no messages since it moved onto them.
   test("an open question of a task on items comes from its thread's requests", async () => {
-    const question = { id: "legacy:9", type: "question", created_at: "2026-11-06T10:00:00Z", questions: [], metadata: { question: "Which?", status: "pending", message_id: 9 } };
+    const question = {
+      id: "legacy:9",
+      type: "question",
+      created_at: "2026-11-06T10:00:00Z",
+      questions: [],
+      metadata: { question: "Which?", status: "pending", message_id: 9 },
+    };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client: any = {
       hosts: async () => [{ id: "h1", local: true, connected: true }],
@@ -96,7 +128,9 @@ describe("the inbox", () => {
       thread: async () => ({ items: [], requests: [question], seq: 1 }),
     };
     const inbox = await loadBoardInbox(client, work, null);
-    expect(inbox.items.map((i) => [i.kind, i.kind === "question" ? i.message.id : null, i.kind === "question" ? i.message.data.question : null])).toEqual([["question", 9, "Which?"]]);
+    expect(inbox.items.map((i) => [i.kind, i.kind === "question" ? i.message.id : null, i.kind === "question" ? i.message.data.question : null])).toEqual([
+      ["question", 9, "Which?"],
+    ]);
   });
 
   test("a board with no profile picked uses its first profile by name on every host, as Projects shows it", async () => {
@@ -108,7 +142,16 @@ describe("the inbox", () => {
         { id: "b", local: false, connected: true, agents: true },
       ],
       // The hosts list their profiles in different orders.
-      profiles: async (h: string) => (h === "a" ? [{ id: "w1", name: "Work" }, { id: "p1", name: "Personal" }] : [{ id: "p2", name: "Personal" }, { id: "w2", name: "Work" }]),
+      profiles: async (h: string) =>
+        h === "a"
+          ? [
+              { id: "w1", name: "Work" },
+              { id: "p1", name: "Personal" },
+            ]
+          : [
+              { id: "p2", name: "Personal" },
+              { id: "w2", name: "Work" },
+            ],
       profileTasks: async (_h: string, p: string) => (asked.push(p), []),
       projects: async () => [],
       pendingPermissions: async (_h: string, q: { profile_id: string }) => (asked.push(`perms ${q.profile_id}`), []),
@@ -132,14 +175,24 @@ describe("the inbox", () => {
       // The board leaves the assistant out unless asked, and never lists routine threads.
       profileTasks: async (_h: string, p: string, assistant?: boolean) => (
         asked.push(`${p} ${!!assistant}`),
-        assistant ? [task("asst", { project_id: null, task_type: "assistant", profile_id: "me", status: "needs_attention", attention_reason: "Asked you" })] : []
+        assistant
+          ? [task("asst", { project_id: null, task_type: "assistant", profile_id: "me", status: "needs_attention", attention_reason: "Asked you" })]
+          : []
       ),
       projects: async () => [],
-      pendingPermissions: async () => [perm("r1", "routine", "2026-11-03T11:00:00Z"), perm("r2", "elsewhere", "2026-11-03T12:00:00Z"), perm("r3", "gone", "2026-11-03T13:00:00Z")],
+      pendingPermissions: async () => [
+        perm("r1", "routine", "2026-11-03T11:00:00Z"),
+        perm("r2", "elsewhere", "2026-11-03T12:00:00Z"),
+        perm("r3", "gone", "2026-11-03T13:00:00Z"),
+      ],
       task: async (_h: string, id: string) => {
         fetched.push(id);
         if (id === "gone") throw new Error("not found");
-        return { task: task(id, { project_id: null, task_type: "routine", profile_id: id === "routine" ? "me" : "someone-else", title: "Morning brief" }), last_message: null, pending_permissions: 1 };
+        return {
+          task: task(id, { project_id: null, task_type: "routine", profile_id: id === "routine" ? "me" : "someone-else", title: "Morning brief" }),
+          last_message: null,
+          pending_permissions: 1,
+        };
       },
       messagePage: async () => ({ messages: [], more: false, subagents: [] }),
     };

@@ -4,13 +4,7 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": [
-      "jest"
-    ]
+    "types": ["jest"]
   },
-  "include": [
-    "index.ts",
-    "src",
-    "tests"
-  ]
+  "include": ["index.ts", "src", "tests"]
 }

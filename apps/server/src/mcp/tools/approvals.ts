@@ -58,14 +58,17 @@ export async function ask_user(s: Shared, ctx: Ctx, tool: string, input: any): P
   let [kind, of, instead, nothing] = ["project", "project", "ask the user to do it in the project's settings", "changed"];
   const routine = is_routine_input(input);
   if (tool === "delete_task") [kind, of, instead, nothing] = ["delete_task", "task", "ask the user to delete it on the board", "deleted"];
-  else if (tool === "create_automation" && routine) [kind, of, instead, nothing] = ["automation", "profile", "ask the user to add it on the assistant's Routines page", "created"];
+  else if (tool === "create_automation" && routine)
+    [kind, of, instead, nothing] = ["automation", "profile", "ask the user to add it on the assistant's Routines page", "created"];
   else if ((tool === "update_automation" || tool === "delete_automation") && routine)
     [kind, of, instead, nothing] = ["automation", "profile", "ask the user to do it on the assistant's Routines page", "changed"];
-  else if (tool === "create_automation") [kind, of, instead, nothing] = ["automation", "project", "ask the user to add it in the project's settings (Automations)", "created"];
+  else if (tool === "create_automation")
+    [kind, of, instead, nothing] = ["automation", "project", "ask the user to add it in the project's settings (Automations)", "created"];
   else if (tool === "update_automation" || tool === "delete_automation")
     [kind, of, instead, nothing] = ["automation", "project", "ask the user to do it in the project's settings (Automations)", "changed"];
   // Workflow changes are asked as automations are (the board shows them by their `workflow`).
-  else if (tool === "create_workflow") [kind, of, instead, nothing] = ["automation", "project", "ask the user to add it in the project's settings (Workflows)", "created"];
+  else if (tool === "create_workflow")
+    [kind, of, instead, nothing] = ["automation", "project", "ask the user to add it in the project's settings (Workflows)", "created"];
   else if (tool === "update_workflow" || tool === "delete_workflow")
     [kind, of, instead, nothing] = ["automation", "project", "ask the user to do it in the project's settings (Workflows)", "changed"];
   else if (tool === "create_project") [kind, of, instead, nothing] = ["project", "board", "ask the user to add it on the board", "added"];
@@ -124,7 +127,9 @@ export async function delete_task(s: Shared, ctx: Ctx, input: any): Promise<any>
     const delete_branch = approved?.delete_branch === true;
     // Only the tasks the user was shown go with it: a subproject's tasks added since (or an ordinary task made a
     // subproject since) need asking again.
-    const shown: string[] = (Array.isArray(approved?.tasks_with_it) ? approved.tasks_with_it : []).map((c: any) => c?.id).filter((x: any) => typeof x === "string");
+    const shown: string[] = (Array.isArray(approved?.tasks_with_it) ? approved.tasks_with_it : [])
+      .map((c: any) => c?.id)
+      .filter((x: any) => typeof x === "string");
     // Every task in it, whether or not it's (still) a subproject, as they'd all go with it.
     const children = db.subproject_tasks(s.db(), t.id);
     const unshown = children.filter((c) => !shown.includes(c.id)).map((c) => `${project_key(s, c)}-${c.number}`);

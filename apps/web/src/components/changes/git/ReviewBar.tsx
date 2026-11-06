@@ -44,33 +44,48 @@ export function ReviewBar({
     <div className="shrink-0 border-t border-line font-sans text-[12px]" data-review>
       {open && (
         <div className="max-h-48 overflow-y-auto border-b border-line py-1">
-          {[...comments.map((c) => ({ c, anchor: c.id, draft: drafts.some((d) => d.of === c.id) })), ...unfinished.map((d) => ({ c: d, anchor: d.id, draft: true }))].map(
-            ({ c, anchor, draft }) => (
-              <div key={anchor} className="group flex items-baseline gap-2 px-3 py-0.5 hover:bg-white/[0.04]">
-                <button tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => onJump(c, anchor)} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
-                  <span className="shrink-0 font-mono text-[11.5px] text-muted">
-                    {c.path}, {lineRange(c)}
-                  </span>
-                  <span className="shrink-0 text-[11px] text-faint">{c.source}</span>
-                  <span className={clsx("min-w-0 truncate", draft ? "text-amber-300" : "text-fg")}>{draft ? (c.note.trim() ? `${c.note} (being written)` : "(being written)") : c.note}</span>
-                </button>
-                <button
-                  tabIndex={-1}
-                  title="Delete the comment"
-                  onMouseDown={(e) => e.preventDefault()}
-                  // One being written may be where it can't be seen any more (its lines changed): it goes from here.
-                  onClick={() => (anchor === c.id && drafts.some((d) => d.id === c.id) ? dropDraft(task.host_id, task.id, c.id) : removeComments(task.host_id, task.id, [c.id]))}
-                  className="shrink-0 self-center rounded text-faint opacity-0 group-hover:opacity-100 hover:text-red-300"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            ),
-          )}
+          {[
+            ...comments.map((c) => ({ c, anchor: c.id, draft: drafts.some((d) => d.of === c.id) })),
+            ...unfinished.map((d) => ({ c: d, anchor: d.id, draft: true })),
+          ].map(({ c, anchor, draft }) => (
+            <div key={anchor} className="group flex items-baseline gap-2 px-3 py-0.5 hover:bg-white/[0.04]">
+              <button
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onJump(c, anchor)}
+                className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+              >
+                <span className="shrink-0 font-mono text-[11.5px] text-muted">
+                  {c.path}, {lineRange(c)}
+                </span>
+                <span className="shrink-0 text-[11px] text-faint">{c.source}</span>
+                <span className={clsx("min-w-0 truncate", draft ? "text-amber-300" : "text-fg")}>
+                  {draft ? (c.note.trim() ? `${c.note} (being written)` : "(being written)") : c.note}
+                </span>
+              </button>
+              <button
+                tabIndex={-1}
+                title="Delete the comment"
+                onMouseDown={(e) => e.preventDefault()}
+                // One being written may be where it can't be seen any more (its lines changed): it goes from here.
+                onClick={() =>
+                  anchor === c.id && drafts.some((d) => d.id === c.id) ? dropDraft(task.host_id, task.id, c.id) : removeComments(task.host_id, task.id, [c.id])
+                }
+                className="shrink-0 self-center rounded text-faint opacity-0 group-hover:opacity-100 hover:text-red-300"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
       <div className="flex h-8 items-center gap-2 px-2">
-        <button tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-muted hover:text-fg">
+        <button
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1.5 text-muted hover:text-fg"
+        >
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           <MessageSquare size={12} className="text-accent" />
           {comments.length ? `${comments.length} comment${comments.length === 1 ? "" : "s"} for the agent` : "No comments added yet"}
@@ -85,7 +100,13 @@ export function ReviewBar({
             size="sm"
             variant="primary"
             disabled={!comments.length || sending || blocked}
-            title={blocked ? "This host takes messages once the agent has finished" : queue ? "Queued: the agent gets them when it finishes" : "Sends them to the agent as one message"}
+            title={
+              blocked
+                ? "This host takes messages once the agent has finished"
+                : queue
+                  ? "Queued: the agent gets them when it finishes"
+                  : "Sends them to the agent as one message"
+            }
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void send()}
           >

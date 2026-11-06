@@ -16,7 +16,12 @@ beforeAll(async () => {
   dep = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Checkout rework" });
   // SHOP-1 is the start of SHOP-10 and SHOP-11, and SHOP of SHOPF.
   for (let i = 2; i <= 11; i++) await server.api("POST", `/projects/${project.id}/tasks`, { title: `Chore ${i}` });
-  shopfront = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shopfront", repo_path: `${server.dataDir}/shopfront`, key: "SHOPF", use_worktrees: false });
+  shopfront = await server.api("POST", `/profiles/${profile.id}/projects`, {
+    name: "Shopfront",
+    repo_path: `${server.dataDir}/shopfront`,
+    key: "SHOPF",
+    use_worktrees: false,
+  });
   // A project keyed like `@none`.
   await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Nonesuch", repo_path: `${server.dataDir}/nonesuch`, key: "NONE" });
 });
@@ -64,7 +69,13 @@ test("tokens set a new task's options, and are taken out of its description", as
     ]);
     assert.match(await page.locator("[aria-label='Reads as']").innerText(), /Task\s+Plan\s+Shop\s+Sonnet\s+high effort\s+after SHOP-1/);
     // A chip's × takes its token out.
-    await ui.run(["click [title='Remove the model']", "gone Sonnet", `assert ${value} === '/plan Price rules ^high @XYZ #SHOP-1'`, "press Control+Enter", "gone Reads as"]);
+    await ui.run([
+      "click [title='Remove the model']",
+      "gone Sonnet",
+      `assert ${value} === '/plan Price rules ^high @XYZ #SHOP-1'`,
+      "press Control+Enter",
+      "gone Reads as",
+    ]);
   });
   const task = await created("Price rules @XYZ");
   assert.ok(task);
@@ -135,8 +146,24 @@ test("a draft typed before the profile board's projects load comes back", async 
 // of @SHOPF) takes it as typed, rather than sending it to the agent as text.
 test("Ctrl+Enter takes the token being typed, even when it's the start of another", async () => {
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${project.id}`, "click New task", "wait Reads as", "type Fix checkout #SHOP-1", "wait role=option[name=/SHOP-10/]", "press Control+Enter", "gone Reads as"]);
-    await ui.run(["goto /profile/Default", "click New task", "wait Reads as", "type Fix totals @SHOP", "wait role=option[name=/Shopfront/]", "press Control+Enter", "gone Reads as"]);
+    await ui.run([
+      `goto /p/${project.id}`,
+      "click New task",
+      "wait Reads as",
+      "type Fix checkout #SHOP-1",
+      "wait role=option[name=/SHOP-10/]",
+      "press Control+Enter",
+      "gone Reads as",
+    ]);
+    await ui.run([
+      "goto /profile/Default",
+      "click New task",
+      "wait Reads as",
+      "type Fix totals @SHOP",
+      "wait role=option[name=/Shopfront/]",
+      "press Control+Enter",
+      "gone Reads as",
+    ]);
   });
   const task = await created("Fix checkout");
   assert.deepEqual(task?.depends_on, [dep.id]);
@@ -243,7 +270,15 @@ test("a repository that becomes git's after the board loads gets worktrees and s
     await ui.run([`goto /p/${later.id}`, "wait Start setup thread"]);
     gitRepo(dir);
     // A subproject is offered once the board is back.
-    await ui.run(["click New task", "type /subproject", "press Space", "wait New subproject in Later", "type Fresh task", "press Control+Enter", "gone Reads as"]);
+    await ui.run([
+      "click New task",
+      "type /subproject",
+      "press Space",
+      "wait New subproject in Later",
+      "type Fresh task",
+      "press Control+Enter",
+      "gone Reads as",
+    ]);
     await ui.run(["click New task", "wait Own git worktree", "type Plain task", "press Control+Enter", "gone Reads as"]);
   });
   const tasks = await server.api("GET", `/projects/${later.id}/tasks`);

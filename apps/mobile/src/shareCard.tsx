@@ -9,14 +9,29 @@ import { colors } from "./theme";
 import { Button, s } from "./ui";
 
 /** What the card says about a waiting share, seen on `board`'s Assistant tab; none when the composer's taking it. */
-export function waitingNote(pending: PendingShare | null, board: Pick<Board, "id">, boardName: (id: string) => string | undefined, taking: boolean): string | null {
+export function waitingNote(
+  pending: PendingShare | null,
+  board: Pick<Board, "id">,
+  boardName: (id: string) => string | undefined,
+  taking: boolean,
+): string | null {
   if (!pending) return null;
   if (pending.boardId === board.id) return taking ? null : "What you shared waits here until the assistant opens.";
   if (pending.boardId) return `What you shared is waiting for ${boardName(pending.boardId) ?? "another board"}'s assistant.`;
   return "What you shared hasn't gone anywhere yet: pick the board whose assistant it's for.";
 }
 
-export function WaitingShare({ pending, board, boardName, taking }: { pending: PendingShare | null; board: Board; boardName: (id: string) => string | undefined; taking: boolean }) {
+export function WaitingShare({
+  pending,
+  board,
+  boardName,
+  taking,
+}: {
+  pending: PendingShare | null;
+  board: Board;
+  boardName: (id: string) => string | undefined;
+  taking: boolean;
+}) {
   const router = useRouter();
   const note = waitingNote(pending, board, boardName, taking);
   if (!pending || !note) return null;
@@ -31,7 +46,9 @@ export function WaitingShare({ pending, board, boardName, taking }: { pending: P
         </Text>
       )}
       <View style={s.row}>
-        {!pending.boardId && <Button title="Pick a board" small kind="primary" onPress={() => router.push({ pathname: "/share", params: { id: String(pending.id) } })} />}
+        {!pending.boardId && (
+          <Button title="Pick a board" small kind="primary" onPress={() => router.push({ pathname: "/share", params: { id: String(pending.id) } })} />
+        )}
         <Button title="Drop it" small kind="ghost" onPress={() => shares.clear(pending.id)} />
       </View>
     </View>

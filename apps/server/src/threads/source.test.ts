@@ -61,7 +61,14 @@ function prompt(s: AppState, task_id: string, rid: string, kind = "tool", tool =
     s.db(),
     `INSERT INTO permission_requests (id, task_id, message_id, tool_name, input, status, created_at, call_id, kind)
      VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8)`,
-    rid, task_id, m.id, tool, JSON.stringify(input), new Date().toISOString(), `call-${rid}`, kind,
+    rid,
+    task_id,
+    m.id,
+    tool,
+    JSON.stringify(input),
+    new Date().toISOString(),
+    `call-${rid}`,
+    kind,
   );
   return m;
 }
@@ -198,7 +205,10 @@ test("an items task's prompts, questions and reports change in place in its item
   assert.equal(db.get_message(c, p.id)?.data.status, "pending");
   permissions.answer(s, "p1", true, false, null, {});
   assert.equal(store.get_request(c, x.id, "p1")?.resolution?.outcome, "allow");
-  assert.deepEqual([db.get_message(c, p.id)?.kind, db.get_message(c, p.id)?.data.status, db.get_message(c, p.id)?.data.input], ["permission", "allowed", { command: "ls" }]);
+  assert.deepEqual(
+    [db.get_message(c, p.id)?.kind, db.get_message(c, p.id)?.data.status, db.get_message(c, p.id)?.data.input],
+    ["permission", "allowed", { command: "ls" }],
+  );
   // A question asked once per call, even when it's asked again (a restart cut its call short).
   const card = questions.card({ question: "Which?", options: ["A", "B"] });
   questions.ask(s, x, "call-1", card);
@@ -255,7 +265,10 @@ test("an items task's project, deletion and automation approvals are pending app
     ],
   );
   // An older UI's list (project changes only).
-  assert.deepEqual(permissions.pending_approvals(s, false, false).map((v) => v.request_id), ["a1"]);
+  assert.deepEqual(
+    permissions.pending_approvals(s, false, false).map((v) => v.request_id),
+    ["a1"],
+  );
 });
 
 test("a late answer to an items task's question goes to its agent as a message, until the conversation moves on", async (t) => {
@@ -271,7 +284,10 @@ test("a late answer to an items task's question goes to its agent as a message, 
   assert.equal(db.get_message(s.db(), q.id)?.data.status, "expired");
   assert.equal(permissions.moved_on(s, x.id, q.id), false);
   permissions.answer(s, "q1", true, false, null, { answers: [["vitest"]] });
-  const reply = testing.messages(s.db(), x.id).filter((m) => m.kind === "user").at(-1)!;
+  const reply = testing
+    .messages(s.db(), x.id)
+    .filter((m) => m.kind === "user")
+    .at(-1)!;
   assert.match(reply.data.text, /vitest/);
   assert.ok(reply.id > q.id);
   assert.equal(store.get_item(s.db(), x.id, `legacy:${reply.id}`)?.type, "user_message");
@@ -314,7 +330,13 @@ test("an items task's readers: what it said since it was asked (workflows, summa
   assert.equal(history.said_since_asked(s.db(), x.id), "A summary");
   assert.equal(history.last_assistant_text(s.db(), x.id), "A summary");
   const r = analytics.report(s.db(), profile, from, "9999");
-  assert.deepEqual(r.events.map((e) => [e.kind, e.task_id, e.text]), [["start", x.id, ""], ["prompt", x.id, "Summarise it"]]);
+  assert.deepEqual(
+    r.events.map((e) => [e.kind, e.task_id, e.text]),
+    [
+      ["start", x.id, ""],
+      ["prompt", x.id, "Summarise it"],
+    ],
+  );
   assert.equal(rows(s, x.id), 0);
 });
 
@@ -386,8 +408,16 @@ test("a server that dies as a task moves onto items leaves it on its messages", 
     const c = db.open(file);
     try {
       assert.equal(source.of(c, task_id), "messages", point);
-      assert.deepEqual(db.list_messages(c, task_id).map((m) => m.data.text), ["kept"], point);
-      assert.deepEqual(store.items(c, task_id).map((i: any) => i.text), ["kept"], point);
+      assert.deepEqual(
+        db.list_messages(c, task_id).map((m) => m.data.text),
+        ["kept"],
+        point,
+      );
+      assert.deepEqual(
+        store.items(c, task_id).map((i: any) => i.text),
+        ["kept"],
+        point,
+      );
       assert.deepEqual(write.compare(c, task_id), [], point);
     } finally {
       c.close();
@@ -407,7 +437,10 @@ test("rebuilds, the batch and threads-rebuild leave items tasks alone", () => {
   db.run(s.db(), "UPDATE threads SET converter=1 WHERE task_id=?1", x.id);
   assert.equal(history.source(s.db(), x.id), "items");
   assert.deepEqual(batch.pending(s.db()), []);
-  assert.deepEqual(rebuild_cli.run(rebuild_cli.parse_args(["--all"]), s.db(), () => {}), []);
+  assert.deepEqual(
+    rebuild_cli.run(rebuild_cli.parse_args(["--all"]), s.db(), () => {}),
+    [],
+  );
   const [named] = rebuild_cli.run(rebuild_cli.parse_args([x.id]), s.db(), () => {});
   assert.match(named!.error!, /written as items only/);
   assert.deepEqual(texts(s, x.id), ["before", "after"]);
@@ -426,7 +459,10 @@ test("at the start, quiet tasks move onto items; one mid-turn moves when its run
   const moved = await source.flip_all(s);
   // `fresh` has no messages: it moves, with nothing to rebuild.
   assert.deepEqual(moved, { moved: 3, rebuilt: 0, deferred: 1 });
-  assert.deepEqual([quiet, busy, done_old, done_new, fresh].map((t) => on(s, t.id)), ["items", "messages", "messages", "items", "items"]);
+  assert.deepEqual(
+    [quiet, busy, done_old, done_new, fresh].map((t) => on(s, t.id)),
+    ["items", "messages", "messages", "items", "items"],
+  );
   db.run(s.db(), "UPDATE runs SET status='exited' WHERE id=?1", run.id);
   source.settled(s, busy.id);
   assert.equal(on(s, busy.id), "items");

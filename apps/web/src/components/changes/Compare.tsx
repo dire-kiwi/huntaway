@@ -23,7 +23,8 @@ const MODE_KEY = "ia.compare.mode";
 /** The Changes tab's unified or split diffs, which one at a time follows. */
 const LAYOUT_KEY = "ia.changes.layout";
 
-const statusLabel = (t: Task) => (t.status === "done" && t.resolution ? RESOLUTION_LABELS[t.resolution] : (STATUSES.find((s) => s.id === t.status)?.label ?? t.status));
+const statusLabel = (t: Task) =>
+  t.status === "done" && t.resolution ? RESOLUTION_LABELS[t.resolution] : (STATUSES.find((s) => s.id === t.status)?.label ?? t.status);
 const notDone = (t: Task) => t.status === "done" && t.resolution === "not_done";
 const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
 const stat = (files: FileDiff[]) => ({ files: files.length, adds: files.reduce((a, f) => a + f.adds, 0), dels: files.reduce((a, f) => a + f.dels, 0) });
@@ -38,7 +39,9 @@ export default function CompareView({ taskId }: { taskId: string }) {
       ) : (
         <>
           <Header title="Compare" />
-          <div className="p-6 text-[13px] text-muted">{loaded && (task ? "This task wasn't made from one prompt with others." : "This task isn't on the board.")}</div>
+          <div className="p-6 text-[13px] text-muted">
+            {loaded && (task ? "This task wasn't made from one prompt with others." : "This task isn't on the board.")}
+          </div>
         </>
       )}
     </Overlay>
@@ -293,7 +296,9 @@ function Compare({ task }: { task: Task }) {
           {!narrow && <FilesOverview tasks={tasks} taskKey={keyOf} files={files} onOpen={openFile} current={shown.id} />}
           {/* Narrow, the page scrolls down through both, and the diff sideways. */}
           <div className="flex min-h-0 flex-1 narrow:flex-none narrow:flex-col">
-            <div className="w-[340px] shrink-0 overflow-y-auto border-r border-line narrow:w-auto narrow:border-r-0 narrow:border-b">{summary(shown, true)}</div>
+            <div className="w-[340px] shrink-0 overflow-y-auto border-r border-line narrow:w-auto narrow:border-r-0 narrow:border-b">
+              {summary(shown, true)}
+            </div>
             <div className="min-h-0 min-w-0 flex-1 overflow-auto narrow:flex-none narrow:overflow-y-hidden">{diffOf(shown, narrow ? "unified" : layout)}</div>
           </div>
         </div>
@@ -591,7 +596,11 @@ function PickDialog({
               if (x && x.uncommitted_count > 0)
                 notes.push(
                   <span className="text-amber-300" title={x.uncommitted.join("\n")}>
-                    {plural(x.uncommitted_count, "uncommitted change")} in its worktree: {x.uncommitted.slice(0, 3).map((l) => l.slice(3)).join(", ")}
+                    {plural(x.uncommitted_count, "uncommitted change")} in its worktree:{" "}
+                    {x.uncommitted
+                      .slice(0, 3)
+                      .map((l) => l.slice(3))
+                      .join(", ")}
                     {x.uncommitted_count > 3 && "…"}
                   </span>,
                 );
@@ -634,8 +643,8 @@ function PickDialog({
             {branches.length > 0 && (
               <Check checked={deleteBranches} onChange={setDeleteBranches} danger label={branches.length === 1 ? "Delete its branch" : "Delete their branches"}>
                 {branches.map((t) => f(t)!.branch).join(", ")}
-                {branches.some((t) => f(t)!.pushed) && ", here and where they're pushed"}. Commits on them that aren't merged anywhere are lost. A branch
-                is kept while its worktree is, while a pull request kept open has it, or if its pushed copy can't be deleted: picking again deletes it.
+                {branches.some((t) => f(t)!.pushed) && ", here and where they're pushed"}. Commits on them that aren't merged anywhere are lost. A branch is
+                kept while its worktree is, while a pull request kept open has it, or if its pushed copy can't be deleted: picking again deletes it.
               </Check>
             )}
             {prs.length > 0 && (
@@ -659,10 +668,27 @@ function PickDialog({
   );
 }
 
-function Check({ checked, onChange, label, danger, children }: { checked: boolean; onChange: (v: boolean) => void; label: string; danger?: boolean; children: ReactNode }) {
+function Check({
+  checked,
+  onChange,
+  label,
+  danger,
+  children,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  danger?: boolean;
+  children: ReactNode;
+}) {
   return (
     <label className="flex cursor-pointer gap-2.5">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className={clsx("mt-0.5 shrink-0", danger ? "accent-red-500" : "accent-accent")} />
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className={clsx("mt-0.5 shrink-0", danger ? "accent-red-500" : "accent-accent")}
+      />
       <span>
         <span className="text-fg">{label}</span>
         <span className="block text-[12px] text-muted">{children}</span>

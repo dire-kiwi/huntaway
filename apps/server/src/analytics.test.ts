@@ -68,7 +68,16 @@ test("reports_a_profiles_activity_in_range", () => {
 });
 
 const new_task = (profile_id: string, kind: string): NewTask => ({
-  profile_id, project_id: null, kind, title: "t", description: "", status: "in_review", use_worktree: false, model: null, effort: null, claude_config_id: null,
+  profile_id,
+  project_id: null,
+  kind,
+  title: "t",
+  description: "",
+  status: "in_review",
+  use_worktree: false,
+  model: null,
+  effort: null,
+  claude_config_id: null,
 });
 
 test("reports_tokens_reviews_and_follow_ups", () => {

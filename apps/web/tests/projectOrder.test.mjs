@@ -19,5 +19,8 @@ test("ignores case and puts numbers in numeric order", () => {
 
 test("orders projects of the same name by host, then id", () => {
   const input = [project("2", "Site", "laptop"), project("9", "Site"), project("1", "Site")];
-  assert.deepEqual(sortProjects(input).map((p) => `${p.host_id}:${p.id}`), ["desktop:1", "desktop:9", "laptop:2"]);
+  assert.deepEqual(
+    sortProjects(input).map((p) => `${p.host_id}:${p.id}`),
+    ["desktop:1", "desktop:9", "laptop:2"],
+  );
 });

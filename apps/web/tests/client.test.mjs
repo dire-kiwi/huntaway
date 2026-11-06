@@ -163,13 +163,19 @@ test("a profile's assistant is on its assistant host, or else the board's own ho
   const placed = [profile("hub", "ph", { assistant_host: "home" }), profile("home", "pr"), profile("laptop", "pl")];
   assert.deepEqual(assistantHome(placed, hosts, "personal"), { hostId: "home", profileId: "pr" });
   // Rather than falling back to another host, it says why it can't be opened there.
-  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { connected: false }), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
+  assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { connected: false }), host("laptop")], "personal"), {
+    hostId: "home",
+    unavailable: "offline",
+  });
   assert.deepEqual(assistantHome(placed, [host("hub"), host("laptop")], "personal"), { hostId: "home", unavailable: "offline" });
   assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 100 })], "personal"), { hostId: "home", unavailable: "old" });
   // One with assistants but from before assistant hosts can't be one.
   assert.deepEqual(assistantHome(placed, [host("hub"), host("home", { api_version: 111 })], "personal"), { hostId: "home", unavailable: "old" });
   assert.deepEqual(assistantHome([placed[0]], hosts, "personal"), { hostId: "home", unavailable: "no_profile" });
   // Another host's setting doesn't count, nor does one naming the board's own host.
-  assert.deepEqual(assistantHome([profile("hub", "ph"), profile("laptop", "pl", { assistant_host: "home" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });
+  assert.deepEqual(assistantHome([profile("hub", "ph"), profile("laptop", "pl", { assistant_host: "home" })], hosts, "personal"), {
+    hostId: "hub",
+    profileId: "ph",
+  });
   assert.deepEqual(assistantHome([profile("hub", "ph", { assistant_host: "hub" })], hosts, "personal"), { hostId: "hub", profileId: "ph" });
 });

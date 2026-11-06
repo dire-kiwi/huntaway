@@ -49,8 +49,14 @@ function same_checks(a: PrChecks | null | undefined, b: PrChecks | null | undefi
     a.failed.length === b.failed.length &&
     a.failed.every((f, i) => f.name === b.failed[i].name && f.conclusion === b.failed[i].conclusion && (f.url ?? null) === (b.failed[i].url ?? null));
   return (
-    a.url === b.url && a.head === b.head && a.outcome === b.outcome && same_failed && a.more_failed === b.more_failed && a.pending === b.pending &&
-    a.passed === b.passed && a.since === b.since
+    a.url === b.url &&
+    a.head === b.head &&
+    a.outcome === b.outcome &&
+    same_failed &&
+    a.more_failed === b.more_failed &&
+    a.pending === b.pending &&
+    a.passed === b.passed &&
+    a.since === b.since
   );
 }
 

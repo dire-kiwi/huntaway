@@ -71,7 +71,10 @@ test("the routines left on the board's host are listed under the assistant host'
       "wait css=[data-testid=routine-left-behind] >> text=Old inbox",
     ]);
     const box = page.getByTestId("routines-left-behind");
-    assert.match(await box.innerText(), new RegExp(`This routine stays on ${hubName}, where your assistant ran before, and doesn't run while it's on homeserver`));
+    assert.match(
+      await box.innerText(),
+      new RegExp(`This routine stays on ${hubName}, where your assistant ran before, and doesn't run while it's on homeserver`),
+    );
     // The assistant host's own routine isn't listed as left behind, nor the other way round.
     assert.equal(await box.getByText("New inbox").count(), 0);
     assert.equal(await page.getByTestId("routine").filter({ hasText: "Old inbox" }).count(), 0);
@@ -81,5 +84,8 @@ test("the routines left on the board's host are listed under the assistant host'
   });
   // Deleted on the board's host; the assistant host's own is still there.
   assert.deepEqual((await hub.api("GET", `/profiles/${mine.id}/automations`)).automations, []);
-  assert.deepEqual((await home.api("GET", `/profiles/${theirs.id}/automations`)).automations.map((a) => a.name), ["New inbox"]);
+  assert.deepEqual(
+    (await home.api("GET", `/profiles/${theirs.id}/automations`)).automations.map((a) => a.name),
+    ["New inbox"],
+  );
 });

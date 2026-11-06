@@ -50,8 +50,8 @@ export function Routines({ assistant }: { assistant: Task }) {
       <div className="mx-auto max-w-3xl space-y-3 px-5 py-5">
         <div className="flex items-center gap-3">
           <p className="flex-1 text-[12.5px] text-muted">
-            Routines wake your assistant on a schedule or a webhook. By default each run works in a thread of its own and posts a report here, or
-            stays quiet when there's nothing new. Ask the assistant to set one up, or add one yourself.
+            Routines wake your assistant on a schedule or a webhook. By default each run works in a thread of its own and posts a report here, or stays quiet
+            when there's nothing new. Ask the assistant to set one up, or add one yourself.
           </p>
           <Button size="sm" onClick={() => setEditing("new")}>
             <Plus size={13} /> New routine
@@ -86,7 +86,13 @@ export function Routines({ assistant }: { assistant: Task }) {
         {err && <div className="text-xs text-red-400">{err}</div>}
         {confirm.dialog}
         {editing && (
-          <AutomationEditor owner={{ hostId, profileId }} automation={editing === "new" ? null : editing} tz={tz} onSaved={reload} onClose={() => setEditing(null)} />
+          <AutomationEditor
+            owner={{ hostId, profileId }}
+            automation={editing === "new" ? null : editing}
+            tz={tz}
+            onSaved={reload}
+            onClose={() => setEditing(null)}
+          />
         )}
       </div>
     </div>
@@ -227,7 +233,11 @@ function RoutineRow({
           <Trash2 size={13} />
         </Button>
       </div>
-      <button type="button" onClick={() => setOpen(!open)} className="mt-1 flex w-full min-w-0 items-center gap-1.5 text-left text-[11.5px] text-faint hover:text-muted">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="mt-1 flex w-full min-w-0 items-center gap-1.5 text-left text-[11.5px] text-faint hover:text-muted"
+      >
         {open ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
         {last ? (
           <>

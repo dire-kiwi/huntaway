@@ -148,7 +148,8 @@ export async function create(s: AppState, r: Req): Promise<any> {
   const t = opt_str(b, "time");
   let w: string[] | null = null;
   if (b.weekdays != null) {
-    if (!Array.isArray(b.weekdays) || b.weekdays.some((d: any) => typeof d !== "string")) throw body_rejection("weekdays: invalid type: expected a sequence of strings");
+    if (!Array.isArray(b.weekdays) || b.weekdays.some((d: any) => typeof d !== "string"))
+      throw body_rejection("weekdays: invalid type: expected a sequence of strings");
     w = b.weekdays;
   }
   const id = r.params.id;
@@ -267,7 +268,9 @@ export async function feedback(s: AppState, r: Req): Promise<any> {
   const date = memory.local_today();
   const path = memory.file_path(dir, memory.MEMORY_FILE);
   const message =
-    rating === "clear" ? `Take back a rating of the morning brief (${kind}: ${topic})` : `Rate the morning brief: ${rating === "up" ? "more" : "less"} ${kind}: ${topic}`;
+    rating === "clear"
+      ? `Take back a rating of the morning brief (${kind}: ${topic})`
+      : `Rate the morning brief: ${rating === "up" ? "more" : "less"} ${kind}: ${topic}`;
   // Read, changed and committed under the workspace's lock, so two ratings at once (or an edit from the Memory tab) both land.
   const [text, commit] = await memory.change(dir, path, memory.MEMORY_FILE, message, (now) => apply(now, rating, kind, topic, date));
   return { line: rating !== "clear" ? line(rating, kind, topic, date) : null, content: text, commit };

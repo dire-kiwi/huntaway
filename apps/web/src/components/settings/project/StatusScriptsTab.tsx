@@ -17,8 +17,7 @@ export function ProjectStatusScripts({
   return (
     <div className="space-y-4">
       <div className="text-[12px] text-faint">
-        Available variables: $IA_OLD_STATUS, $IA_NEW_STATUS (e.g. in_review), $IA_TASK_KEY, $IA_TASK_TITLE, $IA_RESOLUTION, $IA_PR_URL and the setup
-        script's.
+        Available variables: $IA_OLD_STATUS, $IA_NEW_STATUS (e.g. in_review), $IA_TASK_KEY, $IA_TASK_TITLE, $IA_RESOLUTION, $IA_PR_URL and the setup script's.
       </div>
       <Field label="Any column" hint={perColumn ? "Runs on every move, before the column's own script." : undefined}>
         <Textarea

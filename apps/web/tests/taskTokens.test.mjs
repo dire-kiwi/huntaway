@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "vite-plus/test";
-import { allValues, codeRanges, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens } from "../src/components/layout/taskTokens.ts";
+import {
+  allValues,
+  codeRanges,
+  completionAt,
+  findTokens,
+  insertCompletion,
+  lastValue,
+  placeWords,
+  removeTokens,
+  resolveTokens,
+  stripTokens,
+} from "../src/components/layout/taskTokens.ts";
 
 const vocab = { "/": ["task", "plan", "scratch"], "@": ["IA", "SD", "group", "none"], "!": ["opus", "sonnet"], "^": ["high"], "#": ["IA-212", "IA-216"] };
 const parse = (text) => resolveTokens(findTokens(text), vocab);
@@ -101,7 +112,10 @@ test("@ words: a project's key, or its key and host or profile where that's ambi
   assert.deepEqual(placeWords([p("IA"), p("IA")], []), ["IA.desktop.personal.1", "IA.desktop.personal.2"]);
   // Qualified words are tokens, and @IA alone isn't one of them.
   const vocab = { "@": ["IA.desktop", "IA.laptop"] };
-  assert.deepEqual(resolveTokens(findTokens("@ia.laptop and @IA"), vocab).map((t) => t.value), ["IA.laptop", undefined]);
+  assert.deepEqual(
+    resolveTokens(findTokens("@ia.laptop and @IA"), vocab).map((t) => t.value),
+    ["IA.laptop", undefined],
+  );
 });
 
 test("from: takes a task, a branch, a pull request or a commit, up to a space or what ends a sentence", () => {

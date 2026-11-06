@@ -29,7 +29,22 @@ import {
 } from "../../api";
 import { openTask } from "../../router";
 import { onAutomationsChanged, useAvailableConfigs, useHost, useStore } from "../../store";
-import { Button, copyText, Field, IconButton, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle, timeAgo, useAsyncAction, useConfirm, useDraft } from "../ui";
+import {
+  Button,
+  copyText,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  ModalFooter,
+  SUBMIT_KEYS,
+  Textarea,
+  Toggle,
+  timeAgo,
+  useAsyncAction,
+  useConfirm,
+  useDraft,
+} from "../ui";
 
 export type TimeZone = { name: string | null; offset: string };
 
@@ -134,7 +149,8 @@ export function timeUntil(iso: string) {
   return `in ${Math.round(s / 86400)}d`;
 }
 
-export const localTime = (iso: string) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+export const localTime = (iso: string) =>
+  new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /** A project's automations: tasks created, or messages sent to a task, on a schedule or from a webhook. */
 export function ProjectAutomations({ project }: { project: Project }) {
@@ -247,7 +263,12 @@ function RunTask({ run }: { run: AutomationRun }) {
   if (!run.task) return <span className="text-faint">(task deleted)</span>;
   const task = run.task;
   return (
-    <button type="button" className="min-w-0 truncate text-left text-muted hover:text-fg hover:underline" onClick={() => openTask(run.task_id!)} title={task.title}>
+    <button
+      type="button"
+      className="min-w-0 truncate text-left text-muted hover:text-fg hover:underline"
+      onClick={() => openTask(run.task_id!)}
+      title={task.title}
+    >
       <span className="font-mono">{task.key}</span> {task.title}
     </button>
   );
@@ -314,11 +335,17 @@ function AutomationRow({
           <Trash2 size={13} />
         </Button>
       </div>
-      <button type="button" onClick={() => setOpen(!open)} className="mt-1 flex w-full min-w-0 items-center gap-1.5 text-left text-[11.5px] text-faint hover:text-muted">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="mt-1 flex w-full min-w-0 items-center gap-1.5 text-left text-[11.5px] text-faint hover:text-muted"
+      >
         {open ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
         {last ? (
           <>
-            <span className="shrink-0">Last {a.trigger.kind === "webhook" && last.source === "webhook" ? "delivery" : "run"} {timeAgo(last.created_at)}:</span>
+            <span className="shrink-0">
+              Last {a.trigger.kind === "webhook" && last.source === "webhook" ? "delivery" : "run"} {timeAgo(last.created_at)}:
+            </span>
             <RunStatus run={last} />
             {last.task && <span className="truncate">{last.task.key}</span>}
           </>
@@ -545,16 +572,23 @@ function inputOf(d: Draft, existing: Automation | null, labelling: boolean, rout
           ? { kind: "cron", expr: d.cron.trim() }
           : d.when === "at"
             ? // As it was if it's unchanged, to the second, so the server doesn't take it for a new time.
-              { kind: "at", at: existing?.trigger.kind === "at" && localInput(existing.trigger.at) === d.at ? existing.trigger.at : new Date(d.at).toISOString() }
+              {
+                kind: "at",
+                at: existing?.trigger.kind === "at" && localInput(existing.trigger.at) === d.at ? existing.trigger.at : new Date(d.at).toISOString(),
+              }
             : {
-            kind: "webhook",
-            filters: [
-              ...SIMPLE_FILTERS.filter((p) => splitList(d.simple[p]).length).map((p): AutomationFilter => ({ path: p, op: "in", value: splitList(d.simple[p]) })),
-              ...d.filters.filter((f) => f.path.trim()),
-            ],
-            coalesce_seconds: Math.max(0, Math.round(d.coalesce || 0)),
-            coalesce_key: d.coalesceKey,
-          };
+                kind: "webhook",
+                filters: [
+                  ...SIMPLE_FILTERS.filter((p) => splitList(d.simple[p]).length).map((p): AutomationFilter => ({
+                    path: p,
+                    op: "in",
+                    value: splitList(d.simple[p]),
+                  })),
+                  ...d.filters.filter((f) => f.path.trim()),
+                ],
+                coalesce_seconds: Math.max(0, Math.round(d.coalesce || 0)),
+                coalesce_key: d.coalesceKey,
+              };
   const action: AutomationInput["action"] =
     d.does === "create_task"
       ? {
@@ -575,7 +609,9 @@ function inputOf(d: Draft, existing: Automation | null, labelling: boolean, rout
   const b: AutomationInput = { name: d.name, enabled: d.enabled, trigger, action };
   // A host before API 110 has none of these.
   if (routines) {
-    b.active_hours = d.active ? { start: d.activeStart, end: d.activeEnd, weekdays: d.activeDays.length === 7 ? [] : WEEKDAYS.filter((w) => d.activeDays.includes(w)) } : null;
+    b.active_hours = d.active
+      ? { start: d.activeStart, end: d.activeEnd, weekdays: d.activeDays.length === 7 ? [] : WEEKDAYS.filter((w) => d.activeDays.includes(w)) }
+      : null;
     b.precheck = d.precheck.trim() || null;
     b.budget_usd = Number(d.budget) > 0 ? Number(d.budget) : null;
   }
@@ -692,13 +728,16 @@ export function AutomationEditor({
   if (d.precheck.trim()) vars.push("{{precheck}}");
   const templateHint = (
     <>
-      Templates take values like {vars.map((v, i) => (
+      Templates take values like{" "}
+      {vars.map((v, i) => (
         <span key={v}>
           {i > 0 && ", "}
           <code>{v}</code>
         </span>
       ))}
-      .{(webhook || d.precheck.trim()) && " A webhook's values and the precheck's output are wrapped in <untrusted-data> tags, and the agent is told not to follow instructions in them."}
+      .
+      {(webhook || d.precheck.trim()) &&
+        " A webhook's values and the precheck's output are wrapped in <untrusted-data> tags, and the agent is told not to follow instructions in them."}
     </>
   );
   return (
@@ -706,7 +745,12 @@ export function AutomationEditor({
       <div className="space-y-4">
         <div className="grid grid-cols-[1fr_auto] items-end gap-3">
           <Field label="Name">
-            <Input value={d.name} onChange={(e) => set("name", e.target.value)} placeholder={routine ? "Morning inbox check" : "Weekly dependency update"} autoFocus={!saved} />
+            <Input
+              value={d.name}
+              onChange={(e) => set("name", e.target.value)}
+              placeholder={routine ? "Morning inbox check" : "Weekly dependency update"}
+              autoFocus={!saved}
+            />
           </Field>
           <div className="pb-1.5">
             <Toggle checked={d.enabled} onChange={(v) => set("enabled", v)} label="On" />
@@ -760,7 +804,10 @@ export function AutomationEditor({
                       key={w}
                       type="button"
                       onClick={() => set("weekdays", on ? d.weekdays.filter((x) => x !== w) : [...d.weekdays, w])}
-                      className={clsx("h-7 w-10 rounded-md border text-[12px]", on ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-faint hover:text-muted")}
+                      className={clsx(
+                        "h-7 w-10 rounded-md border text-[12px]",
+                        on ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-faint hover:text-muted",
+                      )}
                     >
                       {DAY_LABELS[w]}
                     </button>
@@ -768,14 +815,20 @@ export function AutomationEditor({
                 })}
               </div>
               <div className="text-[12px] text-faint">
-                In the host's time zone{tz ? ` (${[tz.name, tz.offset].filter(Boolean).join(", ")})` : ""}. No day picked means every day. A run missed by more than 10
-                minutes (the server was down) is skipped, not made up.
+                In the host's time zone{tz ? ` (${[tz.name, tz.offset].filter(Boolean).join(", ")})` : ""}. No day picked means every day. A run missed by more
+                than 10 minutes (the server was down) is skipped, not made up.
               </div>
             </div>
           )}
           {d.when === "cron" && (
             <div className="space-y-2">
-              <Input className="font-mono" aria-label="Cron expression" value={d.cron} onChange={(e) => set("cron", e.target.value)} placeholder="0 8 * * mon-fri" />
+              <Input
+                className="font-mono"
+                aria-label="Cron expression"
+                value={d.cron}
+                onChange={(e) => set("cron", e.target.value)}
+                placeholder="0 8 * * mon-fri"
+              />
               <div className="text-[12px] text-faint">
                 Five fields: minute, hour, day of month, month, day of week (e.g. <code>*/30 9-17 * * mon-fri</code>), in the host's time zone
                 {tz ? ` (${[tz.name, tz.offset].filter(Boolean).join(", ")})` : ""}. A run missed by more than 10 minutes is skipped.
@@ -839,7 +892,11 @@ export function AutomationEditor({
           ) : d.does === "create_task" ? (
             <>
               <Field label="Title">
-                <Input value={d.title} onChange={(e) => set("title", e.target.value)} placeholder={webhook ? "Triage: {{body.issue.title}}" : "Update dependencies ({{date}})"} />
+                <Input
+                  value={d.title}
+                  onChange={(e) => set("title", e.target.value)}
+                  placeholder={webhook ? "Triage: {{body.issue.title}}" : "Update dependencies ({{date}})"}
+                />
               </Field>
               <Field label="Description" hint={templateHint}>
                 <Textarea
@@ -847,7 +904,9 @@ export function AutomationEditor({
                   className="font-mono text-[12px]"
                   value={d.description}
                   onChange={(e) => set("description", e.target.value)}
-                  placeholder={webhook ? "Triage this issue: {{body.issue.html_url}}\n\n{{body.issue.body}}" : "Update the dependencies and open a pull request."}
+                  placeholder={
+                    webhook ? "Triage this issue: {{body.issue.html_url}}\n\n{{body.issue.body}}" : "Update the dependencies and open a pull request."
+                  }
                 />
               </Field>
               <div className="grid grid-cols-2 gap-3">
@@ -933,7 +992,8 @@ export function AutomationEditor({
               </div>
               {d.start && webhook && (
                 <div className="text-[12px] text-st-attention">
-                  Its agent runs with the project's permission mode on what the delivery says. Keep that mode asking for approval if anyone outside can trigger it.
+                  Its agent runs with the project's permission mode on what the delivery says. Keep that mode asking for approval if anyone outside can trigger
+                  it.
                 </div>
               )}
             </>
@@ -957,7 +1017,9 @@ export function AutomationEditor({
                   className="font-mono text-[12px]"
                   value={d.message}
                   onChange={(e) => set("message", e.target.value)}
-                  placeholder={webhook ? "A new comment on {{body.issue.html_url}}:\n\n{{body.comment.body}}" : "Check on the nightly build and fix what broke."}
+                  placeholder={
+                    webhook ? "A new comment on {{body.issue.html_url}}:\n\n{{body.comment.body}}" : "Check on the nightly build and fix what broke."
+                  }
                 />
               </Field>
             </>
@@ -1006,13 +1068,18 @@ function GuardFields({ draft: d, set, routine }: { draft: Draft; set: <K extends
                   key={w}
                   type="button"
                   onClick={() => set("activeDays", on ? d.activeDays.filter((x) => x !== w) : [...d.activeDays, w])}
-                  className={clsx("h-7 w-10 rounded-md border text-[12px]", on ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-faint hover:text-muted")}
+                  className={clsx(
+                    "h-7 w-10 rounded-md border text-[12px]",
+                    on ? "border-accent/60 bg-accent/15 text-fg" : "border-line text-faint hover:text-muted",
+                  )}
                 >
                   {DAY_LABELS[w]}
                 </button>
               );
             })}
-            <div className="w-full text-[12px] text-faint">A scheduled run waits for them; a delivery outside them is skipped. No day picked means every day.</div>
+            <div className="w-full text-[12px] text-faint">
+              A scheduled run waits for them; a delivery outside them is skipped. No day picked means every day.
+            </div>
           </div>
         )}
       </div>
@@ -1068,7 +1135,11 @@ function WebhookFields({
     // Not returned: browsers' scrollIntoView may return a promise, which isn't a cleanup.
     urlField.current?.scrollIntoView({ block: "nearest" });
   }, [path]);
-  const setFilter = (i: number, f: Partial<AutomationFilter>) => set("filters", d.filters.map((x, j) => (j === i ? { ...x, ...f } : x)));
+  const setFilter = (i: number, f: Partial<AutomationFilter>) =>
+    set(
+      "filters",
+      d.filters.map((x, j) => (j === i ? { ...x, ...f } : x)),
+    );
   return (
     <div className="space-y-3">
       <Field
@@ -1086,7 +1157,14 @@ function WebhookFields({
       >
         {url ? (
           <div ref={urlField} className="flex items-center gap-2">
-            <Input readOnly aria-label="Webhook URL" className="font-mono text-[12px]" value={url} onFocus={(e) => e.target.select()} data-testid="webhook-url" />
+            <Input
+              readOnly
+              aria-label="Webhook URL"
+              className="font-mono text-[12px]"
+              value={url}
+              onFocus={(e) => e.target.select()}
+              data-testid="webhook-url"
+            />
             <IconButton
               title="Copy the URL"
               onClick={(e) => {
@@ -1184,13 +1262,34 @@ function WebhookFields({
       <div className="space-y-2">
         <div className="text-xs font-medium text-muted">Only when</div>
         <div className="grid grid-cols-3 gap-2">
-          <Input value={d.simple.event} placeholder="Events, e.g. issues" aria-label="Events" onChange={(e) => set("simple", { ...d.simple, event: e.target.value })} />
-          <Input value={d.simple.action} placeholder="Actions, e.g. opened" aria-label="Actions" onChange={(e) => set("simple", { ...d.simple, action: e.target.value })} />
-          <Input value={d.simple.labels} placeholder="Labels, e.g. bug, triage" aria-label="Labels" onChange={(e) => set("simple", { ...d.simple, labels: e.target.value })} />
+          <Input
+            value={d.simple.event}
+            placeholder="Events, e.g. issues"
+            aria-label="Events"
+            onChange={(e) => set("simple", { ...d.simple, event: e.target.value })}
+          />
+          <Input
+            value={d.simple.action}
+            placeholder="Actions, e.g. opened"
+            aria-label="Actions"
+            onChange={(e) => set("simple", { ...d.simple, action: e.target.value })}
+          />
+          <Input
+            value={d.simple.labels}
+            placeholder="Labels, e.g. bug, triage"
+            aria-label="Labels"
+            onChange={(e) => set("simple", { ...d.simple, labels: e.target.value })}
+          />
         </div>
         {d.filters.map((f, i) => (
           <div key={i} className="grid grid-cols-[1fr_9rem_1fr_auto] gap-2">
-            <Input className="font-mono text-[12px]" value={f.path} placeholder="body.issue.user.login" aria-label="Value to check" onChange={(e) => setFilter(i, { path: e.target.value })} />
+            <Input
+              className="font-mono text-[12px]"
+              value={f.path}
+              placeholder="body.issue.user.login"
+              aria-label="Value to check"
+              onChange={(e) => setFilter(i, { path: e.target.value })}
+            />
             <select className={selectClass} value={f.op} aria-label="Condition" onChange={(e) => setFilter(i, { op: e.target.value as FilterOp })}>
               {FILTER_OPS.map((op) => (
                 <option key={op} value={op}>
@@ -1201,13 +1300,21 @@ function WebhookFields({
             {f.op === "exists" || f.op === "not_exists" ? (
               <div />
             ) : (
-              <Input value={listText(f.value)} placeholder={f.op === "in" || f.op === "not_in" ? "a, b, c" : "value"} aria-label="Filter value" onChange={(e) => setFilter(i, { value: e.target.value })} />
+              <Input
+                value={listText(f.value)}
+                placeholder={f.op === "in" || f.op === "not_in" ? "a, b, c" : "value"}
+                aria-label="Filter value"
+                onChange={(e) => setFilter(i, { value: e.target.value })}
+              />
             )}
             <IconButton
               title="Remove this filter"
               onClick={(e) => {
                 e.preventDefault();
-                set("filters", d.filters.filter((_, j) => j !== i));
+                set(
+                  "filters",
+                  d.filters.filter((_, j) => j !== i),
+                );
               }}
             >
               <X size={13} />
@@ -1233,10 +1340,24 @@ function WebhookFields({
       </div>
       <div className="grid grid-cols-[10rem_1fr] gap-3">
         <Field label="Coalesce for (seconds)">
-          <Input type="number" min={0} max={3600} value={d.coalesce} onChange={(e) => set("coalesce", Math.max(0, Math.min(3600, Number(e.target.value) || 0)))} />
+          <Input
+            type="number"
+            min={0}
+            max={3600}
+            value={d.coalesce}
+            onChange={(e) => set("coalesce", Math.max(0, Math.min(3600, Number(e.target.value) || 0)))}
+          />
         </Field>
-        <Field label="…deliveries with the same" hint="A burst of deliveries in the window becomes one run, with the latest delivery's values. 0 runs each one.">
-          <Input className="font-mono text-[12px]" value={d.coalesceKey} placeholder="{{body.issue.number}} (blank: all of them)" onChange={(e) => set("coalesceKey", e.target.value)} />
+        <Field
+          label="…deliveries with the same"
+          hint="A burst of deliveries in the window becomes one run, with the latest delivery's values. 0 runs each one."
+        >
+          <Input
+            className="font-mono text-[12px]"
+            value={d.coalesceKey}
+            placeholder="{{body.issue.number}} (blank: all of them)"
+            onChange={(e) => set("coalesceKey", e.target.value)}
+          />
         </Field>
       </div>
       {confirm.dialog}
@@ -1255,7 +1376,9 @@ function TestDelivery({ hostId, automation, onClose }: { hostId: string; automat
     api.automationRuns(hostId, automation.id).then(
       (r) => {
         setEvent(r.latest_delivery?.event ?? "issues");
-        setBody(JSON.stringify(r.latest_delivery?.body ?? { action: "opened", issue: { number: 1, title: "An issue", body: "What it says", labels: [] } }, null, 2));
+        setBody(
+          JSON.stringify(r.latest_delivery?.body ?? { action: "opened", issue: { number: 1, title: "An issue", body: "What it says", labels: [] } }, null, 2),
+        );
       },
       (e) => setErr((e as Error).message),
     );

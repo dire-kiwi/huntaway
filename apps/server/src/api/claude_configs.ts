@@ -120,7 +120,8 @@ export async function update_claude_config(s: AppState, r: Req) {
   if (agent_f) {
     check_agent(agent_f[1]);
     const started = db.value<number>(c, "SELECT COUNT(*) FROM tasks WHERE claude_config_id=?1 AND session_id IS NOT NULL", id) ?? 0;
-    if (agent_f[1] !== current.agent && started > 0) throw ApiError.conflict("threads have conversations in this config; add another config for the other agent");
+    if (agent_f[1] !== current.agent && started > 0)
+      throw ApiError.conflict("threads have conversations in this config; add another config for the other agent");
   }
   const cfg = db.update_claude_config(c, id, fields);
   if (!cfg) throw ApiError.not_found("Claude config");
@@ -249,7 +250,8 @@ export async function import_profile_config(s: AppState, r: Req) {
 function tar(args: string[], input: Buffer | null): Promise<{ ok: boolean; stdout: Buffer; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("tar", args, { stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
-    const out: Buffer[] = [], err: Buffer[] = [];
+    const out: Buffer[] = [],
+      err: Buffer[] = [];
     child.stdout!.on("data", (d: Buffer) => out.push(d));
     child.stderr!.on("data", (d: Buffer) => err.push(d));
     child.on("error", reject);

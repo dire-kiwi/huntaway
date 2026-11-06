@@ -15,7 +15,8 @@ afterAll(() => server?.stop());
  */
 function messages(taskId) {
   const out = [];
-  const add = (kind, data) => out.push({ id: out.length + 1, task_id: taskId, kind, data, created_at: `2026-10-26T07:00:${String(out.length).padStart(2, "0")}.000Z` });
+  const add = (kind, data) =>
+    out.push({ id: out.length + 1, task_id: taskId, kind, data, created_at: `2026-10-26T07:00:${String(out.length).padStart(2, "0")}.000Z` });
   const assistant = (content, parent = null) => add("claude", { type: "assistant", parent_tool_use_id: parent, message: { content } });
   const result = (id, text, parent = null) =>
     add("claude", { type: "user", parent_tool_use_id: parent, message: { content: [{ type: "tool_result", tool_use_id: id, content: text }] } });
@@ -67,7 +68,13 @@ test("a subagent opens in its own thread view, and goes back to the main thread"
     const { page } = ui;
     await routeMessages(page, task);
     // From another tab: the list switches to the thread.
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "click Details", "click Subagents in this thread", "click css=.shadow-xl button:has-text('Explore config')"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "click Details",
+      "click Subagents in this thread",
+      "click css=.shadow-xl button:has-text('Explore config')",
+    ]);
     await ui.run(["wait Show in thread", "wait Find where the configuration is loaded.", "wait Subagent searching now.", "wait Subagent report."]);
     // Its permission prompt is in its thread, without the link to itself; the main thread isn't shown.
     await ui.run(["wait Permission for Bash", "gone from Explore config", "gone Main agent's summary."]);
@@ -90,11 +97,21 @@ test("escape with a menu open in a subagent's thread only closes the menu", asyn
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Subagent menus" });
   await withBrowser(server, {}, async (ui) => {
     await routeMessages(ui.page, task);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "click Subagents in this thread", "click css=.shadow-xl button:has-text('Explore config')"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "click Subagents in this thread",
+      "click css=.shadow-xl button:has-text('Explore config')",
+    ]);
     await ui.run(["wait Subagent searching now.", "gone Main agent's summary."]);
 
     await ui.run(["click Subagents in this thread", "wait css=.shadow-xl button:has-text('Look for tests')", "press Escape"]);
-    await ui.run(["gone css=.shadow-xl button:has-text('Look for tests')", "wait Subagent searching now.", "wait Show in thread", "gone Main agent's summary."]);
+    await ui.run([
+      "gone css=.shadow-xl button:has-text('Look for tests')",
+      "wait Subagent searching now.",
+      "wait Show in thread",
+      "gone Main agent's summary.",
+    ]);
 
     // The composer's permission mode menu too.
     await ui.run(["click css=[title^='Permission mode']", "wait css=.bottom-full.shadow-xl", "press Escape"]);
@@ -111,12 +128,24 @@ test("a reopened task shows its main thread, not the subagent last viewed", asyn
   const other = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Another task" });
   await withBrowser(server, {}, async (ui) => {
     await routeMessages(ui.page, task);
-    const open = ["click Subagents in this thread", "click css=.shadow-xl button:has-text('Explore config')", "wait Subagent searching now.", "gone Main agent's summary."];
+    const open = [
+      "click Subagents in this thread",
+      "click css=.shadow-xl button:has-text('Explore config')",
+      "wait Subagent searching now.",
+      "gone Main agent's summary.",
+    ];
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", ...open]);
     // Expanding the panel and back keeps it.
     await ui.run(["click Expand", "wait Subagent searching now.", "click Collapse into the side panel", "wait Subagent searching now."]);
 
-    await ui.run(["click Close (Esc)", "gone Show in thread", `click css=[data-task='${task.id}']`, "click Thread", "wait Main agent's summary.", "gone Show in thread"]);
+    await ui.run([
+      "click Close (Esc)",
+      "gone Show in thread",
+      `click css=[data-task='${task.id}']`,
+      "click Thread",
+      "wait Main agent's summary.",
+      "gone Show in thread",
+    ]);
 
     // Opening another task in the panel and coming back does too.
     await ui.run([...open, `click css=[data-task='${other.id}']`, "gone Show in thread", `click css=[data-task='${task.id}']`, "click Thread"]);
@@ -152,12 +181,27 @@ test("Codex children show their metadata, nested transcript and permission sourc
   const add = (data, kind = "claude") => out.push({ id: out.length + 1, task_id: task.id, kind, data, created_at: new Date(out.length * 1000).toISOString() });
   const assistant = (content, parent = null) => add({ type: "assistant", parent_tool_use_id: parent, message: { content } });
   assistant([{ type: "tool_use", id: "codex-agent-child", name: "Agent", input: { run_in_background: true } }]);
-  add({ type: "system", subtype: "task_started", tool_use_id: "codex-agent-child", prompt: "Inspect config", description: "Inspect config", model: "gpt-6.1-sol", subagent_type: "explorer" });
+  add({
+    type: "system",
+    subtype: "task_started",
+    tool_use_id: "codex-agent-child",
+    prompt: "Inspect config",
+    description: "Inspect config",
+    model: "gpt-6.1-sol",
+    subagent_type: "explorer",
+  });
   assistant([{ type: "text", text: "Codex child looking at config." }], "codex-agent-child");
   assistant([{ type: "tool_use", id: "codex-bash", name: "Bash", input: { command: "ls server/src" } }], "codex-agent-child");
   add({ status: "allowed", tool_use_id: "codex-bash", tool_name: "Bash", input: { command: "ls server/src" }, request_id: "codex-p1" }, "permission");
-  add({ type: "user", parent_tool_use_id: "codex-agent-child", message: { content: [{ type: "tool_result", tool_use_id: "codex-bash", content: "config.rs" }] } });
-  assistant([{ type: "tool_use", id: "codex-agent-nested", name: "Agent", input: { description: "Check env", prompt: "Check env", run_in_background: true } }], "codex-agent-child");
+  add({
+    type: "user",
+    parent_tool_use_id: "codex-agent-child",
+    message: { content: [{ type: "tool_result", tool_use_id: "codex-bash", content: "config.rs" }] },
+  });
+  assistant(
+    [{ type: "tool_use", id: "codex-agent-nested", name: "Agent", input: { description: "Check env", prompt: "Check env", run_in_background: true } }],
+    "codex-agent-child",
+  );
   assistant([{ type: "text", text: "Nested Codex findings." }], "codex-agent-nested");
   add({ type: "system", subtype: "task_notification", tool_use_id: "codex-agent-nested", status: "completed" });
   add({ type: "system", subtype: "task_notification", tool_use_id: "codex-agent-child", status: "completed", summary: "Initial config report" });
@@ -172,8 +216,22 @@ test("Codex children show their metadata, nested transcript and permission sourc
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Main Codex summary.", "gone Codex child looking at config."]);
     await ui.run(["text Subagents in this thread"]);
     assert.match(await ui.page.getByTitle("Subagents in this thread").innerText(), /2 done/);
-    await ui.run(["click from Inspect config", "wait Codex child looking at config.", "wait Codex follow-up findings.", "wait gpt-6.1-sol", "wait Permission for Bash", "gone Main Codex summary."]);
-    await ui.run(["click Open subagent thread", "wait Nested Codex findings.", "press Escape", "wait Codex follow-up findings.", "press Escape", "wait Main Codex summary."]);
+    await ui.run([
+      "click from Inspect config",
+      "wait Codex child looking at config.",
+      "wait Codex follow-up findings.",
+      "wait gpt-6.1-sol",
+      "wait Permission for Bash",
+      "gone Main Codex summary.",
+    ]);
+    await ui.run([
+      "click Open subagent thread",
+      "wait Nested Codex findings.",
+      "press Escape",
+      "wait Codex follow-up findings.",
+      "press Escape",
+      "wait Main Codex summary.",
+    ]);
     await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('Inspect config')", "wait Codex child looking at config."]);
   });
 });

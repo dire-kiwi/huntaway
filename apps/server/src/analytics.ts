@@ -207,7 +207,11 @@ export function context_report(c: Conn, profile_id: string, from: string, to: st
       cost_usd: r.cost_usd ?? null,
       duration_ms: r.duration_ms ?? null,
     }));
-  const [tasks, projects] = tasks_and_projects(c, profile_id, stats.map((s) => s.task_id));
+  const [tasks, projects] = tasks_and_projects(
+    c,
+    profile_id,
+    stats.map((s) => s.task_id),
+  );
   return { stats, tasks, projects };
 }
 
@@ -381,7 +385,10 @@ export function token_report(c: Conn, profile_id: string, from: string, to: stri
       task_model: worked,
     });
   }
-  const [rounds, numbers] = review_rounds(c, reviews.map((r) => r.task_id));
+  const [rounds, numbers] = review_rounds(
+    c,
+    reviews.map((r) => r.task_id),
+  );
   reviews.forEach((r, i) => {
     r.round = numbers.get(`${r.task_id}\u0000${round_of[i]}`) ?? 0;
   });
@@ -413,7 +420,14 @@ export function token_report(c: Conn, profile_id: string, from: string, to: stri
       info.id,
     );
     if (!r) throw new Error("Query returned no rows");
-    return { ...info, parent_id: r.parent_id ?? null, task_type: r.task_type ?? null, subproject: !!r.subproject, group_name: r.group_name ?? null, model: r.model ?? null };
+    return {
+      ...info,
+      parent_id: r.parent_id ?? null,
+      task_type: r.task_type ?? null,
+      subproject: !!r.subproject,
+      group_name: r.group_name ?? null,
+      model: r.model ?? null,
+    };
   });
 
   const pending =

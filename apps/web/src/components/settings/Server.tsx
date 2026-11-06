@@ -25,7 +25,11 @@ function useServerStatus(pollMs: number) {
   const host = useStore((s) => s.localHostId);
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const refresh = useCallback(() => {
-    if (host) return api.serverStatus(host).then(setStatus).catch(() => {});
+    if (host)
+      return api
+        .serverStatus(host)
+        .then(setStatus)
+        .catch(() => {});
   }, [host]);
   useEffect(() => {
     refresh();
@@ -150,11 +154,14 @@ export function ServerPanel() {
                 From <span className="font-mono break-all">{release.exe}</span>
               </div>
             )}
-            {release?.shell && <div>Started by the desktop app{release.shell.version && ` v${release.shell.version}`} ({installName(release.shell)})</div>}
+            {release?.shell && (
+              <div>
+                Started by the desktop app{release.shell.version && ` v${release.shell.version}`} ({installName(release.shell)})
+              </div>
+            )}
             {status.source_dir ? (
               <div>
-                Source <span className="font-mono">{status.source_dir}</span> is at{" "}
-                <span className="font-mono text-fg">{short(status.source_commit)}</span>
+                Source <span className="font-mono">{status.source_dir}</span> is at <span className="font-mono text-fg">{short(status.source_commit)}</span>
                 {status.source_branch && (
                   <>
                     {" "}
@@ -210,7 +217,14 @@ export function ServerPanel() {
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
-const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : ms < 10_000 ? `${(ms / 1000).toFixed(1)} s` : ms < 120_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`);
+const seconds = (ms: number) =>
+  ms < 1000
+    ? `${Math.round(ms)} ms`
+    : ms < 10_000
+      ? `${(ms / 1000).toFixed(1)} s`
+      : ms < 120_000
+        ? `${Math.round(ms / 1000)} s`
+        : `${Math.round(ms / 60_000)} min`;
 
 /**
  * The batch rebuild of threads as items (API 121, docs/threads.md's step 7): how many tasks that aren't done have no
@@ -269,7 +283,12 @@ export function ThreadsLine({ hostId }: { hostId: string }) {
               )}
             </span>
             {st.pending > 0 && (
-              <Button size="sm" disabled={busy} onClick={() => act(false)} title="Rebuilds their threads as items from their messages, one task at a time. Done tasks get theirs when they're opened.">
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => act(false)}
+                title="Rebuilds their threads as items from their messages, one task at a time. Done tasks get theirs when they're opened."
+              >
                 <RefreshCw size={13} /> {b && !b.running && b.stopping ? "Go on" : "Rebuild them"}
               </Button>
             )}
@@ -504,7 +523,8 @@ export function ShellNotice({ release, remote }: { release: ReleaseStatus; remot
         <div>
           <div className="font-medium text-fg">The desktop app {remote ? "on this host " : ""}has an update</div>
           <div>
-            {latest ? `v${latest.version}` : "The latest release"} comes with a new version of the app itself{shell.version && ` (this one is v${shell.version})`}, which
+            {latest ? `v${latest.version}` : "The latest release"} comes with a new version of the app itself
+            {shell.version && ` (this one is v${shell.version})`}, which
             {updateShell ? " the app can install itself." : remote ? " that host's app installs from its own Settings → Server." : " the board can't install."}
           </div>
         </div>
@@ -629,7 +649,9 @@ export function RestartModal({
   const running = status.release?.running;
   const logRef = useRef<HTMLPreElement>(null);
   // Seed with the server's view in case the restart began elsewhere.
-  const current = remote ? null : (live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null));
+  const current = remote
+    ? null
+    : (live ?? (status.restart ? { phase: status.restart.phase, error: status.restart.error, log: status.restart.log.split("\n") } : null));
   // Whether this dialog started a restart, or saw one running (begun before it opened, or elsewhere). A restart that had
   // failed before then isn't shown: it would stand in for what this dialog does (Roll back's warning, say).
   const [started, setStarted] = useState(false);
@@ -762,7 +784,8 @@ export function RestartModal({
           <>
             <p className="text-muted">
               Restarts the server, copying <span className="font-mono text-fg">{db.older_changed}</span>, which an older version of Huntaway has used since,
-              into <span className="font-mono text-fg">{db.file}</span> again first. {remote ? "This page follows it until it's back." : "The board reloads once it's back."}
+              into <span className="font-mono text-fg">{db.file}</span> again first.{" "}
+              {remote ? "This page follows it until it's back." : "The board reloads once it's back."}
             </p>
             <Warning>
               What's been done on this version since then (tasks, messages, runs) is discarded. It's kept in{" "}
@@ -772,27 +795,31 @@ export function RestartModal({
         )}
         {!job && (
           <>
-            {!release && !recopy && <p className="text-muted">
-              {target ? (
-                <>
-                  Fetches <span className="font-mono text-fg">{short(target)}</span>, which {status.update_from} runs, from origin and fast-forwards{" "}
-                  <span className="font-mono text-fg">{status.source_dir}</span> to it. Then it rebuilds the UI and server and restarts in place. If either
-                  build fails, the current server keeps running.
-                </>
-              ) : rebuild ? (
-                <>
-                  Rebuilds the UI (<code>npm run build</code>) and server (<code>npm ci</code> when its lockfile changed, and <code>ia-shim</code>) from{" "}
-                  <span className="font-mono text-fg">{status.source_dir}</span>, then restarts in place. If either build fails, the current server keeps
-                  running.
-                </>
-              ) : (
-                "Restarts the server process without rebuilding."
-              )}
-            </p>}
+            {!release && !recopy && (
+              <p className="text-muted">
+                {target ? (
+                  <>
+                    Fetches <span className="font-mono text-fg">{short(target)}</span>, which {status.update_from} runs, from origin and fast-forwards{" "}
+                    <span className="font-mono text-fg">{status.source_dir}</span> to it. Then it rebuilds the UI and server and restarts in place. If either
+                    build fails, the current server keeps running.
+                  </>
+                ) : rebuild ? (
+                  <>
+                    Rebuilds the UI (<code>npm run build</code>) and server (<code>npm ci</code> when its lockfile changed, and <code>ia-shim</code>) from{" "}
+                    <span className="font-mono text-fg">{status.source_dir}</span>, then restarts in place. If either build fails, the current server keeps
+                    running.
+                  </>
+                ) : (
+                  "Restarts the server process without rebuilding."
+                )}
+              </p>
+            )}
             {commits.length > 0 && (
               <div className="rounded-lg border border-line bg-panel/60 p-3">
                 <div className="mb-1.5 text-[11px] font-semibold tracking-wide text-faint uppercase">
-                  {target ? `Deployed at ${status.update_from}, not on this server` : `New on ${status.source_branch ?? "the checkout"} since this server started`}
+                  {target
+                    ? `Deployed at ${status.update_from}, not on this server`
+                    : `New on ${status.source_branch ?? "the checkout"} since this server started`}
                 </div>
                 <ul className="max-h-40 space-y-0.5 overflow-y-auto font-mono text-[12px] text-muted">
                   {commits.map((c) => (
@@ -810,7 +837,9 @@ export function RestartModal({
                 picks them back up.
               </p>
             )}
-            {!release && !recopy && status.dirty &&
+            {!release &&
+              !recopy &&
+              status.dirty &&
               (target ? (
                 <Warning>The source checkout has uncommitted changes, so it can't be updated. Commit or discard them first.</Warning>
               ) : (
@@ -829,7 +858,7 @@ export function RestartModal({
           <div className="space-y-3">
             <div className={clsx("flex items-center gap-2", job.phase === "failed" ? "text-red-400" : "text-fg")}>
               {job.phase === "failed" ? <CircleAlert size={15} /> : <Loader2 size={15} className="animate-spin text-accent" />}
-              {waiting && job.phase === "restarting" ? "Restarting, waiting for the server to come back…" : PHASES[job.phase] ?? job.phase}
+              {waiting && job.phase === "restarting" ? "Restarting, waiting for the server to come back…" : (PHASES[job.phase] ?? job.phase)}
             </div>
             {job.error && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{job.error}</div>}
             {job.log.length > 0 && (
@@ -889,7 +918,12 @@ function ReleaseUpdate({ release, version, remote }: { release: ReleaseStatus; v
         <div className="rounded-lg border border-line bg-panel/60 p-3">
           <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wide text-faint uppercase">
             <span>Release notes</span>
-            <a href={latest.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 font-normal tracking-normal text-accent normal-case hover:underline">
+            <a
+              href={latest.url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 font-normal tracking-normal text-accent normal-case hover:underline"
+            >
               On GitHub <ExternalLink size={11} />
             </a>
           </div>

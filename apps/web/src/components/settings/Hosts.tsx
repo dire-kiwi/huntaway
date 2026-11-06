@@ -67,8 +67,8 @@ export function HostsPanel() {
         </div>
       </div>
       <p className="mb-3 text-[12.5px] text-muted">
-        Each host keeps its own projects, tasks and agent threads. This board shows every connected host, and any other board linked to a host sees the
-        same data. Configure a host (agent defaults, agent configs, profiles, rebuild &amp; restart) from its page.
+        Each host keeps its own projects, tasks and agent threads. This board shows every connected host, and any other board linked to a host sees the same
+        data. Configure a host (agent defaults, agent configs, profiles, rebuild &amp; restart) from its page.
       </p>
       <div className="space-y-2">
         {hosts.map((h) => (
@@ -101,7 +101,11 @@ function ScratchHostRow() {
   return (
     <div className="mt-3 rounded-xl border border-line px-4 py-3">
       <Field label="Scratch task host" hint="This board can't run agents, so new scratch tasks (which are in no project) run on this host.">
-        <select value={picked} onChange={(e) => save(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+        <select
+          value={picked}
+          onChange={(e) => save(e.target.value)}
+          className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+        >
           <option value="">Automatic (first available host)</option>
           {hosts.map((h) => (
             <option key={h.id} value={h.id}>
@@ -161,9 +165,7 @@ export function HostVersion({ host }: { host: Host }) {
   // API 3+ hosts can update from their own origin, so any hub that knows its commit can update them. One that doesn't
   // report a commit has no checkout to update.
   const canUpdate =
-    !host.local &&
-    host.connected &&
-    (release ? !!releaseTarget : !!host.commit && !!target && hostSupports(host, 3) && (differs || compat !== "ok"));
+    !host.local && host.connected && (release ? !!releaseTarget : !!host.commit && !!target && hostSupports(host, 3) && (differs || compat !== "ok"));
 
   // While the host rebuilds, show its progress; done when it comes back (a new boot) or reconnects on the new commit.
   useEffect(() => {
@@ -192,7 +194,12 @@ export function HostVersion({ host }: { host: Host }) {
     setErr(null);
     setPhase("starting");
     try {
-      setBoot(await api.serverStatus(host.id).then((st) => st.boot_id, () => null));
+      setBoot(
+        await api.serverStatus(host.id).then(
+          (st) => st.boot_id,
+          () => null,
+        ),
+      );
       const r = await api.updateHost(host.id);
       if (r.up_to_date) setPhase(null);
     } catch (e) {
@@ -271,7 +278,10 @@ function HostRow({ host }: { host: Host }) {
         ) : (
           <div className="flex items-center gap-2 text-[13px] font-medium">
             {host.name}
-            <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-emerald-400" : "bg-red-400")} title={host.connected ? "Connected" : "Offline"} />
+            <span
+              className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-emerald-400" : "bg-red-400")}
+              title={host.connected ? "Connected" : "Offline"}
+            />
           </div>
         )}
         <div className="truncate text-[11.5px] text-faint">
@@ -326,7 +336,11 @@ function AddHostModal({ onClose }: { onClose: () => void }) {
             ["url", "By URL and token"],
           ] as const
         ).map(([k, label]) => (
-          <button key={k} onClick={() => setHow(k)} className={clsx("flex-1 rounded-md px-2 py-1", how === k ? "bg-raised text-fg" : "text-muted hover:text-fg")}>
+          <button
+            key={k}
+            onClick={() => setHow(k)}
+            className={clsx("flex-1 rounded-md px-2 py-1", how === k ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+          >
             {label}
           </button>
         ))}
@@ -346,7 +360,10 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    api.sshKey().then((k) => setKey(k.public_key)).catch((e) => setErr(e.message));
+    api
+      .sshKey()
+      .then((k) => setKey(k.public_key))
+      .catch((e) => setErr(e.message));
   }, []);
   const p = Number(port) || 7878;
   const binPath = bin.trim() || "/path/to/huntaway";
@@ -365,8 +382,8 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
   return (
     <div className="space-y-4">
       <p className="text-[12.5px] text-muted">
-        This board starts <code>huntaway</code> on the machine if it isn't running, then connects through an SSH tunnel. The host only listens on that
-        machine's localhost, and its agents keep running if the connection drops.
+        This board starts <code>huntaway</code> on the machine if it isn't running, then connects through an SSH tunnel. The host only listens on that machine's
+        localhost, and its agents keep running if the connection drops.
       </p>
       <div className="grid grid-cols-[1fr_90px] gap-3">
         <Field label="SSH target">
@@ -378,7 +395,12 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
       </div>
       <div className="grid grid-cols-[1fr_90px] gap-3">
         <Field label="huntaway on that machine" hint="Absolute path: a release's huntaway, or server-ts/bin/huntaway in a checkout that has built ia-shim.">
-          <Input value={bin} onChange={(e) => setBin(e.target.value)} placeholder="/home/you/huntaway/server-ts/bin/huntaway" className="font-mono text-[12px]" />
+          <Input
+            value={bin}
+            onChange={(e) => setBin(e.target.value)}
+            placeholder="/home/you/huntaway/server-ts/bin/huntaway"
+            className="font-mono text-[12px]"
+          />
         </Field>
         <Field label="Host port">
           <Input value={port} onChange={(e) => setPort(e.target.value)} className="font-mono text-[12px]" />
@@ -421,8 +443,7 @@ function AddUrlHost({ onClose }: { onClose: () => void }) {
   return (
     <div className="space-y-4">
       <p className="text-[12.5px] text-muted">
-        For a host that's already running and reachable from this board, e.g. over Tailscale. Get its token with <code>huntaway token</code> on that
-        machine.
+        For a host that's already running and reachable from this board, e.g. over Tailscale. Get its token with <code>huntaway token</code> on that machine.
       </p>
       <Field label="URL">
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://buildbox:7878" className="font-mono text-[12px]" />
@@ -448,7 +469,10 @@ function AddUrlHost({ onClose }: { onClose: () => void }) {
 function JoinModal({ onClose }: { onClose: () => void }) {
   const [info, setInfo] = useState<{ hub_token: string; host_token: string; command: string } | null>(null);
   useEffect(() => {
-    api.joinInfo().then(setInfo).catch(() => {});
+    api
+      .joinInfo()
+      .then(setInfo)
+      .catch(() => {});
   }, []);
   return (
     <Modal title="Connect hosts and boards" onClose={onClose} width="max-w-2xl">
@@ -533,8 +557,8 @@ export function ProfilesPanel() {
         </Button>
       </div>
       <p className="mb-3 text-[12.5px] text-muted">
-        Profiles are set up on each host and appear together by name. Each picks which of its host's agent configs (Claude Code or Codex) its agents use; with more than one,
-        new tasks ask which.
+        Profiles are set up on each host and appear together by name. Each picks which of its host's agent configs (Claude Code or Codex) its agents use; with
+        more than one, new tasks ask which.
       </p>
       <div className="space-y-3">
         {names.map((name) => {
@@ -640,17 +664,50 @@ export function ProfileForm({
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useStore((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id));
   const { busy, error: err, run } = useAsyncAction();
-  const separate = hostSupports(hosts.find((h) => h.id === host), 20);
-  const sharing = hostSupports(hosts.find((h) => h.id === host), 23);
-  const accounts = hostSupports(hosts.find((h) => h.id === host), 50);
-  const cloning = hostSupports(hosts.find((h) => h.id === host), 55);
-  const linking = hostSupports(hosts.find((h) => h.id === host), LINKS_API);
-  const asanaToggle = hostSupports(hosts.find((h) => h.id === host), ASANA_TOGGLE_API);
-  const limits = hostSupports(hosts.find((h) => h.id === host), LIMITS_API);
-  const reviewing = hostSupports(hosts.find((h) => h.id === host), PROFILE_REVIEWERS_API);
-  const severalSummarizers = hostSupports(hosts.find((h) => h.id === host), MULTI_SUMMARIZER_API);
-  const approving = hostSupports(hosts.find((h) => h.id === host), MERGE_APPROVAL_API);
-  const gating = hostSupports(hosts.find((h) => h.id === host), PR_APPROVAL_API);
+  const separate = hostSupports(
+    hosts.find((h) => h.id === host),
+    20,
+  );
+  const sharing = hostSupports(
+    hosts.find((h) => h.id === host),
+    23,
+  );
+  const accounts = hostSupports(
+    hosts.find((h) => h.id === host),
+    50,
+  );
+  const cloning = hostSupports(
+    hosts.find((h) => h.id === host),
+    55,
+  );
+  const linking = hostSupports(
+    hosts.find((h) => h.id === host),
+    LINKS_API,
+  );
+  const asanaToggle = hostSupports(
+    hosts.find((h) => h.id === host),
+    ASANA_TOGGLE_API,
+  );
+  const limits = hostSupports(
+    hosts.find((h) => h.id === host),
+    LIMITS_API,
+  );
+  const reviewing = hostSupports(
+    hosts.find((h) => h.id === host),
+    PROFILE_REVIEWERS_API,
+  );
+  const severalSummarizers = hostSupports(
+    hosts.find((h) => h.id === host),
+    MULTI_SUMMARIZER_API,
+  );
+  const approving = hostSupports(
+    hosts.find((h) => h.id === host),
+    MERGE_APPROVAL_API,
+  );
+  const gating = hostSupports(
+    hosts.find((h) => h.id === host),
+    PR_APPROVAL_API,
+  );
   // This board's own profiles can run their assistants on a linked host (API 112).
   const assistantHosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
   const onBoardHost = useStore((s) => !!s.hosts.find((h) => h.id === host)?.local);
@@ -700,7 +757,10 @@ export function ProfileForm({
         </Field>
       </div>
       {pick ? (
-        <Field label="Agent configs" hint="The ones its agents can use; projects can pick their own. With more than one, new tasks ask which, starting with the default.">
+        <Field
+          label="Agent configs"
+          hint="The ones its agents can use; projects can pick their own. With more than one, new tasks ask which, starting with the default."
+        >
           <ConfigPicker hostId={host} value={configIds} onChange={setConfigIds} />
         </Field>
       ) : (
@@ -725,7 +785,13 @@ export function ProfileForm({
       )}
       {cloning && (
         <Field label="Clone folder" hint="Where Add project's GitHub tab clones repositories on this host, each into a folder named after it.">
-          <Input className="font-mono text-[12px]" value={cloneDir} placeholder={defaultCloneDir(name)} onChange={(e) => setCloneDir(e.target.value)} spellCheck={false} />
+          <Input
+            className="font-mono text-[12px]"
+            value={cloneDir}
+            placeholder={defaultCloneDir(name)}
+            onChange={(e) => setCloneDir(e.target.value)}
+            spellCheck={false}
+          />
         </Field>
       )}
       {/* Not a Field, whose label would pass clicks anywhere in it on to the toggle. */}
@@ -752,15 +818,16 @@ export function ProfileForm({
             {limitWait
               ? "A task whose agent runs out waits in In progress until the limit resets and then carries on, and a task started on a config that's out waits for it too."
               : "Off, a task whose agent runs out needs your attention, and offers to carry on once the limit resets."}{" "}
-            {limitSwitch
-              ? "A task that hasn't started yet starts on the next of its configs (of the same agent) that isn't out, instead of its own."
-              : ""}
+            {limitSwitch ? "A task that hasn't started yet starts on the next of its configs (of the same agent) that isn't out, instead of its own." : ""}
           </span>
         </div>
       )}
       {reviewing && (
         <>
-          <Field label="Reviewers" hint="Who reviews the tasks of its projects, each in a thread of its own. A project can choose its own in its Review settings.">
+          <Field
+            label="Reviewers"
+            hint="Who reviews the tasks of its projects, each in a thread of its own. A project can choose its own in its Review settings."
+          >
             <ReviewerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={reviewers} onChange={setReviewers} extras={reviewExtras} />
           </Field>
           <Field
@@ -843,7 +910,11 @@ function AssistantHostSelect({ value, onChange }: { value: string; onChange: (id
   const hosts = useStore(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected && hostSupports(h, ASSISTANT_HOST_API))));
   const picked = useStore((s) => s.hosts.find((h) => h.id === value));
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+    >
       <option value="">This host{local ? ` (${local.name})` : ""}</option>
       {hosts.map((h) => (
         <option key={h.id} value={h.id}>
@@ -898,10 +969,17 @@ export function GithubAccountSelect({
           </option>
         ))}
         {/* Saved before, but gh isn't signed in to it (any more). */}
-        {(missing || (value && !list)) && <option value={value}>{value}{missing ? " (not signed in to gh)" : ""}</option>}
+        {(missing || (value && !list)) && (
+          <option value={value}>
+            {value}
+            {missing ? " (not signed in to gh)" : ""}
+          </option>
+        )}
       </select>
       {list?.error && <div className="text-[11.5px] text-faint">Couldn't list gh's accounts: {list.error}</div>}
-      {list && !list.error && accounts.length === 0 && <div className="text-[11.5px] text-faint">gh isn't signed in to any accounts on this host (gh auth login).</div>}
+      {list && !list.error && accounts.length === 0 && (
+        <div className="text-[11.5px] text-faint">gh isn't signed in to any accounts on this host (gh auth login).</div>
+      )}
     </div>
   );
 }
@@ -933,7 +1011,11 @@ function AccessPicker({ own, value, onChange }: { own: string; value: string[]; 
 export function HostSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const hosts = useStore(useShallow((s) => s.hosts.filter(canRunAgents)));
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+    >
       {hosts.map((h) => (
         <option key={h.id} value={h.id}>
           {h.name}
@@ -956,9 +1038,7 @@ export function CopyLoginModal({ from, onClose }: { from: ClaudeConfig | Profile
   const profiles = useStore((s) => s.profiles);
   const configs = useStore((s) => s.claudeConfigs);
   const [to, setTo] = useState(hosts[0]?.id ?? "");
-  const existing = isConfig
-    ? configs.find((c) => c.host_id === to && c.name === from.name)
-    : profiles.find((p) => p.host_id === to && p.name === from.name);
+  const existing = isConfig ? configs.find((c) => c.host_id === to && c.name === from.name) : profiles.find((p) => p.host_id === to && p.name === from.name);
   const existingDir = existing && (("config_dir" in existing ? existing.config_dir : existing.claude_config_dir) || baseDir);
   const [dir, setDir] = useState(fromDir);
   const [overwrite, setOverwrite] = useState(false);
@@ -999,7 +1079,11 @@ export function CopyLoginModal({ from, onClose }: { from: ClaudeConfig | Profile
           <p className="text-faint">No other host can take it{isConfig ? " (hosts need updating to have agent configs)" : ""}.</p>
         ) : (
           <Field label="To host">
-            <select value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+            <select
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+            >
               {hosts.map((h) => (
                 <option key={h.id} value={h.id}>
                   {h.name}
@@ -1102,7 +1186,11 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           )}
         </Field>
         <Field label="Effort">
-          <select className={selectClass} value={settings.default_effort ?? ""} onChange={(e) => save({ default_effort: (e.target.value || null) as HostSettings["default_effort"] })}>
+          <select
+            className={selectClass}
+            value={settings.default_effort ?? ""}
+            onChange={(e) => save({ default_effort: (e.target.value || null) as HostSettings["default_effort"] })}
+          >
             <option value="">Claude's default</option>
             {EFFORTS.map((e) => (
               <option key={e} value={e}>
@@ -1159,8 +1247,8 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
             {hostSupports(host, THREAD_SOURCE_API)
               ? "Threads are written as items now, and drawn from them: a task moves onto them when it's quiet. This only applies to tasks still on their messages (those that were done before the update, until they're written to again): turning it off draws them from their messages."
               : hostSupports(host, THREADS_BATCH_API)
-              ? "Tasks keep their threads in the new thread model as well as their messages, written as their messages are: those started while it's on, and older ones once they're opened or rebuilt (Settings → Server). Turning it off draws threads from their messages again."
-              : "Tasks started from now on also keep their threads in the new thread model, written as their messages are. Turning it off leaves those tasks as they are."}
+                ? "Tasks keep their threads in the new thread model as well as their messages, written as their messages are: those started while it's on, and older ones once they're opened or rebuilt (Settings → Server). Turning it off draws threads from their messages again."
+                : "Tasks started from now on also keep their threads in the new thread model, written as their messages are. Turning it off leaves those tasks as they are."}
           </p>
         </div>
       )}

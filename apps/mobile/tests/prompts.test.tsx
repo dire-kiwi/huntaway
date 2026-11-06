@@ -48,7 +48,16 @@ describe("answering a question", () => {
 
   test("without a typed answer, a tap answers", async () => {
     const answerQuestion = jest.fn(async () => ({}) as never);
-    await render(<QuestionCard client={{ answerQuestion }} hostId="h" taskId="t" messageId={6} data={{ question: "Go?", options: ["Yes", "No"].map((label) => ({ label })), allow_other: false }} onDone={() => {}} />);
+    await render(
+      <QuestionCard
+        client={{ answerQuestion }}
+        hostId="h"
+        taskId="t"
+        messageId={6}
+        data={{ question: "Go?", options: ["Yes", "No"].map((label) => ({ label })), allow_other: false }}
+        onDone={() => {}}
+      />,
+    );
     await fireEvent.press(screen.getByText("No"));
     await waitFor(() => expect(answerQuestion).toHaveBeenCalledWith("h", "t", 6, { choices: ["No"], text: null }));
   });

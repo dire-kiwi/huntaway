@@ -29,7 +29,18 @@ import * as hub from "../../hosts/hub.ts";
 import { readBody } from "../../http.ts";
 import { now, path_str, sleep } from "../../util.ts";
 import { ToolError, msg, type Ctx } from "../tools.ts";
-import { MARKS_API, TASK_FIELDS_API, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT, dispatch, handle_mcp, handle_remote, needs_project_settings_api, too_old, type McpCall } from "./dispatch.ts";
+import {
+  MARKS_API,
+  TASK_FIELDS_API,
+  TASK_FIELD_DEFAULT_LIMIT,
+  TASK_FIELD_MAX_LIMIT,
+  dispatch,
+  handle_mcp,
+  handle_remote,
+  needs_project_settings_api,
+  too_old,
+  type McpCall,
+} from "./dispatch.ts";
 import { local } from "./local.ts";
 import { reminder_time, task_field, task_overview } from "./tasks.ts";
 
@@ -206,7 +217,10 @@ test("legacy_helper_keeps_full_details_after_server_upgrade", async () => {
   const t = task(s, "ia", "Existing thread");
   const description = "Description ā🙂\n".repeat(160);
   const review = { ...db.Review_default(), state: "issues", summary: "Review\n".repeat(400) };
-  db.update_task(s.db(), t.id, [["description", description], ["review", review]]);
+  db.update_task(s.db(), t.id, [
+    ["description", description],
+    ["review", review],
+  ]);
   const run = db.insert_run(s.db(), t.id, "prompt");
   // An already-running helper keeps its API 58 schema and sends the same request shape after reconnecting to the
   // upgraded daemon. No get_task_field capability.
@@ -257,11 +271,17 @@ test("large_task_fields_are_summarized_and_can_be_reassembled", async () => {
   const description = "A lengthy description\n".repeat(5000);
   const message = 'Latest reply: ā🙂\n"quoted"\\\t'.repeat(4000);
   const review = { ...db.Review_default(), state: "issues", summary: "Review\n".repeat(2000), issues: ["Fix it".repeat(1000)] };
-  db.update_task(s.db(), t.id, [["description", description], ["review", review]]);
+  db.update_task(s.db(), t.id, [
+    ["description", description],
+    ["review", review],
+  ]);
   db.insert_message(s.db(), t.id, "claude", { type: "result", result: message });
   // Arrays can grow too; no unbounded review is smuggled in through created_tasks.
   const child = task(s, "ia", "Child");
-  db.update_task(s.db(), child.id, [["created_by", t.id], ["review", review]]);
+  db.update_task(s.db(), child.id, [
+    ["created_by", t.id],
+    ["review", review],
+  ]);
   const overview = await call(s, me, "get_task", { task_id: "IA-1" });
   const serialized = JSON.stringify(overview, null, 2);
   assert.ok(Buffer.byteLength(serialized) < 10000, `overview was ${serialized.length} bytes`);
@@ -272,7 +292,10 @@ test("large_task_fields_are_summarized_and_can_be_reassembled", async () => {
   }
   assert.equal(overview.field_lengths.description, char_count(description));
   assert.equal(overview.field_lengths.last_message, char_count(message));
-  for (const [field, expected] of [["description", description], ["last_message", message]]) {
+  for (const [field, expected] of [
+    ["description", description],
+    ["last_message", message],
+  ]) {
     let offset = 0;
     let assembled = "";
     for (;;) {
@@ -315,16 +338,28 @@ test("task_field_pages_count_characters_and_validate_ranges", async () => {
     assert.equal(v.next_offset, null);
   }
   for (const extra of [
-    { offset: -1 }, { offset: 1.5 }, { offset: "1" }, { offset: null },
-    { limit: -1 }, { limit: 0 }, { limit: TASK_FIELD_MAX_LIMIT + 1 },
-    { limit: 1.5 }, { limit: "1" }, { limit: null }, { field: "session_id" },
+    { offset: -1 },
+    { offset: 1.5 },
+    { offset: "1" },
+    { offset: null },
+    { limit: -1 },
+    { limit: 0 },
+    { limit: TASK_FIELD_MAX_LIMIT + 1 },
+    { limit: 1.5 },
+    { limit: "1" },
+    { limit: null },
+    { field: "session_id" },
   ]) {
     assert.ok(await fails(page(extra)), `accepted ${JSON.stringify(extra)}`);
   }
   // Null, scalar and empty fields have exact lengths matching their paginated representation.
   const overview = await call(s, me, "get_task", { task_id: "IA-1" });
   assert.equal(overview.description, 'aā🙂\n"\\\u0000z');
-  for (const [field, content, format] of [["last_message", "null", "json"], ["running", "false", "json"], ["title", "Small task", "text"]]) {
+  for (const [field, content, format] of [
+    ["last_message", "null", "json"],
+    ["running", "false", "json"],
+    ["title", "Small task", "text"],
+  ]) {
     v = await page({ field });
     assert.equal(v.content, content);
     assert.equal(v.format, format);
@@ -353,7 +388,11 @@ test("overview_bounds_escaped_values_and_the_total_inline_size", () => {
 test("task_fields_use_the_same_profile_access_and_key_resolution", async () => {
   const s = state();
   const [personal, work, lab] = ["personal", "work", "lab"].map((n) => db.insert_profile(s.db(), n, [], null));
-  for (const [p, id, key] of [[personal, "own", "IA"], [work, "work", "IA"], [lab, "lab", "LAB"]] as const) {
+  for (const [p, id, key] of [
+    [personal, "own", "IA"],
+    [work, "work", "IA"],
+    [lab, "lab", "LAB"],
+  ] as const) {
     project(s, p, id, key);
     const t = task(s, id, id);
     db.update_task(s.db(), t.id, [["description", id]]);
@@ -413,7 +452,10 @@ test("reads_task_fields_on_new_and_legacy_linked_hosts", async () => {
   const p = db.insert_profile(s.db(), "personal", [], null);
   const me = ctx(p);
   const calls: Array<[string, string, any]> = [];
-  for (const [name, api_version] of [["old", TASK_FIELDS_API - 1], ["new", TASK_FIELDS_API]] as const) {
+  for (const [name, api_version] of [
+    ["old", TASK_FIELDS_API - 1],
+    ["new", TASK_FIELDS_API],
+  ] as const) {
     await link_fake_host(s, name, api_version, (tool, body) => {
       calls.push([name, tool, body]);
       const details = { id: "remote", description: "ā🙂x".repeat(10000), title: "Remote task" };
@@ -758,7 +800,10 @@ test("marks_only_go_to_hosts_that_can_set_them", async () => {
   const me = ctx(p);
   // Linked hosts that answer every tool call, and note which they were sent.
   const calls: Array<[string, string]> = [];
-  for (const [name, api_version] of [["old", MARKS_API - 1], ["new", MARKS_API]] as const) {
+  for (const [name, api_version] of [
+    ["old", MARKS_API - 1],
+    ["new", MARKS_API],
+  ] as const) {
     await link_fake_host(s, name, api_version, (tool) => {
       calls.push([name, tool]);
       return { ok: true };
@@ -775,7 +820,10 @@ test("marks_only_go_to_hosts_that_can_set_them", async () => {
   assert.deepEqual(sent(), []);
   await dispatch(s, me, "update_task", { task_id: "OLD-1", host: "old", title: "T" });
   await dispatch(s, me, "update_task", { task_id: "NEW-1", host: "new", remind_at: "2h" });
-  assert.deepEqual(sent(), [["old", "update_task"], ["new", "update_task"]]);
+  assert.deepEqual(sent(), [
+    ["old", "update_task"],
+    ["new", "update_task"],
+  ]);
   // Not found here, it's only tried on the hosts that can do it.
   await dispatch(s, me, "update_task", { task_id: "ELSE-1", starred: true });
   assert.deepEqual(sent(), [["new", "update_task"]]);
@@ -892,7 +940,10 @@ test("agents_read_and_change_a_projects_prompts", async () => {
   assert.ok(await fails(call(s, me, "update_project", { name: " " })));
   // Reviewers: blanks dropped, configs checked, an empty list back to the task's own.
   const codex = db.insert_claude_config(s.db(), "Codex", "", "codex");
-  const two = [{ claude_config_id: codex.id, model: "gpt-5" }, { model: " opus ", effort: "" }];
+  const two = [
+    { claude_config_id: codex.id, model: "gpt-5" },
+    { model: " opus ", effort: "" },
+  ];
   v = await call(s, me, "update_project", { reviewers: two });
   assert.deepEqual(v.reviewers, [
     { claude_config_id: codex.id, model: "gpt-5", effort: null },
@@ -1250,7 +1301,10 @@ test("the_user_approves_risky_project_changes", async () => {
     return answer_approval(s, true);
   };
   [res, asked] = await Promise.all([settle(call(s, me("c5"), "update_project", again)), approve2()]);
-  assert.deepEqual(asked.input.changes.map((c: any) => c.field), ["setup_script"]);
+  assert.deepEqual(
+    asked.input.changes.map((c: any) => c.field),
+    ["setup_script"],
+  );
   assert.deepEqual([unwrap(res).permission_mode, db.get_project(s.db(), "kiwicd")!.setup_script], ["default", "npm install"]);
 
   // Settings given in another form than they're kept in, but that come to what they are (a blank column script is
@@ -1270,7 +1324,10 @@ test("files_brought_into_worktrees_need_the_users_approval", async () => {
   const change = { copy_files: ".env", link_folders: "models" };
   let [res, asked] = await Promise.all([settle(call(s, me("c1"), "update_project", change)), answer_approval(s, false)]);
   assert.ok(unwrap_err(res).includes("didn't approve changing copy_files, link_folders"));
-  assert.deepEqual(asked.input.changes.map((c: any) => c.field), ["copy_files", "link_folders"]);
+  assert.deepEqual(
+    asked.input.changes.map((c: any) => c.field),
+    ["copy_files", "link_folders"],
+  );
   const stored = db.get_project(s.db(), "kiwicd")!;
   assert.deepEqual([stored.copy_files, stored.link_folders], ["", ""]);
   [res] = await Promise.all([settle(call(s, me("c2"), "update_project", change)), answer_approval(s, true)]);
@@ -1482,7 +1539,10 @@ test("lists_only_the_created_tasks_the_caller_can_reach", async () => {
 test("group_tasks_have_no_dependencies", async () => {
   const s = state();
   const [personal, work, lab] = ["personal", "work", "lab"].map((n) => db.insert_profile(s.db(), n, [], null));
-  for (const [p, id] of [[personal, "web"], [work, "sd"]] as const) {
+  for (const [p, id] of [
+    [personal, "web"],
+    [work, "sd"],
+  ] as const) {
     project(s, p, id, id.toUpperCase());
     db.update_project(s.db(), id, [["group_name", "Shop"]]);
   }
@@ -1499,7 +1559,10 @@ test("group_tasks_have_no_dependencies", async () => {
   await call(s, ctx(personal), "update_task", { task_id: mine.id, depends_on: [] });
 
   // A link made before this was checked shows to no one, and the migration drops it.
-  db.update_task(s.db(), mine.id, [["depends_on", [theirs.id]], ["waiting", true]]);
+  db.update_task(s.db(), mine.id, [
+    ["depends_on", [theirs.id]],
+    ["waiting", true],
+  ]);
   const get = { task_id: mine.id };
   assert.equal((await call(s, ctx(lab), "get_task", get)).depends_on, undefined);
   grant(s, work, []);
@@ -1513,7 +1576,17 @@ test("group_tasks_follow_their_group_when_its_renamed", () => {
   const c = db.open(":memory:");
   const p = db.insert_profile(c, "me", [], null);
   for (const id of ["a", "b"]) {
-    db.insert_project(c, { id, profile_id: p.id, name: id, key: id, repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+    db.insert_project(c, {
+      id,
+      profile_id: p.id,
+      name: id,
+      key: id,
+      repo_path: "/x",
+      scratch_path: "/s",
+      worktrees_root: "/w",
+      base_branch: null,
+      use_worktrees: false,
+    });
     db.update_project(c, id, [["group_name", "Old"]]);
   }
   const t = db.insert_group_task(c, new_task(p, "Plan"), "Old");
@@ -1595,7 +1668,10 @@ test("a_subagents_completion_wakes_its_agents_wait", async () => {
       },
     }),
   ]);
-  endings.push([false, { type: "system", subtype: "task_notification", tool_use_id: "child", task_id: "background", status: "completed", summary: "Child report" }]);
+  endings.push([
+    false,
+    { type: "system", subtype: "task_notification", tool_use_id: "child", task_id: "background", status: "completed", summary: "Child report" },
+  ]);
   endings.push([false, { type: "system", subtype: "task_updated", tool_use_id: "child", patch: { status: "failed" } }]);
 
   for (const [n, [is_codex, ending]] of endings.entries()) {
@@ -1711,7 +1787,13 @@ test("a_waits_command_runs_unasked_when_the_agents_reviewer_approved_the_call", 
 
   // A run that pre-approves every board tool (one from an older build, before or after the rename, Claude or Codex) is
   // still asked, in auto mode as in Ask.
-  const asked_runs = [launched("auto", "mcp__huntaway"), launched("auto", "mcp__issue_agent"), launched("default", "mcp__issue_agent"), codex_launched(null), codex_launched(false)];
+  const asked_runs = [
+    launched("auto", "mcp__huntaway"),
+    launched("auto", "mcp__issue_agent"),
+    launched("default", "mcp__issue_agent"),
+    codex_launched(null),
+    codex_launched(false),
+  ];
   for (const [n, r] of asked_runs.entries()) {
     const call_id = `asked${n}`;
     s.runs.set(planner.id, { run_id: r.id, cancel: null });
@@ -1774,7 +1856,10 @@ test("an_agent_waits_on_its_pull_request", async () => {
     e = await err(handle_mcp(s, mcp(claude, "c4", { reason: "r", pull_request: "the PR" })));
     assert.ok(e.includes("the PR isn't a pull request"), e);
     // A whole number sent as a float (or written as one) is a number. (JSON.parse reads 7.0 as 7.)
-    for (const [c, pr] of [["c5", 7.0], ["c5b", "7.0"]] as Array<[string, any]>) {
+    for (const [c, pr] of [
+      ["c5", 7.0],
+      ["c5b", "7.0"],
+    ] as Array<[string, any]>) {
       v = await handle_mcp(s, mcp(claude, c, { reason: "r", pull_request: pr, seconds: 1 }));
       assert.deepEqual([v.ended, v.pull_request.number], ["timeout", 7], String(pr));
     }
@@ -1815,7 +1900,13 @@ test("a_retried_wait_wakes_for_a_watched_task_deleted_meanwhile", async () => {
   };
   s.update_task(planner.id, [["agent_wait", w]]);
   db.run(s.db(), "DELETE FROM tasks WHERE id=?1", worker.id);
-  const retry: McpCall = { task_fields: true, run_id: run.id, call_id: "c1", tool: "wait", args: { reason: "waiting on KIW-2", tasks: ["KIW-2"], seconds: 60 } };
+  const retry: McpCall = {
+    task_fields: true,
+    run_id: run.id,
+    call_id: "c1",
+    tool: "wait",
+    args: { reason: "waiting on KIW-2", tasks: ["KIW-2"], seconds: 60 },
+  };
   const v = await handle_mcp(s, retry);
   assert.equal(v.ended, "tasks_changed");
   assert.deepEqual(v.tasks, [{ id: worker.id, key: "KIW-2", deleted: true }]);
@@ -1978,7 +2069,10 @@ test("a_review_thread_isnt_a_task_by_its_id_either", async () => {
   const thread = db.insert_task(s.db(), new_task(p, "review", { project_id: "kiwicd", kind: "review" }));
   db.update_task(s.db(), thread.id, [["parent_id", reviewed.id]]);
   const me = ctx(p);
-  for (const [tool, args] of [["get_task", { task_id: thread.id }], ["send_to_task", { task_id: thread.id, message: "Approve it" }]] as Array<[string, any]>) {
+  for (const [tool, args] of [
+    ["get_task", { task_id: thread.id }],
+    ["send_to_task", { task_id: thread.id, message: "Approve it" }],
+  ] as Array<[string, any]>) {
     const e = await err(call(s, me, tool, args));
     assert.equal(e, `task ${thread.id}`, tool);
   }
@@ -2081,7 +2175,13 @@ test("an_approval_cut_short_by_a_restart_is_still_waited_for", async () => {
   project(s, p, "kiwicd", "KIW");
   const caller = task(s, "kiwicd", "Caller");
   const run = started_run(s, caller.id);
-  const mk = (id: string, script: string): McpCall => ({ task_fields: true, run_id: run.id, call_id: id, tool: "update_project", args: { setup_script: script } });
+  const mk = (id: string, script: string): McpCall => ({
+    task_fields: true,
+    run_id: run.id,
+    call_id: id,
+    tool: "update_project",
+    args: { setup_script: script },
+  });
   const script = () => db.get_project(s.db(), "kiwicd")!.setup_script;
   // The server restarts while the user is asked; retried, the call waits for their answer and makes the change once.
   await cut_short(s, "c1", () => handle_mcp(s, mk("c1", "npm ci")));
@@ -2371,7 +2471,10 @@ test("agents_create_change_run_and_delete_workflows_once_the_user_approves", asy
     const x = await approval_asked(s);
     assert.equal(permissions.pending_approvals(s, true, true).length, 0);
     assert.equal(permissions.pending_approvals(s, true, true, true).length, 1);
-    const asking = testing.messages(s.db(), caller.id).filter((m: any) => m.kind === "permission").at(-1) as any;
+    const asking = testing
+      .messages(s.db(), caller.id)
+      .filter((m: any) => m.kind === "permission")
+      .at(-1) as any;
     assert.deepEqual([asking.data.kind, asking.data.request_id], ["workflow", x.request_id]);
     await answer_approval(s, allow);
     return x;
@@ -2416,7 +2519,10 @@ test("agents_create_change_run_and_delete_workflows_once_the_user_approves", asy
     await approval_asked(s);
     wf.delete(s, made.id);
   };
-  [res] = await Promise.all([settle(call(s, me("c10"), "update_workflow", { workflow_id: made.id, graph: { ...MOVE_GRAPH, nodes: [MOVE_GRAPH.nodes[0]], edges: [] } })), del()]);
+  [res] = await Promise.all([
+    settle(call(s, me("c10"), "update_workflow", { workflow_id: made.id, graph: { ...MOVE_GRAPH, nodes: [MOVE_GRAPH.nodes[0]], edges: [] } })),
+    del(),
+  ]);
   assert.ok(unwrap_err(res).includes("was deleted meanwhile"), unwrap_err(res));
   assert.equal(permissions.pending_approvals(s, true, true, true).length, 0);
 
@@ -2517,7 +2623,10 @@ test("the_assistants_rules_can_make_creating_a_task_ask_first_whatever_its_mode"
   const mine = assistant.get_or_create(s, p.id);
   db.update_task(s.db(), mine.id, [["permission_mode", "bypassPermissions"]]);
   approval_rules.set(s.db(), p.id, {
-    rules: [{ tool: "mcp__huntaway__create_task", decision: "ask" }, { tool: "mcp__huntaway__delete_task", decision: "never" }],
+    rules: [
+      { tool: "mcp__huntaway__create_task", decision: "ask" },
+      { tool: "mcp__huntaway__delete_task", decision: "never" },
+    ],
     expiry_minutes: 30,
   });
   const run = started_run(s, mine.id);
@@ -2551,7 +2660,11 @@ test("the_assistants_rules_can_make_creating_a_task_ask_first_whatever_its_mode"
   assert.ok(e.startsWith(approval_rules.BLOCKED), e);
   assert.deepEqual(
     approval_rules.list(s.db(), p.id, 10).map((a) => [a.tool_name, a.outcome]),
-    [["mcp__huntaway__delete_task", "blocked"], ["mcp__huntaway__create_task", "allowed"], ["mcp__huntaway__create_task", "denied"]],
+    [
+      ["mcp__huntaway__delete_task", "blocked"],
+      ["mcp__huntaway__create_task", "allowed"],
+      ["mcp__huntaway__create_task", "denied"],
+    ],
   );
   // Other tools are as they were.
   await handle_mcp(s, mcp("c4", "list_projects", {}));
@@ -2623,7 +2736,11 @@ test("rules_hold_for_wait_and_its_command", async () => {
   const p = db.insert_profile(s.db(), "personal", [], null);
   const marker = join(testing.temp_dir(), "ran");
   const wait = (call_id: string, run: db.Run): McpCall => ({
-    task_fields: true, run_id: run.id, call_id, tool: "wait", args: { reason: "r", seconds: 5, command: `touch '${marker}'` },
+    task_fields: true,
+    run_id: run.id,
+    call_id,
+    tool: "wait",
+    args: { reason: "r", seconds: 5, command: `touch '${marker}'` },
   });
   // Never: refused, and its command doesn't run, in Bypass.
   let [, run] = ruled_assistant(s, p, [["mcp__huntaway__wait", "never"]]);
@@ -2653,7 +2770,10 @@ test("rules_hold_for_wait_and_its_command", async () => {
   assert.equal(res.ended, "command_exited");
   assert.ok(existsSync(marker));
   const log = approval_rules.list(s.db(), p.id, 10).map((a) => [a.tool_name, a.outcome]);
-  assert.deepEqual(log.slice(0, 2), [["mcp__huntaway__wait", "allowed"], ["mcp__huntaway__wait", "denied"]]);
+  assert.deepEqual(log.slice(0, 2), [
+    ["mcp__huntaway__wait", "allowed"],
+    ["mcp__huntaway__wait", "denied"],
+  ]);
 });
 
 test("a_bash_rule_holds_for_a_waits_command_even_when_claudes_classifier_reviewed_the_wait", async () => {
@@ -2673,7 +2793,11 @@ test("a_bash_rule_holds_for_a_waits_command_even_when_claudes_classifier_reviewe
     return [mine, run];
   };
   const wait = (call_id: string, run: db.Run): McpCall => ({
-    task_fields: true, run_id: run.id, call_id, tool: "wait", args: { reason: "r", seconds: 5, command: `touch '${marker}'` },
+    task_fields: true,
+    run_id: run.id,
+    call_id,
+    tool: "wait",
+    args: { reason: "r", seconds: 5, command: `touch '${marker}'` },
   });
   // Never: the command doesn't run.
   let [mine, run] = auto([["Bash", "never"]]);

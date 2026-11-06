@@ -39,12 +39,7 @@ export function ModelPicker({
     );
   }
   return (
-    <select
-      className={pickerClass}
-      title="Model"
-      value={value}
-      onChange={(e) => (e.target.value === "__custom" ? setEditing(true) : onChange(e.target.value))}
-    >
+    <select className={pickerClass} title="Model" value={value} onChange={(e) => (e.target.value === "__custom" ? setEditing(true) : onChange(e.target.value))}>
       <option value="">{inherited ? `Default model (${inherited})` : "Default model"}</option>
       {options.map((m) => (
         <option key={m.id} value={m.id}>

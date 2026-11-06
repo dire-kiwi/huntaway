@@ -50,7 +50,7 @@ export interface ThreadModel {
 
 function resultText(content: Any): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((c) => (typeof c === "string" ? c : c.text ?? "")).join("\n");
+  if (Array.isArray(content)) return content.map((c) => (typeof c === "string" ? c : (c.text ?? ""))).join("\n");
   return content == null ? "" : JSON.stringify(content, null, 2);
 }
 
@@ -331,7 +331,7 @@ export function reuseItems(next: Item[], prev: Item[]): Item[] {
   let same = next.length === prev.length;
   const out = next.map((it, i) => {
     const was = old.get(it.key);
-    if (!was || was.type !== it.type) return (same = false), it;
+    if (!was || was.type !== it.type) return ((same = false), it);
     if (it.type === "tools" && was.type === "tools") {
       // A group grows, and its calls get their results: keep the calls that didn't change.
       const calls = new Map(was.calls.map((c) => [c.id, c]));

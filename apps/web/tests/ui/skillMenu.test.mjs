@@ -82,7 +82,16 @@ test("the / menu follows a switch to another config", async () => {
   const [codex, claude] = await addCodexConfig();
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Switch", status: "in_review", claude_config_id: codex });
   await withBrowser(server, codexModels, async (ui) => {
-    await ui.run([`goto /t/${task.id}`, "click thread", "click css=textarea", "type /rel", "wait $release-notes", "press Escape", "press Control+a", "press Backspace"]);
+    await ui.run([
+      `goto /t/${task.id}`,
+      "click thread",
+      "click css=textarea",
+      "type /rel",
+      "wait $release-notes",
+      "press Escape",
+      "press Control+a",
+      "press Backspace",
+    ]);
     await server.api("PATCH", `/tasks/${task.id}`, { claude_config_id: claude });
     await ui.run(["sleep 500", "type /rel", "wait /release-notes", "press Enter"]);
     assert.equal(await ui.page.locator("textarea").inputValue(), "/release-notes ");

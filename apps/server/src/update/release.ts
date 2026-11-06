@@ -182,7 +182,12 @@ export interface GhAsset {
 export function GhAsset_from_json(a: any): GhAsset {
   if (typeof a?.name !== "string") throw new Error("missing field `name`");
   if (typeof a.browser_download_url !== "string") throw new Error("missing field `browser_download_url`");
-  return { name: a.name, browser_download_url: a.browser_download_url, size: typeof a.size === "number" ? a.size : 0, digest: typeof a.digest === "string" ? a.digest : null };
+  return {
+    name: a.name,
+    browser_download_url: a.browser_download_url,
+    size: typeof a.size === "number" ? a.size : 0,
+    digest: typeof a.digest === "string" ? a.digest : null,
+  };
 }
 
 /** serde's deserialization of a `GhRelease`. */
@@ -466,8 +471,18 @@ async function check_with(state: AppState, cfg: Config, last: Checked): Promise<
 
 /** HTTP reason phrases, as reqwest's `StatusCode` shows them. */
 const REASONS: Record<number, string> = {
-  400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 410: "Gone", 422: "Unprocessable Entity",
-  429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  409: "Conflict",
+  410: "Gone",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
 };
 
 /** The error for a response that isn't a list: the rate limit (with when it resets), or GitHub's message. */
@@ -515,10 +530,13 @@ function offered(releases: GhRelease[], platform: string, pre: boolean, bad: str
     const text = tag_version(r.tag_name);
     const version = parse_version(text);
     if (!version) continue;
-    if (bad.some((b) => {
-      const v = parse_version(b);
-      return v !== null && compare(v, version) === 0;
-    })) continue;
+    if (
+      bad.some((b) => {
+        const v = parse_version(b);
+        return v !== null && compare(v, version) === 0;
+      })
+    )
+      continue;
     const name = `huntaway-server-${text}-${platform}.tar.gz`;
     const asset = r.assets.find((a) => a.name === name && sha256(a) !== null);
     if (asset) out.push([version, r, asset]);
@@ -611,7 +629,9 @@ export async function update_from_hub(state: AppState, version: string): Promise
     await check(state);
     const newer = latest();
     if (newer !== null && compare(newer, target) > 0 && !staging.is_staged(state, v)) {
-      throw ApiError.bad(`the latest release is ${version_string(newer)}, newer than the board's ${v}: update the board first, or this host from its own board`);
+      throw ApiError.bad(
+        `the latest release is ${version_string(newer)}, newer than the board's ${v}: update the board first, or this host from its own board`,
+      );
     }
   }
   update(state, v);

@@ -37,7 +37,18 @@ import { ArchiveProjectModal } from "../settings/ArchivedProjects";
 import { NewProjectModal } from "../settings/NewProjectModal";
 import { Button, ContextMenu, IconButton, Input, Modal, ModalFooter, RunningDot, StatusBar, type MenuItem } from "../ui";
 
-function NavItem({ active, current, onClick, onContextMenu, icon, children, right, className, title, expanded }: {
+function NavItem({
+  active,
+  current,
+  onClick,
+  onContextMenu,
+  icon,
+  children,
+  right,
+  className,
+  title,
+  expanded,
+}: {
   active: boolean;
   /** Marks the row with a bar at its left edge: the profile whose projects the sidebar lists. */
   current?: boolean;
@@ -131,7 +142,14 @@ function MarkedTasks({ route }: { route: Route }) {
   const projects = useStore((s) => s.projects);
   const panelTask = usePanel()?.taskId;
   const list = useMemo(() => Object.values(tasks), [tasks]);
-  const starred = useMemo(() => starredTasks(list, projects.map((p) => p.id)), [list, projects]);
+  const starred = useMemo(
+    () =>
+      starredTasks(
+        list,
+        projects.map((p) => p.id),
+      ),
+    [list, projects],
+  );
   const reminders = useMemo(() => reminderTasks(list), [list]);
   const now = useReminderClock(reminders);
   const [collapsed, setCollapsed] = useState(loadCollapsedSections);
@@ -214,7 +232,11 @@ function MarkedTasks({ route }: { route: Route }) {
           x={menu.x}
           y={menu.y}
           title={`${taskKey(menu.task, projects)}${menu.task.reminder ? ` · ${menu.task.reminder}` : ""}`}
-          items={[starItem(menu.task, setErr), ...reminderItems(menu.task, () => setPicking(menu.task), setErr, true), titleItem(() => setRenaming(menu.task), true)]}
+          items={[
+            starItem(menu.task, setErr),
+            ...reminderItems(menu.task, () => setPicking(menu.task), setErr, true),
+            titleItem(() => setRenaming(menu.task), true),
+          ]}
           onClose={() => setMenu(null)}
         />
       )}
@@ -243,7 +265,9 @@ function AssistantEntry({ route, profile }: { route: Route; profile: string }) {
         icon={<Bot size={15} />}
         right={
           <span className="flex items-center gap-1.5">
-            {home.unavailable && <span className="h-1.5 w-1.5 rounded-full bg-red-400" aria-label={home.unavailable === "offline" ? "Offline" : "Unavailable"} />}
+            {home.unavailable && (
+              <span className="h-1.5 w-1.5 rounded-full bg-red-400" aria-label={home.unavailable === "offline" ? "Offline" : "Unavailable"} />
+            )}
             {task?.running ? <RunningDot /> : null}
             <Badge n={task?.status === "needs_attention" ? 1 : 0} title="Needs attention" />
           </span>
@@ -395,7 +419,12 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
       orphans: orphanGroupNames(profileTasks, shown, h.id),
     }))
     .filter(
-      (g) => g.entries.length > 0 || g.projects.some((p) => hidden.has(hiddenKey(p))) || g.orphans.length > 0 || !g.host.connected || ["incompatible", "board_outdated"].includes(hostCompat(g.host)),
+      (g) =>
+        g.entries.length > 0 ||
+        g.projects.some((p) => hidden.has(hiddenKey(p))) ||
+        g.orphans.length > 0 ||
+        !g.host.connected ||
+        ["incompatible", "board_outdated"].includes(hostCompat(g.host)),
     );
   const grouped = hosts.length > 1;
 
@@ -465,7 +494,10 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
 
   const projectMenu = (e: MouseEvent, p: Project) => {
     e.preventDefault();
-    const grouping = hostSupports(hosts.find((h) => h.id === p.host_id), 32);
+    const grouping = hostSupports(
+      hosts.find((h) => h.id === p.host_id),
+      32,
+    );
     const isHidden = hidden.has(hiddenKey(p));
     const favorite = favorites.has(hiddenKey(p));
     setMenu({
@@ -481,9 +513,16 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
             ]
           : []),
         { label: favorite ? "Remove from favorites" : "Add to favorites", divider: true, onSelect: () => setProjectsFavorite([p], !favorite) },
-        ...(names.length > 1 || isPinned(p) ? [{ label: isPinned(p) ? "Unpin" : "Pin to every profile", onSelect: () => setProjectsPinned([p], !isPinned(p)) }] : []),
+        ...(names.length > 1 || isPinned(p)
+          ? [{ label: isPinned(p) ? "Unpin" : "Pin to every profile", onSelect: () => setProjectsPinned([p], !isPinned(p)) }]
+          : []),
         { label: isHidden ? "Show in sidebar" : "Hide from sidebar", onSelect: () => setProjectsHidden([p], !isHidden) },
-        ...(hostSupports(hosts.find((h) => h.id === p.host_id), 46) ? [{ label: "Archive…", onSelect: () => setArchiving(p) }] : []),
+        ...(hostSupports(
+          hosts.find((h) => h.id === p.host_id),
+          46,
+        )
+          ? [{ label: "Archive…", onSelect: () => setArchiving(p) }]
+          : []),
       ],
     });
   };
@@ -501,7 +540,10 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
           label: "Rename group…",
           onSelect: () => setNaming({ title: `Rename ${name}`, initial: name, projects: list }),
         },
-        { label: "Ungroup", onSelect: () => trySetGroup(list, null).then((ok) => ok && leaveGroup(list[0].host_id, name, { name: "board", projectId: list[0].id })) },
+        {
+          label: "Ungroup",
+          onSelect: () => trySetGroup(list, null).then((ok) => ok && leaveGroup(list[0].host_id, name, { name: "board", projectId: list[0].id })),
+        },
         ...(names.length > 1 || listed.some(isPinned)
           ? [{ label: allPinned ? "Unpin" : "Pin to every profile", divider: true, onSelect: () => setProjectsPinned(listed, !allPinned) }]
           : []),
@@ -656,7 +698,9 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                           "flex h-8 items-center rounded-md text-[13px] narrow:h-10",
                           onGroup || hidesActive ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
                         )}
-                        onContextMenu={(e) => groupMenu(e, entry.name, groupProjects(all, entry.hostId, entry.name), groupProjects(list, entry.hostId, entry.name))}
+                        onContextMenu={(e) =>
+                          groupMenu(e, entry.name, groupProjects(all, entry.hostId, entry.name), groupProjects(list, entry.hostId, entry.name))
+                        }
                       >
                         {empty ? (
                           <span className="w-6 shrink-0 narrow:w-8" />
@@ -738,7 +782,11 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
                       {off.length} hidden
                     </NavItem>
                     {open && (
-                      <div role="group" aria-label={`Hidden projects${grouped ? ` on ${host.name}` : ""}`} className="ml-3 space-y-0.5 border-l border-line pl-1">
+                      <div
+                        role="group"
+                        aria-label={`Hidden projects${grouped ? ` on ${host.name}` : ""}`}
+                        className="ml-3 space-y-0.5 border-l border-line pl-1"
+                      >
                         {off.map((p) => (
                           <div key={p.id} className="flex">
                             {projectRow(p, true)}
@@ -785,7 +833,10 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
             </div>
           )}
           {shown.length === 0 && (
-            <button onClick={() => setAdding(true)} className="w-full rounded-md border border-dashed border-line px-3 py-3 text-[12px] text-faint hover:text-muted">
+            <button
+              onClick={() => setAdding(true)}
+              className="w-full rounded-md border border-dashed border-line px-3 py-3 text-[12px] text-faint hover:text-muted"
+            >
               {projects.length === 0 ? "Add your first project" : `Add a project to ${active}`}
             </button>
           )}

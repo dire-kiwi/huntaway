@@ -14,7 +14,16 @@ import {
   type WatchPullRequests,
 } from "../../../api";
 import { useStore } from "../../../store";
-import { DEFAULT_REVIEWER, InheritPicker, isDefaultReviewer, ReviewerList, ReviewerRow, reviewerLabel, SummarizerList, useReviewerExtras } from "../../task/Reviewers";
+import {
+  DEFAULT_REVIEWER,
+  InheritPicker,
+  isDefaultReviewer,
+  ReviewerList,
+  ReviewerRow,
+  reviewerLabel,
+  SummarizerList,
+  useReviewerExtras,
+} from "../../task/Reviewers";
 import { Field, Input, Toggle } from "../../ui";
 
 /** The Review tab: reviews, summaries, pull requests and their previews, merge approval, and what happens once a task is merged. */
@@ -52,8 +61,8 @@ export function ReviewTab({ form, host, set }: { form: Project; host: Host | und
           <div className="space-y-1.5">
             <Toggle checked={form.auto_summary} onChange={(v) => set("auto_summary", v)} label="Summarise each task's changes once its review passes" />
             <div className="text-[12px] text-faint">
-              An agent reads the work in its own thread and writes a summary of what changed, which the task opens on while it waits in In
-              review. Summarise now in the task's Summary tab writes one at any time.
+              An agent reads the work in its own thread and writes a summary of what changed, which the task opens on while it waits in In review. Summarise now
+              in the task's Summary tab writes one at any time.
             </div>
           </div>
           <ProjectSummarizer
@@ -73,9 +82,8 @@ export function ReviewTab({ form, host, set }: { form: Project; host: Host | und
           <div className="space-y-1.5">
             <Toggle checked={form.pull_requests} onChange={(v) => set("pull_requests", v)} label="Open a pull request for each task" />
             <div className="text-[12px] text-faint">
-              When the repository is on GitHub, a task's agent pushes its branch and opens a pull request before it finishes. Turned off,
-              agents are told not to push or open one unless you ask, even if the project's own instructions (in CLAUDE.md, say) say to.
-              Subprojects follow this setting too.
+              When the repository is on GitHub, a task's agent pushes its branch and opens a pull request before it finishes. Turned off, agents are told not to
+              push or open one unless you ask, even if the project's own instructions (in CLAUDE.md, say) say to. Subprojects follow this setting too.
             </div>
           </div>
           <div className="space-y-1.5">
@@ -85,25 +93,27 @@ export function ReviewTab({ form, host, set }: { form: Project; host: Host | und
               label="Open a pull request for each task in a subproject"
             />
             <div className="text-[12px] text-faint">
-              The same for the tasks in the project's subprojects, whose pull requests target the subproject's branch. Turned off, their
-              work is merged into the subproject's branch without one.
+              The same for the tasks in the project's subprojects, whose pull requests target the subproject's branch. Turned off, their work is merged into the
+              subproject's branch without one.
             </div>
           </div>
         </>
       )}
 
-      {hostSupports(host, MERGE_APPROVAL_API) && (
-        <ProjectMergeApproval project={form} onChange={(v) => set("merge_approval", v)} />
-      )}
+      {hostSupports(host, MERGE_APPROVAL_API) && <ProjectMergeApproval project={form} onChange={(v) => set("merge_approval", v)} />}
 
       {hostSupports(host, PR_APPROVAL_API) && <ProjectPrApproval project={form} onChange={(v) => set("require_pr_approval", v)} />}
 
       {form.done_when_merged !== undefined && (
         <div className="space-y-1.5">
-          <Toggle checked={form.done_when_merged} onChange={(v) => set("done_when_merged", v)} label="Move a task to Done when its pull request is merged on GitHub" />
+          <Toggle
+            checked={form.done_when_merged}
+            onChange={(v) => set("done_when_merged", v)}
+            label="Move a task to Done when its pull request is merged on GitHub"
+          />
           <div className="text-[12px] text-faint">
-            Every few minutes, the pull requests of tasks in In review or Needs attention are checked. A merged one moves its task to Done and
-            removes its worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
+            Every few minutes, the pull requests of tasks in In review or Needs attention are checked. A merged one moves its task to Done and removes its
+            worktree if nothing in it would be lost; one closed without merging moves its task to Needs attention.
           </div>
         </div>
       )}
@@ -227,11 +237,7 @@ function ProjectSummarizer({ project, host, onChange }: { project: Project; host
   const skills = useProjectSkillNames(project, several);
   // A host from before API 103 has just the one.
   const own = several ? !!project.summarizers?.length : project.summarizer != null;
-  const profiles: Reviewer[] = several
-    ? profile?.summarizers?.length
-      ? profile.summarizers
-      : [DEFAULT_REVIEWER]
-    : [profile?.summarizer ?? DEFAULT_REVIEWER];
+  const profiles: Reviewer[] = several ? (profile?.summarizers?.length ? profile.summarizers : [DEFAULT_REVIEWER]) : [profile?.summarizer ?? DEFAULT_REVIEWER];
   const models = { project: project.model, profile: profile?.default_model };
   return (
     <Field

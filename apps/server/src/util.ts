@@ -28,7 +28,8 @@ export function new_token(): string {
 
 /** Compares secrets without giving away, by how long it takes, how much of one matched. */
 export function same_secret(a: string, b: string): boolean {
-  const x = Buffer.from(a), y = Buffer.from(b);
+  const x = Buffer.from(a),
+    y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
@@ -70,7 +71,13 @@ export function slugify(s: string, max: number): string {
 /** Derive a short uppercase key (e.g. "IA") from a project name. */
 export function derive_key(name: string): string {
   const words = name.split(/[^A-Za-z0-9]/).filter((w) => w);
-  const key = words.length >= 2 ? words.slice(0, 3).map((w) => w[0]).join("") : (words[0] ?? "").slice(0, 3);
+  const key =
+    words.length >= 2
+      ? words
+          .slice(0, 3)
+          .map((w) => w[0])
+          .join("")
+      : (words[0] ?? "").slice(0, 3);
   return key.toUpperCase() || "T";
 }
 

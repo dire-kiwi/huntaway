@@ -293,7 +293,9 @@ async function call(s: AppState, method: string, path: string, body?: any): Prom
 }
 
 const enc = (s: string) =>
-  [...Buffer.from(s)].map((b) => (/[A-Za-z0-9\-._]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, "0")}`)).join("");
+  [...Buffer.from(s)]
+    .map((b) => (/[A-Za-z0-9\-._]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, "0")}`))
+    .join("");
 
 const paths = (o: any): string[] => o.files.map((f: any) => f.path);
 

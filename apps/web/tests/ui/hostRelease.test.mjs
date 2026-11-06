@@ -94,7 +94,13 @@ test("a linked host's page offers its staged release, and follows the Update", a
       "wait v0.2.0 is downloaded and checked",
       "gone Not running from a source checkout",
     ]);
-    await ui.run(["click Update to v0.2.0", "wait Update Huntaway", "wait Release notes", "wait this page follows it until it's back", "wait 1 agent is running"]);
+    await ui.run([
+      "click Update to v0.2.0",
+      "wait Update Huntaway",
+      "wait Release notes",
+      "wait this page follows it until it's back",
+      "wait 1 agent is running",
+    ]);
     const dialog = page.getByRole("dialog");
     assert.match(await dialog.textContent(), /v0\.1\.0→v0\.2\.0/);
     await dialog.getByRole("button", { name: "Update & restart" }).click();
@@ -103,7 +109,10 @@ test("a linked host's page offers its staged release, and follows the Update", a
     // The host's phases while it restarts, then its new boot on 0.2.0.
     s = { release: release(), restart: { phase: "installing", log: "Unpacking it", error: null } };
     await ui.run(["wait Installing the release…"]);
-    s = { boot_id: "b2", release: release({ running: "0.2.0", staged: null, latest: { ...release().latest, newer: false }, previous: "0.1.0", rollback_to: "0.1.0" }) };
+    s = {
+      boot_id: "b2",
+      release: release({ running: "0.2.0", staged: null, latest: { ...release().latest, newer: false }, previous: "0.1.0", rollback_to: "0.1.0" }),
+    };
     await ui.run(["gone Installing the release…", "wait Running v0.2.0", "wait which this server runs", "gone Update to v0.2.0"]);
   });
 });
@@ -114,12 +123,25 @@ test("a linked host's release checks, download and Roll back go through the hub"
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await page.addInitScript(() => {
-      window.huntawayDesktop = { setBadgeCount() {}, focus() {}, shellUpdateKind: () => "pacman", updateShell: () => Promise.reject(new Error("not this app")) };
+      window.huntawayDesktop = {
+        setBadgeCount() {},
+        focus() {},
+        shellUpdateKind: () => "pacman",
+        updateShell: () => Promise.reject(new Error("not this app")),
+      };
     });
     const pkg = { name: "p", url: "https://example.invalid/huntaway-0.3.0-linux-x64.pacman", size: 1, sha256: "ab" };
     const shell = { version: "0.2.0", install: "pacman", path: null, outdated: true, package: pkg };
     const latest = { ...release().latest, version: "0.3.0", url: "https://github.com/dire-kiwi/huntaway/releases/tag/v0.3.0" };
-    let r = release({ running: "0.2.0", staged: null, latest, previous: "0.1.0", rollback_to: "0.1.0", shell, download: { version: "0.3.0", phase: "downloading", bytes: 10e6, total: 40e6, error: null } });
+    let r = release({
+      running: "0.2.0",
+      staged: null,
+      latest,
+      previous: "0.1.0",
+      rollback_to: "0.1.0",
+      shell,
+      download: { version: "0.3.0", phase: "downloading", bytes: 10e6, total: 40e6, error: null },
+    });
     // A host newer than this board, which offered the board's code to bring it in line: without a checkout it can't
     // take it, so it isn't offered.
     const calls = await linkedHost(page, { api_compat: 999 }, () => ({ release: r }));
@@ -139,7 +161,12 @@ test("a linked host's release checks, download and Roll back go through the hub"
     await page.getByRole("switch", { name: "Include prereleases" }).click();
     await page.waitForFunction(() => document.querySelector("[role=switch][aria-checked=true]"));
     assert.deepEqual(calls.settings, [{ release_prereleases: true }]);
-    await ui.run(["click Roll back to v0.1.0", "wait Roll back Huntaway", "wait v0.2.0 may have migrated the database", "wait This page follows it until it's back"]);
+    await ui.run([
+      "click Roll back to v0.1.0",
+      "wait Roll back Huntaway",
+      "wait v0.2.0 may have migrated the database",
+      "wait This page follows it until it's back",
+    ]);
     await page.getByRole("dialog").getByRole("button", { name: "Roll back to v0.1.0" }).click();
     await ui.run(["gone Roll back Huntaway"]);
     assert.equal(calls.rollback, 1);

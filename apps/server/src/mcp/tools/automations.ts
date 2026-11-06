@@ -163,7 +163,11 @@ export function automation_input(s: Shared, ctx: Ctx, op: string, owner: au.Owne
     v.profile = { id: owner.profile, name, host: s.host_name };
   }
   // serde_json's map, sorted by key.
-  return Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]]));
+  return Object.fromEntries(
+    Object.keys(v)
+      .sort()
+      .map((k) => [k, v[k]]),
+  );
 }
 
 /**

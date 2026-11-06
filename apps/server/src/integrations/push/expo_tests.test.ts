@@ -105,9 +105,27 @@ const sub_for = (s: AppState, t: string) => subscriptions(s).find((x) => x.endpo
 function project_task(s: AppState): any {
   const profile = db.insert_profile(s.db(), "work", [], null);
   const x = "/x";
-  const p = { id: "p1", profile_id: profile.id, name: "Web", key: "WEB", repo_path: x, scratch_path: x, worktrees_root: x, base_branch: null, use_worktrees: false };
+  const p = {
+    id: "p1",
+    profile_id: profile.id,
+    name: "Web",
+    key: "WEB",
+    repo_path: x,
+    scratch_path: x,
+    worktrees_root: x,
+    base_branch: null,
+    use_worktrees: false,
+  };
   const project = db.insert_project(s.db(), p);
-  const newt = { profile_id: profile.id, project_id: project.id, kind: "task", title: "Fix the login", description: "", status: "in_progress", use_worktree: false };
+  const newt = {
+    profile_id: profile.id,
+    project_id: project.id,
+    kind: "task",
+    title: "Fix the login",
+    description: "",
+    status: "in_progress",
+    use_worktree: false,
+  };
   return JSON.parse(JSON.stringify(db.insert_task(s.db(), newt)));
 }
 
@@ -165,7 +183,10 @@ test("the_app_subscribes_with_its_expo_token_and_is_pushed_through_expo", async 
   assert.ok(fake.sent.try_recv() === null && web.try_recv() === null);
   const phone_sub = sub_for(s, phone)!;
   assert.ok(phone_sub.last_sent_at !== null && phone_sub.last_error === null);
-  assert.deepEqual(s.push.tickets.map((x) => x.id), [`ticket:${phone}`]);
+  assert.deepEqual(
+    s.push.tickets.map((x) => x.id),
+    [`ticket:${phone}`],
+  );
 
   // A test from Settings goes through Expo too.
   const [status, v] = await api_call(s, "POST", `/api/push/subscriptions/${sub.id}/test`);
@@ -219,12 +240,18 @@ test("tickets_and_receipts_drop_unregistered_phones_and_note_other_failures", as
   };
   await check_receipts(s, 0);
   const ids = [...(await fake.asked.recv()).ids].sort();
-  assert.deepEqual(ids, ["ok1", "ok2", "ok3"].map((n) => `ticket:${token(n)}`));
+  assert.deepEqual(
+    ids,
+    ["ok1", "ok2", "ok3"].map((n) => `ticket:${token(n)}`),
+  );
   assert.equal(sub_for(s, token("ok1")), undefined);
   assert.ok(sub_for(s, token("ok2"))!.last_error!.includes("MessageTooBig"));
   assert.equal(sub_for(s, token("ok3"))!.last_error, null);
   // Asked for again next time.
-  assert.deepEqual(s.push.tickets.map((t) => t.id), [`ticket:${token("ok3")}`]);
+  assert.deepEqual(
+    s.push.tickets.map((t) => t.id),
+    [`ticket:${token("ok3")}`],
+  );
   fake.receipts = { [`ticket:${token("ok3")}`]: { status: "ok" } };
   await check_receipts(s, 0);
   await fake.asked.recv();
@@ -326,12 +353,19 @@ test("a_paired_phone_has_only_its_own_subscriptions_which_go_when_its_revoked", 
   // It sees and changes its own; the board sees them all.
   const [ls, l] = await call(s, "GET", "/api/push", phone);
   assert.equal(ls, 200);
-  assert.deepEqual(l.subscriptions.map((x: any) => x.id), [mine.id]);
+  assert.deepEqual(
+    l.subscriptions.map((x: any) => x.id),
+    [mine.id],
+  );
   assert.equal((await call(s, "GET", "/api/push", BOARD))[1].subscriptions.length, 2);
   const events = { events: { attention: false, review: true, merge: true, done: true, prompts: "all" } };
   const [cs, changed] = await call(s, "PATCH", `/api/push/subscriptions/${mine.id}`, phone, events);
   assert.deepEqual([cs, changed.events.prompts], [200, "all"]);
-  for (const [m, p] of [["PATCH", `/api/push/subscriptions/${theirs.id}`], ["DELETE", `/api/push/subscriptions/${theirs.id}`], ["POST", `/api/push/subscriptions/${theirs.id}/test`]]) {
+  for (const [m, p] of [
+    ["PATCH", `/api/push/subscriptions/${theirs.id}`],
+    ["DELETE", `/api/push/subscriptions/${theirs.id}`],
+    ["POST", `/api/push/subscriptions/${theirs.id}/test`],
+  ]) {
     assert.equal((await call(s, m, p, phone, events))[0], 404, `${m} ${p}`);
   }
   assert.equal(subscriptions(s).length, 2);
@@ -349,7 +383,10 @@ test("a_paired_phone_has_only_its_own_subscriptions_which_go_when_its_revoked", 
 
   // Revoking a device drops its subscriptions, and only its.
   assert.equal((await call(s, "DELETE", `/api/devices/${again_id}`, BOARD))[0], 200);
-  assert.deepEqual(subscriptions(s).map((x) => x.id), [theirs.id]);
+  assert.deepEqual(
+    subscriptions(s).map((x) => x.id),
+    [theirs.id],
+  );
   // A device can unsubscribe itself.
   assert.equal((await call(s, "DELETE", `/api/push/subscriptions/${theirs.id}`, tablet))[0], 200);
   assert.deepEqual(subscriptions(s), []);
@@ -371,7 +408,10 @@ test("a_move_made_from_the_phone_isnt_pushed_to_it", async () => {
   await sleep(300);
   assert.equal(fake.sent.try_recv(), null, "the phone's own move was pushed to it");
   // What happens next, not of its doing, is.
-  s.update_task(t.id, [["status", "needs_attention"], ["attention_reason", "Merge failed"]]);
+  s.update_task(t.id, [
+    ["status", "needs_attention"],
+    ["attention_reason", "Merge failed"],
+  ]);
   const m = (await fake.sent.recv())[0];
   assert.deepEqual([m.data.event, m.body], ["attention", "Needs attention"]);
 });
@@ -397,7 +437,12 @@ test("a_new_token_for_the_same_phone_keeps_its_subscription_and_events", async (
     phone_id,
   );
   await call(s, "POST", "/api/push/subscriptions", phone, { kind: "expo", endpoint: token("new") });
-  assert.deepEqual(subscriptions(s).map((x) => x.endpoint).sort(), [token("new"), token("tablet")]);
+  assert.deepEqual(
+    subscriptions(s)
+      .map((x) => x.endpoint)
+      .sort(),
+    [token("new"), token("tablet")],
+  );
 });
 
 test("what_expo_says_of_an_old_token_doesnt_touch_the_new_one", async () => {
@@ -471,7 +516,10 @@ test("a_reply_reaches_the_app_with_its_board_host_and_task", async () => {
 // HA-209: migration 97's rows from before (no kind) are read as browsers' (see db/tests.test.ts for the migration).
 test("a_subscription_from_before_kinds_is_web_push", () => {
   const s = testing.state();
-  db.run(s.db(), "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES ('s','https://push.example.com/1','k','a','Chrome','{}','1')");
+  db.run(
+    s.db(),
+    "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at) VALUES ('s','https://push.example.com/1','k','a','Chrome','{}','1')",
+  );
   const [sub] = subscriptions(s);
   assert.deepEqual([sub.kind, sub.device_id, sub.name], ["web", null, "Chrome"]);
 });

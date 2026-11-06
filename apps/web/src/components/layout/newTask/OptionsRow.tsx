@@ -29,7 +29,9 @@ export function OptionsRow({
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pt-1">
-        {!subproject && inProject && codeTask && !asSubproject && !fanout && startFrom === undefined && <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />}
+        {!subproject && inProject && codeTask && !asSubproject && !fanout && startFrom === undefined && (
+          <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />
+        )}
         {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
         {pickConfig && <ConfigSelect className={pickerClass} configs={configs} value={config} onChange={setConfig} />}
         <ConfigUsageNote config={configObj} />

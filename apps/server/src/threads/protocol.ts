@@ -744,7 +744,7 @@ function context_of(items: readonly Item[], at: Map<string, number>, need: Set<s
   const out = new Set<number>();
   const seen = new Set<string>();
   for (const first of need) {
-    for (let id: string | undefined = first; id && !seen.has(id); ) {
+    for (let id: string | undefined = first; id && !seen.has(id);) {
       seen.add(id);
       const i = at.get(id);
       if (i === undefined) break;

@@ -47,11 +47,17 @@ export function RewindDialog({
       <div className="space-y-3 text-[13px]">
         <div className="line-clamp-4 border-l-2 border-line-strong pl-2.5 whitespace-pre-wrap text-muted">{turn.text || "(no message)"}</div>
         <p className="text-muted">
-          The worktree's files go back to how they were before this message. Files git ignores (build output) are left alone, and the files as
-          they are now are kept in a git ref, in case.
+          The worktree's files go back to how they were before this message. Files git ignores (build output) are left alone, and the files as they are now are
+          kept in a git ref, in case.
         </p>
         <label className="flex items-start gap-2">
-          <input type="checkbox" className="mt-0.5 accent-accent" disabled={!convo?.ok} checked={conversation && !!convo?.ok} onChange={(e) => setConversation(e.target.checked)} />
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            disabled={!convo?.ok}
+            checked={conversation && !!convo?.ok}
+            onChange={(e) => setConversation(e.target.checked)}
+          />
           <span>
             {!convo?.ok
               ? "The agent's conversation can't go back"
@@ -71,9 +77,8 @@ export function RewindDialog({
             <span>
               Move the branch back to <span className="font-mono">{short(turn.before_head!)}</span> too
               <span className="block text-[11.5px] text-faint">
-                It's at <span className="font-mono">{short(head!)}</span> now. Moving it drops the commits made since from the branch (the reflog
-                still has them); if they're pushed, the next push has to force. Left as it is, those commits stay and the files show as changes
-                undoing them.
+                It's at <span className="font-mono">{short(head!)}</span> now. Moving it drops the commits made since from the branch (the reflog still has
+                them); if they're pushed, the next push has to force. Left as it is, those commits stay and the files show as changes undoing them.
               </span>
             </span>
           </label>

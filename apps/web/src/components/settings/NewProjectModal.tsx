@@ -143,7 +143,10 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
                 aria-checked={source === t.id}
                 title={t.hint}
                 onClick={() => pickSource(t.id)}
-                className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px]", source === t.id ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                className={clsx(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px]",
+                  source === t.id ? "bg-raised text-fg" : "text-muted hover:text-fg",
+                )}
               >
                 {t.icon} {t.label}
               </button>
@@ -157,7 +160,11 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
         )}
         {names.length > 1 && (
           <Field label="Profile" hint="The Claude profile the project's agents run under.">
-            <select value={profileName} onChange={(e) => setProfileName(e.target.value)} className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none">
+            <select
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+            >
               {names.map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -216,7 +223,10 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
                           role="radio"
                           aria-checked={visibility === v}
                           onClick={() => setVisibility(v)}
-                          className={clsx("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px]", visibility === v ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                          className={clsx(
+                            "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px]",
+                            visibility === v ? "bg-raised text-fg" : "text-muted hover:text-fg",
+                          )}
                         >
                           {v === "private" ? <Lock size={12} /> : <Globe size={12} />} {v === "private" ? "Private" : "Public"}
                         </button>
@@ -242,7 +252,10 @@ export function NewProjectModal({ profile, onClose }: { profile?: string; onClos
           </>
         )}
         {!profileId && (
-          <Field label={`Claude config directory for "${profileName}" on this host`} hint="This host has no such profile yet; it's created with this directory.">
+          <Field
+            label={`Claude config directory for "${profileName}" on this host`}
+            hint="This host has no such profile yet; it's created with this directory."
+          >
             <Input value={configDir} onChange={(e) => setConfigDir(e.target.value)} className="font-mono text-[12px]" />
           </Field>
         )}

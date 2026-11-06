@@ -14,7 +14,11 @@ const asanaTask = (gid, name, completed = false, notes = `Steps for ${name}.`) =
   projects: [{ name: "Web" }],
   workspace: { name: "Acme" },
 });
-const TASKS = [asanaTask("1001", "Fix login redirect", false, "Users land on /404 after login."), asanaTask("1002", "Write onboarding docs"), asanaTask("1003", "Old bug", true)];
+const TASKS = [
+  asanaTask("1001", "Fix login redirect", false, "Users land on /404 after login."),
+  asanaTask("1002", "Write onboarding docs"),
+  asanaTask("1003", "Old bug", true),
+];
 
 // A fake Asana API for the test server (IA_ASANA_URL), taking only TOKEN.
 const asana = createServer((req, res) => {
@@ -233,7 +237,12 @@ test("the new task form moves between hosts before and after Asana links", async
       });
       // Both hosts have a Default profile with a Demo project, and the form opens in whichever loaded first.
       await ui.run(["goto /profile/Default", "click New task", "wait Start agent now", "type @DEMO.test", "press Space", "wait Link Asana task"]);
-      for (const [to, shown] of [["@DEMO.old", 0], ["@DEMO.test", 1], ["@DEMO.old", 0], ["@none", 1]]) {
+      for (const [to, shown] of [
+        ["@DEMO.old", 0],
+        ["@DEMO.test", 1],
+        ["@DEMO.old", 0],
+        ["@none", 1],
+      ]) {
         await page.locator("textarea").fill(`${to} `);
         await ui.run(["wait Start agent now", "sleep 200"]);
         assert.equal(await page.getByText("Link Asana task").count(), shown, to);

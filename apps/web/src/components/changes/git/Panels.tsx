@@ -26,7 +26,11 @@ export function Panel({
   return (
     <section
       onMouseDown={onMouseDown}
-      className={clsx("relative flex min-h-[38px] min-w-0 flex-col rounded border", active ? (focused ? "border-emerald-400/80" : "border-emerald-400/45") : "border-line-strong", className)}
+      className={clsx(
+        "relative flex min-h-[38px] min-w-0 flex-col rounded border",
+        active ? (focused ? "border-emerald-400/80" : "border-emerald-400/45") : "border-line-strong",
+        className,
+      )}
     >
       <div className="pointer-events-none absolute -top-[9px] right-2 left-2 flex items-center justify-between gap-2 text-[11px] leading-4">
         <span className={clsx("truncate bg-bg px-1", active ? "font-semibold text-emerald-300" : "text-muted")}>{title}</span>

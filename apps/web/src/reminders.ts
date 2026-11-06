@@ -52,7 +52,7 @@ function morning(from: Date, days: number) {
 /** The quick choices for a reminder, from `now`. */
 export function reminderPresets(now: Date): { label: string; at: Date }[] {
   // Monday, a week from today if that's a Monday.
-  const toMonday = ((8 - now.getDay()) % 7) || 7;
+  const toMonday = (8 - now.getDay()) % 7 || 7;
   return [
     { label: "In 1 hour", at: new Date(now.getTime() + 3600_000) },
     { label: "In 3 hours", at: new Date(now.getTime() + 3 * 3600_000) },

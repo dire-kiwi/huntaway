@@ -92,7 +92,13 @@ function subagent_status(state: Shared, run: Run, thread: string, status: string
   const message =
     status === "running"
       ? { type: "system", subtype: "task_updated", tool_use_id: subagent_id(thread), patch: { status } }
-      : { type: "system", subtype: "task_notification", tool_use_id: subagent_id(thread), status, summary: summary !== null ? truncate(summary, 30_000) : null };
+      : {
+          type: "system",
+          subtype: "task_notification",
+          tool_use_id: subagent_id(thread),
+          status,
+          summary: summary !== null ? truncate(summary, 30_000) : null,
+        };
   const m = state.add_message(run.task_id, "claude", message);
   wait.subagent_finished(state, run, m.data);
 }
@@ -121,7 +127,11 @@ function subagent_item(state: Shared, run: Run, session: string | null, params: 
       subagent_started(state, task_id, session, thread, sender, { prompt: g(item.prompt), model: g(item.model) });
     }
     if (item.status !== "failed") {
-      const status = ["resumeAgent", "sendInput", "followupTask"].includes(tool) ? "running" : ["closeAgent", "interruptAgent"].includes(tool) ? "stopped" : null;
+      const status = ["resumeAgent", "sendInput", "followupTask"].includes(tool)
+        ? "running"
+        : ["closeAgent", "interruptAgent"].includes(tool)
+          ? "stopped"
+          : null;
       if (status !== null) subagent_status(state, run, thread, status, null);
     }
   }
@@ -130,10 +140,15 @@ function subagent_item(state: Shared, run: Run, session: string | null, params: 
     if (thread === session) continue;
     const s = states[thread];
     const normalized = (
-      { pendingInit: "running", running: "running", completed: "completed", errored: "failed", notFound: "failed", shutdown: "stopped", interrupted: "stopped" } as Record<
-        string,
-        string
-      >
+      {
+        pendingInit: "running",
+        running: "running",
+        completed: "completed",
+        errored: "failed",
+        notFound: "failed",
+        shutdown: "stopped",
+        interrupted: "stopped",
+      } as Record<string, string>
     )[str(s?.status) ?? ""];
     if (normalized === undefined) continue;
     subagent_status(state, run, thread, normalized, str(s?.message));

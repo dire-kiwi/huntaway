@@ -32,7 +32,15 @@ export type Dialog =
   | { kind: "help" }
   | { kind: "confirm"; title: string; body: ReactNode; yes: string; danger?: boolean; onYes: () => void }
   | { kind: "menu"; title: string; items: MenuEntry[] }
-  | { kind: "message"; title: string; summary: string; body: string; yes: string; submit: (message: string) => Promise<unknown>; onDraft?: (message: string) => void }
+  | {
+      kind: "message";
+      title: string;
+      summary: string;
+      body: string;
+      yes: string;
+      submit: (message: string) => Promise<unknown>;
+      onDraft?: (message: string) => void;
+    }
   | { kind: "input"; title: string; placeholder: string; yes: string; submit: (text: string) => void };
 
 /** A file's (or folder's) diffs, as fetched: unstaged and staged. */
@@ -61,7 +69,15 @@ export function nearestChange(f: FileDiff, rows: DiffRow[], i: number, dir: 1 | 
 export const short = (sha: string) => sha.slice(0, 8);
 export const ago = (secs: number) => {
   const s = Math.max(0, Date.now() / 1000 - secs);
-  return s < 60 ? "now" : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : s < 86400 * 365 ? `${Math.floor(s / 86400)}d` : `${Math.floor(s / 86400 / 365)}y`;
+  return s < 60
+    ? "now"
+    : s < 3600
+      ? `${Math.floor(s / 60)}m`
+      : s < 86400
+        ? `${Math.floor(s / 3600)}h`
+        : s < 86400 * 365
+          ? `${Math.floor(s / 86400)}d`
+          : `${Math.floor(s / 86400 / 365)}y`;
 };
 export const errText = (e: unknown) => (e as Error).message;
 
@@ -70,14 +86,21 @@ export const withOrig = (files: GitFile[]) => files.flatMap((f) => (f.orig_path 
 /** A row's path for staging: the file's, or the folder's (without its `/`). */
 export const rowPath = (r: FileRow) => (r.file ? r.file.path : r.key.slice(0, -1));
 
-
 export const toggled = (set: ReadonlySet<string>, k: string) => {
   const next = new Set(set);
   if (!next.delete(k)) next.add(k);
   return next;
 };
 
-export function mainTitle(side: Side, status: GitStatus, row: FileRow | undefined, commit: GitCommit | undefined, stash: GitStash | undefined, turn: Turn | undefined, latest: boolean) {
+export function mainTitle(
+  side: Side,
+  status: GitStatus,
+  row: FileRow | undefined,
+  commit: GitCommit | undefined,
+  stash: GitStash | undefined,
+  turn: Turn | undefined,
+  latest: boolean,
+) {
   if (side === "status") return status.base ? `Branch changes vs ${status.base}` : "Changes";
   if (side === "turns") return turn ? `${latest && !turn.stale ? "Latest turn" : `Turn ${turn.turn}`} · ${turnStat(turn)}` : "Turns";
   if (side === "files") return row ? `Changes in ${row.key}` : "Files";
@@ -100,7 +123,12 @@ export async function loadFileDiffs(h: string, id: string, r: FileRow): Promise<
     r.files.some(hasStaged) ? one(path, { staged: true }) : none,
   ]);
   // Untracked files, as if added (a folder's first few).
-  const added = await Promise.all(r.files.filter(untracked).slice(0, 20).map((f) => one(f.path, { untracked: true })));
+  const added = await Promise.all(
+    r.files
+      .filter(untracked)
+      .slice(0, 20)
+      .map((f) => one(f.path, { untracked: true })),
+  );
   return {
     key: r.key,
     unstaged: [u, ...added].map((d) => d.patch).join(""),

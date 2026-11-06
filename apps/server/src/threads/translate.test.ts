@@ -70,16 +70,29 @@ function convert_all(messages: Message[], o: { rebuilds?: boolean } = {}): Conve
 test("converts_a_turn", () => {
   const c = convert_all([
     msg(1, "user", { text: "Fix the test", auto: true }),
-    assistant(2, null, [{ type: "thinking", thinking: "Hmm" }, { type: "text", text: "Looking" }, { type: "tool_use", id: "tu1", name: "Bash", input: { command: "cargo test" } }]),
+    assistant(2, null, [
+      { type: "thinking", thinking: "Hmm" },
+      { type: "text", text: "Looking" },
+      { type: "tool_use", id: "tu1", name: "Bash", input: { command: "cargo test" } },
+    ]),
     results(3, null, [{ type: "tool_result", tool_use_id: "tu1", content: [{ type: "text", text: "ok" }] }]),
     assistant(4, null, [{ type: "text", text: "  " }]),
     msg(5, "user", { text: "and the docs", steered: true }),
     msg(6, "claude", { type: "result", subtype: "success", is_error: false, duration_ms: 1200, num_turns: 3, total_cost_usd: 0.5 }),
     msg(7, "event", { level: "warn", text: "Slow", detail: null }),
   ]);
-  assert.deepEqual(c.items.map((i) => i.id), ["legacy:1", "legacy:2:0", "legacy:2:1", "tu1", "legacy:5", "legacy:6", "legacy:7"]);
+  assert.deepEqual(
+    c.items.map((i) => i.id),
+    ["legacy:1", "legacy:2:0", "legacy:2:1", "tu1", "legacy:5", "legacy:6", "legacy:7"],
+  );
   const items = by_id(c);
-  assert.deepEqual(items["legacy:1"], { id: "legacy:1", type: "user_message", text: "Fix the test", created_at: "2026-11-01T00:00:01.000Z", metadata: { auto: true } });
+  assert.deepEqual(items["legacy:1"], {
+    id: "legacy:1",
+    type: "user_message",
+    text: "Fix the test",
+    created_at: "2026-11-01T00:00:01.000Z",
+    metadata: { auto: true },
+  });
   assert.equal(items["legacy:5"].metadata, undefined);
   assert.equal(items["legacy:5"].steered, true);
   assert.equal(items["legacy:2:0"].type, "reasoning");
@@ -131,7 +144,14 @@ test("subagents_and_their_messages", () => {
   assert.equal(items.ag.kind, "subagent");
   assert.equal(items.ag.title, "Look around");
   // It ended with its task_notification (message 7), not its call's result after it.
-  assert.deepEqual(items.ag.subagent, { status: "completed", agent_type: "Explore", model: "haiku", activity: "Reading /a", tool_uses: 1, ended_at: "2026-11-01T00:00:07.000Z" });
+  assert.deepEqual(items.ag.subagent, {
+    status: "completed",
+    agent_type: "Explore",
+    model: "haiku",
+    activity: "Reading /a",
+    tool_uses: 1,
+    ended_at: "2026-11-01T00:00:07.000Z",
+  });
   assert.equal(items.rd.parent_id, "ag");
   assert.equal(items.rd.path, "/a");
   assert.deepEqual([items["legacy:13"].code, items["legacy:13"].parent_id], ["interrupted", "ag"]);
@@ -212,10 +232,9 @@ test("prompts_become_requests", () => {
   // The Task call never got a result.
   assert.deepEqual(codes(c), ["no_result", "open_prompt"]);
   // A history that goes on keeps it open.
-  const open = convert(
-    [msg(8, "permission", { tool_name: "delete_task", kind: "delete_task", input: { task: "X-1" }, request_id: "r5", status: "pending" })],
-    { finished: false },
-  );
+  const open = convert([msg(8, "permission", { tool_name: "delete_task", kind: "delete_task", input: { task: "X-1" }, request_id: "r5", status: "pending" })], {
+    finished: false,
+  });
   assert.equal(open.requests[0]!.resolution, undefined);
   assert.deepEqual(open.warnings, []);
 });
@@ -226,7 +245,10 @@ test("a_prompt_answered_later_resolves_its_request", () => {
   const t = new Translator();
   t.message(assistant(1, null, [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls" } }]));
   const asked = t.message(msg(2, "permission", pending));
-  assert.deepEqual(asked.events.map((e) => e.type), ["request.opened"]);
+  assert.deepEqual(
+    asked.events.map((e) => e.type),
+    ["request.opened"],
+  );
   const again = t.message(msg(2, "permission", pending));
   assert.deepEqual([again.disposition, again.events], ["redundant", []]);
   const allowed = t.message(msg(2, "permission", { ...pending, status: "allowed" }));
@@ -235,7 +257,17 @@ test("a_prompt_answered_later_resolves_its_request", () => {
   assert.deepEqual(allowed.events, [
     {
       type: "request.opened",
-      request: { id: "r", created_at: "2026-11-01T00:00:02.000Z", tool_call_id: "c", metadata: { ...stored, status: "allowed", message_id: 2 }, type: "permission", kind: "shell", name: "Bash", input: { command: "ls" }, title: "ls" },
+      request: {
+        id: "r",
+        created_at: "2026-11-01T00:00:02.000Z",
+        tool_call_id: "c",
+        metadata: { ...stored, status: "allowed", message_id: 2 },
+        type: "permission",
+        kind: "shell",
+        name: "Bash",
+        input: { command: "ls" },
+        title: "ls",
+      },
     },
     { type: "request.resolved", request_id: "r", resolution: { outcome: "allow" } },
   ]);
@@ -271,7 +303,10 @@ test("a_late_answer_after_its_run_ended_resolves_its_request_again", () => {
   const t = new Translator();
   const live = writes.map((m) => t.message(m));
   // The expiries cancel, and the late answers resolve them again (each replacing the board's record of it first).
-  assert.deepEqual(live.slice(5).map((s) => s.events.map((e) => e.type)), Array(6).fill(["request.opened", "request.resolved"]));
+  assert.deepEqual(
+    live.slice(5).map((s) => s.events.map((e) => e.type)),
+    Array(6).fill(["request.opened", "request.resolved"]),
+  );
   const final = new Map(writes.map((m) => [m.id, m]));
   const whole = convert([...final.values()], { finished: false });
   assert.deepEqual(fold(live.flatMap((s) => s.events)), { items: whole.items, requests: whole.requests });
@@ -288,7 +323,14 @@ test("a_late_answer_after_its_run_ended_resolves_its_request_again", () => {
 });
 
 test("board_questions", () => {
-  const card = (status: string) => ({ question: "Merge?", options: [{ label: "Yes" }, { label: "No" }], multi_select: false, allow_other: true, call_id: "c", status });
+  const card = (status: string) => ({
+    question: "Merge?",
+    options: [{ label: "Yes" }, { label: "No" }],
+    multi_select: false,
+    allow_other: true,
+    call_id: "c",
+    status,
+  });
   const c = convert_all([
     msg(1, "question", { ...card("answered"), answer: { choices: ["Yes"], text: "now" } }),
     msg(2, "question", card("replied")),
@@ -379,20 +421,26 @@ test("a_subagent_that_runs_again_keeps_when_it_first_ended_until_it_does", () =>
 
 test("what_the_history_doesnt_say", () => {
   const long = `${"x".repeat(30_000)}\n… [truncated 5 bytes]`;
-  const c = convert_all([
-    // A result before its call, a call with no result, and a result with no call.
-    results(1, null, [{ type: "tool_result", tool_use_id: "early", content: "first" }]),
-    assistant(2, null, [{ type: "tool_use", id: "early", name: "Read", input: {} }, { type: "tool_use", id: "open", name: "Grep", input: { pattern: "x" } }]),
-    results(3, null, [{ type: "tool_result", tool_use_id: "nowhere", content: "?" }]),
-    // The same call id again.
-    assistant(4, null, [{ type: "tool_use", id: "early", name: "Read", input: {} }]),
-    results(5, null, [{ type: "tool_result", tool_use_id: "early", content: long }]),
-    assistant(6, "missing", [{ type: "text", text: "orphan" }]),
-    msg(7, "claude", { type: "system", subtype: "task_updated", task_id: "never" }),
-    msg(8, "claude", { type: "system", subtype: "hook_response" }),
-    results(9, null, [{ type: "text", text: "[Request interrupted by user]" }]),
-    msg(10, "mystery", {}),
-  ], { rebuilds: false });
+  const c = convert_all(
+    [
+      // A result before its call, a call with no result, and a result with no call.
+      results(1, null, [{ type: "tool_result", tool_use_id: "early", content: "first" }]),
+      assistant(2, null, [
+        { type: "tool_use", id: "early", name: "Read", input: {} },
+        { type: "tool_use", id: "open", name: "Grep", input: { pattern: "x" } },
+      ]),
+      results(3, null, [{ type: "tool_result", tool_use_id: "nowhere", content: "?" }]),
+      // The same call id again.
+      assistant(4, null, [{ type: "tool_use", id: "early", name: "Read", input: {} }]),
+      results(5, null, [{ type: "tool_result", tool_use_id: "early", content: long }]),
+      assistant(6, "missing", [{ type: "text", text: "orphan" }]),
+      msg(7, "claude", { type: "system", subtype: "task_updated", task_id: "never" }),
+      msg(8, "claude", { type: "system", subtype: "hook_response" }),
+      results(9, null, [{ type: "text", text: "[Request interrupted by user]" }]),
+      msg(10, "mystery", {}),
+    ],
+    { rebuilds: false },
+  );
   const items = by_id(c);
   assert.equal(items.early.result.content, "first");
   assert.equal(items.open.status, "cancelled");
@@ -407,14 +455,22 @@ test("what_the_history_doesnt_say", () => {
 
 test("what_waits_for_its_call_is_lost_by_a_rebuild_in_between", () => {
   // A result stored before its call is held in memory: rebuilt from the store in between, it never finds its call.
-  const messages = [results(1, null, [{ type: "tool_result", tool_use_id: "early", content: "first" }]), assistant(2, null, [{ type: "tool_use", id: "early", name: "Read", input: {} }])];
+  const messages = [
+    results(1, null, [{ type: "tool_result", tool_use_id: "early", content: "first" }]),
+    assistant(2, null, [{ type: "tool_use", id: "early", name: "Read", input: {} }]),
+  ];
   assert.equal(by_id(convert(messages)).early.result.content, "first");
   const r = rebuilt_at_every_step(messages);
   assert.equal(by_id(r).early.result, undefined);
 });
 
 test("codex_file_changes_are_edits", () => {
-  const input = { changes: [{ path: "/a.rs", kind: "add", diff: "+x" }, { path: "/b.rs", kind: "update", move_path: "/c.rs", diff: "@@" }] };
+  const input = {
+    changes: [
+      { path: "/a.rs", kind: "add", diff: "+x" },
+      { path: "/b.rs", kind: "update", move_path: "/c.rs", diff: "@@" },
+    ],
+  };
   const c = convert_all([assistant(1, null, [{ type: "tool_use", id: "p", name: "ApplyPatch", input }])]);
   assert.deepEqual((c.items[0] as any).changes, [
     { path: "/a.rs", op: "add", diff: "+x" },
@@ -423,15 +479,18 @@ test("codex_file_changes_are_edits", () => {
 });
 
 test("a_prompt_before_a_call_with_a_reused_id_is_for_that_call", () => {
-  const c = convert_all([
-    assistant(1, null, [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls" } }]),
-    results(2, null, [{ type: "tool_result", tool_use_id: "c", content: "a" }]),
-    msg(3, "permission", { tool_name: "Bash", input: { command: "rm x" }, tool_use_id: "c", request_id: "r1", status: "denied" }),
-    assistant(4, "ag", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "rm x" } }]),
-    results(5, "ag", [{ type: "tool_result", tool_use_id: "c", content: "Denied", is_error: true }]),
-    // A prompt after both have their results can't be told apart.
-    msg(6, "permission", { tool_name: "Bash", input: {}, tool_use_id: "c", request_id: "r2", status: "allowed" }),
-  ], { rebuilds: false });
+  const c = convert_all(
+    [
+      assistant(1, null, [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls" } }]),
+      results(2, null, [{ type: "tool_result", tool_use_id: "c", content: "a" }]),
+      msg(3, "permission", { tool_name: "Bash", input: { command: "rm x" }, tool_use_id: "c", request_id: "r1", status: "denied" }),
+      assistant(4, "ag", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "rm x" } }]),
+      results(5, "ag", [{ type: "tool_result", tool_use_id: "c", content: "Denied", is_error: true }]),
+      // A prompt after both have their results can't be told apart.
+      msg(6, "permission", { tool_name: "Bash", input: {}, tool_use_id: "c", request_id: "r2", status: "allowed" }),
+    ],
+    { rebuilds: false },
+  );
   const items = by_id(c);
   assert.deepEqual([items.c.status, items.c.result.content], ["completed", "a"]);
   assert.deepEqual([items["legacy:4:0"].status, items["legacy:4:0"].result.content], ["denied", "Denied"]);
@@ -458,7 +517,10 @@ test("a_subagents_compaction_and_its_summary_stay_in_it", () => {
 
 test("calls_with_one_id_in_two_subagents_get_their_own_results", () => {
   const c = convert_all([
-    assistant(1, null, [{ type: "tool_use", id: "a", name: "Agent", input: {} }, { type: "tool_use", id: "b", name: "Agent", input: {} }]),
+    assistant(1, null, [
+      { type: "tool_use", id: "a", name: "Agent", input: {} },
+      { type: "tool_use", id: "b", name: "Agent", input: {} },
+    ]),
     assistant(2, "a", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls a" } }]),
     assistant(3, "b", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls b" } }]),
     results(4, "a", [{ type: "tool_result", tool_use_id: "c", content: "out a" }]),
@@ -486,7 +548,11 @@ test("a_result_two_calls_with_its_id_wait_for_goes_to_neither", () => {
 const bash = (id: number, session: string, command: string) =>
   msg(id, "claude", { type: "assistant", session_id: session, message: { content: [{ type: "tool_use", id: "c", name: "Bash", input: { command } }] } });
 const bash_denied = (id: number, session: string) =>
-  msg(id, "claude", { type: "user", session_id: session, message: { content: [{ type: "tool_result", tool_use_id: "c", content: "Denied", is_error: true }] } });
+  msg(id, "claude", {
+    type: "user",
+    session_id: session,
+    message: { content: [{ type: "tool_result", tool_use_id: "c", content: "Denied", is_error: true }] },
+  });
 
 test("a_prompt_before_a_reused_id_whose_first_call_never_returned", () => {
   const denied = (command: string) => msg(2, "permission", { tool_name: "Bash", input: { command }, tool_use_id: "c", request_id: "r", status: "denied" });
@@ -501,13 +567,16 @@ test("a_prompt_before_a_reused_id_whose_first_call_never_returned", () => {
 });
 
 test("a_subagents_compaction_and_summary_before_its_call", () => {
-  const c = convert_all([
-    msg(1, "claude", { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto" } }),
-    msg(2, "claude", { type: "system", subtype: "compact_boundary", parent_tool_use_id: "ag", compact_metadata: { trigger: "auto" } }),
-    msg(3, "claude", { type: "user", isSynthetic: true, parent_tool_use_id: "ag", message: { content: "Child summary" } }),
-    assistant(4, null, [{ type: "tool_use", id: "ag", name: "Agent", input: {} }]),
-    results(5, null, [{ type: "tool_result", tool_use_id: "ag", content: "done" }]),
-  ], { rebuilds: false });
+  const c = convert_all(
+    [
+      msg(1, "claude", { type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto" } }),
+      msg(2, "claude", { type: "system", subtype: "compact_boundary", parent_tool_use_id: "ag", compact_metadata: { trigger: "auto" } }),
+      msg(3, "claude", { type: "user", isSynthetic: true, parent_tool_use_id: "ag", message: { content: "Child summary" } }),
+      assistant(4, null, [{ type: "tool_use", id: "ag", name: "Agent", input: {} }]),
+      results(5, null, [{ type: "tool_result", tool_use_id: "ag", content: "done" }]),
+    ],
+    { rebuilds: false },
+  );
   const items = by_id(c);
   assert.deepEqual([items["legacy:2"].parent_id, items["legacy:2"].summary], ["ag", "Child summary"]);
   assert.equal(items["legacy:1"].summary, undefined);
@@ -517,7 +586,8 @@ test("a_subagents_compaction_and_summary_before_its_call", () => {
 test("a_result_before_its_agent_call_keeps_what_the_board_kept_of_it", () => {
   const call = assistant(2, null, [{ type: "tool_use", id: "ag", name: "Agent", input: { description: "Away" } }]);
   const meta = { agentId: "x", resolvedModel: "haiku", agentType: "Explore", totalToolUseCount: 3, isAsync: true, status: "async_launched" };
-  const result = (id: number) => msg(id, "claude", { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "ag", content: "Launched" }] }, tool_use_result: meta });
+  const result = (id: number) =>
+    msg(id, "claude", { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "ag", content: "Launched" }] }, tool_use_result: meta });
   const early = by_id(convert_all([result(1), call], { rebuilds: false })).ag;
   const in_order = by_id(convert_all([call, result(3)])).ag;
   assert.deepEqual(early.subagent, { status: "stopped", background: true, model: "haiku", agent_type: "Explore", tool_uses: 3 });
@@ -525,16 +595,22 @@ test("a_result_before_its_agent_call_keeps_what_the_board_kept_of_it", () => {
 });
 
 test("a_prompt_before_two_calls_with_its_id_is_for_the_one_with_its_input", () => {
-  const c = convert_all([
-    assistant(1, null, [{ type: "tool_use", id: "a", name: "Agent", input: {} }, { type: "tool_use", id: "b", name: "Agent", input: {} }]),
-    assistant(3, "a", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls a" } }]),
-    msg(4, "permission", { tool_name: "Bash", input: { command: "ls b" }, tool_use_id: "c", request_id: "r", status: "denied" }),
-    assistant(5, "b", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls b" } }]),
-    results(6, "a", [{ type: "tool_result", tool_use_id: "c", content: "out a" }]),
-    results(7, "b", [{ type: "tool_result", tool_use_id: "c", content: "Denied", is_error: true }]),
-    // Neither call has this input: no telling.
-    msg(8, "permission", { tool_name: "Bash", input: { command: "ls c" }, tool_use_id: "c", request_id: "r2", status: "allowed" }),
-  ], { rebuilds: false });
+  const c = convert_all(
+    [
+      assistant(1, null, [
+        { type: "tool_use", id: "a", name: "Agent", input: {} },
+        { type: "tool_use", id: "b", name: "Agent", input: {} },
+      ]),
+      assistant(3, "a", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls a" } }]),
+      msg(4, "permission", { tool_name: "Bash", input: { command: "ls b" }, tool_use_id: "c", request_id: "r", status: "denied" }),
+      assistant(5, "b", [{ type: "tool_use", id: "c", name: "Bash", input: { command: "ls b" } }]),
+      results(6, "a", [{ type: "tool_result", tool_use_id: "c", content: "out a" }]),
+      results(7, "b", [{ type: "tool_result", tool_use_id: "c", content: "Denied", is_error: true }]),
+      // Neither call has this input: no telling.
+      msg(8, "permission", { tool_name: "Bash", input: { command: "ls c" }, tool_use_id: "c", request_id: "r2", status: "allowed" }),
+    ],
+    { rebuilds: false },
+  );
   const r = c.requests as any[];
   assert.deepEqual([r[0].tool_call_id, r[0].parent_id], ["legacy:5:0", "b"]);
   const items = by_id(c);
@@ -545,13 +621,16 @@ test("a_prompt_before_two_calls_with_its_id_is_for_the_one_with_its_input", () =
 });
 
 test("a_prompt_matching_no_call_with_its_reused_id_is_for_none", () => {
-  const c = convert_all([
-    bash(1, "s1", "ls a"),
-    msg(2, "claude", { type: "user", session_id: "s1", message: { content: [{ type: "tool_result", tool_use_id: "c", content: "a" }] } }),
-    msg(3, "permission", { tool_name: "Bash", input: { command: "rm c" }, tool_use_id: "c", request_id: "r", status: "denied" }),
-    bash(4, "s2", "ls b"),
-    bash_denied(5, "s2"),
-  ], { rebuilds: false });
+  const c = convert_all(
+    [
+      bash(1, "s1", "ls a"),
+      msg(2, "claude", { type: "user", session_id: "s1", message: { content: [{ type: "tool_result", tool_use_id: "c", content: "a" }] } }),
+      msg(3, "permission", { tool_name: "Bash", input: { command: "rm c" }, tool_use_id: "c", request_id: "r", status: "denied" }),
+      bash(4, "s2", "ls b"),
+      bash_denied(5, "s2"),
+    ],
+    { rebuilds: false },
+  );
   assert.equal(c.requests[0]!.tool_call_id, undefined);
   const items = by_id(c);
   assert.deepEqual([items.c.status, items["legacy:4:0"].status], ["completed", "failed"]);
@@ -572,8 +651,17 @@ test("what_a_turn_ended_by_saying_and_what_the_board_knows_of_items", () => {
     msg(8, "user", { text: "Start working on this task.", auto: true }),
     msg(9, "user", { text: "Rebase", from_agent: true }),
   ]);
-  assert.deepEqual(c.items.map((i) => i.id), ["legacy:1", "legacy:2:0", "legacy:3", "legacy:4:result", "legacy:4", "legacy:5", "a1", "legacy:8", "legacy:9"]);
-  assert.deepEqual(by_id(c)["legacy:4:result"], { id: "legacy:4:result", type: "assistant_message", text: "The report is in.", created_at: "2026-11-01T00:00:04.000Z", metadata: { from_result: true } });
+  assert.deepEqual(
+    c.items.map((i) => i.id),
+    ["legacy:1", "legacy:2:0", "legacy:3", "legacy:4:result", "legacy:4", "legacy:5", "a1", "legacy:8", "legacy:9"],
+  );
+  assert.deepEqual(by_id(c)["legacy:4:result"], {
+    id: "legacy:4:result",
+    type: "assistant_message",
+    text: "The report is in.",
+    created_at: "2026-11-01T00:00:04.000Z",
+    metadata: { from_result: true },
+  });
   assert.equal(by_id(c)["legacy:5"].error, "Boom");
   assert.deepEqual(Object.fromEntries(c.meta), {
     "legacy:1": { user_text: "Go" },
@@ -591,7 +679,11 @@ test("a_rebuild_mid_turn_knows_what_the_turn_said", () => {
   // Two text blocks of one message around a call: the result says both again, so it adds nothing.
   convert_all([
     msg(1, "user", { text: "Go" }),
-    assistant(2, null, [{ type: "text", text: "One" }, { type: "tool_use", id: "x", name: "Read", input: {} }, { type: "text", text: "Two" }]),
+    assistant(2, null, [
+      { type: "text", text: "One" },
+      { type: "tool_use", id: "x", name: "Read", input: {} },
+      { type: "text", text: "Two" },
+    ]),
     results(3, null, [{ type: "tool_result", tool_use_id: "x", content: "" }]),
     msg(4, "claude", { type: "result", subtype: "success", result: "One\nTwo", num_turns: 1 }),
   ]);

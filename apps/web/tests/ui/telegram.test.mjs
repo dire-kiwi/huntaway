@@ -80,7 +80,10 @@ test("the assistant's Telegram bot is set up, linked and unlinked from its detai
     assert.match(command, /^\/start [A-Za-z0-9]{16}$/);
     assert.notEqual(command, seen);
     // Sent from a private chat: the panel says who it's linked to, without a reload.
-    fake.updates.push({ update_id: 2, message: { message_id: 2, from: { id: 7, first_name: "Pat", username: "pat" }, chat: { id: 7, type: "private" }, text: command } });
+    fake.updates.push({
+      update_id: 2,
+      message: { message_id: 2, from: { id: 7, first_name: "Pat", username: "pat" }, chat: { id: 7, type: "private" }, text: command },
+    });
     await ui.run(["wait is linked to", "wait Pat", "gone Send this to @test_bot"]);
     assert.equal((await server.api("GET", base)).owner.name, "Pat");
     assert.ok(fake.sent.some((m) => m.chat_id === 7 && m.text.includes("Linked to the Default profile's assistant")));

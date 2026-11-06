@@ -105,7 +105,10 @@ export async function unmerged(state: AppState, task: Task): Promise<boolean> {
       env?.drop();
     }
   };
-  const got = await within(5000, pr().catch(() => null));
+  const got = await within(
+    5000,
+    pr().catch(() => null),
+  );
   return !(got != null && got.state === "MERGED");
 }
 
@@ -116,7 +119,9 @@ export async function unmerged(state: AppState, task: Task): Promise<boolean> {
  */
 export async function pr_approval_required(state: AppState, task: Task): Promise<boolean> {
   const c = state.db();
-  let project: Project | null = null, in_subproject = false, required = false;
+  let project: Project | null = null,
+    in_subproject = false,
+    required = false;
   try {
     project = task.project_id ? db.get_project(c, task.project_id) : null;
   } catch {}
@@ -148,7 +153,8 @@ export function approved_by_reviews(pr: any): boolean {
   if (decision === "CHANGES_REQUESTED" || decision === "REVIEW_REQUIRED") return false;
   const verdicts = new Map<string, string>();
   for (const r of Array.isArray(pr?.reviews) ? pr.reviews : []) {
-    const who = r?.author?.login, st = r?.state;
+    const who = r?.author?.login,
+      st = r?.state;
     if (typeof who !== "string" || typeof st !== "string") continue;
     // Anyone can review a public repository's pull request: only those with a say in the repository count.
     const assoc = typeof r.authorAssociation === "string" ? r.authorAssociation : "";

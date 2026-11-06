@@ -77,11 +77,24 @@ export function default_rules(): Rule[] {
   const g = (p: string) => `mcp__${GOOGLE_SERVER}__${p}`;
   const allow = ["search*", "get*", "list*", "read*", "check*", "query*", "*draft*"].map((p) => rule(g(p), "allow"));
   const ask = [
-    "*send*", "create*event*", "modify*event*", "update*event*", "delete*event*", "*share*", "*add*permission*", "*update*permission*",
-    "*remove*permission*", "set*permission*", "*message*label*", "manage*", "update*file*", "create*filter*", "*transfer*",
+    "*send*",
+    "create*event*",
+    "modify*event*",
+    "update*event*",
+    "delete*event*",
+    "*share*",
+    "*add*permission*",
+    "*update*permission*",
+    "*remove*permission*",
+    "set*permission*",
+    "*message*label*",
+    "manage*",
+    "update*file*",
+    "create*filter*",
+    "*transfer*",
   ].map((p) => rule(g(p), "ask"));
   const never = ["*trash*", "*delete*mail*", "*mail*delete*", "*delete*message*", "*delete*file*", "*delete*drive*", "*drive*delete*"].map((p) =>
-    rule(g(p), "never")
+    rule(g(p), "never"),
   );
   return [...allow, ...ask, ...never];
 }
@@ -213,7 +226,8 @@ export function claude_matcher(rules: Rule[]): string {
     const p = r.tool.trim().toLowerCase();
     if (!p.startsWith("mcp__")) return "*";
     const rest = p.slice(5);
-    const star = rest.indexOf("*"), sep = rest.indexOf("__");
+    const star = rest.indexOf("*"),
+      sep = rest.indexOf("__");
     // A pattern in the server's name matches whatever starts with what comes before it; otherwise the rule is for the
     // server or its tools.
     const in_server = star >= 0 && (sep < 0 || star < sep);
@@ -261,7 +275,11 @@ export function on_tool_results(s: Shared, task: Task, v: any): void {
   for (const b of blocks.filter((b) => b?.type === "tool_result" && b?.is_error === true)) {
     let text: string;
     if (typeof b.content === "string") text = b.content;
-    else if (Array.isArray(b.content)) text = b.content.filter((p: any) => typeof p?.text === "string").map((p: any) => p.text).join("\n");
+    else if (Array.isArray(b.content))
+      text = b.content
+        .filter((p: any) => typeof p?.text === "string")
+        .map((p: any) => p.text)
+        .join("\n");
     else continue;
     if (!text.includes(BLOCKED)) continue;
     if (typeof b.tool_use_id !== "string") continue;
@@ -317,7 +335,10 @@ export function codex_server(rules: Rules, server: string, cfg: Record<string, a
   }
   cfg.tools ??= {};
   const tools = cfg.tools;
-  for (const [d, mode] of [["allow", "approve"], ["ask", "prompt"]] as const) {
+  for (const [d, mode] of [
+    ["allow", "approve"],
+    ["ask", "prompt"],
+  ] as const) {
     for (const t of exact(d)) {
       // Unless a stronger rule matches it too.
       if (decide(rules, `${prefix}__${t}`)?.decision === d) tools[t] = { approval_mode: mode };
@@ -466,12 +487,24 @@ function insert(c: Conn, task: Task, request_id: string | null, tool: string, in
     c,
     `INSERT INTO approval_log (id,profile_id,task_id,request_id,tool_name,summary,rule,decision,outcome,answered_by,created_at,decided_at)
      VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)`,
-    new_id(), task.profile_id, task.id, request_id, tool, summarize(input), rule, d, outcome, by, at, decided,
+    new_id(),
+    task.profile_id,
+    task.id,
+    request_id,
+    tool,
+    summarize(input),
+    rule,
+    d,
+    outcome,
+    by,
+    at,
+    decided,
   );
   db.run(
     c,
     "DELETE FROM approval_log WHERE profile_id=?1 AND id NOT IN (SELECT id FROM approval_log WHERE profile_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2)",
-    task.profile_id, KEEP,
+    task.profile_id,
+    KEEP,
   );
 }
 
@@ -481,7 +514,10 @@ export function settle(s: Shared, request_id: string, outcome: string, by: strin
   const n = db.run(
     c,
     "UPDATE approval_log SET outcome=?2, answered_by=?3, decided_at=?4 WHERE request_id=?1 AND outcome='pending'",
-    request_id, outcome, by, now(),
+    request_id,
+    outcome,
+    by,
+    now(),
   ).changes;
   if (n === 0) return;
   const task_id = db.value<string>(c, "SELECT task_id FROM approval_log WHERE request_id=?1", request_id);
@@ -500,6 +536,7 @@ export function list(c: Conn, profile_id: string, limit: number): Action[] {
     c,
     `SELECT id,task_id,request_id,tool_name,summary,rule,decision,outcome,answered_by,created_at,decided_at FROM approval_log
      WHERE profile_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2`,
-    profile_id, Math.min(Math.max(limit, 1), MAX_LISTED),
+    profile_id,
+    Math.min(Math.max(limit, 1), MAX_LISTED),
   );
 }

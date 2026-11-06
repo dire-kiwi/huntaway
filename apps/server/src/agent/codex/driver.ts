@@ -326,7 +326,11 @@ function subagent_item(out: Out, p: any): void {
   for (const thread of receivers) {
     if (tool === "spawnAgent" && item.status !== "failed") subagent_started(out, thread, sender, { prompt: g(item.prompt), model: g(item.model) });
     if (item.status !== "failed") {
-      const status = ["resumeAgent", "sendInput", "followupTask"].includes(tool) ? "running" : ["closeAgent", "interruptAgent"].includes(tool) ? "stopped" : null;
+      const status = ["resumeAgent", "sendInput", "followupTask"].includes(tool)
+        ? "running"
+        : ["closeAgent", "interruptAgent"].includes(tool)
+          ? "stopped"
+          : null;
       if (status !== null) subagent_status(out, thread, status, null);
     }
   }

@@ -168,7 +168,9 @@ export function on_result(state: Shared, task_id: string, v: any): void {
     window = u64(models[ctx.model]?.contextWindow);
   } else {
     // Otherwise the biggest: subagents may have run on smaller models.
-    const all = Object.values(models).map((m: any) => u64(m?.contextWindow)).filter((w): w is number => w !== null);
+    const all = Object.values(models)
+      .map((m: any) => u64(m?.contextWindow))
+      .filter((w): w is number => w !== null);
     window = all.length ? Math.max(...all) : null;
   }
   if (window === null) return;

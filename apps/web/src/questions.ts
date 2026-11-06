@@ -56,14 +56,26 @@ export function declinedWithAnswers(questions: AskedQuestion[], answers: string[
 
 /** A plan's title: its first line if that's a heading, without a leading "Plan:". */
 export function planTitle(plan: string): string {
-  const first = plan.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  const first =
+    plan
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean) ?? "";
   if (!first.startsWith("#")) return "";
-  return first.replace(/^#+\s*/, "").replace(/^Plan:\s*/i, "").trim();
+  return first
+    .replace(/^#+\s*/, "")
+    .replace(/^Plan:\s*/i, "")
+    .trim();
 }
 
 /** A plan without its title (shown above it, see planTitle). */
 export function withoutTitle(plan: string): string {
   const lines = plan.split("\n");
   const i = lines.findIndex((l) => l.trim());
-  return i >= 0 && planTitle(plan) ? lines.slice(i + 1).join("\n").replace(/^\s*\n/, "") : plan;
+  return i >= 0 && planTitle(plan)
+    ? lines
+        .slice(i + 1)
+        .join("\n")
+        .replace(/^\s*\n/, "")
+    : plan;
 }

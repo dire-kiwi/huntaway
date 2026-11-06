@@ -118,8 +118,16 @@ export async function next_push(service: Awaited<ReturnType<typeof push_service>
 export function running_task(s: AppState, task_type: string | null): db.Task {
   const profile = db.insert_profile(s.db(), `p${new_id()}`, [], null);
   const task = db.insert_task(s.db(), {
-    profile_id: profile.id, project_id: null, kind: "task", title: "Send the invoice", description: "", status: "in_progress", use_worktree: false,
-    model: null, effort: null, claude_config_id: null,
+    profile_id: profile.id,
+    project_id: null,
+    kind: "task",
+    title: "Send the invoice",
+    description: "",
+    status: "in_progress",
+    use_worktree: false,
+    model: null,
+    effort: null,
+    claude_config_id: null,
   });
   if (task_type !== null) db.run(s.db(), "UPDATE tasks SET task_type=?1 WHERE id=?2", task_type, task.id);
   const run = db.insert_run(s.db(), task.id, "prompt");

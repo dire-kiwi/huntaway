@@ -122,7 +122,10 @@ test("offers_the_commits_a_deployment_runs_ahead_of_this_host", async () => {
   assert.deepEqual([state.deployed!.commit, state.deployed!.error], [ahead, null]);
   // Fetched from origin, so the status lists what it adds.
   const v = await status(state);
-  assert.deepEqual(v.deployed_commits.map((c: string) => c.slice(c.indexOf(" ") + 1)), ["third", "second"]);
+  assert.deepEqual(
+    v.deployed_commits.map((c: string) => c.slice(c.indexOf(" ") + 1)),
+    ["third", "second"],
+  );
   assert.equal(v.update_from, url);
 });
 
@@ -153,7 +156,10 @@ test("keeps_the_last_commit_when_a_check_fails", async () => {
   const state = host_at(src, url);
   await check_deployed(state, url);
   // One that doesn't say (from before API 65), or a commit origin doesn't have.
-  for (const [c, why] of [[null, "doesn't say which commit"], ["0".repeat(40), "isn't on this checkout's origin"]] as Array<[string | null, string]>) {
+  for (const [c, why] of [
+    [null, "doesn't say which commit"],
+    ["0".repeat(40), "isn't on this checkout's origin"],
+  ] as Array<[string | null, string]>) {
     const other = await deployment(c);
     await check_deployed(state, other);
     const d = state.deployed!;
@@ -215,7 +221,9 @@ test("a_restart_keeps_the_process_id_and_port", async () => {
   assert.equal((await s.ready(1)).port, port);
   const token = readFileSync(join(s.data_dir, "auth_token"), "utf8").trim();
   const req = (path: string, init: RequestInit = {}) =>
-    fetch(`http://127.0.0.1:${port}/api${path}`, { ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } }).then((r) => r.json() as any);
+    fetch(`http://127.0.0.1:${port}/api${path}`, { ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } }).then(
+      (r) => r.json() as any,
+    );
   const before = await req("/admin/server");
   const node = children(s.child.pid!);
   assert.deepEqual(await req("/admin/restart", { method: "POST", body: JSON.stringify({ rebuild: false }) }), { ok: true });
@@ -272,7 +280,9 @@ async function write_then_read(port: number, path: string, token: string, body: 
   let write_error: string | null = null;
   sock.on("error", (e: any) => (write_error ??= e.code ?? String(e)));
   const write = (b: Buffer | string) => new Promise<void>((r) => sock.write(b, (e) => (e && (write_error ??= (e as any).code ?? String(e)), r())));
-  await write(`POST ${path} HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer ${token}\r\ncontent-type: application/json\r\ncontent-length: ${body.length}\r\n\r\n`);
+  await write(
+    `POST ${path} HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer ${token}\r\ncontent-type: application/json\r\ncontent-length: ${body.length}\r\n\r\n`,
+  );
   for (let i = 0; i < body.length && write_error === null; i += 256 << 10) {
     await write(body.subarray(i, i + (256 << 10)));
     await sleep(20);
@@ -314,7 +324,10 @@ test("a_rejection_or_a_throw_in_the_background_is_logged_and_the_server_carries_
   // A route's handler that leaves a promise to reject with nothing to handle it, a timer that throws once, and one
   // that throws every second.
   for (const kind of ["reject", "throw", "loop"]) assert.deepEqual(await s.req("/debug/fault", { kind }), { ok: true });
-  await until("the errors in the log", () => /unhandled rejection.*a rejection nobody handles/.test(s.log()) && /uncaught exception.*a timer that throws/.test(s.log()));
+  await until(
+    "the errors in the log",
+    () => /unhandled rejection.*a rejection nobody handles/.test(s.log()) && /uncaught exception.*a timer that throws/.test(s.log()),
+  );
   await until("the loop's second throw", () => s.log().includes("a background loop that throws"));
   await sleep(2500);
   // Still the same server, serving.

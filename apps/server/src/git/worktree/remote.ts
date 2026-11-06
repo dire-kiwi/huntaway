@@ -70,7 +70,9 @@ export async function push_remote(repo: string, base: string | null | undefined)
     return null;
   }
   if (!listed.ok) return null;
-  const remotes = lines(listed.stdout).map((r) => r.trim()).filter((r) => r);
+  const remotes = lines(listed.stdout)
+    .map((r) => r.trim())
+    .filter((r) => r);
   let upstream: string | null = null;
   if (base) {
     try {
@@ -79,8 +81,7 @@ export async function push_remote(repo: string, base: string | null | undefined)
       upstream = null;
     }
   }
-  const remote =
-    upstream !== null && remotes.includes(upstream) ? upstream : remotes.includes("origin") ? "origin" : remotes.length === 1 ? remotes[0] : null;
+  const remote = upstream !== null && remotes.includes(upstream) ? upstream : remotes.includes("origin") ? "origin" : remotes.length === 1 ? remotes[0] : null;
   if (remote === null) return null;
   try {
     return [remote, await git_ok(repo, ["remote", "get-url", "--push", remote])];

@@ -69,9 +69,7 @@ export function updated(s: Shared, t: Task, body: Record<string, any>): Task {
 function expire_before(s: AppState, cutoff: string): number {
   let ids: string[];
   try {
-    ids = db
-      .all(s.db(), "SELECT id FROM tasks WHERE now_at IS NOT NULL AND now_at <= ?1 AND last_activity_at <= ?1 AND running=0", cutoff)
-      .map((r) => r.id);
+    ids = db.all(s.db(), "SELECT id FROM tasks WHERE now_at IS NOT NULL AND now_at <= ?1 AND last_activity_at <= ?1 AND running=0", cutoff).map((r) => r.id);
   } catch (e) {
     console.warn(`finding tasks to send back to later failed: ${err_str(e)}`);
     return 0;

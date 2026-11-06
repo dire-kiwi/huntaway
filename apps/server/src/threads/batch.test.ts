@@ -81,7 +81,15 @@ test("the setting is on by default, and new tasks are flagged", () => {
   const s = testing.on_items(testing.state(), false);
   assert.equal(write.setting_on(s.db()), true);
   const p = db.insert_profile(s.db(), "p", [], null);
-  const t = db.insert_task(s.db(), { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
+  const t = db.insert_task(s.db(), {
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "in_progress",
+    use_worktree: false,
+  });
   s.add_message(t.id, "user", { text: "hi" });
   assert.equal(flagged(s, t.id), true);
   db.set_setting(s.db(), write.SETTING, "false");
@@ -135,12 +143,21 @@ test("the batch covers the tasks that aren't done without this build's items, an
   const [, again] = await call(s, "POST", "/api/admin/threads/batch", {});
   const p2 = await finished(s);
   assert.deepEqual([again.pending, p2.total, p2.rebuilt], [0, 0, 0]);
-  assert.deepEqual(tasks.map((t) => dump(s, t.id)), all);
+  assert.deepEqual(
+    tasks.map((t) => dump(s, t.id)),
+    all,
+  );
   // So does the command line's.
   const out: string[] = [];
-  assert.deepEqual(rebuild_cli.run(rebuild_cli.parse_args(["--batch"]), c, (x) => void out.push(x)), []);
+  assert.deepEqual(
+    rebuild_cli.run(rebuild_cli.parse_args(["--batch"]), c, (x) => void out.push(x)),
+    [],
+  );
   assert.match(out.join(""), /^0 tasks rebuilt/);
-  assert.deepEqual(tasks.map((t) => dump(s, t.id)), all);
+  assert.deepEqual(
+    tasks.map((t) => dump(s, t.id)),
+    all,
+  );
 });
 
 test("the batch stops after the task it's on, goes on with the rest, and goes on after a restart", async () => {
@@ -186,7 +203,10 @@ test("the batch runs while a task writes its thread, and the thread stays comple
   while (batch.progress(s)!.running) {
     seen.add(flagged(s, live));
     s.emit_delta(live, `chunk ${n} `);
-    s.add_message(live, "claude", { type: "assistant", message: { content: [{ type: "tool_use", id: `x${n}`, name: "Read", input: { file_path: `/f${n}` } }] } });
+    s.add_message(live, "claude", {
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: `x${n}`, name: "Read", input: { file_path: `/f${n}` } }] },
+    });
     await tick();
     s.add_message(live, "claude", { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `x${n}`, content: "ok" }] } });
     s.add_message(live, "claude", { type: "assistant", message: { content: [{ type: "text", text: `said ${n}` }] } });
@@ -229,7 +249,10 @@ test("a done task gets its items when it's opened, or read, with the setting on"
   // Its thread, which would be a 404 without items.
   const [tc, thread] = await call(s, "GET", `/api/tasks/${by_thread}/thread?limit=10`);
   assert.equal(tc, 200);
-  assert.deepEqual(thread.items.map((i: any) => i.type), ["user_message", "tool_call", "assistant_message"]);
+  assert.deepEqual(
+    thread.items.map((i: any) => i.type),
+    ["user_message", "tool_call", "assistant_message"],
+  );
   // A reader.
   assert.equal(history.source(c, by_reader!), "items");
   assert.equal(flagged(s, by_reader!), true);
@@ -308,13 +331,22 @@ test("the command line's batch rebuilds the pending tasks beside a server, and s
     const ids = ["in_progress", "done", "todo"].map((status) => {
       const t = db.insert_task(a, { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status, use_worktree: false });
       db.insert_message(a, t.id, "user", { text: "go" });
-      db.insert_message(a, t.id, "claude", { type: "assistant", message: { content: [{ type: "tool_use", id: "c1", name: "Bash", input: { command: "ls" } }] } });
+      db.insert_message(a, t.id, "claude", {
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id: "c1", name: "Bash", input: { command: "ls" } }] },
+      });
       return t.id;
     });
     db.set_setting(a, write.SETTING, null);
     const out: string[] = [];
     const results = rebuild_cli.run(rebuild_cli.parse_args(["--batch"]), b, (x) => void out.push(x));
-    assert.deepEqual(results.map((r) => [r.task_id, r.rebuilt?.messages]).sort(), [[ids[0], 2], [ids[2], 2]].sort());
+    assert.deepEqual(
+      results.map((r) => [r.task_id, r.rebuilt?.messages]).sort(),
+      [
+        [ids[0], 2],
+        [ids[2], 2],
+      ].sort(),
+    );
     assert.match(out[0]!, new RegExp(`^\\[1/2\\] ${results[0]!.task_id}: 2 messages, 2 items`));
     assert.match(out[1]!, /^\[2\/2\] /);
     assert.match(out[2]!, /^2 tasks rebuilt, in [\d.]+ s/);

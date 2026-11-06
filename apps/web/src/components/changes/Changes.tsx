@@ -145,7 +145,8 @@ function GitView({ task }: { task: Task }) {
       if (!fileRow) return;
       if (!fileRow.file) return setCollapsed((c) => toggled(c, fileRow.key));
       // Still loading, it goes in, and comes out again if there's nothing to stage.
-      if (d.diffs && !hasPane("unstaged") && !hasPane("staged")) return setFlash({ text: d.diffs.tooLarge ? "The diff is too big to stage by line" : d.diffs.notUtf8 ? NOT_UTF8 : "No lines to stage in this file" });
+      if (d.diffs && !hasPane("unstaged") && !hasPane("staged"))
+        return setFlash({ text: d.diffs.tooLarge ? "The diff is too big to stage by line" : d.diffs.notUtf8 ? NOT_UTF8 : "No lines to stage in this file" });
     }
     setInMain(true);
   };
@@ -159,7 +160,10 @@ function GitView({ task }: { task: Task }) {
   // A comment on lines of a file's diff being staged: the range (or hunk) picked, or the cursor's line, or with
   // `at` (a line's comment button), that line unless it's in what's picked.
   const isUntracked = !!target?.file && untracked(target.file);
-  const stagingSources = useMemo<Record<Pane, CommentSource>>(() => ({ unstaged: isUntracked ? { key: "unstaged", label: "an untracked file" } : UNSTAGED, staged: STAGED }), [isUntracked]);
+  const stagingSources = useMemo<Record<Pane, CommentSource>>(
+    () => ({ unstaged: isUntracked ? { key: "unstaged", label: "an untracked file" } : UNSTAGED, staged: STAGED }),
+    [isUntracked],
+  );
   const stagingSource = (p: Pane) => stagingSources[p];
   const commentStaging = (p: Pane = activePane, at?: number) => {
     const f = paneFile(p);
@@ -172,14 +176,24 @@ function GitView({ task }: { task: Task }) {
     } else if (anchor !== null && cur >= 0) [from, to] = [Math.min(anchor, cur), Math.max(anchor, cur)];
     if (at !== undefined && !(inMain && p === activePane && cur >= 0 && at >= from && at <= to)) [from, to] = [at, at];
     if (from < 0) return;
-    comments.open(commentLines(f, stagingSource(p), rs.slice(from, to + 1).filter((r) => r.line >= 0)));
+    comments.open(
+      commentLines(
+        f,
+        stagingSource(p),
+        rs.slice(from, to + 1).filter((r) => r.line >= 0),
+      ),
+    );
     setAnchor(null);
     setHunkMode(false);
   };
   const commentKey = () => {
     if (staging.active) return commentStaging();
     if (picked.current) return picked.current.comment();
-    setFlash({ text: inMain ? "Pick lines by their numbers first (drag or shift-click for more), or use a line's comment button" : "Go into a diff (Enter) to pick lines to comment on" });
+    setFlash({
+      text: inMain
+        ? "Pick lines by their numbers first (drag or shift-click for more), or use a line's comment button"
+        : "Go into a diff (Enter) to pick lines to comment on",
+    });
   };
   // A comment in the review: to its diff, and scrolled to.
   const [jump, setJump] = useState<string | null>(null);
@@ -273,8 +287,9 @@ function GitView({ task }: { task: Task }) {
         <div className="shrink-0 border-b border-line px-3 py-1 text-[11.5px]">
           {status.folder && (
             <div className="text-amber-300">
-              The project's folder is only <span className="font-mono">{status.folder}</span> in the repository at <span className="font-mono">{status.dir}</span>: this shows
-              its files and the commits that touch them. Committing what's staged elsewhere, amending, stashing and resetting are left to a terminal.
+              The project's folder is only <span className="font-mono">{status.folder}</span> in the repository at{" "}
+              <span className="font-mono">{status.dir}</span>: this shows its files and the commits that touch them. Committing what's staged elsewhere,
+              amending, stashing and resetting are left to a terminal.
             </div>
           )}
           {loadErr && <div className="text-red-400">Couldn't refresh: {loadErr}</div>}
@@ -283,7 +298,17 @@ function GitView({ task }: { task: Task }) {
         </div>
       )}
       <div className={clsx("flex min-h-0 flex-1 gap-2 px-2 pt-3 pb-1", narrow && "flex-col")}>
-        <SidePanels status={status} sides={sides} sel={sel} actions={actions} turns={turns} focused={focused} narrow={narrow} focusSide={focusSide} setMenu={setMenu} />
+        <SidePanels
+          status={status}
+          sides={sides}
+          sel={sel}
+          actions={actions}
+          turns={turns}
+          focused={focused}
+          narrow={narrow}
+          focusSide={focusSide}
+          setMenu={setMenu}
+        />
         <MainPanel
           status={status}
           sel={sel}

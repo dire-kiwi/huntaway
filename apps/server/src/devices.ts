@@ -183,7 +183,7 @@ function percent_decode(s: string): string | null {
   const b = Buffer.from(s, "utf8");
   const out: number[] = [];
   const hex = (c: number | undefined) => c !== undefined && ((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x46) || (c >= 0x61 && c <= 0x66));
-  for (let i = 0; i < b.length; ) {
+  for (let i = 0; i < b.length;) {
     if (b[i] === 0x25 && hex(b[i + 1]) && hex(b[i + 2])) {
       out.push(parseInt(String.fromCharCode(b[i + 1], b[i + 2]), 16));
       i += 3;
@@ -300,7 +300,10 @@ function str_field(r: Req, field: string, dflt?: string): string {
   const v = r.body && typeof r.body === "object" && !Array.isArray(r.body) ? r.body[field] : undefined;
   if (typeof v === "string") return v;
   if (v === undefined && dflt !== undefined) return dflt;
-  throw new ApiError(422, `Failed to deserialize the JSON body into the target type: ${v === undefined ? `missing field \`${field}\`` : `${field}: invalid type, expected a string`}`);
+  throw new ApiError(
+    422,
+    `Failed to deserialize the JSON body into the target type: ${v === undefined ? `missing field \`${field}\`` : `${field}: invalid type, expected a string`}`,
+  );
 }
 
 /** `POST /devices/pairing`: a new one-time code for Settings → Network access → Phones' QR code. */

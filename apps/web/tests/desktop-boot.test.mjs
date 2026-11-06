@@ -114,7 +114,13 @@ test("a shell whose process died while it ran is marked bad, unless that process
 
 test("boot.cjs compares versions as versions.cjs does", () => {
   const vs = ["0.1.0", "0.9.0", "0.10.0", "1.0.0-rc.1", "1.0.0-rc.2", "1.0.0-alpha", "1.0.0", "v1.0.1", "nope"];
-  for (const a of vs) for (const b of vs) assert.equal(Object.is(boot.compareVersions(a, b), NaN) ? "nan" : Math.sign(boot.compareVersions(a, b)), Object.is(compareVersions(a, b), NaN) ? "nan" : Math.sign(compareVersions(a, b)), `${a} vs ${b}`);
+  for (const a of vs)
+    for (const b of vs)
+      assert.equal(
+        Object.is(boot.compareVersions(a, b), NaN) ? "nan" : Math.sign(boot.compareVersions(a, b)),
+        Object.is(compareVersions(a, b), NaN) ? "nan" : Math.sign(compareVersions(a, b)),
+        `${a} vs ${b}`,
+      );
 });
 
 test("the data dir is found as the server and main.cjs do", () => {
@@ -184,7 +190,16 @@ test("a shell loaded from a release isn't hashed, and a checkout still relaunche
   // No boot.cjs (a checkout): the stamp decides, and unreadable files aren't a change.
   assert.equal(shellChange({ boot: undefined, stampNow: () => "b", startStamp: "a" }), "the desktop app changed on disk");
   assert.equal(shellChange({ boot: undefined, stampNow: () => "a", startStamp: "a" }), null);
-  assert.equal(shellChange({ boot: undefined, stampNow: () => { throw new Error("ENOENT"); }, startStamp: "a" }), null);
+  assert.equal(
+    shellChange({
+      boot: undefined,
+      stampNow: () => {
+        throw new Error("ENOENT");
+      },
+      startStamp: "a",
+    }),
+    null,
+  );
   // The package's own shell in a release build (running null): the stamp still applies.
   assert.equal(shellChange({ boot: { running: null, choose: () => null }, stampNow: () => "b", startStamp: "a" }), "the desktop app changed on disk");
 });

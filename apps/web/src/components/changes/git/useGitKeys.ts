@@ -38,7 +38,24 @@ export function useGitKeys(o: GitKeysOptions) {
   const { sides, refresh, toggleLayout, layoutOption, commentKey, focusSide, enterMain, setDialog, dialog, menu, rewinding, busyRef, queued } = o;
   const { side, inMain, setInMain, fileRow, collapsed, setCollapsed, files, rows, tree, setTreeMode, commit, stash, turn, moveIn } = o.sel;
   const { active: staging, settling, activePane, anchor, setAnchor, hunkMode, setHunkMode, hasPane, moveCursor, toggleRange, jumpHunk, switchPane } = o.staging;
-  const { busy, anyUnstaged, toggleRow, toggleAll, discardRow, startCommit, amend, reword, resetMenu, stashPush, stashMenu, stashDo, rewindTo, copy, linesAction, discardLines } = o.actions;
+  const {
+    busy,
+    anyUnstaged,
+    toggleRow,
+    toggleAll,
+    discardRow,
+    startCommit,
+    amend,
+    reword,
+    resetMenu,
+    stashPush,
+    stashMenu,
+    stashDo,
+    rewindTo,
+    copy,
+    linesAction,
+    discardLines,
+  } = o.actions;
 
   // Moving in a list, or in the main panel.
   const mainScroll = useRef<HTMLDivElement>(null);
@@ -77,7 +94,9 @@ export function useGitKeys(o: GitKeysOptions) {
             ...(activePane === "unstaged" ? [{ key: "d", label: "Discard", run: discardLines }] : []),
             { key: "v", label: anchor === null ? "Select range" : "End range", run: toggleRange },
             { key: "a", label: hunkMode ? "Select lines" : "Select hunk", run: () => setHunkMode(!hunkMode) },
-            ...(hasPane(activePane === "unstaged" ? "staged" : "unstaged") ? [{ key: "tab", label: activePane === "unstaged" ? "Staged" : "Unstaged", run: () => switchPane() }] : []),
+            ...(hasPane(activePane === "unstaged" ? "staged" : "unstaged")
+              ? [{ key: "tab", label: activePane === "unstaged" ? "Staged" : "Unstaged", run: () => switchPane() }]
+              : []),
             { key: "n", label: "Comment", run: commentKey },
             { key: "c", label: "Commit", run: startCommit },
             layoutOption,

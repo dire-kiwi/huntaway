@@ -113,80 +113,145 @@ export function tools(): any[] {
     return { annotations, description, inputSchema: { properties: sorted(props), required, type: "object" }, name };
   };
   return [
-    tool("pr_create", "Open a pull request for the current branch (push it first, e.g. with git_push). Without a title, gh fills the title and body from the commits.", {
-      title: { type: "string" },
-      body: { type: "string", description: "Markdown" },
-      base: { type: "string", description: "Branch to merge into (defaults to the repository's default branch)" },
-      head: { type: "string", description: "Branch to merge from (defaults to the current branch)" },
-      draft: { type: "boolean" },
-    }, []),
-    tool("pr_view", "A pull request's details as JSON: state, branches, mergeability, review decision, checks and body; with comments, its comments and reviews too.", {
-      pr, comments: { type: "boolean" },
-    }, []),
-    tool("pr_list", "List pull requests as JSON.", {
-      state: { type: "string", enum: ["open", "closed", "merged", "all"], description: "Default open" },
-      head: { type: "string", description: "Only PRs from this branch" },
-      base: { type: "string", description: "Only PRs into this branch" },
-      author: { type: "string", description: "Only PRs by this user (@me for yourself)" },
-      search: { type: "string", description: "GitHub search query" },
-      limit,
-    }, []),
+    tool(
+      "pr_create",
+      "Open a pull request for the current branch (push it first, e.g. with git_push). Without a title, gh fills the title and body from the commits.",
+      {
+        title: { type: "string" },
+        body: { type: "string", description: "Markdown" },
+        base: { type: "string", description: "Branch to merge into (defaults to the repository's default branch)" },
+        head: { type: "string", description: "Branch to merge from (defaults to the current branch)" },
+        draft: { type: "boolean" },
+      },
+      [],
+    ),
+    tool(
+      "pr_view",
+      "A pull request's details as JSON: state, branches, mergeability, review decision, checks and body; with comments, its comments and reviews too.",
+      {
+        pr,
+        comments: { type: "boolean" },
+      },
+      [],
+    ),
+    tool(
+      "pr_list",
+      "List pull requests as JSON.",
+      {
+        state: { type: "string", enum: ["open", "closed", "merged", "all"], description: "Default open" },
+        head: { type: "string", description: "Only PRs from this branch" },
+        base: { type: "string", description: "Only PRs into this branch" },
+        author: { type: "string", description: "Only PRs by this user (@me for yourself)" },
+        search: { type: "string", description: "GitHub search query" },
+        limit,
+      },
+      [],
+    ),
     tool("pr_checks", "A pull request's CI checks as JSON (name, state, bucket pass/fail/pending/skipping, link).", { pr }, []),
     tool("pr_diff", "A pull request's diff.", { pr, name_only: { type: "boolean", description: "Only the names of the changed files" } }, []),
     tool("pr_comment", "Comment on a pull request.", { pr, body: { type: "string", description: "Markdown" } }, ["body"]),
-    tool("pr_edit", "Change a pull request's title, body or base branch.", { pr, title: { type: "string" }, body: { type: "string" }, base: { type: "string" } }, []),
-    tool("pr_merge", "Merge a pull request on GitHub. This doesn't touch local branches or worktrees.", {
-      pr,
-      method: { type: "string", enum: ["merge", "squash", "rebase"], description: "Default merge" },
-      auto: { type: "boolean", description: "Merge once the required checks pass, instead of now" },
-      delete_branch: { type: "boolean", description: "Delete the PR's branch on GitHub after merging (not with auto, or for a PR from a fork)" },
-    }, []),
-    tool("issue_view", "An issue's details as JSON; with comments, its comments too.", { issue, comments: { type: "boolean" } }, ["issue"]),
-    tool("issue_list", "List issues as JSON.", {
-      state: { type: "string", enum: ["open", "closed", "all"], description: "Default open" },
-      label: { type: "string" },
-      assignee: { type: "string", description: "@me for yourself" },
-      search: { type: "string", description: "GitHub search query" },
-      limit,
-    }, []),
-    tool("issue_create", "Open an issue.", {
-      title: { type: "string" },
-      body: { type: "string", description: "Markdown" },
-      labels: { type: "array", items: { type: "string" } },
-    }, ["title"]),
-    tool("issue_comment", "Comment on an issue.", { issue, body: { type: "string", description: "Markdown" } }, ["issue", "body"]),
-    tool("run_list", "List recent GitHub Actions workflow runs as JSON.", {
-      branch: { type: "string" },
-      workflow: { type: "string", description: "Workflow name or file" },
-      limit,
-    }, []),
-    tool("run_view", "A workflow run's jobs and steps, or with log_failed, the logs of its failed steps.", {
-      run_id: { type: "string", description: "The run's id (databaseId in run_list)" },
-      log_failed: { type: "boolean" },
-    }, ["run_id"]),
-    tool("api", "Call the GitHub REST API (gh api). {owner} and {repo} in the endpoint are filled in from the repository.", {
-      endpoint: { type: "string", description: "e.g. repos/{owner}/{repo}/pulls/1/comments, or graphql" },
-      method: { type: "string", enum: ["GET", "POST", "PATCH", "PUT", "DELETE"], description: "Default GET (POST when there are fields)" },
-      fields: {
-        type: "object",
-        description: "Parameters: query parameters for GET, otherwise the request body. Strings are sent as they are; numbers, booleans and null as JSON.",
+    tool(
+      "pr_edit",
+      "Change a pull request's title, body or base branch.",
+      { pr, title: { type: "string" }, body: { type: "string" }, base: { type: "string" } },
+      [],
+    ),
+    tool(
+      "pr_merge",
+      "Merge a pull request on GitHub. This doesn't touch local branches or worktrees.",
+      {
+        pr,
+        method: { type: "string", enum: ["merge", "squash", "rebase"], description: "Default merge" },
+        auto: { type: "boolean", description: "Merge once the required checks pass, instead of now" },
+        delete_branch: { type: "boolean", description: "Delete the PR's branch on GitHub after merging (not with auto, or for a PR from a fork)" },
       },
-      jq: { type: "string", description: "jq expression to filter the response with" },
-      paginate: { type: "boolean", description: "Fetch every page" },
-    }, ["endpoint"]),
-    tool("gh", "Run any gh command, for what the other tools don't cover. Nothing is interactive: pass everything as arguments.", {
-      args: { type: "array", items: { type: "string" }, description: "gh's arguments, e.g. [\"release\", \"list\"]" },
-    }, ["args"]),
-    tool("git_push", "Push a branch with git, outside the sandbox and with the user's git credentials.", {
-      remote: { type: "string", description: "Default origin" },
-      branch: { type: "string", description: "Default the current branch" },
-      force_with_lease: { type: "boolean", description: "Overwrite the remote branch if it hasn't changed since you last fetched it" },
-    }, []),
+      [],
+    ),
+    tool("issue_view", "An issue's details as JSON; with comments, its comments too.", { issue, comments: { type: "boolean" } }, ["issue"]),
+    tool(
+      "issue_list",
+      "List issues as JSON.",
+      {
+        state: { type: "string", enum: ["open", "closed", "all"], description: "Default open" },
+        label: { type: "string" },
+        assignee: { type: "string", description: "@me for yourself" },
+        search: { type: "string", description: "GitHub search query" },
+        limit,
+      },
+      [],
+    ),
+    tool(
+      "issue_create",
+      "Open an issue.",
+      {
+        title: { type: "string" },
+        body: { type: "string", description: "Markdown" },
+        labels: { type: "array", items: { type: "string" } },
+      },
+      ["title"],
+    ),
+    tool("issue_comment", "Comment on an issue.", { issue, body: { type: "string", description: "Markdown" } }, ["issue", "body"]),
+    tool(
+      "run_list",
+      "List recent GitHub Actions workflow runs as JSON.",
+      {
+        branch: { type: "string" },
+        workflow: { type: "string", description: "Workflow name or file" },
+        limit,
+      },
+      [],
+    ),
+    tool(
+      "run_view",
+      "A workflow run's jobs and steps, or with log_failed, the logs of its failed steps.",
+      {
+        run_id: { type: "string", description: "The run's id (databaseId in run_list)" },
+        log_failed: { type: "boolean" },
+      },
+      ["run_id"],
+    ),
+    tool(
+      "api",
+      "Call the GitHub REST API (gh api). {owner} and {repo} in the endpoint are filled in from the repository.",
+      {
+        endpoint: { type: "string", description: "e.g. repos/{owner}/{repo}/pulls/1/comments, or graphql" },
+        method: { type: "string", enum: ["GET", "POST", "PATCH", "PUT", "DELETE"], description: "Default GET (POST when there are fields)" },
+        fields: {
+          type: "object",
+          description: "Parameters: query parameters for GET, otherwise the request body. Strings are sent as they are; numbers, booleans and null as JSON.",
+        },
+        jq: { type: "string", description: "jq expression to filter the response with" },
+        paginate: { type: "boolean", description: "Fetch every page" },
+      },
+      ["endpoint"],
+    ),
+    tool(
+      "gh",
+      "Run any gh command, for what the other tools don't cover. Nothing is interactive: pass everything as arguments.",
+      {
+        args: { type: "array", items: { type: "string" }, description: 'gh\'s arguments, e.g. ["release", "list"]' },
+      },
+      ["args"],
+    ),
+    tool(
+      "git_push",
+      "Push a branch with git, outside the sandbox and with the user's git credentials.",
+      {
+        remote: { type: "string", description: "Default origin" },
+        branch: { type: "string", description: "Default the current branch" },
+        force_with_lease: { type: "boolean", description: "Overwrite the remote branch if it hasn't changed since you last fetched it" },
+      },
+      [],
+    ),
   ];
 }
 
 function sorted(o: any): any {
-  return Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
+  return Object.fromEntries(
+    Object.keys(o)
+      .sort()
+      .map((k) => [k, o[k]]),
+  );
 }
 
 /** A command to run for a tool call. */
@@ -607,7 +672,8 @@ async function exec(c: Command, a: any, r: GhRun): Promise<[string, boolean]> {
       throw context(`couldn't run ${c.program}`, new Error(io_error(e)));
     }
     if (out.timed_out) throw new Error(`${c.program} timed out after ${TIMEOUT / 1000} seconds`);
-    const stdout = out.stdout.toString(), stderr = out.stderr.toString();
+    const stdout = out.stdout.toString(),
+      stderr = out.stderr.toString();
     const failed = out.code === null || !c.ok_codes.includes(out.code);
     let text = stdout.trimEnd();
     if (stderr.trim()) {

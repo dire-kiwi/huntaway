@@ -39,7 +39,12 @@ export interface ReviewerExtras {
  * profile's; null while they load or when the host can't take them. `inherited` is what a reviewer without instructions of its
  * own gets, if not the host's default (the project's In review prompt). */
 export function useReviewerExtras(hostId: string, projectId?: string, inherited?: string | null): ReviewerExtras | null {
-  const supported = useStore((s) => hostSupports(s.hosts.find((h) => h.id === hostId), REVIEWER_OPTIONS_API));
+  const supported = useStore((s) =>
+    hostSupports(
+      s.hosts.find((h) => h.id === hostId),
+      REVIEWER_OPTIONS_API,
+    ),
+  );
   const [loaded, setLoaded] = useState<{ skills: string[]; defaults: string } | null>(null);
   useEffect(() => {
     if (!supported) return;
@@ -83,7 +88,16 @@ export function ReviewerList({
   return (
     <div className="space-y-2">
       {list.map((r, i) => (
-        <ReviewerRow key={i} hostId={hostId} configs={configs} models={models} value={r} onChange={(v) => change(i, v)} removable={list.length > 1} extras={extras} />
+        <ReviewerRow
+          key={i}
+          hostId={hostId}
+          configs={configs}
+          models={models}
+          value={r}
+          onChange={(v) => change(i, v)}
+          removable={list.length > 1}
+          extras={extras}
+        />
       ))}
       {list.length < MAX_REVIEWERS && (
         <Button size="sm" variant="ghost" onClick={() => onChange([...list, DEFAULT_REVIEWER])}>
@@ -95,7 +109,14 @@ export function ReviewerList({
 }
 
 /** Skill names as typed, separated by commas or spaces, with the `/` or `$` they're called with taken off. */
-const parseSkills = (text: string) => [...new Set(text.split(/[\s,]+/).map((k) => k.replace(/^[/$]+/, "")).filter(Boolean))];
+const parseSkills = (text: string) => [
+  ...new Set(
+    text
+      .split(/[\s,]+/)
+      .map((k) => k.replace(/^[/$]+/, ""))
+      .filter(Boolean),
+  ),
+];
 
 /** The most summarizers (the host's limit on reviewers). */
 const MAX_SUMMARIZERS = 6;

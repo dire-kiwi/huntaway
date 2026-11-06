@@ -144,11 +144,7 @@ export const projectsApi = ({ on }: Http) => ({
     h: string,
     profileId: string,
     b: { repo_path: string; visibility: "public" | "private"; repo_name?: string; owner?: string; name?: string; key?: string },
-  ) =>
-    on(h).post<Project & { github: { full_name: string; pushed: boolean; push_error: string | null } }>(
-      `/profiles/${enc(profileId)}/projects/github`,
-      b,
-    ),
+  ) => on(h).post<Project & { github: { full_name: string; pushed: boolean; push_error: string | null } }>(`/profiles/${enc(profileId)}/projects/github`, b),
   getProject: (h: string, id: string) => on(h).get<Project>(`/projects/${enc(id)}`),
   /** move_repo with a new repo_path moves the folder there (API 40). */
   /** `archived` archives the project or unarchives it (API 46). */
@@ -164,6 +160,10 @@ export const projectsApi = ({ on }: Http) => ({
   /** What the agent of a new thread in the project is told on top of its agent's own system prompt, with these options (API 80). */
   systemPromptPreview: (h: string, id: string, q: SystemPromptOptions) =>
     on(h).get<{ text: string; runtime: Agent; permission_mode: PermissionMode }>(
-      `/projects/${enc(id)}/system-prompt?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))}`,
+      `/projects/${enc(id)}/system-prompt?${new URLSearchParams(
+        Object.entries(q)
+          .filter(([, v]) => v != null)
+          .map(([k, v]) => [k, String(v)]),
+      )}`,
     ),
 });

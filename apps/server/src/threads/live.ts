@@ -16,9 +16,7 @@ import { ApiError, Reply } from "../http.ts";
 import type { AppState } from "../state.ts";
 import * as api from "../api.ts";
 import * as store from "./store.ts";
-import type {
-  ItemPage, PermissionMode, QuestionRequest, Resolution, SavedEvent, Snapshot, Thread, ThreadEvent, ThreadStatus,
-} from "./protocol.ts";
+import type { ItemPage, PermissionMode, QuestionRequest, Resolution, SavedEvent, Snapshot, Thread, ThreadEvent, ThreadStatus } from "./protocol.ts";
 
 /** The most events `events` gives at once. */
 export const MAX_EVENTS = 1000;
@@ -92,7 +90,16 @@ export interface Events {
 }
 
 /** The event types this build knows; a newer one's are left out of `events`, but gone past. */
-const KNOWN = new Set(["thread.updated", "turn.started", "turn.completed", "item.added", "item.updated", "items.removed", "request.opened", "request.resolved"]);
+const KNOWN = new Set([
+  "thread.updated",
+  "turn.started",
+  "turn.completed",
+  "item.added",
+  "item.updated",
+  "items.removed",
+  "request.opened",
+  "request.resolved",
+]);
 
 /**
  * The thread's saved events after `after` that this build knows, at most `limit` of them. Event types it doesn't know
@@ -378,7 +385,11 @@ function answers_in_order(request: QuestionRequest, res: Resolution): string[][]
 function new_session(s: AppState, task: Task): Task {
   if (s.is_running(task.id)) throw ApiError.conflict("The agent is running: stop it before starting a new conversation");
   if (task.session_id == null) return task;
-  const t = s.update_task(task.id, [["session_id", null], ["rewind", null], ["context", null]]);
+  const t = s.update_task(task.id, [
+    ["session_id", null],
+    ["rewind", null],
+    ["context", null],
+  ]);
   if (!t) throw ApiError.not_found("task");
   s.add_event(task.id, "info", "The next message starts a new conversation with the agent");
   return t;

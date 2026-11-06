@@ -133,7 +133,10 @@ test("creates_a_repository_for_a_folder", async () => {
   git(broken, ["init", "-q"]);
   git(broken, ["commit", "-q", "--allow-empty", "-m", "init"]);
   renameSync(join(broken, ".git/HEAD"), join(broken, ".git/HEAD.saved"));
-  const objects = () => readdirSync(join(broken, ".git/objects")).filter((n) => n.length === 2).sort();
+  const objects = () =>
+    readdirSync(join(broken, ".git/objects"))
+      .filter((n) => n.length === 2)
+      .sort();
   const objects_before = objects();
   assert.ok(objects_before.length > 0);
   const before = log();
@@ -189,16 +192,36 @@ test("searches_the_names_of_the_owners_repositories", () => {
 
 test("repositories_are_what_the_dialog_shows", () => {
   const r = {
-    full_name: "o/r", name: "r", description: null, private: true, fork: false, archived: false,
-    pushed_at: "2026-10-26T23:45:48Z", html_url: "https://github.com/o/r", owner: { login: "o" },
+    full_name: "o/r",
+    name: "r",
+    description: null,
+    private: true,
+    fork: false,
+    archived: false,
+    pushed_at: "2026-10-26T23:45:48Z",
+    html_url: "https://github.com/o/r",
+    owner: { login: "o" },
   };
   assert.deepEqual(repo(r), {
-    full_name: "o/r", name: "r", description: null, private: true, fork: false, archived: false, pushed_at: "2026-10-26T23:45:48Z", url: "https://github.com/o/r",
+    full_name: "o/r",
+    name: "r",
+    description: null,
+    private: true,
+    fork: false,
+    archived: false,
+    pushed_at: "2026-10-26T23:45:48Z",
+    url: "https://github.com/o/r",
   });
   assert.equal(repo({ name: "r" }), null);
   const node = {
-    nameWithOwner: "o/r", name: "r", description: null, isPrivate: true, isFork: false, isArchived: false,
-    pushedAt: "2026-10-26T23:45:48Z", url: "https://github.com/o/r",
+    nameWithOwner: "o/r",
+    name: "r",
+    description: null,
+    isPrivate: true,
+    isFork: false,
+    isArchived: false,
+    pushedAt: "2026-10-26T23:45:48Z",
+    url: "https://github.com/o/r",
   };
   assert.deepEqual(graphql_repo(node), repo(r));
 });
@@ -206,7 +229,10 @@ test("repositories_are_what_the_dialog_shows", () => {
 test("lists_each_repository_once_most_recently_pushed_first", () => {
   const r = (name: string, pushed: string | null) => ({ full_name: name, pushed_at: pushed });
   const list = latest_first([r("me/old", "2024-01-01T00:00:00Z"), r("org/new", "2026-10-26T00:00:00Z"), r("me/empty", null), r("ORG/new", null)]);
-  assert.deepEqual(list.map((r) => r.full_name), ["org/new", "me/old", "me/empty"]);
+  assert.deepEqual(
+    list.map((r) => r.full_name),
+    ["org/new", "me/old", "me/empty"],
+  );
 });
 
 test("gh_errors_end_with_what_it_said_last", () => {

@@ -17,8 +17,8 @@ export function AssistantPage({ profile }: { profile: string }) {
           : home?.unavailable && loaded
             ? unavailableNote(profile, hostName, home.unavailable)
             : missing && loaded
-            ? `${profile} has no assistant: its host is offline or older than the board.`
-            : "Opening the assistant…"}
+              ? `${profile} has no assistant: its host is offline or older than the board.`
+              : "Opening the assistant…"}
       </div>
     </div>
   );

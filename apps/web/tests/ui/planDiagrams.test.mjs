@@ -15,18 +15,31 @@ afterAll(() => server?.stop());
 async function openPlan(ui, content) {
   if (content) {
     const at = new Date().toISOString();
-    await ui.page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) => route.fulfill({ json: {
-      task_type: "plan", file: "plan.html", versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }], version: 1, content,
-    } }));
+    await ui.page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
+      route.fulfill({
+        json: {
+          task_type: "plan",
+          file: "plan.html",
+          versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
+          version: 1,
+          content,
+        },
+      }),
+    );
   }
   await ui.run([`goto /p/${project.id}?task=${plan.id}`, "wait css=iframe"]);
   return ui.page.frames().find((f) => f.parentFrame() === ui.page.mainFrame());
 }
 
-const ready = (frame, count) => frame.waitForFunction((count) => {
-  const images = [...document.querySelectorAll("ia-diagram > img")];
-  return images.length === count && images.every((i) => i.complete && i.naturalWidth > 0);
-}, count, { timeout: 10000 });
+const ready = (frame, count) =>
+  frame.waitForFunction(
+    (count) => {
+      const images = [...document.querySelectorAll("ia-diagram > img")];
+      return images.length === count && images.every((i) => i.complete && i.naturalWidth > 0);
+    },
+    count,
+    { timeout: 10000 },
+  );
 
 async function withDownload(page, check) {
   const downloading = page.waitForEvent("download");
@@ -93,14 +106,17 @@ test("plan diagrams render Mermaid locally, including multiple types and escaped
 
 test("a broken Mermaid diagram shows its error and source while other diagrams and older SVG plans still display", async () => {
   await withBrowser(server, {}, async (ui) => {
-    const frame = await openPlan(ui, `<h1>Mixed diagrams</h1>
+    const frame = await openPlan(
+      ui,
+      `<h1>Mixed diagrams</h1>
 <ia-diagram><pre>flowchart LR
   A[broken
 </pre></ia-diagram>
 <ia-diagram><pre>flowchart LR
   A["Works"] --&gt; B["Still works"]
 </pre></ia-diagram>
-<ia-diagram><svg viewBox="0 0 100 30"><text x="0" y="20">Earlier plan</text></svg></ia-diagram>`);
+<ia-diagram><svg viewBox="0 0 100 30"><text x="0" y="20">Earlier plan</text></svg></ia-diagram>`,
+    );
     await frame.getByRole("alert").waitFor();
     assert.match(await frame.getByRole("alert").innerText(), /Mermaid:.*Parse error/s);
     assert.ok(await frame.locator("ia-diagram > pre").first().isVisible());
@@ -134,13 +150,25 @@ test("a standalone diagram with line breaks in its labels loads as an image", as
     const diagram = tasks.find((t) => t.labels.includes("diagram"));
     const content = 'flowchart LR\n  A["One<br/>two"] --> B["Three<br>four"]\n';
     const at = new Date().toISOString();
-    await ui.page.route(new RegExp(`/tasks/${diagram.id}/document(\\?.*)?$`), (route) => route.fulfill({ json: {
-      task_type: "diagram", file: "diagram.mmd", versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }], version: 1, content,
-    } }));
+    await ui.page.route(new RegExp(`/tasks/${diagram.id}/document(\\?.*)?$`), (route) =>
+      route.fulfill({
+        json: {
+          task_type: "diagram",
+          file: "diagram.mmd",
+          versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
+          version: 1,
+          content,
+        },
+      }),
+    );
     await ui.run([`goto /p/${project.id}?task=${diagram.id}`, "wait css=img[alt=Diagram]"]);
-    await ui.page.waitForFunction(() => {
-      const img = document.querySelector("img[alt=Diagram]");
-      return img.complete && img.naturalWidth > 0;
-    }, null, { timeout: 10000 });
+    await ui.page.waitForFunction(
+      () => {
+        const img = document.querySelector("img[alt=Diagram]");
+        return img.complete && img.naturalWidth > 0;
+      },
+      null,
+      { timeout: 10000 },
+    );
   });
 });

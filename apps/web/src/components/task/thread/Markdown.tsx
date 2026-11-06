@@ -5,10 +5,7 @@ import remarkGfm from "remark-gfm";
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="prose-chat">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{ a: ({ ...p }) => <a {...p} target="_blank" rel="noreferrer" /> }}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ ...p }) => <a {...p} target="_blank" rel="noreferrer" /> }}>
         {text}
       </ReactMarkdown>
     </div>

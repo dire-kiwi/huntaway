@@ -418,8 +418,7 @@ export function load_active(state: Shared) {
         // its input (see queue::background_changed).
         else if (runs.asks_on_output(state, run.id) && !row.stop_requested && runs.background_tasks(state, run.id) === 0) {
           close_unless_turn_starts(state, run, BACKGROUND_GRACE);
-        }
-        else turn_ended(state, run);
+        } else turn_ended(state, run);
       }
     } else {
       // We stopped while preparing (e.g. setting up the worktree), before claude started, or before ia-shim wrote its

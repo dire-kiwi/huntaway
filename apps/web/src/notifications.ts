@@ -54,7 +54,9 @@ function parseSettings(raw: string | null): NotifySettings {
     const saved = JSON.parse(raw ?? "{}") ?? {};
     return {
       mode: NOTIFY_MODES.some((m) => m.id === saved.mode) ? saved.mode : DEFAULT_NOTIFY.mode,
-      events: Object.fromEntries(NOTIFY_EVENTS.map((e) => [e.id, typeof saved.events?.[e.id] === "boolean" ? saved.events[e.id] : DEFAULT_NOTIFY.events[e.id]])) as NotifySettings["events"],
+      events: Object.fromEntries(
+        NOTIFY_EVENTS.map((e) => [e.id, typeof saved.events?.[e.id] === "boolean" ? saved.events[e.id] : DEFAULT_NOTIFY.events[e.id]]),
+      ) as NotifySettings["events"],
       count: typeof saved.count === "boolean" ? saved.count : DEFAULT_NOTIFY.count,
     };
   } catch {

@@ -1,15 +1,13 @@
 {
   "name": "huntaway-app",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "description": "Huntaway desktop + web UI",
+  "homepage": "https://github.com/dire-kiwi/huntaway",
   "license": "MIT",
+  "author": "Ivan Meredith",
   "type": "module",
-  "engines": {
-    "node": ">=22.12"
-  },
   "main": "electron/boot.cjs",
-  "desktopName": "huntaway-app.desktop",
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
@@ -52,8 +50,9 @@
     "vite": "catalog:",
     "vite-plus": "catalog:"
   },
-  "author": "Ivan Meredith",
-  "homepage": "https://github.com/dire-kiwi/huntaway",
+  "engines": {
+    "node": ">=22.12"
+  },
   "build": {
     "appId": "nz.net.ivan.huntaway",
     "productName": "Huntaway",
@@ -115,5 +114,6 @@
     "directories": {
       "output": "release"
     }
-  }
+  },
+  "desktopName": "huntaway-app.desktop"
 }

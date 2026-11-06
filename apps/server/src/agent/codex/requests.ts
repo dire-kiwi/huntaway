@@ -63,7 +63,8 @@ export function on_request(state: Shared, run: Run, v: any): void {
   const rid = request_id(id);
   const call_id = control_call_id(run.id, rid);
   const req: CodexRequest = { id, method };
-  const ask = (tool_name: string, input: any) => ask_permission(state, run.id, call_id, { tool_name, input, tool_use_id: str(p.itemId), request_id: rid, codex: req });
+  const ask = (tool_name: string, input: any) =>
+    ask_permission(state, run.id, call_id, { tool_name, input, tool_use_id: str(p.itemId), request_id: rid, codex: req });
   switch (method) {
     case "item/commandExecution/requestApproval": {
       const input: any = { command: typeof p.command === "string" ? display_command(p.command) : "", cwd: g(p.cwd) };

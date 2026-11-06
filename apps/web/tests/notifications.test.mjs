@@ -11,12 +11,21 @@ const hook = `export async function resolve(spec, ctx, next) {
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
-const { attentionCount, notificationText, notifyGate, notifySettings, saveNotifySettings, stillApplies, taskEvent, DEFAULT_NOTIFY } = await import(
-  "../src/notifications.ts"
-);
+const { attentionCount, notificationText, notifyGate, notifySettings, saveNotifySettings, stillApplies, taskEvent, DEFAULT_NOTIFY } =
+  await import("../src/notifications.ts");
 const { handleEvent, liveTaskChanges, useStore } = await import("../src/store.ts");
 
-const task = (o = {}) => ({ host_id: "h", id: "t1", kind: "task", profile_id: "p", status: "in_progress", running: true, attention_reason: null, title: "Fix it", ...o });
+const task = (o = {}) => ({
+  host_id: "h",
+  id: "t1",
+  kind: "task",
+  profile_id: "p",
+  status: "in_progress",
+  running: true,
+  attention_reason: null,
+  title: "Fix it",
+  ...o,
+});
 
 test("a task notifies as it goes to Needs attention, ready to review, Ready for merge or Done", () => {
   const working = task();
@@ -49,7 +58,10 @@ test("a run the user stopped, review threads and scratch chats from older hosts 
 });
 
 test("a notification shows the task's key and title, and the reason", () => {
-  assert.deepEqual(notificationText("attention", task({ attention_reason: "Approve Bash?" }), "HA-8"), { title: "HA-8 Fix it", body: "Needs attention: Approve Bash?" });
+  assert.deepEqual(notificationText("attention", task({ attention_reason: "Approve Bash?" }), "HA-8"), {
+    title: "HA-8 Fix it",
+    body: "Needs attention: Approve Bash?",
+  });
   assert.equal(notificationText("attention", task(), "HA-8").body, "Needs attention");
   assert.equal(notificationText("review", task({ review: { state: "passed" } }), "HA-8").body, "Ready to review: its review passed");
   assert.equal(notificationText("done", task({ resolution: "wont_fix" }), "HA-8").body, "Closed: won't fix");
@@ -57,7 +69,12 @@ test("a notification shows the task's key and title, and the reason", () => {
 });
 
 test("the count is of the tasks that need attention", () => {
-  const tasks = [task({ status: "needs_attention" }), task({ status: "needs_attention", kind: "review" }), task({ status: "in_review" }), task({ status: "needs_attention" })];
+  const tasks = [
+    task({ status: "needs_attention" }),
+    task({ status: "needs_attention", kind: "review" }),
+    task({ status: "in_review" }),
+    task({ status: "needs_attention" }),
+  ];
   assert.equal(attentionCount(tasks), 2);
 });
 
@@ -72,7 +89,11 @@ test("ready to review waits out the grace period, and a review or run that start
   try {
     const seen = [];
     let now = null;
-    const gate = notifyGate((t, e) => seen.push(`${t.id}:${e}`), () => now, 5000);
+    const gate = notifyGate(
+      (t, e) => seen.push(`${t.id}:${e}`),
+      () => now,
+      5000,
+    );
     const ready = task({ status: "in_review", running: false });
 
     // It stays ready: one notification once the grace is over.
@@ -138,7 +159,10 @@ test("task events tell what changed, and loads of tasks don't", async () => {
     // First seen: no previous copy.
     handleEvent({ type: "task", host_id: "h", task: task() });
     handleEvent({ type: "task", host_id: "h", task: task({ status: "needs_attention" }) });
-    assert.deepEqual(changes, [[undefined, "in_progress"], ["in_progress", "needs_attention"]]);
+    assert.deepEqual(changes, [
+      [undefined, "in_progress"],
+      ["in_progress", "needs_attention"],
+    ]);
     // Another host's task with the same id, or one in a profile that isn't on the board, is left out.
     handleEvent({ type: "task", host_id: "other", task: task({ status: "done" }) });
     handleEvent({ type: "task", host_id: "h", task: task({ id: "t2", profile_id: "gone", status: "done" }) });

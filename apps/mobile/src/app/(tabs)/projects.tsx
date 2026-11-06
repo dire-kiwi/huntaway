@@ -41,19 +41,35 @@ export default function Projects() {
     <View style={s.screen}>
       <BoardPicker board={board} profiles={profiles.data} profile={profile} />
       {!ok ? (
-        <Empty title={statusOf(statuses, board.id).unauthorized ? `This phone was unpaired from ${board.name}. Pair it again.` : `${board.name}'s Huntaway is too old for the app. Update it.`} />
+        <Empty
+          title={
+            statusOf(statuses, board.id).unauthorized
+              ? `This phone was unpaired from ${board.name}. Pair it again.`
+              : `${board.name}'s Huntaway is too old for the app. Update it.`
+          }
+        />
       ) : (
         <FlatList
           data={projects.data ?? []}
           keyExtractor={(p) => `${p.hostId}/${p.id}`}
-          refreshControl={<RefreshControl refreshing={projects.loading && !!projects.data} onRefresh={() => (profiles.reload(), projects.reload())} tintColor={colors.accent} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={projects.loading && !!projects.data}
+              onRefresh={() => (profiles.reload(), projects.reload())}
+              tintColor={colors.accent}
+            />
+          }
           ListHeaderComponent={
             <>
               {profiles.error && <ErrorText>{profiles.error}</ErrorText>}
               {projects.error && <ErrorText>{projects.error}</ErrorText>}
             </>
           }
-          ListEmptyComponent={projects.loading || profiles.loading ? undefined : <Empty title={profile ? `${profile} has no projects on ${board.name}.` : `${board.name} has no profiles yet.`} />}
+          ListEmptyComponent={
+            projects.loading || profiles.loading ? undefined : (
+              <Empty title={profile ? `${profile} has no projects on ${board.name}.` : `${board.name} has no profiles yet.`} />
+            )
+          }
           renderItem={({ item: p }) => (
             <Pressable
               style={s.card}

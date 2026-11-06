@@ -55,7 +55,8 @@ export async function update_settings(s: AppState, r: Req) {
   const e = b.default_effort;
   if (typeof e === "string" && e && !db.EFFORTS.includes(e)) throw ApiError.bad(`default_effort must be one of ${debug_list(db.EFFORTS)}`);
   const m = b.default_permission_mode;
-  if (typeof m === "string" && m && !db.PERMISSION_MODES.includes(m)) throw ApiError.bad(`default_permission_mode must be one of ${debug_list(db.PERMISSION_MODES)}`);
+  if (typeof m === "string" && m && !db.PERMISSION_MODES.includes(m))
+    throw ApiError.bad(`default_permission_mode must be one of ${debug_list(db.PERMISSION_MODES)}`);
   const h = b.scratch_host;
   if (typeof h === "string" && h && !db.get_link(s.db(), h)) throw ApiError.bad("scratch_host must be a linked host");
   if (Object.hasOwn(b, "public_url") && b.public_url !== null) {
@@ -118,7 +119,13 @@ export async function internal_mcp(s: AppState, r: Req) {
   const run_id = typeof r.body?.run_id === "string" ? r.body.run_id : "";
   if (!authorized(s, r.headers, r.query_string) && !(run_id && mcp_http.run_authorized(s, run_id, r.headers))) throw new ApiError(401, "unauthorized");
   const b = json_map(r);
-  const call = { run_id: req_str(b, "run_id"), call_id: req_str(b, "call_id"), tool: req_str(b, "tool"), args: def_value(b, "args"), task_fields: def_bool(b, "task_fields") };
+  const call = {
+    run_id: req_str(b, "run_id"),
+    call_id: req_str(b, "call_id"),
+    tool: req_str(b, "tool"),
+    args: def_value(b, "args"),
+    task_fields: def_bool(b, "task_fields"),
+  };
   try {
     return { result: await tools.handle_mcp(s, call) };
   } catch (e) {

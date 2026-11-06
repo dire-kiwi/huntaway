@@ -52,7 +52,7 @@ function skill_of(name: string, content: string, description = ""): Skill {
 }
 
 test("reads_skill_frontmatter", () => {
-  assert.deepEqual(frontmatter("---\nname: deploy\ndescription: \"Deploy the app\"\nallowed-tools: Bash\n---\n\nBody\n"), {
+  assert.deepEqual(frontmatter('---\nname: deploy\ndescription: "Deploy the app"\nallowed-tools: Bash\n---\n\nBody\n'), {
     name: "deploy",
     description: "Deploy the app",
     user_invocable: true,
@@ -124,12 +124,14 @@ test("syncs_the_skills_dir", () => {
 
 test("lists_a_claude_tasks_skills", () => {
   const root = testing.temp_dir();
-  const config = join(root, "config"), repo = join(root, "repo");
+  const config = join(root, "config"),
+    repo = join(root, "repo");
   const skill = (dir: string, name: string, description: string, extra: string) => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n${extra}---\n`);
   };
-  const personal = join(config, "skills"), project = join(repo, ".claude/skills");
+  const personal = join(config, "skills"),
+    project = join(repo, ".claude/skills");
   skill(join(personal, "mine"), "mine", "My own", "");
   skill(join(project, "repo-skill"), "repo-skill", "From the repository", "");
   skill(join(project, "user-only"), "user-only", "User only", "disable-model-invocation: true\n");
@@ -174,8 +176,19 @@ test("lists_a_claude_tasks_skills", () => {
   skill(join(personal, "synced/bucket/pdf"), "pdf", "PDFs", "");
   mkdirSync(join(personal, "not-a-skill"), { recursive: true });
   const last_run = [
-    "code-review", "anthropic-skills:pdf", "plug:lint", "upgraded:review", "upgraded:fixed", "hidden", "user-only", "deploy", "alias-hidden",
-    "plug:alias-qualified", "plug:alias-plugin", "scoped:review", "scoped:hidden",
+    "code-review",
+    "anthropic-skills:pdf",
+    "plug:lint",
+    "upgraded:review",
+    "upgraded:fixed",
+    "hidden",
+    "user-only",
+    "deploy",
+    "alias-hidden",
+    "plug:alias-qualified",
+    "plug:alias-plugin",
+    "scoped:review",
+    "scoped:hidden",
   ];
   // The task works in `repo` (a worktree, say) of the project checked out at `main`.
   const got = claude_skills(config, [repo], main, last_run).map((s) => [s.name, s.description]);
@@ -240,18 +253,27 @@ test("finds_skills_where_the_agent_runs", () => {
   review = db.update_task(c, review.id, [["parent_id", task.id]])!;
   // Before the worktree is set up, both run in the main checkout; then in the task's worktree.
   assert.deepEqual(places(review), ["/main", []]);
-  task = db.update_task(c, task.id, [["worktree_path", "/w/1"], ["worktree_state", "ready"]])!;
+  task = db.update_task(c, task.id, [
+    ["worktree_path", "/w/1"],
+    ["worktree_state", "ready"],
+  ])!;
   assert.deepEqual(places(task), ["/w/1", []]);
   assert.deepEqual(places(review), ["/w/1", []]);
   // A plan task from before labels works in its own folder, reading the project's checkout.
   let plan = db.insert_task(c, new_task("pr", "task"));
-  plan = db.update_task(c, plan.id, [["labels", ["plan"]], ["work_dir", `documents/${plan.id}`]])!;
+  plan = db.update_task(c, plan.id, [
+    ["labels", ["plan"]],
+    ["work_dir", `documents/${plan.id}`],
+  ])!;
   const doc = path_str(documents.work_dir(state, plan)!);
   assert.deepEqual(places(plan), [doc, ["/main"]]);
   // A scratch task in no project works in its own folder (or its chat's), one without a type in the profile's.
   let scratch = db.insert_task(c, new_task(null, "task"));
   assert.equal(places(scratch)[0], path_str(state.profile_scratch_dir(p.id)));
-  scratch = db.update_task(c, scratch.id, [["task_type", "scratch"], ["work_dir", "/chat"]])!;
+  scratch = db.update_task(c, scratch.id, [
+    ["task_type", "scratch"],
+    ["work_dir", "/chat"],
+  ])!;
   assert.deepEqual(places(scratch), ["/chat", []]);
 });
 
@@ -324,7 +346,11 @@ test("forgets_board_skills_deleted_or_renamed_from_runs_recorded_before", () => 
   update_skill_in(c, "a", renamed.id, { content: md("new-name"), enabled: null });
   assert.deepEqual(reported(a), ["external", "global", "own"]);
   // Deleted, the disabled one too.
-  for (const [project, id] of [["a", own.id], ["a", disabled.id], [null, global.id]] as Array<[string | null, string]>) {
+  for (const [project, id] of [
+    ["a", own.id],
+    ["a", disabled.id],
+    [null, global.id],
+  ] as Array<[string | null, string]>) {
     assert.equal(delete_in(c, "agent_skills", project, id).ok, true);
   }
   assert.deepEqual(reported(a), ["external"]);
@@ -398,9 +424,15 @@ test("a_thread_can_have_board_skills_the_project_doesnt", () => {
   skill(null, "dup", true);
   const on = (extra: string[]) => effective_with(c, a, extra)[0].map((s) => [s.name, s.project_id] as [string, string | null]);
   // Global skills aren't on for the project unless switched on, and it has its own.
-  assert.deepEqual(on([]).map((s) => s[0]), ["dup", "own"]);
+  assert.deepEqual(
+    on([]).map((s) => s[0]),
+    ["dup", "own"],
+  );
   const got = on(["global", "dead", "missing", "dup", "own", "local-off"]);
-  assert.deepEqual(got.map((s) => s[0]), ["dup", "own", "global", "local-off"]);
+  assert.deepEqual(
+    got.map((s) => s[0]),
+    ["dup", "own", "global", "local-off"],
+  );
   // A project's own skill that's off for its runs can still be picked for a thread, and is off for the others.
   assert.ok(!on([]).some((s) => s[0] === "local-off"));
   // The project's own skill of a name wins over a global one, as it does for the project.
@@ -452,7 +484,8 @@ test("a_profiles_assistant_gets_the_global_tools_its_profile_switches_on", async
     create_mcp_server_in(c, null, { name, config: { type: "http", url: `https://${name}.example` }, enabled: null, auto_allow: auto });
   // `unset` has no switch, so it's off for the profile.
   const [on, off, , probe, quiet] = [skill("on"), skill("off"), skill("unset"), server("probe", true), server("quiet", false)];
-  const set = (scope_id: string, item: string, v: boolean) => db.run(c, "INSERT OR REPLACE INTO agent_tool_switches VALUES ('profile',?1,?2,?3)", scope_id, item, v);
+  const set = (scope_id: string, item: string, v: boolean) =>
+    db.run(c, "INSERT OR REPLACE INTO agent_tool_switches VALUES ('profile',?1,?2,?3)", scope_id, item, v);
   set(me.id, on.id, true);
   set(me.id, off.id, false);
   set(me.id, probe.id, true);
@@ -497,7 +530,17 @@ test("a_profiles_assistant_gets_the_global_tools_its_profile_switches_on", async
   tools = for_task_run(s, scratch, null);
   assert.ok(!Object.keys(tools.mcp_servers).length && tools.skills_dir === null);
   // A project's run is as it was.
-  const project = db.insert_project(c, { id: "web", profile_id: me.id, name: "Web", key: "WEB", repo_path: "/x", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false });
+  const project = db.insert_project(c, {
+    id: "web",
+    profile_id: me.id,
+    name: "Web",
+    key: "WEB",
+    repo_path: "/x",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
+  });
   tools = for_task_run(s, scratch, project);
   assert.deepEqual(Object.keys(tools.mcp_servers), ["probe"]);
 

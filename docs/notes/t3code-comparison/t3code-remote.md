@@ -26,6 +26,7 @@ are relative to the repo root. "(from code)" marks things found in source but no
 ## 2. Installation and distribution
 
 ### Command-line server (`t3`)
+
 - `curl -fsSL https://t3.codes/install.sh | sh` (macOS/Linux), `irm https://t3.codes/install.ps1 | iex`
   (Windows). Installs `t3` into `~/.local/bin`; needs only sh, tar, sha256sum/shasum and curl/wget, no
   Node. `docs/user/install.md`, `scripts/install.sh`
@@ -44,6 +45,7 @@ are relative to the repo root. "(from code)" marks things found in source but no
   Cursor, Grok Build, OpenCode, Antigravity, Pi, Muse Code, fx). `docs/user/install.md`
 
 ### Desktop app (Electron)
+
 - Artifacts per release: macOS arm64 and x64 DMG; Linux x64/arm64 AppImage and `.deb`; Windows
   x64/arm64 NSIS installer. Signed/notarized when secrets exist (Apple Developer ID, Azure Trusted
   Signing). `docs/operations/release.md`
@@ -57,6 +59,7 @@ are relative to the repo root. "(from code)" marks things found in source but no
   `apps/desktop/src/app/DesktopCliShim.ts`
 
 ### Mobile app
+
 - iOS App Store (listing `t3-code-remote-claude-more`, id6787819824) and Google Play (`com.t3tools.t3code`). Store and QR
   links in **Settings → About → Mobile app** on web/desktop. TestFlight is invite-only; Android beta
   APKs are on GitHub releases tagged `android-beta-*`. `docs/user/install.md`
@@ -66,6 +69,7 @@ are relative to the repo root. "(from code)" marks things found in source but no
   production (`T3 Code`). `apps/mobile/README.md`
 
 ### Hosted web app
+
 - `https://app.t3.codes` (stable, Vercel alias `latest`) and `nightly.app.t3.codes`. It is a pure
   client: stores its connection catalog in the browser and connects directly to each environment; it
   holds no server-side pairing state and proxies nothing. Needs HTTPS endpoints (T3 Connect or
@@ -74,6 +78,7 @@ are relative to the repo root. "(from code)" marks things found in source but no
 - A local server also serves the web UI itself; `t3` opens it in the browser. `docs/user/install.md`
 
 ### Release channels
+
 - `stable` and `nightly` (nightly built from `main`, checked every 30 min; stable promotes the latest
   nightly commit). `preview` is a maintainer test train (never offered as an update; `npx t3@preview`,
   `T3CODE_CHANNEL=preview`, `t3 update --channel preview` with a warning). npm dist-tags `latest`,
@@ -87,6 +92,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
 3773 (next free port is chosen if busy, from code). `t3 help` / `t3 --help`.
 
 ### Running a server
+
 - `t3 [path]` / `t3 start`: run the server and open the web app in a browser. A bare non-existent
   directory name is rejected (use `t3 ./new-dir`). Refuses to start a second server on the same T3 home.
 - `t3 serve`: headless; no browser; prints "Connection string", one-time token, pairing URL, a
@@ -100,6 +106,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   `T3CODE_TELEMETRY_ENABLED`, `T3CODE_RELAY_URL`, `T3CODE_CLOUDFLARED_PATH`, `T3CODE_DEV_AUTH_TOKEN`.
 
 ### Remote access and auth
+
 - `t3 pair [--scope …] [--ttl 5m] [--label] [--tailscale] [--tailscale-serve-port]`: mint a one-time
   pairing token for the running server and print it as a QR code; `--tailscale` publishes via Tailscale
   Serve and pairs through the tailnet HTTPS URL. Default TTL 5 minutes. `apps/server/src/cli/pair.ts`
@@ -121,6 +128,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   `apps/server/src/cli/environment.ts`
 
 ### Service, updates, maintenance
+
 - `t3 service install [--allow-downgrade] | status | restart | uninstall | protect [--undo] [--yes]`;
   `t3 service update` is deprecated in favour of `t3 update`. `apps/server/src/cli/service.ts`
 - `t3 update [version] [--channel stable|nightly|preview] [--allow-downgrade] [-y|--yes]`: download a
@@ -134,6 +142,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   `apps/server/src/cli/browser.ts`
 
 ### Driving a running server from a terminal
+
 - `t3 app [path]`: open a new thread for a directory in the running desktop app (adds the project).
 - `t3 project add <path> [--title] | remove <project> [--force] | rename <project> <title>`.
 - `t3 thread list [--project] | start <project> <message> [--title --provider --model --worktree
@@ -144,6 +153,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   switch to. `apps/server/src/cli/theme.ts`, `docs/user/appearance.md`
 
 ### Diagnostics and internal
+
 - `t3 trace summary [--since 30m] [--limit N]`: summarize the local NDJSON trace file.
 - `t3 triage [--agent claude|codex] [--model]`: have Claude or Codex investigate a T3 Code problem on
   this machine and help file an issue. `apps/server/src/cli/triage.ts`
@@ -214,6 +224,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
 ## 6. Remote access
 
 ### Environments, routes and multiple servers in one client
+
 - Each saved environment has an ordered list of **routes** (LAN, Tailscale, other VPN, public URL, SSH,
   T3 Connect). The client connects over the first that answers; while on a later route it re-checks
   earlier ones on network change, foreground and every minute, and moves back. Routes can be added,
@@ -237,6 +248,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   overrides. `docs/user/project-settings.md`
 
 ### Direct pairing (LAN or private network)
+
 - Desktop host: **Settings → Sharing & access → Network access** (desktop setting `serverExposureMode`
   `local-only` | `network-accessible`; changing it restarts the app), then create a pairing link for a
   reachable address (QR code, copyable URL, code, hosted-app link; per-link scopes).
@@ -250,6 +262,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   certificates are trusted on Android when installed as a CA certificate. `docs/user/remote-access.md`
 
 ### Tailscale
+
 - Plain tailnet IP: `t3 serve --host <tailnet-ip>`. Tailscale HTTPS: `t3 serve --tailscale-serve`
   (`--tailscale-serve-port`, default 443) or `t3 pair --tailscale` for a running server; desktop toggle
   **Tailscale HTTPS** in Sharing & access. Pairing links then use `https://machine.tailnet.ts.net/`.
@@ -260,6 +273,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   Tailscale as a fallback to T3 Connect. `docs/user/mobile-notifications.md`, `docs/user/faq.md`
 
 ### T3 Connect (hosted relay + managed tunnels)
+
 - Purpose: reach an environment from anywhere without router forwarding. Host: desktop **Settings →
   Sharing & access → T3 Connect**, or `t3 connect` on a CLI host (offers to install the background
   service). Other devices sign in to the same account and pick the environment; app.t3.codes adds
@@ -299,6 +313,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   config is set. `docs/operations/connect-setup.md`, `docs/operations/android-notifications.md`
 
 ### Desktop-managed SSH
+
 - Desktop **Settings → Environments → Add environment → SSH** with a host or SSH alias (host picker reads
   `~/.ssh/config`; "Use local SSH config, agent, and tunnels"). T3 starts or reuses a server on the
   remote host, downloads its runtime to `~/.t3/runtime`, and opens the port forward; projects, provider
@@ -312,6 +327,7 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
   `docs/operations/observability.md`
 
 ### WSL (Windows)
+
 - Desktop on Windows can run a second backend inside a chosen WSL distro (**WSL backend**, "Run the
   selected WSL distro alongside Windows"), or **WSL only**. T3 installs its own server runtime inside the
   distro (Windows packages embed the Linux CLI archive); provider CLIs must be installed in the distro.
@@ -319,11 +335,13 @@ Defined in `apps/server/src/binCli.ts` and `apps/server/src/cli/*.ts` (Effect CL
 - Native process telemetry is unavailable for the WSL backend. `docs/internals/resource-telemetry.md`
 
 ### Desktop as remote only
+
 - **Settings → Environments → Local environment** off: restarts with no local server, agents, terminals
   or WSL backends; works only through pairing, T3 Connect or SSH; data kept.
   `docs/user/remote-access.md`, `apps/desktop/src/settings/DesktopAppSettings.ts`
 
 ### Outside agents over MCP (related)
+
 - Each environment serves `/mcp`; Claude Code, Codex, ChatGPT or bots sign in via OAuth (PKCE, loopback or
   HTTPS redirect) with a pairing code; owner grants read-only or a runtime-mode ceiling; listed and
   revocable in Sharing & access. Hosted agents need the T3 Connect address. `docs/user/outside-agents.md`,
@@ -429,6 +447,7 @@ environment server, not client devices.
 ## 11. Mobile app (iOS / Android)
 
 ### Platform and connection
+
 - React Native/Expo app; iOS 18.0+ (iPhone and iPad), Android 7.0+ (API 24). The phone is a remote only:
   the computer runs the agents and must stay on. `apps/mobile/app.config.ts`, `docs/user/faq.md`
 - Connect via T3 Connect sign-in ("Reach your machines from anywhere, no network setup"), QR scan
@@ -438,6 +457,7 @@ environment server, not client devices.
   `apps/mobile/src/features/connection/`, `apps/mobile/app.config.ts`
 
 ### Feature inventory (from routes and feature folders; most also in user docs)
+
 - Threads: list with filters/search (incl. message matches), swipe actions, archive/undo, snooze,
   arrange/drag, pinning, new-task flow (project/environment/branch/worktree/files/attachments/settings),
   queued messages and steering, subagents sheet, background-work sheet, proposed-plan cards.
@@ -467,6 +487,7 @@ environment server, not client devices.
   `docs/user/composer.md`, `docs/internals/voice-input.md`
 
 ### Notifications, Live Activities, widgets
+
 - Push requires T3 Connect + environment **Publish agent activity**; enable **Device Notifications** in
   Settings → Notifications. Alerts for finished, failed, needs approval, asks for input; tap opens the
   thread; grouped alerts ("2 agents need attention"). Foreground alerts suppressed only for the thread on
@@ -491,6 +512,7 @@ environment server, not client devices.
   `t3code://pair` links for pairing. `apps/mobile/app.config.ts`, `packages/shared/src/remote.ts`
 
 ### Offline behaviour
+
 - Drafts and queued messages (with local copies of attachments) work offline and survive restarts;
   uploads resume on reconnect; signing out of T3 Connect keeps queued work for that account.
   `docs/user/composer.md`
@@ -500,12 +522,14 @@ environment server, not client devices.
   `apps/mobile/src/connection/`
 
 ### Diagnostics
+
 - **Settings → Diagnostics** lists startup crashes from the last 7 days with error and component stack
   (copyable for issues); **Send crash reports** toggle. `docs/user/install.md`, `docs/user/telemetry.md`
 
 ## 12. Desktop app (Electron)
 
 ### Shell and local server management
+
 - Main window with persisted bounds (from code); app menu with Check for Updates, Settings, Paste as
   Text, zoom, reload/devtools. **Quit shortcut** setting: `hold` (default), `double-click` (press twice)
   or `direct` for Cmd/Ctrl+Q. `apps/desktop/src/window/`, `apps/desktop/src/window/QuitHold.ts`,
@@ -520,6 +544,7 @@ environment server, not client devices.
   `apps/web/src/components/settings/settingsSearch.ts`
 
 ### OS integration
+
 - `t3 app [path]` opens a project in the running app over a local socket. `docs/user/install.md`,
   `apps/desktop/src/app/DesktopAppActivation.ts`
 - Deep links: `t3code://pair` (add a server after confirming the address), `t3code://app/` OAuth callbacks
@@ -543,6 +568,7 @@ environment server, not client devices.
   mobile do not). `docs/internals/connection-runtime.md`
 
 ### Startup and recovery
+
 - Single-instance lock; "T3 Code could not start" window when the bundled server fails, with Update or a
   link to the last version that started, and **Copy details**. `docs/user/updating.md`,
   `apps/desktop/src/app/DesktopStartupRecovery.ts`
@@ -557,7 +583,7 @@ environment server, not client devices.
 - **Background activity** policy (from code): Balanced / Performance / Battery saver / custom, with
   toggles "Pause when host is locked", "Pause on host low power", "Pause on client low power", "Pause on
   battery", and intervals for git fetch, provider health and host power polling. Server-side
-  `BackgroundPolicy` + `HostPowerMonitor` (Electron power feed). 
+  `BackgroundPolicy` + `HostPowerMonitor` (Electron power feed).
   `apps/web/src/components/settings/BackgroundActivitySettings.tsx`, `apps/server/src/background/`
 
 ## 14. Telemetry, analytics, diagnostics, observability

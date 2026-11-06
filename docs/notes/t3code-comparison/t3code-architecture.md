@@ -94,7 +94,7 @@ here only as one-line pointers.
 - Rust for native helpers (`native/resource-monitor`, `native/hyprland-snap-shot`,
   `native/kde-snap-shot`); C for `native/browser-secret` (libsecret lookup of Chromium's cookie key on
   Linux); vendored `libghostty-vt` C ABI headers (terminal emulation). `native/*`
-- SQL (SQLite) for persistence; GraphQL only as a *client* of Expo's API (see 7.12).
+- SQL (SQLite) for persistence; GraphQL only as a _client_ of Expo's API (see 7.12).
 
 ### Frameworks and key libraries
 

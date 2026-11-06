@@ -82,32 +82,102 @@ const THEME: ThemeRegistration = {
     { settings: { foreground: FG } },
     { scope: ["comment", "punctuation.definition.comment", "string.comment"], settings: { foreground: "#6e6e82", fontStyle: "italic" } },
     {
-      scope: ["keyword", "storage", "storage.type", "storage.modifier", "keyword.control", "keyword.operator.new", "keyword.operator.expression", "keyword.operator.word", "variable.language", "support.type.object.module"],
+      scope: [
+        "keyword",
+        "storage",
+        "storage.type",
+        "storage.modifier",
+        "keyword.control",
+        "keyword.operator.new",
+        "keyword.operator.expression",
+        "keyword.operator.word",
+        "variable.language",
+        "support.type.object.module",
+      ],
       settings: { foreground: "#b49cff" },
     },
-    { scope: ["keyword.operator", "punctuation", "meta.brace", "punctuation.separator", "punctuation.terminator", "punctuation.accessor"], settings: { foreground: "#8e8ea6" } },
-    { scope: ["string", "punctuation.definition.string", "string.template", "markup.inline.raw", "markup.raw", "markup.fenced_code"], settings: { foreground: "#e0c08c" } },
-    { scope: ["constant.character.escape", "string.regexp", "constant.other.character-class.regexp", "constant.other.placeholder"], settings: { foreground: "#f5c26b" } },
     {
-      scope: ["constant.numeric", "constant.language", "support.constant", "constant.other", "variable.other.constant", "variable.other.enummember", "constant.character"],
+      scope: ["keyword.operator", "punctuation", "meta.brace", "punctuation.separator", "punctuation.terminator", "punctuation.accessor"],
+      settings: { foreground: "#8e8ea6" },
+    },
+    {
+      scope: ["string", "punctuation.definition.string", "string.template", "markup.inline.raw", "markup.raw", "markup.fenced_code"],
+      settings: { foreground: "#e0c08c" },
+    },
+    {
+      scope: ["constant.character.escape", "string.regexp", "constant.other.character-class.regexp", "constant.other.placeholder"],
+      settings: { foreground: "#f5c26b" },
+    },
+    {
+      scope: [
+        "constant.numeric",
+        "constant.language",
+        "support.constant",
+        "constant.other",
+        "variable.other.constant",
+        "variable.other.enummember",
+        "constant.character",
+      ],
       settings: { foreground: "#f5a97f" },
     },
     {
-      scope: ["entity.name.function", "support.function", "variable.function", "entity.name.method", "meta.function-call.generic", "entity.name.function.macro", "support.function.macro"],
+      scope: [
+        "entity.name.function",
+        "support.function",
+        "variable.function",
+        "entity.name.method",
+        "meta.function-call.generic",
+        "entity.name.function.macro",
+        "support.function.macro",
+      ],
       settings: { foreground: "#82aaff" },
     },
     {
-      scope: ["entity.name.type", "entity.name.class", "support.type", "support.class", "entity.other.inherited-class", "entity.name.namespace", "entity.name.module", "storage.type.primitive", "entity.name.type.primitive", "entity.name.scope-resolution"],
+      scope: [
+        "entity.name.type",
+        "entity.name.class",
+        "support.type",
+        "support.class",
+        "entity.other.inherited-class",
+        "entity.name.namespace",
+        "entity.name.module",
+        "storage.type.primitive",
+        "entity.name.type.primitive",
+        "entity.name.scope-resolution",
+      ],
       settings: { foreground: "#6fd3d3" },
     },
     {
-      scope: ["variable.other.property", "variable.other.object.property", "support.variable.property", "meta.object-literal.key", "support.type.property-name", "entity.name.tag.yaml", "variable.other.member", "entity.other.attribute-name.class.css"],
+      scope: [
+        "variable.other.property",
+        "variable.other.object.property",
+        "support.variable.property",
+        "meta.object-literal.key",
+        "support.type.property-name",
+        "entity.name.tag.yaml",
+        "variable.other.member",
+        "entity.other.attribute-name.class.css",
+      ],
       settings: { foreground: "#b3bce6" },
     },
     { scope: ["entity.name.tag", "punctuation.definition.tag", "support.class.component"], settings: { foreground: "#f38ba8" } },
     { scope: ["entity.other.attribute-name"], settings: { foreground: "#c4a7e7" } },
-    { scope: ["meta.decorator", "punctuation.decorator", "entity.name.function.decorator", "meta.attribute", "entity.name.lifetime", "storage.modifier.lifetime", "punctuation.definition.annotation"], settings: { foreground: "#f5c26b" } },
-    { scope: ["markup.heading", "entity.name.section", "markup.heading punctuation.definition.heading"], settings: { foreground: "#8f8ff9", fontStyle: "bold" } },
+    {
+      scope: [
+        "meta.decorator",
+        "punctuation.decorator",
+        "entity.name.function.decorator",
+        "meta.attribute",
+        "entity.name.lifetime",
+        "storage.modifier.lifetime",
+        "punctuation.definition.annotation",
+      ],
+      settings: { foreground: "#f5c26b" },
+    },
+    {
+      scope: ["markup.heading", "entity.name.section", "markup.heading punctuation.definition.heading"],
+      settings: { foreground: "#8f8ff9", fontStyle: "bold" },
+    },
     { scope: ["markup.bold"], settings: { fontStyle: "bold" } },
     { scope: ["markup.italic"], settings: { fontStyle: "italic" } },
     { scope: ["markup.underline.link", "string.other.link", "markup.link"], settings: { foreground: "#7c7cf8" } },
@@ -145,7 +215,11 @@ scope.onmessage = async (e: MessageEvent<{ id: number; lang: string; texts: stri
     const grammar = GRAMMARS[lang];
     if (!grammar) throw new Error(`no grammar for ${lang}`);
     const h = await (highlighter ??= createHighlighterCore({ themes: [THEME], langs: [], engine: createJavaScriptRegexEngine({ forgiving: true }) }));
-    if (!loaded.has(lang)) loaded.set(lang, grammar().then((m) => h.loadLanguage(m.default)));
+    if (!loaded.has(lang))
+      loaded.set(
+        lang,
+        grammar().then((m) => h.loadLanguage(m.default)),
+      );
     await loaded.get(lang);
     const lines = texts.map((text) =>
       h.codeToTokensBase(text, { lang, theme: "huntaway", tokenizeMaxLineLength: MAX_LINE_LENGTH, tokenizeTimeLimit: 200 }).map((line) => {

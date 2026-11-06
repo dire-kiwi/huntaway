@@ -33,8 +33,12 @@ test("background shell lifecycle events aren't subagents", () => {
 function thread() {
   const messages = [];
   const add = (data, kind = "claude") => messages.push({ id: messages.length + 1, kind, data, created_at: new Date(messages.length * 1000).toISOString() });
-  const start = (id, parent = null, input = {}) => add({ type: "assistant", parent_tool_use_id: parent,
-    message: { content: [{ type: "tool_use", id, name: "Agent", input: { run_in_background: true, ...input } }] } });
+  const start = (id, parent = null, input = {}) =>
+    add({
+      type: "assistant",
+      parent_tool_use_id: parent,
+      message: { content: [{ type: "tool_use", id, name: "Agent", input: { run_in_background: true, ...input } }] },
+    });
   const status = (id, status, summary) => add({ type: "system", subtype: "task_notification", tool_use_id: id, status, summary });
   const update = (id, status) => add({ type: "system", subtype: "task_updated", tool_use_id: id, patch: { status } });
   return { messages, add, start, status, update, agents: (running = true) => buildSubagents(messages, running) };
@@ -43,8 +47,17 @@ function thread() {
 test("Codex child metadata can arrive after its stable row, without creating another agent", () => {
   const t = thread();
   t.start("codex-agent-child");
-  t.add({ type: "system", subtype: "task_started", tool_use_id: "codex-agent-child", task_id: "child", prompt: "Inspect config", description: "Inspect config",
-    model: "gpt-6.1-sol", subagent_type: "explorer", parent_tool_use_id: "codex-agent-parent" });
+  t.add({
+    type: "system",
+    subtype: "task_started",
+    tool_use_id: "codex-agent-child",
+    task_id: "child",
+    prompt: "Inspect config",
+    description: "Inspect config",
+    model: "gpt-6.1-sol",
+    subagent_type: "explorer",
+    parent_tool_use_id: "codex-agent-parent",
+  });
   t.start("codex-agent-child");
   for (const name of ["wait", "sendInput", "sendMessage", "resumeAgent", "followupTask", "closeAgent"]) {
     t.add({ type: "assistant", message: { content: [{ type: "tool_use", id: name, name, input: { receiver_thread_ids: ["child"] } }] } });
@@ -80,7 +93,11 @@ test("a Codex follow-up reopens a completed child and replaces its old report", 
 test("a child's pending permission can arrive before its row and survives status updates", () => {
   const t = thread();
   t.add({ status: "pending", tool_use_id: "bash" }, "permission");
-  t.add({ type: "assistant", parent_tool_use_id: "codex-agent-child", message: { content: [{ type: "tool_use", id: "bash", name: "Bash", input: { command: "make" } }] } });
+  t.add({
+    type: "assistant",
+    parent_tool_use_id: "codex-agent-child",
+    message: { content: [{ type: "tool_use", id: "bash", name: "Bash", input: { command: "make" } }] },
+  });
   t.start("codex-agent-child");
   t.update("codex-agent-child", "running");
   assert.equal(t.agents()[0].awaitingApproval, true);
@@ -93,6 +110,8 @@ test("failed, interrupted and unfinished Codex children have separate outcomes",
   for (const id of ["failed", "interrupted", "unfinished"]) t.start(id);
   t.status("failed", "failed", "Child error");
   t.status("interrupted", "stopped");
-  assert.deepEqual(t.agents(false).map((s) => s.status), ["failed", "stopped", "stopped"]);
+  assert.deepEqual(
+    t.agents(false).map((s) => s.status),
+    ["failed", "stopped", "stopped"],
+  );
 });
-

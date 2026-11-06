@@ -155,9 +155,13 @@ function submit_review_tool(): any {
         verdict: {
           type: "string",
           enum: ["pass", "needs_fixes"],
-          description: "needs_fixes if anything must be fixed before merging (list it in serious_issues); pass if it's ready to merge as far as correctness goes",
+          description:
+            "needs_fixes if anything must be fixed before merging (list it in serious_issues); pass if it's ready to merge as far as correctness goes",
         },
-        summary: { type: "string", description: "A few sentences: what you reviewed and what you found, including minor issues and suggestions worth mentioning" },
+        summary: {
+          type: "string",
+          description: "A few sentences: what you reviewed and what you found, including minor issues and suggestions worth mentioning",
+        },
         serious_issues: {
           type: "array",
           items: { type: "string" },
@@ -193,7 +197,18 @@ export function for_reviewers(tool: string): boolean {
  * (create_task with start, send_to_task, run_automation) or change anything. The server checks it (tools::execute_mcp):
  * a run's tool list stays as it started while its mode changes.
  */
-const FOR_PLANNING = ["list_projects", "list_tasks", "get_task", "get_task_field", "get_project", "list_automations", "list_workflows", "wait", "request_user_input", "submit_review"];
+const FOR_PLANNING = [
+  "list_projects",
+  "list_tasks",
+  "get_task",
+  "get_task_field",
+  "get_project",
+  "list_automations",
+  "list_workflows",
+  "wait",
+  "request_user_input",
+  "submit_review",
+];
 
 /** Whether a thread in plan mode may call `tool`. */
 export function for_planning(tool: string): boolean {
@@ -212,7 +227,9 @@ export function tools(review: boolean): any[] {
 
 /** The names of the tools in `tools(review)`. */
 export function tool_names(review: boolean): string[] {
-  return tools(review).map((t) => t.name).filter((n) => typeof n === "string");
+  return tools(review)
+    .map((t) => t.name)
+    .filter((n) => typeof n === "string");
 }
 
 function board_tools(): any[] {
@@ -250,7 +267,10 @@ function board_tools(): any[] {
     description:
       "Remind the user of the task later: it's listed under Reminders in the board's sidebar, and shows as due from this time on. A delay from now (30m, 2h, 1d 12h, 1w), a time like 2026-05-01T09:00:00Z, or a date and time in the host's time zone (2026-05-01 09:00; a date alone means 9:00). Replaces any reminder it has; an empty string clears it.",
   };
-  const reminder = { type: "string", description: "What the reminder is for, shown with it (with remind_at, or to change the note of the reminder the task has)" };
+  const reminder = {
+    type: "string",
+    description: "What the reminder is for, shown with it (with remind_at, or to change the note of the reminder the task has)",
+  };
   const copy_files = {
     type: "string",
     description:
@@ -317,7 +337,10 @@ function board_tools(): any[] {
       inputSchema: {
         type: "object",
         properties: {
-          reason: { type: "string", description: "What you're waiting for, shown on the board (e.g. 'waiting on OBP-1 and OWC-1', 'waiting for CI and review')" },
+          reason: {
+            type: "string",
+            description: "What you're waiting for, shown on the board (e.g. 'waiting on OBP-1 and OWC-1', 'waiting for CI and review')",
+          },
           seconds: {
             type: "number",
             minimum: 1,
@@ -385,7 +408,10 @@ function board_tools(): any[] {
         properties: {
           task_id: task_ref,
           profile,
-          field: { type: "string", description: "Top-level field name from get_task's field_lengths (e.g. description, last_message, review or created_tasks)" },
+          field: {
+            type: "string",
+            description: "Top-level field name from get_task's field_lengths (e.g. description, last_message, review or created_tasks)",
+          },
           offset: { type: "integer", minimum: 0, default: 0, description: "Zero-based character offset" },
           limit: {
             type: "integer",
@@ -409,7 +435,8 @@ function board_tools(): any[] {
           description: { type: "string", description: "Full instructions for the agent that will work on it (markdown)" },
           project_id: {
             type: "string",
-            description: "Defaults to the current project. Also takes a key or name, or <profile>:<key> for a project on another profile's board (e.g. work:SD)",
+            description:
+              "Defaults to the current project. Also takes a key or name, or <profile>:<key> for a project on another profile's board (e.g. work:SD)",
           },
           profile,
           status: { type: "string", enum: status_enum },
@@ -547,7 +574,8 @@ function board_tools(): any[] {
           },
           group_name: {
             type: "string",
-            description: "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group",
+            description:
+              "The sidebar group the project is in, shared with the host's other projects of that group name; an empty string takes it out of its group",
           },
           reviewers: {
             type: ["array", "null"],
@@ -615,10 +643,14 @@ function board_tools(): any[] {
   ];
   const props = list.find((t) => t.name === "update_project")?.inputSchema?.properties;
   if (props) {
-    props.auto_summary = { type: "boolean", description: "Once a task's review passes, have an agent summarise its changes for the user to read before merging" };
+    props.auto_summary = {
+      type: "boolean",
+      description: "Once a task's review passes, have an agent summarise its changes for the user to read before merging",
+    };
     props.summarizer = {
       type: ["object", "null"],
-      description: "The one summarizer, for when there's only one: the same as summarizers with a list of one, and null the same as an empty list. Prefer summarizers.",
+      description:
+        "The one summarizer, for when there's only one: the same as summarizers with a list of one, and null the same as an empty list. Prefer summarizers.",
       properties: { claude_config_id: { type: "string" }, model: { type: "string" }, effort: { type: "string" } },
     };
     props.summarizers = {
@@ -818,7 +850,10 @@ function automation_tools(profile: any, project_one: string): any[] {
         maximum: 3600,
         description: "Deliveries within this many seconds of the first make one run, with the latest one's values (0: each runs by itself)",
       },
-      coalesce_key: { type: "string", description: "With coalescing, only deliveries with the same key (a template such as {{body.issue.number}}) go together" },
+      coalesce_key: {
+        type: "string",
+        description: "With coalescing, only deliveries with the same key (a template such as {{body.issue.number}}) go together",
+      },
     },
     required: ["kind"],
   };
@@ -993,7 +1028,9 @@ export function check_args(tool: string, args: any): string | null {
   else if (typeof args === "object" && !Array.isArray(args)) given = args;
   else return `${tool}'s arguments must be an object`;
   // `host` picks a linked host (see tools::dispatch).
-  const extra = Object.keys(given).sort().find((k) => !Object.hasOwn(props, k) && k !== "host");
+  const extra = Object.keys(given)
+    .sort()
+    .find((k) => !Object.hasOwn(props, k) && k !== "host");
   if (extra !== undefined) return `${tool} has no argument ${JSON.stringify(extra)}; its arguments are ${names()}. ${hint}`;
   for (const r of schema.inputSchema.required ?? []) {
     const v = given[r];

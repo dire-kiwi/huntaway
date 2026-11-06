@@ -194,8 +194,7 @@ function Config_from_json(v: any): Config {
   const bot = v.bot == null ? null : { id: v.bot.id, username: v.bot.username };
   if (bot && (!is_int(bot.id) || typeof bot.username !== "string")) throw new Error("bot");
   const o = v.owner;
-  const owner =
-    o == null ? null : { chat_id: o.chat_id, user_id: o.user_id, name: o.name, username: opt_str(o.username), linked_at: o.linked_at };
+  const owner = o == null ? null : { chat_id: o.chat_id, user_id: o.user_id, name: o.name, username: opt_str(o.username), linked_at: o.linked_at };
   if (owner && (!is_int(owner.chat_id) || !is_int(owner.user_id) || typeof owner.name !== "string" || typeof owner.linked_at !== "string")) {
     throw new Error("owner");
   }
@@ -211,7 +210,8 @@ function Progress_from_json(v: any): Progress {
   if (!is_obj(v)) throw new Error("not an object");
   const prompts: Record<string, SentPrompt> = {};
   for (const [k, p] of Object.entries(is_obj(v.prompts) ? v.prompts : {})) {
-    if (is_obj(p) && is_int((p as any).message_id) && typeof (p as any).html === "string") prompts[k] = { message_id: (p as any).message_id, html: (p as any).html };
+    if (is_obj(p) && is_int((p as any).message_id) && typeof (p as any).html === "string")
+      prompts[k] = { message_id: (p as any).message_id, html: (p as any).html };
   }
   return { offset: is_int(v.offset) ? v.offset : 0, awaiting: v.awaiting === true, replied: is_int(v.replied) ? v.replied : 0, prompts };
 }
@@ -220,7 +220,8 @@ function Outbox_from_json(v: any): Outbox {
   if (!is_obj(v)) throw new Error("not an object");
   const items: Queued[] = [];
   for (const q of Array.isArray(v.items) ? v.items : []) {
-    if (is_obj(q) && is_uint(q.id) && is_obj(q.item) && typeof q.item.kind === "string") items.push({ id: q.id, item: q.item, sent: is_uint(q.sent) ? q.sent : 0 });
+    if (is_obj(q) && is_uint(q.id) && is_obj(q.item) && typeof q.item.kind === "string")
+      items.push({ id: q.id, item: q.item, sent: is_uint(q.sent) ? q.sent : 0 });
   }
   return { next: is_uint(v.next) ? v.next : 0, items };
 }
@@ -294,7 +295,8 @@ function linked(c: Conn, profile_id: string): [string, Config, Owner] | null {
 export function valid_token(token: string): boolean {
   const i = token.indexOf(":");
   if (i < 0) return false;
-  const id = token.slice(0, i), secret = token.slice(i + 1);
+  const id = token.slice(0, i),
+    secret = token.slice(i + 1);
   return /^[0-9]{1,20}$/.test(id) && /^[A-Za-z0-9_-]{20,100}$/.test(secret);
 }
 
@@ -727,8 +729,10 @@ async function handle(s: Shared, profile_id: string, token: string, u: any, sign
   if (u?.callback_query !== undefined) return await button(s, profile_id, token, u.callback_query);
   const m = u?.message;
   if (m === undefined) return;
-  const chat = m?.chat, from = m?.from;
-  const chat_id = chat?.id, user_id = from?.id;
+  const chat = m?.chat,
+    from = m?.from;
+  const chat_id = chat?.id,
+    user_id = from?.id;
   if (!is_int(chat_id) || !is_int(user_id)) return;
   const text: string = typeof m.text === "string" ? m.text : typeof m.caption === "string" ? m.caption : "";
   const cfg = config(s.db(), profile_id);
@@ -851,12 +855,13 @@ async function download(s: Shared, token: string, file_id: string): Promise<Buff
   const chunks: Buffer[] = [];
   let size = 0;
   try {
-    if (res.body) for await (const chunk of res.body) {
-      chunks.push(Buffer.from(chunk));
-      size += chunk.length;
-      // Leaving the loop cancels the rest.
-      if (size > attachments.MAX_BYTES) throw new Error(too_big());
-    }
+    if (res.body)
+      for await (const chunk of res.body) {
+        chunks.push(Buffer.from(chunk));
+        size += chunk.length;
+        // Leaving the loop cancels the rest.
+        if (size > attachments.MAX_BYTES) throw new Error(too_big());
+      }
   } catch (e) {
     throw new Error(without_token(e, token));
   }
@@ -905,7 +910,8 @@ async function forward(s: Shared, profile_id: string, token: string, chat_id: nu
 async function button(s: Shared, profile_id: string, token: string, cb: any) {
   const reply = (text: string) => ({ callback_query_id: cb?.id, text });
   const cfg = config(s.db(), profile_id);
-  const user = cb?.from?.id, chat = cb?.message?.chat?.id;
+  const user = cb?.from?.id,
+    chat = cb?.message?.chat?.id;
   if (!cfg.owner || !is_int(user) || !is_int(chat) || cfg.owner.user_id !== user || cfg.owner.chat_id !== chat) {
     drop_stranger(s, profile_id, cb?.from, cb?.message?.chat, "button press");
     await call(s, token, "answerCallbackQuery", reply("Only the person this bot is linked to can answer."), 10_000).catch(() => {});
@@ -913,7 +919,8 @@ async function button(s: Shared, profile_id: string, token: string, cb: any) {
   }
   const data: string = typeof cb.data === "string" ? cb.data : "";
   const i = data.indexOf(":");
-  const verb = i < 0 ? "" : data.slice(0, i), id = data.slice(i + 1);
+  const verb = i < 0 ? "" : data.slice(0, i),
+    id = data.slice(i + 1);
   if (verb !== "allow" && verb !== "deny") return;
   const allow = verb === "allow";
   let text: string;
@@ -964,7 +971,9 @@ function outcome(status: string, note: string | null): string {
     case "denied":
       return "❌ Denied";
     case "expired":
-      return note === permissions.EXPIRED_UNANSWERED ? "⌛ Expired: nobody answered in time, so it was denied" : "⌛ Ended: the run stopped before it was answered";
+      return note === permissions.EXPIRED_UNANSWERED
+        ? "⌛ Expired: nobody answered in time, so it was denied"
+        : "⌛ Ended: the run stopped before it was answered";
     default:
       return `Ended (${status})`;
   }
@@ -1223,7 +1232,8 @@ export function observe(s: Shared, ev: any, statuses: Map<string, [string, boole
       const m = ev.message;
       const status = typeof m?.data?.status === "string" ? m.data.status : "pending";
       if (m?.kind !== "permission" || status === "pending") return;
-      const task_id = m.task_id, request = m.data?.request_id;
+      const task_id = m.task_id,
+        request = m.data?.request_id;
       if (typeof task_id !== "string" || typeof request !== "string") return;
       const t = assistants_task(s, task_id);
       if (!t) return;
@@ -1233,7 +1243,8 @@ export function observe(s: Shared, ev: any, statuses: Map<string, [string, boole
     case "task": {
       const t = ev.task;
       if (t?.task_type !== "assistant") return;
-      const id = t.id, status = t.status;
+      const id = t.id,
+        status = t.status;
       if (typeof id !== "string" || typeof status !== "string") return;
       const running = t.running === true;
       const before = statuses.get(id);
@@ -1274,7 +1285,8 @@ function key(t: Task): string {
 function on_message(s: Shared, m: any) {
   const kind: string = typeof m?.kind === "string" ? m.kind : "";
   const data = m?.data ?? {};
-  const relevant = kind === "claude" ? data.type === "result" : kind === "report" ? true : kind === "permission" || kind === "question" ? data.status === "pending" : false;
+  const relevant =
+    kind === "claude" ? data.type === "result" : kind === "report" ? true : kind === "permission" || kind === "question" ? data.status === "pending" : false;
   if (!relevant) return;
   const task_id = m.task_id;
   if (typeof task_id !== "string") return;
@@ -1415,7 +1427,9 @@ function on_attention(s: Shared, task: Task) {
   let waiting = 0;
   try {
     const c = s.db();
-    waiting = (db.value<number>(c, "SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending'", task.id) ?? 0) + history.open_questions(c, task.id).length;
+    waiting =
+      (db.value<number>(c, "SELECT COUNT(*) FROM permission_requests WHERE task_id=?1 AND status='pending'", task.id) ?? 0) +
+      history.open_questions(c, task.id).length;
   } catch {}
   if (waiting > 0) return;
   const why = reason === "" ? "" : `: ${escape(cut(reason, 300))}`;

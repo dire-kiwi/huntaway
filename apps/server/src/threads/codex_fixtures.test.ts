@@ -31,8 +31,21 @@ const jsonl = (path: string): any[] =>
 
 /** What the adapter writes to the run's output (its KEEP, and the requests): the rest it drops. */
 const KEPT = new Set([
-  "thread/started", "thread/status/changed", "thread/closed", "turn/started", "turn/completed", "turn/plan/updated", "item/started", "item/completed",
-  "item/agentMessage/delta", "thread/compacted", "thread/tokenUsage/updated", "account/rateLimits/updated", "error", "warning", "model/rerouted",
+  "thread/started",
+  "thread/status/changed",
+  "thread/closed",
+  "turn/started",
+  "turn/completed",
+  "turn/plan/updated",
+  "item/started",
+  "item/completed",
+  "item/agentMessage/delta",
+  "thread/compacted",
+  "thread/tokenUsage/updated",
+  "account/rateLimits/updated",
+  "error",
+  "warning",
+  "model/rerouted",
   "mcpServer/startupStatus/updated",
 ]);
 
@@ -126,7 +139,8 @@ function replay(scenario: string, on: "items" | "messages"): Replayed {
     if (m.method === undefined) {
       // A response to the adapter's request: thread/start's says the thread's id, as the adapter does once it's started.
       const thread = m.result?.thread?.id;
-      if (typeof thread === "string" && m.result?.turn === undefined && !db.get_task(s.db(), task.id)!.session_id) line({ method: "thread/started", params: { thread: { id: thread } } });
+      if (typeof thread === "string" && m.result?.turn === undefined && !db.get_task(s.db(), task.id)!.session_id)
+        line({ method: "thread/started", params: { thread: { id: thread } } });
       continue;
     }
     if (m.method === "item/started" && m.params?.item?.id) items.set(m.params.item.id, m.params.item);

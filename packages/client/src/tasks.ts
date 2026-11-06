@@ -79,7 +79,7 @@ export const ARCHIVE_AFTER_MS = 2 * 24 * 3600_000;
 /** Done for ARCHIVE_AFTER_MS by `now`: off the kanban board, in the list view's Archived section. Hosts
  *  before API 53 don't say when a task was done, so the last time it changed stands in. */
 export const isArchived = (t: Task, now: number) => {
-  const since = t.status === "done" ? t.done_at ?? (t.done_at === undefined ? t.updated_at : null) : null;
+  const since = t.status === "done" ? (t.done_at ?? (t.done_at === undefined ? t.updated_at : null)) : null;
   return !!since && Date.parse(since) <= now - ARCHIVE_AFTER_MS;
 };
 
@@ -380,7 +380,12 @@ export interface PrChecks {
 /** The host API version that reads tasks' checks and has Fix broken checks. */
 export const CHECKS_API = 94;
 
-const prKey = (url: string) => url.match(/^https?:\/\/(?:www\.)?([^/]+\/[^/]+\/[^/]+)\/pull\/(\d+)/i)?.slice(1).join("#").toLowerCase();
+const prKey = (url: string) =>
+  url
+    .match(/^https?:\/\/(?:www\.)?([^/]+\/[^/]+\/[^/]+)\/pull\/(\d+)/i)
+    ?.slice(1)
+    .join("#")
+    .toLowerCase();
 
 /** How the checks of the task's pull request stood at the board's latest read of it, if it has read the one the task has now. */
 export function prChecks(t: Task): PrChecks | null {
@@ -454,7 +459,6 @@ function noteMove(storage: KeyValueStorage, h: string, id: string, status: Statu
     /* then it may notify of the move */
   }
 }
-
 
 /** A file saved on a host for prompts to refer to (see attachments.ts). */
 export interface Attachment {

@@ -95,7 +95,8 @@ export const isAnswered = (f: PlanField) => f.answer.length > 0 || noneChosen(f)
 export const answered = (fields: PlanField[]) => fields.filter(isAnswered).length;
 
 /** The fields as the plan has them, as Reset leaves them (also when the plan's frame isn't there to report them). */
-export const resetFields = (fields: PlanField[]): PlanField[] => fields.map((f) => ({ ...f, value: f.initial.value, answer: f.initial.answer, touched: false }));
+export const resetFields = (fields: PlanField[]): PlanField[] =>
+  fields.map((f) => ({ ...f, value: f.initial.value, answer: f.initial.answer, touched: false }));
 
 const same = (a: PlanValue | undefined, b: PlanValue | undefined) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -117,7 +118,13 @@ export function answersMessage(fields: PlanField[], version?: number | null): st
     if (first === undefined) return `- ${q}: ${noneChosen(f) ? "(none of the choices)" : "(no answer)"}`;
     if (!rest.length && !first.includes("\n")) return `- ${q}: ${first}`;
     // Text over several lines is quoted, as Markdown.
-    const item = (a: string) => (a.includes("\n") ? a.split("\n").map((l) => `  > ${l}`.trimEnd()).join("\n") : `  - ${a}`);
+    const item = (a: string) =>
+      a.includes("\n")
+        ? a
+            .split("\n")
+            .map((l) => `  > ${l}`.trimEnd())
+            .join("\n")
+        : `  - ${a}`;
     return `- ${q}:\n${f.answer.map(item).join("\n")}`;
   });
   return `My answers to the questions in the plan${version ? ` (v${version})` : ""}:\n\n${lines.join("\n")}\n\nPlease update the plan with them.`;

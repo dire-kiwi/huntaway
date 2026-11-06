@@ -114,8 +114,8 @@ export default function Pair() {
         )}
         {err && <ErrorText>{err}</ErrorText>}
         <Text style={s.faint}>
-          The board must be on HTTPS at an address this phone reaches, such as with tailscale serve on its machine. The phone gets a token of its own,
-          which you can revoke on the board.
+          The board must be on HTTPS at an address this phone reaches, such as with tailscale serve on its machine. The phone gets a token of its own, which you
+          can revoke on the board.
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

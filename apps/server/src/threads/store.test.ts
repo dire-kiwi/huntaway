@@ -4,8 +4,18 @@ import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
 import { read_json, read_jsonl } from "./examples.ts";
 import {
-  apply_events, initial_state, item_page, snapshot_window,
-  type Item, type NewEvent, type SavedEvent, type Snapshot, type Thread, type ThreadEvent, type ThreadRequest, type ToolCall,
+  apply_events,
+  initial_state,
+  item_page,
+  snapshot_window,
+  type Item,
+  type NewEvent,
+  type SavedEvent,
+  type Snapshot,
+  type Thread,
+  type ThreadEvent,
+  type ThreadRequest,
+  type ToolCall,
 } from "./protocol.ts";
 import * as store from "./store.ts";
 
@@ -51,7 +61,11 @@ describe("spec/examples", () => {
   /** The example thread's events saved for a task, and its thread as the task would give it. */
   function saved() {
     const s = setup();
-    store.append(s.c, s.task, events.filter((e) => e.type !== "delta").map((e) => unnumbered(for_task(e, s.task))));
+    store.append(
+      s.c,
+      s.task,
+      events.filter((e) => e.type !== "delta").map((e) => unnumbered(for_task(e, s.task))),
+    );
     return { ...s, thread: { ...whole.thread, id: s.task } };
   }
 
@@ -88,18 +102,28 @@ describe("append", () => {
     const saved = store.append(c, task, [{ type: "turn.started", turn_id: "t1" }, added({ id: "u1", type: "user_message", text: "hi" }), added(call)], {
       message_id: 7,
     });
-    assert.deepEqual(saved.map((e) => [e.thread_id, e.seq, e.type]), [
-      [task, 1, "turn.started"],
-      [task, 2, "item.added"],
-      [task, 3, "item.added"],
-    ]);
+    assert.deepEqual(
+      saved.map((e) => [e.thread_id, e.seq, e.type]),
+      [
+        [task, 1, "turn.started"],
+        [task, 2, "item.added"],
+        [task, 3, "item.added"],
+      ],
+    );
     const pos = () => db.all(c, "SELECT id, pos FROM thread_items WHERE task_id=?1 ORDER BY pos", task).map((r) => [r.id, r.pos]);
-    assert.deepEqual(pos(), [["u1", 0], ["tc1", 1]]);
+    assert.deepEqual(pos(), [
+      ["u1", 0],
+      ["tc1", 1],
+    ]);
     store.append(c, task, [{ type: "item.updated", item_id: "tc1", patch: { status: "completed", result: { content: "a" } } }], { message_id: 8 });
     assert.deepEqual(store.get_item(c, task, "tc1"), { ...call, status: "completed", result: { content: "a" } });
     // Added again with its id: replaced where it was.
     store.append(c, task, [added({ ...call, status: "failed" }), added({ id: "a1", type: "assistant_message", text: "done" })], { message_id: 9 });
-    assert.deepEqual(pos(), [["u1", 0], ["tc1", 1], ["a1", 2]]);
+    assert.deepEqual(pos(), [
+      ["u1", 0],
+      ["tc1", 1],
+      ["a1", 2],
+    ]);
     assert.deepEqual(ids(store.items(c, task)), ["u1", "tc1", "a1"]);
     assert.equal((store.get_item(c, task, "tc1") as ToolCall).status, "failed");
     assert.equal(rows(c, "thread_items", task), 3);
@@ -150,7 +174,12 @@ describe("append", () => {
 
   test("removes items with their origins", () => {
     const { c, task } = setup();
-    store.append(c, task, ["a", "b", "c"].map((id) => added({ id, type: "assistant_message", text: id })), { message_id: 1 });
+    store.append(
+      c,
+      task,
+      ["a", "b", "c"].map((id) => added({ id, type: "assistant_message", text: id })),
+      { message_id: 1 },
+    );
     store.append(c, task, [{ type: "items.removed", item_ids: ["b", "nope"], indices: [1, 3] }]);
     assert.deepEqual(ids(store.items(c, task)), ["a", "c"]);
     assert.deepEqual(store.item_origins(c, task, "b"), []);
@@ -190,7 +219,10 @@ describe("append", () => {
     const { c, task } = setup();
     const other = add_task(c);
     store.append(c, task, [{ type: "turn.started", turn_id: "t1" }]);
-    store.append(c, other, [{ type: "turn.started", turn_id: "t1" }, { type: "turn.completed", turn_id: "t1" }]);
+    store.append(c, other, [
+      { type: "turn.started", turn_id: "t1" },
+      { type: "turn.completed", turn_id: "t1" },
+    ]);
     store.append(c, task, [{ type: "turn.completed", turn_id: "t1" }]);
     assert.deepEqual([store.last_seq(c, task), store.last_seq(c, other)], [2, 2]);
     // The seq it was given is replaced, as is its thread.
@@ -220,7 +252,10 @@ describe("pruning", () => {
     assert.equal(store.events_after(c, task, 0), null);
     assert.equal(store.events_after(c, task, 9), null);
     assert.equal(store.events_after(c, task, 10)!.length, 6);
-    assert.deepEqual(store.events_after(c, task, last - 2)!.map((e) => e.seq), [last - 1, last]);
+    assert.deepEqual(
+      store.events_after(c, task, last - 2)!.map((e) => e.seq),
+      [last - 1, last],
+    );
     // With every event gone, the seq is kept: one up to date has nothing to catch up on, and one behind takes a snapshot.
     assert.equal(store.prune(c, new Date(Date.now() + 2 * store.KEEP_MS).toISOString()), 6);
     assert.equal(rows(c, "thread_events", task), 0);
@@ -229,7 +264,10 @@ describe("pruning", () => {
     assert.equal(store.events_after(c, task, last - 1), null);
     const [next] = store.append(c, task, turns(1));
     assert.equal(next.seq, last + 1);
-    assert.deepEqual(store.events_after(c, task, last)!.map((e) => e.seq), [last + 1]);
+    assert.deepEqual(
+      store.events_after(c, task, last)!.map((e) => e.seq),
+      [last + 1],
+    );
   });
 
   test("prune sweeps every thread", () => {
@@ -238,10 +276,16 @@ describe("pruning", () => {
     store.append(c, task, turns(10), { at: ago(2 * store.KEEP_MS) });
     store.append(c, other, turns(3), { at: ago(2 * store.KEEP_MS) });
     store.append(c, other, turns(2));
-    assert.deepEqual(db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", other).map((r) => r.seq), [4, 5]);
+    assert.deepEqual(
+      db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", other).map((r) => r.seq),
+      [4, 5],
+    );
     assert.equal(store.prune(c), 10);
     assert.equal(rows(c, "thread_events", task), 0);
-    assert.deepEqual(db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", other).map((r) => r.seq), [4, 5]);
+    assert.deepEqual(
+      db.all(c, "SELECT seq FROM thread_events WHERE task_id=?1 ORDER BY seq", other).map((r) => r.seq),
+      [4, 5],
+    );
     assert.equal(store.prune(c), 0);
     assert.deepEqual([store.last_seq(c, task), store.last_seq(c, other)], [10, 5]);
   });
@@ -249,7 +293,9 @@ describe("pruning", () => {
 
 test("clear empties a thread for a rebuild, and its seq goes up past what clients had", () => {
   const { c, task, thread } = setup();
-  store.append(c, task, [added({ id: "a", type: "assistant_message", text: "a" }), { type: "request.opened", request: { id: "r", type: "plan", plan: "p" } }], { message_id: 1 });
+  store.append(c, task, [added({ id: "a", type: "assistant_message", text: "a" }), { type: "request.opened", request: { id: "r", type: "plan", plan: "p" } }], {
+    message_id: 1,
+  });
   store.set_item_meta(c, task, "a", { auto: true });
   store.clear(c, task);
   assert.deepEqual(store.snapshot(c, thread), { thread, items: [], requests: [], seq: 3 });
@@ -282,10 +328,19 @@ test("a task's thread goes with it", () => {
     store.set_item_meta(c, t, "a", { auto: true });
   }
   const tables = ["thread_items", "thread_requests", "thread_events", "thread_item_origins"];
-  assert.deepEqual(tables.map((table) => rows(c, table, task)), [1, 1, 2, 1]);
+  assert.deepEqual(
+    tables.map((table) => rows(c, table, task)),
+    [1, 1, 2, 1],
+  );
   db.run(c, "DELETE FROM tasks WHERE id=?1", task);
-  assert.deepEqual(tables.map((table) => rows(c, table, task)), [0, 0, 0, 0]);
-  assert.deepEqual(tables.map((table) => rows(c, table, other)), [1, 1, 2, 1]);
+  assert.deepEqual(
+    tables.map((table) => rows(c, table, task)),
+    [0, 0, 0, 0],
+  );
+  assert.deepEqual(
+    tables.map((table) => rows(c, table, other)),
+    [1, 1, 2, 1],
+  );
   assert.deepEqual(store.item_meta(c, other, "a"), { auto: true });
 });
 
@@ -302,7 +357,13 @@ test("items keep what the board knows about them", () => {
 });
 
 describe("windows", () => {
-  const msg = (id: string, parent_id?: string, turn_id = "t1"): Item => ({ id, type: "assistant_message", text: id, turn_id, ...(parent_id ? { parent_id } : {}) });
+  const msg = (id: string, parent_id?: string, turn_id = "t1"): Item => ({
+    id,
+    type: "assistant_message",
+    text: id,
+    turn_id,
+    ...(parent_id ? { parent_id } : {}),
+  });
   const agent = (id: string, status: ToolCall["status"], parent_id?: string): Item => ({
     id,
     type: "tool_call",
@@ -343,7 +404,11 @@ describe("windows", () => {
         permission("p-none", { turn_id: "t9" }),
         permission("p-gone", { tool_call_id: "x1" }),
       ].map((request): NewEvent => ({ type: "request.opened", request })),
-      ...["p-old", "p-new", "p-turn", "p-none", "p-gone"].map((request_id): NewEvent => ({ type: "request.resolved", request_id, resolution: { outcome: "cancel" } })),
+      ...["p-old", "p-new", "p-turn", "p-none", "p-gone"].map((request_id): NewEvent => ({
+        type: "request.resolved",
+        request_id,
+        resolution: { outcome: "cancel" },
+      })),
     ];
   }
 
@@ -353,7 +418,8 @@ describe("windows", () => {
     const whole = store.snapshot(c, thread);
     assert.deepEqual(ids(whole.items), ["m0", "sa", "m2", "sb", "m4", "b1", "m6", "tc", "m8", "m9"]);
     assert.deepEqual(whole, apply_events(initial_state(thread), store.events_after(c, task, 0)!));
-    for (let limit = 0; limit <= whole.items.length + 1; limit++) assert.deepEqual(store.window(c, thread, limit), snapshot_window(whole, limit), `limit ${limit}`);
+    for (let limit = 0; limit <= whole.items.length + 1; limit++)
+      assert.deepEqual(store.window(c, thread, limit), snapshot_window(whole, limit), `limit ${limit}`);
     assert.deepEqual(store.window(c, thread), whole);
     assert.deepEqual(store.window(c, thread, 2.5), snapshot_window(whole, 2.5));
     // sb is running: a window after it brings it, and sa (and tc, for the open p-sa).

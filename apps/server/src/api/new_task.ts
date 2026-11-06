@@ -162,7 +162,8 @@ export async function create_scratch_task(s: AppState, r: Req) {
 /** `POST /profiles/{id}/tasks`: a scratch task (see db::Task::is_scratch), which is in no project. Without a title or description it's called "New scratch task". */
 export function create_scratch_task_inner(s: AppState, profile_id: string, b: CreateTask): Task {
   if (!db.get_profile(s.db(), profile_id)) throw ApiError.not_found("profile");
-  if ((b.kind != null && b.kind !== "task") || [check_task_type(b.task_type)].some((t) => t !== null && t !== db.SCRATCH)) throw ApiError.bad("a task in no project is a scratch task");
+  if ((b.kind != null && b.kind !== "task") || [check_task_type(b.task_type)].some((t) => t !== null && t !== db.SCRATCH))
+    throw ApiError.bad("a task in no project is a scratch task");
   if (b.parent_id != null || b.subproject === true || b.use_worktree === true || (b.depends_on != null && b.depends_on.length > 0)) {
     throw ApiError.bad("a scratch task can't be a subproject, be in one, have a worktree or have dependencies");
   }
@@ -267,7 +268,18 @@ export function create_group_task_inner(s: AppState, id: string, gb: CreateGroup
   const labels = new_task_labels(b);
   let t = db.insert_group_task(
     s.db(),
-    { profile_id: id, project_id: null, kind: "task", title: t_title, description, status, use_worktree: false, model: nonempty(b.model), effort, claude_config_id: config },
+    {
+      profile_id: id,
+      project_id: null,
+      kind: "task",
+      title: t_title,
+      description,
+      status,
+      use_worktree: false,
+      model: nonempty(b.model),
+      effort,
+      claude_config_id: config,
+    },
     group,
   );
   const fields: Array<[string, any]> = [];
@@ -442,7 +454,8 @@ export function check_start_from(c: Conn, project: Project, task_id: string | nu
       }
       return null;
     };
-    const pull_request = (number: number, repo: string | null): StartFrom => (repo !== null ? { type: "pull_request", number, repo } : { type: "pull_request", number });
+    const pull_request = (number: number, repo: string | null): StartFrom =>
+      repo !== null ? { type: "pull_request", number, repo } : { type: "pull_request", number };
     if (kind === "task") {
       const t = find_task(c, project, what);
       if (!t) throw bad(`no task ${what} in ${project.name}`);
@@ -482,7 +495,8 @@ export function check_start_from(c: Conn, project: Project, task_id: string | nu
     if (!t) throw bad(`no task ${other}`);
     if (t.kind !== "task" || t.project_id !== project.id) throw bad(`"${t.title}" isn't a task in the same project`);
     if (t.id === task_id) throw bad("a task can't start from itself");
-    if (db.is_scratch(t) || documents.documents_only(t) || !(t.use_worktree || t.branch != null)) throw bad(`"${t.title}" has no branch of its own to start from`);
+    if (db.is_scratch(t) || documents.documents_only(t) || !(t.use_worktree || t.branch != null))
+      throw bad(`"${t.title}" has no branch of its own to start from`);
     // Nor from a task whose worktree (by way of others) needs this one's first: one that starts from it, or is in it as
     // a subproject (each sets the other up first, see worktree::setup).
     if (task_id !== null) {
@@ -515,7 +529,8 @@ function find_task(c: Conn, project: Project, word: string): Task | null {
   if (byId && byId.project_id === project.id) return byId;
   const dash = word.lastIndexOf("-");
   if (dash < 0) return null;
-  const key = word.slice(0, dash), n = word.slice(dash + 1);
+  const key = word.slice(0, dash),
+    n = word.slice(dash + 1);
   if (!/^[+-]?\d+$/.test(n)) return null;
   const num = Number(n);
   const lower = ascii_lower(key);

@@ -454,7 +454,9 @@ async function deliver(s: AppState, sub: Subscription, msg: Message, urgent: boo
     await res.arrayBuffer().catch(() => {});
     return null;
   }
-  const text = Array.from(await res.text().catch(() => "")).slice(0, 300).join("");
+  const text = Array.from(await res.text().catch(() => ""))
+    .slice(0, 300)
+    .join("");
   const status = `${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
   const error = `the push service answered ${status}${text.trim() ? `: ${text.trim()}` : ""}`;
   return { gone: res.status === 404 || res.status === 410, error };
@@ -505,7 +507,13 @@ export function is_expo_token(t: string): boolean {
  */
 function expo_message(s: AppState, sub: Subscription, msg: Message, urgent: boolean): any {
   const data: any = { board: s.host_id, url: msg.url, tag: msg.tag };
-  const extra: Array<[string, unknown]> = [["host", msg.host_id], ["task_id", msg.task_id], ["event", msg.event], ["request_id", msg.request_id], ["answer", msg.answer]];
+  const extra: Array<[string, unknown]> = [
+    ["host", msg.host_id],
+    ["task_id", msg.task_id],
+    ["event", msg.event],
+    ["request_id", msg.request_id],
+    ["answer", msg.answer],
+  ];
   for (const [k, v] of extra) if (v !== undefined && v !== null) data[k] = v;
   const prompt = msg.event === "prompt";
   // A newer message about the same task replaces the one before it (`collapseId` on iOS, `tag` on Android).
@@ -580,9 +588,10 @@ async function send_expo(s: AppState, subs: Subscription[], msg: Message, urgent
   let tickets: any[];
   try {
     const v = await expo_post(s.push.expo_url, body);
-    tickets = Array.isArray(v?.data) && v.data.length === subs.length
-      ? v.data
-      : subs.map(() => ({ status: "error", message: `Expo's push service gave an answer it shouldn't have: ${JSON.stringify(v)}` }));
+    tickets =
+      Array.isArray(v?.data) && v.data.length === subs.length
+        ? v.data
+        : subs.map(() => ({ status: "error", message: `Expo's push service gave an answer it shouldn't have: ${JSON.stringify(v)}` }));
   } catch (e) {
     const message = typeof e === "string" ? e : err_str(e);
     tickets = subs.map(() => ({ status: "error", message }));
@@ -988,7 +997,8 @@ async function find_task(s: AppState, host: string, id: string): Promise<any> {
 function observe_prompt(s: AppState, host: string, m: any) {
   const data = m?.data;
   if (m?.kind !== "permission" || data?.status !== "pending") return;
-  const task_id = m.task_id, request = data.request_id;
+  const task_id = m.task_id,
+    request = data.request_id;
   if (typeof task_id !== "string" || typeof request !== "string") return;
   const key = `${host}:${task_id}`;
   const set = s.push.prompts.get(key) ?? new Set<string>();
@@ -1000,7 +1010,9 @@ function observe_prompt(s: AppState, host: string, m: any) {
 /** A thread message changed: a prompt answered or expired is no longer waiting, and the tokens that would answer it from a notification stop working. */
 function prompt_settled(s: AppState, host: string, m: any) {
   const data = m?.data;
-  const task_id = m?.task_id, request = data?.request_id, status = data?.status;
+  const task_id = m?.task_id,
+    request = data?.request_id,
+    status = data?.status;
   if (typeof task_id !== "string" || typeof request !== "string" || typeof status !== "string") return;
   if (m.kind !== "permission" || status === "pending") return;
   const key = `${host}:${task_id}`;
@@ -1203,14 +1215,16 @@ export function subscribe(s: AppState, r: Req) {
     throw new ApiError(422, "Failed to deserialize the JSON body into the target type: kind: unknown variant, expected `web` or `expo`");
   }
   if (b.keys !== undefined && b.keys !== null) {
-    if (typeof b.keys !== "object") throw new ApiError(422, "Failed to deserialize the JSON body into the target type: keys: invalid type, expected struct Keys");
+    if (typeof b.keys !== "object")
+      throw new ApiError(422, "Failed to deserialize the JSON body into the target type: keys: invalid type, expected struct Keys");
     if (typeof b.keys.p256dh !== "string") throw missing("p256dh");
     if (typeof b.keys.auth !== "string") throw missing("auth");
   }
   if (b.events !== undefined && b.events !== null && (typeof b.events !== "object" || Array.isArray(b.events))) {
     throw ApiError.bad("events must be an object");
   }
-  let p256dh = "", auth = "";
+  let p256dh = "",
+    auth = "";
   if (kind === "web") {
     if (r.device) throw new ApiError(403, "a paired device can only subscribe the app (kind expo)");
     check_endpoint(b.endpoint);
@@ -1234,7 +1248,9 @@ export function subscribe(s: AppState, r: Req) {
   } else if (!is_expo_token(b.endpoint)) {
     throw ApiError.bad("endpoint must be an Expo push token (ExponentPushToken[…])");
   }
-  const name = Array.from(typeof b.name === "string" ? b.name.trim() : "").slice(0, 100).join("");
+  const name = Array.from(typeof b.name === "string" ? b.name.trim() : "")
+    .slice(0, 100)
+    .join("");
   const device_id = r.device?.id ?? null;
   const c = s.db();
   let old = db.one<{ id: string; kind: string }>(c, "SELECT id, kind FROM push_subscriptions WHERE endpoint=?1", b.endpoint);
@@ -1256,7 +1272,12 @@ export function subscribe(s: AppState, r: Req) {
     db.run(
       c,
       "UPDATE push_subscriptions SET p256dh=?1, auth=?2, name=?3, events=COALESCE(?4, events), last_error=NULL, device_id=COALESCE(?5, device_id) WHERE id=?6",
-      p256dh, auth, name, events ? JSON.stringify(events) : null, device_id, old.id,
+      p256dh,
+      auth,
+      name,
+      events ? JSON.stringify(events) : null,
+      device_id,
+      old.id,
     );
     id = old.id;
   } else {
@@ -1265,7 +1286,15 @@ export function subscribe(s: AppState, r: Req) {
     db.run(
       c,
       "INSERT INTO push_subscriptions (id,endpoint,p256dh,auth,name,events,created_at,kind,device_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-      id, b.endpoint, p256dh, auth, name, JSON.stringify(events), now(), kind, device_id,
+      id,
+      b.endpoint,
+      p256dh,
+      auth,
+      name,
+      JSON.stringify(events),
+      now(),
+      kind,
+      device_id,
     );
   }
   // One app on a phone has one token: any other it subscribed with is gone.

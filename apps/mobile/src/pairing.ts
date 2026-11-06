@@ -33,10 +33,14 @@ export const tooOldMessage = (name: string, apiVersion: number | undefined) =>
  */
 export async function pair(link: string, deviceName: string, opts: { fetch?: Fetch; allowHttp?: boolean } = {}): Promise<{ board: Board; token: string }> {
   const parsed = parsePairingLink(link);
-  if (!parsed) throw new PairingError("link", "That isn't a Huntaway pairing link. It starts with huntaway://pair, from Settings → Network access → Pair a phone.");
+  if (!parsed)
+    throw new PairingError("link", "That isn't a Huntaway pairing link. It starts with huntaway://pair, from Settings → Network access → Pair a phone.");
   const { url, code } = parsed;
   if (isPlainHttp(url) && !opts.allowHttp) {
-    throw new PairingError("insecure", `${url} is plain HTTP, which phones refuse. Serve the board over HTTPS (tailscale serve --bg 7878) and pair from that address.`);
+    throw new PairingError(
+      "insecure",
+      `${url} is plain HTTP, which phones refuse. Serve the board over HTTPS (tailscale serve --bg 7878) and pair from that address.`,
+    );
   }
   let token = "";
   const client = createClient({ baseUrl: url, getToken: () => token, setToken: (t) => (token = t), storage: memoryStorage(), fetch: opts.fetch });
@@ -62,7 +66,8 @@ export async function pair(link: string, deviceName: string, opts: { fetch?: Fet
     };
     return { board, token };
   } catch (e) {
-    if (e instanceof ApiError && e.status === 403) throw new PairingError("code", "That code has expired or was already used. Show a new one on the board and scan it again.");
+    if (e instanceof ApiError && e.status === 403)
+      throw new PairingError("code", "That code has expired or was already used. Show a new one on the board and scan it again.");
     if (e instanceof ApiError && e.status === 404) throw new PairingError("too_old", tooOldMessage(url, health.api_version));
     throw new PairingError("other", e instanceof Error ? e.message : String(e));
   }

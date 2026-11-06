@@ -68,7 +68,8 @@ test("the_first_start_copies_the_older_file_and_migrates_the_copy", () => {
   writer.exec("PRAGMA wal_autocheckpoint=0");
   mark(writer, "in the log");
   assert.ok(statSync(`${old}-wal`).size > 0);
-  const before = bytes(old), before_mtime = mtime(old);
+  const before = bytes(old),
+    before_mtime = mtime(old);
 
   const { conn: c, status: st } = open(dir, false);
   assert.equal(version(c), VERSION);

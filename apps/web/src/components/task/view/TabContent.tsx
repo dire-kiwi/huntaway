@@ -16,8 +16,7 @@ const Routines = lazy(() => import("../Routines").then((m) => ({ default: m.Rout
 // What empty threads show. The same elements every time, so the (memoized) thread doesn't redraw for them.
 const NOT_STARTED = (
   <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
-    No agent has worked on this yet. Press <span className="text-fg">Start</span> or send instructions below; the task description is included
-    automatically.
+    No agent has worked on this yet. Press <span className="text-fg">Start</span> or send instructions below; the task description is included automatically.
   </div>
 );
 

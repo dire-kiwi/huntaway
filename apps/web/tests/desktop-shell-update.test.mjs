@@ -43,10 +43,13 @@ async function fake({ release, status, tag = "v0.3.0", file = PACKAGE, cut = fal
     };
     if (req.url === "/api/admin/server") {
       if (req.headers.authorization !== "Bearer secret") return json(401, { error: "unauthorized" });
-      return json(200, { release: status ?? { latest: { version: "0.3.0" }, shell: { outdated: true, install: "pacman", package: { url: `${base}/elsewhere` } } } });
+      return json(200, {
+        release: status ?? { latest: { version: "0.3.0" }, shell: { outdated: true, install: "pacman", package: { url: `${base}/elsewhere` } } },
+      });
     }
     if (req.url === `/repos/o/r/releases/tags/${tag}`) {
-      if (release === "rate-limited") return json(403, { message: "API rate limit exceeded" }, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000000000" });
+      if (release === "rate-limited")
+        return json(403, { message: "API rate limit exceeded" }, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000000000" });
       return json(200, release ?? gh());
     }
     if (req.url.startsWith("/download/")) {
@@ -257,13 +260,18 @@ test("an app newer than the release isn't downgraded to it, even if the server s
   fs.writeFileSync(appimage, "old");
   for (const current of ["0.4.0-rc.1", "0.3.0"]) {
     const f = await fake();
-    await assert.rejects((await run(f, { kind: "appimage", appimage, current })).promise, new RegExp(`v${current.replace(/\./g, "\\.")}\\) isn't older than v0\\.3\\.0`));
+    await assert.rejects(
+      (await run(f, { kind: "appimage", appimage, current })).promise,
+      new RegExp(`v${current.replace(/\./g, "\\.")}\\) isn't older than v0\\.3\\.0`),
+    );
     assert.ok(!f.requests.some((r) => r.startsWith("/repos/") || r.startsWith("/download/")), "nothing is fetched from GitHub");
   }
   assert.equal(fs.readFileSync(appimage, "utf8"), "old");
   // An older app is updated.
   const f = await fake();
-  await (await run(f, { kind: "appimage", appimage, current: "0.3.0-rc.2" })).promise;
+  await (
+    await run(f, { kind: "appimage", appimage, current: "0.3.0-rc.2" })
+  ).promise;
   assert.equal(fs.readFileSync(appimage).equals(PACKAGE), true);
 });
 

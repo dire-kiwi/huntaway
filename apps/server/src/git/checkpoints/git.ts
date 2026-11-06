@@ -56,7 +56,10 @@ export async function run_ok(dir: string, args: string[], env: Record<string, st
 
 /** NUL-separated output's non-empty parts, as latin1 strings (bytes). */
 export function split_nul(bytes: Buffer): string[] {
-  return bytes.toString("latin1").split("\0").filter((p) => p !== "");
+  return bytes
+    .toString("latin1")
+    .split("\0")
+    .filter((p) => p !== "");
 }
 
 /** A path from git (a latin1 string of its bytes) as text. */

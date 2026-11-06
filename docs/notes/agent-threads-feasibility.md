@@ -26,16 +26,16 @@ No importer or full-board conversion has been tested yet.
 
 ## What fits already
 
-| | Huntaway | agent-threads (Rust) |
-|---|---|---|
-| Runtime and dependencies | tokio 1.54, rusqlite 0.40.2 bundled, edition 2024, MSRV 1.89 | tokio 1.54, rusqlite 0.40.2 bundled (one `libsqlite3-sys`, no `links` clash), edition 2024, needs about 1.88. Adds async-trait, hyper and hyper-util; base64 0.22 sits next to Huntaway's 0.23 |
-| Claude launch | `claude -p` stream-json in and out, `--replay-user-messages`, partial messages | The same |
-| Steering | Written to stdin, counts once Claude echoes it back, 30s steer window after `result`, then requeued | The same (`steer_grace` 30s) |
-| Stop | `control_request` interrupt, 10s, then close input and SIGTERM/SIGKILL to the process group | The same (`stop_grace` 10s) |
-| Runs that outlive the server | `ia-shim` with a run dir, followed from a saved offset | `agent-threads-shim`, a port with the same files, plus `recover()` that re-attaches. Open permission requests survive the restart too (they're checkpointed with the run) |
-| Codex | `huntaway codex-run` adapter over `codex app-server`, converting into Claude-shaped messages | Native driver over `codex app-server`: steer, interrupt, approvals, `requestUserInput`, dynamic tools, usage, retries as notices |
-| Subagents | Grouped by `parent_tool_use_id` in the UI | `parent_id` on items, done in the backend |
-| Tests | Unit tests and UI tests | 96 Rust tests, 26 recorded Claude and Codex fixtures, a kill-mid-turn restart suite |
+|                              | Huntaway                                                                                            | agent-threads (Rust)                                                                                                                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime and dependencies     | tokio 1.54, rusqlite 0.40.2 bundled, edition 2024, MSRV 1.89                                        | tokio 1.54, rusqlite 0.40.2 bundled (one `libsqlite3-sys`, no `links` clash), edition 2024, needs about 1.88. Adds async-trait, hyper and hyper-util; base64 0.22 sits next to Huntaway's 0.23 |
+| Claude launch                | `claude -p` stream-json in and out, `--replay-user-messages`, partial messages                      | The same                                                                                                                                                                                       |
+| Steering                     | Written to stdin, counts once Claude echoes it back, 30s steer window after `result`, then requeued | The same (`steer_grace` 30s)                                                                                                                                                                   |
+| Stop                         | `control_request` interrupt, 10s, then close input and SIGTERM/SIGKILL to the process group         | The same (`stop_grace` 10s)                                                                                                                                                                    |
+| Runs that outlive the server | `ia-shim` with a run dir, followed from a saved offset                                              | `agent-threads-shim`, a port with the same files, plus `recover()` that re-attaches. Open permission requests survive the restart too (they're checkpointed with the run)                      |
+| Codex                        | `huntaway codex-run` adapter over `codex app-server`, converting into Claude-shaped messages        | Native driver over `codex app-server`: steer, interrupt, approvals, `requestUserInput`, dynamic tools, usage, retries as notices                                                               |
+| Subagents                    | Grouped by `parent_tool_use_id` in the UI                                                           | `parent_id` on items, done in the backend                                                                                                                                                      |
+| Tests                        | Unit tests and UI tests                                                                             | 96 Rust tests, 26 recorded Claude and Codex fixtures, a kill-mid-turn restart suite                                                                                                            |
 
 What Huntaway would gain:
 
@@ -60,7 +60,7 @@ What Huntaway would gain:
 
 These have to be settled before Huntaway can depend on the crate at all.
 
-1. **Visibility and licence.** *Settled since this was written:* `dire-kiwi/agent-threads` is now public under MIT.
+1. **Visibility and licence.** _Settled since this was written:_ `dire-kiwi/agent-threads` is now public under MIT.
    It was private with no licence, and Huntaway is public (MIT), its CI runs on GitHub-hosted runners, and
    `install.sh` builds from source, so a git dependency on a private repository would have broken all three.
 2. **Per-thread launch settings.** Huntaway sets these for each run (`runner.rs:1169-1257`, `runs.rs:83-144`). The
@@ -76,6 +76,7 @@ These have to be settled before Huntaway can depend on the crate at all.
    A wrapper `Harness` that builds a `claude_code(...)` from the thread's metadata for each `open` would cover most of
    this without changing the crate (the core looks harnesses up by name, and `Harness::open` is public). But
    per-thread `args`, `env` and `add_dirs` in `CreateOptions` would be the cleaner upstream fix.
+
 3. **Config isolation has to be off, all of it.** The crate passes `--setting-sources "" --strict-mcp-config` unless
    `user_settings` is set. Huntaway relies on the profile's CLAUDE.md, settings, hooks and plugins, so it would run
    with `user_settings: true`. Then the crate's skills plugin and the user's skills both load. Check that this
@@ -83,24 +84,25 @@ These have to be settled before Huntaway can depend on the crate at all.
    to turn skills off.
 4. **Features Huntaway uses that the crate doesn't have:**
 
-   | Huntaway feature | Where | In agent-threads |
-   |---|---|---|
-   | ExitPlanMode approval that switches mode (`updatedPermissions: setMode`), and "keep planning" feedback | `permissions.rs:88-105, 324-330, 421` | No special case. ExitPlanMode is a plain `other` tool, and `Resolution` can't carry a mode or updated permissions |
-   | Rewind: `--resume-session-at`, Codex `thread/revert`, a fresh session from the first message | `checkpoints.rs` | None. `create` takes no session id (it can be put in the store directly), and there's no resume-at or revert |
-   | Context usage: a `get_context_usage` control request at turn end | `context.rs:196-236` | No way for the app to send control requests or see responses |
-   | Rate limits: `rate_limit_event`, `usage_limit_reached` | `usage.rs`, `runner.rs:2228-2297` | Dropped |
-   | Background subagents: `task_started`, `task_progress`, `task_updated`, `task_notification`, `run_in_background`, Skill-forked agents | `subagents.ts`, `db.rs:2733` | Not translated |
-   | "Always allow" that outlives the run | `task.auto_allow` | In memory per thread (`thread.rs:135`) |
-   | Answering a prompt after its run ended (sent as the next message), and pending prompts updated when the mode changes | `permissions.rs:231, 350-371` | Requests are cancelled when their turn ends, and decided once |
-   | `/compact` runs and the idle auto-compact; Codex `thread/compact/start` | `runner.rs:624-631` | No compact command. A Claude `/compact` sent as a message is untested; Huntaway runs it without stream-json input |
-   | Codex sandbox writable roots, the reviewers' filesystem profile, and model validation | `codex.rs:101-159` | `permission_mode` maps to approval policy and sandbox only, plus extra `config` |
-   | Raw harness payload | Stored per message | `raw` is in the protocol, but the Rust backend never fills it in |
+   | Huntaway feature                                                                                                                     | Where                                 | In agent-threads                                                                                                  |
+   | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+   | ExitPlanMode approval that switches mode (`updatedPermissions: setMode`), and "keep planning" feedback                               | `permissions.rs:88-105, 324-330, 421` | No special case. ExitPlanMode is a plain `other` tool, and `Resolution` can't carry a mode or updated permissions |
+   | Rewind: `--resume-session-at`, Codex `thread/revert`, a fresh session from the first message                                         | `checkpoints.rs`                      | None. `create` takes no session id (it can be put in the store directly), and there's no resume-at or revert      |
+   | Context usage: a `get_context_usage` control request at turn end                                                                     | `context.rs:196-236`                  | No way for the app to send control requests or see responses                                                      |
+   | Rate limits: `rate_limit_event`, `usage_limit_reached`                                                                               | `usage.rs`, `runner.rs:2228-2297`     | Dropped                                                                                                           |
+   | Background subagents: `task_started`, `task_progress`, `task_updated`, `task_notification`, `run_in_background`, Skill-forked agents | `subagents.ts`, `db.rs:2733`          | Not translated                                                                                                    |
+   | "Always allow" that outlives the run                                                                                                 | `task.auto_allow`                     | In memory per thread (`thread.rs:135`)                                                                            |
+   | Answering a prompt after its run ended (sent as the next message), and pending prompts updated when the mode changes                 | `permissions.rs:231, 350-371`         | Requests are cancelled when their turn ends, and decided once                                                     |
+   | `/compact` runs and the idle auto-compact; Codex `thread/compact/start`                                                              | `runner.rs:624-631`                   | No compact command. A Claude `/compact` sent as a message is untested; Huntaway runs it without stream-json input |
+   | Codex sandbox writable roots, the reviewers' filesystem profile, and model validation                                                | `codex.rs:101-159`                    | `permission_mode` maps to approval policy and sandbox only, plus extra `config`                                   |
+   | Raw harness payload                                                                                                                  | Stored per message                    | `raw` is in the protocol, but the Rust backend never fills it in                                                  |
 
    The design doc ruled checkpoints, usage dashboards and multi-host relaying out of scope, but Huntaway needs the
    harness-level hooks behind them. The smallest general fix is a way to pass through what the crate doesn't
    translate: fill in `raw`, or add a callback for each harness line and a way to send control requests. Then
    Huntaway could keep its own rate-limit, context and background-subagent handling. ExitPlanMode, resume-at and
    revert, compaction, and persisted "always" answers need real API.
+
 5. **Run directories can't be shared or adopted.** Huntaway's run format is 2 and the crate's is 1. A crate backend
    stops runs whose format is newer than it knows, and its pruning deletes run dirs its store doesn't know, so it
    must not share `<data>/runs`. Huntaway's in-flight runs have no crate `RunRecord`. At the switch-over, old runs
@@ -155,12 +157,12 @@ cards. It would add, upstream or through `renderItem`/`tools`:
 
 ## Options
 
-| | What | Cost | Verdict |
-|---|---|---|---|
-| A. Swap now | Replace the server thread layer and the UI thread in one go | Rewrite about 12k lines of server and 2-3k lines of UI, convert or dual-render old threads, drain runs, keep both formats for linked hosts. Blocked by 2-4 above | No |
-| B. Upstream first, then migrate in stages | Close the gaps in agent-threads with Huntaway as the driving client, then move Huntaway behind a per-task engine switch | The upstream work below, then a staged migration of a similar total size, without a big-bang release | **Recommended**, if one shared implementation matters |
-| C. Share the protocol only | Huntaway keeps its runner but emits agent-threads events (translating its own messages), and the UI moves to the protocol reducer and components | Gives the UI convergence and the normalized model without the run-layer risk, but keeps two driver implementations | A fallback if B stalls |
-| D. Don't adopt | Keep the two codebases separate and port fixes by hand | None now, and they drift from here on | Only if B and C both stall |
+|                                           | What                                                                                                                                             | Cost                                                                                                                                                             | Verdict                                               |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| A. Swap now                               | Replace the server thread layer and the UI thread in one go                                                                                      | Rewrite about 12k lines of server and 2-3k lines of UI, convert or dual-render old threads, drain runs, keep both formats for linked hosts. Blocked by 2-4 above | No                                                    |
+| B. Upstream first, then migrate in stages | Close the gaps in agent-threads with Huntaway as the driving client, then move Huntaway behind a per-task engine switch                          | The upstream work below, then a staged migration of a similar total size, without a big-bang release                                                             | **Recommended**, if one shared implementation matters |
+| C. Share the protocol only                | Huntaway keeps its runner but emits agent-threads events (translating its own messages), and the UI moves to the protocol reducer and components | Gives the UI convergence and the normalized model without the run-layer risk, but keeps two driver implementations                                               | A fallback if B stalls                                |
+| D. Don't adopt                            | Keep the two codebases separate and port fixes by hand                                                                                           | None now, and they drift from here on                                                                                                                            | Only if B and C both stall                            |
 
 ### Upstream work for B (agent-threads tasks)
 

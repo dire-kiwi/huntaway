@@ -67,7 +67,8 @@ test("the graph's subproject tasks follow the status filter", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await ui.run([`goto /p/${project.id}`, "wait Checkout rework", "click Graph view", "click Every task", "wait Child alpha", "wait Child beta"]);
-    const only = (id) => page.waitForFunction((id) => document.querySelectorAll("[data-task]").length === 1 && !!document.querySelector(`[data-task="${id}"]`), id);
+    const only = (id) =>
+      page.waitForFunction((id) => document.querySelectorAll("[data-task]").length === 1 && !!document.querySelector(`[data-task="${id}"]`), id);
     const toggle = (status) => ui.run(["click Filter", `click css=[role=menuitemcheckbox] >> text=${status}`, "press Escape"]);
     // Done: the done task shows though its subproject (in review) doesn't, and the other, to do, is left out.
     await toggle("Done");

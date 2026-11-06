@@ -83,7 +83,13 @@ test("questions with several answers, and answered ones", async () => {
     const { page } = ui;
     await routeThread(page, task.id, thread(task.id, [["question", answered], ["question", replied], user("Serif"), ["question", pets]]));
     const sent = await capture(page);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Which pets?", "wait answered in the thread", "wait css=[aria-label='Question from the agent'] >> text=answered"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Which pets?",
+      "wait answered in the thread",
+      "wait css=[aria-label='Question from the agent'] >> text=answered",
+    ]);
     // The answered one shows its answer, and can't be answered again.
     assert.equal(await page.getByRole("radio", { name: "Red" }).getAttribute("aria-checked"), "true");
     assert.equal(await page.getByRole("radio", { name: "Red" }).isDisabled(), true);
@@ -101,7 +107,15 @@ const askData = (extra = {}) => ({
   status: "pending",
   input: {
     questions: [
-      { question: "Which season?", header: "Season", multiSelect: false, options: [{ label: "Spring", description: "Spring" }, { label: "Summer", description: "Warm days" }] },
+      {
+        question: "Which season?",
+        header: "Season",
+        multiSelect: false,
+        options: [
+          { label: "Spring", description: "Spring" },
+          { label: "Summer", description: "Warm days" },
+        ],
+      },
       { question: "Which pets?", header: "Pets", multiSelect: true, options: [{ label: "Cats" }, { label: "Dogs" }, { label: "Birds" }] },
     ],
   },
@@ -114,7 +128,14 @@ test("Claude's AskUserQuestion is answered from its card, question by question",
     const { page } = ui;
     await routeThread(page, task.id, thread(task.id, [user("Start"), ["permission", askData()]]));
     const sent = await capture(page);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Claude asks 2 questions", "wait Warm days", "gone Claude wants to use", "gone Always allow"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Claude asks 2 questions",
+      "wait Warm days",
+      "gone Claude wants to use",
+      "gone Always allow",
+    ]);
     // A description that only repeats its label isn't shown.
     assert.equal(await page.getByRole("radio", { name: "Spring" }).getByText("Spring").count(), 1);
     // Not until every question has an answer.
@@ -138,7 +159,13 @@ test("a question whose run ended is answered by message, and answered ones show 
     const { page } = ui;
     await routeThread(page, task.id, thread(task.id, [["permission", answered], user("Again"), ["permission", askData({ status: "expired" })]]));
     const sent = await capture(page);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Claude asked 2 questions", "wait A lizard", "wait run ended before these were answered"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Claude asked 2 questions",
+      "wait A lizard",
+      "wait run ended before these were answered",
+    ]);
     assert.equal(await page.getByRole("checkbox", { name: "Dogs" }).first().getAttribute("aria-checked"), "true");
     await ui.run(["click css=[aria-label='Questions from Claude'] >> nth=1 >> text=Which season?", "press 1"]);
     await ui.run(["click css=[aria-label='Your own answer to: Which pets?']", "type Fish", "click Send answers"]);
@@ -150,12 +177,25 @@ test("a question whose run ended is answered by message, and answered ones show 
 test("a question or plan the conversation has moved past isn't answered any more", async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Moved on" });
   const plan = { tool_name: "ExitPlanMode", request_id: "plan-1", status: "expired", input: { plan: "# Plan: Old plan\n\nDo it" } };
-  const items = [["question", colour], ["permission", askData({ status: "expired" })], ["permission", plan], user("Do something else"), ["permission", askData({ request_id: "ask-2", status: "expired", input: { questions: [{ question: "Still open?", options: [{ label: "Yes" }] }] } })]];
+  const items = [
+    ["question", colour],
+    ["permission", askData({ status: "expired" })],
+    ["permission", plan],
+    user("Do something else"),
+    ["permission", askData({ request_id: "ask-2", status: "expired", input: { questions: [{ question: "Still open?", options: [{ label: "Yes" }] }] } })],
+  ];
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await routeThread(page, task.id, thread(task.id, items));
     const sent = await capture(page);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Which colour should the button be?", "wait Old plan", "wait not answered", "wait Still open?"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Which colour should the button be?",
+      "wait Old plan",
+      "wait not answered",
+      "wait Still open?",
+    ]);
     // The ones before the user's message are closed; the expired one after it can still be answered.
     assert.equal(await page.getByRole("button", { name: "Approve" }).count(), 0);
     assert.equal(await page.getByRole("radio", { name: "Green" }).isDisabled(), true);
@@ -172,14 +212,33 @@ test("Codex's questions get the same card, and its other prompts say it's Codex 
     agent: "codex",
     request_id: "cq",
     status: "pending",
-    input: { questions: [{ id: "name", header: "Name", question: "Which file name?", options: [{ label: "a.txt", description: "" }], isOther: false, isSecret: false, multiSelect: false }] },
+    input: {
+      questions: [
+        {
+          id: "name",
+          header: "Name",
+          question: "Which file name?",
+          options: [{ label: "a.txt", description: "" }],
+          isOther: false,
+          isSecret: false,
+          multiSelect: false,
+        },
+      ],
+    },
   };
   const bash = { tool_name: "Bash", agent: "codex", request_id: "cb", status: "pending", input: { command: "ls" } };
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await routeThread(page, task.id, thread(task.id, [user("Start"), ["permission", codexQuestion], ["permission", bash]]));
     const sent = await capture(page);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Codex asks", "wait Which file name?", "wait Codex wants to use", "gone Claude wants to use"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Codex asks",
+      "wait Which file name?",
+      "wait Codex wants to use",
+      "gone Claude wants to use",
+    ]);
     // It takes no answer of the user's own, so it has no field for one.
     assert.equal(await page.getByLabel("Your own answer to: Which file name?").count(), 0);
     // A lone question is answered by picking.
@@ -206,14 +265,26 @@ test("a plan's mode starts as the thread's own", async () => {
 
 test("a plan is approved into the mode picked, or sent back with feedback", async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Plan" });
-  const plan = { tool_name: "ExitPlanMode", request_id: "plan-1", status: "pending", input: { plan: "# Plan: Add a cache\n\n## Steps\n\n1. Add **the cache**\n2. Test it" } };
+  const plan = {
+    tool_name: "ExitPlanMode",
+    request_id: "plan-1",
+    status: "pending",
+    input: { plan: "# Plan: Add a cache\n\n## Steps\n\n1. Add **the cache**\n2. Test it" },
+  };
   const approved = { ...plan, request_id: "plan-0", status: "allowed", mode: "acceptEdits" };
   const kept = { ...plan, request_id: "plan-00", status: "denied", feedback: "Test the eviction too." };
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await routeThread(page, task.id, thread(task.id, [["permission", kept], ["permission", approved], user("Go"), ["permission", plan]]));
     const sent = await capture(page);
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Plan ready for approval", "wait css=strong >> text=the cache", "wait Continued in Accept edits.", "wait Test the eviction too."]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Plan ready for approval",
+      "wait css=strong >> text=the cache",
+      "wait Continued in Accept edits.",
+      "wait Test the eviction too.",
+    ]);
     // The plan as Markdown, its title above it, not as JSON.
     assert.equal(await page.getByRole("heading", { name: "Steps" }).count(), 1);
     assert.equal(await page.getByRole("heading", { name: "Plan: Add a cache" }).count(), 0);
@@ -223,7 +294,11 @@ test("a plan is approved into the mode picked, or sent back with feedback", asyn
     await ui.run(["click Approve"]);
     assert.deepEqual(await nth(sent, 1), { path: "/permissions/plan-1", body: { decision: "allow", mode: "acceptEdits" } });
 
-    await ui.run(["click css=[aria-label='Plan from the agent'] >> nth=2 >> text=Keep planning", "type Cache misses too.", "click css=[aria-label='Plan from the agent'] >> nth=2 >> button:has-text('Keep planning')"]);
+    await ui.run([
+      "click css=[aria-label='Plan from the agent'] >> nth=2 >> text=Keep planning",
+      "type Cache misses too.",
+      "click css=[aria-label='Plan from the agent'] >> nth=2 >> button:has-text('Keep planning')",
+    ]);
     assert.deepEqual((await nth(sent, 2)).body, { decision: "deny", feedback: "Cache misses too." });
   });
 });

@@ -2,7 +2,20 @@
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import * as api from "../../api.ts";
 import * as db from "../../db.ts";
@@ -156,7 +169,10 @@ test("a_checkpoint_leaves_the_index_branch_and_stashes_alone", async () => {
   const tree = sh(wt, ["ls-tree", "-r", "--name-only", ref_name(t.id, 0)]);
   assert.deepEqual(tree.trimEnd().split("\n"), [".gitignore", "f.txt", "gone.txt", "new/untracked.txt", "staged.txt"]);
   assert.equal(sh(wt, ["show", `${ref_name(t.id, 0)}:f.txt`]), "changed\n");
-  assert.ok(readdirSync(git_dir).every((e) => !e.startsWith("huntaway-")), "no scratch index left");
+  assert.ok(
+    readdirSync(git_dir).every((e) => !e.startsWith("huntaway-")),
+    "no scratch index left",
+  );
 
   // Nothing new since: no second one.
   [run] = start(s, t.id, "again");
@@ -239,7 +255,12 @@ test("turns_show_their_own_changes_and_rewind_restores_the_files", async () => {
   const expected: Rewind = { turn: 2, message_id: m2, session: "sess", resume_at: `at-${m1}` };
   assert.deepEqual(task.rewind, expected);
   const stale = list(s.db(), t.id).map((c) => [c.kind, c.stale]);
-  assert.deepEqual(stale, [["start", 0], ["turn", 0], ["turn", 2], ["rewind", 1]]);
+  assert.deepEqual(stale, [
+    ["start", 0],
+    ["turn", 0],
+    ["turn", 2],
+    ["rewind", 1],
+  ]);
   // The files the rewind replaced are kept.
   assert.equal(sh(wt, ["show", `${r.kept}:a.txt`]), "a, changed\n");
   await assert.rejects(do_rewind(s, t.id, m2, false, false), "a stale turn can't be rewound to again");
@@ -380,7 +401,10 @@ test("a_rewind_goes_to_before_the_first_turn_a_message_started", async () => {
   after_turn(s, run.id, "done");
   const cps = await settled(s, t.id);
   const ts = cps.filter((c) => c.kind === "turn").map((c) => [c.turn, c.message_id]);
-  assert.deepEqual(ts, [[1, m], [2, null]]);
+  assert.deepEqual(ts, [
+    [1, m],
+    [2, null],
+  ]);
   await do_rewind(s, t.id, m, false, false);
   assert.ok(!existsSync(join(wt, "a.txt")) && !existsSync(join(wt, "b.txt")));
 });
@@ -472,7 +496,12 @@ test("checkpoints_go_with_the_worktree", async () => {
   // The project's repository is reached through a symlink.
   const [t, wt, repo] = await task_repo(s, true);
   await turn(s, t.id, "one", () => write(wt, "a.txt", "a\n"));
-  assert.equal(sh(repo, ["for-each-ref", "--format=%(refname)", ref_prefix(t.id)]).trimEnd().split("\n").length, 2);
+  assert.equal(
+    sh(repo, ["for-each-ref", "--format=%(refname)", ref_prefix(t.id)])
+      .trimEnd()
+      .split("\n").length,
+    2,
+  );
   await worktree.teardown(s, t.id, true, false);
   assert.equal(sh(repo, ["for-each-ref", ref_prefix(t.id)]), "");
   assert.equal(list(s.db(), t.id).length, 0);
@@ -489,7 +518,10 @@ test("checkpoints_stay_while_the_worktree_does", async () => {
     sh(wt, ["add", "a.txt"]);
     sh(wt, ["commit", "-qm", "a"]);
   });
-  const refs = () => sh(repo, ["for-each-ref", "--format=%(refname)", ref_prefix(t.id)]).split("\n").filter((l) => l).length;
+  const refs = () =>
+    sh(repo, ["for-each-ref", "--format=%(refname)", ref_prefix(t.id)])
+      .split("\n")
+      .filter((l) => l).length;
   const rows = () => list(s.db(), t.id).length;
   assert.deepEqual([refs(), rows()], [2, 2]);
   // A teardown script that fails, or leaves changes, keeps the worktree: its checkpoints stay.
@@ -546,7 +578,18 @@ function cp(n: number, turn: number | null, session: string, at: string | null, 
 test("the_conversation_goes_back_to_the_turn_before_still_in_it", () => {
   const c = db.open(":memory:");
   const p = db.insert_profile(c, "p", [], null);
-  const nt = { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "todo", use_worktree: false, model: null, effort: null, claude_config_id: null };
+  const nt = {
+    profile_id: p.id,
+    project_id: null,
+    kind: "task",
+    title: "t",
+    description: "",
+    status: "todo",
+    use_worktree: false,
+    model: null,
+    effort: null,
+    claude_config_id: null,
+  };
   const task: Task = { ...db.insert_task(c, nt as any), session_id: "s" };
   const rows = [cp(0, null, "s", null, 0), cp(1, 1, "s", "u1", 0), cp(2, 2, "s", "u2", 2), cp(3, 3, "s", "u3", 1), cp(4, 4, "s", "u4", 0)];
   const back = (turn: Checkpoint, codex: boolean) => conversation(task, rows, turn, codex, 10);

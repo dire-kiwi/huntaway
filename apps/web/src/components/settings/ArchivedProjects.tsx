@@ -33,8 +33,8 @@ export function ArchiveProjectModal({ project, onClose }: { project: Project; on
   return (
     <Modal title={`Archive ${project.name}`} onClose={onClose}>
       <p className="mb-4 text-[13px] text-muted">
-        The project goes off the board: out of the sidebar, the inbox and its group, and agents can&apos;t add tasks to it. Its tasks, worktrees and branches are
-        kept. To bring it back, unarchive it in Settings → Archived projects.
+        The project goes off the board: out of the sidebar, the inbox and its group, and agents can&apos;t add tasks to it. Its tasks, worktrees and branches
+        are kept. To bring it back, unarchive it in Settings → Archived projects.
       </p>
       <ModalFooter>
         {err && <div className="mb-3 text-xs text-red-400">{err}</div>}
@@ -60,7 +60,16 @@ export function ArchivedProjectsPanel() {
   const [list, setList] = useState<Project[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const from = useMemo(() => profiles.filter((p) => hostSupports(hosts.find((h) => h.id === p.host_id), 46)), [profiles, hosts]);
+  const from = useMemo(
+    () =>
+      profiles.filter((p) =>
+        hostSupports(
+          hosts.find((h) => h.id === p.host_id),
+          46,
+        ),
+      ),
+    [profiles, hosts],
+  );
   useEffect(() => {
     let live = true;
     const lists = from.map((p) =>
@@ -98,7 +107,9 @@ export function ArchivedProjectsPanel() {
         {list === null ? (
           <div className="px-4 py-3 text-[12.5px] text-faint">Loading…</div>
         ) : !list.length ? (
-          <div className="px-4 py-3 text-[12.5px] text-faint">No archived projects. Archive one from its menu in the sidebar (right-click it) or its settings.</div>
+          <div className="px-4 py-3 text-[12.5px] text-faint">
+            No archived projects. Archive one from its menu in the sidebar (right-click it) or its settings.
+          </div>
         ) : (
           list.map((p) => (
             <div key={key(p)} className="flex items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0">

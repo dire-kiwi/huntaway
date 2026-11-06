@@ -4,8 +4,8 @@ Part of the T3 Code inventory: [t3code-overview.md](t3code-overview.md) has the 
 
 Source: shallow clone of `pingdotgg/t3code` at commit 9b1d351 (2026-10-30, release v0.1.5), read only.
 Paths are relative to the repository root. "(from code)" marks things found in source but not in
-`docs/`. Terms: an *environment* is one running T3 Code server (machine + credentials + state); a
-*project* is a workspace root on an environment; a *thread* is one agent conversation; a *turn* is one
+`docs/`. Terms: an _environment_ is one running T3 Code server (machine + credentials + state); a
+_project_ is a workspace root on an environment; a _thread_ is one agent conversation; a _turn_ is one
 user-to-agent cycle (`docs/internals/glossary.md`).
 
 ## 1. Workspaces: projects, threads and worktrees
@@ -64,8 +64,8 @@ user-to-agent cycle (`docs/internals/glossary.md`).
 - **Submodules:** new worktrees run `git submodule update --init --recursive` by default; the
   **Submodules** setting (`recursive` | `top-level` | `none`, also `"worktreeSubmodules"` in
   `t3.json` of the branch being checked out) changes that. `docs/user/project-settings.md`
-- **Visible setup progress:** a per-thread setup tracker streams stages *Fetch base branch → Check
-  out files → Init submodules → Run setup script → Start agent* with status, percent and an output
+- **Visible setup progress:** a per-thread setup tracker streams stages _Fetch base branch → Check
+  out files → Init submodules → Run setup script → Start agent_ with status, percent and an output
   tail; setup can be cancelled (`worktreeSetup.cancel`). `packages/contracts/src/worktreeSetup.ts`,
   `apps/server/src/project/WorktreeSetupTracker.ts`
 - **Setup script:** the project action marked "run on worktree create" runs in a terminal in the new
@@ -133,9 +133,9 @@ user-to-agent cycle (`docs/internals/glossary.md`).
 
 ### Commit, push, create PR (one "stacked" action)
 
-- **Git actions control** in the thread header with a context-aware primary button: *Commit*,
-  *Commit & push*, *Commit, push & PR*, *Push & create PR*, *Create PR*, *Pull*, *Publish
-  repository*, or a disabled hint ("Branch has diverged from upstream. Rebase/merge first.").
+- **Git actions control** in the thread header with a context-aware primary button: _Commit_,
+  _Commit & push_, _Commit, push & PR_, _Push & create PR_, _Create PR_, _Pull_, _Publish
+  repository_, or a disabled hint ("Branch has diverged from upstream. Rebase/merge first.").
   Menu items: Commit, Push, Create PR/MR (label follows the host's terminology).
   `apps/web/src/components/GitActionsControl.logic.ts`
 - **Server action** `git.runStackedAction` with `commit | push | create_pr | commit_push |
@@ -222,7 +222,7 @@ user-to-agent cycle (`docs/internals/glossary.md`).
   `apps/web/src/components/diffs/`, `packages/contracts/src/settings.ts` (`diffLayout`,
   `diffIgnoreWhitespace`, `diffFilesCollapsed`), `docs/user/keybindings.md`
 - **Line comments go to the agent.** Selecting lines in a diff (or in a file) and commenting adds a
-  *review comment* chip to the composer carrying the file path, line range, the selected diff and
+  _review comment_ chip to the composer carrying the file path, line range, the selected diff and
   your note; sending delivers it to the agent. `apps/web/src/components/diffs/AnnotatableCodeView.tsx`,
   `apps/web/src/reviewCommentContext.ts`, `docs/user/composer.md` ("Context in your message")
 - **Commit links** from a supported host open in the Diff pane when the commit exists locally.
@@ -234,8 +234,8 @@ user-to-agent cycle (`docs/internals/glossary.md`).
 - **Clone from the command palette** (Add Project): choose a host and `owner/repo`, or paste any Git
   URL; pick destination (base folder `addProjectBaseDirectory`) and protocol `auto | ssh | https`.
   The project opens immediately while the clone runs; the first prompt can be written and sending
-  waits for the files. A toast shows stages (*Connecting, Counting objects, Receiving objects,
-  Resolving deltas, Checking out files*), percent, speed, "Stalled", and offers cancel/retry. If
+  waits for the files. A toast shows stages (_Connecting, Counting objects, Receiving objects,
+  Resolving deltas, Checking out files_), percent, speed, "Stalled", and offers cancel/retry. If
   the host refuses the SSH key it retries over HTTPS with Git's credentials.
   `docs/user/source-control.md`, `packages/contracts/src/projectClone.ts`,
   `apps/server/src/project/ProjectCloneTracker.ts`
@@ -257,14 +257,14 @@ user-to-agent cycle (`docs/internals/glossary.md`).
 From each provider's `CAPABILITIES` and `definition.changeRequestActions`
 (`packages/source-control-<host>/src/server/*PullRequestProvider.ts`, `src/shared/definition.ts`):
 
-| Host | Auth / transport | PR actions | Merge methods | Branch update | Line review | Reply / resolve | Verdicts | Viewed marks | Other |
-|---|---|---|---|---|---|---|---|---|---|
-| GitHub (+ GHES) | API (GraphQL/REST) with saved token > `GH_TOKEN`/`GH_ENTERPRISE_TOKEN` > `gh` ≥2.81 login | merge, ready, draft, close, reopen, delete-branch, update-branch, enable/disable auto-merge, revert, approve-workflows | merge, squash, rebase | merge, rebase | yes, incl. ranges | yes / yes | comment, approve, request changes | on host (GitHub's own) | stacks + stack actions, labels, reactions, reviewers, edit title/body/comments, maintainer edits, search |
-| GitLab | `glab` CLI | merge, ready, draft, close, reopen, update-branch, auto-merge on/off | merge, squash, rebase | rebase | yes | yes / yes | comment, approve (no "request changes") | kept by T3 server | reactions, reviewers, search |
-| Forgejo / Gitea / Codeberg | `fj` (preferred) or `tea` ≥0.16 | merge, close, reopen, update-branch | merge, squash, rebase | merge, rebase | yes | no / no | comment, approve, request changes | kept by T3 server | labels, reactions, reviewers |
-| Bitbucket | REST API with access token, or Atlassian email + API token (Settings or `T3CODE_BITBUCKET_*` env) | merge, close (no reopen of declined) | merge, squash, rebase | — | yes | yes / yes | comment, approve, request changes | kept by T3 server | reviewers, search |
-| Azure DevOps | `az` + `azure-devops` extension | merge, ready, draft, close, reopen, auto-merge on/off | merge, squash | — | no | no / no | none | kept by T3 server | request reviewers (no candidate list); comments must be changed on the website |
-| GitCafe (git.cafe) | `cafe` CLI login, saved token or `CAFE_TOKEN` | ready, draft, close, reopen, merge, update-branch | merge, squash, rebase | rebase (restacks layers above) | no ("not available yet") | yes / yes | approve, request changes, comment | — | stacks + stack actions, labels, reactions, search |
+| Host                       | Auth / transport                                                                                  | PR actions                                                                                                             | Merge methods         | Branch update                  | Line review              | Reply / resolve | Verdicts                                | Viewed marks           | Other                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------ | ------------------------ | --------------- | --------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| GitHub (+ GHES)            | API (GraphQL/REST) with saved token > `GH_TOKEN`/`GH_ENTERPRISE_TOKEN` > `gh` ≥2.81 login         | merge, ready, draft, close, reopen, delete-branch, update-branch, enable/disable auto-merge, revert, approve-workflows | merge, squash, rebase | merge, rebase                  | yes, incl. ranges        | yes / yes       | comment, approve, request changes       | on host (GitHub's own) | stacks + stack actions, labels, reactions, reviewers, edit title/body/comments, maintainer edits, search |
+| GitLab                     | `glab` CLI                                                                                        | merge, ready, draft, close, reopen, update-branch, auto-merge on/off                                                   | merge, squash, rebase | rebase                         | yes                      | yes / yes       | comment, approve (no "request changes") | kept by T3 server      | reactions, reviewers, search                                                                             |
+| Forgejo / Gitea / Codeberg | `fj` (preferred) or `tea` ≥0.16                                                                   | merge, close, reopen, update-branch                                                                                    | merge, squash, rebase | merge, rebase                  | yes                      | no / no         | comment, approve, request changes       | kept by T3 server      | labels, reactions, reviewers                                                                             |
+| Bitbucket                  | REST API with access token, or Atlassian email + API token (Settings or `T3CODE_BITBUCKET_*` env) | merge, close (no reopen of declined)                                                                                   | merge, squash, rebase | —                              | yes                      | yes / yes       | comment, approve, request changes       | kept by T3 server      | reviewers, search                                                                                        |
+| Azure DevOps               | `az` + `azure-devops` extension                                                                   | merge, ready, draft, close, reopen, auto-merge on/off                                                                  | merge, squash         | —                              | no                       | no / no         | none                                    | kept by T3 server      | request reviewers (no candidate list); comments must be changed on the website                           |
+| GitCafe (git.cafe)         | `cafe` CLI login, saved token or `CAFE_TOKEN`                                                     | ready, draft, close, reopen, merge, update-branch                                                                      | merge, squash, rebase | rebase (restacks layers above) | no ("not available yet") | yes / yes       | approve, request changes, comment       | —                      | stacks + stack actions, labels, reactions, search                                                        |
 
 - **Discovery:** Settings → Source control lists each host's CLI (found/missing, version, install
   hint) and auth status with accounts; **Rescan** after signing in on the server machine. Hosts
@@ -452,7 +452,7 @@ From each provider's `CAPABILITIES` and `definition.changeRequestActions`
 ### Not present
 
 - **No per-project environment variables / `.env` handling** in project settings (from code: none
-  in `ProjectSettingsOverrides` or `t3.json`). Environment variables exist per *provider instance*
+  in `ProjectSettingsOverrides` or `t3.json`). Environment variables exist per _provider instance_
   (agent CLI config), optionally read from 1Password (§14). `packages/contracts/src/providerInstance.ts`
 - **No devcontainer support for user projects.** `.devcontainer/` and
   `docs/internals/devcontainer.md` only describe a container for developing T3 Code itself

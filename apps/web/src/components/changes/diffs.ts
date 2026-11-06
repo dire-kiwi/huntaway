@@ -189,7 +189,11 @@ export function linesPatch(file: FileDiff, chosen: (hunk: number, line: number) 
     // patch; one that's put back with context after it (the last line now) has one already.
     lines = lines.flatMap((l, k) => {
       const later = lines.slice(k + 1);
-      if (!reverse && l.noEol && l.kind === " " && later.some((x) => x.kind === "+")) return [{ ...l, kind: "-" }, { ...l, kind: "+", noEol: false }];
+      if (!reverse && l.noEol && l.kind === " " && later.some((x) => x.kind === "+"))
+        return [
+          { ...l, kind: "-" },
+          { ...l, kind: "+", noEol: false },
+        ];
       if (reverse && l.noEol && l.kind === "-" && later.some((x) => x.kind === " ")) return [{ ...l, noEol: false }];
       return [l];
     });

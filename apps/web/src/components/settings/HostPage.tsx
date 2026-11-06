@@ -52,7 +52,10 @@ export function HostPage({ hostId }: { hostId: string }) {
               {agents && (
                 <section>
                   <h2 className="mb-1 text-[13px] font-semibold">Agent defaults</h2>
-                  <p className="mb-3 text-[12.5px] text-muted">For every agent on this host. A model set on a thread, project or profile, an effort set on a thread, or a permission mode set on a thread or project, takes precedence.</p>
+                  <p className="mb-3 text-[12.5px] text-muted">
+                    For every agent on this host. A model set on a thread, project or profile, an effort set on a thread, or a permission mode set on a thread
+                    or project, takes precedence.
+                  </p>
                   <AgentDefaultsRow host={host} showName={false} />
                 </section>
               )}
@@ -62,9 +65,8 @@ export function HostPage({ hostId }: { hostId: string }) {
                 <section>
                   <h2 className="mb-1 text-[13px] font-semibold">Terminal tools</h2>
                   <p className="mb-3 text-[12.5px] text-muted">
-                    TUI programs or scripts to open from a task, next to its Terminal tab. Each runs in its own tmux session in the task's worktree,
-                    through your login shell, and keeps running while the board is open; a couple of minutes after the last board showing it closes, it
-                    ends.
+                    TUI programs or scripts to open from a task, next to its Terminal tab. Each runs in its own tmux session in the task's worktree, through
+                    your login shell, and keeps running while the board is open; a couple of minutes after the last board showing it closes, it ends.
                   </p>
                   <TerminalToolsRow host={host} />
                 </section>
@@ -251,7 +253,11 @@ function RemoteServer({ hostId }: { hostId: string }) {
                 From <span className="font-mono break-all">{release.exe}</span>
               </div>
             )}
-            {release?.shell && <div>Started by the desktop app{release.shell.version && ` v${release.shell.version}`} ({installName(release.shell)})</div>}
+            {release?.shell && (
+              <div>
+                Started by the desktop app{release.shell.version && ` v${release.shell.version}`} ({installName(release.shell)})
+              </div>
+            )}
             {status.source_dir ? (
               <div>
                 Builds from <span className="font-mono">{status.source_dir}</span>
@@ -280,7 +286,10 @@ function RemoteServer({ hostId }: { hostId: string }) {
         )}
         {job?.phase === "failed" && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{job.error}</div>}
         {(busy || job?.phase === "failed") && job?.log && (
-          <pre ref={logRef} className="h-48 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11px] whitespace-pre-wrap text-[#b9b9c8]">
+          <pre
+            ref={logRef}
+            className="h-48 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11px] whitespace-pre-wrap text-[#b9b9c8]"
+          >
             {job.log}
           </pre>
         )}

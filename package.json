@@ -4,10 +4,6 @@
   "description": "A kanban board for orchestrating Claude Code and Codex agents",
   "license": "MIT",
   "type": "module",
-  "packageManager": "pnpm@10.34.9",
-  "engines": {
-    "node": ">=24"
-  },
   "scripts": {
     "check": "vp check",
     "fix": "vp check --fix",
@@ -21,5 +17,9 @@
   },
   "devDependencies": {
     "vite-plus": "catalog:"
-  }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.34.9"
 }

@@ -222,7 +222,11 @@ async function serve_tunnel(s: AppState, ws: WebSocket): Promise<void> {
         }
         case "tool_call": {
           const c = ToolCall_from(m);
-          if (c) background("answering a host's board tool call", run_up_call(s, host_id, c, "tunnel").then((a) => void tx({ t: "tool_answer", ...a })));
+          if (c)
+            background(
+              "answering a host's board tool call",
+              run_up_call(s, host_id, c, "tunnel").then((a) => void tx({ t: "tool_answer", ...a })),
+            );
           break;
         }
         case "pong":

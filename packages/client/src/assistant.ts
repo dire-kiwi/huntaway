@@ -210,7 +210,8 @@ export const assistantApi = ({ on }: Http) => {
     /** Add the host's Google server (unless it has one) and switch it on for the profile. */
     setupGoogle: (h: string, profileId: string) => on(h).post<GoogleStatus>(`/profiles/${enc(profileId)}/assistant/google`, {}),
     /** Add the morning brief routine, on `weekdays` at `time` (the host's time zone; weekdays at 7:30 without them). */
-    addBrief: (h: string, profileId: string, b: { time?: string; weekdays?: Weekday[] }) => on(h).post<Automation>(`/profiles/${enc(profileId)}/assistant/brief`, b),
+    addBrief: (h: string, profileId: string, b: { time?: string; weekdays?: Weekday[] }) =>
+      on(h).post<Automation>(`/profiles/${enc(profileId)}/assistant/brief`, b),
     /** Rate one of the brief's items: it becomes (or changes, or drops) a line in MEMORY.md. */
     rateBrief: (h: string, profileId: string, rating: BriefRating, item: BriefItem) =>
       on(h).post<{ line: string | null; content: string; commit: string | null }>(`/profiles/${enc(profileId)}/assistant/brief/feedback`, { rating, ...item }),

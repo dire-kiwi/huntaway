@@ -15,26 +15,29 @@ import { REFUSED } from "./inbound.ts";
 export function dial_out(s: AppState, hub: string, token: string): () => void {
   let stopped = false;
   let abort: (() => void) | null = null;
-  background("keeping the tunnel to a hub open", (async () => {
-    let backoff = 1;
-    while (!stopped) {
-      try {
-        await tunnel_to(s, hub, token, (a) => (abort = a));
-        backoff = 1;
-      } catch (e) {
-        if (!stopped) console.error(`hub ${hub}: ${err_str(e)}`);
+  background(
+    "keeping the tunnel to a hub open",
+    (async () => {
+      let backoff = 1;
+      while (!stopped) {
+        try {
+          await tunnel_to(s, hub, token, (a) => (abort = a));
+          backoff = 1;
+        } catch (e) {
+          if (!stopped) console.error(`hub ${hub}: ${err_str(e)}`);
+        }
+        if (stopped) break;
+        await new Promise<void>((r) => {
+          const t = setTimeout(r, backoff * 1000);
+          abort = () => {
+            clearTimeout(t);
+            r();
+          };
+        });
+        backoff = Math.min(backoff * 2, 30);
       }
-      if (stopped) break;
-      await new Promise<void>((r) => {
-        const t = setTimeout(r, backoff * 1000);
-        abort = () => {
-          clearTimeout(t);
-          r();
-        };
-      });
-      backoff = Math.min(backoff * 2, 30);
-    }
-  })());
+    })(),
+  );
   return () => {
     stopped = true;
     abort?.();
@@ -138,15 +141,18 @@ function tunnel_message(s: AppState, text: string, tx: (m: Up) => boolean, strea
     }
     case "req": {
       const { id, method, path, body } = d;
-      background("answering a request from the hub", (async () => {
-        let status: number, out: any;
-        try {
-          [status, out] = await api.local_request(s, method, path, body === null || body === undefined ? null : Buffer.from(JSON.stringify(body)));
-        } catch (e) {
-          [status, out] = [500, { error: err_str(e) }];
-        }
-        tx({ t: "res", id, status, body: out });
-      })());
+      background(
+        "answering a request from the hub",
+        (async () => {
+          let status: number, out: any;
+          try {
+            [status, out] = await api.local_request(s, method, path, body === null || body === undefined ? null : Buffer.from(JSON.stringify(body)));
+          } catch (e) {
+            [status, out] = [500, { error: err_str(e) }];
+          }
+          tx({ t: "res", id, status, body: out });
+        })(),
+      );
       return;
     }
     case "ws_open": {
@@ -154,9 +160,12 @@ function tunnel_message(s: AppState, text: string, tx: (m: Up) => boolean, strea
       const from_hub = new Chan<Frame>();
       streams.set(d.id, from_hub);
       const id = d.id;
-      background("relaying a websocket for the hub", relay_local(s, id, d.path, from_hub, tx).finally(() => {
-        if (streams.get(id) === from_hub) streams.delete(id);
-      }));
+      background(
+        "relaying a websocket for the hub",
+        relay_local(s, id, d.path, from_hub, tx).finally(() => {
+          if (streams.get(id) === from_hub) streams.delete(id);
+        }),
+      );
       return;
     }
     case "ws_msg": {

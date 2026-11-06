@@ -13,7 +13,7 @@ it was ported from (`server/src/`) was removed in HA-179; `apps/server/PORTING.m
 (one file per former Rust module, Rust's names, which new code keeps too) and says how to read the Rust in git history.
 What stays in Rust is `ia-shim` (`rust/shim/`), the per-run supervisor the TS server runs agents under, and the broker
 (`rust/broker/`): build the shim with `cargo build -p ia-shim` at the top of the checkout. `app/`, `server-ts/` and
-`scripts/legacy-update.sh` only forward checkouts and launchers from before HA-263 (see *The layout before HA-263* in
+`scripts/legacy-update.sh` only forward checkouts and launchers from before HA-263 (see _The layout before HA-263_ in
 `docs/development.md`): don't add to them.
 
 ## Task workflow
@@ -21,7 +21,7 @@ What stays in Rust is `ia-shim` (`rust/shim/`), the per-run supervisor the TS se
 - This project's own work is tracked on the Huntaway board (project `issue-agent`, task keys `IA-<n>`).
 - If a task changed code, open a pull request for its branch before you finish (see below). Tasks
   with no code changes don't need one.
-- When asked to merge (for example, after the task is moved to *Ready for merge*), commit and push
+- When asked to merge (for example, after the task is moved to _Ready for merge_), commit and push
   any outstanding work, wait for the PR's checks to pass (`wait` with `pull_request: <N>` and
   `pull_request_events: ["checks_failed", "checks_passed"]`), then merge it with the gh tools'
   `pr_merge`. `master` has no required checks, so "all checks passed" means those that had started
@@ -57,7 +57,7 @@ minutes after each push it's rebuilt from the PR's head, and it's removed when t
   idle and wakes on the next request.
 - It also has a `personal` profile (`--profile`, see `docs/guide/server.md`) on a Claude login shared by every
   preview, so agents can run there. Don't log it out or change that login's settings from a preview.
-- Its address isn't kept in this public repository. The board project's *Pull request previews*
+- Its address isn't kept in this public repository. The board project's _Pull request previews_
   setting has it, and the board fills in the task's `preview_url` from its PR, so the card links it.
 
 ## Testing in a worktree
@@ -68,7 +68,7 @@ Task worktrees live inside that data dir, and the agent working in them is run b
 Keep test servers fully separate from it:
 
 - Your task has a temp folder of its own, `$TMPDIR`, which the board deletes once the task is done
-  (see *Temp folders* in `docs/guide/concepts.md`). Put env files, logs, screenshots and scratch folders there
+  (see _Temp folders_ in `docs/guide/concepts.md`). Put env files, logs, screenshots and scratch folders there
   rather than straight in `/tmp`, which is shared and fills up. `mktemp`, the server's tests and the
   test scripts already use it.
 - Start a test server with `scripts/test-server.sh --seed > $TMPDIR/ia<N>-env` (serve flags such as
@@ -123,7 +123,7 @@ Keep test servers fully separate from it:
   - `GET /api/permissions[?task_id=…]` lists pending permission prompts, and
     `POST /api/permissions/{id}` with `{"decision": "allow"}` (or `deny`) answers one. They're in
     the `permission_requests` table of `<data dir>/huntaway-2.db` (`huntaway.db` on a server started with
-    `IA_NEW_DB_FILE=0`; see *The database file* in `docs/guide/server.md`). A task whose thread is on items
+    `IA_NEW_DB_FILE=0`; see _The database file_ in `docs/guide/server.md`). A task whose thread is on items
     (`tasks.thread_source`, see `docs/threads.md`) has no `messages` rows: read its thread with `ia-api thread`.
   - `<data dir>/runs/<run id>/spec.json` shows how a run was launched (model, permission mode,
     config dir), so you can check launch flags without waiting for the model.
@@ -256,7 +256,7 @@ most of those were cases like these:
 - State from before the change: rows written before a migration, unsaved input in a form, agents
   already running or queued, a linked host that is offline or on an older version.
 - Concurrency: two requests or two tasks at once, and the order locks are taken in (debug builds
-  only catch a second lock of the *same* mutex).
+  only catch a second lock of the _same_ mutex).
 - Anything that deletes or cleans up data: run it from another working directory, through a
   symlink, with shared or custom folders, and with git state that `git status` hides.
 - Access across profiles: a route or tool that returns another profile's tasks, or accepts

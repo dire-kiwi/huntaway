@@ -132,8 +132,12 @@ function asset(name: string, digest: string | null): any {
 function release(tag: string, prerelease: boolean): any {
   const v = tag.replace(/^v+/, "");
   return {
-    tag_name: tag, draft: false, prerelease, published_at: "2026-10-01T00:00:00Z",
-    body: `notes for ${v}`, html_url: `https://github.com/o/r/releases/tag/${tag}`,
+    tag_name: tag,
+    draft: false,
+    prerelease,
+    published_at: "2026-10-01T00:00:00Z",
+    body: `notes for ${v}`,
+    html_url: `https://github.com/o/r/releases/tag/${tag}`,
     assets: [
       asset(`huntaway-server-${v}-linux-x64.tar.gz`, DIGEST),
       asset(`huntaway-server-${v}-mac-arm64.tar.gz`, DIGEST),
@@ -254,7 +258,10 @@ test("a_failed_check_keeps_the_last_result", async () => {
   assert.equal(r.error, "GitHub answered 500 Internal Server Error: nope");
   assert.equal(r.rate_limit_reset, null);
   // The rate limit says so, with when it resets.
-  const limited: Array<[string, string]> = [["x-ratelimit-remaining", "0"], ["x-ratelimit-reset", "1793491200"]];
+  const limited: Array<[string, string]> = [
+    ["x-ratelimit-remaining", "0"],
+    ["x-ratelimit-reset", "1793491200"],
+  ];
   fake.fail = [403, limited];
   await check(state);
   r = release_status(state);
@@ -313,7 +320,13 @@ test("an_app_newer_than_the_latest_release_isnt_offered_its_package", async () =
   const fake = fake_of([release("v0.2.0", false)]);
   const base = await github(fake);
   const cfg = (v: string): Config => ({ ...config(base), desktop_version: v, desktop_shell: "shell-0.3.0-rc.1" });
-  for (const [desktop, outdated] of [["0.3.0-rc.1", false], ["0.2.0", false], ["0.2.0-rc.1", true], ["0.1.0", true], ["not a version", false]] as const) {
+  for (const [desktop, outdated] of [
+    ["0.3.0-rc.1", false],
+    ["0.2.0", false],
+    ["0.2.0-rc.1", true],
+    ["0.1.0", true],
+    ["not a version", false],
+  ] as const) {
     const state = host(cfg(desktop));
     await check(state);
     const r = release_status(state);
@@ -348,7 +361,13 @@ test("a_manifest_that_cant_be_read_fails_the_check", async () => {
   assert.equal(r.latest.version, "0.3.0");
   assert.ok(r.error.startsWith("reading huntaway-0.4.0-release.json: "), JSON.stringify(r));
   // The rate limit on the manifest says when it resets.
-  fake.manifest_fail = [429, [["x-ratelimit-remaining", "0"], ["x-ratelimit-reset", "1793491200"]]];
+  fake.manifest_fail = [
+    429,
+    [
+      ["x-ratelimit-remaining", "0"],
+      ["x-ratelimit-reset", "1793491200"],
+    ],
+  ];
   await check(state);
   r = release_status(state);
   assert.deepEqual([r.latest.version, r.rate_limit_reset], ["0.3.0", "2026-11-01T00:00:00Z"]);
@@ -907,7 +926,15 @@ test("state_json_round_trips_with_unknown_keys", () => {
   assert.deepEqual([s.current, s.staged, s.trying, s.bad], ["0.2.0", "0.3.0", null, ["0.2.5"]]);
   s.trying = "0.3.0";
   staging.write(app, s);
-  assert.deepEqual(read_json(join(app, "state.json")), { current: "0.2.0", previous: null, staged: "0.3.0", trying: "0.3.0", bad: ["0.2.5"], launches: [1, 2], x: "y" });
+  assert.deepEqual(read_json(join(app, "state.json")), {
+    current: "0.2.0",
+    previous: null,
+    staged: "0.3.0",
+    trying: "0.3.0",
+    bad: ["0.2.5"],
+    launches: [1, 2],
+    x: "y",
+  });
   assert.equal(readdirSync(app).length, 1, "no temp file is left");
   // One that can't be read counts as none.
   writeFileSync(join(app, "state.json"), "{not json");
@@ -1024,7 +1051,12 @@ test("update_refuses_what_it_cant_update_to", async () => {
   assert.equal((await update("0.2.0"))[0], 400);
   await check(state);
   await finished(state);
-  for (const [v, why] of [["0.1.0", "isn't older"], ["0.0.1", "isn't older"], ["0.9.0", "isn't the latest"], ["nope", "isn't a version"]]) {
+  for (const [v, why] of [
+    ["0.1.0", "isn't older"],
+    ["0.0.1", "isn't older"],
+    ["0.9.0", "isn't the latest"],
+    ["nope", "isn't a version"],
+  ]) {
     const [code, body] = await update(v);
     assert.equal(code, 400, `${v}: ${JSON.stringify(body)}`);
     assert.ok(body.error.includes(why), `${v}: ${JSON.stringify(body)}`);

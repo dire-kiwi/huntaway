@@ -157,7 +157,7 @@ test("lists_and_calls_the_board_tools_over_http", async () => {
   const { server } = await listen(s);
   try {
     const e = entry(s, run, "huntaway");
-    const init = await (await post(e, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } })).json() as any;
+    const init = (await (await post(e, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } })).json()) as any;
     assert.equal(init.result.protocolVersion, "2025-11-25");
     assert.equal(init.result.serverInfo.name, "huntaway");
     // Notifications get no answer; nor do GETs for a stream of the server's own, or sessions to end.
@@ -165,10 +165,10 @@ test("lists_and_calls_the_board_tools_over_http", async () => {
     assert.equal((await fetch(e.url, { headers: { ...e.headers, accept: "text/event-stream" } })).status, 405);
     assert.equal((await fetch(e.url, { method: "DELETE", headers: e.headers })).status, 405);
     assert.equal((await post(e, [{ jsonrpc: "2.0", id: 1, method: "ping" }])).status, 400);
-    const unknown = await (await post(e, { jsonrpc: "2.0", id: 2, method: "server/discover" })).json() as any;
+    const unknown = (await (await post(e, { jsonrpc: "2.0", id: 2, method: "server/discover" })).json()) as any;
     assert.equal(unknown.error.code, -32601);
 
-    const list = await (await post(e, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json() as any;
+    const list = (await (await post(e, { jsonrpc: "2.0", id: 3, method: "tools/list" })).json()) as any;
     const names = list.result.tools.map((t: any) => t.name);
     assert.ok(names.includes("update_task") && !names.includes("submit_review"));
 
@@ -189,7 +189,9 @@ test("lists_and_calls_the_board_tools_over_http", async () => {
     assert.equal(db.value(s.db(), "SELECT run_id FROM mcp_calls WHERE tool='get_task'"), run.id);
 
     // A client that doesn't take event streams gets JSON.
-    const plain = await (await post(e, { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "get_task", arguments: { task_id: task.id } } }, "application/json")).json() as any;
+    const plain = (await (
+      await post(e, { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "get_task", arguments: { task_id: task.id } } }, "application/json")
+    ).json()) as any;
     assert.equal(JSON.parse(plain.result.content[0].text).id, task.id);
   } finally {
     server.close();
@@ -201,7 +203,7 @@ test("a_reviews_server_offers_the_reviewers_tools", async () => {
   const [, run] = running_task(s, { review: true });
   const { server } = await listen(s);
   try {
-    const list = await (await post(entry(s, run, "huntaway"), { jsonrpc: "2.0", id: 1, method: "tools/list" })).json() as any;
+    const list = (await (await post(entry(s, run, "huntaway"), { jsonrpc: "2.0", id: 1, method: "tools/list" })).json()) as any;
     const names = list.result.tools.map((t: any) => t.name);
     assert.ok(names.includes("submit_review") && !names.includes("update_task"));
   } finally {
@@ -215,7 +217,12 @@ async function prompt(s: Shared, run: db.Run, controller: AbortController) {
   const res = await fetch(e.url, {
     method: "POST",
     headers: { ...e.headers, accept: "application/json, text/event-stream", "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "permission_prompt", arguments: { tool_name: "Bash", input: { command: "ls" }, tool_use_id: "toolu_1" } } }),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: { name: "permission_prompt", arguments: { tool_name: "Bash", input: { command: "ls" }, tool_use_id: "toolu_1" } },
+    }),
     signal: controller.signal,
   });
   const prime = (await events(res)())!;
@@ -235,7 +242,8 @@ async function resume(s: Shared, run: db.Run, last: string) {
   return JSON.parse(msg.data);
 }
 
-const request_for = (s: Shared, run: db.Run) => db.value<string>(s.db(), "SELECT p.id FROM permission_requests p JOIN mcp_calls m ON m.id=p.call_id WHERE m.run_id=?1", run.id);
+const request_for = (s: Shared, run: db.Run) =>
+  db.value<string>(s.db(), "SELECT p.id FROM permission_requests p JOIN mcp_calls m ON m.id=p.call_id WHERE m.run_id=?1", run.id);
 
 test("a_call_whose_stream_broke_is_answered_when_the_client_reconnects", async () => {
   const s = testing.state();
@@ -279,7 +287,11 @@ test("a_call_with_a_progress_token_makes_progress_on_its_stream_and_after_a_reco
         jsonrpc: "2.0",
         id: 3,
         method: "tools/call",
-        params: { name: "permission_prompt", arguments: { tool_name: "Bash", input: { command: "ls" } }, _meta: { progressToken: 3, "claudecode/toolUseId": "toolu_9" } },
+        params: {
+          name: "permission_prompt",
+          arguments: { tool_name: "Bash", input: { command: "ls" } },
+          _meta: { progressToken: 3, "claudecode/toolUseId": "toolu_9" },
+        },
       }),
       signal: controller.signal,
     });
@@ -365,13 +377,15 @@ test("the_gh_server_is_the_runs", async () => {
   const { server } = await listen(s);
   try {
     const e = entry(s, run, "gh");
-    const init = await (await post(e, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } })).json() as any;
+    const init = (await (await post(e, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } })).json()) as any;
     assert.equal(init.result.serverInfo.name, "huntaway-gh");
     assert.ok(init.result.instructions.includes("the GitHub account octo-bot"), init.result.instructions);
-    const list = await (await post(e, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json() as any;
+    const list = (await (await post(e, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json()) as any;
     assert.ok(list.result.tools.some((t: any) => t.name === "pr_create"));
     // A gh call's stream that broke after a restart: its output is gone, and the agent is told so.
-    const r = await fetch(e.url, { headers: { ...e.headers, accept: "text/event-stream", "last-event-id": `gh.x1.${Buffer.from("3").toString("base64url")}` } });
+    const r = await fetch(e.url, {
+      headers: { ...e.headers, accept: "text/event-stream", "last-event-id": `gh.x1.${Buffer.from("3").toString("base64url")}` },
+    });
     const next = events(r);
     await next();
     const v = JSON.parse((await next())!.data);

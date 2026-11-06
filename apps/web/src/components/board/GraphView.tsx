@@ -118,7 +118,9 @@ function layout(shown: Task[], all: Record<string, Task>, onBoard: ReadonlySet<s
   for (const id of linked) groups.set(find(id), [...(groups.get(find(id)) ?? []), id]);
   const created = (id: string) => nodes.get(id)!.task.created_at;
   // The biggest groups first, then the most recent.
-  const ordered = [...groups.values()].sort((a, b) => b.length - a.length || Math.max(...b.map((i) => Date.parse(created(i)))) - Math.max(...a.map((i) => Date.parse(created(i)))));
+  const ordered = [...groups.values()].sort(
+    (a, b) => b.length - a.length || Math.max(...b.map((i) => Date.parse(created(i)))) - Math.max(...a.map((i) => Date.parse(created(i)))),
+  );
 
   const placed: Placed[] = [];
   const boxes: { x: number; y: number; w: number; h: number; n: number }[] = [];
@@ -138,7 +140,9 @@ function layout(shown: Task[], all: Record<string, Task>, onBoard: ReadonlySet<s
       // Tasks from one prompt stay side by side: they go where the first of them wants to.
       const groupWant = new Map<string, number>();
       for (const id of col) groupWant.set(fanoutOf(id), Math.min(groupWant.get(fanoutOf(id)) ?? Infinity, want(id)));
-      col.sort((a, b) => groupWant.get(fanoutOf(a))! - groupWant.get(fanoutOf(b))! || fanoutOf(a).localeCompare(fanoutOf(b)) || created(a).localeCompare(created(b)));
+      col.sort(
+        (a, b) => groupWant.get(fanoutOf(a))! - groupWant.get(fanoutOf(b))! || fanoutOf(a).localeCompare(fanoutOf(b)) || created(a).localeCompare(created(b)),
+      );
       let next = 0;
       for (const id of col) {
         const at = Math.max(next, c === 0 ? next : Math.max(0, want(id)));
@@ -161,13 +165,33 @@ function layout(shown: Task[], all: Record<string, Task>, onBoard: ReadonlySet<s
     if (ps.length < 2) continue;
     const x0 = Math.min(...ps.map((p) => p.x));
     const y0 = Math.min(...ps.map((p) => p.y));
-    boxes.push({ x: x0 - 8, y: y0 - 18, w: Math.max(...ps.map((p) => p.x)) - x0 + NODE_W + 16, h: Math.max(...ps.map((p) => p.y)) - y0 + NODE_H + 26, n: ps.length });
+    boxes.push({
+      x: x0 - 8,
+      y: y0 - 18,
+      w: Math.max(...ps.map((p) => p.x)) - x0 + NODE_W + 16,
+      h: Math.max(...ps.map((p) => p.y)) - y0 + NODE_H + 26,
+      n: ps.length,
+    });
   }
   const unlinked = shown.filter((t) => !linked.has(t.id));
   return { placed, edges: edges.filter((e) => at.has(e.from) && at.has(e.to)), boxes, width, height: Math.max(0, top - COMPONENT_GAP), unlinked, at };
 }
 
-function Node({ task, ghost, project, progress, onMenu, style }: { task: Task; ghost?: boolean; project?: Project; progress?: Progress; onMenu?: OnMenu; style?: React.CSSProperties }) {
+function Node({
+  task,
+  ghost,
+  project,
+  progress,
+  onMenu,
+  style,
+}: {
+  task: Task;
+  ghost?: boolean;
+  project?: Project;
+  progress?: Progress;
+  onMenu?: OnMenu;
+  style?: React.CSSProperties;
+}) {
   const open = usePanelOpen(task.id);
   const selectable = useSelectable(task.id);
   return (
@@ -269,7 +293,16 @@ export function GraphView({
               </defs>
               {boxes.map((b, i) => (
                 <g key={i}>
-                  <rect x={PAD + b.x} y={PAD + b.y} width={b.w} height={b.h} rx={8} fill="color-mix(in srgb, var(--color-accent) 4%, transparent)" stroke="color-mix(in srgb, var(--color-accent) 35%, transparent)" strokeDasharray="4 3" />
+                  <rect
+                    x={PAD + b.x}
+                    y={PAD + b.y}
+                    width={b.w}
+                    height={b.h}
+                    rx={8}
+                    fill="color-mix(in srgb, var(--color-accent) 4%, transparent)"
+                    stroke="color-mix(in srgb, var(--color-accent) 35%, transparent)"
+                    strokeDasharray="4 3"
+                  />
                   <text x={PAD + b.x + 8} y={PAD + b.y + 12} fontSize={10.5} fill="var(--color-faint)">
                     one prompt · {b.n} agents
                   </text>

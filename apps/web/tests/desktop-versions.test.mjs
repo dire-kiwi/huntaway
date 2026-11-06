@@ -6,7 +6,17 @@ import { afterEach, test } from "vite-plus/test";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { chooseServer, compareVersions, installKind, markBad, noteRustServer, readState, releaseEnv, startWithFallback, writeState } = require("../electron/versions.cjs");
+const {
+  chooseServer,
+  compareVersions,
+  installKind,
+  markBad,
+  noteRustServer,
+  readState,
+  releaseEnv,
+  startWithFallback,
+  writeState,
+} = require("../electron/versions.cjs");
 
 const dirs = [];
 afterEach(() => {
@@ -67,7 +77,10 @@ test("trying comes first, and once it's marked bad (nothing came up) the current
   // The keys the shell doesn't know are kept, and nothing is added twice.
   markBad(dir, "0.3.0");
   assert.deepEqual(readState(dir), { current: "0.2.0", previous: "0.1.1", trying: null, bad: ["0.0.9", "0.3.0"], extra: { kept: true } });
-  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith(".tmp")), []);
+  assert.deepEqual(
+    fs.readdirSync(dir).filter((f) => f.endsWith(".tmp")),
+    [],
+  );
   // Marking another version bad leaves trying alone.
   const other = appDir({ current: "0.2.0", trying: "0.3.0" }, ["0.3.0", "0.2.0"]);
   markBad(other, "0.2.0");
@@ -99,7 +112,19 @@ test("versions that aren't semver are never started", () => {
 });
 
 test("versions compare as semver, prereleases below their release", () => {
-  const ordered = ["0.9.0", "0.10.0-alpha", "0.10.0-alpha.1", "0.10.0-alpha.beta", "0.10.0-beta", "0.10.0-beta.2", "0.10.0-beta.11", "0.10.0-rc.1", "0.10.0", "0.10.1", "1.0.0"];
+  const ordered = [
+    "0.9.0",
+    "0.10.0-alpha",
+    "0.10.0-alpha.1",
+    "0.10.0-alpha.beta",
+    "0.10.0-beta",
+    "0.10.0-beta.2",
+    "0.10.0-beta.11",
+    "0.10.0-rc.1",
+    "0.10.0",
+    "0.10.1",
+    "1.0.0",
+  ];
   for (let i = 0; i < ordered.length; i++) {
     for (let j = 0; j < ordered.length; j++) {
       assert.equal(Math.sign(compareVersions(ordered[i], ordered[j])), Math.sign(i - j), `${ordered[i]} vs ${ordered[j]}`);
@@ -115,11 +140,17 @@ test("versions compare as semver, prereleases below their release", () => {
 
 test("the install kind and the environment for a release build's server", () => {
   const never = () => assert.fail("pacman isn't asked");
-  assert.equal(installKind({ platform: "linux", env: { APPIMAGE: "/home/u/Huntaway.AppImage" }, resourcesPath: "/tmp/.mount_x/resources", pacmanOwns: never }), "appimage:/home/u/Huntaway.AppImage");
+  assert.equal(
+    installKind({ platform: "linux", env: { APPIMAGE: "/home/u/Huntaway.AppImage" }, resourcesPath: "/tmp/.mount_x/resources", pacmanOwns: never }),
+    "appimage:/home/u/Huntaway.AppImage",
+  );
   assert.equal(installKind({ platform: "linux", env: {}, resourcesPath: "/opt/Huntaway/resources", pacmanOwns: () => true }), "pacman");
   assert.equal(installKind({ platform: "linux", env: {}, resourcesPath: "/opt/Huntaway/resources", pacmanOwns: () => false }), "other");
   assert.equal(installKind({ platform: "linux", env: {}, resourcesPath: "/home/u/huntaway/resources", pacmanOwns: never }), "other");
-  assert.equal(installKind({ platform: "darwin", env: {}, resourcesPath: "/Applications/Huntaway.app/Contents/Resources", pacmanOwns: never }), "mac:/Applications/Huntaway.app");
+  assert.equal(
+    installKind({ platform: "darwin", env: {}, resourcesPath: "/Applications/Huntaway.app/Contents/Resources", pacmanOwns: never }),
+    "mac:/Applications/Huntaway.app",
+  );
 
   const desktop = { version: "0.2.0", shell: "abc", install: "pacman", bundled: BUNDLED };
   assert.deepEqual(releaseEnv({ env: {}, ...desktop }), {
@@ -182,7 +213,13 @@ test("a trying version (or one that exited after the timeout) is skipped, and ma
 test("when another launch's server takes the port, no version is marked bad", async () => {
   // Two launches start 0.3.0 at once; this one loses the port.
   let taken = false;
-  const f = fallback({ order: ["0.3.0", "0.2.0"], servers: { "0.3.0": "exit", "0.2.0": "ok" }, failed: new Set(["0.4.0"]), portTaken: () => taken, after: () => (taken = true) });
+  const f = fallback({
+    order: ["0.3.0", "0.2.0"],
+    servers: { "0.3.0": "exit", "0.2.0": "ok" },
+    failed: new Set(["0.4.0"]),
+    portTaken: () => taken,
+    after: () => (taken = true),
+  });
   await assert.rejects(f.run, /exit/);
   assert.deepEqual(f.started, ["0.3.0"]);
   assert.deepEqual(f.saved, []);

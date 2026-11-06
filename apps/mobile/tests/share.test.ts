@@ -6,13 +6,18 @@ const NOW = 1730000000000;
 
 describe("what a share puts in the composer", () => {
   test("text, with its link once", () => {
-    expect(sharedDraft({ text: "Read this: https://example.com/a", webUrl: "https://example.com/a" }, NOW)).toEqual({ text: "Read this: https://example.com/a", files: [] });
+    expect(sharedDraft({ text: "Read this: https://example.com/a", webUrl: "https://example.com/a" }, NOW)).toEqual({
+      text: "Read this: https://example.com/a",
+      files: [],
+    });
     expect(sharedDraft({ text: "Read this", webUrl: "https://example.com/a" }, NOW)).toEqual({ text: "Read this\nhttps://example.com/a", files: [] });
     expect(sharedDraft({ text: "  just text \n", webUrl: null }, NOW)).toEqual({ text: "just text", files: [] });
   });
 
   test("a link on its own, with the page's title", () => {
-    expect(sharedDraft({ text: "https://example.com/a", webUrl: "https://example.com/a", meta: { title: "A page" } }, NOW)?.text).toBe("A page\nhttps://example.com/a");
+    expect(sharedDraft({ text: "https://example.com/a", webUrl: "https://example.com/a", meta: { title: "A page" } }, NOW)?.text).toBe(
+      "A page\nhttps://example.com/a",
+    );
     // iOS shares a page as its URL, without text.
     expect(sharedDraft({ text: null, webUrl: "https://example.com/a", meta: { title: "A page" } }, NOW)?.text).toBe("A page\nhttps://example.com/a");
     expect(sharedDraft({ webUrl: "https://example.com/a" }, NOW)?.text).toBe("https://example.com/a");

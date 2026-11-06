@@ -61,10 +61,18 @@ test("an action tapped in the background answers once, however it arrives", asyn
   await Promise.all([mockTasks["huntaway-notification-response"]({ data: response }), (async () => mockListeners[0](response))()]);
   await new Promise((r) => setTimeout(r, 10));
   expect(fetch).toHaveBeenCalledTimes(1);
-  expect(fetch).toHaveBeenCalledWith("https://work.ts.net/api/permissions/r1/push-answer", expect.objectContaining({ method: "POST", body: JSON.stringify({ token: "tok", decision: "allow" }) }));
+  expect(fetch).toHaveBeenCalledWith(
+    "https://work.ts.net/api/permissions/r1/push-answer",
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ token: "tok", decision: "allow" }) }),
+  );
   expect(mockExpo.dismissNotificationAsync).toHaveBeenCalledWith("n1");
-  expect(mockExpo.scheduleNotificationAsync).toHaveBeenCalledWith({ content: { title: "WEB-3 Fix the login", body: "Allowed.", data: expect.not.objectContaining({ answer: expect.anything() }) }, trigger: null });
+  expect(mockExpo.scheduleNotificationAsync).toHaveBeenCalledWith({
+    content: { title: "WEB-3 Fix the login", body: "Allowed.", data: expect.not.objectContaining({ answer: expect.anything() }) },
+    trigger: null,
+  });
   // A plain tap isn't the background task's (the app opens, and its listener has it).
-  await mockTasks["huntaway-notification-response"]({ data: { actionIdentifier: "expo.modules.notifications.actions.DEFAULT", notification: notification("n2") } });
+  await mockTasks["huntaway-notification-response"]({
+    data: { actionIdentifier: "expo.modules.notifications.actions.DEFAULT", notification: notification("n2") },
+  });
   expect(fetch).toHaveBeenCalledTimes(1);
 });

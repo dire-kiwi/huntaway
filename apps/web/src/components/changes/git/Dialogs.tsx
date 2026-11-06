@@ -6,7 +6,17 @@ import { Button, Input, isSubmitShortcut, Kbd, Modal, SUBMIT_KEYS, Textarea } fr
 import { errText, noop, type Dialog, type MenuEntry, type Option } from "./model";
 
 /** The bar at the bottom: what can be done where you are (each one clickable), and what's going on. */
-export function OptionsBar({ options, busy, flash, onDismiss }: { options: Option[]; busy: string | null; flash: { text: string; error?: boolean } | null; onDismiss: () => void }) {
+export function OptionsBar({
+  options,
+  busy,
+  flash,
+  onDismiss,
+}: {
+  options: Option[];
+  busy: string | null;
+  flash: { text: string; error?: boolean } | null;
+  onDismiss: () => void;
+}) {
   return (
     <div className="flex h-7 shrink-0 items-center gap-3 overflow-hidden border-t border-line px-2 text-[11.5px]">
       <div className="flex min-w-0 flex-1 items-center gap-x-3 overflow-hidden whitespace-nowrap">
@@ -79,7 +89,13 @@ function InputDialog({ dialog, onClose }: { dialog: Extract<Dialog, { kind: "inp
   };
   return (
     <Modal title={dialog.title} onClose={onClose} onSubmit={submit}>
-      <Input autoFocus value={text} placeholder={dialog.placeholder} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      <Input
+        autoFocus
+        value={text}
+        placeholder={dialog.placeholder}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && submit()}
+      />
       <div className="mt-4 flex justify-end gap-2">
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="primary" onClick={submit}>

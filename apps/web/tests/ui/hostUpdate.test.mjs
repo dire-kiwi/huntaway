@@ -37,7 +37,8 @@ test("a host's Update ends when it restarts, and offers the hub's checkout", asy
         const restart = updates && polls <= 2 ? { phase: "building_server", log: "", error: null } : null;
         return json(route, { boot_id: polls > 2 ? "b2" : "b1", started_at: "", source_dir: "/src", running_commit: remote, running_agents: 0, restart });
       }
-      if (path.endsWith("/admin/server")) return json(route, { ...(await (await route.fetch()).json()), source_dir: "/src", source_commit: checkout, running_commit: running });
+      if (path.endsWith("/admin/server"))
+        return json(route, { ...(await (await route.fetch()).json()), source_dir: "/src", source_commit: checkout, running_commit: running });
       if (path.startsWith("/api/h/rem/")) return json(route, path.endsWith("/settings") ? {} : []);
       return route.fallback();
     });

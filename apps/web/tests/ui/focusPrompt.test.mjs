@@ -55,25 +55,36 @@ test("a task made with Create & start is in Now, one only created is in Later", 
 // endpoint, not the thread's).
 test("answering an agent's question from its card puts the task in Now", async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Asks a question", description: "Needs an answer" });
-  const card = { call_id: "c1", question: "Which colour should the button be?", options: [{ label: "Red" }, { label: "Green" }], multi_select: false, allow_other: true, status: "pending" };
-  execFileSync(
-    "python3",
-    [
-      "-c",
-      `
+  const card = {
+    call_id: "c1",
+    question: "Which colour should the button be?",
+    options: [{ label: "Red" }, { label: "Green" }],
+    multi_select: false,
+    allow_other: true,
+    status: "pending",
+  };
+  execFileSync("python3", [
+    "-c",
+    `
 import json, sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (sys.argv[2], 'question', sys.argv[3], '2026-10-31T07:00:00.000Z'))
 c.commit()
 `,
-      `${server.dataDir}/huntaway.db`,
-      task.id,
-      JSON.stringify(card),
-    ],
-  );
+    `${server.dataDir}/huntaway.db`,
+    task.id,
+    JSON.stringify(card),
+  ]);
   assert.equal((await server.api("GET", `/tasks/${task.id}`)).task.now_at, null);
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Which colour should the button be?", "click Or write your own answer", "type Please do the second change instead", "press Enter"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Which colour should the button be?",
+      "click Or write your own answer",
+      "type Please do the second change instead",
+      "press Enter",
+    ]);
     await ui.run(["wait Fake reply to:"]);
   });
   assert.ok((await server.api("GET", `/tasks/${task.id}`)).task.now_at, "the answer put it in Now");
@@ -89,25 +100,29 @@ test("answering Claude's own question card puts the task in Now", async () => {
     status: "expired",
     input: { questions: [{ question: "Which pets?", header: "Pets", multiSelect: true, options: [{ label: "Cats" }, { label: "Dogs" }] }] },
   };
-  execFileSync(
-    "python3",
-    [
-      "-c",
-      `
+  execFileSync("python3", [
+    "-c",
+    `
 import json, sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 cur = c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (sys.argv[2], 'permission', sys.argv[3], '2026-10-31T07:00:00.000Z'))
 c.execute("insert into permission_requests (id,task_id,message_id,tool_name,input,status,created_at,kind) values (?,?,?,?,?,?,?,?)", ('ask-now', sys.argv[2], cur.lastrowid, 'AskUserQuestion', json.dumps(json.loads(sys.argv[3])['input']), 'expired', '2026-10-31T07:00:00.000Z', 'tool'))
 c.commit()
 `,
-      `${server.dataDir}/huntaway.db`,
-      task.id,
-      JSON.stringify(ask),
-    ],
-  );
+    `${server.dataDir}/huntaway.db`,
+    task.id,
+    JSON.stringify(ask),
+  ]);
   assert.equal((await server.api("GET", `/tasks/${task.id}`)).task.now_at, null);
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Which pets?", "click css=[aria-label='Your own answer to: Which pets?']", "type Fish", "click Send answers"]);
+    await ui.run([
+      `goto /p/${project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Which pets?",
+      "click css=[aria-label='Your own answer to: Which pets?']",
+      "type Fish",
+      "click Send answers",
+    ]);
     await ui.run(["wait Fake reply to:"]);
   });
   assert.ok((await server.api("GET", `/tasks/${task.id}`)).task.now_at, "the answers put it in Now");

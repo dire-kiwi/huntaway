@@ -72,7 +72,10 @@ test("a gap is caught up from the thread's seq, then the events held meanwhile a
 test("a log that doesn't go back that far, or a thread_resync, takes a fresh window", async () => {
   setup("c");
   let windows = 0;
-  api.thread = async () => (++windows, { thread: thread("c"), items: [text("w", windows === 1 ? "old" : `fresh ${windows}`)], requests: [], seq: 10 * windows });
+  api.thread = async () => (
+    ++windows,
+    { thread: thread("c"), items: [text("w", windows === 1 ? "old" : `fresh ${windows}`)], requests: [], seq: 10 * windows }
+  );
   api.threadEvents = async () => ({ events: [], more: false, seq: 10, resync: true });
   const release = it.retainItemThread("local", "c");
   await tick();

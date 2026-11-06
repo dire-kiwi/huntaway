@@ -24,8 +24,20 @@ export function project_or_own(s: Shared, ctx: Ctx, pid: string | null, profile:
  * called and where on the board it is.
  */
 export const AGENT_FIELDS = [
-  "name", "key", "base_branch", "model", "start_prompt", "review_prompt", "merge_prompt", "auto_review", "review_rounds", "reviewers", "auto_summary",
-  "summarizer", "summarizers", "group_name",
+  "name",
+  "key",
+  "base_branch",
+  "model",
+  "start_prompt",
+  "review_prompt",
+  "merge_prompt",
+  "auto_review",
+  "review_rounds",
+  "reviewers",
+  "auto_summary",
+  "summarizer",
+  "summarizers",
+  "group_name",
 ];
 
 /**
@@ -33,8 +45,17 @@ export const AGENT_FIELDS = [
  * asking, move where the work happens, or bring the repository's ignored files (secrets, say) into worktrees.
  */
 export const APPROVAL_FIELDS = [
-  "permission_mode", "setup_script", "teardown_script", "copy_files", "link_folders", "status_script", "status_scripts", "repo_path", "move_repo",
-  "use_worktrees", "worktrees_root",
+  "permission_mode",
+  "setup_script",
+  "teardown_script",
+  "copy_files",
+  "link_folders",
+  "status_script",
+  "status_scripts",
+  "repo_path",
+  "move_repo",
+  "use_worktrees",
+  "worktrees_root",
 ];
 
 /** `update_project`: the changes in `args`, asking the user first if any of them need it. Nothing changes if they don't approve. */

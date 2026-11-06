@@ -10,16 +10,16 @@ API version (`hostSupports(host, N)`): on an older linked host they're simply hi
 
 ## 1. Routes and pages (`router.ts`, `App.tsx`)
 
-| Path | Page |
-|---|---|
-| `/` | Redirects to the board of the active profile (the one picked last, saved in the browser). |
-| `/profile/<name>` | Profile board: every task of that profile across projects and hosts, plus its group and scratch tasks (README). |
-| `/p/<project>` | Project board (README). `/p/<project>/settings`: project settings page (section 9). |
-| `/g/<host>/<group>` | Group board: all tasks of a group's projects plus its group tasks (README). |
-| `/t/<task>` | A task's own page; once the task is loaded it redirects to its board with the task open in the side panel (its subproject's, group's or profile's board as fits). |
-| `/t/<task>/board` | A subproject's own board (README). |
-| `/settings`, `/analytics`, `/hosts/<host>` | Settings, Analytics, a host's page. |
-| `?task=<id>[&expanded]` | On any board: the task open in the side panel, or expanded into a dialog. |
+| Path                                       | Page                                                                                                                                                              |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                                        | Redirects to the board of the active profile (the one picked last, saved in the browser).                                                                         |
+| `/profile/<name>`                          | Profile board: every task of that profile across projects and hosts, plus its group and scratch tasks (README).                                                   |
+| `/p/<project>`                             | Project board (README). `/p/<project>/settings`: project settings page (section 9).                                                                               |
+| `/g/<host>/<group>`                        | Group board: all tasks of a group's projects plus its group tasks (README).                                                                                       |
+| `/t/<task>`                                | A task's own page; once the task is loaded it redirects to its board with the task open in the side panel (its subproject's, group's or profile's board as fits). |
+| `/t/<task>/board`                          | A subproject's own board (README).                                                                                                                                |
+| `/settings`, `/analytics`, `/hosts/<host>` | Settings, Analytics, a host's page.                                                                                                                               |
+| `?task=<id>[&expanded]`                    | On any board: the task open in the side panel, or expanded into a dialog.                                                                                         |
 
 - There is **no inbox route, no separate list route** (list is a per-browser view toggle on every
   board), no command palette and no search across boards. `App.tsx`
@@ -34,20 +34,20 @@ API version (`hostSupports(host, N)`): on an older linked host they're simply hi
 - Header: logo, "Huntaway", and a **connection dot** (green; red and pulsing with "Reconnecting…"
   while the event socket is down).
 - Profiles list with a per-profile **status bar** of coloured segments (README); Analytics link.
-- *Starred* and *Reminders* sections (README). Reminders show a relative label and turn amber with a
+- _Starred_ and _Reminders_ sections (README). Reminders show a relative label and turn amber with a
   bell-ring when due; the heading counts due ones. Right-click a row: Star/Unstar, the reminder
-  presets, *Remind me at…*, *Clear reminder*. `components/task/Reminders.tsx`, `reminders.ts`
+  presets, _Remind me at…_, _Clear reminder_. `components/task/Reminders.tsx`, `reminders.ts`
 - Projects of the active profile, grouped by host when there are several (README). Each row shows the
   key's first 3 letters as an icon, a **running dot** if any agent runs, a purple badge counting tasks
   **in review and ready to check** (review passed or none, agent not running) and an amber badge
-  counting **needs attention**. Collapsed groups and the *N hidden* row roll those counts up.
+  counting **needs attention**. Collapsed groups and the _N hidden_ row roll those counts up.
 - Host sub-headings (multi-host only) show an online/offline dot, "· offline" or "· needs update",
   and link to the host's page.
 - Drag/Alt+Arrow reorder, groups, pin, hide, archive (README). Screen-reader announcements for
   reorders (`aria-live`).
-- Project right-click menu: *Group <name> in* → each existing group (checked), *New group…*, *No
-  group*; *Pin to every profile*/*Unpin*; *Hide from sidebar*/*Show in sidebar*; *Archive…*.
-  Group menu: *Rename group…*, *Ungroup*, *Pin*/*Unpin*, *Hide from sidebar*.
+- Project right-click menu: _Group <name> in_ → each existing group (checked), _New group…_, _No
+  group_; _Pin to every profile_/_Unpin_; _Hide from sidebar_/_Show in sidebar_; _Archive…_.
+  Group menu: _Rename group…_, _Ungroup_, _Pin_/_Unpin_, _Hide from sidebar_.
 - Footer: **Usage left** panel (README; collapsible, refresh button, bars filled by what's left, red
   under 10%, amber under 30%, reset countdown, plan name; `components/settings/Usage.tsx`), **"New version ·
   Reload"** when the server serves a newer UI build than the page runs (`components/settings/uiVersion.ts`), **"N new
@@ -56,27 +56,30 @@ API version (`hostSupports(host, N)`): on an older linked host they're simply hi
 ## 3. Boards (`components/board/Board.tsx`, `components/board/BoardControls.tsx`, `components/board/boardQuery.ts`)
 
 ### Columns and views
+
 - Columns: Backlog, To do, In progress, Needs attention, In review, Ready for merge, Done (README);
   each host's own set of statuses decides which show. **Backlog** is a 40px vertical strip at the
   start until opened (state kept per browser; still takes drops).
 - Per-column count, a **+** (new task in that column) on To do and Backlog, and empty-state hints
   ("Drop a task here to start its agent", "…to have its agent merge it").
 - Done column ends with an **"N archived"** link that switches to the list view and scrolls to the
-  *Archived* section (README covers archiving).
+  _Archived_ section (README covers archiving).
 - **Board/List toggle** in every board header (one setting for all boards, per browser). The list
-  view has collapsible sections per status, then *Archived*.
+  view has collapsible sections per status, then _Archived_.
 - A plain mouse wheel scrolls the kanban sideways when it overflows (unless a column under the
   pointer can still scroll vertically).
 - Search, Filter (statuses, task kinds, projects, flags: running/starred/has PR/has reminder) and Sort
   (manual, latest activity, newest, oldest, title, cost) (README). Below 1180px wide they move to a
   row under the header; a filter bar shows "N of M" and removable filter chips.
-- Board headers: project name + repo path (+ host name), settings gear, *New task*; group boards list
+- Board headers: project name + repo path (+ host name), settings gear, _New task_; group boards list
   their projects as links; a subproject board has a breadcrumb, its branch, a **Thread** button (with
-  a running dot) to its own agent, and *New task*; a profile board lists its hosts and project count.
+  a running dot) to its own agent, and _New task_; a profile board lists its hosts and project count.
 
 ### Card contents (`TaskCard`)
+
 One non-wrapping top row (badges that don't fit are cut; extra words appear only when the card is
 ≥280px wide, via container queries), then the title, then a footer row:
+
 - Top row, left to right: **key** (`IA-12`, `G-3`, `S-4`); **subproject** badge (done/total, or
   "merged" in green when all merged); **group task** badge; **type** badge (plan/artifact/diagram/scratch,
   plan shows created-task progress); **queued to merge**; **dependency** badge (queued, or how many
@@ -86,7 +89,7 @@ One non-wrapping top row (badges that don't fit are cut; extra words appear only
   **reminder** marks; right-aligned **state + time**: amber "!" when needs attention, a pulsing dot and a
   live **elapsed timer** while working ("Merging since…" during a merge), an hourglass while the agent
   `wait`s, the resolution icon/label for done tasks, else "5m ago".
-- Title (greyed for *Won't fix*); an amber box with the **attention reason** (the agent's question,
+- Title (greyed for _Won't fix_); an amber box with the **attention reason** (the agent's question,
   the permission it wants, the failure) clamped to 3 lines; the **wait reason** under it while waiting.
 - Footer: subproject **Board** icon button, **preview dot** (README), **branch icon** (hover shows the
   branch, click copies it, ✓ flash; dimmed until the worktree is ready), **PR icon** (README), **Asana**
@@ -97,20 +100,23 @@ One non-wrapping top row (badges that don't fit are cut; extra words appear only
   host, diff size, last message.
 
 ### List rows (`TaskRow`)
-Status icon, key, title (+ attention or wait reason), then marks, subproject badge + *Board* button,
+
+Status icon, key, title (+ attention or wait reason), then marks, subproject badge + _Board_ button,
 type/group badges, run state ("working"/"merging"/"waiting"), queued-to-merge, deps, fan-out model,
 review, **resolution badge**, preview, branch, PR, Asana, cost and activity time.
 
 ### Drag and drop
+
 - Cards and rows drag between columns/sections and reorder within one (manual sort only); a drop line
   in the target column's colour shows where. With another sort, a drop only changes the column (to its
   end). Dropping below a filtered column's last shown card goes after it (README).
 - Side effects: into **In progress** sends an empty message to start a never-started agent (if the
-  host can run agents); into **Done** sets resolution *Done*; an archived task dropped into Done is
+  host can run agents); into **Done** sets resolution _Done_; an archived task dropped into Done is
   un-archived (README). Ready for merge, dependencies and queues are server-side (README).
 - Optimistic: the board moves the card at once and rolls back with a red dismissible banner on failure.
 
 ### Right-click on a card or row
+
 Menu titled "Complete KEY-N as": **Done / Not done / Won't fix** (current one checked; moves it to the
 end of Done), then **Star/Unstar**, **Remind me in 1 hour / in 3 hours / tomorrow at 9:00 / next
 Monday at 9:00**, **Remind me at…** (date-time + "what for" note dialog), **Clear reminder**. Hosts
@@ -157,6 +163,7 @@ actually a single **token-driven editor** (IA-220): everything is typed into the
 ## 5. Task panel (`components/task/TaskView.tsx`)
 
 ### Modes
+
 - **Side panel** sliding in over the right half of a board (below its header), **expanded** into a
   large dialog (≤1400px) with a backdrop (button, or `&expanded` in the URL), or a full page.
 - The same element in both, so expanding keeps thread scroll, terminals and edits.
@@ -167,6 +174,7 @@ actually a single **token-driven editor** (IA-220): everything is typed into the
   task on its details (when narrow), otherwise the thread (`components/task/openingTab.ts`).
 
 ### Header
+
 Breadcrumb (project / group / profile → subproject key → task key) with links back to the board (keeping
 the task open beside it), type badge, **title** (double-click to rename; a pin icon when renamed by
 hand, click to let it follow messages again; README), **star** toggle, then: subproject **Board**
@@ -177,16 +185,18 @@ and **Stop** / "Queued" / **Start**. Expand/collapse and close buttons. Below 88
 wrap to a second row and the details become a tab.
 
 ### Tabs
+
 `<document type>` (doc tasks), **thread**, **changes** (code tasks), **review** (code tasks, with a
 pulsing violet dot while reviewing and an amber one when it found issues or waits), **terminal**,
 **details** (narrow only).
 
 ### Details sidebar (320px column; a tab when narrow)
+
 - **Status**: every column as a clickable list (moves the task; unlike dragging, moving to In progress
   here doesn't start the agent), running dot, a **Resolution** segmented control (Done / Not done /
   Won't fix) for done tasks, notices for queued-to-merge and waiting-for-dependencies, the attention
-  reason, the reminder with its note and *Clear*.
-- **Description**: rendered markdown with attachment thumbnails; *Edit* opens a textarea (Ctrl/Cmd+Enter
+  reason, the reminder with its note and _Clear_.
+- **Description**: rendered markdown with attachment thumbnails; _Edit_ opens a textarea (Ctrl/Cmd+Enter
   saves) that warns if the description changed meanwhile.
 - **Asana** (README), **Same prompt** (fan-out siblings with status, model label, running/waiting icon
   and cost, to compare; README), **Tasks** (those a plan or group task created, with "Outside the group"
@@ -194,17 +204,18 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
 - **Depends on**: list with status icons and "merged" tags, remove on hover, and an "Add a task it
   depends on…" select of unmerged tasks in the project.
 - **Preview** URL field with its live dot, **Pull request** URL field with a `#12` link (README).
-- **Subproject**: *Make it a subproject* / *Make it a plain task* (only while it has no tasks), *Open
-  board*, or for a subproject's task a link to its subproject (README).
+- **Subproject**: _Make it a subproject_ / _Make it a plain task_ (only while it has no tasks), _Open
+  board_, or for a subproject's task a link to its subproject (README).
 - **Worktree**: state (not created / setting up / ready / error / removed), branch, base, path with
   copy, error output, **Set up**, **Tear down…** (dialog: discard uncommitted changes, also delete the
-  branch), *Don't use a worktree* / *Use a worktree*.
+  branch), _Don't use a worktree_ / _Use a worktree_.
 - **Agent**: host (multi-host), session id, live working timer, wait description, cost, **config**
   (changeable until the agent first starts), **model** (free-text, placeholder shows the inherited
   one), **effort** select, the list of tools **always allowed** for this thread (read-only), created.
 - **Delete task** (dialog: also delete its branch, and a subproject's tasks' branches).
 
 ### Changes tab (`DiffView`)
+
 - One unified diff of the task's worktree against the merge-base with its base branch, **including
   uncommitted and untracked files** (server `worktree::diff`; first 50 untracked files, 2 MB cap).
 - Summary ("7 files changed vs master, +120 −34"), a **Commits** box (`git log --oneline` since the
@@ -214,13 +225,15 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
   staging/reverting, inline comments sent to the agent, or a "commit/push/open PR" button.
 
 ### Review tab and review threads (`components/task/Review.tsx`)
+
 - The task's latest review (README): per-reviewer rows with state and a link to each reviewer's thread,
   summary and issues, and **Review now / Review again** (disabled while the agent runs).
 - A review thread opens in the same panel with breadcrumb back to the task, its own Agents/Context
-  pills and Stop, and a sidebar: *Reviewing* (task + branch), *Latest review*, reviewer cost/session.
+  pills and Stop, and a sidebar: _Reviewing_ (task + branch), _Latest review_, reviewer cost/session.
   The composer there asks "Ask the reviewer about its findings…".
 
 ### Terminal and terminal tools (`components/task/Terminal.tsx`, `terminalTools.ts`)
+
 - (README) tmux-backed shell and tools. UI extras: a header with the tool command and cwd, connection
   state, **Restart** (end and start again), **End**/**Close**; an overlay on exit or disconnect with
   **Reconnect** / "Start a new session"; clickable URLs (web-links addon); Ctrl/Cmd+C copies a selection
@@ -228,8 +241,9 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
   terminals stay mounted across tab switches; xterm loads lazily.
 
 ### Document tab (`components/task/Document.tsx`, `components/task/planTheme.ts`, `components/task/planAnswers.ts`, `components/task/htmlFrame.ts`)
+
 - (README) plan/artifact/diagram rendering, versions, plan questions. UI extras: a **version
-  dropdown** ("v3 · 5m ago (latest)" / "(being written)") with *Back to the latest*; **Preview/Source**
+  dropdown** ("v3 · 5m ago (latest)" / "(being written)") with _Back to the latest_; **Preview/Source**
   toggle; **copy source**; **download** the file (and the rendered **SVG** for diagrams); diagram
   **zoom** (−, fit, +) and a **Fix** button that sends Mermaid's error to the agent; "Writing…" while
   the agent writes.
@@ -237,7 +251,7 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
   with `<ia-html>` embedded sandboxed sub-pages auto-sized to their content and `<ia-question>` turned
   into form fields. The frame keeps its scroll position across reloads as the agent rewrites the file.
 - The agent's **latest reply** floats in a small box above the composer under the document, with a
-  *Thread* link; the plan's question bar ("2 of 5 questions answered", Reset, **Send answers**; README).
+  _Thread_ link; the plan's question bar ("2 of 5 questions answered", Reset, **Send answers**; README).
 
 ## 6. Thread (`components/task/Thread.tsx`, `threadModel.ts`, `subagents.ts`)
 
@@ -313,6 +327,7 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
 ## 9. Settings
 
 ### Settings page (`/settings`, `components/settings/Settings.tsx`), in order
+
 1. **Hosts** (`components/settings/Hosts.tsx`): each host's name, online dot, mode, URL, "last seen", "board
    only (can't run agents)", version/API/commit, compatibility badge (Outdated / Too old / Board too old)
    and **Update to <commit>** with live phases (README); **Configure**, **Rename**, **Remove**.
@@ -338,22 +353,25 @@ pulsing violet dot while reviewing and an amber one when it found issues or wait
 7. **Network access**: the board URL with token (masked, Reveal, Copy), data directory and version.
 
 ### Host page (`/hosts/<id>`, `components/settings/HostPage.tsx`)
+
 Mode, URL, version and update; **Agent defaults** (model with "Specific model…", effort, permission
 mode; README); agent configs and profiles on this host; **Terminal tools** (name + command rows;
 README); **Server** (local: as above; a linked host: Rebuild & restart or plain Restart, polled log);
 **Remove from board**. Offline hosts show "settings can be changed once it reconnects".
 
 ### Project settings (`/p/<id>/settings`)
+
 All on one form with **Save changes** (only edited fields are sent, so concurrent agent edits survive):
-name, key (shows former keys), repository path (+ *Move the folder there*), group (with suggestions),
+name, key (shows former keys), repository path (+ _Move the folder there_), group (with suggestions),
 base branch, model, **Use its own agent configs**, GitHub account, permission mode, reviews (toggle,
-fix rounds, reviewers with config/model/effort), **Prompts** (each shows Default/Custom and *Reset to
-default*), skills and MCP servers (saved immediately), worktrees (toggle, folder, setup and teardown
+fix rounds, reviewers with config/model/effort), **Prompts** (each shows Default/Custom and _Reset to
+default_), skills and MCP servers (saved immediately), worktrees (toggle, folder, setup and teardown
 scripts with variable hints, **Remove merged worktrees** with a per-task removed/kept report), status
 scripts (any column + per column), scratch folder (read-only), **Archive project**, **Delete project**.
 All of these are README features; the page itself isn't described there.
 
 ### Add project dialog (`components/settings/NewProjectModal.tsx`, `components/settings/GithubRepos.tsx`)
+
 (README) Folder / GitHub tabs. UI extras: the **folder picker** browses the host's filesystem as you
 type (Tab completes, arrows pick, `~/` expands, git repos marked, "New folder. It's created when you
 add the project."); host and profile selects; a config-directory field when the profile doesn't exist
@@ -380,22 +398,22 @@ open their task. Tab, range and rules are remembered per browser.
 
 ## 12. Keyboard
 
-| Key | Where | Does |
-|---|---|---|
-| `/` | any board | Focus the search box (README); Escape clears, then leaves it |
-| Escape | task panel | Close it (after leaving a subagent's thread, an open menu or popover first) |
-| Enter / Space | focused card or row | Open the task (cards are Tab-focusable) |
-| Enter, Shift+Enter | composer | Send / new line |
-| Shift+Tab | composer | Cycle Ask → Accept edits → Auto → Plan (README) |
-| `/` or `$` at start | composer | Skills menu: arrows, Enter/Tab, Escape (README) |
-| `/ @ ! ^ #` | new task dialog | Token autocomplete: arrows, Enter/Tab, Escape closes the list |
-| Ctrl/Cmd+Enter | any dialog, description editor | Submit / save |
-| Escape, Tab | dialogs | Close; Tab is trapped inside the top dialog and focus returns afterwards |
-| Arrows, Home/End, Escape | right-click menus | Move, close |
-| Alt+Up/Down | sidebar grip | Reorder projects (README) |
-| Double-click, Enter/Escape | task title | Rename / save / cancel |
-| Tab, arrows, Enter | folder picker | Complete, pick |
-| Ctrl/Cmd+C, Ctrl/Cmd+V, Shift+Insert | terminal | Copy selection (else ^C), paste |
+| Key                                  | Where                          | Does                                                                        |
+| ------------------------------------ | ------------------------------ | --------------------------------------------------------------------------- |
+| `/`                                  | any board                      | Focus the search box (README); Escape clears, then leaves it                |
+| Escape                               | task panel                     | Close it (after leaving a subagent's thread, an open menu or popover first) |
+| Enter / Space                        | focused card or row            | Open the task (cards are Tab-focusable)                                     |
+| Enter, Shift+Enter                   | composer                       | Send / new line                                                             |
+| Shift+Tab                            | composer                       | Cycle Ask → Accept edits → Auto → Plan (README)                             |
+| `/` or `$` at start                  | composer                       | Skills menu: arrows, Enter/Tab, Escape (README)                             |
+| `/ @ ! ^ #`                          | new task dialog                | Token autocomplete: arrows, Enter/Tab, Escape closes the list               |
+| Ctrl/Cmd+Enter                       | any dialog, description editor | Submit / save                                                               |
+| Escape, Tab                          | dialogs                        | Close; Tab is trapped inside the top dialog and focus returns afterwards    |
+| Arrows, Home/End, Escape             | right-click menus              | Move, close                                                                 |
+| Alt+Up/Down                          | sidebar grip                   | Reorder projects (README)                                                   |
+| Double-click, Enter/Escape           | task title                     | Rename / save / cancel                                                      |
+| Tab, arrows, Enter                   | folder picker                  | Complete, pick                                                              |
+| Ctrl/Cmd+C, Ctrl/Cmd+V, Shift+Insert | terminal                       | Copy selection (else ^C), paste                                             |
 
 No global shortcuts for new task, switching boards or tasks, and no command palette or shortcut help.
 
@@ -421,7 +439,7 @@ No global shortcuts for new task, switching boards or tasks, and no command pale
   A per-host `resync` event does the same for a host that reconnected to the hub.
 - Terminals reconnect and tmux repaints; preview dots pause polling while the tab is hidden.
 - The UI notices a **new UI build** on the server (on focus, after reconnecting, every 5 minutes) and
-  offers *Reload*; after a server restart it reloads itself once the new process answers.
+  offers _Reload_; after a server restart it reloads itself once the new process answers.
 - No offline mode: nothing works without the server, but drafts (composer, new task, plan answers) are
   in localStorage and survive.
 
@@ -459,8 +477,8 @@ between browsers or machines.
 
 ## 18. Gaps, quirks and README drift (useful for the T3 Code comparison)
 
-- README drift: it describes type tabs (*Plan*, *Subproject*…) "at the top of the New task form" and a
-  project picker (*Group task*, *No project*); the current dialog does both with `/type` and `@where`
+- README drift: it describes type tabs (_Plan_, _Subproject_…) "at the top of the New task form" and a
+  project picker (_Group task_, _No project_); the current dialog does both with `/type` and `@where`
   tokens and the "Reads as" row. `^effort` and `#dependency` tokens aren't in the README at all, nor is
   adding a host **over SSH**, the side panel/expanded modes, composer drafts, or task resolutions as a
   card menu.

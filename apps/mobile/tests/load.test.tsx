@@ -4,7 +4,9 @@ import { Snapshot, useLoad } from "../src/load";
 import { withMessage } from "../src/thread";
 
 const m = (id: number) => ({ id, task_id: "t", kind: "user", data: { text: String(id) }, created_at: "" }) as Message;
-const addMessage = (msg: Message) => (t: MessagePage | undefined): MessagePage => ({ more: t?.more ?? false, subagents: t?.subagents ?? [], messages: withMessage(t?.messages ?? [], msg) });
+const addMessage =
+  (msg: Message) =>
+  (t: MessagePage | undefined): MessagePage => ({ more: t?.more ?? false, subagents: t?.subagents ?? [], messages: withMessage(t?.messages ?? [], msg) });
 
 /** A promise to resolve by hand. */
 function deferred<T>() {
@@ -52,7 +54,9 @@ describe("reading and live changes", () => {
 
   test("useLoad: switching boards drops the last board's data even when the new load fails", async () => {
     const reads = { A: deferred<string>(), B: deferred<string>() };
-    const { result, rerender } = await renderHook(({ board }: { board: "A" | "B" }) => useLoad(() => reads[board].promise, [board]), { initialProps: { board: "A" as "A" | "B" } });
+    const { result, rerender } = await renderHook(({ board }: { board: "A" | "B" }) => useLoad(() => reads[board].promise, [board]), {
+      initialProps: { board: "A" as "A" | "B" },
+    });
     await act(async () => reads.A.resolve("A's projects"));
     expect(result.current.data).toBe("A's projects");
     await rerender({ board: "B" });

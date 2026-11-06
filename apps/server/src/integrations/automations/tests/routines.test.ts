@@ -62,7 +62,8 @@ const DAY = 24 * HOUR;
 /** New Zealand's daylight saving (as in tests.test.ts): +13 from 2026-09-27 02:00 until 2027-04-04 03:00, else +12. */
 const Nz: Tz = {
   offset(utc) {
-    const start = Date.UTC(2026, 8, 26, 14), end = Date.UTC(2027, 3, 3, 14);
+    const start = Date.UTC(2026, 8, 26, 14),
+      end = Date.UTC(2027, 3, 3, 14);
     return (utc >= start && utc < end ? 13 : 12) * 3600;
   },
 };
@@ -85,7 +86,15 @@ function setup(): [Shared, Project] {
   s.local_router = api.router(s);
   const p = db.insert_profile(s.db(), "work", [], null);
   const project = db.insert_project(s.db(), {
-    id: "web", profile_id: p.id, name: "Web", key: "WEB", repo_path: "/src/web", scratch_path: "/s", worktrees_root: "/w", base_branch: null, use_worktrees: false,
+    id: "web",
+    profile_id: p.id,
+    name: "Web",
+    key: "WEB",
+    repo_path: "/src/web",
+    scratch_path: "/s",
+    worktrees_root: "/w",
+    base_branch: null,
+    use_worktrees: false,
   });
   return [s, project];
 }
@@ -106,7 +115,9 @@ function last_run(s: Shared, a: Automation): Run {
 }
 
 function statuses(s: Shared, a: Automation): string[] {
-  return runs(s.db(), a.id, 100).reverse().map((r) => r.status);
+  return runs(s.db(), a.id, 100)
+    .reverse()
+    .map((r) => r.status);
 }
 
 function set_next(s: Shared, a: Automation, at: number) {
@@ -120,7 +131,10 @@ function said(s: Shared, task_id: string, text: string) {
 }
 
 function reports(s: Shared, task_id: string): any[] {
-  return testing.messages(s.db(), task_id).filter((m) => m.kind === "report").map((m) => m.data);
+  return testing
+    .messages(s.db(), task_id)
+    .filter((m) => m.kind === "report")
+    .map((m) => m.data);
 }
 
 function req(params: Record<string, string>, body: any = {}): Req {
@@ -181,7 +195,10 @@ test("cron_expressions_follow_their_fields_and_daylight_saving", () => {
   for (const bad of ["", "* * * *", "60 * * * *", "* 24 * * *", "0 0 0 * *", "0 0 * 13 *", "0 0 * * 8", "5-1 * * * *", "*/0 * * * *", "0 0 * * someday"]) {
     assert.throws(() => check_trigger(cron(bad)), Error, bad);
   }
-  assert.throws(() => check_trigger(cron("0 0 30 2 *")), (e: any) => e.message.includes("never matches"));
+  assert.throws(
+    () => check_trigger(cron("0 0 30 2 *")),
+    (e: any) => e.message.includes("never matches"),
+  );
   assert.deepEqual(check_trigger(cron("  0  8 * *   mon-fri ")), cron("0 8 * * mon-fri"));
 });
 
@@ -228,7 +245,10 @@ test("an_at_runs_once_however_late_then_turns_itself_off", async () => {
   busy(s, the_assistant.id);
   // In the past, it can't be set.
   const past = { name: "Late", trigger: { kind: "at", at: "2020-01-01 09:00" }, action: { kind: "message_assistant", message: "x" } };
-  assert.throws(() => routine(s, p.id, past), (e: any) => e.message.includes("passed"));
+  assert.throws(
+    () => routine(s, p.id, past),
+    (e: any) => e.message.includes("passed"),
+  );
   // Two hours on, not one: when daylight saving ends, an hour on can be a local time that's also now (an hour that
   // repeats is read as its first time), which has passed.
   const at = local_minute(Date.now() + 2 * HOUR);
@@ -262,14 +282,23 @@ test("a_routine_belongs_to_a_profile_and_only_messages_its_assistant", async () 
   const msg = { kind: "message_assistant", message: "Check the mail" };
   // A routine can't make tasks, nor a project's automation wake the assistant.
   const task = { name: "x", trigger: { kind: "interval", every_minutes: 60 }, action: { kind: "create_task", title: "x" } };
-  assert.throws(() => routine(s, p.id, task), (e: any) => e.message.includes("only message the assistant"));
+  assert.throws(
+    () => routine(s, p.id, task),
+    (e: any) => e.message.includes("only message the assistant"),
+  );
   const wake = { name: "x", trigger: { kind: "interval", every_minutes: 60 }, action: msg };
-  assert.throws(() => create(s, project.id, wake), (e: any) => e.message.includes("profile's routines"));
+  assert.throws(
+    () => create(s, project.id, wake),
+    (e: any) => e.message.includes("profile's routines"),
+  );
   const a = routine(s, p.id, wake);
   assert.deepEqual([a.project_id, a.profile_id, is_routine(a)], [null, p.id, true]);
   assert.deepEqual(a.action, { kind: "message_assistant", message: "Check the mail", mode: "fresh" });
   // Listed with the profile's routines, not the project's automations.
-  assert.deepEqual(list_routines(s.db(), p.id).map((x) => x.id), [a.id]);
+  assert.deepEqual(
+    list_routines(s.db(), p.id).map((x) => x.id),
+    [a.id],
+  );
   assert.deepEqual(list(s.db(), project.id), []);
   const listed = await list_routines_handler(s, req({ id: p.id }));
   assert.equal(listed.automations[0].profile_id, p.id);
@@ -287,7 +316,11 @@ test("a_fresh_run_works_in_a_thread_of_its_own_under_the_assistant", async () =>
   let the_assistant = assistant.get_or_create(s, p.id);
   db.run(s.db(), "UPDATE tasks SET model='opus', permission_mode='acceptEdits' WHERE id=?1", the_assistant.id);
   the_assistant = db.get_task(s.db(), the_assistant.id)!;
-  const a = routine(s, p.id, { name: "Inbox", trigger: { kind: "cron", expr: "0 8 * * *" }, action: { kind: "message_assistant", message: "Anything new in the inbox?" } });
+  const a = routine(s, p.id, {
+    name: "Inbox",
+    trigger: { kind: "cron", expr: "0 8 * * *" },
+    action: { kind: "message_assistant", message: "Anything new in the inbox?" },
+  });
   // Tests can't start agents: here, a send would be refused. It's queued for the thread's (pretend) run.
   testing.when("routine:thread", () => {
     busy(s, db.value<string>(s.db(), "SELECT id FROM tasks WHERE task_type='routine' ORDER BY created_at DESC LIMIT 1")!);
@@ -363,7 +396,10 @@ test("a_routine_threads_run_ending_marks_it_done_and_reports", () => {
   const t = db.insert_routine_task(s.db(), the_assistant, "Inbox");
   const run = db.insert_run(s.db(), t.id, "prompt");
   s.runs.set(t.id, { run_id: run.id, cancel: null });
-  s.update_task(t.id, [["running", true], ["status", "in_progress"]]);
+  s.update_task(t.id, [
+    ["running", true],
+    ["status", "in_progress"],
+  ]);
   said(s, t.id, "The deploy failed overnight.");
   runner.finish(s, run.id, "Ok");
   const after = db.get_task(s.db(), t.id)!;
@@ -438,8 +474,17 @@ test("a_routine_doesnt_wake_an_assistant_that_has_moved_to_another_host", async 
   const p = profile(s);
   const the_assistant = assistant.get_or_create(s, p.id);
   const marker = join(testing.temp_dir(), "prechecked");
-  const fresh = routine(s, p.id, { name: "Inbox", trigger: { kind: "interval", every_minutes: 60 }, precheck: `touch ${marker}`, action: { kind: "message_assistant", message: "x" } });
-  const thread = routine(s, p.id, { name: "Nudge", trigger: { kind: "interval", every_minutes: 60 }, action: { kind: "message_assistant", mode: "thread", message: "y" } });
+  const fresh = routine(s, p.id, {
+    name: "Inbox",
+    trigger: { kind: "interval", every_minutes: 60 },
+    precheck: `touch ${marker}`,
+    action: { kind: "message_assistant", message: "x" },
+  });
+  const thread = routine(s, p.id, {
+    name: "Nudge",
+    trigger: { kind: "interval", every_minutes: 60 },
+    action: { kind: "message_assistant", mode: "thread", message: "y" },
+  });
   db.upsert_link(s.db(), "laptop-id", "laptop", "ssh", null, null);
   db.update_profile(s.db(), p.id, [["assistant_host", "laptop-id"]]);
   const why = `personal's assistant runs on laptop, so routines on ${s.host_name} don't wake it: make this one on laptop, in its assistant's Routines tab there`;
@@ -457,7 +502,10 @@ test("a_routine_doesnt_wake_an_assistant_that_has_moved_to_another_host", async 
   assert.equal(count(s, "SELECT COUNT(*) FROM tasks WHERE task_type='routine'"), 0);
   assert.equal(db.get_task(s.db(), the_assistant.id)!.queued_message, null);
   // Nor is one made here.
-  assert.throws(() => routine(s, p.id, { name: "New", trigger: cron("0 8 * * *"), action: { kind: "message_assistant", message: "z" } }), (e: any) => e.message === why);
+  assert.throws(
+    () => routine(s, p.id, { name: "New", trigger: cron("0 8 * * *"), action: { kind: "message_assistant", message: "z" } }),
+    (e: any) => e.message === why,
+  );
   // Back on this host, they run again.
   db.update_profile(s.db(), p.id, [["assistant_host", null]]);
   busy(s, the_assistant.id);
@@ -656,7 +704,11 @@ test("an_assistant_run_that_took_several_routines_messages_splits_its_cost_betwe
   const s = testing.state();
   const p = profile(s);
   const the_assistant = assistant.get_or_create(s, p.id);
-  const a = routine(s, p.id, { name: "Ping", trigger: { kind: "interval", every_minutes: 60 }, action: { kind: "message_assistant", mode: "thread", message: "p" } });
+  const a = routine(s, p.id, {
+    name: "Ping",
+    trigger: { kind: "interval", every_minutes: 60 },
+    action: { kind: "message_assistant", mode: "thread", message: "p" },
+  });
   const run = db.insert_run(s.db(), the_assistant.id, "prompt");
   const ids = [0, 1].map(() => {
     const r = Run_new(a.id, "schedule", "ok", Date.now());

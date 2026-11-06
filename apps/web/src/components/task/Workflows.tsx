@@ -226,14 +226,24 @@ export function WorkflowsList({ task }: { task: Task }) {
         const last = data.runs.find((r) => r.workflow_id === w.id);
         return (
           <div key={w.id} className="flex items-center gap-2">
-            <span className={clsx("min-w-0 flex-1 truncate", w.enabled ? "text-muted" : "text-faint")} title={w.enabled ? undefined : "Off: it runs only by hand"}>
+            <span
+              className={clsx("min-w-0 flex-1 truncate", w.enabled ? "text-muted" : "text-faint")}
+              title={w.enabled ? undefined : "Off: it runs only by hand"}
+            >
               {w.name}
             </span>
             {last && <span className="shrink-0 text-[11.5px] text-faint">{last.state === "running" ? "running" : timeAgo(last.created_at)}</span>}
             {last?.state === "running" ? (
               <Loader2 size={12} className="animate-spin text-st-review" />
             ) : (
-              <Button size="sm" variant="ghost" aria-label={`Run ${w.name}`} disabled={busy === w.id || task.running} title={task.running ? "Wait for the agent to finish" : "Run it on this task now"} onClick={() => run(w.id)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Run ${w.name}`}
+                disabled={busy === w.id || task.running}
+                title={task.running ? "Wait for the agent to finish" : "Run it on this task now"}
+                onClick={() => run(w.id)}
+              >
                 {busy === w.id ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run
               </Button>
             )}

@@ -109,7 +109,10 @@ function adapter(fields: Partial<ReturnType<typeof Spec_default>>, answer: (req:
     }, 20_000);
     child.on("exit", () => {
       clearTimeout(timer);
-      const sent = readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+      const sent = readFileSync(log, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
       resolve({ out, sent });
     });
   });
@@ -127,16 +130,25 @@ test("requests_go_to_the_output_and_their_answers_come_back_on_the_input", async
   assert.ok(!out.some((v) => v.method === BOARD_TOOLS));
   // Each request on the output, an approval with the item it's about.
   const requests = out.filter((v) => "id" in v && v.method);
-  assert.deepEqual(requests.map((r) => r.id), [10, 11, 12]);
+  assert.deepEqual(
+    requests.map((r) => r.id),
+    [10, 11, 12],
+  );
   assert.deepEqual(requests[0].item, { type: "commandExecution", id: "c1", command: "make" });
   // Their answers, passed on.
   const answers = sent.filter((m) => m.method === undefined && [10, 11, 12].includes(m.id));
-  assert.deepEqual(answers.map((a) => [a.id, a.result]), [
-    [10, { decision: "accept" }],
-    [11, { contentItems: [{ type: "inputText", text: "task" }], success: true }],
-  ]);
+  assert.deepEqual(
+    answers.map((a) => [a.id, a.result]),
+    [
+      [10, { decision: "accept" }],
+      [11, { contentItems: [{ type: "inputText", text: "task" }], success: true }],
+    ],
+  );
   // What the app-server stopped waiting for is told only of one the board hadn't answered.
-  assert.deepEqual(out.filter((v) => v.method === "serverRequest/resolved").map((v) => v.params.requestId), [12]);
+  assert.deepEqual(
+    out.filter((v) => v.method === "serverRequest/resolved").map((v) => v.params.requestId),
+    [12],
+  );
   assert.ok(out.some((v) => v.method === "turn/completed"));
 });
 

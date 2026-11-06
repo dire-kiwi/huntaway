@@ -47,7 +47,8 @@ export class CommandHelp {
     const rest = words.slice(path).join(" ");
     // Its groups at the top level, `[<number> | <url>]`, `<files>...`, up to `[flags]` and `--`.
     const args: string[] = [];
-    let group = "", depth = 0;
+    let group = "",
+      depth = 0;
     for (const c of [...rest, " "]) {
       if ("[{<".includes(c)) depth++;
       else if ("]}>".includes(c)) depth--;
@@ -91,7 +92,9 @@ export class CommandHelp {
         if (h !== null) hosts.push(h);
       }
     };
-    let i = 0, words = 0, dashes = false;
+    let i = 0,
+      words = 0,
+      dashes = false;
     const positional: string[] = [];
     while (i < args.length) {
       const a = args[i];
@@ -160,8 +163,33 @@ export function CommandHelp_parse(help: string): CommandHelp | null {
  * something).
  */
 const GH_COMMANDS = [
-  "agent-task", "api", "attestation", "auth", "browse", "cache", "codespace", "cs", "discussion", "extension", "ext", "gist", "gpg-key",
-  "issue", "label", "org", "pr", "project", "release", "repo", "ruleset", "run", "search", "secret", "ssh-key", "status", "variable",
+  "agent-task",
+  "api",
+  "attestation",
+  "auth",
+  "browse",
+  "cache",
+  "codespace",
+  "cs",
+  "discussion",
+  "extension",
+  "ext",
+  "gist",
+  "gpg-key",
+  "issue",
+  "label",
+  "org",
+  "pr",
+  "project",
+  "release",
+  "repo",
+  "ruleset",
+  "run",
+  "search",
+  "secret",
+  "ssh-key",
+  "status",
+  "variable",
   "workflow",
 ];
 
@@ -247,8 +275,22 @@ export function fallback_targets(args: string[]): string[] {
  * flag without a value, such as `--force`).
  */
 const CONTENT_OPTIONS = [
-  "--body", "--body-file", "--title", "--field", "--raw-field", "--header", "--jq", "--template", "--input", "--notes", "--notes-file",
-  "--subject", "--search", "--label", "--add-label", "--remove-label",
+  "--body",
+  "--body-file",
+  "--title",
+  "--field",
+  "--raw-field",
+  "--header",
+  "--jq",
+  "--template",
+  "--input",
+  "--notes",
+  "--notes-file",
+  "--subject",
+  "--search",
+  "--label",
+  "--add-label",
+  "--remove-label",
 ];
 const CONTENT_SHORT = "btqF";
 const API_CONTENT_SHORT = "fH";
