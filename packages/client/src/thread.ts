@@ -150,7 +150,7 @@ export const THREAD_VIEW_API = 119;
 
 /**
  * A page of a thread's saved events after a seq (API 114), or `resync`: the log doesn't go back that far. `E` is the
- * event type (server-ts/src/threads/protocol.ts's, which the app has as app/src/threads.ts).
+ * event type (apps/server/src/threads/protocol.ts's, which the app has as apps/web/src/threads.ts).
  */
 export interface ThreadEventPage<E> {
   events: E[];
@@ -206,7 +206,7 @@ export const threadApi = ({ on }: Http) => ({
     on(h).post(`/permissions/${enc(id)}`, { decision, message, ...reply }),
   /**
    * A task's thread kept as items (API 114, docs/threads-api.md): a snapshot, or with `limit` a window of its last items.
-   * The types are server-ts/src/threads/protocol.ts's (app/src/threads.ts): `S` its Snapshot, `P` its ItemPage.
+   * The types are apps/server/src/threads/protocol.ts's (apps/web/src/threads.ts): `S` its Snapshot, `P` its ItemPage.
    */
   thread: <S>(h: string, id: string, limit?: number) => on(h).get<S>(`/tasks/${enc(id)}/thread${limit != null ? `?limit=${limit}` : ""}`),
   /** The thread's items before index `before` (a window's start), `limit` of them. */

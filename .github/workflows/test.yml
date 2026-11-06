@@ -1,6 +1,7 @@
-# Runs the server, UI and mobile app tests, the browser checks in app/tests/ui and scripts/ia-api's tests on each pull request. The
-# server is the TypeScript one in server-ts/ (the `server-ts` job, and what the browser checks run against); the `rust`
-# job tests what stays in Rust in server/: ia-shim and the broker. It needs no secrets, so pull requests from forks run
+# Runs the server, UI and mobile app tests, the browser checks in apps/web/tests/ui and scripts/ia-api's tests on each pull
+# request, and lints the whole repository with Vite+ (`vp lint`). The workspace has one package-lock.json at its root, and
+# each job installs the workspaces it tests (`npm ci -w …`). The server is apps/server (the `server` job, and what the
+# browser checks run against); the `rust` job tests the Rust crates in crates/: ia-shim and the broker. It needs no secrets, so pull requests from forks run
 # it too. Deployments live outside this repository.
 #
 # The owner's own jobs can run on self-hosted runners (labels self-hosted and huntaway), which keep their checkout, build
@@ -26,7 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The Rust workspace (server/): ia-shim, which the server runs agents under, and the broker.
+  # The Rust workspace (Cargo.toml at the root, crates/): ia-shim, which the server runs agents under, and the broker.
   rust:
     runs-on: &runs-on >-
       ${{ (vars.SELF_HOSTED_USER != '' && github.actor == vars.SELF_HOSTED_USER && github.triggering_actor == vars.SELF_HOSTED_USER
@@ -37,12 +38,12 @@ jobs:
     env:
       # Incremental state only helps rebuilds of the same code, and is about half the size of a debug build.
       CARGO_INCREMENTAL: "0"
-      # sccache isn't installed here; server/.cargo/rustc-wrapper runs rustc directly without it.
+      # sccache isn't installed here; .cargo/rustc-wrapper runs rustc directly without it.
       SCCACHE_DISABLE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # A self-hosted runner's checkout keeps the ignored build output (server/target, app/node_modules) of earlier
+          # A self-hosted runner's checkout keeps the ignored build output (target, node_modules) of earlier
           # jobs, so builds are incremental; the next step removes untracked files, as clean does.
           clean: ${{ runner.environment == 'github-hosted' }}
 
@@ -53,7 +54,7 @@ jobs:
           # Earlier jobs' screenshots of failed ui steps, which the ui job uploads.
           rm -f /tmp/ui-check-*-failed.png
           # Builds of many branches pile up in the target directory: start again once it's over 20G.
-          if [ -d server/target ] && [ "$(du -sm server/target | cut -f1)" -gt 20480 ]; then rm -rf server/target; fi
+          if [ -d target ] && [ "$(du -sm target | cut -f1)" -gt 20480 ]; then rm -rf target; fi
 
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -61,16 +62,14 @@ jobs:
       # Self-hosted runners keep their target directory instead.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: runner.environment == 'github-hosted'
-        with:
-          workspaces: server
 
-      # Each test binary runs in a TMPDIR of its own and fails if it leaves anything in it (server/.cargo/test-runner).
+      # Each test binary runs in a TMPDIR of its own and fails if it leaves anything in it (.cargo/test-runner).
       - name: cargo test
-        working-directory: server
         run: cargo test --locked
 
+  # The UI (apps/web) and packages/client, the lint of the whole repository, and that package-lock.json is up to date.
   # Always on a GitHub-hosted runner: it's quick, and leaves the self-hosted ones to the rust and ui jobs.
-  app:
+  web:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -80,29 +79,31 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: npm ci
-        working-directory: app
         run: npm ci --no-audit --no-fund
 
-      # npm ci doesn't mind a package-lock.json that's behind package.json, but npm install
-      # rewrites it, which leaves the checkout of a host that builds it with uncommitted changes.
+      # npm ci doesn't mind a package-lock.json that's behind a package.json, but npm install rewrites it, which leaves
+      # the checkout of a host that builds it with uncommitted changes.
       - name: package-lock.json is up to date
-        working-directory: app
         run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
 
-      # The UI, then packages/client on its own (typecheck:client), with no DOM, as the mobile app will use it.
+      # Oxlint through Vite+, with the rules in vite.config.ts, over every package.
+      - name: Lint
+        run: npx vp lint --deny-warnings
+
+      # The UI, then packages/client on its own (typecheck:client), with no DOM, as the mobile app uses it.
       - name: Typecheck
-        working-directory: app
+        working-directory: apps/web
         run: npm run typecheck
 
       - name: npm test
-        working-directory: app
+        working-directory: apps/web
         run: npm test
 
-  # The mobile app (mobile/): its typecheck, which covers the parts of packages/client it uses, and its Jest tests. On a
-  # GitHub-hosted runner, as the app job.
+  # The mobile app (apps/mobile): its typecheck, which covers the parts of packages/client it uses, and its Jest tests. On a
+  # GitHub-hosted runner, as the web job.
   mobile:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -113,27 +114,22 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: npm ci
-        working-directory: mobile
-        run: npm ci --no-audit --no-fund
-
-      - name: package-lock.json is up to date
-        working-directory: mobile
-        run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
+        run: npm ci --no-audit --no-fund -w @huntaway/mobile
 
       - name: Typecheck
-        working-directory: mobile
+        working-directory: apps/mobile
         run: npm run typecheck
 
       - name: Jest
-        working-directory: mobile
+        working-directory: apps/mobile
         run: npm test -- --ci
 
-  # The server (server-ts/): its typecheck and unit tests. On a GitHub-hosted runner, which leaves the self-hosted ones to
+  # The server (apps/server): its typecheck and unit tests. On a GitHub-hosted runner, which leaves the self-hosted ones to
   # the rust and ui jobs.
-  server-ts:
+  server:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -146,41 +142,32 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: server-ts/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: npm ci
-        working-directory: server-ts
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund -w @huntaway/server
 
-      # npm ci doesn't mind a package-lock.json that's behind package.json, but npm install rewrites it, which leaves the
-      # checkout of a host that rebuilds from it with uncommitted changes (as the app job checks).
-      - name: package-lock.json is up to date
-        working-directory: server-ts
-        run: npm install --no-audit --no-fund --ignore-scripts && git diff --exit-code package-lock.json
-
-      # The broker tests run the Rust broker (its test_broker example, see server-ts/src/hosts/broker/test_broker.ts).
+      # The broker tests run the Rust broker (its test_broker example, see apps/server/src/hosts/broker/test_broker.ts).
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: server
-          key: server-ts
+          key: server
 
       - name: Build the test broker
-        working-directory: server
         run: cargo build --locked -p huntaway-broker --example test_broker
 
       - name: Typecheck
-        working-directory: server-ts
+        working-directory: apps/server
         run: npm run typecheck
 
       - name: npm test
-        working-directory: server-ts
+        working-directory: apps/server
         run: npm test
 
-  # The browser checks in app/tests/ui (`npm run test:ui`, which builds the UI first) against the server (server-ts/, as
-  # scripts/test-server.sh runs it, with a debug ia-shim), and
+  # The browser checks in apps/web/tests/ui (`npm run test:ui`, which builds the UI first) against the server (apps/server,
+  # as scripts/test-server.sh runs it, with a debug ia-shim), and
   # scripts/ia-api's tests. They're split between three runners, each running 4 files at a time on a GitHub-hosted one
   # (it has 4 CPUs, and Chromium keeps them busy: more at once only made each check slower) and 2 on a self-hosted one
   # (2 CPUs).
@@ -198,7 +185,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # A self-hosted runner's checkout keeps the ignored build output (server/target, app/node_modules) of earlier
+          # A self-hosted runner's checkout keeps the ignored build output (target, node_modules) of earlier
           # jobs, so builds are incremental; the next step removes untracked files, as clean does.
           clean: ${{ runner.environment == 'github-hosted' }}
 
@@ -209,7 +196,7 @@ jobs:
           # Earlier jobs' screenshots of failed ui steps, which the ui job uploads.
           rm -f /tmp/ui-check-*-failed.png
           # Builds of many branches pile up in the target directory: start again once it's over 20G.
-          if [ -d server/target ] && [ "$(du -sm server/target | cut -f1)" -gt 20480 ]; then rm -rf server/target; fi
+          if [ -d target ] && [ "$(du -sm target | cut -f1)" -gt 20480 ]; then rm -rf target; fi
 
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -217,38 +204,27 @@ jobs:
       # Self-hosted runners keep their target directory instead.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: runner.environment == 'github-hosted'
-        with:
-          workspaces: server
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            app/package-lock.json
-            server-ts/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: npm ci
-        working-directory: app
-        run: npm ci --no-audit --no-fund
-
-      - name: npm ci (server)
-        working-directory: server-ts
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund -w huntaway-app -w @huntaway/server --include-workspace-root
 
       # The runners have no /usr/bin/chromium, so scripts/ui-check.mjs falls back to Playwright's own Chromium (not its
       # headless shell, which has no notifications or push). Self-hosted runners have its system libraries already.
       - name: Chromium
-        working-directory: app
         run: npx playwright-core install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} --no-shell chromium
 
       # The server runs its agents under the Rust ia-shim.
       - name: Build ia-shim
-        working-directory: server
         run: cargo build --locked -p ia-shim
 
       - name: Browser checks
-        working-directory: app
+        working-directory: apps/web
         run: npm run test:ui
         env:
           IA_UI_TEST_SHARD: ${{ matrix.shard }}/3
@@ -268,6 +244,7 @@ jobs:
         run: python3 scripts/ia-api-test.py
 
       - name: install-release-host tests
+        if: matrix.shard == 1
         run: sh scripts/install-release-host-test.sh
 
       - name: copy-live-board tests

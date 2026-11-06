@@ -12,7 +12,7 @@
 # Then the test server restarts on it. IA_LIVE_DATA_DIR overrides where the live data is (~/.local/share/issue-agent).
 #
 # The copy goes in under the name of the live board's file: `huntaway-2.db` from a server that's moved onto it (see
-# server-ts/src/db/file.ts), or `huntaway.db` (or `issue-agent.db`) from one before, which a test server (unless it was
+# apps/server/src/db/file.ts), or `huntaway.db` (or `issue-agent.db`) from one before, which a test server (unless it was
 # started with IA_NEW_DB_FILE=0) copies into its `huntaway-2.db` as it restarts, as the live board's does on its update. After a Roll back both are
 # there, and the older one is in use, so the source is the file a running process (the live server) has open; with
 # none open, the only file there, else IA_LIVE_DB (a file name in the live data dir) says which.

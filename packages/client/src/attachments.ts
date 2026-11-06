@@ -1,7 +1,7 @@
 import type { Attachment } from "./tasks";
 
 /**
- * Files attached to a prompt are saved on the host (server-ts/src/attachments.ts) and listed at the end of the message, so
+ * Files attached to a prompt are saved on the host (apps/server/src/attachments.ts) and listed at the end of the message, so
  * the agent reads them from there:
  *
  *     Attached files:
@@ -11,7 +11,7 @@ import type { Attachment } from "./tasks";
  */
 const HEADER = "Attached files:";
 
-/** Largest file a host takes (server-ts/src/attachments.ts's MAX_BYTES). */
+/** Largest file a host takes (apps/server/src/attachments.ts's MAX_BYTES). */
 export const MAX_ATTACHMENT_BYTES = 10 << 20;
 
 /** A file listed in a message: enough to fetch it again. */

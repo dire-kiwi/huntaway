@@ -1,0 +1,30 @@
+{
+  "name": "huntaway",
+  "private": true,
+  "description": "A kanban board for orchestrating Claude Code and Codex agents",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "apps/server",
+    "apps/web",
+    "apps/mobile",
+    "packages/client"
+  ],
+  "scripts": {
+    "build": "vp run huntaway-app#build",
+    "dev": "vp run huntaway-app#dev",
+    "serve": "apps/server/bin/huntaway serve",
+    "typecheck": "vp run -r typecheck",
+    "test": "vp run -r test",
+    "lint": "vp lint"
+  },
+  "devDependencies": {
+    "vite-plus": "1.5.0"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.5.0"
+  }
+}

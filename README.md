@@ -6,11 +6,11 @@ usually in its own git worktree. Click a card to see the full thread, reply to t
 approve tool calls, and review, stage and commit its changes (lazygit-style).
 
 ```
-server-ts/     the server, in TypeScript on Node 24+ (node:sqlite): API, events, agent runner, worktrees, MCP helper,
+apps/server/     the server, in TypeScript on Node 24+ (node:sqlite): API, events, agent runner, worktrees, MCP helper,
                hub. src/ is grouped in agent/, mcp/, git/, hosts/, update/, integrations/ and review/
-               (see docs/structure.md); bin/huntaway runs it (see server-ts/README.md)
-server/shim/   ia-shim (Rust): tiny per-run supervisor that keeps agents alive across restarts
-server/broker/ huntaway-broker (Rust): public connection setup with managed tunnels, or a legacy relay
+               (see docs/structure.md); bin/huntaway runs it (see apps/server/README.md)
+crates/shim/   ia-shim (Rust): tiny per-run supervisor that keeps agents alive across restarts
+crates/broker/ huntaway-broker (Rust): public connection setup with managed tunnels, or a legacy relay
 app/           React + Vite UI, wrapped by Electron (electron/main.cjs)
 packages/client/ the board's API client, plain TypeScript with no DOM, shared by app/ (which links it, file:) and the
                mobile app: createClient() makes a client for one board, from an adapter for its address and token
@@ -33,7 +33,7 @@ Agents survive server restarts, and one board can span several machines. Each ma
 
 Huntaway used to be called Issue Agent. A machine that ran it under that name keeps its data
 where it was (`~/.local/share/issue-agent`, `issue-agent.db`, `~/.config/issue-agent/desktop.json`),
-and there's still an `issue-agent` command that starts `huntaway` beside it (`server-ts/bin/issue-agent`, in
+and there's still an `issue-agent` command that starts `huntaway` beside it (`apps/server/bin/issue-agent`, in
 release packages too, and the `issue-agent` binary of Rust releases), so hosts updating from an older build, SSH host
 commands and desktop configs that name it keep working. Board tools from
 before the rename (`mcp__issue_agent__…`) still show as board tools in old threads.
@@ -55,20 +55,20 @@ cd app && npm run electron
 ```
 
 The server runs on Node 24+ straight from its `.ts` files, so there's nothing to build for it but its dependencies
-(`npm ci` in `server-ts/` again when its `package-lock.json` changes). It finds `ia-shim` in `server/target/release/`
-or `server/target/debug/` (the newer one), beside `bin/huntaway`, or at `$IA_SHIM_BIN`. Its tests are `npm test` and
-`npm run typecheck` in `server-ts/`.
+(`npm ci` in `apps/server/` again when its `package-lock.json` changes). It finds `ia-shim` in `target/release/`
+or `target/debug/` (the newer one), beside `bin/huntaway`, or at `$IA_SHIM_BIN`. Its tests are `npm test` and
+`npm run typecheck` in `apps/server/`.
 
 UI development with hot reload: run the server, then `npm run dev` in `app/` (Vite proxies
 `/api` to `127.0.0.1:7878`, override with `IA_SERVER`). Use `npm run electron:dev` to load the
 dev server in Electron.
 
 Run the UI's unit tests with `cd app && npm test`, and its browser regression tests (which build the UI and start test
-servers, so run `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
+servers, so run `npm ci` in `apps/server/` and `cargo build -p ia-shim` in `server/` first, and have Chromium at
 `/usr/bin/chromium`) with `npm run test:ui` (Node.js 24+), which runs 8 files at a time (`IA_UI_TEST_JOBS=<n>` changes that).
 
 Faster Rust builds (`ia-shim` and the broker): install [sccache](https://github.com/mozilla/sccache) (`cargo install sccache
---locked`, or your package manager's) and `server/` builds through it (`server/.cargo/config.toml`),
+--locked`, or your package manager's) and `server/` builds through it (`.cargo/config.toml`),
 so each task worktree reuses the dependencies another one already compiled rather than building
 them again. Without sccache, or where it can't start its server (a sandbox with no network), cargo
 runs rustc directly. The server is started with `$XDG_RUNTIME_DIR` (or `/tmp`) as its `TMPDIR`
@@ -76,7 +76,7 @@ rather than the build's, which may be a task's temp folder that goes when the ta
 `RUSTC_WRAPPER= cargo …` or `SCCACHE_DISABLE=1` turns it off; `sccache -s` shows the hit rate.
 Debug builds also leave dependencies' debuginfo out, which keeps each worktree's `target/` smaller.
 `cargo test` runs each test binary with a `TMPDIR` of its own on disk, `/var/tmp/ia-cargo-test-*`
-(or `$IA_CARGO_TEST_TMPDIR`), removed when it exits (`server/.cargo/test-runner`), rather than in
+(or `$IA_CARGO_TEST_TMPDIR`), removed when it exits (`.cargo/test-runner`), rather than in
 `/tmp`, which is often a tmpfs in memory that tests' databases and repositories fill up.
 
 The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
@@ -294,7 +294,7 @@ or deleting events, sharing files or handing them over, changing files, mail fil
 anything `manage_*` ask; deleting or trashing mail and files is never. A switch adds an *ask* on the
 board's `create_task`.
 
-- **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`, `server-ts/src/agent/approval_rules/hook.ts`) that
+- **Claude Code** gets a PreToolUse hook (`huntaway approval-hook`, `apps/server/src/agent/approval_rules/hook.ts`) that
   allows, asks or denies the calls a rule matches. Its *ask* goes to the board's permission prompt in every mode,
   Bypass included (checked with Claude Code 2.1.317), so the assistant's runs in Bypass get the prompt tool too; in
   *Don't ask* what a rule asks about is denied. Tools a rule names exactly as *never* are left out of the run
@@ -377,7 +377,7 @@ Its tools are `mcp__google__…`.
    huntaway google-auth --client-secret ~/.google_workspace_mcp/client_secret.json
    ```
 
-   (`server-ts/bin/huntaway google-auth` from a checkout.) It listens on `127.0.0.1:8765` there
+   (`apps/server/bin/huntaway google-auth` from a checkout.) It listens on `127.0.0.1:8765` there
    (`--port` for another, `--credentials-dir` for another folder) and prints Google's consent URL.
    Open it in your browser, sign in, tick every box and allow; Google sends the browser back to
    `http://127.0.0.1:8765/`, which the tunnel brings to the host. It swaps the code for tokens (with
@@ -404,7 +404,7 @@ MCP servers.
 | `--host` / `IA_HOST` | `0.0.0.0` | Use `127.0.0.1` to disable network access |
 | `--port` / `IA_PORT` | `7878` | `0` picks a free port (printed in the `IA_READY {"port": …}` line on stdout) |
 | `--data-dir` / `IA_DATA_DIR` | `~/.local/share/huntaway` (`…/issue-agent` if only that exists) | DB, auth token, scratch folders, worktrees |
-| `--ui-dir` / `IA_UI_DIR` | auto | Built UI (`app/dist`) |
+| `--ui-dir` / `IA_UI_DIR` | auto | Built UI (`apps/web/dist`) |
 | `IA_CLAUDE_BIN` | `claude` | Claude Code binary |
 | `IA_CODEX_BIN` | `codex` | Codex binary |
 | `--token` / `IA_TOKEN` | generated | Use this access token instead of the one in the data dir (a secret shared by deployments) |
@@ -493,10 +493,10 @@ as by default:
 
 When the source checkout has commits the running server doesn't (for example, a task branch
 merged to `master`), the sidebar shows **N new commits · Restart**. The same action is under
-Settings → Server. It runs `npm install --no-save` and `npm run build` in `app/`, `npm ci` in `server-ts/`
+Settings → Server. It runs `npm install --no-save` and `npm run build` in `app/`, `npm ci` in `apps/server/`
 when its lockfile changed, and `cargo build --release -p ia-shim` in `server/` (skipped when there's no cargo and a
-prebuilt `server-ts/bin/ia-shim`, as `scripts/install.sh` leaves without Rust), streaming the log, then re-execs
-`server-ts/bin/huntaway` with the same arguments, so the PID stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
+prebuilt `apps/server/bin/ia-shim`, as `scripts/install.sh` leaves without Rust), streaming the log, then re-execs
+`apps/server/bin/huntaway` with the same arguments, so the PID stays the same and Electron or a supervisor keeps tracking it. Running agents keep going and
 the new process picks them up. If a build fails, the old server keeps running.
 
 With `--update-from <url>`, the server also follows that deployment of the board. Every five
@@ -618,7 +618,7 @@ answers only that prompt: the service worker posts it to `POST /api/permissions/
 (`{"token", "decision": "allow" | "deny"}`, no `Authorization`), and shows what came of it in
 the notification's place (`result` is `allowed` or `denied`, or `answered`, `expired`, `closed`,
 `invalid`, `offline` or `failed`, with a `message`). The board that sends the push mints the
-token and keeps only its hash (`push_answer_tokens`, see `server-ts/src/integrations/push_answers.ts`), so that's
+token and keeps only its hash (`push_answer_tokens`, see `apps/server/src/integrations/push_answers.ts`), so that's
 where it's checked; a prompt on a linked host is then answered through the link, as the UI's
 `/api/h/<host>/permissions/{id}` is. The first answer settles it: a token stops working once its prompt has been
 answered (from a notification, the board or anywhere else) or has expired with its run, or at its `expires_at` (a
@@ -665,7 +665,7 @@ four minutes, well under an attachment's 10 MB.
   as a web app.
 
 The app works with a board of the same API or newer: a board older than the app's minimum (API 118,
-`MIN_API` in `mobile/src/pairing.ts`) says so in the app, both when pairing and on a paired board
+`MIN_API` in `apps/mobile/src/pairing.ts`) says so in the app, both when pairing and on a paired board
 that's later found older (after a rollback, say), rather than failing somewhere later. Update that
 board's Huntaway to use it again.
 
@@ -704,7 +704,7 @@ to rename or revoke; revoking one cuts it off at once, open websockets included,
 says it was unpaired. A device can't pair others or manage them (`POST /devices/pairing`, `PATCH`
 and `DELETE /devices/{id}` are for the board's own token), but it can list them and unpair itself,
 which removing the board in the app does. A device can only use the routes the app does (`HUB`
-and `HOST` in `server-ts/src/devices.ts`): profiles, projects, tasks and their threads, each profile's
+and `HOST` in `apps/server/src/devices.ts`): profiles, projects, tasks and their threads, each profile's
 assistant (API 120, but not its memory), attachments, permission prompts, the board's events and
 hosts, the devices list and its own push subscriptions, on every profile, on the
 board or through it on a linked host. Everything else gets a 403, so a new route is closed to
@@ -740,7 +740,7 @@ go when it's revoked. When Expo's token for the phone changes, its subscription 
 and keeps its events. The board batches pushes to Expo (100 a request), reads its tickets, and asks
 for the receipts about 15 minutes later: a phone Expo says isn't registered any more (the app was
 uninstalled) is dropped, and other failures show as the subscription's last error (see
-`server-ts/src/integrations/push.ts`). `IA_EXPO_PUSH_URL` sends them somewhere else (a fake, for
+`apps/server/src/integrations/push.ts`). `IA_EXPO_PUSH_URL` sends them somewhere else (a fake, for
 tests), and `IA_EXPO_ACCESS_TOKEN` is the token for a project with Expo's enhanced push security
 on. The app needs a build with its EAS project id (`extra.eas.projectId` in `app.json`, from
 `eas init`) for its push token, and Android builds need Firebase Cloud Messaging set up for it (a
@@ -754,17 +754,17 @@ the server, which makes a new one (browsers, and hubs that link this host, then 
 #### Building the mobile app
 
 The app is `nz.net.ivan.huntaway` on both platforms, as the desktop app is, and takes the release's
-version: `mobile/scripts/release-version.js` writes it into `app.json` before a release build, with
+version: `apps/mobile/scripts/release-version.js` writes it into `app.json` before a release build, with
 Android's `versionCode` worked out from it (1.2.3 → 10203999, 1.2.3-rc.2 → 10203002), so each
 release installs over the one before. The repository keeps 1.0.0. Its icons and launch screen
-(`expo-splash-screen`) are rendered from the board's icon (`app/public/icon.svg`) by
-`mobile/scripts/icons.sh`.
+(`expo-splash-screen`) are rendered from the board's icon (`apps/web/public/icon.svg`) by
+`apps/mobile/scripts/icons.sh`.
 
 **Android** is built by the release workflow's `android` job (`.github/workflows/release.yml`) on
 GitHub's runner, with `npx expo prebuild` and Gradle, rather than on EAS: it needs no Expo account
 or EAS build quota, it's attached to the release with the other files, and the signing key stays
 in this repository's secrets. Pull requests don't build it (as the rest of the release, HA-244): a
-change to the app's packaging (`mobile/app.json`, `eas.json`, its `package.json`) is first built by
+change to the app's packaging (`apps/mobile/app.json`, `eas.json`, its `package.json`) is first built by
 the release that ships it, or by hand (Actions → Release → Run workflow) on a tag of its own. A
 release's APK needs the release key, made once and kept:
 
@@ -850,7 +850,7 @@ It checks for git, Node.js 24+ and npm (and warns if `claude`/`codex` or `tmux` 
 repository to `~/.local/share/huntaway-app` (`--dir`), builds the UI and installs the server's dependencies there. Its
 agents run under `ia-shim`, which it builds when there's Rust 1.89+ and a C compiler; without them, on Linux x64 and
 Apple silicon, it downloads the latest release's server tarball (checked against its sha256) and puts its prebuilt
-`ia-shim` in `server-ts/bin/` (`HUNTAWAY_RELEASES` names another repository's releases). Last, it adds **Huntaway** to the app launcher: on Linux a
+`ia-shim` in `apps/server/bin/` (`HUNTAWAY_RELEASES` names another repository's releases). Last, it adds **Huntaway** to the app launcher: on Linux a
 `huntaway-app.desktop` entry that runs `~/.local/bin/huntaway-desktop`, and on macOS
 `~/Applications/Huntaway.app` (a renamed copy of the checkout's Electron whose app runs the
 checkout's). Run it again to update an install by hand or to change its options (`--help`).
@@ -861,7 +861,7 @@ restart** builds whatever the checkout has. With `--update-from https://board.ex
 with `IA_UPDATE_FROM`, and once the deployment runs a newer commit the sidebar shows **N new
 commits · Update** (and Settings → Server shows **Update to <commit>**). Updating fetches that commit
 from the checkout's `origin`, fast-forwards to it, rebuilds and restarts. When the update changed
-the app itself (`app/electron/`, or the Electron version), the app relaunches once the board has
+the app itself (`apps/web/electron/`, or the Electron version), the app relaunches once the board has
 reloaded. Agents keep running throughout.
 
 The launcher also puts the folders of `node`, `npm`, `cargo`, `git` and the agent CLIs on `PATH`,
@@ -884,12 +884,12 @@ workflow builds an existing release's tag again and replaces its files.
 | `huntaway-<version>-linux-x64.pacman` | The desktop app as an Arch package (`sudo pacman -U <file>`) |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip` | The desktop app for Apple silicon Macs |
 | `huntaway-<version>.apk` | The mobile app for Android, once its signing key is set (see *The mobile app*) |
-| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `server-ts/` with the Node in `node/`, and `issue-agent`, which runs it under its old name) and `ia-shim`, with the UI in `ui/` |
+| `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the TypeScript server in `apps/server/` with the Node in `node/`, and `issue-agent`, which runs it under its old name) and `ia-shim`, with the UI in `ui/` |
 | `huntaway-<version>-release.json` | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
 
 The server's version is the release's too (`huntaway --version`).
 
-Releases carry the TypeScript server (`server-ts/`, see its README) since 0.4.0, rather than the Rust
+Releases carry the TypeScript server (`apps/server/`, see its README) since 0.4.0, rather than the Rust
 server that 0.3.x and earlier carried (removed from the repository in HA-179):
 `scripts/package-server.sh` puts it together with the Node that runs it (the release job's own, so
 hosts don't need Node installed), `ia-shim` and the UI, and both the tarball and the desktop app
@@ -925,7 +925,7 @@ from the Dock or an app launcher. A release build isn't a checkout, so it has no
 restart**: it updates from GitHub's releases instead (see below). The Mac build is ad-hoc signed,
 not signed with a Developer ID, so macOS blocks a downloaded copy until you run
 `xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
-run `npm run dist` in `app/`, which puts them in `app/release/`. To build an existing release
+run `npm run dist` in `app/`, which puts them in `apps/web/release/`. To build an existing release
 again, use Actions → Release → Run workflow with its tag, which replaces its files.
 
 ### Updating the desktop app
@@ -957,7 +957,7 @@ version is all a check does; quitting and starting the app again still runs the 
 - **What's kept.** `app/state.json` records the `current` version, the `previous` one (for a
   rollback), one `staged` for Update, and the `bad` ones. Only those versions are kept, about 40 MB
   each. Deleting `app/` goes back to the app's own server.
-- **The app's own code.** The window, notifications, badge and the server launcher (`app/electron/`) update
+- **The app's own code.** The window, notifications, badge and the server launcher (`apps/web/electron/`) update
   with the server, like the UI. The app's entry point, `boot.cjs`, loads `electron/main.cjs` from the `electron/`
   folder of the version the server runs (each release's server tarball has one, with a `shell.json` naming the
   Electron it was written for), and falls back to the copy in the package. After an Update has restarted the
@@ -1212,7 +1212,7 @@ drops the live board's bots from its copy).
 ### Reaching a host from anywhere
 
 Away from home, without Tailscale or a VPN, a host can use a **broker** (`huntaway-broker`, in
-`server/broker`) to set up public access. There are two transports:
+`crates/broker`) to set up public access. There are two transports:
 
 - **Managed tunnels**: the broker provisions a Cloudflare Tunnel and DNS hostname for each host.
   The host runs `cloudflared`, and the broker handles registration and endpoint discovery. Normal
@@ -1231,7 +1231,7 @@ a host reachable from outside its network. A managed hub's board reaches a linke
 `browser ↔ Cloudflare Tunnel ↔ hub ↔ linked host`. The hub uses the link configured in Settings →
 Hosts for the last hop, which may be direct, another tunnel or a legacy relay.
 
-[Configure the broker](server/broker/README.md), then connect a host:
+[Configure the broker](crates/broker/README.md), then connect a host:
 
 ```sh
 huntaway serve --broker https://broker.example.com --broker-token <broker token>   # or IA_BROKER, IA_BROKER_TOKEN
@@ -1435,7 +1435,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   restarts until the setting is turned on again. Codex's windows are told apart by their length
   (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
   then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
-  has no session limit. See `server-ts/src/agent/window.ts`.
+  has no session limit. See `apps/server/src/agent/window.ts`.
 - **Running out of usage** (API 81): when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config *out* until the
@@ -1973,7 +1973,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   folder (not a link) of the server's user that no one else can write to, and only folders in it
   named after a task are. Files written straight to `/tmp` by name don't go with it.
   Before a task's folder or worktree goes, what its agents left running there is stopped (TS
-  server, `server-ts/src/agent/leftovers.ts`): test servers whose `--data-dir` is in the folder,
+  server, `apps/server/src/agent/leftovers.ts`): test servers whose `--data-dir` is in the folder,
   or that run the worktree's build or were started in it (unless their data is in another task's
   folder), the ia-shim runs in their data dirs, the folder or by the worktree's ia-shim, the
   agents under those shims, and what the servers started. The sweep also stops those whose task
@@ -2024,8 +2024,8 @@ skipped. Auto-compacting idle sessions is Claude-only.
   `done`), `IA_TASK_KEY`, `IA_TASK_TITLE`, `IA_RESOLUTION` (when done) and `IA_PR_URL`. The API
   has the column scripts in `status_scripts` (`{"done": "…"}`) and the any-column one in
   `status_script`.
-  This repository's own project frees a done task's worktree build output (`server/target`,
-  `app/dist`, about 2 GB each) with this *Done* script:
+  This repository's own project frees a done task's worktree build output (`target`,
+  `apps/web/dist`, about 2 GB each) with this *Done* script:
 
   ```bash
   "$IA_REPO_PATH/scripts/clean-worktree.sh" "$IA_WORKTREE_PATH"
@@ -2071,14 +2071,14 @@ skipped. Auto-compacting idle sessions is Claude-only.
   stashes, space applies, `g` pops and `d` drops. Right-clicking a file, commit or stash shows
   its menu. The view checks for changes every few seconds (the agent may be making them), and
   keys pressed while a change is being made wait for it, so pressing space again stages the next
-  line. The staged lines are a patch the UI makes from the diff it shows (`app/src/components/changes/diffs.ts`),
+  line. The staged lines are a patch the UI makes from the diff it shows (`apps/web/src/components/changes/diffs.ts`),
   applied with `git apply --cached`; if the file has changed since, git refuses it and the view
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
   wrong. A host before API 66 shows the branch's diff alone.
 - **Diffs and comments for the agent:** the Changes tab's diffs are highlighted for their
   file's language (by extension or name; the theme is the board's own colours), with
-  [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`app/src/components/changes/highlight.worker.ts`),
+  [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`apps/web/src/components/changes/highlight.worker.ts`),
   so a big diff doesn't hold up the page. Each language's grammar is fetched the first time a
   file in it is shown; a file's diff is highlighted once it's scrolled near, each hunk on its own
   (lines show plain until then), and files with more than 5000 lines in their diff, and lines over
@@ -2095,7 +2095,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   file, its lines (numbered in the new version, or the old one for removed lines), the lines as
   the diff has them and its note, and while the agent works it's queued or steered as any message
   is then. Comments, and notes still being written, are kept in the browser per task
-  (`app/src/components/changes/lineComments.ts`), as composer drafts are.
+  (`apps/web/src/components/changes/lineComments.ts`), as composer drafts are.
 - **Checkpoints and rewinding** (API 70): a task in a worktree of its own keeps a checkpoint of
   its files before each of its agent's runs (when anything changed since the last, so the first
   run's is the task's baseline) and after each of the agent's turns, including ones that were
@@ -2223,7 +2223,7 @@ skipped. Auto-compacting idle sessions is Claude-only.
   its task and a subproject's tasks' towards the subproject (expand it to see each). It can measure
   all tokens (uncached input, cache reads and writes, and output), output tokens, or cost (Claude
   Code's; Codex doesn't report one). Each run's tokens are counted per model, subagents' included,
-  from its output once it ends (see `server-ts/src/agent/tokens.ts`): runs from before this was kept
+  from its output once it ends (see `apps/server/src/agent/tokens.ts`): runs from before this was kept
   are counted at startup from the output the board still keeps (14 days of it), and older ones
   show only what they cost, as estimates. Its *Reviews* part counts each reviewer's submission:
   how many found serious issues, how many tasks passed their first round, and how many rounds of
@@ -2338,7 +2338,7 @@ MCP helper process of its own.
 
 A Claude run that takes input (every run but a `/compact`) has the board's tools as an in-process
 ("SDK") MCP server of Claude Code's, over its control protocol, as its permission prompts are (HA-221,
-`server-ts/src/agent/runner/requests.ts`). The run's input starts with an `initialize` control
+`apps/server/src/agent/runner/requests.ts`). The run's input starts with an `initialize` control
 request that registers the `huntaway` server (`sdkMcpServers`), with no time limit on its calls and
 none moved to the background, and gives Claude Code its handshake's results (`sdkMcpServerManifests`:
 its `initialize` and `tools/list`, the reviewers' tools for a review thread), so it needn't ask for

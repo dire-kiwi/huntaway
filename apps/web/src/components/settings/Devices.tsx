@@ -113,7 +113,7 @@ export function DevicesPanel() {
       <p>
         Pair the Huntaway app on a phone by scanning a QR code. It holds this board's address and a code that works once, for five minutes, and the
         phone gets a token of its own, which you can revoke here at any time. The phone reaches the board over HTTPS, such as with{" "}
-        <code>tailscale serve</code> (see <i>The mobile app</i> in the README).
+        <code>tailscale serve</code> (see docs/mobile.md).
       </p>
       {!pairing ? (
         <Button size="sm" variant="primary" onClick={start}>

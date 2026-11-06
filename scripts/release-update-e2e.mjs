@@ -26,7 +26,7 @@ const assets = path.join(work, "assets");
 const only = opt("--only")?.split(",");
 const keep = args.includes("--keep");
 const runs = path.join(work, "runs");
-const { chromium } = await import(path.join(root, "app/node_modules/playwright-core/index.mjs"));
+const { chromium } = await import(path.join(root, "node_modules/playwright-core/index.mjs"));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);

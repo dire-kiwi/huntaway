@@ -12,7 +12,7 @@
 //   --timeout <ms>          for each step, default 5000
 //   --allow-error <regex>   don't fail on page and console errors that match (repeatable)
 //   --chromium <path>       default $CHROMIUM, else /usr/bin/chromium, else Playwright's own browser
-//                           (`npx playwright-core install --no-shell chromium` in app/, as CI does)
+//                           (`npx playwright-core install --no-shell chromium`, as CI does)
 //
 // Steps (a <target> is a CSS or Playwright selector if it starts with # . [ // or css= text= role= and so on,
 // or tag[...]; anything else is text, matched case-insensitively against what's shown, then against
@@ -33,7 +33,7 @@
 // It prints page errors and console errors as they happen, and exits non-zero on a failed step (after
 // saving a screenshot of the page to <tmp>/ui-check-<pid>-failed.png) or on any error that wasn't allowed.
 //
-// The same thing is a module for scripted checks (see app/tests/ui):
+// The same thing is a module for scripted checks (see apps/web/tests/ui):
 //   const ui = await open({ url, token }); await ui.run(["goto /settings", "wait Profiles"]); ui.page...; await ui.close();
 
 import fs from "node:fs";
@@ -42,7 +42,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const appDir = fileURLToPath(new URL("../app/", import.meta.url));
+const appDir = fileURLToPath(new URL("../apps/web/", import.meta.url));
 
 function playwright() {
   try {

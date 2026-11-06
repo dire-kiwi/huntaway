@@ -1,6 +1,6 @@
 /// <reference types="node" />
 // HA-262: the phone showed Ready for merge green, the web board's Done colour, where the board has it pink. Its status
-// colours are the board's (app/src/index.css's --color-st-*).
+// colours are the board's (apps/web/src/index.css's --color-st-*).
 import fs from "node:fs";
 import path from "node:path";
 import { STATUS_COLOR } from "../src/theme";

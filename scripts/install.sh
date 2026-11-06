@@ -5,7 +5,7 @@
 #   scripts/install.sh [options]          # from a checkout; run --help for the options
 #
 # It checks for the build tools, clones the repository (or fast-forwards a clone it made before),
-# builds the UI, installs the server's dependencies (the server, server-ts/, runs on Node 24+ from its sources) and
+# builds the UI, installs the server's dependencies (the server, apps/server/, runs on Node 24+ from its sources) and
 # builds ia-shim, the Rust supervisor its agents run under (with cargo, or else it takes the latest release's prebuilt
 # one, on Linux x64 and Apple silicon), and adds Huntaway to the app launcher (a .desktop entry on Linux,
 # ~/Applications/Huntaway.app on macOS). With --update-from URL (or HUNTAWAY_UPDATE_FROM), the app's server follows
@@ -132,33 +132,28 @@ fetch_source() {
     mkdir -p "$(dirname "$DIR")"
     git clone --quiet --branch "$BRANCH" "$REPO" "$DIR"
   fi
-  [ -f "$DIR/server-ts/package.json" ] && [ -f "$DIR/app/package.json" ] || die "$DIR doesn't look like a Huntaway checkout"
+  [ -f "$DIR/apps/server/package.json" ] && [ -f "$DIR/apps/web/package.json" ] || die "$DIR doesn't look like a Huntaway checkout"
 }
 
 build() {
-  say "Building the UI"
-  # npm install once there's a node_modules, as Rebuild & restart does: npm ci would delete the Electron a running app is using.
-  # --no-save keeps it from rewriting package-lock.json, which would stop a hub's Update ("uncommitted changes").
+  say "Installing the dependencies and building the UI"
+  # The desktop app's and the server's dependencies (not the mobile app's), at the checkout's root. npm install once
+  # there's a node_modules, as Rebuild & restart does: npm ci would delete the Electron a running app is using, and the
+  # server's dependencies under running agents. --no-save keeps it from rewriting package-lock.json, which would stop a
+  # hub's Update ("uncommitted changes").
   local npm_install=ci
-  [ -d "$DIR/app/node_modules" ] && npm_install="install --no-save"
-  (cd "$DIR/app" && npm $npm_install --no-audit --no-fund && npm run build)
-  say "Installing the server's dependencies"
-  # npm ci when its lockfile changed since the last install (as Rebuild & restart does, see lockfile_changed in
-  # server-ts/src/update/admin.ts), which leaves a running server's node_modules alone otherwise.
-  local installed="$DIR/server-ts/node_modules/.package-lock.json"
-  if [ ! -f "$installed" ] || [ "$DIR/server-ts/package-lock.json" -nt "$installed" ]; then
-    (cd "$DIR/server-ts" && npm ci --no-audit --no-fund)
-  fi
+  [ -d "$DIR/node_modules" ] && npm_install="install --no-save"
+  (cd "$DIR" && npm $npm_install --no-audit --no-fund -w huntaway-app -w @huntaway/server --include-workspace-root && npm run build -w huntaway-app)
   if [ "$SHIM" = cargo ]; then
     say "Building ia-shim (the first build takes a minute)"
-    (cd "$DIR/server" && cargo build --release --locked -p ia-shim)
+    (cd "$DIR" && cargo build --release --locked -p ia-shim)
   else
     prebuilt_shim
   fi
 }
 
 # The latest release's ia-shim, from its server tarball (checked against the sha256 GitHub lists for it), into
-# server-ts/bin/, where the server looks for it beside bin/huntaway. Rebuild & restart keeps it while there's no cargo.
+# apps/server/bin/, where the server looks for it beside bin/huntaway. Rebuild & restart keeps it while there's no cargo.
 prebuilt_shim() {
   local platform tmp asset name sum
   platform="$(release_platform)"
@@ -178,19 +173,18 @@ prebuilt_shim() {
   if command -v sha256sum >/dev/null 2>&1; then sum="$(sha256sum "$tmp/server.tar.gz" | cut -d' ' -f1)"; else sum="$(shasum -a 256 "$tmp/server.tar.gz" | cut -d' ' -f1)"; fi
   [ "$sum" = "$(printf '%s\n' "$asset" | sed -n 3p)" ] || { rm -rf "$tmp"; die "$name.tar.gz doesn't match its sha256"; }
   tar -xzf "$tmp/server.tar.gz" -C "$tmp" "$name/ia-shim" || { rm -rf "$tmp"; die "$name.tar.gz has no ia-shim"; }
-  mkdir -p "$DIR/server-ts/bin"
+  mkdir -p "$DIR/apps/server/bin"
   # Moved into place, so that a shim that's running (an agent's) keeps its file.
-  cp "$tmp/$name/ia-shim" "$DIR/server-ts/bin/.ia-shim.new" && chmod 755 "$DIR/server-ts/bin/.ia-shim.new" &&
-    mv -f "$DIR/server-ts/bin/.ia-shim.new" "$DIR/server-ts/bin/ia-shim"
+  cp "$tmp/$name/ia-shim" "$DIR/apps/server/bin/.ia-shim.new" && chmod 755 "$DIR/apps/server/bin/.ia-shim.new" &&
+    mv -f "$DIR/apps/server/bin/.ia-shim.new" "$DIR/apps/server/bin/ia-shim"
   rm -rf "$tmp"
 }
 
-# Whether $DIR has a server the app can start (as findServerBinary in app/electron/main.cjs looks): the TypeScript
-# server once its dependencies are installed, or the Rust build of a checkout that a Rust server has rebuilt since,
-# which never installs them (the Rust server was removed in HA-179, so that's a build left from before). The macOS app
-# runs --shortcut-only after an update changed Electron, then exits: if that stopped here, the app wouldn't open again.
+# Whether $DIR has a server the app can start (as findServerBinary in apps/web/electron/main.cjs looks): the server
+# once the workspace's dependencies are installed. The macOS app runs --shortcut-only after an update changed Electron,
+# then exits: if that stopped here, the app wouldn't open again.
 has_build() {
-  [ -f "$DIR/server-ts/node_modules/ws/package.json" ] || [ -x "$DIR/server/target/release/huntaway" ]
+  [ -f "$DIR/node_modules/ws/package.json" ]
 }
 
 # ---------- launcher ----------
@@ -213,7 +207,7 @@ tool_path() {
 # Electron downloads its binary the first time it's required (and again once an update has
 # installed another version), not when npm installs it.
 ensure_electron() {
-  node -e 'require(process.argv[1])' "$DIR/app/node_modules/electron" >/dev/null || die "couldn't download Electron"
+  node -e 'require(process.argv[1])' "$DIR/node_modules/electron" >/dev/null || die "couldn't download Electron"
 }
 
 shortcut_linux() {
@@ -232,19 +226,19 @@ shortcut_linux() {
     # For the app to relaunch through this, which downloads a new Electron after an update.
     echo "HUNTAWAY_LAUNCHER=$(shq "$launcher")"
     echo "export HUNTAWAY_LAUNCHER"
-    echo "electron=$(shq "$DIR/app/node_modules/electron")"
+    echo "electron=$(shq "$DIR/node_modules/electron")"
     echo "node -e 'require(process.argv[1])' \"\$electron\" >/dev/null || exit 1"
-    echo "exec \"\$electron/dist/\$(cat \"\$electron/path.txt\")\" $(shq "$DIR/app") \"\$@\""
+    echo "exec \"\$electron/dist/\$(cat \"\$electron/path.txt\")\" $(shq "$DIR/apps/web") \"\$@\""
   } >"$launcher"
   chmod 755 "$launcher"
-  # Named after app/package.json's desktopName, which Electron reports as the window's app id.
+  # Named after apps/web/package.json's desktopName, which Electron reports as the window's app id.
   cat >"$apps/huntaway-app.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Huntaway
 Comment=Kanban board for Claude Code and Codex agents
 Exec=$launcher
-Icon=$DIR/app/build/icon.png
+Icon=$DIR/apps/web/build/icon.png
 Terminal=false
 Categories=Development;
 StartupWMClass=huntaway-app
@@ -254,7 +248,7 @@ EOF
   case ":$PATH:" in *":$bin_dir:"*) ;; *) warn "$bin_dir isn't on PATH, so start huntaway-desktop from the launcher, or by its full path." ;; esac
   # Electron's sandbox needs unprivileged user namespaces, which Ubuntu 24.04+ restricts through AppArmor.
   if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
-    local sandbox="$DIR/app/node_modules/electron/dist/chrome-sandbox"
+    local sandbox="$DIR/node_modules/electron/dist/chrome-sandbox"
     warn "this system restricts user namespaces, so Electron needs its setuid sandbox helper:"
     echo "  sudo chown root:root $(shq "$sandbox") && sudo chmod 4755 $(shq "$sandbox")" >&2
   fi
@@ -266,15 +260,15 @@ shortcut_mac() {
   mkdir -p "$HOME/Applications"
   rm -rf "$app"
   # A copy of the Electron that npm installed, renamed, whose app is a stub that runs the checkout's.
-  ditto "$DIR/app/node_modules/electron/dist/Electron.app" "$app"
+  ditto "$DIR/node_modules/electron/dist/Electron.app" "$app"
   plutil -replace CFBundleName -string Huntaway "$app/Contents/Info.plist"
   plutil -replace CFBundleDisplayName -string Huntaway "$app/Contents/Info.plist"
   plutil -replace CFBundleIdentifier -string nz.dire.huntaway "$app/Contents/Info.plist"
   tmp="$(mktemp -d)"
   mkdir "$tmp/huntaway.iconset"
   for s in 16 32 128 256 512; do
-    sips -z "$s" "$s" "$DIR/app/build/icon.png" --out "$tmp/huntaway.iconset/icon_${s}x${s}.png" >/dev/null
-    sips -z "$((s * 2))" "$((s * 2))" "$DIR/app/build/icon.png" --out "$tmp/huntaway.iconset/icon_${s}x${s}@2x.png" >/dev/null
+    sips -z "$s" "$s" "$DIR/apps/web/build/icon.png" --out "$tmp/huntaway.iconset/icon_${s}x${s}.png" >/dev/null
+    sips -z "$((s * 2))" "$((s * 2))" "$DIR/apps/web/build/icon.png" --out "$tmp/huntaway.iconset/icon_${s}x${s}@2x.png" >/dev/null
   done
   iconutil -c icns "$tmp/huntaway.iconset" -o "$app/Contents/Resources/electron.icns" || warn "couldn't make the app's icon"
   rm -rf "$tmp"
@@ -297,14 +291,14 @@ process.env.PATH = $path + ":" + process.env.PATH;
 if ($update && !process.env.IA_UPDATE_FROM) process.env.IA_UPDATE_FROM = $update;
 let wanted = null;
 try {
-  wanted = JSON.parse(fs.readFileSync(src + "/app/node_modules/electron/package.json", "utf8")).version;
+  wanted = JSON.parse(fs.readFileSync(src + "/node_modules/electron/package.json", "utf8")).version;
 } catch {}
 if (wanted && wanted !== process.versions.electron) {
   // An update installed another Electron: copy this app from it again, then start that.
   spawn("/bin/bash", [src + "/scripts/install.sh", "--dir", src, "--shortcut-only", "--open"], { detached: true, stdio: "ignore" }).unref();
   app.exit(0);
 } else {
-  require(src + "/app/electron/main.cjs");
+  require(src + "/apps/web/electron/main.cjs");
 }
 EOF
   # Editing the bundle broke Electron's signature; sign it again (ad hoc), or Apple silicon won't start it.

@@ -1,5 +1,5 @@
 // Each profile's assistant (API 109): one long-lived thread in no project that the sidebar opens, full width, at
-// `/assistant/<profile>` (see server-ts/src/agent/assistant.ts). It's off the boards. Where it is: assistantHome in the
+// `/assistant/<profile>` (see apps/server/src/agent/assistant.ts). It's off the boards. Where it is: assistantHome in the
 // client package, which follows the profile's assistant host (API 112).
 import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install a host from a GitHub release's server tarball, to update from releases (README "Release updates").
+# Install a host from a GitHub release's server tarball, to update from releases (docs/server.md, "Restarting after a merge": --release-updates).
 #
 #   scripts/install-release-host.sh [--version <v>] [--dir <dir>] [--data-dir <dir>] [--repo <OWNER/REPO>]
 #

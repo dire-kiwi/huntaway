@@ -14,8 +14,8 @@
 # --pacman    run the container check too (needs docker and the archlinux image; downloads the package's deps)
 # --keep      keep each run's data dirs (they're in DIR/runs)
 #
-# Builds (in DIR/src, a copy of this checkout with its uncommitted changes, sharing app/node_modules, server-ts/node_modules
-# and a cargo target dir in DIR/target):
+# Builds (in DIR/src, a copy of this checkout with its uncommitted changes, sharing its node_modules and a
+# cargo target dir in DIR/target):
 #   0.9.0, 0.9.1  the app (AppImage, pacman), the server tarball and huntaway-<v>-release.json, as release.yml makes them
 #   0.9.3         the same, with a changed frame (a line added to electron/boot.cjs), so its manifest's stamp differs
 #   0.9.2         a server tarball whose huntaway passes --version but exits at once on serve (0.9.1's shim and UI)
@@ -47,7 +47,7 @@ export TMPDIR="$work/tmp"
 mkdir -p "$TMPDIR"
 assets="$work/assets"
 
-[[ -x $root/app/node_modules/electron/dist/electron ]] || { echo "run npm ci in app/ (with Electron's install script) first" >&2; exit 1; }
+[[ -x $root/node_modules/electron/dist/electron ]] || { echo "run npm ci (with Electron's install script) first" >&2; exit 1; }
 
 # Copy the checkout (tracked and untracked files, not ignored ones) into $work/src, and link what it shares.
 copy_source() {
@@ -55,14 +55,13 @@ copy_source() {
   mkdir -p "$work/src" "$work/target"
   (cd "$root" && git ls-files -z --cached --others --exclude-standard | tar --null -T - --ignore-failed-read -cf - 2> /dev/null) |
     tar -xf - -C "$work/src"
-  ln -s "$root/app/node_modules" "$work/src/app/node_modules"
-  [[ ! -d $root/server-ts/node_modules ]] || ln -s "$root/server-ts/node_modules" "$work/src/server-ts/node_modules"
-  ln -s "$work/target" "$work/src/server/target"
+  ln -s "$root/node_modules" "$work/src/node_modules"
+  ln -s "$work/target" "$work/src/target"
 }
 
 # Set the app's version as the workflow's Version step does (the server's is VERSION, for scripts/package-server.sh).
 set_version() {
-  (cd "$work/src/app" && npm version --no-git-tag-version --allow-same-version "$1" > /dev/null)
+  (cd "$work/src/apps/web" && npm version --no-git-tag-version --allow-same-version "$1" > /dev/null)
 }
 
 # Build release $1 as the workflow does, and put its files in $assets.
@@ -70,28 +69,28 @@ build_release() {
   local v=$1 src="$work/src" name
   echo "== building $v" >&2
   set_version "$v"
-  (cd "$src/app" && npm run build > "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
-  (cd "$src/server" && cargo build --release --locked -p ia-shim >> "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
+  (cd "$src/apps/web" && npm run build > "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
+  (cd "$src" && cargo build --release --locked -p ia-shim >> "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
   # The server the app and the tarball carry, as the workflow packages it (the copy isn't a git checkout: its commit is this one's).
   (cd "$src" && VERSION=$v IA_BUILD_COMMIT=$(git -C "$root" rev-parse HEAD) scripts/package-server.sh release-server "$(command -v node)" \
     >> "$work/build-$v.log" 2>&1) || { tail -20 "$work/build-$v.log" >&2; exit 1; }
-  rm -rf "$src/app/release"
-  (cd "$src/app" && npx electron-builder --linux --x64 --publish never >> "$work/build-$v.log" 2>&1) ||
+  rm -rf "$src/apps/web/release"
+  (cd "$src/apps/web" && npx electron-builder --linux --x64 --publish never >> "$work/build-$v.log" 2>&1) ||
     { tail -20 "$work/build-$v.log" >&2; exit 1; }
   # The release manifest, as the workflow's step writes it.
-  (cd "$src/app" && VERSION=$v node -e 'const fs = require("node:fs"); const { frameStamp } = require("./electron/stamp.cjs");
-    const electron = require("./node_modules/electron/package.json").version;
+  (cd "$src/apps/web" && VERSION=$v node -e 'const fs = require("node:fs"); const { frameStamp } = require("./electron/stamp.cjs");
+    const electron = require("electron/package.json").version;
     const manifest = { version: process.env.VERSION, shell: frameStamp("electron", electron), electron };
     fs.writeFileSync(`release/huntaway-${process.env.VERSION}-release.json`, JSON.stringify(manifest, null, 2) + "\n")')
   # The server tarball, as the workflow's Package the server step makes it: the package, and this release's desktop shell.
   name="huntaway-server-$v-linux-x64"
-  cp -R "$src/release-server" "$src/app/release/$name"
-  mkdir "$src/app/release/$name/electron"
-  cp "$src/app/electron/"*.cjs "$src/app/release/$name/electron/"
-  (cd "$src/app" && node -e 'const electron = require("./node_modules/electron/package.json").version;
+  cp -R "$src/release-server" "$src/apps/web/release/$name"
+  mkdir "$src/apps/web/release/$name/electron"
+  cp "$src/apps/web/electron/"*.cjs "$src/apps/web/release/$name/electron/"
+  (cd "$src/apps/web" && node -e 'const electron = require("electron/package.json").version;
     require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ electron, boot: 1 }) + "\n")' "release/$name/electron/shell.json")
-  tar -C "$src/app/release" -czf "$src/app/release/$name.tar.gz" "$name"
-  cp "$src/app/release/"*.{AppImage,pacman,tar.gz,json} "$assets/"
+  tar -C "$src/apps/web/release" -czf "$src/apps/web/release/$name.tar.gz" "$name"
+  cp "$src/apps/web/release/"*.{AppImage,pacman,tar.gz,json} "$assets/"
 }
 
 # A server tarball for $1 from 0.9.1's, whose huntaway is the script $2 (which gets 0.9.1's binary as $REAL).
@@ -114,7 +113,7 @@ if [[ -n $build ]]; then
   copy_source
   build_release 0.9.0
   build_release 0.9.1
-  echo "// a changed frame for the e2e check's 0.9.3" >> "$work/src/app/electron/boot.cjs"
+  echo "// a changed frame for the e2e check's 0.9.3" >> "$work/src/apps/web/electron/boot.cjs"
   build_release 0.9.3
   # 0.9.2 passes the smoke test (--version) and exits at once otherwise.
   fake_release 0.9.2 '[ "$1" = --version ] && { echo "huntaway 0.9.2"; exit 0; }

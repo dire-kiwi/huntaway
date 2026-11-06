@@ -1,5 +1,5 @@
 {
-  "name": "huntaway-mobile",
+  "name": "@huntaway/mobile",
   "private": true,
   "version": "1.0.0",
   "description": "Huntaway's mobile app: your boards, prompts and threads on Android and iOS",
@@ -23,14 +23,11 @@
     ],
     "transformIgnorePatterns": [
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@huntaway/.*|mdast-.*|micromark.*|decode-named-character-reference|character-entities|unist-.*|ccount|escape-string-regexp|markdown-table|longest-streak|zwitch|devlop)"
-    ],
-    "modulePaths": [
-      "<rootDir>/node_modules"
     ]
   },
   "dependencies": {
     "@expo/metro-runtime": "~58.0.16",
-    "@huntaway/client": "file:../packages/client",
+    "@huntaway/client": "*",
     "expo": "~58.0.22",
     "expo-camera": "~58.0.14",
     "expo-clipboard": "~58.0.4",

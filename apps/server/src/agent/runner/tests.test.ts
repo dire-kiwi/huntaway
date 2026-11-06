@@ -208,15 +208,15 @@ test("a_reviewers_work_stays_read_only_inside_a_cache", () => {
 
 test("a_reviewer_may_write_the_directories_git_ignores_whole", async () => {
   const dir = testing.temp_dir();
-  for (const d of ["target/debug", "app/node_modules/x", "build", ".claude", "src"]) mkdirSync(join(dir, d), { recursive: true });
+  for (const d of ["target/debug", "node_modules/x", "build", ".claude", "src"]) mkdirSync(join(dir, d), { recursive: true });
   writeFileSync(join(dir, ".gitignore"), "target\nnode_modules\nbuild\n.claude\n.env\n");
-  for (const f of ["build/tracked", "build/untracked", ".env", "src/a.rs", "app/node_modules/x/i", ".claude/settings.local.json"]) writeFileSync(join(dir, f), "1");
+  for (const f of ["build/tracked", "build/untracked", ".env", "src/a.rs", "node_modules/x/i", ".claude/settings.local.json"]) writeFileSync(join(dir, f), "1");
   git_in(dir, ["init", "-q", "."]);
   git_in(dir, ["add", ".gitignore", "src"]);
   git_in(dir, ["add", "-f", "build/tracked"]);
   const found = (await ignored_dirs(path_str(dir))).sort();
   // Not `build`, which holds a tracked file, nor the agents' settings.
-  assert.deepEqual(found, [path_str(join(dir, "app/node_modules")), path_str(join(dir, "target"))]);
+  assert.deepEqual(found, [path_str(join(dir, "node_modules")), path_str(join(dir, "target"))]);
   assert.deepEqual(await ignored_dirs(path_str(join(testing.temp_dir(), "no-such-dir"))), []);
 });
 

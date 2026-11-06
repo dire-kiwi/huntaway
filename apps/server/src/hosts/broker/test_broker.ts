@@ -1,13 +1,13 @@
 // For tests: the Rust broker, run as a process. Rust's tests run the `huntaway-broker` crate in-process with the limits
-// they need (`Config { max_streams, stall }`); these run `server/broker/examples/test_broker.rs`, the crate's router
-// behind those flags, built with `cargo build -p huntaway-broker --example test_broker` in `server/` (done here if it's
+// they need (`Config { max_streams, stall }`); these run `crates/broker/examples/test_broker.rs`, the crate's router
+// behind those flags, built with `cargo build -p huntaway-broker --example test_broker` (done here if it's
 // missing; `$IA_TEST_BROKER` names another). Without cargo, tests that need it are skipped and say why.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-const SERVER = new URL("../../../../server/", import.meta.url).pathname;
+const ROOT = new URL("../../../../../", import.meta.url).pathname;
 
 let found: string | { skip: string } | null = null;
 
@@ -16,15 +16,15 @@ export function test_broker_bin(): string | { skip: string } {
   if (found) return found;
   const find = () =>
     ["debug", "release"]
-      .map((p) => join(SERVER, "target", p, "examples", "test_broker"))
+      .map((p) => join(ROOT, "target", p, "examples", "test_broker"))
       .filter((p) => existsSync(p))
       .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
   if (process.env.IA_TEST_BROKER) return (found = process.env.IA_TEST_BROKER);
   if (!find()) {
     try {
-      execFileSync("cargo", ["build", "-q", "-p", "huntaway-broker", "--example", "test_broker"], { cwd: SERVER, stdio: "ignore", timeout: 900_000 });
+      execFileSync("cargo", ["build", "-q", "-p", "huntaway-broker", "--example", "test_broker"], { cwd: ROOT, stdio: "ignore", timeout: 900_000 });
     } catch (e) {
-      return (found = { skip: `no test broker (cargo build -p huntaway-broker --example test_broker in server/ failed: ${(e as Error).message})` });
+      return (found = { skip: `no test broker (cargo build -p huntaway-broker --example test_broker failed: ${(e as Error).message})` });
     }
   }
   return (found = find() ?? { skip: "no test broker" });

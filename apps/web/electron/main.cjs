@@ -23,7 +23,7 @@
 // reloaded the board. Only a release that changes boot.cjs or Electron needs a newer package: an AppImage or the
 // pacman package installs it from the board's Settings → Server (updateShell in shellupdate.cjs) and relaunches.
 // A server this app finds already running, or a remote serverUrl, isn't started here, so it never gets release updates
-// from the app. README's "Updating the desktop app" has the whole story; scripts/release-update-e2e.sh tests it.
+// from the app. "Updating the desktop app" in docs/desktop.md has the whole story; scripts/release-update-e2e.sh tests it.
 
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
@@ -143,14 +143,9 @@ function findServerBinary(skip = []) {
     const choice = versions.chooseServer({ appDir: releaseDir(), bundled, minVersion: app.getVersion(), exe: EXE, skip });
     if (choice.version || fs.existsSync(bundled)) return { ...choice, bundled: !choice.version };
   }
-  // A checkout: the TypeScript server, once its dependencies are installed. A checkout that hasn't run `npm ci` in
-  // server-ts/ since the server moved there (an install whose Rust server rebuilt it) runs the Rust build it has left
-  // from before the Rust server was removed (HA-179) until then.
-  const root = path.join(__dirname, "..", "..");
-  const ts = path.join(root, "server-ts", "bin", "huntaway");
-  if (fs.existsSync(path.join(root, "server-ts", "node_modules", "ws", "package.json"))) return { bin: ts, version: null };
-  const bin = [path.join(root, "server", "target", "release", EXE), path.join(root, "server", "target", "debug", EXE)].find((p) => fs.existsSync(p));
-  return bin ? { bin, version: null } : null;
+  // A checkout (this file is apps/web/electron/main.cjs): the server, once the workspace's dependencies are installed.
+  const root = path.join(__dirname, "..", "..", "..");
+  return fs.existsSync(path.join(root, "node_modules", "ws", "package.json")) ? { bin: path.join(root, "apps", "server", "bin", "huntaway"), version: null } : null;
 }
 
 let installKindCache;
@@ -166,7 +161,7 @@ let skipBackupOnce = false;
 /**
  * The environment for a server started here: a release build's, whichever binary it runs, turns on release updates.
  * `skipDbBackup` in desktop.json, or "Start without a backup" for one start, lets it start without backing up the
- * database (server-ts/src/backup.ts).
+ * database (apps/server/src/backup.ts).
  */
 function serverEnv() {
   const env = { ...process.env };
@@ -262,7 +257,7 @@ async function startServer(win) {
   const started = versions.startWithFallback({
     choose: (skip) => {
       const choice = findServerBinary(skip);
-      if (!choice) throw new Error("Could not find the huntaway server. Run `npm ci` in server-ts/, and `cargo build --release -p ia-shim` in server/.");
+      if (!choice) throw new Error("Could not find the huntaway server. Run `npm ci` and `cargo build --release -p ia-shim` in the checkout.");
       return choice;
     },
     start: (choice) =>
@@ -361,7 +356,7 @@ function spawnServer(choice, { onLost, onLate }) {
     });
     ended.then(({ code, signal }) => {
       clearTimeout(timer);
-      // It couldn't back up the database, and says why (server-ts/src/serve.ts): {reason, why, dir}.
+      // It couldn't back up the database, and says why (apps/server/src/serve.ts): {reason, why, dir}.
       const m = buf.match(/IA_BACKUP_FAILED (\{.*\})/);
       let backup = null;
       try {
@@ -427,7 +422,8 @@ function errorPage(message, title = "Huntaway couldn't start", backup = null) {
 function electronVersion() {
   if (app.isPackaged) return process.versions.electron;
   try {
-    return JSON.parse(fs.readFileSync(path.join(__dirname, "..", "node_modules", "electron", "package.json"), "utf8")).version;
+    // The workspace installs it at the checkout's root, so it's looked up as require would.
+    return JSON.parse(fs.readFileSync(require.resolve("electron/package.json", { paths: [__dirname] }), "utf8")).version;
   } catch {
     return undefined; // not installed
   }

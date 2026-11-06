@@ -313,7 +313,7 @@ function PushNote({ support }: { support: ReturnType<typeof pushSupport> }) {
       return (
         <>
           Push needs the board on HTTPS, and this page is plain HTTP on <span className="font-mono">{window.location.hostname}</span>. Serve the board
-          over HTTPS at an address the device can reach, such as with <code>tailscale serve</code> (see <i>Push notifications</i> in the README), and
+          over HTTPS at an address the device can reach, such as with <code>tailscale serve</code> (see <i>Push notifications on a phone</i> in docs/server.md), and
           open it there.
         </>
       );

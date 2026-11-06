@@ -1,5 +1,5 @@
 #!/bin/sh
-# The TypeScript port of the huntaway server (see server-ts/PORTING.md): `huntaway serve …` and its other subcommands.
+# The TypeScript port of the huntaway server (see apps/server/PORTING.md): `huntaway serve …` and its other subcommands.
 # A server started from a `node --test` file (the browser tests) is not a test process itself.
 unset NODE_TEST_CONTEXT
 # Its own path, through symbolic links to it (`readlink -f`, which macOS has since 12.3), else the path `$0` names.
@@ -7,7 +7,7 @@ self=$(readlink -f "$0" 2>/dev/null)
 [ -n "$self" ] && [ -f "$self" ] || self=$(cd -P "$(dirname "$0")" && pwd)/$(basename "$0")
 here=$(dirname "$self")
 # A release's package (see .github/workflows/release.yml) has this script as its `huntaway`, with the server in
-# server-ts/ and Node in node/ beside it; a checkout has it in server-ts/bin/. A package's server is precompiled to .js
+# apps/server/ and Node in node/ beside it; a checkout has it in apps/server/bin/. A package's server is precompiled to .js
 # (scripts/package-server.sh), so Node doesn't load its TypeScript compiler (about 20 MB) for it; a checkout runs the .ts.
 if [ -f "$here/server-ts/src/main.js" ]; then src=$here/server-ts/src ext=js
 elif [ -f "$here/server-ts/src/main.ts" ]; then src=$here/server-ts/src ext=ts
@@ -27,7 +27,7 @@ if [ -z "$node" ]; then
   done
   node=${node:-node}
 fi
-# Memory (HA-181, see server-ts/README.md → Memory). V8 lets its young generation grow to two 16 MB semi-spaces, which
+# Memory (HA-181, see apps/server/README.md → Memory). V8 lets its young generation grow to two 16 MB semi-spaces, which
 # a server that then goes idle keeps, with whatever garbage is in them (an idle server allocates too little to collect
 # it): 2 MB ones keep an idle server about 20 MB smaller and its heap collected. Under a lower old-space limit V8 grows
 # the heap less eagerly, which roughly halves what's left after a burst of load (loading every thread) at about 10% of

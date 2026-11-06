@@ -1,4 +1,4 @@
-// HA-222: tasks whose items are their thread's source (server-ts/src/threads/source.ts) have no messages since they
+// HA-222: tasks whose items are their thread's source (apps/server/src/threads/source.ts) have no messages since they
 // moved onto items. Their thread is drawn from items whatever the Keep threads as items setting, and so are what read
 // a thread outside it: a needs-attention card's prompts (Triage) and a plan's last reply, which read messages before.
 import assert from "node:assert/strict";

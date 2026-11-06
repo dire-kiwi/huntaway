@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A stand-in for the board's MCP server for ask-eval: it offers the board's `request_user_input` (with the board's
-description and schema, read from server-ts/src/mcp.ts by eval.py and passed in IA_EVAL_TOOLS) and a few read-only
+description and schema, read from apps/server/src/mcp.ts by eval.py and passed in IA_EVAL_TOOLS) and a few read-only
 tools, answers every call as the board would, and does nothing else. Newline-delimited JSON-RPC on stdio."""
 import json, os, sys
 

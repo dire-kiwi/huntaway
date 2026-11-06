@@ -2,15 +2,15 @@
 
 See `README.md` for layout, build and run instructions.
 
-## The server is `server-ts/`
+## The server is `apps/server/`
 
-The server is the TypeScript one in `server-ts/` (Node 24+, run straight from its `.ts` files, see
-`server-ts/README.md`): every release since 0.4.0 runs it, and so do test servers, the install script and the
-desktop app from a checkout. **Make server changes in `server-ts/src/`.** The Rust server it was ported from
-(`server/src/`) was removed in HA-179; `server-ts/PORTING.md` has the conventions the code follows (one file per former
+The server is the TypeScript one in `apps/server/` (Node 24+, run straight from its `.ts` files, see
+`apps/server/README.md`): every release since 0.4.0 runs it, and so do test servers, the install script and the
+desktop app from a checkout. **Make server changes in `apps/server/src/`.** The Rust server it was ported from
+(`server/src/`) was removed in HA-179; `apps/server/PORTING.md` has the conventions the code follows (one file per former
 Rust module, Rust's names, which new code keeps too) and says how to read the Rust in git history. What stays in Rust, in the `server/`
-workspace, is `ia-shim` (`server/shim/`), the per-run supervisor the TS server runs agents under, and the broker
-(`server/broker/`): build the shim with `cargo build -p ia-shim` in `server/`.
+workspace, is `ia-shim` (`crates/shim/`), the per-run supervisor the TS server runs agents under, and the broker
+(`crates/broker/`): build the shim with `cargo build -p ia-shim` in `server/`.
 
 ## Task workflow
 
@@ -68,8 +68,8 @@ Keep test servers fully separate from it:
   rather than straight in `/tmp`, which is shared and fills up. `mktemp`, the server's tests and the
   test scripts already use it.
 - Start a test server with `scripts/test-server.sh --seed > $TMPDIR/ia<N>-env` (serve flags such as
-  `--demo` can follow). It runs this worktree's server (`server-ts/bin/huntaway`: run `npm ci` in
-  `server-ts/` and `cargo build -p ia-shim` in `server/` first) on a free port on 127.0.0.1, with a fresh
+  `--demo` can follow). It runs this worktree's server (`apps/server/bin/huntaway`: run `npm ci` in
+  `apps/server/` and `cargo build -p ia-shim` in `server/` first) on a free port on 127.0.0.1, with a fresh
   `mktemp -d` data dir and no hub (`IA_TEST_BIN` runs another build instead). Don't pick a fixed port: other agents' test servers are running
   too. It prints `export IA_TEST_URL=…` lines (`IA_TEST_TOKEN`, `IA_TEST_PID`, `IA_TEST_DATA_DIR`,
   `IA_TEST_ENV`), and writes them to `<data dir>/env` too. Shell variables don't survive between
@@ -111,7 +111,7 @@ Keep test servers fully separate from it:
     when the task needs attention (a pending prompt, unless `--approve` answers it, or a run that
     ended in `needs_attention`) and 124 on timeout. Run it with the Bash tool's timeout above
     `--timeout`, or with `run_in_background`.
-- API facts that agents keep rediscovering (routes are in `host_routes` in `server-ts/src/api.ts`, handlers in `server-ts/src/api/`):
+- API facts that agents keep rediscovering (routes are in `host_routes` in `apps/server/src/api.ts`, handlers in `apps/server/src/api/`):
   - There's no `/api/projects` or `/api/tasks` list: use `/api/profiles/{id}/projects` and
     `/api/projects/{id}/tasks`.
   - `GET /api/tasks/{id}` returns `{task, last_message, pending_permissions}`, so read
@@ -125,7 +125,7 @@ Keep test servers fully separate from it:
     config dir), so you can check launch flags without waiting for the model.
 - Build in the worktree, never in the main checkout (the board project's repository path), which is
   the live daemon's source dir (no building, `git pull` or restarting there). `npm ci` in
-  `server-ts/` and a debug `cargo build -p ia-shim` in `server/` are enough for a test server.
+  `apps/server/` and a debug `cargo build -p ia-shim` in `server/` are enough for a test server.
 - Don't stop or restart the live daemon. That means no `pkill huntaway`/`pkill issue-agent`/`killall`, and no
   **Restart** or **Update** from the board. Stop processes by PID, and never `pkill -f` a pattern
   that also appears in your own command line (it kills your own shell). The same goes for
@@ -147,8 +147,8 @@ Keep test servers fully separate from it:
 A typecheck and a build don't show layout or behaviour, so look at UI changes in a browser before you
 finish, and click through what you changed: typechecked-only UI changes have shipped lost drafts,
 stale forms and broken reordering that one interaction would have shown. Run the test server with a
-fresh `npm run build` (it serves `app/dist`), then drive it with `scripts/ui-check.mjs`. It uses
-`playwright-core` from `app/node_modules` (so `npm ci` in `app/` first) and `/usr/bin/chromium` (or `$CHROMIUM`);
+fresh `npm run build` (it serves `apps/web/dist`), then drive it with `scripts/ui-check.mjs`. It uses
+`playwright-core` from `node_modules` (so `npm ci` in `app/` first) and `/usr/bin/chromium` (or `$CHROMIUM`);
 there's no other browser tooling to look for.
 
 ```sh
@@ -180,14 +180,14 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   closed.
 - For a visual fix, take the same screenshot with the change set aside and compare the two. Run
   `npm run build` again after setting it aside, and again after bringing it back: the server serves
-  `app/dist`, so without a rebuild both screenshots show the new UI. The stash stack is shared with
+  `apps/web/dist`, so without a rebuild both screenshots show the new UI. The stash stack is shared with
   other worktrees, so stash with `git stash push -m <unique tag>` and `git stash apply` that entry
   rather than a bare `git stash pop`.
 - For checks that need more than steps (`page.route` to fake a failed request, several pages, API
   calls in between), import `open` from `scripts/ui-check.mjs` and use `ui.page`, which is a
-  Playwright page. Checks for bugs that are easy to bring back go in `app/tests/ui/` and run with
+  Playwright page. Checks for bugs that are easy to bring back go in `apps/web/tests/ui/` and run with
   `npm run test:ui` in `app/` (it builds the UI, and each file starts its own `--demo` test server
-  with agents switched off, so `npm ci` in `server-ts/` and `cargo build -p ia-shim` in `server/` first). Files run 8 at a time (`IA_UI_TEST_JOBS`
+  with agents switched off, so `npm ci` in `apps/server/` and `cargo build -p ia-shim` in `server/` first). Files run 8 at a time (`IA_UI_TEST_JOBS`
   changes that), so a check mustn't count on a quiet machine: wait for what it reads rather than read it
   at once. Run one file with `node --experimental-strip-types --test tests/ui/<file>`. They aren't part of `npm test`,
   but CI runs them, split between three runners (`Tests / ui (1/3)` to `(3/3)`; `IA_UI_TEST_SHARD=2/3` runs the second third). Run them when you change the UI they cover, and add one when an interaction found a bug.
@@ -200,16 +200,16 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
 
 ## Running tests
 
-- Run the server's tests with `npm test` in `server-ts/`, and its typecheck with `npm run typecheck` there. One file:
+- Run the server's tests with `npm test` in `apps/server/`, and its typecheck with `npm run typecheck` there. One file:
   `node --disable-warning=ExperimentalWarning --test src/<path>.test.ts` (add `--test-name-pattern=<regex>` for one
   test). The broker tests build the Rust broker's `test_broker` example on first use.
 - Wrap long runs in `timeout` and write the output to a log file, then read the log:
   `timeout 900 npm test > $TMPDIR/test.log 2>&1; tail -30 $TMPDIR/test.log`. Piping through `grep`
   buffers, so a hang shows nothing.
-- Give a test a folder with `testing.temp_dir()` (`server-ts/src/testing.ts`), which is removed when the file's tests
+- Give a test a folder with `testing.temp_dir()` (`apps/server/src/testing.ts`), which is removed when the file's tests
   end, not `os.tmpdir()`: tests that left their folders there filled `/tmp`. `testing.state()` gives an `AppState` on
   an in-memory database. `IA_KEEP_TEST_DIRS=1` keeps the folders.
-- New worktrees have no `node_modules`. Run `npm ci` in `app/` and `server-ts/` first, then use the package
+- New worktrees have no `node_modules`. Run `npm ci` in `app/` and `apps/server/` first, then use the package
   scripts (`npm run typecheck`, `npm test`, `npm run build`). The typecheck in both is
   [tsrs](https://github.com/oxc-project/tsrs) (Cloudflare and VoidZero's Rust port of TypeScript 7, the `tsrs` dev
   dependency, run as `tsrs`, with `tsc`'s flags), not `typescript`, which neither package has: `npx tsc` runs an
@@ -217,7 +217,7 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
 - The code is formatted by hand, with lines of up to about 160 characters, and there's no
   Prettier, ESLint or rustfmt config. Don't run `prettier`, `eslint` or `cargo fmt`, because each
   rewrites whole files. Match the surrounding style, and check `git diff --stat` before committing.
-- CI runs `npm run typecheck` and `npm test` in `server-ts/` and `app/` on every PR, `npm run test:ui` (against the
+- CI runs `npm run typecheck` and `npm test` in `apps/server/` and `app/` on every PR, `npm run test:ui` (against the
   TS server) and `scripts/ia-api-test.py`, and `cargo test` in `server/` for ia-shim and the broker
   (`.github/workflows/test.yml`, the `Tests / server-ts`, `Tests / app`, `Tests / ui (1/3)` to `(3/3)` and
   `Tests / rust` checks, on self-hosted runners for the owner's own branches and GitHub-hosted ones
@@ -225,8 +225,8 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
 - `scripts/ia-api` has its own tests (a faked server and clock): `python3 scripts/ia-api-test.py`.
-- If both your branch and master bumped `API_VERSION` (`server-ts/src/hosts/proto.ts`) or added a DB
-  migration (`server-ts/src/db/schema.ts`), git may merge the two without a conflict. After merging master,
+- If both your branch and master bumped `API_VERSION` (`apps/server/src/hosts/proto.ts`) or added a DB
+  migration (`apps/server/src/db/schema.ts`), git may merge the two without a conflict. After merging master,
   check both numbers and move yours above master's.
 
 ### The Rust workspace (`server/`: ia-shim and the broker)
@@ -234,7 +234,7 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
 - Run its tests with debug `cargo test` in `server/` (`-p ia-shim` or `-p huntaway-broker` for one crate), not
   `--release`: a release test build compiles a second copy of every dependency.
 - `cargo test` in `server/` runs each test binary in a `TMPDIR` of its own, which is removed when it exits, and fails
-  it if it left anything there (`server/.cargo/test-runner`), so a test that leaks fails locally as it does in CI.
+  it if it left anything there (`.cargo/test-runner`), so a test that leaks fails locally as it does in CI.
   `cargo test --manifest-path` from another folder skips that. That `TMPDIR` is on disk, `/var/tmp/ia-cargo-test-*`
   (`IA_CARGO_TEST_TMPDIR` picks another folder), not in the task's `$TMPDIR`: `/tmp` is a tmpfs that every agent
   shares, and tests filled it ("disk I/O error"). Where `/var/tmp` can't be written, it's in `$TMPDIR` as before.

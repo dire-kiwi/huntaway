@@ -233,7 +233,7 @@ function find_ui_dir(explicit: string | null, from_app: boolean, exe: string): s
   }
   if (explicit) return explicit;
   const here = import.meta.dirname;
-  return [own, join(here, "../../ui"), join(here, "../../app/dist")].find((p) => existsSync(join(p, "index.html"))) ?? null;
+  return [own, join(here, "../../ui"), join(here, "../../web/dist")].find((p) => existsSync(join(p, "index.html"))) ?? null;
 }
 
 /** Whether the request's `Host` names this machine (127.0.0.1, localhost or [::1], with any port). */
@@ -513,7 +513,7 @@ export async function serve(args: ServeArgs) {
   lag.debug_route(state.local_router!);
   const ui = find_ui_dir(args.ui_dir, from_app, admin.current_exe());
   if (ui) log.info(`serving UI from ${ui}`);
-  else log.warn("no UI build found; API only (build app/ or pass --ui-dir)");
+  else log.warn("no UI build found; API only (build apps/web or pass --ui-dir)");
   const loopback_only = ["127.0.0.1", "::1", "localhost"].includes(args.host) || args.host.startsWith("127.");
   if (args.open_token) log.warn("--open-token: handing the access token to every browser that opens the board");
 

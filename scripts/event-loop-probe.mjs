@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // How long the TS server's one thread is held up by its heavy requests (HA-183): for each request, how long it took, how
 // late a request for /api/health and a UI websocket's ping were answered meanwhile, and the time the server says the
-// request held its thread for (GET /api/debug/event-loop, see server-ts/src/lag.ts).
+// request held its thread for (GET /api/debug/event-loop, see apps/server/src/lag.ts).
 //
 //   scripts/test-server.sh --no-agents > $TMPDIR/ia<N>-env && scripts/copy-live-board.sh $TMPDIR/ia<N>-env
 //   node scripts/event-loop-probe.mjs --env $TMPDIR/ia<N>-env [--threads N] [--only REGEX] [--json] [GET-path...]
@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const { WebSocket } = createRequire(join(root, "server-ts/package.json"))("ws");
+const { WebSocket } = createRequire(join(root, "apps/server/package.json"))("ws");
 const args = process.argv.slice(2);
 const opt = (f, d) => {
   const i = args.indexOf(f);
@@ -80,7 +80,7 @@ async function probe() {
   };
 }
 
-/** The server's own figures (server-ts/src/lag.ts), or null from a server without them (to compare with an older build). */
+/** The server's own figures (apps/server/src/lag.ts), or null from a server without them (to compare with an older build). */
 const lagged = (q = "") => get(`/debug/event-loop${q}`).then((r) => r.json(), () => null);
 
 async function measure(label, path) {

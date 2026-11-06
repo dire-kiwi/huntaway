@@ -2,8 +2,8 @@
 
 How clients read a task's thread kept as items (see [threads.md](threads.md) for the model), follow it live, and
 send it commands: on a host, and through a hub at `/api/h/<host_id>/...`, as every host route is. The shapes
-(`Snapshot`, `ItemPage`, `ThreadEvent`, `Command`, `Resolution`) are those of `server-ts/src/threads/protocol.ts`.
-The code is in `server-ts/src/threads/live.ts`, with the handlers in `server-ts/src/api/thread.ts`. It's the port of
+(`Snapshot`, `ItemPage`, `ThreadEvent`, `Command`, `Resolution`) are those of `apps/server/src/threads/protocol.ts`.
+The code is in `apps/server/src/threads/live.ts`, with the handlers in `apps/server/src/api/thread.ts`. It's the port of
 HA-145's `docs/agent-threads-api.md`, changed for Huntaway's own model: there's no agent-threads backend, the
 thread is read from the board's own tables, and commands go onto the board's own routes.
 

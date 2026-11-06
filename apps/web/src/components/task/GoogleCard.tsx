@@ -1,5 +1,5 @@
 // The assistant's Google card (API 113): whether its Google Workspace server (Gmail, Calendar and Drive, on the assistant's host)
-// is connected and as whom, and if not, what's missing and how to set it up (see server-ts/src/agent/assistant/google.ts).
+// is connected and as whom, and if not, what's missing and how to set it up (see apps/server/src/agent/assistant/google.ts).
 import clsx from "clsx";
 import { Copy, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -93,7 +93,7 @@ export function GoogleCard({ assistant }: { assistant: Task }) {
               then sign in on {st.host}, and open the link it prints here:
               <Command text={st.consent_command} />
             </li>
-            <li>Check again. The README's An assistant host has the details.</li>
+            <li>Check again. An assistant host in docs/hosts.md has the details.</li>
           </ol>
         </details>
       )}

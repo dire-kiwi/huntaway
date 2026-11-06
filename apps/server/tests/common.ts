@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { temp_dir } from "../src/testing.ts";
 
-/** The server's command (Cargo's `CARGO_BIN_EXE_huntaway`): `server-ts/bin/huntaway`. */
+/** The server's command (Cargo's `CARGO_BIN_EXE_huntaway`): `apps/server/bin/huntaway`. */
 export const HUNTAWAY = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "huntaway");
 
 /** A fixture's path in `tests/fixtures` (Rust's `include_str!("fixtures/…")`). */

@@ -77,7 +77,7 @@ async function main() {
     case "--help":
     case "-h":
     case "help":
-      console.log("Usage: huntaway [serve|mcp|gh-mcp|token|google-auth] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see server-ts/PORTING.md).");
+      console.log("Usage: huntaway [serve|mcp|gh-mcp|token|google-auth] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see apps/server/PORTING.md).");
       return;
     default:
       console.error(`error: unrecognized subcommand '${cmd}'`);

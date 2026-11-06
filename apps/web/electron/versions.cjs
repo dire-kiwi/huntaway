@@ -1,5 +1,5 @@
 // Which server a release build starts: one of the versions the server downloaded into `<data dir>/app/`, or the one in
-// its own resources. The server (server-ts/src/update/release.ts) unpacks each release into `app/<v>/` ({huntaway, ia-shim,
+// its own resources. The server (apps/server/src/update/release.ts) unpacks each release into `app/<v>/` ({huntaway, ia-shim,
 // ui/index.html}) and keeps `app/state.json`:
 //
 //   current   the version that last came up (the server sets it once it's listening)
@@ -119,7 +119,7 @@ function chooseServer({ appDir, bundled, minVersion, exe = "huntaway", skip = []
  *     the same way, a wrong host say;
  *   - something answers on the port after a failure (`portTaken`): another launch's server took it;
  *   - the app is quitting (`stopping`);
- *   - the server couldn't back up the database (the rejection's `backup`, see server-ts/src/backup.ts).
+ *   - the server couldn't back up the database (the rejection's `backup`, see apps/server/src/backup.ts).
  *
  * A timeout (a rejection without `early`) keeps `failed`, as that server is still starting and only slow, which isn't
  * held against it. If it exits, the caller adds it and starts again. If it comes up (the rejection's `ready` resolves,
@@ -166,7 +166,7 @@ const FIRST_TS = "0.4.0";
 /**
  * Before starting a Rust release (`version`, before 0.4.0), record it in `<data dir>/server_version`, as it doesn't: the
  * TypeScript server that starts after it then backs up the database, though the version recorded before was its own
- * (server-ts/src/backup.ts, HA-184). A later version, or none known, records itself.
+ * (apps/server/src/backup.ts, HA-184). A later version, or none known, records itself.
  */
 function noteRustServer(dataDir, version) {
   if (!(compareVersions(version, FIRST_TS) < 0)) return false;

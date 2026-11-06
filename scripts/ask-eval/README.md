@@ -3,7 +3,7 @@
 A task's agent that needs something from the user before it can go on should call the board's `request_user_input`,
 which puts the task in **Needs attention**. One that ends its turn with the question in its summary instead puts the
 task in **In review**, where it looks finished and stalls (HA-198). This replays the ends of real turns under different
-wordings of the agents' instructions on asking (`ask_and_finish` in `server-ts/src/agent/runner/prompt.ts`) and counts
+wordings of the agents' instructions on asking (`ask_and_finish` in `apps/server/src/agent/runner/prompt.ts`) and counts
 how often the agent asks.
 
 1. **Mine** the turn ends from a board's database (read-only). The cases are the user's own threads, so keep them in
@@ -28,8 +28,8 @@ how often the agent asks.
    ```
 
 `verify` in `eval.py` is the check: `claude -p` with the case's system prompt, the board's tools served by
-`stub_mcp.py` (their definitions come from `server-ts/src/mcp.ts` through `board_tools.ts`, so `npm ci` in
-`server-ts/` first) and its built-in tools off, given the message that started the turn and the final message the
+`stub_mcp.py` (their definitions come from `apps/server/src/mcp.ts` through `board_tools.ts`, so `npm ci` in
+`apps/server/` first) and its built-in tools off, given the message that started the turn and the final message the
 agent wrote, and told to end the turn. A case passes if the agent called `request_user_input` exactly when its label
 says it should. Each run costs about what a short turn does on the model given, on the login `claude` uses; it isn't
 part of CI.

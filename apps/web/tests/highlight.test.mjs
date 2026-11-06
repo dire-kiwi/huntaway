@@ -4,11 +4,11 @@ import { parseDiff } from "../src/components/changes/diffs.ts";
 import { highlightable, langFor, MAX_LINES, sidesOf } from "../src/components/changes/highlight.ts";
 
 test("a file's language, by extension or name", () => {
-  assert.equal(langFor("app/src/components/Changes.tsx"), "tsx");
+  assert.equal(langFor("apps/web/src/components/Changes.tsx"), "tsx");
   assert.equal(langFor("server/src/main.rs"), "rust");
   assert.equal(langFor("Dockerfile"), "docker");
   assert.equal(langFor("deploy/Dockerfile.dev"), "docker");
-  assert.equal(langFor("server/Cargo.lock"), "toml");
+  assert.equal(langFor("Cargo.lock"), "toml");
   assert.equal(langFor("README.MD"), "markdown");
   assert.equal(langFor(".env.local"), "dotenv");
   assert.equal(langFor("LICENSE"), null);

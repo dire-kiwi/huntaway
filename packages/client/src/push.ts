@@ -1,6 +1,6 @@
 import { enc, type Http } from "./http";
 
-/** What tasks notify of: in the web board's notifications (app/src/notifications.ts), and by push to a device. */
+/** What tasks notify of: in the web board's notifications (apps/web/src/notifications.ts), and by push to a device. */
 export type NotifyEvent = "attention" | "review" | "merge" | "done";
 
 export const NOTIFY_EVENTS: { id: NotifyEvent; label: string; hint: string }[] = [
@@ -43,7 +43,7 @@ export const EXPO_PUSH_API = 120;
 /** How a device is pushed to: Web Push (a browser), or the mobile app through Expo (API 120; `web` before). */
 export type PushKind = "web" | "expo";
 
-/** A device that gets the board's notifications by Web Push (API 74; see server-ts/src/integrations/push.ts), or the app. */
+/** A device that gets the board's notifications by Web Push (API 74; see apps/server/src/integrations/push.ts), or the app. */
 export interface PushDevice {
   id: string;
   /** Its push service's URL for it, which tells this browser's own from the others; for the app, its Expo push token. */

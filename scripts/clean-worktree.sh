@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove a task worktree's build output (Rust's server/target, the UI's dist, release and
+# Remove a task worktree's build output (Rust's target, the UI's dist, release and
 # tsbuildinfo) to free disk space once its task is done. Building again recreates it.
 #
 #   scripts/clean-worktree.sh [worktree]   # defaults to the current directory
@@ -34,7 +34,7 @@ top=$(git -C "$dir" rev-parse --show-toplevel)
 
 shopt -s nullglob
 paths=()
-for p in "$top"/server/target "$top"/app/dist "$top"/app/release "$top"/app/*.tsbuildinfo; do
+for p in "$top"/target "$top"/apps/web/dist "$top"/apps/web/release "$top"/apps/web/*.tsbuildinfo; do
   [[ -e $p ]] && paths+=("$p")
 done
 if ((${#paths[@]} == 0)); then

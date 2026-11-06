@@ -1,6 +1,6 @@
 // Port of server/src/integrations/push_answers.rs (HA-126 and HA-123, on the HA-117 branch).
 /**
- * Answering a permission prompt from a notification (Allow and Deny on a push, see push.ts and app/public/sw.js), without
+ * Answering a permission prompt from a notification (Allow and Deny on a push, see push.ts and apps/web/public/sw.js), without
  * the board's token: each push about a prompt carries a token that can only answer that one prompt, once (`POST
  * /api/permissions/{id}/push-answer`).
  *

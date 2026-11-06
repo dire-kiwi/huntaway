@@ -39,7 +39,7 @@ const board = (id: string, more: Partial<Board> = {}): Board => ({
   ...more,
 });
 
-/** A push as the server sends it (server-ts/src/integrations/push.ts, expo_message), as expo-notifications hands it over. */
+/** A push as the server sends it (apps/server/src/integrations/push.ts, expo_message), as expo-notifications hands it over. */
 const promptData = {
   board: "work",
   host: "h1",

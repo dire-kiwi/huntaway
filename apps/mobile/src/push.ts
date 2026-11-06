@@ -20,7 +20,7 @@ export const DEFAULT_ACTION = "expo.modules.notifications.actions.DEFAULT";
  *  from before shows none in the phone's events). */
 export const assistantPushEvents = (e: PushEvents) => ASSISTANT_PUSH_EVENTS.filter((x) => typeof e[x.id] === "boolean");
 
-/** What a push from a board carries (server-ts/src/integrations/push.ts, `expo_message`). */
+/** What a push from a board carries (apps/server/src/integrations/push.ts, `expo_message`). */
 export interface PushData {
   /** The board's host id: the paired board's id. */
   board: string;

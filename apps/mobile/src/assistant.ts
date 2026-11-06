@@ -1,5 +1,5 @@
 // The Assistant tab: the selected board's assistant for its picked profile, one long-lived thread outside every project
-// (server-ts/src/agent/assistant.ts). Where it is comes from the client's assistantHome, as on the web board: a profile can
+// (apps/server/src/agent/assistant.ts). Where it is comes from the client's assistantHome, as on the web board: a profile can
 // have it on an assistant host of its own (API 112), which may be offline. Paired devices reach it from API 120.
 import { assistantHome, type AssistantHome, type Client, type Profile, type Task } from "@huntaway/client";
 import type { Board } from "./boards";

@@ -5,8 +5,8 @@ connection setup and endpoint discovery; application traffic travels through Clo
 configuration it keeps the **legacy relay** transport, carrying application traffic on hosts' outbound websockets.
 A hub combines linked hosts into one board; either transport can expose that hub.
 
-How hosts connect and how clients select one is in the main README,
-[Reaching a host from anywhere](../../README.md#reaching-a-host-from-anywhere). Registration and relay messages are
+How hosts connect and how clients select one is in
+[Reaching a host from anywhere](../../docs/hosts.md#reaching-a-host-from-anywhere). Registration and relay messages are
 in `src/proto.rs`. Agents' own model-provider and git traffic is independent of the public transport.
 
 ## Managed tunnels: broker handles setup only
