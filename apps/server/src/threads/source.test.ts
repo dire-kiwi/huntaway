@@ -490,7 +490,7 @@ test("at the start, quiet tasks move onto items; one mid-turn moves when its run
 // with a question waiting, move at the start, so none is on messages.
 test("at the start, done tasks are rebuilt onto items, and a task waiting on a question moves with it still open", async (t) => {
   runs.TEST_CAN_RUN.set(true);
-  t.after(() => runs.TEST_CAN_RUN.set(false));
+  t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   const { s, events, task } = setup();
   const [old, stale, asking, gate] = [
     task("never kept", "done"),
