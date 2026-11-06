@@ -5,10 +5,11 @@ import { sortProjects } from "./projectOrder";
 import {
   api,
   ApiError,
+  boardHosts,
   canRunAgents,
-  hostCompat,
   hostSupports,
   hasAssistant,
+  usableHost,
   wsUrl,
   type ClaudeConfig,
   type Host,
@@ -79,18 +80,7 @@ interface State {
   removeProject: (hostId: string, id: string) => void;
 }
 
-/**
- * Connected hosts this UI can work with and that can run agents. A hub that can't run agents
- * (e.g. one deployed only to show other hosts) gets no new work; boardHosts says what it shows.
- */
-const usable = (h: Host) => canRunAgents(h) && ["ok", "outdated"].includes(hostCompat(h));
-const usableHosts = (hosts: Host[]) => hosts.filter(usable);
-
-/**
- * Hosts whose profiles and projects are on the board: the usable ones, plus this host even if
- * it can't run agents (it usually has none, but a PR preview seeds a demo project).
- */
-export const boardHosts = (hosts: Host[]) => hosts.filter((h) => (h.local && h.connected) || usable(h));
+const usableHosts = (hosts: Host[]) => hosts.filter(usableHost);
 
 /** Where new work goes by default: this host if it can run agents, else the first one that can. */
 export function defaultAgentHost(): string | null {

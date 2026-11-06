@@ -1,7 +1,7 @@
-import { api, hostSupports, type AnalyticsReport, type Status } from "./api";
+import { api, boardHosts, hostSupports, type AnalyticsReport, type Status } from "./api";
 import type { CCompaction, CTurn } from "./contextStats";
 import type { TokenData } from "./tokenStats";
-import { boardHosts, useStore } from "./store";
+import { useStore } from "./store";
 
 /**
  * Prompt analytics for time tracking. Each host reports the profile's prompts and agent runs
