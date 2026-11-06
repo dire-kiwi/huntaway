@@ -25,6 +25,7 @@ import type { Conn, Task } from "../db.ts";
 import * as runner from "../agent/runner.ts";
 import * as worktree from "../git/worktree.ts";
 import * as gh_mcp from "../mcp/gh_mcp.ts";
+import * as workflows from "../integrations/workflows.ts";
 import * as pr_watch from "../mcp/pr_watch.ts";
 import type { Target } from "../mcp/pr_watch.ts";
 import * as terminal from "../hosts/terminal.ts";
@@ -271,6 +272,7 @@ async function merged(s: AppState, t: Task, target: Target): Promise<boolean> {
   // As moving it to Done does (see api::update_task_inner).
   runner.start_unblocked(s, done.project_id ?? null);
   runner.start_next_merge(s, done.project_id ?? null);
+  workflows.on_status(s, done);
   await terminal.kill_all(s, t.id);
   try {
     const r = await worktree.remove_if_merged(s, t.id, true);
@@ -290,7 +292,9 @@ function closed(s: AppState, t: Task, target: Target): boolean {
       ["attention_reason", text],
     ];
     const when = (c: Conn) => unchanged(c, t) && db.get_task(c, t.id)?.status === "in_review";
-    if (!s.update_task_if(t.id, fields, when)) return false;
+    const flagged = s.update_task_if(t.id, fields, when);
+    if (!flagged) return false;
+    workflows.on_status(s, flagged);
   }
   s.add_event(t.id, "warn", `${text}.`, target.url());
   return true;

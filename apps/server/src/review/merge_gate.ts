@@ -11,6 +11,7 @@
 import * as db from "../db.ts";
 import type { Conn, Task } from "../db.ts";
 import * as runner from "../agent/runner.ts";
+import * as workflows from "../integrations/workflows.ts";
 import * as questions from "../mcp/questions.ts";
 import { ApiError, type AppState } from "../state.ts";
 import * as history from "../threads/history.ts";
@@ -140,9 +141,10 @@ export function settle(s: AppState, task_id: string, status: string): void {
  * when its turn comes); denied, it goes back to "In review".
  */
 export function decide(s: AppState, task_id: string, approve: boolean): Task {
-  const st = { refused: null as ApiError | null };
+  const st = { refused: null as ApiError | null, was: null as string | null };
   const still = (c: Conn): boolean => {
     const now = db.get_task(c, task_id);
+    st.was = now?.status ?? null;
     if (!now) st.refused = ApiError.not_found("task");
     else if (!is_pending(now) || !now.merging) st.refused = ApiError.conflict("the task isn't waiting for its merge to be approved any more");
     else if (now.running || db.has_active_run(c, task_id)) st.refused = ApiError.conflict("its agent is still running; approve the merge once it's done");
@@ -166,5 +168,6 @@ export function decide(s: AppState, task_id: string, approve: boolean): Task {
   if (approve) s.add_event(task_id, "info", "Merge approved: it merges once no other task in the project is merging");
   else s.add_event(task_id, "info", "Merge denied: back in review");
   runner.start_next_merge(s, updated.project_id ?? null);
+  if (updated.status !== st.was) workflows.on_status(s, updated);
   return db.get_task(s.db(), task_id) ?? updated;
 }

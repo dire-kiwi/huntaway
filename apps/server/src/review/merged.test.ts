@@ -8,9 +8,11 @@ import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import * as api from "../api.ts";
 import * as worktree from "../git/worktree.ts";
+import * as workflows from "../integrations/workflows.ts";
 import * as pr_watch from "../mcp/pr_watch.ts";
 import * as testing from "../testing.ts";
 import type { AppState } from "../state.ts";
+import { sleep } from "../util.ts";
 import { check, query, set_fake, states } from "./merged.ts";
 
 function sh(dir: string, args: string[]) {
@@ -150,6 +152,27 @@ test("a_closed_pull_request_flags_the_task_once", async () => {
   const now = task(s, t.id);
   assert.deepEqual([now.status, now.attention_reason], ["needs_attention", "Which colour?"]);
   assert.equal(events(s, t.id).filter((e) => e.includes("closed on GitHub")).length, 3);
+  set_fake(null);
+});
+
+// HA-262: a task its pull request moved to Done (or Needs attention) didn't start the workflows that start when a task
+// enters that column, as moving it there does.
+test("a_task_its_pull_request_moves_starts_the_workflows_of_its_new_column", async () => {
+  const s = testing.state();
+  const profile = db.insert_profile(s.db(), "p", [], null);
+  const [merged_url, closed_url] = ["https://github.com/o/r/pull/7", "https://github.com/o/r/pull/8"];
+  const [, pid, a] = await task_in_review(s, profile.id, merged_url);
+  const b = await new_task(s, pid, closed_url);
+  const on = (status: string) => workflows.create(s, pid, { name: status, graph: { nodes: [{ id: "t", kind: "trigger", on: "status", status }], edges: [] } });
+  const [done, flagged] = [on("done"), on("needs_attention")];
+  const [prs] = fake_github();
+  prs.set(merged_url, "MERGED");
+  prs.set(closed_url, "CLOSED");
+  await check(s, new Map());
+  assert.deepEqual([task(s, a.id).status, task(s, b.id).status], ["done", "needs_attention"]);
+  const ran = (w: workflows.Workflow, t: Task) => workflows.latest_run(s.db(), w.id, t.id)?.state ?? null;
+  for (let i = 0; i < 200 && (ran(done, a) === null || ran(flagged, b) === null); i++) await sleep(10);
+  assert.deepEqual([ran(done, a), ran(flagged, b), ran(done, b), ran(flagged, a)], ["done", "done", null, null]);
   set_fake(null);
 });
 
