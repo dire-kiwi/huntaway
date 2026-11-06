@@ -84,22 +84,6 @@ async function command<R>(task: Pick<Task, "host_id" | "id">, cmd: { type: strin
   return (await api.threadCommand<R>(task.host_id, task.id, cmd)).result;
 }
 
-/** Sends the agent a message, as the composer does: a thread command for a thread drawn from its items. */
-export function sendMessage(task: Task, text: string): Promise<Task> {
-  return drawsItems(task) ? command<Task>(task, { type: "send", text }) : api.send(task.host_id, task.id, text);
-}
-
-/** Stops the agent. */
-export function stopAgent(task: Task): Promise<unknown> {
-  return drawsItems(task) ? command(task, { type: "interrupt" }) : api.stop(task.host_id, task.id);
-}
-
-/** Changes the thread's permission mode (null: back to the one it inherits, which only the board's route does). */
-export function setMode(task: Task, mode: BoardMode | null): Promise<Task> {
-  const m = mode === null ? undefined : modeOf(mode);
-  return drawsItems(task) && m ? command<Task>(task, { type: "set_options", permission_mode: m }) : api.updateTask(task.host_id, task.id, { permission_mode: mode });
-}
-
 /** Answers one of the thread's requests with a `respond` command. */
 export function respond(task: Pick<Task, "host_id" | "id">, request_id: string, resolution: Resolution): Promise<unknown> {
   return command(task, { type: "respond", request_id, resolution });

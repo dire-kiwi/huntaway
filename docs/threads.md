@@ -258,10 +258,10 @@ and shows the messages it has until its window has loaded.
   the Agents list has them all, as the messages path's first page does with what lists the earlier subagents; its
   context items aren't drawn until their page loads, as a subagent from before the loaded messages isn't. What a new
   snapshot leaves as it was stays the same objects, so rows that didn't change don't redraw.
-- **What it sends**: the composer's messages, its stop and its mode go as thread commands (`send`, `interrupt`,
-  `set_options`), and the prompt cards answer with `respond` (a permission, a plan with the mode to carry on in, Claude's
-  questions by their ids, the board's own questions). Going back to the inherited mode, unqueuing and rewinding use the
-  board's routes, as do the board's lists of prompts outside the thread.
+- **What it sends**: the prompt cards answer with `respond` (a permission, a plan with the mode to carry on in, Claude's
+  questions by their ids, the board's own questions). The composer's messages, its stop and its mode, unqueuing and
+  rewinding use the board's routes (which the thread commands `send`, `interrupt` and `set_options` go to as well), as do
+  the board's lists of prompts outside the thread.
 - **What the items needed** (converter 4): what the board draws that the protocol doesn't say is the items' and
   requests' `metadata`: a user message the board sent itself (`auto`), a turn's `subtype`, `num_turns` and
   `total_cost_usd`, a compaction's `post_tokens`, a result's text no message said (`from_result`, which isn't drawn),
