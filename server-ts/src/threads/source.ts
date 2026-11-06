@@ -16,7 +16,7 @@
 // are read back from what their request or item keeps of them (`kept`), which is the message's data as it was written.
 //
 // Tasks move onto items one at a time (`flip`), when they're quiet: no run going (a task mid-turn waits for its run to
-// end) and no prompt or question waiting for an answer. Their items must be complete and this build's, so one that
+// end) and no prompt waiting for an answer (a question may be). Their items must be complete and this build's, so one that
 // isn't (never rebuilt, an older converter's, live writes stopped on an error) is rebuilt from its messages first, in
 // the same transaction. It happens at the server's start (`flip_all`), when a run ends (`settled`), and before any
 // message is written to a quiet task that's still on messages (insert_message, start_run): a new task moves with its
@@ -69,13 +69,14 @@ export function next_id(c: Conn): number {
 
 // ---------- moving onto items ----------
 
-/** Why task `task_id` can't move onto items now (see the top of the file), or null if it's quiet. */
+/**
+ * Why task `task_id` can't move onto items now (see the top of the file), or null if it's quiet. A question waiting for
+ * an answer (the board's request_user_input card, the merge gate's) doesn't hold it back: its rebuilt request is open,
+ * with the question as its metadata, and answering it changes that (`update`), as for a question asked on items.
+ */
 export function busy(c: Conn, task_id: string): string | null {
   if (db.has_active_run(c, task_id)) return "its agent is running";
   if (db.one(c, "SELECT 1 FROM permission_requests WHERE task_id=?1 AND status='pending' LIMIT 1", task_id)) return "a prompt is waiting for an answer";
-  if (db.one(c, "SELECT 1 FROM messages WHERE task_id=?1 AND kind='question' AND json_extract(data, '$.status')='pending' LIMIT 1", task_id)) {
-    return "a question is waiting for an answer";
-  }
   return null;
 }
 
@@ -218,21 +219,21 @@ export function settled(s: AppState, task_id: string): void {
 const pause = () => new Promise<void>((r) => setImmediate(r));
 
 /**
- * At the server's start: moves every quiet task that's still on messages onto items, oldest first, one transaction
- * each, yielding between them. Tasks mid-turn move when their run ends (`settled`). Done tasks whose items aren't
- * this build's are left as they are (their messages are read, as before): one moves at its next message.
+ * At the server's start: moves every quiet task that's still on messages onto items, one transaction each, yielding
+ * between them. Tasks mid-turn move when their run ends (`settled`). Those that aren't done go first, oldest first; then
+ * the done ones, whose items are mostly an older build's or none (the batch leaves them out), so they're rebuilt from
+ * their messages as they move. A rebuild that fails leaves its task on messages (see `flip`), and the log says how many
+ * are left.
  */
 export async function flip_all(s: AppState): Promise<{ moved: number; rebuilt: number; deferred: number }> {
   const out = { moved: 0, rebuilt: 0, deferred: 0 };
   if (!flips(s.db())) return out;
   await pause();
-  const ids = db.all<{ id: string; status: string }>(s.db(), "SELECT id, status FROM tasks WHERE thread_source <> 'items' ORDER BY created_at, id");
+  const ids = db.all<{ id: string }>(s.db(), "SELECT id FROM tasks WHERE thread_source <> 'items' ORDER BY status = 'done', created_at, id");
   const t0 = performance.now();
-  for (const { id, status } of ids) {
+  for (const { id } of ids) {
     try {
-      const c = s.db();
-      if (status === "done" && !current(c, id)) continue;
-      const how = flip(c, id);
+      const how = flip(s.db(), id);
       if (how === "moved") out.moved++;
       else if (how === "rebuilt") out.rebuilt++;
       else if (how === null) out.deferred++;
@@ -244,7 +245,10 @@ export async function flip_all(s: AppState): Promise<{ moved: number; rebuilt: n
   }
   if (ids.length) {
     const ms = Math.round(performance.now() - t0);
-    console.log(`${now()} huntaway: ${out.moved + out.rebuilt} tasks moved onto items (${out.rebuilt} rebuilt first) in ${ms} ms; ${out.deferred} wait until they're quiet`);
+    const left = db.value<number>(s.db(), "SELECT COUNT(*) FROM tasks WHERE thread_source <> 'items'") ?? 0;
+    console.log(
+      `${now()} huntaway: ${out.moved + out.rebuilt} tasks moved onto items (${out.rebuilt} rebuilt first) in ${ms} ms; ${out.deferred} didn't (mid-turn, a prompt waiting, or a failed rebuild); ${left} are on messages`,
+    );
   }
   return out;
 }

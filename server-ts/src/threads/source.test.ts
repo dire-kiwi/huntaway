@@ -24,6 +24,7 @@ import * as source from "./source.ts";
 import * as history from "./history.ts";
 import * as batch from "./batch.ts";
 import * as rebuild_cli from "./rebuild.ts";
+import { CONVERTER_VERSION } from "./translate.ts";
 
 // A run's launch fails rather than starting a real agent (with TEST_CAN_RUN, its messages are still written).
 process.env.IA_SHIM_BIN = "/nonexistent/ia-shim";
@@ -100,7 +101,7 @@ test("a board that never wrote a message starts the sequence", () => {
   assert.deepEqual([m.id, row.id], [1, 2]);
 });
 
-test("a task moves onto items once it's quiet: a run going, a prompt or a question waiting holds it back", () => {
+test("a task moves onto items once it's quiet: a run going or a prompt waiting holds it back, a question doesn't", () => {
   const { s, task } = setup();
   const t = task();
   on_messages(s, () => s.add_message(t.id, "user", { text: "go" }));
@@ -118,13 +119,20 @@ test("a task moves onto items once it's quiet: a run going, a prompt or a questi
   assert.equal(source.busy(s.db(), t.id), "a prompt is waiting for an answer");
   s.add_event(t.id, "info", "an event");
   assert.deepEqual([on(s, t.id), rows(s, t.id)], ["messages", 5]);
-  // The question stays answerable after its run.
+  // The prompt expired: quiet, so it moves, with its question still open (it stays answerable after its run).
   permissions.expire_for_task(s, t.id);
-  assert.equal(source.busy(s.db(), t.id), "a question is waiting for an answer");
+  assert.equal(source.busy(s.db(), t.id), null);
   source.settled(s, t.id);
-  assert.equal(on(s, t.id), "messages");
-  db.update_pending_message(s.db(), q.id, { ...q.data, status: "replied" });
-  // Quiet: the next message moves it, and is its first written as items only.
+  assert.deepEqual([on(s, t.id), rows(s, t.id)], ["items", 5]);
+  assert.deepEqual(history.open_questions(s.db(), t.id).map((o) => o.id), [q.id]);
+  assert.equal(store.get_request(s.db(), t.id, `legacy:${q.id}`)?.resolution, undefined);
+  // Settled on items: its request, and the message as it's kept, say so, and its row is as it was.
+  assert.equal(db.update_pending_message(s.db(), q.id, { ...q.data, status: "replied" }, t.id)?.data.status, "replied");
+  assert.equal(db.get_message(s.db(), q.id, t.id)?.data.status, "replied");
+  assert.equal(store.get_request(s.db(), t.id, `legacy:${q.id}`)?.resolution?.outcome, "cancel");
+  assert.deepEqual(history.open_questions(s.db(), t.id), []);
+  assert.equal(db.value(s.db(), "SELECT json_extract(data, '$.status') FROM messages WHERE id=?1", q.id), "pending");
+  // The next message is written as items only.
   const m = s.add_message(t.id, "user", { text: "carry on" });
   assert.deepEqual([on(s, t.id), rows(s, t.id)], ["items", 5]);
   assert.deepEqual(texts(s, t.id), ["go", "an event", "carry on"]);
@@ -424,9 +432,10 @@ test("at the start, quiet tasks move onto items; one mid-turn moves when its run
   });
   const run = db.insert_run(s.db(), busy.id, "prompt");
   const moved = await source.flip_all(s);
-  // `fresh` has no messages: it moves, with nothing to rebuild.
-  assert.deepEqual(moved, { moved: 3, rebuilt: 0, deferred: 1 });
-  assert.deepEqual([quiet, busy, done_old, done_new, fresh].map((t) => on(s, t.id)), ["items", "messages", "messages", "items", "items"]);
+  // `fresh` has no messages: it moves, with nothing to rebuild. `done_old`'s items were never kept: it's rebuilt.
+  assert.deepEqual(moved, { moved: 3, rebuilt: 1, deferred: 1 });
+  assert.deepEqual([quiet, busy, done_old, done_new, fresh].map((t) => on(s, t.id)), ["items", "messages", "items", "items", "items"]);
+  assert.deepEqual(texts(s, done_old.id), ["from before the setting"]);
   db.run(s.db(), "UPDATE runs SET status='exited' WHERE id=?1", run.id);
   source.settled(s, busy.id);
   assert.equal(on(s, busy.id), "items");
@@ -436,6 +445,57 @@ test("at the start, quiet tasks move onto items; one mid-turn moves when its run
   s.add_message(other.id, "user", { text: "hi" });
   assert.deepEqual(await source.flip_all(s), { moved: 0, rebuilt: 0, deferred: 0 });
   assert.equal(on(s, other.id), "messages");
+});
+
+// HA-225's prerequisite: done tasks left on messages by HA-222 (their items an older build's, or never kept), and tasks
+// with a question waiting, move at the start, so none is on messages.
+test("at the start, done tasks are rebuilt onto items, and a task waiting on a question moves with it still open", async (t) => {
+  runs.TEST_CAN_RUN.set(true);
+  t.after(() => runs.TEST_CAN_RUN.set(false));
+  const { s, events, task } = setup();
+  const [old, stale, asking, gate] = [task("never kept", "done"), task("an older converter's", "done"), task("asking", "needs_attention"), task("merge gate", "needs_attention")];
+  let q = 0;
+  let card = 0;
+  on_messages(s, () => {
+    db.set_setting(s.db(), write.SETTING, "false");
+    s.add_message(old.id, "user", { text: "from before the setting" });
+    s.add_message(old.id, "claude", { type: "assistant", message: { content: [{ type: "text", text: "done that" }] } });
+    db.set_setting(s.db(), write.SETTING, null);
+    s.add_message(stale.id, "user", { text: "kept" });
+    s.add_message(asking.id, "user", { text: "go" });
+    q = s.add_message(asking.id, "question", { ...questions.card({ question: "Which?", options: ["A", "B"] }), call_id: "call-1", status: "pending" }).id;
+    s.add_message(gate.id, "user", { text: "go" });
+    db.run(s.db(), "UPDATE tasks SET merging=1, merge_approval='pending' WHERE id=?1", gate.id);
+    merge_gate.ask(s, gate.id);
+    card = history.open_questions(s.db(), gate.id)[0]!.id;
+  });
+  db.run(s.db(), "UPDATE threads SET converter=1 WHERE task_id=?1", stale.id);
+  db.run(s.db(), "UPDATE tasks SET thread_items=0 WHERE id=?1", asking.id);
+  const before = [old, stale, asking, gate].map((x) => rows(s, x.id));
+  events.length = 0;
+  assert.deepEqual(await source.flip_all(s), { moved: 1, rebuilt: 3, deferred: 0 });
+  assert.equal(db.value(s.db(), "SELECT COUNT(*) FROM tasks WHERE thread_source <> 'items'"), 0);
+  assert.deepEqual(texts(s, old.id), ["from before the setting"]);
+  assert.equal(store.items(s.db(), old.id).length, 2);
+  assert.deepEqual(texts(s, stale.id), ["kept"]);
+  assert.equal(db.value(s.db(), "SELECT converter FROM threads WHERE task_id=?1", stale.id), CONVERTER_VERSION);
+  // Clients are told each task moved, and to load its rebuilt thread again.
+  for (const x of [old, stale, asking]) assert.ok(events.some((e) => e.type === "thread_resync" && e.task_id === x.id), x.title);
+  // The question is still open, and answering it sends the reply, written as an item.
+  assert.deepEqual(history.open_questions(s.db(), asking.id).map((o) => o.id), [q]);
+  questions.answer(s, asking.id, q, { choices: ["B"] });
+  assert.equal(db.get_message(s.db(), q, asking.id)?.data.status, "answered");
+  assert.equal(store.get_request(s.db(), asking.id, `legacy:${q}`)?.resolution?.outcome, "answer");
+  const reply = testing.messages(s.db(), asking.id).filter((m) => m.kind === "user").at(-1)!;
+  assert.match(reply.data.text, /> Which\?\n\nB/);
+  assert.equal(store.get_item(s.db(), asking.id, `legacy:${reply.id}`)?.type, "user_message");
+  await idle(s, asking.id);
+  // The merge gate's card too.
+  assert.deepEqual(history.open_questions(s.db(), gate.id).map((o) => o.id), [card]);
+  merge_gate.settle(s, gate.id, "replaced");
+  assert.equal(db.get_message(s.db(), card, gate.id)?.data.status, "replaced");
+  // Their messages are as they were: nothing was written to them since.
+  assert.deepEqual([old, stale, asking, gate].map((x) => rows(s, x.id)), before);
 });
 
 // Review of HA-222: a rebuild that failed as a task was to move onto items threw out of insert_message and start_run,

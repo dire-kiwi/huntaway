@@ -454,10 +454,10 @@ permission, question, merge-gate and report updates.
   `threads-import` leave it out. A translator fix from here on applies to what it writes next.
 
 **Moving onto items** (`flip`), one task at a time, in one transaction: when it's quiet, no run going (a task mid-turn
-waits for its run to end) and no prompt or question waiting for an answer. Its items must be complete and this build's,
+waits for its run to end) and no prompt waiting for an answer. Its items must be complete and this build's,
 so one that isn't (never rebuilt, an older converter's, live writes stopped on an error) is rebuilt from its messages
 first, in the same transaction; a task with no messages just starts its thread. It happens at the server's start
-(`flip_all`, every quiet task but done ones whose items aren't this build's, yielding between them), when a run ends
+(`flip_all`, every quiet task, yielding between them), when a run ends
 (`settled`, from output.ts's `finish` once the run has exited and its prompts expired), in start_run before its run's
 row (so the run's prompt is the first message written as an item), and before any message is written to a quiet task
 still on messages (insert_message): a new task moves with its first message. Clients get the task (with its
@@ -483,7 +483,7 @@ an items task's messages, so it shows its thread as it was at the move: it needs
 messages, and both pass), and read what was written with `testing.messages`, which for a task on items is a journal of
 the messages it was written as (the board's readers read items). The step 3–7 tests of items beside messages, and the
 message routes', keep their tasks on messages (`testing.on_items(s, false)`). `threads/source.test.ts` covers the move
-(quiet, mid-turn, a prompt or question waiting, stale items rebuilt first, start_run, the start and a run's end), ids,
+(quiet, mid-turn, a prompt waiting, stale items rebuilt first, start_run, the start and a run's end), ids,
 in-place updates, pending approvals, a late answer, attachments a week on, the readers, moving back, crashes around the
 move (a throw and a process exit at `threads:flipped` and `threads:write`), and rebuilds leaving it alone.
 
@@ -503,6 +503,34 @@ move (a throw and a process exit at `threads:flipped` and `threads:write`), and 
 > - Delete `huntaway.db` (with its `-wal` and `-shm`) once you won't go back.
 > - **Update the phone app** to this release's build: an older one shows each thread as it was when its task moved
 >   over, and its Inbox misses the questions asked since.
+
+### Every task onto items
+
+Before step 13 removes the messages path, every task must be on items. Step 10 left two kinds on messages, which
+this change (HA-225's first PR) moves at the server's start:
+
+- **Done tasks whose items weren't this build's** (most of them had none: the batch leaves done tasks out, and one got
+  items only when it was opened). `flip_all` now takes them after the tasks that aren't done, rebuilding each from its
+  messages as it moves, one transaction a task, yielding between them.
+- **Tasks with a question waiting** (the board's `request_user_input` card, or the merge gate's): `busy` no longer
+  counts one. The rebuilt thread has the question as an open request with its card as its metadata, so answering it,
+  a reply settling it, or the merge gate replacing it, changes it in place (`source.update`), as for a question asked
+  on items. A pending permission prompt still holds a task back: it's its run's, which hasn't finished with it.
+
+A task whose rebuild fails stays on messages, as before (logged, and not tried again until it's rebuilt or the server
+restarts); the start's log line says how many are left on messages.
+
+What was checked: unit tests (`threads/source.test.ts`): done tasks with no items and with an older converter's, a
+task waiting on a question (answered after the move, its reply written as an item) and one on the merge gate's card
+(replaced after it), their messages left as they were. On a scrubbed copy of the live board (2026-11-06, 2,000 tasks,
+644 on messages: 637 done, 6 waiting on a question, 1 new): all 644 moved in 9.2 s at the start (629 rebuilt first),
+none failed, none left on messages, no thread with an error or an older converter, and every task with messages has
+items. The 21 questions still pending (on done tasks too) are open requests, and one answered through the API
+resolved its request and wrote its reply as an item. The database file went from 1,650 MB to 1,903 MB.
+
+> **Every task moves onto the new thread store.** The first start after the update moves the tasks still on the old
+> one (done tasks, and those waiting on a question) onto it: on a big board that takes a few seconds, while the board
+> is already up, and the database grows by about a sixth. Nothing changes in how they look.
 
 ## Claude's control protocol
 
@@ -618,7 +646,9 @@ which the agent didn't remember it and its file was gone. The thread view drew e
 | B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`server-ts/src/db/file.ts`), on since step 10 |
 | 10. Items are the source | HA-222 | Done: `threads/source.ts`, `tasks.thread_source` (migration 98, API 122), no messages rows for tasks on items, the move when quiet, `huntaway threads-rebuild --back`, `huntaway-2.db` on by default. See "Items are the source". |
 | 11. Codex writes items directly | HA-223 | This change: `agent/codex/driver.ts`, `threads/native.ts`, `agent/codex/requests.ts`, the board's tools as Codex dynamic tools, run format 5, migration 99. See "Codex writes items directly". |
-| 12–14. Soak, remove the legacy code, delete old message rows | HA-224 to HA-226 | Not started |
+| 12. Soak | HA-224 | Done |
+| 13a. Every task onto items | HA-225 | This change: `source.flip_all` rebuilds done tasks too, and a question waiting no longer holds a task back. See "Every task onto items". |
+| 13–14. Remove the legacy code, delete old message rows | HA-225, HA-226 | Not started |
 
 Left for later steps:
 
@@ -627,6 +657,5 @@ Left for later steps:
   have the preview's text so far. The view shows the rest as it streams, as it did from messages.
 - Saving `thread.updated` when the task's state changes: the view reads a thread's state from its task, whose `task`
   events it has anyway, so nothing needs it yet.
-- Done tasks that are never opened have no items, and stay on messages (step 10 keeps the readers' fallback to
-  messages for them, and moves one onto items at its next message, rebuilding it first). Step 13 needs them on items
-  too: a batch with done tasks in it.
+- None: done tasks, and tasks with a question waiting, move onto items at the start too (see "Every task onto items",
+  below), which step 13 needs.
