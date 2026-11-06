@@ -55,6 +55,50 @@ export function linksInNewTabs() {
   };
 }
 
+/**
+ * Takes WebRTC away from the page before its own scripts run: Chromium doesn't hold RTCPeerConnection to the frame's
+ * policy, so a page could send data to a STUN or TURN server of its choosing, in its hostname or a TURN username
+ * (HA-269). A frame in the page is of another origin (the sandbox gives each document an opaque origin of its own), so
+ * the page can't take the constructor back from one, but a new document in it would have it: a srcdoc frame's scripts,
+ * or a javascript: URL's (`<iframe src="javascript:…">`, which frame-src doesn't hold). For those, FRAME_CSP requires
+ * Trusted Types, and this makes the default policy, which lets everything through: the page's innerHTML, eval and the
+ * like work as before, but a new frame has no default policy, so it can't run a javascript: URL. A srcdoc frame of the
+ * page's own still runs its scripts before anything can take WebRTC away there (in a browser: the desktop app takes it
+ * away in every frame, see electron/preload.cjs). The board's <ia-html> frames run this first (planTheme.ts). Workers
+ * have no RTCPeerConnection, but a classic one the page makes (from a blob: or data: URL, all worker-src allows) has the
+ * policy without the default policy, which would fail its importScripts, eval and the like: it's started from a script
+ * that makes one, then imports the page's. A blob: URL's Blob is kept as it's made, and imported from a URL of its own,
+ * as pages often revoke theirs once the worker is made. (A worker that worker makes has no default policy.) It runs in
+ * a document's frame, as source.
+ */
+export function noWebRtc() {
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection"]) delete (window as unknown as Record<string, unknown>)[name];
+  const pass = (s: string) => s;
+  type Policies = { createPolicy: (name: string, rules: Record<string, (s: string) => string>) => unknown };
+  (window as unknown as { trustedTypes?: Policies }).trustedTypes?.createPolicy("default", { createHTML: pass, createScript: pass, createScriptURL: pass });
+  const blobs = new Map<string, Blob>();
+  const { createObjectURL, revokeObjectURL } = URL;
+  URL.createObjectURL = (obj: Blob | MediaSource) => {
+    const url = createObjectURL(obj);
+    if (obj instanceof Blob) blobs.set(url, obj);
+    return url;
+  };
+  URL.revokeObjectURL = (url: string) => {
+    blobs.delete(url);
+    revokeObjectURL(url);
+  };
+  const policy = 'self.trustedTypes?.createPolicy("default", { createHTML: (s) => s, createScript: (s) => s, createScriptURL: (s) => s });';
+  const PageWorker = Worker;
+  window.Worker = class extends PageWorker {
+    constructor(url: string | URL, options?: WorkerOptions) {
+      const href = String(url);
+      const blob = options?.type === "module" ? undefined : blobs.get(href);
+      const own = blob ? createObjectURL(blob) : options?.type !== "module" && /^data:/i.test(href) ? href : null;
+      super(own ? createObjectURL(new Blob([`${policy}\nimportScripts(${JSON.stringify(own)});`], { type: "text/javascript" })) : url, options);
+    }
+  };
+}
+
 /** When the user last used the board itself, rather than a frame in it: a pointer down or key press in its document. */
 let boardInput = -Infinity;
 let tracking = false;
@@ -98,9 +142,15 @@ const CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpk
  * and blob: URLs. So a page an agent wrote (say, prompted by a poisoned issue) can't send what's in it, or the answers
  * typed into it, out with remote images, fetch, frames or form posts. The frame's own navigations are held by the
  * board's frame-src (index.html), and its links by `linksInNewTabs`. An <ia-html>'s frame (srcdoc) inherits it.
- * Two ways out remain, both through a hostname of the page's choosing (HA-269): WebRTC, which Chromium doesn't hold to
- * CSP (a STUN or TURN server), and, in browsers but not Electron, a frame load the policy refuses (an <iframe>, or a
- * frame navigating itself), for which Chromium still looks the host up and connects to it, TLS SNI included.
+ * WebRTC isn't held to CSP, so `noWebRtc` takes it away, and Trusted Types (with its default policy) keep a javascript:
+ * URL frame from getting it back. What's left is in browsers, not the desktop app (HA-269): a srcdoc frame the page
+ * makes itself can use WebRTC (it has no default policy, so its own innerHTML and the like with strings fail), and
+ * unless Chrome's "Preload pages" setting is off, it still looks up and connects to (TLS SNI included) the host of a
+ * frame load the policy refuses (an <iframe>, or a frame navigating itself) and of a <link rel=preconnect>, in the
+ * page's HTML or added by its script. Each sends data out in a hostname of the page's choosing. Nothing the board sets
+ * changes the last two: the frame served with the policy as a header, the iframe's `csp` attribute, COOP and COEP were
+ * tried, and `x-dns-prefetch-control: off` doesn't hold preconnect (dns-prefetch links and links' hosts aren't looked
+ * up in the frame, even with it on).
  */
 export const FRAME_CSP = [
   "default-src 'none'",
@@ -114,12 +164,13 @@ export const FRAME_CSP = [
   "frame-src 'none'",
   "form-action 'none'",
   "base-uri 'none'",
+  "require-trusted-types-for 'script'",
 ].join("; ");
 
 /**
  * A document's HTML with its policy (FRAME_CSP) before anything in it, and the script that keeps its place (`keepPlace`)
- * (with `linksInNewTabs`) after. The policy comes first of all, with a doctype of its own (the page's, after it, is ignored), rather than after
+ * (with `linksInNewTabs`) after. The policy comes first of all, then `noWebRtc`, with a doctype of its own (the page's, after it, is ignored), rather than after
  * the page's doctype or comments: finding where those end as the browser does isn't worth the risk of a script before it.
  */
 export const frameDoc = (html: string, y: number, inset: number) =>
-  `<!doctype html><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">\n${html}\n<script>(${keepPlace})(${y},${inset});(${linksInNewTabs})()</script>`;
+  `<!doctype html><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><script>(${noWebRtc})()</script>\n${html}\n<script>(${keepPlace})(${y},${inset});(${linksInNewTabs})()</script>`;
