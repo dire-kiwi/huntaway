@@ -11,3 +11,7 @@ __pycache__/
 /apps/server/bin/ia-shim
 /target
 /server-ts/bin/ia-shim
+# What a checkout from before HA-263 (app/, server-ts/ and server/ at the top) leaves there (see scripts/legacy-update.sh).
+/app/dist
+/app/*.tsbuildinfo
+/server/

@@ -251,7 +251,7 @@ jobs:
             echo "set=true" >> "$GITHUB_OUTPUT"
           else
             echo "set=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=No Android APK::The ANDROID_KEY* secrets aren't all set, so a release has no APK (README: The mobile app)"
+            echo "::notice title=No Android APK::The ANDROID_KEY* secrets aren't all set, so a release has no APK (docs/guide/mobile.md: The mobile app)"
           fi
 
   # The mobile app's Android APK (apps/mobile), built here with `expo prebuild` and Gradle rather than on EAS: it needs no
@@ -331,7 +331,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$KEYSTORE" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
-            echo "::error::A release's APK needs the signing key: set the repository secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD (README: The mobile app)"
+            echo "::error::A release's APK needs the signing key: set the repository secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD (docs/guide/mobile.md: The mobile app)"
             exit 1
           fi
           keystore="$RUNNER_TEMP/release.jks"

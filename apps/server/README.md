@@ -1,29 +1,32 @@
-# server-ts: the server (HA-174)
+# apps/server: the server (HA-174)
 
 The `huntaway` server, in TypeScript. It's a port of the Rust server (`server/src/`), which it replaced and which was
 removed in HA-179 (`PORTING.md` says how to read that Rust in git history). Releases carry it (see *Release builds* in
-the top README): `scripts/package-server.sh` packages it with the Node that runs it, `ia-shim` and the UI, for the
+[docs/guide/desktop.md](../../docs/guide/desktop.md)): `scripts/package-server.sh` packages it with the Node that runs it, `ia-shim` and the UI, for the
 server tarball and the desktop app. Checkouts run it too: test servers (`scripts/test-server.sh`), the install script,
-the desktop app (`npm run electron`) and Rebuild & restart. It runs on Node 24+ straight from the `.ts` files (Node
+the desktop app (`pnpm run electron`) and Rebuild & restart. It runs on Node 24+ straight from the `.ts` files (Node
 strips the types; there's no build step), with `node:sqlite` for the database and `ws` for websockets as its only
 dependency. A release's package carries it compiled to `.js` (`tsconfig.build.json`), which saves the server Node's
 TypeScript compiler (see *Memory*).
 
 ```sh
-cd server-ts && npm ci
+pnpm install                                               # at the top of the checkout
+cd apps/server
 bin/huntaway serve --port 7979 --data-dir /tmp/board-ts   # the same flags and subcommands as the Rust binary had
-npm run typecheck && npm test                              # tsrs (TypeScript 7, in Rust), and the unit tests
+pnpm typecheck && pnpm test                                # Vite+'s type check (TypeScript 7), and the tests (Vitest)
 ```
 
-It runs agents with the Rust `ia-shim` (`$IA_SHIM_BIN`, else the newer of `server/target/{release,debug}/ia-shim`, else
-`ia-shim` beside `bin/huntaway`), so build that with `cargo build -p ia-shim` in `server/` first. `bin/issue-agent` is
-the same command under the board's name from before the rename (see the top README), and release packages have it too.
+It runs agents with the Rust `ia-shim` (`$IA_SHIM_BIN`, else the newer of `target/{release,debug}/ia-shim` at the top of
+the checkout, else `ia-shim` beside `bin/huntaway`), so build that with `cargo build -p ia-shim` there first.
+`bin/issue-agent` is the same command under the board's name from before the rename (see the top README), and release
+packages have it too. In a release package the server is in `server-ts/`, the folder's name before HA-263, and
+`server-ts/bin/huntaway` in a checkout forwards here for commands that still name that path.
 `scripts/test-server.sh` runs `bin/huntaway`, and `IA_TEST_BIN` runs another build instead (as `scripts/ram-compare.mjs`
 does for a Rust release's server):
 
 ```sh
 scripts/test-server.sh --demo > $TMPDIR/ts-env
-cd app && npm run test:ui                                   # the browser checks
+pnpm test:ui                                                # the browser checks (apps/web/tests/ui)
 ```
 
 ## Scope
@@ -31,7 +34,7 @@ cd app && npm run test:ui                                   # the browser checks
 Everything a single machine's board does is ported: the API, the database and its migrations, live events, agent runs
 (Claude and Codex) and their thread output, the board's MCP tools and the gh MCP server, permission prompts, worktrees,
 checkpoints and the git views, reviews, automations, status scripts, terminals, hub links (`--hub`, hosts added by URL)
-and Web Push, restarting, rebuilding from a checkout (the UI, `npm ci` when `server-ts`'s lockfile changed, and the Rust
+and Web Push, restarting, rebuilding from a checkout (`pnpm install`, the UI, and the Rust
 `ia-shim`) and release updates (downloaded into `<data dir>/app/`, Update and Roll back onto a release, which may be one
 that runs the Rust server: 0.3.x and earlier, which `backup.ts`'s backup on a version change makes safe to go back to),
 SSH hosts (`ssh-host`, and hosts added over SSH) and the broker (`--broker`: the legacy relay, and managed tunnels with
@@ -77,7 +80,7 @@ release build of the Rust server and a package of the TS server on Node 26.8, on
 | Each agent's `huntaway gh-mcp` helper | 7 MB | none since HA-180 | 90 MB |
 
 On the `--demo` data, idle is 20 MB against 85 MB (128 MB before), and loading the board keeps them at about 26 MB and
-87 MB. A checkout's `.ts` (test servers, `bin/huntaway` in `server-ts/`) idles at 132 MB on the live copy: Node's
+87 MB. A checkout's `.ts` (test servers, `bin/huntaway` in `apps/server`) idles at 132 MB on the live copy: Node's
 TypeScript compiler, below.
 
 The Rust server's figures vary by 10 to 20% from run to run, the TS server's by a few MB.

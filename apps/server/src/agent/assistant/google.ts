@@ -299,7 +299,7 @@ export function status(s: Shared, profile_id: string): Status {
   } else if (account === undefined && wanted !== null) {
     problem = `There are no credentials for ${wanted} in ${path_str(creds)}: sign in with ${consent_command}.`;
   } else if (account === undefined) {
-    problem = `Not signed in to Google yet: run ${consent_command} on this host (see the README's An assistant host).`;
+    problem = `Not signed in to Google yet: run ${consent_command} on this host (see An assistant host in docs/guide/assistant.md).`;
   } else if (!account.refresh_token) {
     problem = `${account.email}'s credentials have no refresh token, so they stop working within the hour: sign in again with ${consent_command}.`;
   }

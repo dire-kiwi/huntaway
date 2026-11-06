@@ -4,30 +4,33 @@ Where code goes, and how big modules are split. Written for HA-96, which split t
 largest files; HA-101 split the next five and HA-102 grouped the server's modules into folders, and
 HA-103 grouped the app's components into feature folders and split its largest files. The rest of
 the plan, under *Next*, is for follow-up tasks. Those splits were made in the Rust server (`server/src/`), and its
-TypeScript port in `server-ts/src/`, which is the server now (HA-174, HA-178), kept the same modules and file layout.
-The Rust server was removed in HA-179 (`server-ts/PORTING.md` says how to read it in git history); `server/` keeps
-the Rust that's left, `ia-shim` and the broker.
+TypeScript port in `apps/server/src/`, which is the server now (HA-174, HA-178), kept the same modules and file layout.
+The Rust server was removed in HA-179 (`apps/server/PORTING.md` says how to read it in git history); `rust/` has the
+Rust that's left, `ia-shim` and the broker. HA-263 made the repository a pnpm workspace with Vite+ (`vp`) as its
+toolchain, and moved the packages into `apps/` and `rust/` (see [development.md](development.md)).
 
 ## Layout
 
 ```
-server-ts/src/       the server: one module per feature, grouped in folders by area (bin/huntaway runs it)
-server/              the Rust workspace (cargo build -p ia-shim, cargo test), with these two crates:
-server/shim/         ia-shim, the per-run supervisor (Rust)
-server/broker/       huntaway-broker (Rust)
-app/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
-app/src/api/         the web board's client: packages/client's, for the page's own board
-packages/client/     the API's types and calls, a file per resource, shared with the mobile app
-app/src/components/  React components in a folder per feature (see App modules)
-app/tests/           unit tests (npm test); app/tests/ui/ browser tests (npm run test:ui)
-scripts/             test servers, ia-api, ui-check and other tools (see README.md)
-docs/                notes like this one
+apps/server/src/          the server: one module per feature, grouped in folders by area (bin/huntaway runs it)
+apps/server/tests/        whole-server tests
+apps/web/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
+apps/web/src/api/         the web board's client: packages/client's, for the page's own board
+apps/web/src/components/  React components in a folder per feature (see App modules)
+apps/web/electron/        the desktop app's shell (Electron)
+apps/web/tests/           unit tests (vp test); apps/web/tests/ui/ browser tests (pnpm run test:ui)
+apps/mobile/              the mobile app (Expo, React Native)
+packages/client/          the API's types and calls, a file per resource, shared with the mobile app
+rust/shim/                ia-shim, the per-run supervisor (the Cargo workspace is the root's Cargo.toml)
+rust/broker/              huntaway-broker
+scripts/                  test servers, ia-api, ui-check and other tools (see development.md)
+docs/                     the guide (docs/guide/), design notes like this one, and dated notes (docs/notes/)
 ```
 
 ## Server modules
 
 Each module is a file named after its feature (`worktree.ts`, `hub.ts`, `review.ts`…), in a folder for its area of
-`server-ts/src/`:
+`apps/server/src/`:
 
 | Folder | Modules |
 |---|---|
@@ -44,21 +47,21 @@ Each module is a file named after its feature (`worktree.ts`, `hub.ts`, `review.
 (`../agent/runner.ts`); `mcp.ts` and `review.ts` are modules of their own as well as their folders'. Imports are
 namespace imports with the `.ts` extension, as Rust paths read: `import * as worktree from "../git/worktree.ts"`, then
 `worktree.git(…)`. A new module goes in the folder for what it's about, or at the top if it's used everywhere, as
-`util` is. `server-ts/PORTING.md` has the rest of the conventions (names, types, sync and async).
+`util` is. `apps/server/PORTING.md` has the rest of the conventions (names, types, sync and async).
 
 When a module outgrows one file it becomes a folder too, as `runner`, `db`, `api` and `tools` have:
 
 ```
-server-ts/src/agent/runner.ts              what the module is about, shared items, the core
-server-ts/src/agent/runner/queue.ts        one part of it each
-server-ts/src/agent/runner/tests.test.ts   its tests
+apps/server/src/agent/runner.ts              what the module is about, shared items, the core
+apps/server/src/agent/runner/queue.ts        one part of it each
+apps/server/src/agent/runner/tests.test.ts   its tests
 ```
 
 - `foo.ts` sits next to a `foo/` folder for its parts, and re-exports each with `export * from "./foo/part.ts";`, so
   the rest of the server keeps importing `foo.ts` and doesn't need to know which file has an item.
 - A part imports what it needs from the others (circular imports are fine for functions, but not at module load).
 - Tests are `*.test.ts`: beside a one-file module (`backup.test.ts`), or in its folder (`foo/tests.test.ts`), and
-  `server-ts/tests/` for whole-server tests. `npm test` in `server-ts/` runs them all.
+  `apps/server/tests/` for whole-server tests. `vp test` in `apps/server` runs them all (Vitest).
 - Split by what the code is about, not by kind: `db/tasks.ts` has the `Task` row and the task
   queries, rather than one file of types and one of queries. Each `api/` part has the handlers
   for one resource. The route table stays in `api.ts` (`host_routes`), the one place that lists
@@ -79,7 +82,7 @@ These were Rust files (`.rs`); the TypeScript server has the same parts as `.ts`
 | `mcp/tools.rs` | 4,055 | `tools.rs` (`Ctx`, errors), `dispatch`, `local`, `projects`, `approvals`, `automations`, `resolve`, `tasks`, `tests` |
 
 The largest part is now `db/schema.rs` (about 1,000 lines, mostly the migrations' SQL); the
-others are 60 to 800. A new DB migration goes in `server-ts/src/db/schema.ts`.
+others are 60 to 800. A new DB migration goes in `apps/server/src/db/schema.ts`.
 
 ### What HA-101 split
 
@@ -109,8 +112,8 @@ Their parts are 70 to 460 lines.
 ## App modules
 
 The app groups its components by feature (see *bulletproof-react* below): a folder in
-`app/src/components/` for each, with the helpers only that feature uses beside its components.
-Helpers several features use stay in `app/src/` (`store.ts`, `router.ts`, `threadModel.ts`,
+`apps/web/src/components/` for each, with the helpers only that feature uses beside its components.
+Helpers several features use stay in `apps/web/src/` (`store.ts`, `router.ts`, `threadModel.ts`,
 `analytics.ts`…).
 
 | Folder | What's in it |
@@ -123,14 +126,14 @@ Helpers several features use stay in `app/src/` (`store.ts`, `router.ts`, `threa
 | `ui/` | the shared building blocks, a file per kind (`controls`, `Modal`, `ContextMenu`, `status`, `links`, `time`, `hooks`, `format`) re-exported by `ui/index.ts`, AgentIcon, `preview.ts` |
 
 - A feature may import from another (the composer sends line comments from `changes/`, the Changes
-  tab reads turns from `task/`); what every feature needs goes in `ui/` or `app/src/`.
+  tab reads turns from `task/`); what every feature needs goes in `ui/` or `apps/web/src/`.
 - `packages/client/src/` (`@huntaway/client`) has a file per resource, as the server's `api/` has
   (`tasks`, `thread`, `git`, `projects`, `hosts`…), with `http.ts` for the requests themselves. It's
-  plain TypeScript with no DOM (`npm run typecheck` in `app/` checks it on its own), for the mobile
+  plain TypeScript with no DOM (its own tsconfig.json, which `pnpm typecheck` checks it with), for the mobile
   app too: each resource's calls are made from a board's `Http` (`tasksApi(http)`), and
   `createClient(adapter)` puts them together for one board, whose address, token, storage and
   websocket address the adapter gives (an app with several boards makes a client for each).
-  `app/src/api/index.ts` makes the web board's, for the page's own board with its token in
+  `apps/web/src/api/index.ts` makes the web board's, for the page's own board with its token in
   localStorage, as `api`, and re-exports the package's types, so `import { api, type Task } from
   "../../api"` works from anywhere. Tests stub calls on that one `api` object.
 - When a component outgrows its file, it becomes a folder named after it beside it
@@ -160,7 +163,7 @@ The largest files left in the app are `Hosts.tsx`, `Automations.tsx` and `Analyt
 
 ### Server: the next files
 
-The largest files in `server-ts/src/` (not counting tests) are `db/schema.ts` (1,284 lines, most of them the
+The largest files in `apps/server/src/` (not counting tests) are `db/schema.ts` (1,284 lines, most of them the
 migrations' SQL) and `agent/agent_tools.ts` (1,175), which would be the next to split; then `hosts/broker.ts` (920)
 and `mcp.ts` (867).
 

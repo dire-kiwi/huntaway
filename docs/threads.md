@@ -1,7 +1,7 @@
 # Threads as items
 
 A task's thread was kept as Claude Code's stream-json: each saved line a row in `messages`, which the app folds into
-what it draws (`app/src/threadModel.ts`). The agent-threads migration (HA-191's plan) keeps each thread as normalized
+what it draws (`apps/web/src/threadModel.ts`). The agent-threads migration (HA-191's plan) keeps each thread as normalized
 **items**, built from the same messages, and served as numbered **events**; since step 10 the items are the source, and
 a task's messages stop being written once it has moved onto them (see "Items are the source"), and since step 11 a
 Codex run writes them straight from its notifications (see "Codex writes items directly"). This file describes
@@ -13,8 +13,8 @@ what Huntaway uses, into its own code, noting the commit they came from (`main` 
 
 ## The model
 
-`server-ts/src/threads/protocol.ts` is one plain TypeScript file that the server and the app share. The app imports it
-by relative path (`app/src/threads.ts` re-exports it), so it has no imports and nothing that's only Node's, and it
+`apps/server/src/threads/protocol.ts` is one plain TypeScript file that the server and the app share. The app imports it
+by relative path (`apps/web/src/threads.ts` re-exports it), so it has no imports and nothing that's only Node's, and it
 passes both packages' typechecks. There's no code generation and no JSON Schema.
 
 - **Thread**: a task has one thread, and its id is the task's. Its own state (`status`, `model`, `session_id`,
@@ -50,7 +50,7 @@ modes. Names are the server's snake_case: `apply_event`, `snapshot_window`, `ite
 
 ## The storage
 
-`server-ts/src/threads/store.ts`, on tables of the board's own database (migration 89), on the same connection, so a
+`apps/server/src/threads/store.ts`, on tables of the board's own database (migration 89), on the same connection, so a
 message and its items can be written in one transaction:
 
 | Table | What |
@@ -82,7 +82,7 @@ says which tasks have a thread kept as items.
 
 ## The translator
 
-`server-ts/src/threads/translate.ts` makes items from the messages the board stores: the slimmed lines
+`apps/server/src/threads/translate.ts` makes items from the messages the board stores: the slimmed lines
 `agent/runner/output.ts` writes, the board's own `user`, `event`, `permission` and `question` rows, and Codex's runs as
 `agent/codex/output.ts` shapes them like Claude's. It's the port of HA-128's `import.rs` (converter version 6 there),
 made a fold, so the live path (step 3) and batch rebuilds (step 7) can share it:
@@ -174,7 +174,7 @@ say (a rebuild).
 
 ## Writing items live
 
-`server-ts/src/threads/write.ts`, step 3 (plan decisions D3 and D4).
+`apps/server/src/threads/write.ts`, step 3 (plan decisions D3 and D4).
 
 - **The switch:** the host setting *Keep threads as items* (`thread_items` in `/api/settings`, API 116; Settings, a
   host's Agent defaults), off by default until step 7 turned it on (stored as `"false"` when it's off, so unset is
@@ -235,21 +235,21 @@ approval), the threads were a rebuild's too.
 
 Step 5 (HA-218): the app draws a task's thread from its items when the task's thread is kept as items (the task's
 `thread_items`, API 119), its host serves the view (API 119) and the host's setting is on. Every other task, and
-every task on an older host, is drawn from its messages as before (`app/src/threadModel.ts`), and so is a flagged task
+every task on an older host, is drawn from its messages as before (`apps/web/src/threadModel.ts`), and so is a flagged task
 once the setting is turned off (its messages are still written). A host that answers 404 for a flagged task's thread
 (its live writes stopped on an error) has it drawn from its messages too, until a `thread_resync` says it was rebuilt.
-`app/src/threadView.ts` decides which. It's one view either way (`components/task/Thread.tsx`), so a thread that
+`apps/web/src/threadView.ts` decides which. It's one view either way (`components/task/Thread.tsx`), so a thread that
 switches (its first message flags it, the setting changes) keeps its rows' state and the composer its text and focus,
 and shows the messages it has until its window has loaded.
 
-- **Following it** (`app/src/itemThreads.ts`): a window of the thread's last 300 items, then its `thread_event`s,
+- **Following it** (`apps/web/src/itemThreads.ts`): a window of the thread's last 300 items, then its `thread_event`s,
   folded with protocol.ts's `apply_event`. Events that come while the window or a catch-up loads are held and applied
   after it. A gap (`is_gap`) fetches `/thread/events` after the thread's seq; a `resync` answer there, or a
   `thread_resync`, takes a fresh window; a reconnect (or the hub's `resync`) catches every shown thread up from its seq.
   Scrolled up, the 200 items before the window's start come in with `with_page`, keeping what events have changed in
   the window since. Streamed text comes from the thread's `delta` events (the board's own `delta` and `delta_reset`
   events aren't drawn for it), into the same preview as before, until an item is added to the main conversation.
-- **Drawing it** (`app/src/itemModel.ts`): an adapter maps the items and requests onto the `ThreadModel` that
+- **Drawing it** (`apps/web/src/itemModel.ts`): an adapter maps the items and requests onto the `ThreadModel` that
   threadModel.ts builds from messages, which `components/task/Thread.tsx` and `thread/*` draw unchanged: rows (a run of
   tool calls is one group), each subagent's own rows, the subagents, the calls' results. Requests go in among the items
   in the order their messages were stored. Keys are the message path's (`legacy:12:3` is `12.3`), so rewinding to a
@@ -273,9 +273,9 @@ and shows the messages it has until its window has loaded.
 
 What it doesn't do the same: a foreground subagent's notification summary isn't kept (its report is its call's
 result, which the message path shows too once it has come); a thread whose live writes failed is drawn from its
-messages. What was checked: `app/tests/itemModel.test.mjs` translates a thread with a bit of everything (and every
-prefix of it) through the server's translator and compares what's drawn with the message path's; `app/tests/
-itemThreads.test.mjs` covers holding, gaps, resyncs, pages, streamed text and a 404; `app/tests/ui/itemThread.test.mjs`
+messages. What was checked: `apps/web/tests/itemModel.test.mjs` translates a thread with a bit of everything (and every
+prefix of it) through the server's translator and compares what's drawn with the message path's; `apps/web/tests/
+itemThreads.test.mjs` covers holding, gaps, resyncs, pages, streamed text and a 404; `apps/web/tests/ui/itemThread.test.mjs`
 shoots the same task drawn both ways (the setting off, then on) and compares the pictures, rows opened too, and pages a
 long thread back. On a test server with haiku: a question, a prompt allowed and one denied, a plan approved into a mode,
 the board's own question, a subagent, steering, stopping and the mode, all from the browser, each thread pixel for
@@ -287,7 +287,7 @@ against a 100-message page), 300 streamed tokens 55–74 → 32–40, a 1,000-to
 
 ## The readers
 
-`server-ts/src/threads/history.ts`, step 6 (plan decision D5). Everything the board reads of a thread (review, summaries,
+`apps/server/src/threads/history.ts`, step 6 (plan decision D5). Everything the board reads of a thread (review, summaries,
 titles, the wait tool, pr_watch, `last_message`, prompts and approvals, checkpoints, analytics) goes through one
 reader each, which reads the task's items when its readers should (`history.source`), and the SQL it always ran on the
 messages otherwise. They read items when the task's items are its source (step 10: always, whatever wrote them), or
@@ -322,7 +322,7 @@ whitespace-only text block isn't an item. `has_call` from messages only looks at
 board writes a Codex subagent's call). `said_in_turn` is asked about a result's message: from items, another message's
 id has no turn's end, so nothing was said in it.
 
-What still reads `messages` on purpose (`grep -rn -E "FROM messages|JOIN messages|UPDATE messages" server-ts/src`,
+What still reads `messages` on purpose (`grep -rn -E "FROM messages|JOIN messages|UPDATE messages" apps/server/src`,
 without the tests):
 
 - The writer: db/messages.ts's inserts and updates, and threads/write.ts and report.ts, which translate messages.
@@ -360,7 +360,7 @@ On a scrubbed copy of the live board (2026-11-06, schema 95, 1,858 tasks, none f
 
 ## Every task gets items
 
-`server-ts/src/threads/batch.ts`, step 7 (the plan's `backfill` question, answered with its recommendation): the
+`apps/server/src/threads/batch.ts`, step 7 (the plan's `backfill` question, answered with its recommendation): the
 tasks from before the setting get their items from a rebuild of their messages (`write.ts`'s `rebuild`), and the
 setting is on by default (API 121). It's still additive: messages are the source, and dropping the `thread_*` rows
 (and `tasks.thread_items`) undoes it.
@@ -422,7 +422,7 @@ the text streamed after the rebuild until the message is saved (then it has all 
 
 ## Items are the source
 
-`server-ts/src/threads/source.ts`, step 10 (plan decisions D6 and D7). Each task has a `thread_source` (migration 98,
+`apps/server/src/threads/source.ts`, step 10 (plan decisions D6 and D7). Each task has a `thread_source` (migration 98,
 API 122): `messages`, as before, or `items`. A task on items gets no `messages` rows: each message it's written as goes
 through the translator into its items only, from every write point (they all go through db/messages.ts's
 `insert_message`, `update_message_data` and `update_pending_message`, D3): output.ts's lines and the board's events
@@ -473,7 +473,7 @@ tasks stay on their messages.
 
 **The app** draws a task on items from its items whatever the host's *Keep threads as items* setting (which is only
 for tasks still on messages now), and so do the board card's pending prompts (`PendingPrompts`) and a document's last
-reply, which read messages before. **The mobile app** (`mobile/src/threadView.tsx`, `thread.ts`'s `itemThreadItems`)
+reply, which read messages before. **The mobile app** (`apps/mobile/src/threadView.tsx`, `thread.ts`'s `itemThreadItems`)
 draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, loaded
 again as its messages' events come, and its Inbox finds an open question in the thread's requests
 (`openItemQuestion`); paired devices may read those two routes (devices.ts). A phone app from before this release reads
@@ -507,7 +507,7 @@ move (a throw and a process exit at `threads:flipped` and `threads:write`), and 
 ## Claude's control protocol
 
 Steps 8 and 9 move what a Claude run asks the board onto Claude Code's control protocol, on the run's own output
-(`out.jsonl`) and input (`input.jsonl`), in `server-ts/src/agent/runner/requests.ts`:
+(`out.jsonl`) and input (`input.jsonl`), in `apps/server/src/agent/runner/requests.ts`:
 
 - **Permission prompts** (step 8, HA-219): `--permission-prompt-tool stdio`, so each prompt is a `can_use_tool` control
   request, decided by mcp/permissions.ts's policy as the helper's `permission_prompt` was, and answered with a
@@ -530,7 +530,7 @@ Step 11 (HA-223). A Codex run's adapter (`huntaway codex-run`, agent/codex/adapt
 notifications to the run's output as they are, as before; what changes is what the server makes of them, and how the
 run reaches the board.
 
-- **The driver** (`server-ts/src/agent/codex/driver.ts`): for a task whose items are its source, each notification is
+- **The driver** (`apps/server/src/agent/codex/driver.ts`): for a task whose items are its source, each notification is
   mapped straight onto the model's events (`map`, which is pure and reads the thread through the store, so a restarted
   server, or a notification read again, goes on from what's stored), written by `threads/native.ts` in one transaction,
   and sent to clients once committed. There's no message shaped like Claude Code's in between: agent/codex/output.ts
@@ -546,7 +546,7 @@ run reaches the board.
   of its calls (or a subagent's) finds it, and a translator rebuilt from the store (`Translator.from`) has them too. Each
   of the driver's writes is given a message id (`source.next_id`) as its items' origin, so they keep their order with the
   board's messages by origin as by position. Streamed text is a preview (`stream:…`), as for Claude.
-- **Requests, with no helper** (`server-ts/src/agent/codex/requests.ts`, run format 5): the adapter writes each of the
+- **Requests, with no helper** (`apps/server/src/agent/codex/requests.ts`, run format 5): the adapter writes each of the
   app-server's requests to the run's output (an approval with the item it's about), and the board answers it on the
   run's input (`{"type": "codex_response", "id", "result" | "error"}`), through runner/requests.ts's `ask` and `call`, so
   each is recorded in `mcp_calls` as `stdio:<run id>:codex:<id>`, at most once, and taken up again after a restart.
@@ -609,13 +609,13 @@ which the agent didn't remember it and its file was gone. The thread view drew e
 | 1. The model and its store, dormant | HA-212 | Done: `protocol.ts`, `store.ts`, migration 89. Nothing calls them, and nothing writes the tables. |
 | 2. The translator, and a dry run on a copy of the board | HA-214 | Done: `translate.ts`, `huntaway threads-import` (`report.ts`), and the dry run above. Nothing calls the translator at serve time. |
 | 3. Items written live, behind a setting | HA-239 (was HA-216) | Done: `threads/write.ts`, the hook in `db/messages.ts`, the setting, migration 95, `huntaway threads-rebuild`, API 116. |
-| 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`server-ts/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
-| 5. The UI on items | HA-218 | Done: `app/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. |
+| 4. Thread API and live events | HA-215 | Done: the routes, `thread_event` and `thread_resync` on `/api/ws` (`apps/server/src/threads/live.ts`), API 114, `ia-api thread`. See [threads-api.md](threads-api.md). |
+| 5. The UI on items | HA-218 | Done: `apps/web/src/itemThreads.ts`, `itemModel.ts`, `threadView.ts`, converter 4, tasks' `thread_items` and API 119. |
 | 6. Readers on items | HA-217 | Done: `threads/history.ts`, `huntaway threads-readers` (`threads/readers.ts`), the attachment scan on items, converter 3. Telegram's readers (HA-257): converter 5. |
 | 7. Every task gets items, the setting on by default | HA-220 | Done: `threads/batch.ts`, `huntaway threads-rebuild --batch`, Settings → Server's rebuild, a done task's items on open, the setting on by default, API 121. |
 | 8. Permission prompts and questions over stdio | HA-219 | Done: `agent/runner/requests.ts`, run format 3. See "Claude's control protocol". |
 | 9. The board's tools in process | HA-221 | Done: the board's MCP server in process for Claude runs, run format 4. See "Claude's control protocol". |
-| B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`server-ts/src/db/file.ts`), on since step 10 |
+| B. A new database file, dormant | HA-213 | Done: `huntaway-2.db` behind `IA_NEW_DB_FILE` (`apps/server/src/db/file.ts`), on since step 10 |
 | 10. Items are the source | HA-222 | Done: `threads/source.ts`, `tasks.thread_source` (migration 98, API 122), no messages rows for tasks on items, the move when quiet, `huntaway threads-rebuild --back`, `huntaway-2.db` on by default. See "Items are the source". |
 | 11. Codex writes items directly | HA-223 | This change: `agent/codex/driver.ts`, `threads/native.ts`, `agent/codex/requests.ts`, the board's tools as Codex dynamic tools, run format 5, migration 99. See "Codex writes items directly". |
 | 12–14. Soak, remove the legacy code, delete old message rows | HA-224 to HA-226 | Not started |

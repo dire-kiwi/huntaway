@@ -23,7 +23,7 @@
 // reloaded the board. Only a release that changes boot.cjs or Electron needs a newer package: an AppImage or the
 // pacman package installs it from the board's Settings → Server (updateShell in shellupdate.cjs) and relaunches.
 // A server this app finds already running, or a remote serverUrl, isn't started here, so it never gets release updates
-// from the app. README's "Updating the desktop app" has the whole story; scripts/release-update-e2e.sh tests it.
+// from the app. "Updating the desktop app" in docs/guide/desktop.md has the whole story; scripts/release-update-e2e.sh tests it.
 
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");

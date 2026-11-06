@@ -93,7 +93,7 @@ export function GoogleCard({ assistant }: { assistant: Task }) {
               then sign in on {st.host}, and open the link it prints here:
               <Command text={st.consent_command} />
             </li>
-            <li>Check again. The README's An assistant host has the details.</li>
+            <li>Check again. An assistant host in docs/guide/assistant.md has the details.</li>
           </ol>
         </details>
       )}

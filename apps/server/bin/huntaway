@@ -27,7 +27,7 @@ if [ -z "$node" ]; then
   done
   node=${node:-node}
 fi
-# Memory (HA-181, see server-ts/README.md → Memory). V8 lets its young generation grow to two 16 MB semi-spaces, which
+# Memory (HA-181, see apps/server/README.md → Memory). V8 lets its young generation grow to two 16 MB semi-spaces, which
 # a server that then goes idle keeps, with whatever garbage is in them (an idle server allocates too little to collect
 # it): 2 MB ones keep an idle server about 20 MB smaller and its heap collected. Under a lower old-space limit V8 grows
 # the heap less eagerly, which roughly halves what's left after a burst of load (loading every thread) at about 10% of
