@@ -1,6 +1,6 @@
 // Answering what an agent waits on, in place: a permission prompt (Allow or Deny; the questions of Claude's
 // AskUserQuestion and of Codex, which come as a request_user_input prompt, by picking or typing answers) and a question asked with request_user_input (pick options or type an answer).
-import { takesTypedAnswer, type Client, type PermissionReply } from "@huntaway/client";
+import { QUESTION_TOOLS, takesTypedAnswer, type Client, type PermissionReply } from "@huntaway/client";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { colors } from "./theme";
@@ -9,8 +9,6 @@ import { Button, ErrorText, s } from "./ui";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
 
-/** The tools whose prompts are questions for the user, not requests for permission (server: permissions::is_question). */
-const QUESTION_TOOLS = ["AskUserQuestion", "request_user_input"];
 export const isQuestionTool = (tool: string) => QUESTION_TOOLS.includes(tool);
 
 /** One line saying what a tool call does, from its input. */

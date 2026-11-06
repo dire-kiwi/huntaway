@@ -11,9 +11,6 @@ export type AskedQuestion = { question: string; header?: string; options: AskedO
 
 const str = (x: unknown) => (typeof x === "string" ? x : "");
 
-/** The tools whose prompts are questions for the user, not requests for permission (server: permissions::is_question). */
-export const QUESTION_TOOLS = ["AskUserQuestion", "request_user_input"];
-
 /** The questions of a question prompt's data, in a shape the cards can trust whatever the agent sent. */
 export function questionsOf(data: Any): AskedQuestion[] {
   const list = data?.input?.questions;

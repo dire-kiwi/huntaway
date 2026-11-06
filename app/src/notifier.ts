@@ -1,4 +1,4 @@
-import { isOpenBoard, movedHere, taskKey, type Task } from "./api";
+import { isOpenBoard, movedHere, taskKey, type NotifyEvent, type Task } from "./api";
 import {
   attentionCount,
   EVENT_STATUS,
@@ -9,7 +9,6 @@ import {
   playsSound,
   showsNotifications,
   stillApplies,
-  type NotifyEvent,
 } from "./notifications";
 import { onNavigate, openTask, parse } from "./router";
 import { liveTaskChanges, useStore } from "./store";
