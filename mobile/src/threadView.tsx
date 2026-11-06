@@ -9,7 +9,7 @@ import { Markdown } from "./markdown";
 import { PermissionCard, QuestionCard, toolSummary } from "./prompts";
 import { useBoardEvents, useLoad } from "./session";
 import { colors } from "./theme";
-import { applyDelta, endsDelta, hiddenUser, itemThreadItems, threadItems, withMessage, type ThreadItem } from "./thread";
+import { endsDelta, hiddenUser, itemThreadItems, threadItems, withMessage, type ThreadItem } from "./thread";
 import { Button, Empty, ErrorText, s } from "./ui";
 
 const PAGE = 60;
@@ -52,13 +52,6 @@ export function useThread(boardId: string, client: Client | undefined, host: str
       thread.reload();
     }, 500);
   };
-  useEffect(
-    () => () => {
-      if (again.current) clearTimeout(again.current);
-      again.current = null;
-    },
-    [boardId, host, id],
-  );
   // The streamed reply and a request for earlier messages belong to one thread: the Assistant tab keeps this mounted
   // when it shows another profile's assistant, so what's left of the last thread's is kept apart and dropped.
   const key = `${boardId}/${host}/${id}`;
@@ -66,7 +59,34 @@ export function useThread(boardId: string, client: Client | undefined, host: str
   current.current = key;
   const [streamed, setStreamed] = useState({ key, text: "" });
   const delta = streamed.key === key ? streamed.text : "";
-  const setDelta = (f: (d: string) => string) => setStreamed((was) => ({ key, text: f(was.key === key ? was.text : "") }));
+  // Streamed tokens are put in once a frame: one at a time, a long reply would be drawn again for each.
+  const tokens = useRef({ key, text: "" });
+  const frame = useRef<number | null>(null);
+  const flush = () => {
+    frame.current = null;
+    const t = tokens.current;
+    if (!t.text) return;
+    tokens.current = { key: t.key, text: "" };
+    setStreamed((was) => ({ key: t.key, text: (was.key === t.key ? was.text : "") + t.text }));
+  };
+  const addDelta = (text: string) => {
+    if (tokens.current.key !== key) tokens.current = { key, text: "" };
+    tokens.current.text += text;
+    frame.current ??= requestAnimationFrame(flush);
+  };
+  const clearDelta = () => {
+    tokens.current = { key, text: "" };
+    setStreamed((was) => (was.key === key && !was.text ? was : { key, text: "" }));
+  };
+  useEffect(
+    () => () => {
+      if (again.current) clearTimeout(again.current);
+      again.current = null;
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+    },
+    [boardId, host, id],
+  );
   const [olderState, setOlderState] = useState<{ key: string; busy: boolean; error: string | null }>({ key, busy: false, error: null });
   const mine = olderState.key === key;
   const olderBusy = mine && olderState.busy;
@@ -86,7 +106,7 @@ export function useThread(boardId: string, client: Client | undefined, host: str
       if ((ev.task as Task).thread_source === "items" && thread.data && !thread.data.snap) reloadSoon();
     } else if ((ev.type === "message" || ev.type === "message_updated") && ev.task_id === id) {
       const m = ev.message as Message;
-      if (endsDelta(m)) setDelta(() => "");
+      if (endsDelta(m)) clearDelta();
       // A thread kept as items has its thread_events for it.
       if (!thread.data?.snap) thread.setData((t) => (t?.snap ? t : { ...t, more: t?.more ?? false, subagents: t?.subagents ?? [], messages: withMessage(t?.messages ?? [], m) }));
     } else if (ev.type === "thread_event" && ev.task_id === id && ev.event?.type !== "delta" && (thread.data?.snap || thread.loading)) {
@@ -102,7 +122,8 @@ export function useThread(boardId: string, client: Client | undefined, host: str
     } else if (ev.type === "thread_resync" && ev.task_id === id && thread.data?.snap) {
       // Rebuilt: what's loaded may not be its thread now.
       reloadSoon();
-    } else if ((ev.type === "delta" || ev.type === "delta_reset") && ev.task_id === id) setDelta((d) => applyDelta(d, ev));
+    } else if (ev.type === "delta" && ev.task_id === id && ev.text) addDelta(String(ev.text));
+    else if (ev.type === "delta_reset" && ev.task_id === id) clearDelta();
   });
 
   const items = useMemo(() => {
@@ -190,8 +211,10 @@ export function ThreadMessages({
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           delta ? (
+            // Plain text while it streams in: parsing it as markdown again for each token takes longer the longer it
+            // gets. The saved message is markdown.
             <View style={[s.card, { borderColor: colors.accent }]}>
-              <Markdown text={delta} />
+              <Text style={{ color: colors.fg, fontSize: 15, lineHeight: 21 }}>{delta}</Text>
             </View>
           ) : task?.running ? (
             <Text style={[s.faint, { padding: 12 }]}>The agent is working…</Text>

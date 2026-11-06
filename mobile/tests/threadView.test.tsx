@@ -19,19 +19,48 @@ function fakeClient() {
 
 const texts = (t: ReturnType<typeof useThread>) => (t.thread.data?.messages ?? []).map((m) => m.data.text);
 
+// Animation frames, run when a test says (streamed tokens are put in once a frame).
+let frames: (() => void)[] = [];
+beforeEach(() => {
+  frames = [];
+  jest.spyOn(global, "requestAnimationFrame").mockImplementation((cb) => frames.push(() => cb(0)));
+  jest.spyOn(global, "cancelAnimationFrame").mockImplementation(() => {});
+});
+afterEach(() => jest.restoreAllMocks());
+const nextFrame = () =>
+  act(async () => {
+    const due = frames;
+    frames = [];
+    for (const f of due) f();
+  });
+
 test("a reply streaming in one assistant's thread isn't carried into another's", async () => {
   const { client } = fakeClient();
   const view = await renderHook((p: { id: string }) => useThread("b", client, "h", p.id), { initialProps: { id: "A" } });
   await waitFor(() => expect(texts(view.result.current)).toEqual(["A 100"]));
   await act(async () => emitBoardEvent("b", { type: "delta", host_id: "h", task_id: "A", text: "Half of A's re" }));
+  await nextFrame();
   expect(view.result.current.delta).toBe("Half of A's re");
   await view.rerender({ id: "B" });
   expect(view.result.current.delta).toBe("");
   await act(async () => emitBoardEvent("b", { type: "delta", host_id: "h", task_id: "B", text: "B's reply" }));
+  await nextFrame();
   expect(view.result.current.delta).toBe("B's reply");
   // A's stream, still coming, isn't B's.
   await act(async () => emitBoardEvent("b", { type: "delta", host_id: "h", task_id: "A", text: "ply" }));
+  await nextFrame();
   expect(view.result.current.delta).toBe("B's reply");
+});
+
+test("a token switched away from before its frame isn't put in the next thread's reply", async () => {
+  const { client } = fakeClient();
+  const view = await renderHook((p: { id: string }) => useThread("b", client, "h", p.id), { initialProps: { id: "A" } });
+  await waitFor(() => expect(texts(view.result.current)).toEqual(["A 100"]));
+  await act(async () => emitBoardEvent("b", { type: "delta", host_id: "h", task_id: "A", text: "A's" }));
+  await view.rerender({ id: "B" });
+  await act(async () => emitBoardEvent("b", { type: "delta", host_id: "h", task_id: "B", text: "B's" }));
+  await nextFrame();
+  expect(view.result.current.delta).toBe("B's");
 });
 
 test("earlier messages asked for in one assistant's thread don't land in another's", async () => {
@@ -133,6 +162,37 @@ test("a routine's report shows in the thread, and opens its routine's thread", a
   expect(screen.getByText("Morning brief")).toBeTruthy();
   fireEvent.press(screen.getByText("Open A-9"));
   expect(opened).toEqual(["r9"]);
+});
+
+test("a reply streams in as plain text, drawn once a frame however many tokens come", async () => {
+  const client = {
+    task: jest.fn(async (_h: string, id: string) => ({ task: { id, running: true } })),
+    messagePage: jest.fn(async () => ({ messages: [], more: false, subagents: [] })),
+  };
+  let renders = 0;
+  function Shown() {
+    renders++;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = useThread("b", client as any, "h", "T");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return <ThreadMessages t={t} client={client as any} host="h" taskId="T" />;
+  }
+  await render(<Shown />);
+  await waitFor(() => expect(screen.getByText("The agent is working…")).toBeTruthy());
+  const before = renders;
+  // Each token comes on its own, as the socket's messages do.
+  for (const text of ["Here's ", "**the** ", "`plan`"]) await act(async () => emitBoardEvent("b", { type: "delta", host_id: "h", task_id: "T", text }));
+  expect(renders).toBe(before);
+  expect(frames.length).toBe(1);
+  await nextFrame();
+  expect(renders).toBe(before + 1);
+  // As it came: not parsed as markdown.
+  expect(screen.getByText("Here's **the** `plan`")).toBeTruthy();
+  // Saved as a message: the stream's done, and what's still to come of it in this frame is dropped.
+  await act(async () => emitBoardEvent("b", { type: "delta", host_id: "h", task_id: "T", text: " and more" }));
+  await act(async () => emitBoardEvent("b", { type: "delta_reset", host_id: "h", task_id: "T" }));
+  await nextFrame();
+  expect(screen.queryByText(/plan/)).toBeNull();
 });
 
 // HA-222: a task whose items are its thread's source has no messages since it moved onto them.

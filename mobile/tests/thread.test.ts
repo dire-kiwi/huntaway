@@ -1,6 +1,6 @@
 import type { Message } from "@huntaway/client";
 import { photoName, withAttachments } from "../src/attachments";
-import { applyDelta, endsDelta, threadItems, withMessage } from "../src/thread";
+import { endsDelta, threadItems, withMessage } from "../src/thread";
 import { groupTasks } from "../src/tasks";
 
 const m = (id: number, kind: Message["kind"], data: unknown) => ({ id, task_id: "t", kind, data, created_at: "" }) as Message;
@@ -43,10 +43,6 @@ describe("the thread", () => {
   });
 
   test("the reply streams in until it's stored", () => {
-    let d = applyDelta("", { type: "delta", text: "Hel" });
-    d = applyDelta(d, { type: "delta", text: "lo" });
-    expect(d).toBe("Hello");
-    expect(applyDelta(d, { type: "delta_reset" })).toBe("");
     expect(endsDelta(m(1, "claude", { type: "assistant", message: { content: [] } }))).toBe(true);
     expect(endsDelta(m(1, "claude", { type: "assistant", parent_tool_use_id: "x" }))).toBe(false);
   });

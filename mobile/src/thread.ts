@@ -65,13 +65,6 @@ export function threadItems(messages: Message[]): ThreadItem[] {
   return items;
 }
 
-/** The streamed text of the agent's reply so far, from `delta` events, until the reply is stored. */
-export function applyDelta(current: string, ev: { type: string; text?: string }): string {
-  if (ev.type === "delta") return current + (ev.text ?? "");
-  if (ev.type === "delta_reset") return "";
-  return current;
-}
-
 /** A message ends the streamed preview when it's the agent's stored reply. */
 export const endsDelta = (m: Message) => m.kind === "claude" && m.data?.type === "assistant" && !m.data?.parent_tool_use_id;
 
