@@ -1,6 +1,6 @@
 // The reducer's and windows' cases, from agent-threads' ts/packages/protocol/src/reducer.test.ts and window.test.ts (main
 // 5ad670a), and its spec/examples (see examples.ts).
-import { describe, test } from "node:test";
+import { describe, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { read_json, read_jsonl } from "./examples.ts";
 import {

@@ -1,5 +1,5 @@
 // Port of server/src/git/worktree/approval_tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { approved_by_reviews } from "../worktree.ts";
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, test } from "vite-plus/test";
 import { clonePath, defaultCloneDir, filterRepos, loadProjectSource, mergeRepos, repoFromInput, saveProjectSource } from "../src/components/settings/repoSource.ts";
 
 const repo = (full_name) => ({ full_name, name: full_name.split("/")[1] });

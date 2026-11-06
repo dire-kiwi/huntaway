@@ -5,12 +5,11 @@ import type { Conn, PrChecks, Task } from "../../db.ts";
 import { ApiError, type Shared } from "../../state.ts";
 import * as runner from "../../agent/runner.ts";
 import * as automations from "../../integrations/automations.ts";
-import { byte_len, err_str, now } from "../../util.ts";
+import { byte_len, err_str, IN_TEST, now } from "../../util.ts";
 import { TEST_GH_PROGRAM } from "../gh_mcp.ts";
 import { Target } from "../pr_watch.ts";
 
-/** Whether this runs under `node --test` (Rust's `cfg!(test)`). */
-const TEST = process.execArgv.some((a) => a.startsWith("--test"));
+const TEST = IN_TEST;
 import { compare, outcome, summary, type Check, type Pr } from "./pr.ts";
 import { gh, gh_error, type LogResult, type Watcher } from "./read.ts";
 import { load, store, Row_default, type Seen } from "./seen.ts";

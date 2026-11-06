@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { after, afterEach, before, test } from "node:test";
+import { afterAll, afterEach, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
@@ -10,7 +10,7 @@ let wt;
 const git = (dir, ...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 const lines = (n, f = (i) => `line ${i}`) => Array.from({ length: n }, (_, i) => `${f(i + 1)}\n`).join("");
 
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
   mkdirSync(repo);
@@ -26,7 +26,7 @@ before(async () => {
   task = await server.api("POST", `/tasks/${task.id}/worktree/setup`);
   wt = task.worktree_path;
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 // Nothing staged for the next test, even when one fails (else it fails the next one too).
 afterEach(() => wt && git(wt, "reset", "-q"));
 

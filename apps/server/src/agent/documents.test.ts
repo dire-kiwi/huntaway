@@ -1,5 +1,5 @@
 // Port of the tests in server/src/agent/documents.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { closeSync, existsSync, mkdirSync, openSync, futimesSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

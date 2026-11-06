@@ -1,7 +1,7 @@
 // Items as the source (threads/source.ts, step 10 of docs/threads.md): a task's move onto items when it's quiet, the
 // messages of an items task written as items only through every write point, the ids they keep, what reads and
 // changes them in place, crashes around the move, and moving back.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, existsSync, utimesSync } from "node:fs";
@@ -160,7 +160,7 @@ test("a task whose items aren't this build's is rebuilt from its messages as it 
 
 test("start_run moves a task onto items before its run, and its turn_message_id names its prompt's item", async (t) => {
   runs.TEST_CAN_RUN.set(true);
-  t.after(() => runs.TEST_CAN_RUN.set(false));
+  t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   const { s, task } = setup();
   const x = task();
   const first = on_messages(s, () => s.add_message(x.id, "user", { text: "before" }));
@@ -260,7 +260,7 @@ test("an items task's project, deletion and automation approvals are pending app
 
 test("a late answer to an items task's question goes to its agent as a message, until the conversation moves on", async (t) => {
   runs.TEST_CAN_RUN.set(true);
-  t.after(() => runs.TEST_CAN_RUN.set(false));
+  t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   const { s, task } = setup();
   const x = task();
   s.add_message(x.id, "user", { text: "go" });
@@ -368,7 +368,7 @@ test("a server that dies as a task moves onto items leaves it on its messages", 
   const file = join(dir, "huntaway-2.db");
   const script = `
     import * as db from ${JSON.stringify(new URL("../db.ts", import.meta.url).href)};
-    import * as testing from ${JSON.stringify(new URL("../testing.ts", import.meta.url).href)};
+    import { when } from ${JSON.stringify(new URL("../util.ts", import.meta.url).href)};
     import * as source from ${JSON.stringify(new URL("./source.ts", import.meta.url).href)};
     const c = db.open(${JSON.stringify(file)});
     const p = db.insert_profile(c, "p", [], null);
@@ -376,7 +376,7 @@ test("a server that dies as a task moves onto items leaves it on its messages", 
     console.log(t.id);
     db.insert_message(c, t.id, "user", { text: "kept" });
     source.set_flips(c, true);
-    testing.when(process.argv.at(-1), () => process.exit(3));
+    when(process.argv.at(-1), () => process.exit(3));
     db.insert_message(c, t.id, "user", { text: "lost" });
   `;
   for (const point of ["threads:flipped", "threads:write"]) {
@@ -442,7 +442,7 @@ test("at the start, quiet tasks move onto items; one mid-turn moves when its run
 // so the write was lost, and every later one failed the same way.
 test("a rebuild that fails as a task moves onto items leaves it on messages, and its writes go on as rows", async (t) => {
   runs.TEST_CAN_RUN.set(true);
-  t.after(() => runs.TEST_CAN_RUN.set(false));
+  t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   const { s, task } = setup();
   const x = task("stale", "done");
   on_messages(s, () => s.add_message(x.id, "user", { text: "from before" }));

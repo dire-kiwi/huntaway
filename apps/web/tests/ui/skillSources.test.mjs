@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project, profile, repo;
@@ -13,7 +13,7 @@ const skill = (name, description) => {
   writeFileSync(join(repo, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\nBody\n`);
 };
 
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
   [profile] = await server.api("GET", "/profiles");
@@ -24,7 +24,7 @@ before(async () => {
   git("add", "-A");
   git("commit", "-q", "-m", "init");
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-140: skills come from a git repository that's added, updated and removed in Settings, and each is switched on per profile or project.
 test("adds a git repository's skills, switches them on and updates and removes the source", async () => {

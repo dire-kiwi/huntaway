@@ -19,13 +19,13 @@ import * as gh_mcp from "../mcp/gh_mcp.ts";
 import * as permissions from "../mcp/permissions.ts";
 import { ApiError, AsyncMutex, type AppState } from "../state.ts";
 import type { Req } from "../http.ts";
-import { err_str, expand_tilde, now, sleep } from "../util.ts";
+import { err_str, expand_tilde, IN_TEST, now, sleep } from "../util.ts";
 
 /** The most of a worktree's uncommitted changes listed. */
 const LISTED = 20;
 
 /** How long the agents of a task that wasn't picked have to stop before it's left as it is (ms; shorter in tests). */
-const STOP_WAIT = process.env.NODE_TEST_CONTEXT ? 2_000 : 20_000;
+const STOP_WAIT = IN_TEST ? 2_000 : 20_000;
 
 /** How long deleting a pushed branch, or closing a pull request, may take (ms). */
 const REMOTE_TIMEOUT = 60_000;

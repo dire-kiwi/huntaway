@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import type { Conn } from "../db.ts";

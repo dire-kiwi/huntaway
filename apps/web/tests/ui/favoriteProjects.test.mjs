@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server, solo;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const [profile] = await server.api("GET", "/profiles");
   const add = (name, key) => server.api("POST", `/profiles/${profile.id}/projects`, { name, key, repo_path: `${server.dataDir}/${key}`, use_worktrees: false });
@@ -17,7 +17,7 @@ before(async () => {
   await server.api("PATCH", `/projects/${omega.id}`, { group_name: "Solo" });
   solo = await server.api("POST", `/profiles/${profile.id}/group-tasks`, { group: "Solo", title: "Plan across Solo", status: "needs_attention" });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 /** The sidebar's project and group names (and section headings), top to bottom. */
 const rows = (page) =>

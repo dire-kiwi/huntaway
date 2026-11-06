@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { dropPosition } from "../src/components/board/taskOrder.ts";
 
 const t = (id, position) => ({ id, position });

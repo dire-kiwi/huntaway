@@ -1,5 +1,5 @@
 // Port of the tests in server/src/attachments.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "./db.ts";
 import * as testing from "./testing.ts";

@@ -1,7 +1,7 @@
 // The adapter (`huntaway codex-run`, adapter.ts) against a fake `codex app-server`: the board's tools go to a new
 // thread as dynamic tools, the app-server's requests go to the run's output and their answers come back on its input,
 // and with no input (a compaction) they're declined.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";

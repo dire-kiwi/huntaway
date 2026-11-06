@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 // HA-50: the project settings' preview of what a new thread's agent is told.
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
   gitRepo(repo);
@@ -14,7 +14,7 @@ before(async () => {
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
   await server.api("PATCH", `/projects/${project.id}`, { claude_config_ids: [codex.id] });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const PLAN_NOTE = "You are in plan mode";
 const preview = (page) => page.locator("pre[aria-label='System prompt']");

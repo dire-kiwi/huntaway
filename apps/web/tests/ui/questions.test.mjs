@@ -1,15 +1,15 @@
 // HA-9: agents' questions (request_user_input, AskUserQuestion, Codex's) and plans (ExitPlanMode) are answered from
 // cards in the thread, not as permission prompts with raw JSON.
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, routeThread, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 /** A thread of `items` ([kind, data] pairs), as a host stores it. */
 function thread(taskId, items) {

@@ -31,7 +31,7 @@ import type { Task, WaitPr } from "../db.ts";
 import type { Shared } from "../state.ts";
 import * as runner from "../agent/runner.ts";
 import * as worktree from "../git/worktree.ts";
-import { err_str, expand_tilde } from "../util.ts";
+import { err_str, expand_tilde, IN_TEST } from "../util.ts";
 import { Account } from "./gh_mcp.ts";
 
 export * from "./pr_watch/read.ts";
@@ -40,8 +40,8 @@ export * from "./pr_watch/pr.ts";
 export * from "./pr_watch/in_review.ts";
 export * from "./pr_watch/failed.ts";
 
-/** Whether this runs under `node --test` (Rust's `cfg!(test)`), for shorter periods. */
-export const TEST = process.execArgv.some((a) => a.startsWith("--test"));
+/** Whether this runs in tests (util.ts's IN_TEST), for shorter periods. */
+export const TEST = IN_TEST;
 
 /** What can end a wait on a pull request, besides its being merged or closed. */
 export const EVENTS = ["checks_failed", "checks_passed", "comments", "conflicts"];

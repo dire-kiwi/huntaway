@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { openingTab } from "../src/components/task/openingTab.ts";
 
 const task = (fields) => ({ kind: "task", status: "in_review", running: false, document_at: null, task_type: null, ...fields });

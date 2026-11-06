@@ -1,6 +1,6 @@
 // The helpers of server/src/hosts/uplink/tests.rs that other tests use too (agent/assistant/tests.rs): nodes with their
 // own ids, their API, and a hub linked to a host by URL. What they start is stopped when the test file's tests end.
-import { after } from "node:test";
+import { afterAll } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { WebSocketServer } from "ws";
@@ -14,7 +14,7 @@ import * as hub from "../hub.ts";
 
 /** What the tests leave running (servers, links), stopped when the file's tests end. */
 const cleanups: Array<() => void> = [];
-after(() => {
+afterAll(() => {
   for (const f of cleanups.splice(0)) f();
 });
 

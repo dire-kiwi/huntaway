@@ -1,6 +1,6 @@
 // A Codex run's requests on its output (requests.ts): approvals and questions as the board's permission prompts, the
 // board's tools as dynamic tools through its dispatch, each answered on the run's input as a codex_response.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

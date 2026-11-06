@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 // HA-167: a Claude config's proxy (CLIProxyAPI). Its keys never come back to the board, so the edit dialog's key fields
 // start blank, and saving it without typing them must keep them; taking the URL away clears them too.
 let server;
 let config;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   config = await server.api("POST", "/claude-configs", {
     name: "Pool",
@@ -16,7 +16,7 @@ before(async () => {
     management_key: "mk-secret",
   });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const URL_FIELD = "[placeholder='http://192.168.1.10:8317']";
 const saved = async () => (await server.api("GET", "/claude-configs")).find((c) => c.id === config.id);

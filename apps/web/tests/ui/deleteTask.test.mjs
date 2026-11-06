@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-32: a deletion that failed (the host offline, or a 409 while the task merges) closed the dialog and the panel as if
 // it had worked, leaving the task on the board with no word of why.

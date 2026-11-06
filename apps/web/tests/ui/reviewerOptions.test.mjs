@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-142: each reviewer can have instructions and skills of its own, which the settings keep through other edits to it.
 test("a reviewer's own instructions and skills are saved, and kept when its other settings change", async () => {

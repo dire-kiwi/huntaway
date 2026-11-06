@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-12: closing the editor of a webhook it had just made blanked the page (an effect returned scrollIntoView's promise).
 test("a new webhook shows its URL and secret, closes cleanly, and its deliveries show live", async () => {

@@ -1,5 +1,5 @@
 // HA-198: a run that only wrote or revised its task's plan leaves the task in "Needs attention", waiting for the user.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";

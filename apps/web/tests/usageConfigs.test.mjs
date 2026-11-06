@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { resetsIn, resetsPhrase, usageAlert, usageConfigs } from "../src/usageConfigs.ts";
 
 const config = (host_id, id, show_usage = true) => ({ host_id, id, name: id, config_dir: "", created_at: "", show_usage });

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
-before(() => {
+beforeAll(() => {
   server = startServer();
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // The counts in a profile's sidebar bar, by status.
 const bar = (page, profile) =>

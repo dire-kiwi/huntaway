@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // IA-63: switches clicked before the previous save came back used to send a stale list, so a click was lost.
 test("fast clicks on skill switches all reach the server", async () => {

@@ -1,5 +1,5 @@
 // Port of server/src/agent/runner/tests.rs.
-import { beforeEach, test } from "node:test";
+import { beforeEach, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";

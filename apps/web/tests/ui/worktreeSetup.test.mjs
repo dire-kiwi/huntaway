@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let profile;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   [profile] = await server.api("GET", "/profiles");
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const project = async (name, key) => {
   const dir = `${server.dataDir}/${name.toLowerCase()}`;

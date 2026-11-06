@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // IA-126: a title re-titled from a message while it was being renamed replaced what was typed, and Enter saved it.
 test("a title that changes while it's being renamed keeps the draft", async () => {

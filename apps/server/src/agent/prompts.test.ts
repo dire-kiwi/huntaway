@@ -1,5 +1,5 @@
 // Port of the tests in server/src/agent/prompts.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import { DEFAULT_MERGE, DEFAULT_REVIEW, DEFAULT_START, defaults, merge, review, review_by, start } from "./prompts.ts";

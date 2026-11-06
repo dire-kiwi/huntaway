@@ -1,5 +1,5 @@
 // Port of server/src/git/changes/tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { changes_code, runs_program, substitutions, tokenize } from "../changes.ts";
 

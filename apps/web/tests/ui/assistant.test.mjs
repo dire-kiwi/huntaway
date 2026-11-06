@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
-before(() => {
+beforeAll(() => {
   server = startServer();
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-119: each profile has an assistant, which the sidebar opens full width and which is off the board.
 test("the sidebar opens the profile's assistant, which stays off the board", async () => {

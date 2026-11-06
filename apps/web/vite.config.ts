@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vite-plus";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -14,5 +14,9 @@ export default defineConfig({
     proxy: {
       "/api": { target: server, ws: true, changeOrigin: true },
     },
+  },
+  // The unit tests (`vp test`). The browser checks in tests/ui have a config of their own (`pnpm run test:ui`).
+  test: {
+    include: ["tests/*.test.mjs"],
   },
 });

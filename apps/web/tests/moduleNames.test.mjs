@@ -2,7 +2,7 @@
 // may hold two modules whose names differ only in case, with or without the extension.
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 
 test("no two modules in a folder have names that differ only in case", () => {
   const clashes = [];

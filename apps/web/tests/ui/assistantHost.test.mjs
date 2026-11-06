@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let hub;
 let home;
-before(() => {
+beforeAll(() => {
   hub = startServer();
   home = startServer();
 });
-after(() => {
+afterAll(() => {
   hub?.stop();
   home?.stop();
 });

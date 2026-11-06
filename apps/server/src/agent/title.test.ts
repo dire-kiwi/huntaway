@@ -1,5 +1,5 @@
 // Port of the tests in server/src/agent/title.rs.
-import { beforeEach, test } from "node:test";
+import { beforeEach, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import type { NewTask, Task } from "../db.ts";

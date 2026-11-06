@@ -1,8 +1,9 @@
-# Builds the desktop app (app/package.json's `build`) and the server for Linux and macOS, and the mobile app's Android
-# APK (once its signing key's secrets are set), when a GitHub release is published, and attaches them to that release.
-# The server is the TypeScript one (server-ts/, HA-174), packaged with the Node that runs it and the Rust ia-shim by
-# scripts/package-server.sh; a host on an earlier (Rust) release updates onto it as onto any release, and the server
-# backs up its database as it starts on a new version (server-ts/src/backup.ts), which is also what makes a Roll back
+# Builds the desktop app (apps/web/package.json's `build`) and the server for Linux and macOS, and the mobile app's
+# Android APK (once its signing key's secrets are set), when a GitHub release is published, and attaches them to that
+# release. The server is the TypeScript one (apps/server, HA-174), packaged with the Node that runs it and the Rust
+# ia-shim by scripts/package-server.sh (in the package it's still in server-ts/, where installed releases look for it); a
+# host on an earlier (Rust) release updates onto it as onto any release, and the server backs up its database as it
+# starts on a new version (apps/server/src/backup.ts), which is also what makes a Roll back
 # onto a Rust release (0.3.x) safe. The release's tag is the version (v1.2.3 → 1.2.3), so it must be semver with an
 # optional leading v. Running it by hand (Actions → Release → Run workflow) builds an existing release's tag again and
 # replaces its files. Nothing else runs it (HA-244): pull requests don't build the release, so a change to the packaging
@@ -55,16 +56,14 @@ jobs:
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: server
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      # Vite+ (the version in pnpm-workspace.yaml's catalog), Node 24 and pnpm. The install comes after the version is
+      # set.
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            app/package-lock.json
-            server-ts/package-lock.json
+          cache: true
+          run-install: false
 
       # fpm writes the Arch package's .MTREE with bsdtar.
       - name: bsdtar
@@ -73,21 +72,20 @@ jobs:
 
       # The app's version, and (through VERSION, which scripts/package-server.sh reads) the server's (`huntaway --version`).
       - name: Version
-        working-directory: app
         run: |
           version="${TAG#v}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          npm version --no-git-tag-version --allow-same-version "$version"
+          node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            p.version = process.argv[2]; fs.writeFileSync(process.argv[1], JSON.stringify(p, null, 2) + "\n")' apps/web/package.json "$version"
 
-      - name: npm ci
-        working-directory: app
-        run: npm ci --no-audit --no-fund
+      # The server's and the desktop app's dependencies, not the mobile app's (the android job's).
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile --filter 'huntaway-server...' --filter 'huntaway-app...'
 
-      # The UI, and ia-shim, the Rust supervisor the server runs agents under (the rest of server/ is the broker, which
-      # is deployed on its own).
+      # The UI, and ia-shim, the Rust supervisor the server runs agents under (the rest of rust/ is the broker, which is
+      # deployed on its own).
       - name: Build
-        working-directory: app
-        run: npm run build && (cd ../server && cargo build --release --locked -p ia-shim)
+        run: pnpm --filter huntaway-app run build && cargo build --release --locked -p ia-shim
 
       # The server the desktop app and the server tarball carry: the TypeScript server, the Node this job runs on (the
       # runner's own os and arch), ia-shim and the UI, in release-server/ (see the script). IA_BUILD_COMMIT: the server
@@ -123,12 +121,12 @@ jobs:
       # binary in it, node and ia-shim too, is signed again ad hoc, without the hardened runtime, and the checks below
       # see the app the release ships (HA-185).
       - name: Package the desktop app
-        working-directory: app
-        run: npx electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
+        working-directory: apps/web
+        run: pnpm exec electron-builder --${{ matrix.os }} --${{ matrix.arch }} --publish never
 
       # The server the packaged app starts from its resources.
       - name: Check the desktop app's server
-        working-directory: app
+        working-directory: apps/web
         run: |
           if [ "${{ matrix.os }}" = mac ]; then res=$(echo release/mac*/Huntaway.app/Contents/Resources); else res=release/linux-unpacked/resources; fi
           ls "$res"
@@ -139,7 +137,7 @@ jobs:
       # from its resources, with their Node; an agent runs a turn under their ia-shim, and the MCP helper answers.
       - name: Start the desktop app
         run: |
-          if [ "${{ matrix.os }}" = mac ]; then exe=$(echo app/release/mac*/Huntaway.app/Contents/MacOS/Huntaway); else exe=app/release/linux-unpacked/huntaway-desktop; fi
+          if [ "${{ matrix.os }}" = mac ]; then exe=$(echo apps/web/release/mac*/Huntaway.app/Contents/MacOS/Huntaway); else exe=apps/web/release/linux-unpacked/huntaway-desktop; fi
           node scripts/desktop-app-check.mjs "$exe" --version "$VERSION"
 
       # How macOS sees the app: electron-builder signs it ad hoc (identity "-", no hardened runtime) and nothing is
@@ -150,7 +148,7 @@ jobs:
       - name: Signatures and Gatekeeper (macOS)
         if: matrix.os == 'mac'
         run: |
-          app=$(echo app/release/mac*/Huntaway.app)
+          app=$(echo apps/web/release/mac*/Huntaway.app)
           out="$RUNNER_TEMP/signatures.txt"
           {
             echo "macOS $(sw_vers -productVersion); $(spctl --status 2>&1)"
@@ -175,7 +173,7 @@ jobs:
         run: |
           dl="$RUNNER_TEMP/downloaded"
           mkdir -p "$dl"
-          ditto -x -k app/release/*-mac-*.zip "$dl"
+          ditto -x -k apps/web/release/*-mac-*.zip "$dl"
           q="0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)"
           find "$dl/Huntaway.app" -exec xattr -w com.apple.quarantine "$q" {} +
           echo "quarantine on node: $(xattr -p com.apple.quarantine "$dl/Huntaway.app/Contents/Resources/node/bin/node")"
@@ -186,12 +184,12 @@ jobs:
           fi
 
       # What an installed app reads to update itself: the version, and the shell stamp (the frame stamp of
-      # app/electron/stamp.cjs: boot.cjs and Electron) of the desktop app, which says whether the update needs a new
+      # apps/web/electron/stamp.cjs: boot.cjs and Electron) of the desktop app, which says whether the update needs a new
       # package or only changes the server, the UI and the rest of the shell (boot.cjs loads that from the server's
       # tarball). The stamp is checked against the one the packaged app computes from its app.asar, with its own Electron.
       - name: Release manifest
         if: matrix.os == 'linux'
-        working-directory: app
+        working-directory: apps/web
         run: |
           node -e 'const fs = require("node:fs"); const { frameStamp } = require("./electron/stamp.cjs");
             const electron = require("./node_modules/electron/package.json").version;
@@ -208,28 +206,28 @@ jobs:
       # The server on its own, for hosts: release-server/ (huntaway, which runs the TypeScript server in server-ts/ with
       # the Node in node/, ia-shim, and the UI in ui/ beside them, where the server looks).
       # electron/ is the desktop shell of this release, which an installed app loads once it has updated to it
-      # (app/electron/boot.cjs); shell.json says which Electron it was written for and which boot.cjs it needs.
+      # (apps/web/electron/boot.cjs); shell.json says which Electron it was written for and which boot.cjs it needs.
       - name: Package the server
         run: |
           name="huntaway-server-$VERSION-${{ matrix.os }}-${{ matrix.arch }}"
-          mkdir -p app/release
-          cp -R release-server "app/release/$name"
-          mkdir "app/release/$name/electron"
-          cp app/electron/*.cjs "app/release/$name/electron/"
-          node -e 'const electron = require("./app/node_modules/electron/package.json").version;
-            require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ electron, boot: 1 }) + "\n")' "app/release/$name/electron/shell.json"
-          tar -C app/release -czf "app/release/$name.tar.gz" "$name"
+          mkdir -p apps/web/release
+          cp -R release-server "apps/web/release/$name"
+          mkdir "apps/web/release/$name/electron"
+          cp apps/web/electron/*.cjs "apps/web/release/$name/electron/"
+          node -e 'const electron = require("./apps/web/node_modules/electron/package.json").version;
+            require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ electron, boot: 1 }) + "\n")' "apps/web/release/$name/electron/shell.json"
+          tar -C apps/web/release -czf "apps/web/release/$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: huntaway-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            app/release/*.AppImage
-            app/release/*.pacman
-            app/release/*.dmg
-            app/release/*.zip
-            app/release/*.tar.gz
-            app/release/*.json
+            apps/web/release/*.AppImage
+            apps/web/release/*.pacman
+            apps/web/release/*.dmg
+            apps/web/release/*.zip
+            apps/web/release/*.tar.gz
+            apps/web/release/*.json
           if-no-files-found: error
           retention-days: 1
 
@@ -256,7 +254,7 @@ jobs:
             echo "::notice title=No Android APK::The ANDROID_KEY* secrets aren't all set, so a release has no APK (README: The mobile app)"
           fi
 
-  # The mobile app's Android APK (mobile/), built here with `expo prebuild` and Gradle rather than on EAS: it needs no
+  # The mobile app's Android APK (apps/mobile), built here with `expo prebuild` and Gradle rather than on EAS: it needs no
   # Expo account or build quota, and the signing key stays in this repository's secrets. ANDROID_KEYSTORE_BASE64 is the
   # keystore (base64 of the .jks), with ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD; Gradle
   # gets them as android.injected.signing.* properties, as Android Studio passes them, so the generated build.gradle
@@ -273,11 +271,11 @@ jobs:
         with:
           ref: refs/tags/${{ env.TAG }}
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache: true
+          run-install: false
 
       # React Native's Gradle plugin builds with a JDK 17 toolchain. The runner has the Android SDK and NDK; Gradle
       # downloads the versions it's missing.
@@ -288,12 +286,11 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
-      - name: npm ci
-        working-directory: mobile
-        run: npm ci --no-audit --no-fund
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile --filter 'huntaway-mobile...'
 
       - name: Version
-        working-directory: mobile
+        working-directory: apps/mobile
         run: |
           version="${TAG#v}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
@@ -304,7 +301,7 @@ jobs:
       # committed, so app.json names it only here, where it exists: prebuild fails on a missing file. Without it the
       # app builds and runs, but can't register for push on Android.
       - name: google-services.json
-        working-directory: mobile
+        working-directory: apps/mobile
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
@@ -319,8 +316,8 @@ jobs:
             fs.writeFileSync("app.json", JSON.stringify(config, null, 2) + "\n")'
 
       - name: expo prebuild
-        working-directory: mobile
-        run: npx expo prebuild --platform android --no-install
+        working-directory: apps/mobile
+        run: pnpm exec expo prebuild --platform android --no-install
         env:
           CI: "1"
 
@@ -343,19 +340,19 @@ jobs:
             const esc = (v) => v.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/^\s/, "\\$&");
             const keys = ["store.file", "store.password", "key.alias", "key.password"];
             require("node:fs").appendFileSync(file, "\n" + keys.map((k, i) => `android.injected.signing.${k}=${esc(values[i])}\n`).join(""))' \
-            mobile/android/gradle.properties "$keystore" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"
+            apps/mobile/android/gradle.properties "$keystore" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"
 
       - name: Gradle
-        working-directory: mobile/android
+        working-directory: apps/mobile/android
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
 
       # The APK's signer, which must be the release key on a release (a Gradle that ignored the injected key would
       # otherwise ship one signed with the debug key).
       - name: APK
         run: |
-          mkdir -p mobile/release
-          apk="mobile/release/huntaway-$VERSION.apk"
-          cp mobile/android/app/build/outputs/apk/release/app-release.apk "$apk"
+          mkdir -p apps/mobile/release
+          apk="apps/mobile/release/huntaway-$VERSION.apk"
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$apk"
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           "$apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
           if grep -q "CN=Android Debug" "$RUNNER_TEMP/certs.txt"; then
@@ -367,7 +364,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: huntaway-android
-          path: mobile/release/*.apk
+          path: apps/mobile/release/*.apk
           if-no-files-found: error
           retention-days: 1
 

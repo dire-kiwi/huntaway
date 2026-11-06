@@ -1,5 +1,5 @@
 // Tests of lag.ts and worker.ts (HA-183).
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { call, type Req } from "./http.ts";

@@ -1,5 +1,5 @@
 // Port of server/src/integrations/automations/tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import * as db from "../../db.ts";

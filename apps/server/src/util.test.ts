@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { temp_dir } from "./testing.ts";
 import { has_commits, is_git_root, make_private, path_str, remove_dir_all } from "./util.ts";

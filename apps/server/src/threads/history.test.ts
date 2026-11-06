@@ -1,7 +1,7 @@
 // The board's readers of a thread (threads/history.ts): on a legacy history (its messages) and on its translation (the
 // items a rebuild makes of them), each gives the same answer, and the callers read items only for tasks whose readers
 // should. Then `huntaway threads-readers` (threads/readers.ts) on such histories, and the attachment scan.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import type { AppState } from "../state.ts";

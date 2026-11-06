@@ -1,5 +1,5 @@
 // Port of server/src/agent/assistant/tests.rs (HA-119 and HA-120, on the HA-117 branch).
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";

@@ -6,12 +6,11 @@ import type { Shared } from "../../state.ts";
 import * as runner from "../../agent/runner.ts";
 import * as runs from "../../agent/runs.ts";
 import * as automations from "../../integrations/automations.ts";
-import { background, err_str, new_id, now as now_str } from "../../util.ts";
+import { background, err_str, IN_TEST, new_id, now as now_str } from "../../util.ts";
 import { Account } from "../gh_mcp.ts";
 import { GIVE_UP, Target } from "../pr_watch.ts";
 
-/** Whether this runs under `node --test` (Rust's `cfg!(test)`). Not pr_watch.ts's: that may not be loaded yet. */
-const TEST = process.execArgv.some((a) => a.startsWith("--test"));
+const TEST = IN_TEST;
 import { by_maintainer, compare, summary, what, type Check, type Pr } from "./pr.ts";
 import { Watcher, told } from "./read.ts";
 import { load, store, Row_default } from "./seen.ts";

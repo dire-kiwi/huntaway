@@ -30,11 +30,15 @@ export function test_broker_bin(): string | { skip: string } {
   return (found = find() ?? { skip: "no test broker" });
 }
 
-/** node:test options for a test that runs the broker: skipped, saying why, when there's none. */
-export function needs_broker(): { skip?: string } {
+/** Test options for a test that runs the broker: skipped when there's none, saying why (once). */
+export function needs_broker(): { skip?: boolean } {
   const b = test_broker_bin();
-  return typeof b === "string" ? {} : b;
+  if (typeof b === "string") return {};
+  if (!warned) console.warn(`skipping the tests that run the broker: ${b.skip}`);
+  warned = true;
+  return { skip: true };
 }
+let warned = false;
 
 /** `huntaway_broker::Config`'s fields tests set (`stall` in ms). */
 export interface Config {

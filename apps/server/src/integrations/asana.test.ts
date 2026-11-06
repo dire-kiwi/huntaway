@@ -1,5 +1,5 @@
 // Port of the tests in server/src/integrations/asana.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { AsanaError, label, me, search, task_gid, type AsanaTask } from "./asana.ts";
 import { TOKEN, fake } from "./asana/tests.ts";

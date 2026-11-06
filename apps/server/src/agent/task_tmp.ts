@@ -31,16 +31,13 @@ import type { Task } from "../db.ts";
 import type { AppState, Shared } from "../state.ts";
 import * as worktree from "../git/worktree.ts";
 import * as leftovers from "./leftovers.ts";
-import { err_str, new_id, path_str, reached } from "../util.ts";
+import { err_str, IN_TEST, new_id, path_str, reached } from "../util.ts";
 
 /** How often the folders of done and deleted tasks are looked for. */
 const SWEEP_MS = 600_000;
 
 /** Prefix of a folder being removed: renamed first, so a run starting meanwhile gets a new one. */
 export const REMOVING = ".removing-";
-
-/** Whether this is a test process (Rust's `cfg!(test)`): `node --test` sets NODE_TEST_CONTEXT in its test processes. */
-const IN_TEST = !!process.env.NODE_TEST_CONTEXT;
 
 /** The folder all of this server's tasks' temp folders are in. */
 export function root(state: AppState): string {

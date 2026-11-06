@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   // Subprojects need worktrees, so a project on a git repository.
   const repo = `${server.dataDir}/shop`;
@@ -12,7 +12,7 @@ before(async () => {
   const [profile] = await server.api("GET", "/profiles");
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // IA-129: a subproject is a task like any other, so its card opens it beside the board; its own board is a button away.
 test("a subproject's card opens it beside the board, and its Board button opens its board", async () => {

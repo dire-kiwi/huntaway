@@ -1,6 +1,6 @@
 // Port of server/src/hosts/broker/tests.rs. Rust's tests run the `huntaway-broker` crate in-process; these run it as a
 // process (see test_broker.ts).
-import { after, test } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { STATUS_CODES, createServer, request as http_request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -26,7 +26,7 @@ relay.test_timing();
 
 /** What each test leaves running (servers, brokers, dialling loops), stopped when the file's tests end. */
 const cleanups: Array<() => void> = [];
-after(() => {
+afterAll(() => {
   for (const f of cleanups.splice(0)) f();
 });
 

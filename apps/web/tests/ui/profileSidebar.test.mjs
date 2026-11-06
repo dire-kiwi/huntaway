@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, demo;
-before(async () => {
+beforeAll(async () => {
   // Two profiles: "Default" with the Demo project, and "test" with the Test project.
   server = startServer("--seed");
   demo = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const demoRow = "css=aside >> role=button[name=/^DEM Demo/]";
 const testRow = "css=aside >> role=button[name=/^TES Test/]";

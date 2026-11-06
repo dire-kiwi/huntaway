@@ -1,5 +1,5 @@
 // Port of the tests in server/src/update/admin.rs.
-import { test, after } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
@@ -20,7 +20,7 @@ import { randomBytes } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 
 const servers: Array<() => void> = [];
-after(() => servers.forEach((f) => f()));
+afterAll(() => servers.forEach((f) => f()));
 
 function sh(dir: string, args: string[]): string {
   return execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();

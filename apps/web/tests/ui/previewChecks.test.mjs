@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-188: each card with a preview polls /api/preview-status, which waits up to 5s on a preview that doesn't answer. A
 // browser opens 6 connections to a host, so a board with more such previews than that had every one of them busy, and

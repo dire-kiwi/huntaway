@@ -5,6 +5,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+/**
+ * Whether this is a test process (Rust's `cfg!(test)`), for shorter periods and stand-ins: Vitest sets VITEST in the
+ * processes it runs tests in, and what they start inherits it, except a server started through bin/huntaway (as the
+ * browser tests start theirs), which takes it out.
+ */
+export const IN_TEST = !!process.env.VITEST;
+
 /** RFC 3339 with milliseconds and a Z, as chrono's `to_rfc3339_opts(Millis, true)`. */
 export function now(): string {
   return new Date().toISOString();

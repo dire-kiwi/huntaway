@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { parseDiff } from "../src/components/changes/diffs.ts";
 import { highlightable, langFor, MAX_LINES, sidesOf } from "../src/components/changes/highlight.ts";
 

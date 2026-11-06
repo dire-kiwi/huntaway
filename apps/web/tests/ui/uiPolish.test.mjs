@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, routeThread, startServer, withBrowser } from "./harness.mjs";
 
 // Its threads are faked on the messages routes, which a task whose items are its source (HA-222) doesn't read: its server
@@ -7,12 +7,12 @@ import { demoProject, routeThread, startServer, withBrowser } from "./harness.mj
 process.env.IA_NEW_DB_FILE = "0";
 
 let server, project, tasks;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
   tasks = await server.api("GET", `/projects/${project.id}/tasks`);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const byTitle = (title) => tasks.find((t) => t.title.startsWith(title));
 const dialogs = (page) => page.locator("[role=dialog]").count();

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
-before(() => {
+beforeAll(() => {
   server = startServer();
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-122: a routine's run works in a thread of its own under the assistant, off every list the board loads, and posts
 // its report (here, that it failed: agents can't run on this server) in the assistant's thread, which links to it.

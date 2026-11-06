@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server, profile, folders;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   [profile] = await server.api("GET", "/profiles");
   folders = realpathSync(mkdtempSync(join(tmpdir(), "ia-create-")));
 });
-after(() => {
+afterAll(() => {
   server?.stop();
   if (folders) rmSync(folders, { recursive: true, force: true });
 });

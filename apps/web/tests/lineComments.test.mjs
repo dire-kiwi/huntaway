@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { beforeEach, test } from "node:test";
+import { beforeEach, test } from "vite-plus/test";
 import { parseDiff } from "../src/components/changes/diffs.ts";
 
 // The review is kept in localStorage: a stand-in for node.

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, test } from "node:test";
+import { afterEach, test } from "vite-plus/test";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -174,7 +174,8 @@ test("a download cut off halfway leaves the AppImage as it was", async () => {
   assert.deepEqual(fs.readdirSync(dir), ["Huntaway.AppImage"]);
 });
 
-test("an AppImage in a folder the user can't write says so before downloading", { skip: process.getuid?.() === 0 && "root writes anywhere" }, async () => {
+// Not as root, which writes anywhere.
+test("an AppImage in a folder the user can't write says so before downloading", { skip: process.getuid?.() === 0 }, async () => {
   const f = await fake();
   const dir = tmp();
   const appimage = path.join(dir, "Huntaway.AppImage");

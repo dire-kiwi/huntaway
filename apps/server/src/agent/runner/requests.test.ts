@@ -1,6 +1,6 @@
 // Permission prompts over Claude Code's control protocol (requests.ts): the policy of mcp/permissions.ts, asked on the
 // run's output and answered on its input.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

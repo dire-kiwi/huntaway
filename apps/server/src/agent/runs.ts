@@ -33,7 +33,7 @@ import type { Spec } from "./codex.ts";
 import * as codex from "./codex.ts";
 import type { Shared } from "../state.ts";
 import { VERSION } from "../hosts/proto.ts";
-import { context, err_str, expand_tilde, sleep } from "../util.ts";
+import { context, err_str, expand_tilde, IN_TEST, sleep } from "../util.ts";
 import * as threads_store from "../threads/store.ts";
 
 /** On-disk format of a run directory written by this build. */
@@ -156,9 +156,9 @@ const TARGET_DIR = fileURLToPath(new URL("../../../../target/", import.meta.url)
 export function shim_path(state: Shared): string {
   const env = process.env.IA_SHIM_BIN;
   if (env) return env;
-  // Not in tests (`node --test`), which mustn't start real agents unless they ask to (TEST_CAN_RUN), as the Rust tests
-  // can't: their binary has no ia-shim beside it.
-  const built = process.env.NODE_TEST_CONTEXT ? [] : ["release", "debug"].map((p) => join(TARGET_DIR, p, "ia-shim")).filter(is_file);
+  // Not in tests, which mustn't start real agents unless they ask to (TEST_CAN_RUN), as the Rust tests can't: their
+  // binary has no ia-shim beside it.
+  const built = IN_TEST ? [] : ["release", "debug"].map((p) => join(TARGET_DIR, p, "ia-shim")).filter(is_file);
   if (built.length) return built.sort((a, b) => mtime(b) - mtime(a))[0];
   return join(dirname(state.exe), "ia-shim");
 }

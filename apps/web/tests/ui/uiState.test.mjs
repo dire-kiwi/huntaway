@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project, hostId;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
   hostId = (await server.api("GET", "/hosts")).find((h) => h.local).id;
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 /**
  * Lets the test send events to the page, as the host would (the page's own still come through). A host's resync refreshes

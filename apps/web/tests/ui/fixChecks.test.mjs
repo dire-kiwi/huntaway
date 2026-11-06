@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
   gitRepo(repo);
@@ -12,7 +12,7 @@ before(async () => {
   // Nothing reads its pull requests in the background: neither watching them in review nor Done when merged.
   await server.api("PATCH", `/projects/${project.id}`, { watch_pull_requests: "off", done_when_merged: false });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const PR = "https://github.com/o/r/pull/7";
 

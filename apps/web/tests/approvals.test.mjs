@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { approvalLoads, withApproval } from "../src/approvals.ts";
 
 const approval = (request_id, status = "pending", created_at = request_id, host_id = "desktop") => ({ request_id, status, created_at, host_id });

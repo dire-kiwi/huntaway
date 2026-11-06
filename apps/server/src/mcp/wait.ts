@@ -38,7 +38,7 @@ import type { AgentWait, Conn, Run, Task, WaitTask } from "../db.ts";
 import type { Shared } from "../state.ts";
 import * as runner from "../agent/runner.ts";
 import * as pr_watch from "./pr_watch.ts";
-import { context, err_str, new_id, now } from "../util.ts";
+import { context, err_str, IN_TEST, new_id, now } from "../util.ts";
 import * as history from "../threads/history.ts";
 
 export const DEFAULT_SECS = 600;
@@ -54,8 +54,7 @@ export const UNWATCHED_MAX_SECS = 30;
 /** How much of the end of a command's output the tool returns (bytes). */
 const OUTPUT_MAX = 4000;
 
-/** Whether this runs under `node --test` (Rust's `cfg!(test)`). */
-const TEST = process.execArgv.some((a) => a.startsWith("--test"));
+const TEST = IN_TEST;
 
 /** How often (ms) a wait checks for what no task event announces (its run being stopped). */
 export const TICK = TEST ? 200 : 5000;

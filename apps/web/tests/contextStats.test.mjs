@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { byTask, histogram, limitRows, percentile, tokens } from "../src/contextStats.ts";
 
 const turn = (taskId, at, n, cost = null, start = null) => ({ at, taskId, tokens: n, startTokens: start, maxTokens: 1_000_000, cost });

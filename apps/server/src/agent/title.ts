@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import * as db from "../db.ts";
 import type { ClaudeConfig, Task } from "../db.ts";
 import type { Shared } from "../state.ts";
-import { context, err_str, expand_tilde } from "../util.ts";
+import { context, err_str, expand_tilde, IN_TEST } from "../util.ts";
 import * as attachments from "../attachments.ts";
 import * as runner from "./runner.ts";
 import * as codex from "./codex.ts";
@@ -344,13 +344,13 @@ export async function check_cli(argv: string[]): Promise<void> {
 }
 
 /**
- * Stands in for Haiku in tests (Rust's `#[cfg(test)]` thread-locals): on under `node --test` (which sets
- * `NODE_TEST_CONTEXT` in the processes it runs), or with `on` set. `reply` is the title to reply with (an error for
+ * Stands in for Haiku in tests (Rust's `#[cfg(test)]` thread-locals): on in a test process (util.ts's IN_TEST), or
+ * with `on` set. `reply` is the title to reply with (an error for
  * null), `asked` what it was asked, `spent` what each call says it used, and `replies` replies for the next calls, in
  * turn, before `reply`: each once its gate (if any) opens.
  */
 export const TEST = {
-  on: !!process.env.NODE_TEST_CONTEXT,
+  on: IN_TEST,
   reply: null as string | null,
   asked: [] as string[],
   spent: null as any,

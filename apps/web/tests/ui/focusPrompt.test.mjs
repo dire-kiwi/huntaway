@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 // Its threads are seeded as messages rows, which a task whose items are its source (HA-222) has none of: its server is
@@ -8,12 +8,12 @@ import { demoProject, startServer, withBrowser } from "./harness.mjs";
 process.env.IA_NEW_DB_FILE = "0";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   // Agents run with scripts/fake-claude, so a started task's agent runs without a model.
   server = startServer("--fake-claude");
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // The task once the dialog's request has made it (the dialog closing doesn't wait for the board to show it).
 const byDescription = async (description) => {

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server, project, sp, a, b;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   // Subprojects need worktrees, so a project on a git repository.
   const repo = `${server.dataDir}/shop`;
@@ -14,7 +14,7 @@ before(async () => {
   a = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Child alpha", parent_id: sp.id });
   b = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Child beta", parent_id: sp.id });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const nowIds = async () => {
   const all = [sp, a, b];

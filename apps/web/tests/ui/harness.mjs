@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after } from "node:test";
+import { afterAll } from "vite-plus/test";
 import { fileURLToPath } from "node:url";
 import { launch, open } from "../../../../scripts/ui-check.mjs";
 
@@ -57,7 +57,7 @@ const sharedBrowser = async () => {
   if (!(await browser)?.isConnected()) browser = launch();
   return browser;
 };
-after(async () => (await browser)?.close());
+afterAll(async () => (await browser)?.close());
 
 /**
  * Run `fn` with a browser on the server (see `open` in scripts/ui-check.mjs), then close it. Page and console

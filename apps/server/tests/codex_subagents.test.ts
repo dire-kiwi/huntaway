@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { chmodSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
 import { HUNTAWAY, TempDir_new, fixture } from "./common.ts";

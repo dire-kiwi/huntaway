@@ -1,6 +1,6 @@
 // Codex's runs as the board stores them, shaped like Claude's by agent/codex/output.ts (with agent/codex/adapter.ts's
 // approvals as permission prompts), translated: the cases of agent/codex/subagent_tests.test.ts and tests.test.ts.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import type { Run } from "../db.ts";

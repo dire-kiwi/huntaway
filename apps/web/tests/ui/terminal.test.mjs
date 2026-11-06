@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 for (const tool of [false, true]) test(`${tool ? "lazygit" : "terminal"} opens without a canvas context and survives hiding and reconnecting`, async () => {
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Terminal rendering", status: "in_review" });

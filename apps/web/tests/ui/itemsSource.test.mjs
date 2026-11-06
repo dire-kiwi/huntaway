@@ -2,16 +2,16 @@
 // moved onto items. Their thread is drawn from items whatever the Keep threads as items setting, and so are what read
 // a thread outside it: a needs-attention card's prompts (Triage) and a plan's last reply, which read messages before.
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   // Agents run with scripts/fake-claude, so a started task's agent replies without a model.
   server = startServer("--fake-claude");
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 /** Waits until `f` gives something truthy (the board's state, read through its API). */
 async function until(what, f, ms = 15_000) {

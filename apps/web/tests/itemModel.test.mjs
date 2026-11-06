@@ -3,7 +3,7 @@
 // rows, subagents and results.
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { forkedSkillMessages } from "./fixtures/forkedSkill.mjs";
 import { threadHistory as history } from "./fixtures/threadHistory.mjs";
 

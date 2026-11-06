@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, test } from "vite-plus/test";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../src/activeProfile.ts";
 
 afterEach(() => { delete globalThis.localStorage; });

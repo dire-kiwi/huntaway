@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project, plan;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
   plan = (await server.api("GET", `/projects/${project.id}/tasks`)).find((t) => t.labels.includes("plan"));
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 async function openPlan(ui, content) {
   if (content) {

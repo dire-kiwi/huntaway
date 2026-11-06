@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 const TOKEN = "123456:ABCdefGHIjklMNOpqrSTUvwxYZ_0123456789";
@@ -36,13 +36,13 @@ const bot = createServer((req, res) => {
 });
 
 let server;
-before(async () => {
+beforeAll(async () => {
   await new Promise((r) => bot.listen(0, "127.0.0.1", r));
   // The test server talks to the fake, never to Telegram.
   process.env.IA_TELEGRAM_API = `http://127.0.0.1:${bot.address().port}`;
   server = startServer();
 });
-after(() => {
+afterAll(() => {
   fake.closing = true;
   server?.stop();
   bot.closeAllConnections();

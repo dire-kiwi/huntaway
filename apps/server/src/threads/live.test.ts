@@ -1,6 +1,6 @@
 // The thread API and live thread events (threads/live.ts, docs/threads-api.md), on the spec's example thread: the port
 // of HA-145's server/src/threads/live/tests.rs, for items kept in place in the board's own tables.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
@@ -323,7 +323,7 @@ test("respond answers permission prompts, plans and questions through the board'
   const { s, task } = setup();
   // A question's answer is sent to the agent, whose launch fails here.
   runs.TEST_CAN_RUN.set(true);
-  t.after(() => runs.TEST_CAN_RUN.set(false));
+  t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   const cmd = `/api/tasks/${task.id}/thread/commands`;
   const status = (id: string) => ({ ...db.one<{ status: string; note: string | null }>(s.db(), "SELECT status, note FROM permission_requests WHERE id=?1", id) });
   const open = (request: any) => store.append(s.db(), task.id, [{ type: "request.opened", request }]);
@@ -384,7 +384,7 @@ test("send, compact, interrupt, set_options, rewind and new_session go onto the 
   const refused = await call(s, "POST", cmd, { type: "send", text: "Carry on" });
   assert.deepEqual(refused, [400, { error: "This host can't run agents (it has no claude or codex CLI, or no ia-shim)" }]);
   runs.TEST_CAN_RUN.set(true);
-  t.after(() => runs.TEST_CAN_RUN.set(false));
+  t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   // The message is the user's, whether or not its agent could start (here it can't).
   const [sent_code, sent] = await call(s, "POST", cmd, { type: "send", text: "Carry on" });
   assert.equal(sent_code, 200, JSON.stringify(sent));
@@ -422,7 +422,7 @@ test("send, compact, interrupt, set_options, rewind and new_session go onto the 
 test("requests the translator makes from the board's prompts and questions are answered", async (t) => {
   const { s, task } = setup();
   runs.TEST_CAN_RUN.set(true);
-  t.after(() => runs.TEST_CAN_RUN.set(false));
+  t.onTestFinished(() => runs.TEST_CAN_RUN.set(false));
   // The board's rows, as mcp/permissions.ts and mcp/questions.ts write them, through the translator into the store.
   pending_permission(s, task, "perm1");
   s.add_message(task.id, "question", { question: "Merge now?", options: [{ label: "Yes" }, { label: "No" }], status: "pending", call_id: "c1" });

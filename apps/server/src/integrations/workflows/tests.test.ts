@@ -1,5 +1,5 @@
 // The tests of server/src/integrations/workflows/tests.rs (HA-173's branch, ported by HA-189), and more of HA-189's own.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as db from "../../db.ts";

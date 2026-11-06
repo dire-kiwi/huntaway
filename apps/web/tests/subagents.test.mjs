@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { buildSubagents } from "../src/subagents.ts";
 import { forkedSkillMessages } from "./fixtures/forkedSkill.mjs";
 

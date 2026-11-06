@@ -1,5 +1,5 @@
 // Port of server/src/agent/codex/tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { MCP_SERVER_NAME } from "../runner.ts";
 import { REVIEW_PROFILE, Spec_default, is_claude_model, policy, thread_params, type Spec } from "../codex.ts";

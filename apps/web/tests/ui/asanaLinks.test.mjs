@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 const TOKEN = "good-token";
@@ -34,13 +34,13 @@ const asana = createServer((req, res) => {
 });
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   await new Promise((resolve) => asana.listen(0, "127.0.0.1", resolve));
   process.env.IA_ASANA_URL = `http://127.0.0.1:${asana.address().port}`;
   server = startServer();
   project = await demoProject(server);
 });
-after(() => {
+afterAll(() => {
   server?.stop();
   asana.close();
 });

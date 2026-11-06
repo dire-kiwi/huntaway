@@ -1,5 +1,5 @@
 // HA-186: a done task's test servers, their shims and agents are stopped, and nothing else is.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";

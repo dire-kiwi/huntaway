@@ -1,14 +1,14 @@
 // Checks of scripts/ui-check.mjs itself.
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // Plans render in a sandboxed frame with no storage; signing in there used to throw a SecurityError.
 test("a plan's sandboxed frame raises no errors, and errors in the page and the frame are still caught", async () => {

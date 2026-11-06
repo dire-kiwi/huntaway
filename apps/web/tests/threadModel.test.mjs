@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { forkedSkillMessages } from "./fixtures/forkedSkill.mjs";
 
 // The app's modules import each other without extensions (and folders by their index.ts), as Vite allows.

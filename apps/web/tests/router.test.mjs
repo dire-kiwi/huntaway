@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 
 // The app's modules import each other without extensions, as Vite allows (as in store.test.mjs).
 const hook = `export async function resolve(spec, ctx, next) {

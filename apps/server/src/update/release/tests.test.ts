@@ -1,5 +1,5 @@
 // Port of server/src/update/release/tests.rs.
-import { test, after } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -23,7 +23,7 @@ import type { Config, Latest } from "../release.ts";
 const NOT_EXEC = "not started by bin/huntaway, which execs for this server";
 
 const closers: Array<() => void> = [];
-after(() => closers.forEach((f) => f()));
+afterAll(() => closers.forEach((f) => f()));
 
 /** tokio's `Notify`: `notify_one` wakes a waiter, or the next one to wait. */
 class Notify {

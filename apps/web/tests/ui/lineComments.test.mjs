@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
@@ -18,7 +18,7 @@ const prompts = () =>
     .map((l) => JSON.parse(l).prompt)
     .filter((p) => !p.startsWith("Review the work on"));
 
-before(async () => {
+beforeAll(async () => {
   server = startServer("--fake-claude");
   const repo = `${server.dataDir}/shop`;
   mkdirSync(`${repo}/src`, { recursive: true });
@@ -38,7 +38,7 @@ before(async () => {
   git(wt, "commit", "-qam", "Name ten");
   writeFileSync(`${wt}/src/app.ts`, lines(30, (i) => (i === 3 ? "export const three = 3;" : i === 10 ? "export const ten = 10;" : `export const line${i} = ${i};`)));
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const DRAFT = "What should the agent know";
 /** Into app.ts's unstaged diff (its folder is the first row), with the cursor on its first change. */

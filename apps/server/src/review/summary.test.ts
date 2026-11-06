@@ -1,5 +1,5 @@
 // The tests of server/src/review/summary.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as db from "../db.ts";

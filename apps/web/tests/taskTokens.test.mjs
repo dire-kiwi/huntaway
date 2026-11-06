@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { allValues, codeRanges, completionAt, findTokens, insertCompletion, lastValue, placeWords, removeTokens, resolveTokens, stripTokens } from "../src/components/layout/taskTokens.ts";
 
 const vocab = { "/": ["task", "plan", "scratch"], "@": ["IA", "SD", "group", "none"], "!": ["opus", "sonnet"], "^": ["high"], "#": ["IA-212", "IA-216"] };

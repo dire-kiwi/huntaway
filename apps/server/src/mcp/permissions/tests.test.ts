@@ -1,5 +1,5 @@
 // Port of server/src/mcp/permissions/tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../../db.ts";
 import type { Task } from "../../db.ts";

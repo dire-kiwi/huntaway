@@ -1,6 +1,6 @@
 // Port of server/src/integrations/telegram/tests.rs. Its last tests (replies and reports by push, beside Telegram) used
 // the mobile app's Expo push, which master doesn't have yet: they push to a Web Push subscription here instead.
-import { test, type TestContext } from "node:test";
+import { test, type TestContext } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createDecipheriv, createECDH, type ECDH } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -198,7 +198,7 @@ async function board(t: TestContext): Promise<[Shared, Fake, string]> {
   const f = new Fake();
   await serve(f);
   s.telegram.use_api(f.url, 1);
-  t.after(() => {
+  t.onTestFinished(() => {
     stop(s);
     f.close();
   });
@@ -904,7 +904,7 @@ async function no_push(service: PushService, what: string) {
 async function pushing_board(t: TestContext): Promise<[Shared, Fake, string, PushService]> {
   const [s, f, p] = await linked_board(t);
   const service = await fake_push_service();
-  t.after(() => service.close());
+  t.onTestFinished(() => service.close());
   hub.start(s);
   push.start(s);
   const old = await subscribe_phone(s, service, "old", {});

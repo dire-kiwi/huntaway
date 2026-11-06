@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -239,7 +239,8 @@ test("a_server_that_cant_back_up_the_database_doesnt_start_unless_told_to", asyn
   assert.throws(() => backup.on_start(dir, path, "0.4.0", 87));
 });
 
-test("a_backup_that_isnt_allowed_says_so", { skip: process.getuid?.() === 0 && "root may write anywhere" }, () => {
+// Not as root, which may write anywhere.
+test("a_backup_that_isnt_allowed_says_so", { skip: process.getuid?.() === 0 }, () => {
   const dir = temp_dir();
   const path = closed_board(dir, 1, 86);
   mkdirSync(backup.backup_dir(dir));

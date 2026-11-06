@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { clipped, pointInPolygon, polygonHitsRect, reach } from "../src/lasso.ts";
 import { FOCUSES, inFocus, isFocus, isNow } from "../src/focus.ts";
 

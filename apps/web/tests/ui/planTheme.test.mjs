@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { frameDoc } from "../../src/components/task/htmlFrame.ts";
 import { themedPlan } from "../../src/components/task/planTheme.ts";
 import { launchOptions } from "../../../../scripts/ui-check.mjs";
@@ -12,8 +12,8 @@ const { chromium } = createRequire(import.meta.url)("playwright-core");
 const css = fs.readFileSync(new URL("../../src/components/task/planTheme.css", import.meta.url), "utf8");
 
 let browser;
-before(async () => (browser = await chromium.launch(launchOptions())));
-after(() => browser?.close());
+beforeAll(async () => (browser = await chromium.launch(launchOptions())));
+afterAll(() => browser?.close());
 
 // Pages come from an http origin (answered here, without a server) rather than setContent's about:blank: under that,
 // Chromium on GitHub's runners aborts as a sandboxed frame navigates (a CHECK in GetCompatibleSandboxedSiteInstance).

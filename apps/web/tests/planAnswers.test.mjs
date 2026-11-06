@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { afterSend, answered, answersMessage, readFields, resetFields, withTouched } from "../src/components/task/planAnswers.ts";
 
 const field = (name, label, answer, extra = {}) => ({ name, label, type: "radio", value: { v: [] }, answer, touched: false, initial: { value: { v: [] }, answer: [] }, ...extra });

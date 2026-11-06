@@ -1,5 +1,5 @@
 // Port of server/src/integrations/push/tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createECDH, createPublicKey, verify, type ECDH } from "node:crypto";
 import { createServer } from "node:http";

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { apply_events, initial_state, snapshot_window } from "../src/threads.ts";
 
 // HA-212: the app gets the thread model from the server's file (apps/server/src/threads/protocol.ts), by relative path.

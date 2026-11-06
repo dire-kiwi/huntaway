@@ -2,7 +2,7 @@
 // insert_message, update_message_data and update_pending_message, reached from AppState.add_message, start_run, and the
 // permission, question and merge-gate updates), what's sent once committed, rollbacks and crashes, rebuilds, and deltas.
 // The fixture and Codex tests (fixtures.test.ts, codex.test.ts) write whole recorded sessions this way too.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -315,7 +315,7 @@ test("a server that dies between the message and its items leaves neither", () =
   // The first message, written; the second, cut off between its row and its items.
   const script = `
     import * as db from ${JSON.stringify(new URL("../db.ts", import.meta.url).href)};
-    import * as testing from ${JSON.stringify(new URL("../testing.ts", import.meta.url).href)};
+    import { when } from ${JSON.stringify(new URL("../util.ts", import.meta.url).href)};
     import * as write from ${JSON.stringify(new URL("./write.ts", import.meta.url).href)};
     const c = db.open(${JSON.stringify(file)});
     db.set_setting(c, write.SETTING, "true");
@@ -323,7 +323,7 @@ test("a server that dies between the message and its items leaves neither", () =
     const t = db.insert_task(c, { profile_id: p.id, project_id: null, kind: "task", title: "t", description: "", status: "in_progress", use_worktree: false });
     console.log(t.id);
     db.insert_message(c, t.id, "user", { text: "kept" });
-    testing.when("threads:write", () => process.exit(3));
+    when("threads:write", () => process.exit(3));
     db.insert_message(c, t.id, "user", { text: "lost" });
   `;
   const r = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", "--input-type=module", "-e", script], { encoding: "utf8" });

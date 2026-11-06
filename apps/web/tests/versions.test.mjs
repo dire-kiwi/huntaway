@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { compareVersions } from "../src/components/settings/versions.ts";
 
 test("versions compare by semver precedence", () => {

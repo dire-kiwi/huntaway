@@ -1,7 +1,7 @@
 #!/bin/sh
 # The TypeScript port of the huntaway server (see server-ts/PORTING.md): `huntaway serve …` and its other subcommands.
-# A server started from a `node --test` file (the browser tests) is not a test process itself.
-unset NODE_TEST_CONTEXT
+# A server started from a test (the browser tests') is not a test process itself (see IN_TEST in src/util.ts).
+unset VITEST NODE_TEST_CONTEXT
 # Its own path, through symbolic links to it (`readlink -f`, which macOS has since 12.3), else the path `$0` names.
 self=$(readlink -f "$0" 2>/dev/null)
 [ -n "$self" ] && [ -f "$self" ] || self=$(cd -P "$(dirname "$0")" && pwd)/$(basename "$0")

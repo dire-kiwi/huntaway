@@ -1,5 +1,5 @@
 // Port of server/src/db/tests.rs.
-import { after, test } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +21,7 @@ import {
 // only need the database.
 // (`after` at the top level, as one called inside a test runs when that test ends.)
 let root: string | null = null;
-after(() => {
+afterAll(() => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 function temp_dir(): string {

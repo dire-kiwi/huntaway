@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, routeThread, startServer, withBrowser } from "./harness.mjs";
 import { threadHistory } from "../fixtures/threadHistory.mjs";
 import { convert } from "../../../server/src/threads/translate.ts";
@@ -17,11 +17,11 @@ import { apply_events, initial_state, item_page, snapshot_window } from "../../s
 process.env.IA_NEW_DB_FILE = "0";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 /** Far past the events the server writes for the task itself, which the view then leaves be. */
 const SEQ = 100_000;

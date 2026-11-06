@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import { fileRows, linesPatch, parseDiff, unquote } from "../src/components/changes/diffs.ts";
 
 test("reads files, hunks and line numbers", () => {
@@ -81,7 +81,7 @@ test("lists changed files as a tree, folders that only hold a folder run togethe
 // compared with what choosing those lines means.
 
 const dir = mkdtempSync(join(tmpdir(), "ia-changes-"));
-after(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const git = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", dir, ...args], { encoding: "utf8" });
 const apply = (patch, ...flags) => {
   const r = spawnSync("git", ["-C", dir, "apply", "--whitespace=nowarn", ...flags, "-"], { input: patch, encoding: "utf8" });

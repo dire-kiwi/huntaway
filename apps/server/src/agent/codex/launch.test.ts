@@ -1,7 +1,7 @@
 // How a Codex run is launched (agent/runner/launch.ts) since its requests go to its output (agent/codex/requests.ts): a
 // new session gets the board's tools as dynamic tools and no board MCP server; one that started with them keeps them;
 // one from before keeps the board's MCP server. A fake ia-shim takes the run (its folder written) and starts nothing.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

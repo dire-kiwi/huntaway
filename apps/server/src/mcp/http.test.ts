@@ -1,5 +1,5 @@
 // Tests of the board's MCP servers over HTTP (mcp/http.ts, HA-180).
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";

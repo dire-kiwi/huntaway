@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { harnessesOf, harnessWords } from "../src/components/layout/harnesses.ts";
 
 const claude = (id, name) => ({ id, name, agent: "claude", models: [{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }] });

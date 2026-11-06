@@ -1,7 +1,7 @@
 // Port of server/src/integrations/automations/tests/routines.rs (HA-122 and HA-161, on the HA-117 branch).
 // Routines: a profile's automations that wake its assistant, and what's new for every automation (cron and at triggers,
 // active hours, prechecks and budgets).
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

@@ -3,7 +3,7 @@
 // Rust's tests cut a call short with a timeout, which drops its future. A promise can't be dropped, so here
 // `cut_short` does what a restart does to a call waiting for the user: it forgets the call (calls_inflight) and its
 // waiter (perm_waiters), leaving it to wait for good, and the retry finds it recorded as executing.
-import { after, test } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -378,7 +378,7 @@ test("task_fields_use_the_same_profile_access_and_key_resolution", async () => {
 
 /** Fake linked hosts' servers, closed when the file's tests end. */
 const servers: Array<() => void> = [];
-after(() => {
+afterAll(() => {
   for (const f of servers.splice(0)) f();
 });
 

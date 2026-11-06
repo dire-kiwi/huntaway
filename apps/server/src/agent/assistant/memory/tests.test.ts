@@ -1,5 +1,5 @@
 // Port of server/src/agent/assistant/memory/tests.rs (HA-121 and HA-160, on the HA-117 branch).
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {

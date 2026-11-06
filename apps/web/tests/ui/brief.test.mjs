@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server;
-before(() => {
+beforeAll(() => {
   server = startServer();
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-125: without a brief, the Brief tab sets up the morning brief routine on the days and at the time picked.
 test("the Brief tab adds the morning brief routine", async () => {

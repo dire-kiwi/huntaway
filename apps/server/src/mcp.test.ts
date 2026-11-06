@@ -1,5 +1,5 @@
 // Port of the tests in server/src/mcp.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { Ctx, check_args, tool_names } from "./mcp.ts";

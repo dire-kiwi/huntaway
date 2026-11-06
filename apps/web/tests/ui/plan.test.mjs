@@ -1,6 +1,6 @@
 // A plan in the board's theme, running to the bottom of the task under the composer.
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 // Its threads are faked on the messages routes, which a task whose items are its source (HA-222) doesn't read: its server
@@ -8,11 +8,11 @@ import { demoProject, startServer, withBrowser } from "./harness.mjs";
 process.env.IA_NEW_DB_FILE = "0";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 /** Wait until `locator`'s box stops moving (unchanged over a few animation frames). */
 async function settled(locator) {

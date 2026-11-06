@@ -1,5 +1,5 @@
 // Port of the tests in server/src/agent/tokens/calls.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import * as db from "../../db.ts";

@@ -1,4 +1,4 @@
-import { test, after } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
@@ -6,7 +6,7 @@ import { ApiError, readBody } from "./http.ts";
 import { sleep } from "./util.ts";
 
 const servers: Server[] = [];
-after(() => servers.forEach((s) => (s.closeAllConnections(), s.close())));
+afterAll(() => servers.forEach((s) => (s.closeAllConnections(), s.close())));
 
 /** A server that reads bodies with `readBody(req, limit, drain_ms)` and answers with what it read, or its 413. */
 async function server(limit: number, drain_ms?: number) {

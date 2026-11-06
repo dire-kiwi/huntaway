@@ -1,6 +1,6 @@
 // Every task gets items (threads/batch.ts, step 7 of docs/threads.md): the batch rebuild of the tasks that aren't done,
 // on the server and from the command line, and a done task's items when it's opened or read.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import * as db from "../db.ts";

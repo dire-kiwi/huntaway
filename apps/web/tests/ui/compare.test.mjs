@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let project;
 let tasks;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
   gitRepo(repo);
@@ -25,7 +25,7 @@ before(async () => {
     tasks.push({ ...t, wt });
   }
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const task = (t) => server.api("GET", `/tasks/${t.id}`).then((r) => r.task);
 

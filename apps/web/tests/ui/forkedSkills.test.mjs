@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { forkedSkillMessages } from "../fixtures/forkedSkill.mjs";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
@@ -9,14 +9,14 @@ import { demoProject, startServer, withBrowser } from "./harness.mjs";
 process.env.IA_NEW_DB_FILE = "0";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
   // The view on messages and its pages: with Keep threads as items on (the default), a task opened with messages written
   // behind the board's back gets its items (docs/threads.md, step 7), whose window has all of this thread.
   await server.api("PATCH", "/settings", { thread_items: false });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // IA-173: replay the Skill/local_agent shape from ODS-9, through the real paged messages API.
 test("an older review's forked Skill opens from Agents with its transcript and report", async () => {

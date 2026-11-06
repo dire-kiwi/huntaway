@@ -3,7 +3,7 @@
 // awaited, `.catch`ed, or run with util.ts's `background`, which logs what it throws. There's no ESLint here, so this is
 // typescript-eslint's no-floating-promises and no-misused-promises (the void-return case), with tsrs's checker API (its
 // `tsrs/sync`, the TypeScript 7 API, which runs the checker in a tsrs process and asks it over a pipe).
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, relative } from "node:path";

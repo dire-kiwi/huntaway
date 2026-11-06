@@ -1,5 +1,5 @@
 // Port of the tests in server/src/integrations/status_script.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

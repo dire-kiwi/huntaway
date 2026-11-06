@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 // IA-227 with a Claude Code config and a Codex one, whose models the board fetches from the host (faked here, as the
@@ -10,7 +10,7 @@ let server;
 let project;
 let codex;
 let cart;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
   gitRepo(repo);
@@ -23,7 +23,7 @@ before(async () => {
   execFileSync("git", ["init", "-q", `${server.dataDir}/cart`]);
   cart = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Cart", repo_path: `${server.dataDir}/cart`, key: "CART", use_worktrees: false });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const MODELS = [{ id: "gpt-5.5", name: "GPT-5.5", is_default: true, efforts: ["low", "medium", "high", "xhigh"], default_effort: null }];
 const json = (body, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });

@@ -1,7 +1,7 @@
 // The Codex driver (driver.ts): a run's notifications written straight into a task's items, compared with what the
 // messages path (output.ts's messages shaped like Claude Code's, translated) makes of the same run, case by case: every
 // difference is named here, and in docs/threads.md ("Codex writes items directly").
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../../db.ts";
 import type { Run } from "../../db.ts";

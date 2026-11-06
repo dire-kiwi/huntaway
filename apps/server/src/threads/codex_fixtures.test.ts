@@ -7,7 +7,7 @@
 //   must be the ones the fixture's expected.jsonl folds into, but for what the board does otherwise (`ours`, `theirs`);
 // - and on a task still on its messages, where they're made into messages shaped like Claude Code's and translated:
 //   every difference between the two is listed in `DIFFERENCES` (and in docs/threads.md), so none goes unnoticed.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";

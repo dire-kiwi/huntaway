@@ -1,5 +1,5 @@
 // Port of server/src/db/file/tests.rs (HA-153, on ia/ha-128-implement-agent-threads-from-feasibility).
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";

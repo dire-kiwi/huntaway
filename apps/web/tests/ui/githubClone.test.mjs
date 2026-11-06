@@ -4,12 +4,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { fileURLToPath } from "node:url";
 import { startServer, withBrowser } from "./harness.mjs";
 
 let server, profile, clones;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   [profile] = await server.api("GET", "/profiles");
   // The profile clones into a scratch folder, where o/r is cloned already, so adding it needs no gh.
@@ -24,7 +24,7 @@ before(async () => {
   writeFileSync(join(clones, "taken", "notes.txt"), "mine");
   await server.api("PATCH", `/profiles/${profile.id}`, { clone_dir: clones });
 });
-after(() => {
+afterAll(() => {
   server?.stop();
   if (clones) rmSync(clones, { recursive: true, force: true });
 });

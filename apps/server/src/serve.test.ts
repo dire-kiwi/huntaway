@@ -1,7 +1,7 @@
 // Port of server/src/main.rs's tests: what they test is in serve.ts (main.ts runs the command line when it's loaded).
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { temp_dir } from "./testing.ts";
 import { db_path, loopback_host, older_db_path, parse_serve_args, stamped } from "./serve.ts";

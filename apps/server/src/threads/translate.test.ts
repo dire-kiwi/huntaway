@@ -1,6 +1,6 @@
 // HA-128's server/src/threads/import/tests.rs, ported to the translator, and what being a fold adds: translating a
 // history one message at a time, rebuilt from its items at any point, gives what translating it at once does.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
 import * as testing from "../testing.ts";

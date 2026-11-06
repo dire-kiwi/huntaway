@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 let server;
 let project;
 let dep;
 let shopfront;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
   gitRepo(repo);
@@ -20,7 +20,7 @@ before(async () => {
   // A project keyed like `@none`.
   await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Nonesuch", repo_path: `${server.dataDir}/nonesuch`, key: "NONE" });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const value = "document.querySelector('textarea').value";
 const created = async (description) => (await server.api("GET", `/projects/${project.id}/tasks`)).find((t) => t.description === description);

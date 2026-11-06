@@ -1,5 +1,5 @@
 // Port of the tests in rust/broker/src/proto.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Ctl_from_json, DATA, TEXT, WINDOW, Window, decode, encode, slug, valid_name } from "./proto.ts";

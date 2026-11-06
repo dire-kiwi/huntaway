@@ -4,7 +4,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { HUNTAWAY, TempDir_new, fixture } from "./common.ts";
 

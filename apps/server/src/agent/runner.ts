@@ -8,7 +8,7 @@ import * as db from "../db.ts";
 import type { Conn, Message, Profile, Project, Queued, Run, Task } from "../db.ts";
 import { ApiError } from "../http.ts";
 import type { Shared } from "../state.ts";
-import { err_str, expand_tilde, new_id, now, reached } from "../util.ts";
+import { err_str, expand_tilde, IN_TEST, new_id, now, reached } from "../util.ts";
 import * as runs from "./runs.ts";
 import * as documents from "./documents.ts";
 import * as memory from "./assistant/memory.ts";
@@ -50,9 +50,6 @@ export const LEGACY_MCP_SERVER_NAME = "issue_agent";
 export function is_board_server(name: string): boolean {
   return name === MCP_SERVER_NAME || name === LEGACY_MCP_SERVER_NAME;
 }
-
-/** Whether this is a test process (Rust's `cfg!(test)`): `node --test` sets NODE_TEST_CONTEXT in its test processes. */
-const IN_TEST = !!process.env.NODE_TEST_CONTEXT;
 
 /** How long a stopped agent has to end its turn before its process is stopped (ms). */
 export const STOP_GRACE = IN_TEST ? 1000 : 10_000;

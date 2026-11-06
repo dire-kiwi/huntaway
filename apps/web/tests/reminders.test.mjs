@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { fromLocalInput, isDue, nextDue, reminderLabel, reminderPresets, reminderTasks, starredTasks, toLocalInput } from "../src/reminders.ts";
 
 const task = (id, fields = {}) => ({ id, kind: "task", project_id: "a", number: 1, ...fields });

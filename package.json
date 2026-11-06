@@ -7,5 +7,19 @@
   "packageManager": "pnpm@10.34.9",
   "engines": {
     "node": ">=24"
+  },
+  "scripts": {
+    "check": "vp check",
+    "fix": "vp check --fix",
+    "typecheck": "vp check --no-fmt --no-lint",
+    "test": "vp test",
+    "test:ui": "pnpm --filter huntaway-app test:ui",
+    "test:mobile": "pnpm --filter huntaway-mobile test",
+    "dev": "pnpm --filter huntaway-app dev",
+    "build": "pnpm --filter huntaway-app build",
+    "electron": "pnpm --filter huntaway-app electron"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
   }
 }

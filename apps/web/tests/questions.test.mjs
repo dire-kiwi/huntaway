@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { askedAnswers, declinedWithAnswers, planTitle, questionsOf, withoutTitle } from "../src/questions.ts";
 
 test("a prompt's questions are read whatever the agent sent", () => {

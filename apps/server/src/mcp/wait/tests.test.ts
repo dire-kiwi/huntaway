@@ -1,5 +1,5 @@
 // Port of server/src/mcp/wait/tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";

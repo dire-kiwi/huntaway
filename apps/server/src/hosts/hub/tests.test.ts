@@ -1,6 +1,6 @@
 // Port of server/src/hosts/hub/tests.rs. (The broker in `a_host_dialled_in_through_a_broker_over_a_dead_connection_reconnects`
 // is the Rust one, run as a process: see hosts/broker/test_broker.ts.)
-import { after, test } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createConnection, createServer as createTcpServer, type Socket } from "node:net";
@@ -25,7 +25,7 @@ relay.test_timing();
 
 /** What each test leaves running (servers, dialling loops), stopped when the file's tests end. */
 const cleanups: Array<() => void> = [];
-after(() => {
+afterAll(() => {
   for (const f of cleanups.splice(0)) f();
 });
 

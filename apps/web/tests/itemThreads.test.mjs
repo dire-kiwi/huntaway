@@ -2,7 +2,7 @@
 // window on a resync, paging back, and streaming its preview text.
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 
 // The app's modules import each other without extensions (and folders by their index.ts), as Vite allows.
 const hook = `export async function resolve(spec, ctx, next) {

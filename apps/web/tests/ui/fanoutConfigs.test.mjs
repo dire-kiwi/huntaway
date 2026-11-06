@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { gitRepo, startServer, withBrowser } from "./harness.mjs";
 
 // Review of IA-227: with two Codex configs that both have a model, `!model` is the picked config's whatever order their
@@ -8,7 +8,7 @@ let server;
 let project;
 let work;
 let personal;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   const repo = `${server.dataDir}/shop`;
   gitRepo(repo);
@@ -19,7 +19,7 @@ before(async () => {
   await server.api("PATCH", `/profiles/${profile.id}`, { claude_config_ids: [work.id, personal.id, ...profile.claude_config_ids] });
   project = await server.api("POST", `/profiles/${profile.id}/projects`, { name: "Shop", repo_path: repo, key: "SHOP" });
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 const MODELS = [{ id: "gpt-5.5", name: "GPT-5.5", is_default: true, efforts: ["low", "medium", "high"], default_effort: "medium" }];
 const json = (body, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });

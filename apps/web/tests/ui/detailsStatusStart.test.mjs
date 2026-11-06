@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
-before(async () => {
+beforeAll(async () => {
   // Agents run with scripts/fake-claude, which logs each call and answers without a model.
   server = startServer("--fake-claude");
   project = await demoProject(server);
 });
-after(() => server?.stop());
+afterAll(() => server?.stop());
 
 // HA-32: moving a fresh task to In progress from its Details tab only changed its column, where a drop on the board
 // starts its agent too.

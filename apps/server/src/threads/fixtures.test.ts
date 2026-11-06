@@ -4,7 +4,7 @@
 // and the permission prompts, which it asks through its MCP tool rather than can_use_tool), and the translator's items
 // must be the ones the fixture's expected.jsonl folds into, but for what `messages` doesn't keep (see `normalize`). The
 // task keeps its thread as items (the setting is on), so the items written live as the rows were must be a rebuild's.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";

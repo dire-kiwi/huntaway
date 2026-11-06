@@ -1,5 +1,5 @@
 // Port of server/src/agent/codex/subagent_tests.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../../db.ts";
 import type { Run } from "../../db.ts";

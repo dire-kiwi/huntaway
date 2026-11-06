@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "vite-plus/test";
 import { demoProject, startServer, withBrowser } from "./harness.mjs";
 
 let server, project, service;
-before(async () => {
+beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
   service = await pushService();
 });
-after(() => {
+afterAll(() => {
   server?.stop();
   service?.close();
 });

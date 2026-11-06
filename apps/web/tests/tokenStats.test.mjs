@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { byDay, byImplementer, byReviewer, byTask, groupBy, issuesByModelAndEffort, purposeOf, reviewsByTask, summarise, ticks, tokens, total } from "../src/tokenStats.ts";
 
 const row = (threadId, at, model, output, extra = {}) => ({

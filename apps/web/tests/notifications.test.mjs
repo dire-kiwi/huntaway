@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { mock, test } from "node:test";
+import { test, vi } from "vite-plus/test";
 
 // The app's modules import each other without extensions (and folders by their index.ts), as Vite allows.
 const hook = `export async function resolve(spec, ctx, next) {
@@ -68,7 +68,7 @@ test("a notification stops applying once the task moves on", () => {
 });
 
 test("ready to review waits out the grace period, and a review or run that starts meanwhile cancels it", () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
   try {
     const seen = [];
     let now = null;
@@ -79,9 +79,9 @@ test("ready to review waits out the grace period, and a review or run that start
     now = ready;
     gate.observe(task(), ready);
     gate.observe(ready, { ...ready, cost_usd: 1 }); // another change meanwhile doesn't start it again
-    mock.timers.tick(4999);
+    vi.advanceTimersByTime(4999);
     assert.deepEqual(seen, []);
-    mock.timers.tick(1);
+    vi.advanceTimersByTime(1);
     assert.deepEqual(seen, ["t1:review"]);
 
     // A review starts a moment after: nothing until it passes.
@@ -90,7 +90,7 @@ test("ready to review waits out the grace period, and a review or run that start
     gate.observe(task(), ready);
     now = reviewing;
     gate.observe(ready, reviewing);
-    mock.timers.tick(10_000);
+    vi.advanceTimersByTime(10_000);
     assert.deepEqual(seen, []);
 
     // Attention notifies at once, and takes over from a pending one.
@@ -99,17 +99,17 @@ test("ready to review waits out the grace period, and a review or run that start
     now = asking;
     gate.observe(ready, asking);
     assert.deepEqual(seen, ["t1:attention"]);
-    mock.timers.tick(10_000);
+    vi.advanceTimersByTime(10_000);
     assert.deepEqual(seen, ["t1:attention"]);
 
     // A task that's gone by then doesn't.
     seen.length = 0;
     gate.observe(task(), ready);
     now = undefined;
-    mock.timers.tick(10_000);
+    vi.advanceTimersByTime(10_000);
     assert.deepEqual(seen, []);
   } finally {
-    mock.timers.reset();
+    vi.useRealTimers();
   }
 });
 

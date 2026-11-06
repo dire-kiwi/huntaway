@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { isWholePage } from "../src/components/task/planTheme.ts";
 
 test("a plan that's a whole page of its own is told apart from content for the theme", () => {

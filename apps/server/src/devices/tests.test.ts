@@ -1,6 +1,6 @@
 // Port of server/src/devices/tests.rs (HA-136, from the HA-117 branch at bb59d8a), with its push and Assistant tab tests
 // (HA-137, HA-138, ported by HA-209; the push ones are in integrations/push/expo_tests.test.ts).
-import { after, test } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { writeFileSync } from "node:fs";
@@ -20,7 +20,7 @@ import { MAX_CODES, hash, list, refused, refused_on_host, type DeviceAuth } from
 const BOARD = "board-token";
 
 const cleanups: Array<() => void> = [];
-after(() => {
+afterAll(() => {
   for (const f of cleanups.splice(0)) f();
 });
 

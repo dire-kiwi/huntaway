@@ -1,15 +1,15 @@
-// Port of server/src/testing.rs: test helpers. (`run`/`run_within` aren't needed: node:test has timeouts, and an
+// Port of server/src/testing.rs: test helpers. (`run`/`run_within` aren't needed: Vitest has timeouts, and an
 // async test is just an async function.)
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after } from "node:test";
+import { afterAll } from "vite-plus/test";
 import * as db from "./db.ts";
 import * as source from "./threads/source.ts";
 import { AppState, type Identity } from "./state.ts";
 import type { ServerMeta } from "./update/admin.ts";
 
-// `when` and `reached` are in util.ts, so the server's own code can mark points without importing node:test.
+// `when` and `reached` are in util.ts, so the server's own code can mark points without importing the test runner.
 export { when, reached } from "./util.ts";
 
 export function meta(): ServerMeta {
@@ -82,9 +82,9 @@ export function messages(c: db.Conn, task_id: string): db.Message[] {
 let root: string | null = null;
 const dirs: string[] = [];
 
-// Registered as the module loads (at a test file's top level, through its imports), so it runs once the file's tests have
-// ended: registered inside a test, it would run when that test ends.
-after(() => {
+// Registered as the module loads (at a test file's top level, through its imports, while Vitest collects the file's
+// tests, which is when it takes hooks), so it runs once the file's tests have ended.
+afterAll(() => {
   if (!root) return;
   if (process.env.IA_KEEP_TEST_DIRS && process.env.IA_KEEP_TEST_DIRS !== "0") {
     console.error(`kept test folders in ${root}`);

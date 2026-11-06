@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { mock, test } from "node:test";
+import { test, vi } from "vite-plus/test";
 
 // The app's modules import each other without extensions (and folders by their index.ts), as Vite allows.
 const hook = `export async function resolve(spec, ctx, next) {
@@ -342,14 +342,14 @@ test("a load of everything queued behind a slow one starts anyway, and the slow 
   const answers = [];
   api.hosts = () => new Promise((resolve) => answers.push(resolve));
   useStore.setState({ loadProfiles: async () => {}, loadHostSettings: async () => {} });
-  mock.timers.enable({ apis: ["setTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
   try {
     const slow = useStore.getState().loadAll();
     const queued = useStore.getState().loadAll();
     const flush = () => new Promise((r) => setImmediate(r));
     await flush();
     assert.equal(answers.length, 1);
-    mock.timers.tick(2000);
+    vi.advanceTimersByTime(2000);
     await flush();
     assert.equal(answers.length, 2);
     answers[1]([host("local"), host("remote")]);
@@ -358,6 +358,6 @@ test("a load of everything queued behind a slow one starts anyway, and the slow 
     await slow;
     assert.deepEqual(useStore.getState().hosts.map((h) => h.id), ["local", "remote"]);
   } finally {
-    mock.timers.reset();
+    vi.useRealTimers();
   }
 });

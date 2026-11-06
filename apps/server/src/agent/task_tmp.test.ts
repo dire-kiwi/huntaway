@@ -1,5 +1,5 @@
 // Port of the tests in server/src/agent/task_tmp.rs.
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

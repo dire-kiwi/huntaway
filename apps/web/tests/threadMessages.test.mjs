@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
-import { mock, test } from "node:test";
+import { test, vi } from "vite-plus/test";
 
 // The app's modules import each other without extensions (and folders by their index.ts), as Vite allows.
 const hook = `export async function resolve(spec, ctx, next) {
@@ -31,7 +31,7 @@ test("a message goes in id order, and an update replaces the one with its id", (
 });
 
 test("a thread's messages go once nothing shows it, and a load that finishes after leaves them gone", async () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
   try {
     let answer;
     api.messages = () => new Promise((resolve) => (answer = resolve));
@@ -47,14 +47,14 @@ test("a thread's messages go once nothing shows it, and a load that finishes aft
     assert.deepStrictEqual(ids(s().messages.t), [1]);
     first();
     first(); // twice is once
-    mock.timers.tick(60_000);
+    vi.advanceTimersByTime(60_000);
     assert.deepStrictEqual(ids(s().messages.t), [1]);
 
     // The other goes: they're kept for a while, in case it's shown again soon.
     second();
-    mock.timers.tick(1000);
+    vi.advanceTimersByTime(1000);
     assert.ok(s().messages.t);
-    mock.timers.tick(60_000);
+    vi.advanceTimersByTime(60_000);
     assert.equal(s().messages.t, undefined);
 
     // Shown again and gone before its messages came.
@@ -71,12 +71,12 @@ test("a thread's messages go once nothing shows it, and a load that finishes aft
     answer([msg(1), msg(2)]);
     await load;
     fourth();
-    mock.timers.tick(1000);
+    vi.advanceTimersByTime(1000);
     const fifth = retainThread("t");
-    mock.timers.tick(60_000);
+    vi.advanceTimersByTime(60_000);
     assert.deepStrictEqual(ids(s().messages.t), [1, 2]);
     fifth();
   } finally {
-    mock.timers.reset();
+    vi.useRealTimers();
   }
 });

@@ -1,6 +1,6 @@
 // Port of server/src/integrations/push/expo_tests.rs (HA-137, from the HA-117 branch at bb59d8a; ported by HA-209): the
 // mobile app's push, through a fake of Expo's push service.
-import { after, test } from "node:test";
+import { afterAll, test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import * as testing from "../../testing.ts";
@@ -14,7 +14,7 @@ import { check_receipts, list, noted, RECEIPT_AFTER, send_all, start, type Messa
 import { answer_from_push, call as api_call, device, emit, next_push, push_service, raise, running_task, subscribe_device, task, withf } from "./testing.ts";
 
 const cleanups: Array<() => void> = [];
-after(() => {
+afterAll(() => {
   for (const f of cleanups.splice(0)) f();
 });
 
