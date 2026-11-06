@@ -13,9 +13,10 @@ what Huntaway uses, into its own code, noting the commit they came from (`main` 
 
 ## The model
 
-`server-ts/src/threads/protocol.ts` is one plain TypeScript file that the server and the app share. The app imports it
-by relative path (`app/src/threads.ts` re-exports it), so it has no imports and nothing that's only Node's, and it
-passes both packages' typechecks. There's no code generation and no JSON Schema.
+`server-ts/src/threads/protocol.ts` is one plain TypeScript file that the server and the clients share. The shared
+client re-exports it by relative path (`@huntaway/client/protocol`, `packages/client/src/protocol.ts`), which the app
+(`app/src/threads.ts`) and the phone app import, so it has no imports and nothing that's only Node's, and it passes
+every package's typecheck. There's no code generation and no JSON Schema.
 
 - **Thread**: a task has one thread, and its id is the task's. Its own state (`status`, `model`, `session_id`,
   `usage`...) is the task's, so it isn't stored with the items.
@@ -474,8 +475,8 @@ tasks stay on their messages.
 **The app** draws a task on items from its items whatever the host's *Keep threads as items* setting (which is only
 for tasks still on messages now), and so do the board card's pending prompts (`PendingPrompts`) and a document's last
 reply, which read messages before. **The mobile app** (`mobile/src/threadView.tsx`, `thread.ts`'s `itemThreadItems`)
-draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, loaded
-again as its messages' events come, and its Inbox finds an open question in the thread's requests
+draws a task on items (the task screen, the Assistant tab) from `GET /tasks/{id}/thread`'s window and its pages, with
+its `thread_event`s folded in by `apply_event` (it loads the window again after a gap or a `thread_resync`), and its Inbox finds an open question in the thread's requests
 (`openItemQuestion`); paired devices may read those two routes (devices.ts). A phone app from before this release reads
 an items task's messages, so it shows its thread as it was at the move: it needs this release's build.
 
@@ -562,8 +563,8 @@ run reaches the board.
   runs have no board MCP server either (the board's HTTP server refuses them), and a session from before (or one whose
   first run is gone) keeps the board's MCP server over HTTP. Codex's reviewer doesn't review a dynamic tool's calls, so
   in *Auto* mode a newer session's `wait` command is the board's to ask about (`Spec::review_waits` is for the MCP server's).
-- **The phone app** reloads a thread drawn from its items on its `thread_event`s too (the driver's writes send no
-  `message` event).
+- **The phone app** follows a thread drawn from its items by its `thread_event`s, not its messages' events (the
+  driver's writes send no `message` event).
 
 ### Every difference from what the messages path made
 
