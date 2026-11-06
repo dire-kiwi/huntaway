@@ -7,6 +7,7 @@ import { Router, call, no_route_error, parseBody, parseQuery, type Answer, type 
 import type { AppState } from "./state.ts";
 import { home_dir, path_str, safe_decode, same_secret } from "./util.ts";
 import { API_COMPAT, API_VERSION, BUILD_ID, ToolAnswer_from, VERSION } from "./hosts/proto.ts";
+import * as relay from "./hosts/relay.ts";
 import * as uplink from "./hosts/uplink.ts";
 import * as claude_configs from "./api/claude_configs.ts";
 import * as host from "./api/host.ts";
@@ -353,7 +354,9 @@ function info(s: AppState) {
 
 /**
  * This host's events, for a hub that links to it. A hub that says hello here takes our agents' board tool calls (see
- * hosts/uplink.ts), while this lasts.
+ * hosts/uplink.ts), while this lasts. A hub that went without closing (a laptop that slept, a NAT mapping that expired)
+ * would otherwise keep them waiting for its answers until they time out, so it's let go once it hasn't answered our
+ * pings for a while (as the hub does with us, and a host with the hub it dials).
  */
 function ws(s: AppState, _r: Req, socket: WebSocket) {
   socket.send(JSON.stringify({ type: "hello" }));
@@ -362,11 +365,29 @@ function ws(s: AppState, _r: Req, socket: WebSocket) {
   });
   let up: uplink.Registered | null = null;
   const end = () => {
+    clearInterval(ping);
+    clearTimeout(quiet);
     off();
     up?.drop();
     up = null;
   };
+  const ping = setInterval(() => {
+    try {
+      socket.ping();
+    } catch {
+      socket.terminate();
+    }
+  }, relay.PING);
+  const silence = () => setTimeout(() => socket.terminate(), relay.SILENCE);
+  let quiet = silence();
+  const heard = () => {
+    clearTimeout(quiet);
+    if (socket.readyState === socket.OPEN) quiet = silence();
+  };
+  socket.on("pong", heard);
+  socket.on("ping", heard);
   socket.on("message", (data, binary) => {
+    heard();
     if (binary) return;
     let v: any;
     try {
