@@ -535,5 +535,5 @@ function find_task(c: Conn, project: Project, word: string): Task | null {
   const num = Number(n);
   const lower = ascii_lower(key);
   if (![project.key, ...project.former_keys].some((k) => ascii_lower(k) === lower)) return null;
-  return db.list_tasks_for_project(c, project.id, "task").find((t) => t.number === num) ?? null;
+  return db.task_by_number(c, project.id, num);
 }
