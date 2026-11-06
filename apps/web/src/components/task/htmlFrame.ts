@@ -99,7 +99,11 @@ export function noWebRtc() {
   };
 }
 
-/** When the user last used the board itself, rather than a frame in it: a pointer down or key press in its document. */
+/**
+ * When the user last used the board itself, rather than a frame in it: a pointer down or up, the end of a touch or a key
+ * press in its document. A touch or pen activates the page as it's lifted, not as it comes down (Chromium), so a held
+ * touch's activation counts from its end (HA-274).
+ */
 let boardInput = -Infinity;
 let tracking = false;
 /** Starts keeping `boardInput` (once). */
@@ -107,8 +111,7 @@ export function trackBoardInput() {
   if (tracking) return;
   tracking = true;
   const note = (e: Event) => e.isTrusted && (boardInput = performance.now());
-  addEventListener("pointerdown", note, true);
-  addEventListener("keydown", note, true);
+  for (const type of ["pointerdown", "pointerup", "touchend", "keydown"]) addEventListener(type, note, true);
 }
 
 /** How long a user activation lasts in Chromium (5s), and a little more. */
