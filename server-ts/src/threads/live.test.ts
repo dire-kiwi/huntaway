@@ -10,7 +10,7 @@ import { sleep } from "../util.ts";
 import { dispatch, makeReq, router } from "../api.ts";
 import * as runs from "../agent/runs.ts";
 import { read_json, read_jsonl } from "./examples.ts";
-import { apply_event, apply_events, initial_state, type NewEvent, type SavedEvent, type Snapshot, type ThreadEvent } from "./protocol.ts";
+import { apply_events, initial_state, type NewEvent, type SavedEvent, type Snapshot, type ThreadEvent } from "./protocol.ts";
 import * as store from "./store.ts";
 import * as live from "./live.ts";
 import { Translator } from "./translate.ts";
@@ -210,56 +210,28 @@ test("a client further behind than the log, or ahead of the thread, is told to r
   assert.deepEqual((await call(s, "GET", at(`after=${last - 1}`)))[1], { events: [], more: false, seq: last, resync: true });
 });
 
-test("live events reach clients, with the text streamed so far in snapshots", async () => {
+test("live events reach clients", async () => {
   const { s, task } = setup();
   const got = listen(s);
-  // The example's events, as the writer sends them: saved ones once committed, deltas as they stream.
-  for (const e of EVENTS) {
-    if (e.type === "delta") {
-      const sent = live.send_delta(s, task.id, e.item_id, e.kind, e.text);
-      assert.deepEqual(sent, { ...e, thread_id: task.id });
-      // A snapshot taken now has the text so far, which the next delta's offset follows on from.
-      const [, now] = await call(s, "GET", `/api/tasks/${task.id}/thread`);
-      const item = now.items.find((i: any) => i.id === e.item_id);
-      assert.equal(item.text.length, e.offset + e.text.length, JSON.stringify(item));
-    } else {
-      live.send_events(s, task.id, store.append(s.db(), task.id, [for_task(e, task.id)]));
-    }
-  }
+  // The example's saved events, as the writer sends them once they're committed.
+  const saved = EVENTS.filter((e) => e.type !== "delta");
+  for (const e of saved) live.send_events(s, task.id, store.append(s.db(), task.id, [for_task(e, task.id)]));
   assert.deepEqual(
     got.map((v) => [v.type, v.task_id]),
-    EVENTS.map(() => ["thread_event", task.id]),
+    saved.map(() => ["thread_event", task.id]),
   );
   assert.deepEqual(
     got.map((v) => v.event),
-    EVENTS.map((e) => (e.type === "thread.updated" ? { ...e, thread_id: task.id, thread: { ...e.thread, id: task.id } } : { ...e, thread_id: task.id })),
+    saved.map((e) => (e.type === "thread.updated" ? { ...e, thread_id: task.id, thread: { ...e.thread, id: task.id } } : { ...e, thread_id: task.id })),
   );
-  // The saved text ended what was streamed: the snapshot is the saved thread's.
   assert.deepEqual((await call(s, "GET", `/api/tasks/${task.id}/thread`))[1], as_task(s, task, SNAPSHOT));
   // A client applying them all, from a snapshot taken before any, ends up there too.
   const client = apply_events(initial_state(live.thread_of(s, task)), got.map((v) => v.event));
   assert.deepEqual(client.items, SNAPSHOT.items);
-  // A delta for an item the thread doesn't have isn't sent.
-  assert.equal(live.send_delta(s, task.id, "nope", "text", "x"), null);
-  assert.equal(got.length, EVENTS.length);
-});
-
-test("a client that connects mid-message gets the text so far, and later deltas apply to it", async () => {
-  const { s, task } = setup();
-  store.append(s.db(), task.id, [{ type: "item.added", item: { id: "a1", type: "assistant_message", text: "" } }]);
-  live.send_delta(s, task.id, "a1", "text", "Hello");
-  const [, snap] = await call(s, "GET", `/api/tasks/${task.id}/thread`);
-  assert.equal(snap.items[0].text, "Hello");
-  // A delta sent before the snapshot was read, arriving after it, and the next one.
-  const late = { type: "delta", thread_id: task.id, seq: snap.seq, item_id: "a1", kind: "text", offset: 0, text: "Hello" } as ThreadEvent;
-  const next = live.send_delta(s, task.id, "a1", "text", ", world")!;
-  const after = apply_event(apply_event(snap, late), next);
-  assert.equal((after.items[0] as any).text, "Hello, world");
-  // A rebuild tells clients to take a fresh window, and forgets what was streamed.
-  const got = listen(s);
+  // A rebuild tells clients to take a fresh window.
+  got.length = 0;
   live.send_resync(s, task.id);
   assert.deepEqual(got, [{ type: "thread_resync", task_id: task.id }]);
-  assert.equal((await call(s, "GET", `/api/tasks/${task.id}/thread`))[1].items[0].text, "");
 });
 
 test("tasks without items, and other tasks' threads and requests, aren't reached", async () => {

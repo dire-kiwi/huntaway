@@ -34,7 +34,7 @@ thread is read from the board's own tables, and commands go onto the board's own
 
 | Route | Returns |
 | --- | --- |
-| `GET /api/tasks/{id}/thread` | The whole thread as a `Snapshot` `{thread, items, requests, seq}`, with the text streamed so far. |
+| `GET /api/tasks/{id}/thread` | The whole thread as a `Snapshot` `{thread, items, requests, seq}` (saved items only: see the deltas below). |
 | `GET /api/tasks/{id}/thread?limit=N` | A window: the last `N` items, with `start` and `context` (the whole thread if it has no more than `N`). |
 | `GET /api/tasks/{id}/thread/items?before=I[&limit=N]` | An `ItemPage` of the items before index `I` (a window's `start`), 100 unless `limit` says. `start` 0: nothing before it. |
 | `GET /api/tasks/{id}/thread/events?after=SEQ[&limit=N]` | `{events, more, seq}`: the saved events after `SEQ` (0 unless given; no deltas), at most `N` and 1,000. With `more`, ask again after `seq`. |

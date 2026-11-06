@@ -8,8 +8,8 @@
 // onto the board's own routes for sending, stopping, answering prompts, the mode and rewinding, unchanged.
 //
 // What writes a thread's items (step 3 of docs/threads.md) sends its events with `send_events` once they're
-// committed, streamed text with `send_delta`, and `send_resync` when it changes a thread in a way its log doesn't
-// describe (a rebuild).
+// committed, and `send_resync` when it changes a thread in a way its log doesn't describe (a rebuild). Streamed text
+// goes as deltas for a preview item the thread doesn't have (write.ts's `stream_text`).
 import * as db from "../db.ts";
 import type { Task } from "../db.ts";
 import { ApiError, Reply } from "../http.ts";
@@ -66,10 +66,9 @@ export function thread_of(s: AppState, task: Task): Thread {
   return t;
 }
 
-/** The whole thread, or (with a `limit` it's over) a window of its last `limit` items, with the text streamed so far. */
+/** The whole thread, or (with a `limit` it's over) a window of its last `limit` items. */
 export function window(s: AppState, task: Task, limit?: number): Snapshot {
-  const w = store.window(s.db(), thread_of(s, task), limit);
-  return with_streamed(s, w);
+  return store.window(s.db(), thread_of(s, task), limit);
 }
 
 /** The thread's items before index `before` (a window's start), at most `limit` of them. */
@@ -125,81 +124,14 @@ export function events(s: AppState, task: Task, after: number, limit = MAX_EVENT
 
 // ---------- live events ----------
 
-/** The text streamed into each thread's items since they were last saved: task id → item id → text. */
-interface Streamed {
-  kind: "text" | "reasoning";
-  text: string;
-}
-const streaming = new WeakMap<AppState, Map<string, Map<string, Streamed>>>();
-
-function streamed_of(s: AppState, task_id: string, make: true): Map<string, Streamed>;
-function streamed_of(s: AppState, task_id: string, make?: false): Map<string, Streamed> | undefined;
-function streamed_of(s: AppState, task_id: string, make = false): Map<string, Streamed> | undefined {
-  let all = streaming.get(s);
-  if (!all) {
-    if (!make) return undefined;
-    streaming.set(s, (all = new Map()));
-  }
-  let mine = all.get(task_id);
-  if (!mine && make) all.set(task_id, (mine = new Map()));
-  return mine;
-}
-
-/** `state` with the text streamed into its items since they were saved (a snapshot taken mid-message, say). */
-function with_streamed(s: AppState, state: Snapshot): Snapshot {
-  const mine = streamed_of(s, state.thread.id);
-  if (!mine?.size) return state;
-  let changed = false;
-  const items = state.items.map((item) => {
-    const st = mine.get(item.id);
-    if (!st || item.type !== (st.kind === "text" ? "assistant_message" : "reasoning")) return item;
-    if (st.text.length <= item.text.length || !st.text.startsWith(item.text)) return item;
-    changed = true;
-    return { ...item, text: st.text };
-  });
-  return changed ? { ...state, items } : state;
-}
-
 /** Sends one thread event of task `task_id`'s to clients: `{type: "thread_event", task_id, event}`. */
 function send(s: AppState, task_id: string, event: ThreadEvent): void {
   s.emit({ type: "thread_event", task_id, event });
 }
 
-/**
- * Sends task `task_id`'s saved events (as store.append returned them) to clients, once they're committed. What they
- * save of an item's text ends what was streamed into it.
- */
+/** Sends task `task_id`'s saved events (as store.append returned them) to clients, once they're committed. */
 export function send_events(s: AppState, task_id: string, events: SavedEvent[]): void {
-  const mine = streamed_of(s, task_id);
-  for (const e of events) {
-    if (mine?.size) {
-      if (e.type === "item.added") mine.delete(e.item.id);
-      else if (e.type === "item.updated" && "text" in e.patch) mine.delete(e.item_id);
-      else if (e.type === "items.removed") for (const id of e.item_ids) mine.delete(id);
-    }
-    send(s, task_id, e);
-  }
-}
-
-/**
- * Sends `text` streamed into item `item_id` (an assistant_message for `text`, a reasoning item for `reasoning`) of task
- * `task_id`'s thread to clients, as a delta from the text it has so far, with the seq of the thread's last saved event.
- * It isn't saved, but snapshots taken before the item's text is saved include it. Returns the event, or null if the
- * thread has no such item.
- */
-export function send_delta(s: AppState, task_id: string, item_id: string, kind: "text" | "reasoning", text: string): ThreadEvent | null {
-  const mine = streamed_of(s, task_id, true);
-  let st = mine.get(item_id);
-  if (!st || st.kind !== kind) {
-    const item = store.get_item(s.db(), task_id, item_id);
-    if (!item || item.type !== (kind === "text" ? "assistant_message" : "reasoning")) return null;
-    st = { kind, text: item.text };
-    mine.set(item_id, st);
-  }
-  const event: ThreadEvent = { type: "delta", thread_id: task_id, seq: store.last_seq(s.db(), task_id), item_id, kind, offset: st.text.length, text };
-  st.text += text;
-  send(s, task_id, event);
-  return event;
+  for (const e of events) send(s, task_id, e);
 }
 
 /**
@@ -207,13 +139,7 @@ export function send_delta(s: AppState, task_id: string, item_id: string, kind: 
  * they take a fresh window: `{type: "thread_resync", task_id}`.
  */
 export function send_resync(s: AppState, task_id: string): void {
-  streaming.get(s)?.delete(task_id);
   s.emit({ type: "thread_resync", task_id });
-}
-
-/** Forgets what was streamed into a thread's items: its run ended without saving it (or the task went). */
-export function forget_streamed(s: AppState, task_id: string): void {
-  streaming.get(s)?.delete(task_id);
 }
 
 // ---------- commands ----------
