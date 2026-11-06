@@ -1,4 +1,0 @@
-#!/bin/sh
-# HA-263 moved the server to apps/server. Commands that name this path (SSH hosts' and desktop configs, and a server
-# from before the move restarting after its Update) run the server from there (see scripts/legacy-update.sh).
-exec "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/../../apps/server/bin/huntaway" "$@"
