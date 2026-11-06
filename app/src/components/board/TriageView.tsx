@@ -1,10 +1,10 @@
 import clsx from "clsx";
 import { BellRing, ChevronRight, CircleAlert, Eye, GitMerge, MessagesSquare, Play, PlayCircle, Square } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, canRunAgents, dependencyQueued, limitQueued, readyToCheck, type Project, type Task } from "../../api";
+import { api, canRunAgents, dependencyQueued, keyPrefix, limitQueued, readyToCheck, type Project, type Task } from "../../api";
 import { openTask, usePanelOpen } from "../../router";
 import { useSelectable } from "../../selection";
-import { keyPrefix, useHost, useStore } from "../../store";
+import { useHost, useStore } from "../../store";
 import { isDue } from "../../reminders";
 import { Composer } from "../task/thread/Composer";
 import { Markdown } from "../task/thread/Markdown";

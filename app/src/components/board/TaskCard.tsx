@@ -1,11 +1,11 @@
 import clsx from "clsx";
 import { CheckCheck, Clock, Ellipsis, Folder, GitMerge, Hourglass, Kanban, Layers, ShieldQuestionMark } from "lucide-react";
 import { memo, type KeyboardEvent, type MouseEvent } from "react";
-import { agentWaiting, isScratch, limitQueued, mergeAwaitsApproval, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../../api";
+import { agentWaiting, isScratch, keyPrefix, limitQueued, mergeAwaitsApproval, mergeQueued, rejoinsMerge, taskLabels, type Project, type Task } from "../../api";
 import { inGroupTaskGroup } from "../../projectGroups";
 import { navigate, openTask, usePanelOpen } from "../../router";
 import { useSelectable } from "../../selection";
-import { isGroupTask, keyPrefix, useStore } from "../../store";
+import { isGroupTask, useStore } from "../../store";
 import { ExternalLinkIcon } from "../task/ExternalLinks";
 import { ReviewBadge } from "../task/Review";
 import { DependencyBadge } from "./Dependencies";

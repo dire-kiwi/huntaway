@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import { api, hostSupports, type Task } from "../../api";
-import { taskKey, useProject, useStore } from "../../store";
+import { api, hostSupports, taskKey, type Task } from "../../api";
+import { useProject, useStore } from "../../store";
 import { Button, Modal, ModalFooter, prLabel } from "../ui";
 
 /** Hosts from this API version say whether a task's work is merged (`api.unmerged`). */

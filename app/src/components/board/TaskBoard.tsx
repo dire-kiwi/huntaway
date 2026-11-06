@@ -8,6 +8,7 @@ import {
   hostSupports,
   isArchived,
   isAssistants,
+  keyPrefix,
   moveTask,
   STATUSES,
   taskLabels,
@@ -22,7 +23,7 @@ import { groupTasks } from "../../projectGroups";
 import { dropPosition } from "./taskOrder";
 import { EMPTY_QUERY, isFiltering, isSortKey, showsStatus, sortTasks, taskKinds, taskMatcher, type BoardQuery, type SortKey, type TaskKind } from "./boardQuery";
 import { FilterBar, FilterMenu, SearchBox, SortMenu, type FilterOption } from "./BoardControls";
-import { isGroupTask, keyPrefix, useStore } from "../../store";
+import { isGroupTask, useStore } from "../../store";
 import { useConfirmDone } from "./ConfirmDone";
 import { COMPARE_API } from "./Fanout";
 import { openCompare } from "../../router";

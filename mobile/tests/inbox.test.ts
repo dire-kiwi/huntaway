@@ -1,5 +1,5 @@
-import type { Message, PendingPermission, Task } from "@huntaway/client";
-import { hostItems, loadBoardInbox, mergeInbox, openQuestion, taskKey } from "../src/inbox";
+import { taskKey, type Message, type PendingPermission, type Task } from "@huntaway/client";
+import { hostItems, loadBoardInbox, mergeInbox, openQuestion } from "../src/inbox";
 
 const task = (id: string, extra: Partial<Task> = {}) =>
   ({ id, number: 1, title: `Task ${id}`, status: "in_progress", kind: "task", project_id: "p1", attention_reason: null, updated_at: "2026-11-03T10:00:00Z", ...extra }) as Task;
@@ -57,6 +57,9 @@ describe("the inbox", () => {
     expect(taskKey(task("a", { number: 7 }), [{ id: "p1", key: "HA" }])).toBe("HA-7");
     expect(taskKey(task("a", { project_id: null, task_type: "scratch", number: 2 }), [])).toBe("S-2");
     expect(taskKey(task("a", { project_id: null, group_name: "g", number: 4 }), [])).toBe("G-4");
+    // HA-262: the assistant's and its routines' threads are A-<n>, as on the web board.
+    expect(taskKey(task("a", { project_id: null, task_type: "assistant", number: 1 }), [])).toBe("A-1");
+    expect(taskKey(task("a", { project_id: null, task_type: "routine", number: 3 }), [])).toBe("A-3");
   });
 
   test("a board's inbox reads its picked profile on each connected host", async () => {
