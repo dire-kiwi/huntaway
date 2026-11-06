@@ -188,7 +188,7 @@ test("start_run moves a task onto items before its run, and its turn_message_id 
   assert.equal(history.first_user_message(s.db(), y.id), history.message_of(start.id));
 });
 
-test("an items task's prompts, questions and reports change in place in its items, with no rows", async (t) => {
+test("an items task's prompts, questions and reports change in place in its items, with no rows", async () => {
   const { s, task } = setup();
   const c = s.db();
   const x = task();

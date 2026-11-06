@@ -40,7 +40,7 @@ export function url_host(s: string): string | null {
   const i = s.indexOf("://");
   if (i < 0) return null;
   const scheme = s.slice(0, i), rest = s.slice(i + 3);
-  if (!scheme || !/^[a-z0-9+.\-]+$/i.test(scheme)) return null;
+  if (!scheme || !/^[a-z0-9+.-]+$/i.test(scheme)) return null;
   const authority = rest.split(/[/?#]/)[0];
   const at = authority.split("@");
   return at[at.length - 1].split(":")[0];

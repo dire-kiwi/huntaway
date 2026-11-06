@@ -29,7 +29,7 @@ test("In progress from a task's Details starts its agent", async () => {
 
 // HA-262: the board's drop and the phone's Move go through moveTask (packages/client), as Details does.
 test("a fresh task dropped into In progress on the board starts its agent", async () => {
-  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Drop me", description: "Say hi from the drop." });
+  await server.api("POST", `/projects/${project.id}/tasks`, { title: "Drop me", description: "Say hi from the drop." });
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
     await ui.run([`goto /p/${project.id}`, "wait Drop me"]);

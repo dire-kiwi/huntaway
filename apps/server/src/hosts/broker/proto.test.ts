@@ -5,8 +5,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Ctl_from_json, DATA, TEXT, WINDOW, Window, decode, encode, slug, valid_name } from "./proto.ts";
 
 test("data_frames_round_trip", () => {
-  const f = encode(0x0102030405060708, TEXT, Buffer.from("hi"));
-  assert.deepEqual(decode(f), [0x0102030405060708, TEXT, Buffer.from("hi")]);
+  const f = encode(0x01020304050607, TEXT, Buffer.from("hi"));
+  assert.deepEqual(decode(f), [0x01020304050607, TEXT, Buffer.from("hi")]);
   assert.deepEqual(decode(encode(1, DATA, Buffer.alloc(0))), [1, DATA, Buffer.alloc(0)]);
   assert.equal(decode(Buffer.alloc(8)), null);
 });

@@ -281,7 +281,7 @@ export function positional_host(arg: string): string | null {
     const user_host = arg.slice(0, colon);
     const at = user_host.lastIndexOf("@");
     const [user, host] = at >= 0 ? [user_host.slice(0, at), user_host.slice(at + 1)] : [null, user_host];
-    const hostname = host.length > 0 && /^[A-Za-z0-9.\-]+$/.test(host);
+    const hostname = host.length > 0 && /^[A-Za-z0-9.-]+$/.test(host);
     return hostname && (user !== null || host.includes(".")) ? ascii_lower(host) : null;
   }
   const parts = arg.split("/");
