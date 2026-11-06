@@ -336,3 +336,38 @@ test("map_is_pure_and_reads_the_thread_through_its_view", () => {
   const child = map(view, ctx, { method: "item/completed", params: { threadId: "kid", item: { type: "agentMessage", id: "m", text: "hi" } } });
   assert.equal((child.events[0] as any).item.parent_id, "codex-agent-kid");
 });
+
+test("a_failed_write_at_a_turns_end_still_records_the_runs_result", () => {
+  const [state, run] = running("items");
+  const f = feed(state, run);
+  f.line({ method: "thread/started", params: { thread: { id: "child", parentThreadId: "main", preview: "Look" } } });
+  f.event("item/started", "main", { item: { type: "commandExecution", id: "sh", command: "make", cwd: "/w" } });
+  const wait = { call_id: "w1", run_id: run.id, since: "2026-11-06T00:00:00Z", until: "2099-01-01T00:00:00Z", reason: null, tasks: [] };
+  state.update_task(run.task_id, [["agent_wait", wait]]);
+  const fail = () => {
+    throw new Error("disk I/O error");
+  };
+  const errors: string[] = [];
+  const error = console.error;
+  console.error = (m: string) => void errors.push(m);
+  try {
+    // A subagent's end: the wait for it still ends.
+    testing.when("threads:native", fail);
+    f.event("turn/completed", "child", { turn: { id: "ct", status: "completed" } });
+    assert.equal(db.get_task(state.db(), run.task_id)!.agent_wait!.subagent_finished?.tool_use_id, "codex-agent-child");
+    // The run's own turn's end (which cancels the call it left running): the run still has its result.
+    testing.when("threads:native", fail);
+    f.event("turn/completed", "main", { turn: { id: "t1", status: "completed", durationMs: 10 } });
+  } finally {
+    console.error = error;
+  }
+  assert.equal(errors.length, 2);
+  assert.match(errors[1], /turn\/completed couldn't be written to task .*'s items: disk I\/O error/);
+  const r = db.get_run(state.db(), run.id)!;
+  assert.equal(r.saw_result, true);
+  assert.equal(r.result_error, null);
+  // Nothing of the failed writes was written.
+  const sh = store.get_item(state.db(), run.task_id, "sh") as any;
+  assert.equal(sh.status, "running");
+  assert.equal((store.get_item(state.db(), run.task_id, "codex-agent-child") as any).subagent.status, "running");
+});

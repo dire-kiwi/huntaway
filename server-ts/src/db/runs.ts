@@ -109,9 +109,12 @@ export function set_run_session(c: Conn, run_id: string, session: string): void 
   run(c, "UPDATE runs SET session_id=?1 WHERE id=?2", session, run_id);
 }
 
-/** Run `run_id` gives the Codex session it starts the board's tools as dynamic tools (see `session_board_tools`). */
-export function set_run_board_tools(c: Conn, run_id: string): void {
-  run(c, "UPDATE runs SET board_tools=1 WHERE id=?1", run_id);
+/**
+ * Run `run_id` gives the Codex session it starts the board's tools as dynamic tools (see `session_board_tools`), or
+ * (`on` false) didn't after all: its Codex wouldn't take them (agent/codex/adapter.ts's start_thread).
+ */
+export function set_run_board_tools(c: Conn, run_id: string, on = true): void {
+  run(c, "UPDATE runs SET board_tools=?2 WHERE id=?1", run_id, on ? 1 : 0);
 }
 
 /**

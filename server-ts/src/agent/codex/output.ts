@@ -22,6 +22,12 @@ import * as driver from "./driver.ts";
 import { on_request, on_resolved } from "./requests.ts";
 
 const g = (v: any) => (v === undefined ? null : v);
+/**
+ * The adapter's own notification (not Codex's) of whether a new thread took the board's tools as dynamic tools: it says
+ * `{"dynamic": false}` when Codex wouldn't, and the thread has the board's MCP server instead (see adapter.ts's
+ * start_thread).
+ */
+export const BOARD_TOOLS = "huntaway/boardTools";
 const str = (v: any): string | null => (typeof v === "string" ? v : null);
 const is_obj = (v: any) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -215,6 +221,8 @@ export function tool_output(item: any): [string, boolean] {
 export function handle_line(state: Shared, run: Run, v: any): void {
   if ("id" in v) return on_request(state, run, v);
   if (v.method === "serverRequest/resolved") return on_resolved(state, run, v.params?.requestId);
+  // Its session's later runs have the board's MCP server too (see launch.ts).
+  if (v.method === BOARD_TOOLS) return void (v.params?.dynamic === false && db.set_run_board_tools(state.db(), run.id, false));
   if (thread_source.of(state.db(), run.task_id) === "items") return driver.handle(state, run, v);
   const task_id = run.task_id;
   const p = v?.params ?? {};

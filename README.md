@@ -2250,7 +2250,9 @@ skipped. Auto-compacting idle sessions is Claude-only.
 Each run gets the `huntaway` MCP server, which the board serves itself, in process for Claude runs,
 as dynamic tools (a `huntaway` namespace, answered on the run's input) for Codex sessions started
 since they were, and over HTTP for older Codex sessions (Codex can't give a session it resumes new
-dynamic tools) and compactions (see *How runs reach the board's MCP servers* below):
+dynamic tools), sessions whose Codex wouldn't take dynamic tools, and compactions (see *How runs reach the board's MCP
+servers* below). A newer Codex session's subagents don't have them (Codex doesn't pass a thread's dynamic tools on to the
+threads it spawns): their parent does. The tools:
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see

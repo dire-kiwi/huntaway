@@ -4,7 +4,7 @@ import { readFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { REVIEW_PROFILE, thread_params, uses_profile, Spec_from_json, type Spec } from "../codex.ts";
-import { own_thread } from "./output.ts";
+import { BOARD_TOOLS, own_thread } from "./output.ts";
 import { Channel, Responder, Rpc } from "./rpc.ts";
 import * as runner from "../runner.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
@@ -131,6 +131,9 @@ export async function run_adapter(spec_path: string): Promise<void> {
       }
     }
 
+    // A new thread given the board's tools as dynamic tools has the board's MCP server only if Codex won't take them.
+    const board = spec.thread_id == null && spec.board_tools !== null ? servers[runner.MCP_SERVER_NAME] : undefined;
+    if (spec.thread_id == null && spec.board_tools !== null) delete servers[runner.MCP_SERVER_NAME];
     const params = thread_params(spec, cwd, servers);
     let started: any;
     if (spec.thread_id != null) {
@@ -138,7 +141,7 @@ export async function run_adapter(spec_path: string): Promise<void> {
       params.excludeTurns = true;
       started = await rpc.request("thread/resume", params);
     } else {
-      started = await start_thread(rpc, params, spec.board_tools);
+      started = await start_thread(rpc, params, spec.board_tools, board);
     }
     const thread_id = str(started?.thread?.id);
     if (thread_id === null) throw new Error("no thread id");
@@ -378,16 +381,22 @@ function decline(reply: Responder, msg: any) {
 
 /**
  * `thread/start`, with the board's tools as dynamic tools (`Spec::board_tools`). A Codex that doesn't take dynamic
- * tools starts the thread without them, and says so.
+ * tools starts the thread without them, with the board's MCP server (`board`, which launch.ts left in `mcp.json` for
+ * this) instead, and says so: a warning, and a `huntaway/boardTools` notification ({"dynamic": false}), on which the
+ * server records that the session hasn't them (runs.board_tools), so its later runs have the board's MCP server too.
  */
-async function start_thread(rpc: Rpc, params: any, tools: any | null): Promise<any> {
+async function start_thread(rpc: Rpc, params: any, tools: any | null, board: any): Promise<any> {
   if (tools === null) return rpc.request("thread/start", params);
   try {
     return await rpc.request("thread/start", { ...params, dynamicTools: [tools] });
   } catch (e) {
     if (!/dynamic.?tools|experimental|unknown field/i.test(err_str(e))) throw e;
-    emit({ method: "warning", params: { message: `This Codex doesn't take the board's tools (${err_str(e)}), so the agent hasn't them.` } });
-    return rpc.request("thread/start", params);
+    const how = board !== undefined ? "they're on the board's MCP server instead" : "the agent hasn't them";
+    emit({ method: "warning", params: { message: `This Codex doesn't take the board's tools as dynamic tools (${err_str(e)}), so ${how}.` } });
+    emit({ method: BOARD_TOOLS, params: { dynamic: false } });
+    if (board === undefined) return rpc.request("thread/start", params);
+    const servers = { ...params.config?.mcp_servers, [runner.MCP_SERVER_NAME]: board };
+    return rpc.request("thread/start", { ...params, config: { ...params.config, mcp_servers: servers } });
   }
 }
 
