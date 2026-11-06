@@ -101,15 +101,23 @@ async function startDevServer(server) {
       probe.close(() => resolve(port));
     });
   });
-  const vite = spawn(join(appDir, "node_modules/.bin/vite"), ["--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
+  // Vite+'s `vp dev`, from the workspace's node_modules at the repository's root, as `npm run dev` runs it. In a process
+  // group of its own, which `stop` ends: `vp` leaves the Vite it starts running when only it is killed.
+  const vite = spawn(join(appDir, "../../node_modules/.bin/vp"), ["dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: appDir,
     env: { ...process.env, IA_SERVER: server.url },
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
+  const kill = () => {
+    try {
+      process.kill(-vite.pid, "SIGTERM");
+    } catch {}
+  };
   let log = "";
   await new Promise((resolve, reject) => {
     // Killed if it doesn't start, or the test's process would wait for it forever.
-    const timer = setTimeout(() => (vite.kill(), reject(new Error(`vite didn't start:\n${log}`))), 30000);
+    const timer = setTimeout(() => (kill(), reject(new Error(`vite didn't start:\n${log}`))), 30000);
     const read = (d) => {
       log += d;
       // With $CI set (as on GitHub's runners) Vite's colours are on, and it prints the port in bold.
@@ -119,7 +127,7 @@ async function startDevServer(server) {
     vite.stderr.on("data", read);
     vite.on("exit", (code) => (clearTimeout(timer), reject(new Error(`vite exited with ${code}:\n${log}`))));
   });
-  return { url: `http://127.0.0.1:${port}`, stop: () => vite.kill() };
+  return { url: `http://127.0.0.1:${port}`, stop: kill };
 }
 
 // IA-171 review: in development StrictMode mounts the dialog twice, which mustn't leave it taking itself for closed (and

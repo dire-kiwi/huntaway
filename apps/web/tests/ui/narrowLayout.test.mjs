@@ -11,6 +11,8 @@ after(() => server?.stop());
 
 const PHONE = { size: "390x844", touch: true };
 const TODO = "Edit this task's title and description";
+// Still in To do once the menu test has moved TODO to In review.
+const FRESH = "Try dragging this card to another column";
 const ATTENTION = "A task waiting on an answer";
 const REVIEW = "Finished work to look over";
 const ARCHIVED = "Shipped last week";
@@ -143,7 +145,9 @@ test("on a phone a task opens full screen with a back button", async () => {
 test("on a phone a task's Start button is on screen", async () => {
   await withBrowser(server, PHONE, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^To do/]", "sleep 600", `click ${TODO}`, "wait role=button[name='Back']", "sleep 500"]);
+    await ui.run([`goto /p/${project.id}`, "click role=tab[name=/^To do/]"]);
+    await untilOnScreen(page, FRESH);
+    await ui.run([`click ${FRESH}`, "wait role=button[name='Back']", "sleep 500"]);
     const start = await page.getByRole("button", { name: "Start", exact: true }).boundingBox();
     assert.ok(start && start.x >= 0 && start.x + start.width <= 390 && start.y < 48, `Start at ${JSON.stringify(start)}`);
     const tabs = await page.getByRole("button", { name: "details", exact: true }).boundingBox();
