@@ -459,6 +459,26 @@ export async function serve(args: ServeArgs) {
   backup.record_version(data_dir, VERSION);
 
   const server = createServer();
+  // A request that comes while the server is still starting (a client reconnecting after a restart) waits until it can
+  // be answered (`ready()` below): one that came before there was a handler got no answer.
+  const { promise: started, resolve: ready } = Promise.withResolvers<void>();
+  // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
+  server.on("request", (req, res) =>
+    started
+      .then(() => answer(req, res))
+      .catch((e) => {
+        console.error(`answering ${req.method} ${(req.url ?? "/").split("?")[0]}:`, e);
+        res.destroy();
+      }),
+  );
+  server.on("upgrade", (req, socket, head) =>
+    started
+      .then(() => upgrade(state, wss, req, socket, head))
+      .catch((e) => {
+        console.error(`websocket ${(req.url ?? "/").split("?")[0]}:`, e);
+        socket.destroy();
+      }),
+  );
   await new Promise<void>((ok, fail) => {
     server.once("error", (e) => fail(new Error(`binding ${args.host}:${args.port}`, { cause: e })));
     server.listen(args.port, args.host, () => ok());
@@ -542,21 +562,8 @@ export async function serve(args: ServeArgs) {
       } else res.destroy();
     }
   };
-  // What a failed answer throws (an error sending the error, say) ends the connection, rather than the server.
-  server.on("request", (req, res) =>
-    answer(req, res).catch((e) => {
-      console.error(`answering ${req.method} ${(req.url ?? "/").split("?")[0]}:`, e);
-      res.destroy();
-    }),
-  );
-
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
-  server.on("upgrade", (req, socket, head) =>
-    upgrade(state, wss, req, socket, head).catch((e) => {
-      console.error(`websocket ${(req.url ?? "/").split("?")[0]}:`, e);
-      socket.destroy();
-    }),
-  );
+  ready();
 
   // Agents kept running while we were down; catch up on their output.
   runner.load_active(state);
