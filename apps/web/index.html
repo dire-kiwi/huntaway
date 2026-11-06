@@ -5,7 +5,8 @@
     <!-- Frames hold only the board's own pages: an agent's HTML document (a srcdoc frame, see components/task/htmlFrame.ts)
          can't load another host's page by navigating its frame there. Chrome (not Electron) still looks the host up and
          connects to it (TLS SNI included) before refusing, unless its "Preload pages" setting is off, so the hostname
-         can still carry data out (HA-269). Nothing the board sets stops that. -->
+         can still carry data out (HA-269), as it does for a <link rel=preconnect> in the document. Nothing the board
+         sets stops that. -->
     <meta http-equiv="Content-Security-Policy" content="frame-src 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0b0b0e" />

@@ -112,10 +112,12 @@ const CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpk
  * typed into it, out with remote images, fetch, frames or form posts. The frame's own navigations are held by the
  * board's frame-src (index.html), and its links by `linksInNewTabs`. An <ia-html>'s frame (srcdoc) inherits it.
  * WebRTC isn't held to CSP, so `noWebRtc` takes it away. What's left is in browsers, not the desktop app (HA-269): a
- * srcdoc frame the page makes itself can use WebRTC, and for a frame load the policy refuses (an <iframe>, or a frame
- * navigating itself) Chrome still looks the host up and connects to it, TLS SNI included, unless its "Preload pages"
- * setting is off. Both send data out in a hostname of the page's choosing. Nothing the board sets changes the second:
- * the frame served with the policy as a header, the iframe's `csp` attribute, COOP and COEP were tried.
+ * srcdoc frame the page makes itself can use WebRTC, and unless Chrome's "Preload pages" setting is off, it still looks
+ * up and connects to (TLS SNI included) the host of a frame load the policy refuses (an <iframe>, or a frame navigating
+ * itself) and of a <link rel=preconnect>, in the page's HTML or added by its script. Each sends data out in a hostname
+ * of the page's choosing. Nothing the board sets changes the last two: the frame served with the policy as a header,
+ * the iframe's `csp` attribute, COOP and COEP were tried, and `x-dns-prefetch-control: off` doesn't hold preconnect
+ * (dns-prefetch links and links' hosts aren't looked up in the frame, even with it on).
  */
 export const FRAME_CSP = [
   "default-src 'none'",

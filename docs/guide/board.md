@@ -126,16 +126,19 @@ fonts from cdnjs, jsDelivr, unpkg and Google Fonts (no remote images, requests, 
 posts), and no WebRTC, so a page an agent wrote (say, prompted by a poisoned issue) can't send
 what's in it, or your answers to it, somewhere else. Its links open in a new tab after your click in
 the page; one it opens otherwise, the board asks you about first. In a browser, a page can still
-send data out in a hostname of its choosing, two ways (HA-269):
+send data out in a hostname of its choosing, without a click (HA-269):
 
 - When the policy refuses a frame (one the page makes, or the page's own frame going to another
   host), Chrome has already looked the host up and connected to it, with the hostname in TLS SNI.
-  It doesn't when its _Preload pages_ setting (in Settings, under Performance) is off.
+- For a `<link rel="preconnect">` (in the page's HTML or added by its script), Chrome looks the host
+  up and connects to it the same way.
 - A frame the page makes with its own HTML (`srcdoc`) can still use WebRTC: a STUN or TURN
   server's hostname, or a TURN username.
 
-The desktop app has neither: it makes no connection for a frame it refuses, and it takes WebRTC
-away in every frame. Browsers other than Chrome and Chromium weren't checked.
+Chrome doesn't do the first two when its _Preload pages_ setting (in Settings, under Performance) is
+off. The desktop app does none of them: it makes no connection or lookup for a frame it refuses or a
+preconnect link, and it takes WebRTC away in every frame. Browsers other than Chrome and Chromium
+weren't checked.
 
 Before API 71, plan, artifact and diagram were types of task whose agents made only the document,
 in the task's own folder, with no worktree, review or merge. Tasks made as one have it as their
