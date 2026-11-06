@@ -13,12 +13,13 @@ import {
   NotebookPen,
   Sparkles,
   Workflow,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { api, hostSupports, type DocumentType, type Message, type Task, type TaskDocument, type TaskType } from "../../api";
-import { frameDoc } from "./htmlFrame";
+import { followsFrameInput, frameDoc, fromFrame, openable, trackBoardInput } from "./htmlFrame";
 import { diagramImage, renderMermaid, svgWidth, withPlanDiagrams } from "./mermaid";
 import {
   afterSend,
@@ -166,6 +167,8 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
   const [picked, setPicked] = useState<number | null>(null);
   const [doc, setDoc] = useState<TaskDocument | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // A link the document asked to open that didn't follow the user's own click in it (see HtmlFrame): the user decides.
+  const [asked, setAsked] = useState<string | null>(null);
   const [source, setSource] = useState(false);
   const [svg, setSvg] = useState<string | null>(null);
   useEffect(() => {
@@ -364,6 +367,26 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
         )}
       </div>
       {err && <div className="shrink-0 bg-red-500/10 px-3 py-1.5 text-[12px] text-red-300">{err}</div>}
+      {asked && (
+        <div role="alert" className="flex shrink-0 items-center gap-2 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-200">
+          <span className="shrink-0">The {type} opens a link:</span>
+          <code className="min-w-0 flex-1 truncate font-mono text-[11.5px]" title={asked}>
+            {asked}
+          </code>
+          <Button
+            size="sm"
+            onClick={() => {
+              window.open(asked, "_blank", "noopener,noreferrer");
+              setAsked(null);
+            }}
+          >
+            Open
+          </Button>
+          <IconButton title="Don't open it" onClick={() => setAsked(null)}>
+            <X size={13} />
+          </IconButton>
+        </div>
+      )}
       <div className="relative min-h-0 flex-1">
         {doc === null && !err ? (
           <div className="flex h-full items-center justify-center text-muted">
@@ -392,6 +415,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
             plan={themed ? { readOnly: old, key: formKey, answers, onForm } : undefined}
             inset={inset}
             title={`${info.label}: ${task.title}`}
+            onAsk={setAsked}
           />
         )}
       </div>
@@ -467,6 +491,10 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
  * keeps its scroll position as the page changes, and leaves `inset` pixels at its bottom for what covers it. With
  * `plan`, `html` is a plan's content, shown in the theme, with the answers to its questions that haven't been sent put
  * back in each time it loads.
+ *
+ * It has no allow-popups: its links and window.open ask the board (iaOpen, see linksInNewTabs), which opens a web link
+ * at once only when that follows the user's own click or key press in the frame, and otherwise passes it to `onAsk`.
+ * In the desktop app, which has no popup blocker, a page could otherwise send its contents out in a link as it loads.
  */
 function HtmlFrame({
   frame,
@@ -474,11 +502,13 @@ function HtmlFrame({
   title,
   inset,
   plan,
+  onAsk,
 }: {
   frame: RefObject<HTMLIFrameElement | null>;
   html: string;
   title: string;
   inset: number;
+  onAsk: (url: string) => void;
   plan?: {
     readOnly: boolean;
     key: string | null;
@@ -491,8 +521,20 @@ function HtmlFrame({
   bottom.current = inset;
   const form = useRef(plan?.onForm);
   form.current = plan?.onForm;
+  const ask = useRef(onAsk);
+  ask.current = onAsk;
   useEffect(() => {
+    trackBoardInput();
     const onMessage = (e: MessageEvent) => {
+      // From the frame or an <ia-html> in it.
+      if (typeof e.data?.iaOpen === "string" && fromFrame(frame.current, e.source)) {
+        const url = e.data.iaOpen;
+        if (!openable(url)) return;
+        if (followsFrameInput(frame.current)) window.open(url, "_blank", "noopener,noreferrer");
+        // Asked only after some input of the user's (a page asking as it loads is ignored), where that can be told.
+        else if (navigator.userActivation?.isActive !== false) ask.current(url);
+        return;
+      }
       if (e.source !== frame.current?.contentWindow) return;
       if (form.current && typeof e.data?.iaDiagram === "string" && typeof e.data.source === "string") {
         const target = frame.current.contentWindow;
@@ -520,7 +562,12 @@ function HtmlFrame({
   const readOnly = !!plan?.readOnly;
   const key = plan?.key ?? undefined;
   const doc = useMemo(
-    () => frameDoc(plan ? themedPlan(html, planCss, readOnly ? { readOnly } : { answers: plan.answers(), key }) : html, scroll.current, bottom.current),
+    () =>
+      frameDoc(
+        plan ? themedPlan(html, planCss, readOnly ? { readOnly, board: true } : { answers: plan.answers(), key, board: true }) : html,
+        scroll.current,
+        bottom.current,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [html, themed, readOnly, key],
   );
@@ -530,7 +577,7 @@ function HtmlFrame({
       title={title}
       srcDoc={doc}
       onLoad={sendInset}
-      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
+      sandbox="allow-scripts allow-forms"
       referrerPolicy="no-referrer"
       className={clsx("block h-full w-full", plan ? "bg-bg" : "bg-white")}
     />

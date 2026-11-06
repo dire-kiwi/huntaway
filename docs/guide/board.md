@@ -115,7 +115,13 @@ Mermaid diagram. With a plan, it writes the plan first and waits for you to appr
 starts the work; once you do, it can carry it out in the task or break it into tasks, and the
 card shows how many of those are done. Each label gets a tab in the task, before the thread,
 showing its document as the agent writes it: HTML in a sandboxed frame (its scripts run, but it
-can't reach the board), a diagram drawn in the board with zoom, an SVG download and a button that
+can't reach the board, and a Content-Security-Policy lets it load only scripts, styles and fonts from
+cdnjs, jsDelivr, unpkg and Google Fonts: no remote images, requests, frames or form posts. Its links
+open in a new tab after your click in the page; one it opens otherwise, the board asks you about first.
+A page can still send data out in a hostname, though: WebRTC isn't held by the policy, and in a
+browser (not the desktop app) a frame it points at another host is refused only after Chrome has
+looked the host up and connected to it, TLS SNI included), a
+diagram drawn in the board with zoom, an SVG download and a button that
 sends a parse error back to the agent. Reply under the document to ask for changes. The board
 keeps a version from each turn that changed the file (`GET /tasks/{id}/document?label=plan`, with
 `&version=N` for an earlier one), and the task opens on its first label's document once there's
