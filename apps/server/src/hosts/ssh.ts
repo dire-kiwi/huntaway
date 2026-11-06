@@ -30,8 +30,20 @@ async function get(url: string, token: string | null = null): Promise<{ status: 
   return { status: res.status, text: await res.text() };
 }
 
-/** `huntaway ssh-host`: make sure a host is running on `port` and print JSON describing it. */
-export async function ssh_host(port: number, data_dir: string, name: string | null): Promise<void> {
+/**
+ * How long `ssh-host` waits for a host that's down to come back by itself before starting one: a restart or an Update
+ * leaves the port closed for a second or two (longer with a database backup), and a host started meanwhile takes the
+ * port from the release being started, which then fails to listen (and the started host marks that release bad, as
+ * one that didn't start: HA-271).
+ */
+export const START_GRACE_MS = 15_000;
+
+/**
+ * `huntaway ssh-host`: make sure a host is running on `port` and print JSON describing it. With `start` false
+ * (`--no-start`), a host that isn't running is an error rather than started, for a host that has its own supervisor.
+ */
+export async function ssh_host(port: number, data_dir: string, name: string | null, opts: { start?: boolean; grace_ms?: number } = {}): Promise<void> {
+  const { start = true, grace_ms = START_GRACE_MS } = opts;
   const base = `http://127.0.0.1:${port}`;
   const healthy = async () => {
     try {
@@ -41,19 +53,20 @@ export async function ssh_host(port: number, data_dir: string, name: string | nu
       return false;
     }
   };
+  /** Whether the host is up within `ms`, checking every 250 ms. */
+  const up_within = async (ms: number) => {
+    for (const end = Date.now() + ms; Date.now() < end;) {
+      await sleep(250);
+      if (await healthy()) return true;
+    }
+    return false;
+  };
   let started = false;
-  if (!(await healthy())) {
+  if (!(await healthy()) && !(await up_within(grace_ms))) {
+    if (!start) throw new Error(`no host is running on port ${port} (ssh-host --no-start doesn't start one)`);
     start_detached(port, data_dir, name);
     started = true;
-    let up = false;
-    for (let i = 0; i < 60; i++) {
-      await sleep(250);
-      if (await healthy()) {
-        up = true;
-        break;
-      }
-    }
-    if (!up) throw new Error(`started a host on port ${port}, but it didn't come up; see ${path_str(join(data_dir, "serve.log"))}`);
+    if (!(await up_within(15_000))) throw new Error(`started a host on port ${port}, but it didn't come up; see ${path_str(join(data_dir, "serve.log"))}`);
   }
   // A running host on the default data dir uses its token file; IA_TOKEN isn't visible here.
   let token: string;
@@ -88,11 +101,12 @@ function start_detached(port: number, data_dir: string, name: string | null) {
   }
 }
 
-/** `huntaway ssh-host [--port N] [--data-dir DIR] [--name NAME]`, the forced command on an SSH target. */
+/** `huntaway ssh-host [--port N] [--data-dir DIR] [--name NAME] [--no-start]`, the forced command on an SSH target. */
 export async function ssh_host_cli(argv: string[]): Promise<void> {
   let port = 7878;
   let data_dir: string | null = process.env.IA_DATA_DIR || null;
   let name: string | null = null;
+  let start = true;
   for (let i = 0; i < argv.length; i++) {
     let arg = argv[i];
     let val: string | undefined;
@@ -119,12 +133,15 @@ export async function ssh_host_cli(argv: string[]): Promise<void> {
       case "--name":
         name = next();
         break;
+      case "--no-start":
+        start = false;
+        break;
       default:
         throw new Error(`unexpected argument '${argv[i]}'`);
     }
   }
   const { default_data_dir } = await import("../serve.ts");
-  await ssh_host(port, data_dir ?? default_data_dir(), name);
+  await ssh_host(port, data_dir ?? default_data_dir(), name, { start });
 }
 
 // ---------- on the hub ----------
