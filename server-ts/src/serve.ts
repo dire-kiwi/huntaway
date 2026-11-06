@@ -12,7 +12,7 @@ import { WebSocketServer } from "ws";
 import * as db from "./db.ts";
 import * as db_file from "./db/file.ts";
 import * as api from "./api.ts";
-import { readBody, send, errorAnswer, no_route_error, ApiError, type Answer } from "./http.ts";
+import { readBody, send, errorAnswer, no_route_error, ApiError, DEFAULT_LIMIT, type Answer } from "./http.ts";
 import { AppState, default_exe, type Identity } from "./state.ts";
 import { background, expand_tilde, new_id, new_token, now, err_str, home_dir, make_private } from "./util.ts";
 import * as admin from "./update/admin.ts";
@@ -522,7 +522,11 @@ export async function serve(args: ServeArgs) {
       if (path === "/api" || path.startsWith("/api/")) {
         for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
         const found = state.local_router!.find(path.slice(4));
-        const raw = await readBody(req, found?.route.limit ?? 2 << 20);
+        // One without the token that the route needs isn't read: dispatch refuses it, and node drops its body after the
+        // answer. Read first, anyone who can reach the server could make it hold a route's body (300 MB for /api/h/…).
+        const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+        const refused = found?.route.auth && !api.auth(state, req.method ?? "GET", path, req.headers, query).ok;
+        const raw = refused ? Buffer.alloc(0) : await readBody(req, found?.route.limit ?? DEFAULT_LIMIT);
         const r = api.makeReq(req.method ?? "GET", url, req.headers, raw);
         r.incoming = req;
         send(res, await api.dispatch(state, r));
