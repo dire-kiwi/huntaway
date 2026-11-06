@@ -7,14 +7,15 @@
  * mcp/tools/dispatch.ts's handle_control), recorded in `mcp_calls` as `stdio:<run id>:<request id>`, so the policy, the
  * thread's `permission` message and the request in `permission_requests` are those of mcp/permissions.ts, as they were.
  *
- * The board's tools are there too, for the Claude runs that take input (RUN_FORMAT 4, `runs.tools_on_output`): the
+ * The board's tools are there too, for the Claude runs that take input (RUN_FORMAT 4, launch.ts's `tools_on_output`): the
  * board's MCP server is one of Claude Code's in-process ("SDK") servers, which the `initialize` request at the start of
  * the run's input names (`initialize_line`), so the run's `mcp.json` has no board server and no helper or HTTP server
  * takes its calls. Claude Code sends each MCP message to it as an `mcp_message` control request, answered with the
  * server's JSON-RPC response (`mcp_response`). A `tools/call` is a board call like a helper's (the same dispatch,
  * mcp/tools/dispatch.ts), recorded in `mcp_calls` under the same kind of id, so the call knows its run, and its task,
  * from the run it came in on. The handshake (`initialize`, `tools/list`) is answered at once, and is mostly skipped:
- * `initialize_line` gives Claude Code its results up front.
+ * `initialize_line` gives Claude Code its results up front. A call Claude Code gives up on is a `notifications/cancelled`
+ * message naming its JSON-RPC id (`on_mcp_cancelled`); a prompt it gives up on is a `control_cancel_request`.
  *
  * After a restart, the run's output is followed again from its saved offset, which is past the requests already read:
  * those still open (their calls executing: a prompt, a `wait`) are taken up again from `mcp_calls` (see
@@ -98,7 +99,7 @@ export interface Called {
   codex?: CodexRequest;
 }
 
-/** The calls Claude no longer wants answered (see `on_control_cancel`), while their prompts settle. */
+/** The calls Claude no longer wants answered (see `cancel_call`), while their prompts settle. */
 const cancelled = new Set<string>();
 
 /** A `control_request` from the run's agent (`v`): a permission prompt, an MCP message, or one this board doesn't take. */
@@ -131,7 +132,10 @@ function on_mcp_message(state: Shared, run: Run, request_id: string, req: any): 
   }
   // A notification (`notifications/initialized`, `notifications/cancelled`): Claude Code still waits for its control
   // response.
-  if (typeof rpc_id !== "string" && typeof rpc_id !== "number") return answer({ jsonrpc: "2.0", id: 0, result: {} });
+  if (typeof rpc_id !== "string" && typeof rpc_id !== "number") {
+    if (msg.method === "notifications/cancelled") on_mcp_cancelled(state, run, msg.params?.requestId);
+    return answer({ jsonrpc: "2.0", id: 0, result: {} });
+  }
   if (msg.method === "tools/call") {
     const name = typeof msg.params?.name === "string" ? msg.params.name : "";
     call_tool(state, run.id, control_call_id(run.id, request_id), name, { request_id, rpc_id, arguments: msg.params?.arguments ?? null });
@@ -154,8 +158,9 @@ function reviews(state: Shared, run: Run): boolean {
 }
 
 /**
- * Claude no longer wants request `v.request_id` answered (its turn was interrupted, say): a prompt expires, as it would
- * when the run ends, a `wait` ends, and the agent isn't answered.
+ * Claude no longer wants request `v.request_id` answered (its turn was interrupted, say): a permission prompt expires,
+ * as it would when the run ends, and the agent isn't answered. (A board call is cancelled with a `notifications/cancelled`
+ * instead, see `on_mcp_cancelled`.)
  */
 export function on_control_cancel(state: Shared, run: Run, v: any): void {
   const request_id = v?.request_id;
@@ -163,7 +168,44 @@ export function on_control_cancel(state: Shared, run: Run, v: any): void {
   cancel_call(state, run, control_call_id(run.id, request_id));
 }
 
-/** The agent no longer wants call `call` answered (see `on_control_cancel`). */
+/**
+ * Claude Code no longer wants the board call it sent with JSON-RPC id `rpc_id` answered (a sibling tool call failed, or
+ * its turn was interrupted): it says so with a `notifications/cancelled` to the in-process server, not a
+ * `control_cancel_request`, so the call is found by the id its answer would go back with (saved in `mcp_calls.args`),
+ * and ends as one `on_control_cancel` ends.
+ */
+function on_mcp_cancelled(state: Shared, run: Run, rpc_id: unknown): void {
+  if (typeof rpc_id !== "string" && typeof rpc_id !== "number") return;
+  let rows: Array<{ id: string; tool: string; args: string }>;
+  try {
+    rows = open_calls(state, run.id);
+  } catch (e) {
+    console.warn(`run ${run.id}: finding the board call Claude Code cancelled (${JSON.stringify(rpc_id)}): ${err_str(e)}`);
+    return;
+  }
+  for (const r of rows) {
+    let saved: any;
+    try {
+      saved = JSON.parse(r.args);
+    } catch {
+      continue;
+    }
+    if (saved?.rpc_id === rpc_id && !saved.codex) cancel_call(state, run, r.id);
+  }
+}
+
+/** The permission prompts and board calls of run `run_id` that were executing, as `mcp_calls` has them. */
+function open_calls(state: Shared, run_id: string): Array<{ id: string; tool: string; args: string }> {
+  return db.all(
+    state.db(),
+    "SELECT id, tool, args FROM mcp_calls WHERE run_id=?1 AND status='executing' AND substr(id, 1, ?2)=?3",
+    run_id,
+    CALL_PREFIX.length,
+    CALL_PREFIX,
+  );
+}
+
+/** The agent no longer wants call `call` answered: a prompt it asked expires, a `wait` ends, and it isn't answered. */
 export function cancel_call(state: Shared, run: Run, call: string): void {
   // Unless it's been answered already.
   if (!state.calls_inflight.has(call)) return;
@@ -180,13 +222,7 @@ export function cancel_call(state: Shared, run: Run, call: string): void {
 export function resume_requests(state: Shared, run: Run): void {
   let rows: Array<{ id: string; tool: string; args: string }>;
   try {
-    rows = db.all(
-      state.db(),
-      "SELECT id, tool, args FROM mcp_calls WHERE run_id=?1 AND status='executing' AND substr(id, 1, ?2)=?3",
-      run.id,
-      CALL_PREFIX.length,
-      CALL_PREFIX,
-    );
+    rows = open_calls(state, run.id);
   } catch (e) {
     console.error(`run ${run.id}: finding its open permission prompts and board calls: ${err_str(e)}`);
     return;
