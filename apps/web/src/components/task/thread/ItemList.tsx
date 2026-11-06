@@ -49,7 +49,7 @@ function RewindMark({ id }: { id: string }) {
   );
 }
 
-/** Memoized: a new message leaves the items it doesn't change as they were (see buildModel), and their rows with them. */
+/** Memoized: a new snapshot leaves the items it doesn't change as they were (see buildItemModel), and their rows with them. */
 const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running: boolean; hostId: string; cwd?: string | null }) {
   switch (it.type) {
     case "user":

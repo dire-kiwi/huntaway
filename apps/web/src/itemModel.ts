@@ -1,16 +1,15 @@
-// What a thread shows, built from its items (a thread kept as items, docs/threads.md): the adapter from the shared model
-// (threads.ts, apps/server/src/threads/protocol.ts) onto the ThreadModel that threadModel.ts builds from messages, which
-// the thread's components draw. The same task looks the same either way (tests/ui/itemThread.test.mjs compares them).
+// What a thread shows, built from its items (docs/threads.md): the adapter from the shared model (threads.ts,
+// apps/server/src/threads/protocol.ts) onto the ThreadModel (threadModel.ts) that the thread's components draw. It draws
+// a thread as the board drew it from its messages before threads moved onto items.
 //
 // What the items don't say, the board's `metadata` on them does (converter 4 on the server): an auto message, a turn's
-// cost and turns, a compaction's tokens after, a request's stored prompt or question, and its message's id. Keys are
-// the message path's where an item came from one message (`legacy:<id>[:<block>]` is `<id>[.<block>]`), so the rows
-// that take a message id from them (rewinding, a prompt's "moved on") work as they do there.
+// cost and turns, a compaction's tokens after, a request's stored prompt or question, and its message's id. An item
+// that came from one message keeps that message's id in its key (`legacy:<id>[:<block>]` is `<id>[.<block>]`), so the
+// rows that take a message id from them (rewinding, a prompt's "moved on") have it.
 //
-// Like buildModel, a new snapshot rebuilds the model, but what it leaves as it was stays the same objects: apply_event
-// keeps the identity of the items an event doesn't change, and what's made of each is kept by item (`made`).
+// A new snapshot rebuilds the model, but what it leaves as it was stays the same objects: apply_event keeps the
+// identity of the items an event doesn't change, and what's made of each is kept by item (`made`).
 
-import type { Message } from "./api";
 import type { Subagent, SubagentStatus } from "./subagents";
 import { reuseItems, shallowEqual, type Call, type Item, type ThreadModel, type ToolResult } from "./threadModel";
 import type { Item as ThreadItem, Snapshot, ThreadRequest, ToolCall } from "./threads";
@@ -18,7 +17,7 @@ import type { Item as ThreadItem, Snapshot, ThreadRequest, ToolCall } from "./th
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
 
-/** `legacy:<message id>[:<block>]`: the message an item came from, and the key the message path gives what it made of it. */
+/** `legacy:<message id>[:<block>]`: the message an item came from, and the key of the row made of it. */
 const LEGACY = /^legacy:(\d+)(?::(.+))?$/;
 
 /** The id of the message an item (or a board question's request) came from, if its id says. */
@@ -27,7 +26,7 @@ export function messageIdOf(id: string): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
-/** The key the message path gives what it made of the message an item came from: `<id>` or `<id>.<block>`. */
+/** The key of the row made of an item: `<id>` or `<id>.<block>` for one that came from a message, else its id. */
 export function keyOf(id: string): string {
   const m = LEGACY.exec(id);
   return m ? (m[2] !== undefined ? `${m[1]}.${m[2]}` : m[1]) : id;
@@ -60,7 +59,7 @@ const callOf = (it: ToolCall): Call =>
 const resultOf = (it: ToolCall): ToolResult | undefined =>
   it.result ? once(it.result, () => ({ content: it.result!.content, isError: it.status !== "completed" })) : undefined;
 
-/** A turn's end as the message path's result row reads it (Claude's result message). */
+/** A turn's end as the result row reads it (as Claude's result message has it). */
 const resultData = (it: Extract<ThreadItem, { type: "turn_result" }>) =>
   once(it, () => {
     const md: Any = it.metadata ?? {};
@@ -133,7 +132,7 @@ const requestMessage = (r: ThreadRequest): number | undefined => {
   return typeof n === "number" ? n : messageIdOf(r.id);
 };
 
-/** The view's rows of one conversation (the main one, or a subagent's), as threadModel.ts's ItemBuilder makes them. */
+/** The view's rows of one conversation (the main one, or a subagent's). */
 class Rows {
   items: Item[] = [];
 
@@ -155,7 +154,7 @@ class Rows {
         this.push({ type: "user", key, text: it.text, auto: (it.metadata as Any)?.auto === true ? true : undefined, steered: it.steered });
         return;
       case "assistant_message":
-        // A turn's result text that no message said: the message path shows its turn's end instead.
+        // A turn's result text that no message said: its turn's end shows instead.
         if ((it.metadata as Any)?.from_result) return;
         this.push({ type: "text", key, text: it.text });
         return;
@@ -166,7 +165,7 @@ class Rows {
         this.tool(callOf(it));
         return;
       case "notice":
-        // Claude Code's "[Request interrupted…]": the message path draws nothing for it.
+        // Claude Code's "[Request interrupted…]": nothing's drawn for it.
         if (it.code === "interrupted") return;
         if (it.code === "routine_report") return this.push({ type: "report", key, data: it.metadata ?? { text: it.text } });
         // An API error Claude Code gave as the assistant's text (the board's own events have no code).
@@ -210,7 +209,7 @@ function before(r: ThreadRequest, rid: number | undefined, it: ThreadItem): bool
   return !!r.created_at && !!it.created_at && r.created_at < it.created_at;
 }
 
-/** The subagent that a subagent's call shows, as subagents.ts's buildSubagents makes it from messages. */
+/** The subagent that a subagent's call shows. */
 function subagentOf(it: ToolCall, running: boolean, waiting: Set<string>): Subagent {
   const s = it.subagent;
   const input: Any = it.input ?? {};
@@ -228,7 +227,6 @@ function subagentOf(it: ToolCall, running: boolean, waiting: Set<string>): Subag
     background: !!(s?.background ?? input.run_in_background),
     status,
     startedAt: it.created_at ?? "",
-    messageId: 0,
     parent: it.parent_id ?? null,
   };
   const type = s?.agent_type ?? input.subagent_type;
@@ -248,7 +246,7 @@ type Shown = Pick<Snapshot, "items" | "requests" | "context">;
 /**
  * The model of a thread from its items and requests (a snapshot or window), reusing what's unchanged from `prev`. A
  * window's context items (the subagent calls its items belong to, from before it) aren't rows of the main conversation
- * until the page with them is loaded, as a subagent from before the loaded messages isn't: their subagents are known.
+ * until the page with them is loaded, but their subagents are known.
  */
 export function buildItemModel(snap: Shown, running: boolean, prev?: ThreadModel): ThreadModel {
   const main = new Rows();
@@ -301,7 +299,7 @@ export function buildItemModel(snap: Shown, running: boolean, prev?: ThreadModel
   }
   const childItems = new Map<string, Item[]>();
   for (const [id, rows] of kids) {
-    const old = prev?.childItems?.get(id);
+    const old = prev?.childItems.get(id);
     childItems.set(id, old ? reuseItems(rows.items, old) : rows.items);
   }
   const sameResults = prev && prev.results.size === results.size && [...results].every(([k, v]) => prev.results.get(k) === v);
@@ -309,15 +307,12 @@ export function buildItemModel(snap: Shown, running: boolean, prev?: ThreadModel
   return {
     items: prev ? reuseItems(main.items, prev.items) : main.items,
     results: sameResults ? prev.results : results,
-    children: NO_CHILDREN,
     subagents: prev && sameMap(prev.subagents, subagents) ? prev.subagents : subagents,
     callParent: sameParents ? prev.callParent : callParent,
     lastSent,
-    childItems: prev?.childItems && sameMap(prev.childItems, childItems) ? prev.childItems : childItems,
+    childItems: prev && sameMap(prev.childItems, childItems) ? prev.childItems : childItems,
   };
 }
-
-const NO_CHILDREN = new Map<string, Message[]>();
 
 function sameMap<K, V>(a: Map<K, V>, b: Map<K, V>): boolean {
   if (a.size !== b.size) return false;

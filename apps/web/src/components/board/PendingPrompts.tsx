@@ -78,7 +78,7 @@ const pendingPrompts = (items: Item[]) =>
 
 /** The permission prompts, questions and plans a task's agent is waiting on, to answer without opening its thread. */
 export function PendingPrompts({ task }: { task: Task }) {
-  // From its items or its messages, as its thread is drawn (an items task has no messages since it moved onto them).
+  // From its items (threadView.ts).
   const model = useThreadModel(task, true);
   const prompts = pendingPrompts(model.items);
   // The question it asked with request_user_input, while nothing's been sent to it since.

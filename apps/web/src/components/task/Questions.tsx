@@ -229,7 +229,7 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({
   const [text, setText] = useState("");
   const { busy, err, run } = useBusy();
   const ref = useRef<HTMLDivElement>(null);
-  // In a thread drawn from its items, with the thread's respond command: its options picked, then the typed answer.
+  // In a thread, with the thread's respond command: its options picked, then the typed answer.
   const commands = usePromptAnswers();
   const answer = (choices: string[], typed: string) =>
     run(() =>

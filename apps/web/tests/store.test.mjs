@@ -11,7 +11,7 @@ const hook = `export async function resolve(spec, ctx, next) {
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
-const { handleEvent, retainThread, useStore } = await import("../src/store.ts");
+const { handleEvent, useStore } = await import("../src/store.ts");
 const { flushDeltas, useDeltas, watchDelta } = await import("../src/deltas.ts");
 const { api } = await import("../src/api/index.ts");
 // Some tests stub it out.
@@ -45,85 +45,6 @@ test("a refresh that finishes last keeps the approvals of a host that reconnecte
     useStore.getState().approvals.map((a) => `${a.host_id}:${a.request_id}`),
     ["remote:r1"],
   );
-});
-
-// IA-169 review: events kept while a thread's first page loaded were added to the page as they were, so a message
-// the page had too was shown twice, and a change to one in the page went to the end.
-test("a thread's first page and the events that came while it loaded make one list, in order", async () => {
-  const msg = (id, text) => ({
-    id,
-    task_id: "t1",
-    kind: "claude",
-    created_at: "",
-    data: { type: "assistant", message: { content: [{ type: "text", text }] } },
-  });
-  let answer;
-  api.messagePage = () => new Promise((resolve) => (answer = resolve));
-  useStore.setState({ hosts: [{ ...host("local"), api_version: 56 }], tasks: { t1: { id: "t1", host_id: "local" } }, messages: {}, threads: {} });
-
-  const release = retainThread("t1");
-  const load = useStore.getState().loadMessages("t1");
-  // Stored while the page was read: a change to one it has, and a new one it has too.
-  handleEvent({ type: "message_updated", task_id: "t1", message: msg(101, "changed") });
-  handleEvent({ type: "message", task_id: "t1", message: msg(102, "new") });
-  answer({ messages: [msg(100, "a"), msg(101, "b"), msg(102, "new")], more: true, subagents: [] });
-  await load;
-  assert.deepEqual(
-    useStore.getState().messages.t1.map((m) => `${m.id}:${m.data.message.content[0].text}`),
-    ["100:a", "101:changed", "102:new"],
-  );
-  release();
-});
-
-// IA-169 review: a permission answered while the older page with it was loading stayed pending, as the page had it.
-test("changes that come while an older page loads are kept over the page", async () => {
-  const msg = (id, status) => ({ id, task_id: "t2", kind: "permission", created_at: "", data: { status, tool_name: "Bash", request_id: `r${id}` } });
-  let answer;
-  api.messagePage = () => new Promise((resolve) => (answer = resolve));
-  useStore.setState({
-    hosts: [{ ...host("local"), api_version: 56 }],
-    tasks: { t2: { id: "t2", host_id: "local" } },
-    messages: { t2: [msg(10, "allowed")] },
-    threads: { t2: { more: true, subagents: [], loading: false } },
-  });
-
-  const release = retainThread("t2");
-  const load = useStore.getState().loadOlderMessages("t2");
-  // Answered after the host read the page.
-  handleEvent({ type: "message_updated", task_id: "t2", message: msg(5, "allowed") });
-  answer({ messages: [msg(4, "denied"), msg(5, "pending")], more: false, subagents: [] });
-  await load;
-  assert.deepEqual(
-    useStore.getState().messages.t2.map((m) => `${m.id}:${m.data.status}`),
-    ["4:denied", "5:allowed", "10:allowed"],
-  );
-  release();
-});
-
-// IA-169 review: a reload after a reconnect that came while the thread was closed (but still kept) was dropped, and
-// reopening it then only asked for newer messages: a permission answered meanwhile stayed pending.
-test("a reload of a closed thread that's still kept updates it", async () => {
-  const msg = (id, status) => ({ id, task_id: "t3", kind: "permission", created_at: "", data: { status, tool_name: "Bash", request_id: `r${id}` } });
-  const asked = [];
-  let answer = { messages: [msg(1, "pending"), msg(2, "pending")], more: false, subagents: [] };
-  api.messagePage = (_h, _id, q) => (asked.push(q), Promise.resolve(answer));
-  useStore.setState({ hosts: [{ ...host("local"), api_version: 56 }], tasks: { t3: { id: "t3", host_id: "local" } }, messages: {}, threads: {} });
-  const status = () => useStore.getState().messages.t3?.map((m) => `${m.id}:${m.data.status}`);
-
-  let release = retainThread("t3");
-  await useStore.getState().loadMessages("t3");
-  release();
-  // Closed, and kept for a while. A permission is answered while the host is disconnected, and the reload after it comes now.
-  answer = { messages: [msg(1, "pending"), msg(2, "allowed")], more: false, subagents: [] };
-  await useStore.getState().loadMessages("t3", true);
-  assert.deepEqual(status(), ["1:pending", "2:allowed"]);
-  // Opened again, it asks only for newer ones, and has the answer.
-  release = retainThread("t3");
-  answer = { messages: [], more: false, subagents: [] };
-  await useStore.getState().loadMessages("t3");
-  assert.deepEqual(asked.at(-1), { after: 2 });
-  assert.deepEqual(status(), ["1:pending", "2:allowed"]);
-  release();
 });
 
 // IA-161: a host's refresh replaced all its tasks with what it loaded, so a task event that came while it loaded was undone
@@ -192,7 +113,6 @@ test("events change only their own host's tasks and projects", () => {
     projects: [{ id: "proj", profile_id: "p", host_id: "local" }],
     archived: [],
     tasks: { same: t },
-    messages: { same: [] },
   });
   const unwatch = watchDelta("same");
   // Each collision is logged, once.
@@ -202,8 +122,12 @@ test("events change only their own host's tasks and projects", () => {
   handleEvent({ type: "task", host_id: "remote", task: { ...t, title: "remote's" } });
   handleEvent({ type: "task_deleted", host_id: "remote", id: "same" });
   handleEvent({ type: "project_deleted", host_id: "remote", id: "proj" });
-  handleEvent({ type: "delta", host_id: "remote", task_id: "same", text: "remote text" });
-  handleEvent({ type: "message", host_id: "remote", task_id: "same", message: { id: 1, task_id: "same", kind: "user", data: { text: "hi" } } });
+  handleEvent({
+    type: "thread_event",
+    host_id: "remote",
+    task_id: "same",
+    event: { type: "delta", thread_id: "same", seq: 1, item_id: "i", kind: "text", offset: 0, text: "remote text" },
+  });
   const s = useStore.getState();
   assert.equal(s.tasks.same.title, "local's");
   assert.deepEqual(
@@ -213,7 +137,6 @@ test("events change only their own host's tasks and projects", () => {
   flushDeltas();
   assert.deepEqual(useDeltas.getState().deltas, {});
   unwatch();
-  assert.deepEqual(s.messages.same, []);
   console.warn = warn;
   assert.deepEqual(warned, ["Task same is on hosts local and remote: only local's is shown, and remote's is left out."]);
   // Its own host's do.
@@ -311,7 +234,6 @@ test("a profile load that ends after a newer one doesn't undo it", async () => {
     projects: [],
     archived: [],
     tasks: {},
-    messages: {},
   });
   const older = useStore.getState().loadProfiles();
   const newer = useStore.getState().loadProfiles();

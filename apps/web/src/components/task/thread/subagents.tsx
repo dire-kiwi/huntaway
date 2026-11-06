@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { ArrowLeft, Bot, Check, ChevronRight, FileText, Loader2, LocateFixed, Maximize2, ShieldQuestion, Square, X } from "lucide-react";
 import { Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "../../../subagents";
-import { buildItems, type Call, type Item, type ToolResult } from "../../../threadModel";
+import type { Call, Item, ToolResult } from "../../../threadModel";
 import { RunningDot } from "../../ui";
 import { lineage, ThreadCtx, usePendingFocus, useThread } from "./context";
 import { ItemList } from "./ItemList";
@@ -131,23 +131,11 @@ const toolUses = (s: Subagent) => s.toolUses != null && `${s.toolUses} tool use$
  * they're left out inline and shown in its own thread (`withPrompts`).
  */
 function SubagentItems({ sub, result, withPrompts }: { sub: Subagent; result?: ToolResult; withPrompts?: boolean }) {
-  const msgs = useThread((t) => t.children.get(sub.id));
-  // A thread drawn from its items has each subagent's own rows already (itemModel.ts).
-  const own = useThread((t) => t.childItems?.get(sub.id));
-  const fromItems = useThread((t) => !!t.childItems);
-  const results = useThread((t) => t.results);
+  const own = useThread((t) => t.childItems.get(sub.id));
   const running = useThread((t) => t.running);
   const hostId = useThread((t) => t.hostId);
   const cwd = useThread((t) => t.cwd);
-  const prev = useRef<Item[]>(undefined);
-  const items = useMemo(() => {
-    if (fromItems) return withPrompts ? (own ?? NO_ITEMS) : (own ?? NO_ITEMS).filter((i) => i.type !== "permission");
-    return (prev.current = buildItems(
-      (msgs ?? []).filter((m) => withPrompts || m.kind !== "permission"),
-      results,
-      prev.current,
-    ));
-  }, [fromItems, own, msgs, results, withPrompts]);
+  const items = useMemo(() => (withPrompts ? (own ?? NO_ITEMS) : (own ?? NO_ITEMS).filter((i) => i.type !== "permission")), [own, withPrompts]);
   const report = reportText(sub, result);
   const hasText = items.some((i) => i.type === "text");
   // A subagent's own messages leave the thread's items as they were, so the thread doesn't scroll for them: this

@@ -1,8 +1,8 @@
-// The threads drawn from their items (docs/threads-api.md), kept up to date while they're shown: each starts from a
-// window of its last items, follows its `thread_event`s with the shared reducer (threads.ts's apply_event), catches up
-// from its seq after a gap or a reconnect, takes a fresh window on a `thread_resync`, and loads earlier items a page at a
-// time. Streamed text (delta events, for an item the thread doesn't have yet) goes in deltas.ts's store, as the board's
-// own delta events do for threads drawn from messages. itemModel.ts makes what the view draws of it.
+// The threads shown, drawn from their items (docs/threads-api.md) and kept up to date while they're shown: each starts
+// from a window of its last items, follows its `thread_event`s with the shared reducer (threads.ts's apply_event),
+// catches up from its seq after a gap or a reconnect, takes a fresh window on a `thread_resync`, and loads earlier items
+// a page at a time. Streamed text (delta events, for an item the thread doesn't have yet) goes in deltas.ts's store.
+// itemModel.ts makes what the view draws of it.
 
 import { create } from "zustand";
 import { ApiError, api } from "./api";
@@ -20,9 +20,9 @@ export interface ItemThread {
 }
 
 /**
- * The threads shown from their items, by task id, and those whose host had no items for them (a 404: its live writes
- * stopped on an error, say), which are drawn from their messages instead. That's kept for the page's life, so the view
- * doesn't flip back and forth, unless the thread is rebuilt (a thread_resync).
+ * The threads shown from their items, by task id, and those whose host had no items for them (a 404: a task still on
+ * its messages, on a host from before every task moved onto items with its Keep threads as items setting off), which
+ * the view says it can't show. That's kept for the page's life, unless the thread is rebuilt (a thread_resync).
  */
 export const useItemThreads = create<{ threads: Record<string, ItemThread>; missing: Record<string, true> }>(() => ({ threads: {}, missing: {} }));
 
@@ -86,11 +86,6 @@ export function retainItemThread(hostId: string, taskId: string): () => void {
       forgetItemModels((id) => live.has(id));
     }, KEEP_MS);
   };
-}
-
-/** Whether task `taskId`'s thread is followed from its items here (so the board's own delta events aren't drawn for it). */
-export function followsItems(taskId: string): boolean {
-  return live.has(taskId) && !useItemThreads.getState().missing[taskId];
 }
 
 function setMissing(taskId: string, missing: boolean) {
@@ -209,7 +204,7 @@ export function onThreadEvent(hostId: string, taskId: string, ev: ThreadEvent) {
 export function onThreadResync(hostId: string, taskId: string) {
   const l = live.get(taskId);
   if (l && l.host === hostId) void loadWindow(taskId);
-  // One drawn from its messages for want of items may have them now.
+  // One that had no items may have them now.
   else setMissing(taskId, false);
 }
 

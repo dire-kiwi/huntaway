@@ -1245,9 +1245,9 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           <Toggle checked={!!settings.thread_items} onChange={(on) => save({ thread_items: on })} label="Keep threads as items" />
           <p className="mt-1 text-[12px] text-faint">
             {hostSupports(host, THREAD_SOURCE_API)
-              ? "Threads are written as items now, and drawn from them: a task moves onto them when it's quiet. This only applies to tasks still on their messages (those that were done before the update, until they're written to again): turning it off draws them from their messages."
+              ? "Threads are written as items now, and drawn from them: a task moves onto them when it's quiet. This only applies to a task still on its messages, which gets items when it's opened while it's on: with it off, its thread isn't shown."
               : hostSupports(host, THREADS_BATCH_API)
-                ? "Tasks keep their threads in the new thread model as well as their messages, written as their messages are: those started while it's on, and older ones once they're opened or rebuilt (Settings → Server). Turning it off draws threads from their messages again."
+                ? "Tasks keep their threads in the new thread model as well as their messages, written as their messages are: those started while it's on, and older ones once they're opened or rebuilt (Settings → Server). Threads are only drawn from it: with it off, a task without it isn't shown."
                 : "Tasks started from now on also keep their threads in the new thread model, written as their messages are. Turning it off leaves those tasks as they are."}
           </p>
         </div>

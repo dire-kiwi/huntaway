@@ -13,7 +13,7 @@ type ThreadData = ThreadModel & {
 
 /**
  * The thread's model, for its rows to pick what they show from (useThread). It's the same object for
- * the thread's life, so a new model only redraws the rows whose pick changed (see buildModel).
+ * the thread's life, so a new model only redraws the rows whose pick changed (see buildItemModel).
  */
 export class ThreadSource {
   private listeners = new Set<() => void>();

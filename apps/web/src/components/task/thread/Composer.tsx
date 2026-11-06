@@ -105,7 +105,7 @@ async function sendDraft(key: string, task: Task, body: string, sent: string, fi
   sending.set(key, (sending.get(key) ?? 0) + 1);
   let end: SendEnd;
   try {
-    // A thread command for a thread drawn from its items (threadView.ts).
+    // A thread command (threadView.ts).
     await sendMessage(task, body);
     // Off the saved draft as well, for when no composer shows it.
     const d = loadComposerDraft(key);

@@ -2,64 +2,56 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, test } from "vite-plus/test";
 import { forkedSkillMessages } from "../fixtures/forkedSkill.mjs";
-import { demoProject, startServer, withBrowser } from "./harness.mjs";
-
-// Its threads are seeded as messages rows, which a task whose items are its source (HA-222) has none of: its server is
-// on the older database file, where tasks stay on their messages.
-process.env.IA_NEW_DB_FILE = "0";
+import { convert, Translator } from "../../../server/src/threads/translate.ts";
+import { demoProject, routeThread, SEQ, startServer, withBrowser } from "./harness.mjs";
 
 let server, project;
 beforeAll(async () => {
   server = startServer();
   project = await demoProject(server);
-  // The view on messages and its pages: with Keep threads as items on (the default), a task opened with messages written
-  // behind the board's back gets its items (docs/threads.md, step 7), whose window has all of this thread.
-  await server.api("PATCH", "/settings", { thread_items: false });
 });
 afterAll(() => server?.stop());
 
-// IA-173: replay the Skill/local_agent shape from ODS-9, through the real paged messages API.
+// IA-173: replay the Skill/local_agent shape from ODS-9, as a long thread's items (a window and earlier pages).
 test("an older review's forked Skill opens from Agents with its transcript and report", async () => {
   const parent = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Work under review" });
   const thread = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Review of work" });
   const messages = forkedSkillMessages(thread.id);
   messages.find((m) => m.kind === "permission").data.status = "allowed";
-  for (let n = 1; n <= 120; n++)
+  // More than a window's 300 items after it.
+  for (let n = 1; n <= 320; n++)
     messages.push({
+      id: messages.length + 1,
       task_id: thread.id,
       kind: "claude",
       created_at: new Date(n * 1000).toISOString(),
       data: { type: "assistant", message: { content: [{ type: "text", text: `Review follow-up ${n}.` }] } },
     });
-  execFileSync(
-    "python3",
-    [
-      "-c",
-      `
-import json, sqlite3, sys
+  // A review thread of the parent task.
+  execFileSync("python3", [
+    "-c",
+    `
+import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 c.execute("update tasks set kind='review', parent_id=? where id=?", (sys.argv[2], sys.argv[3]))
-for m in json.load(sys.stdin):
- c.execute("insert into messages (task_id,kind,data,created_at) values (?,?,?,?)", (m['task_id'], m['kind'], json.dumps(m['data'], separators=(',', ':')), m['created_at']))
 c.commit()
 `,
-      `${server.dataDir}/huntaway.db`,
-      parent.id,
-      thread.id,
-    ],
-    { input: JSON.stringify(messages) },
-  );
+    `${server.dataDir}/huntaway-2.db`,
+    parent.id,
+    thread.id,
+  ]);
 
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
-    await ui.run([`goto /t/${thread.id}`, "wait css=h1:text-is('Review')", "wait Review follow-up 120.", "wait Load earlier messages"]);
-    assert.equal(await page.getByText("Main reviewer summary.", { exact: true }).count(), 0, "the Skill's launch is in an older page");
+    await routeThread(page, thread.id, messages);
+    await ui.run([`goto /t/${thread.id}`, "wait css=h1:text-is('Review')", "wait Review follow-up 320.", "wait Load earlier messages"]);
+    assert.equal(await page.getByText("Main reviewer summary.", { exact: true }).count(), 0, "the Skill's launch is before the window");
     assert.match(await page.getByTitle("Subagents in this thread").innerText(), /1 done/);
     await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('/code-review')", "wait Show in thread"]);
     await ui.run(["wait Review PR 139 for correctness bugs.", "wait git diff main...HEAD", "wait Permission for Bash", "wait No runtime bugs found."]);
-    await ui.run(["click git diff main...HEAD", "wait The reviewed diff.", "gone Review follow-up 120."]);
+    await ui.run(["click git diff main...HEAD", "wait The reviewed diff.", "gone Review follow-up 320."]);
     await ui.run(["click Show in thread"]);
-    await ui.run(["gone Show in thread", "wait Review follow-up 120.", "wait No runtime bugs found."]);
+    await ui.run(["gone Show in thread", "wait Review follow-up 320.", "wait No runtime bugs found."]);
     await page.getByRole("button", { name: "Open subagent thread", exact: true }).waitFor();
   });
 });
@@ -68,15 +60,25 @@ test("a streamed Skill launch becomes a running subagent, then completes with it
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Live forked Skill", status: "in_review" });
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui;
+    // An empty thread, which the messages below come to as its live events.
+    await routeThread(page, task.id, []);
     let socket;
     await page.routeWebSocket(/\/api\/ws/, (ws) => {
       socket = ws;
       ws.connectToServer();
     });
     await ui.run([`goto /t/${task.id}`, "click Thread", "wait No agent has worked on this yet"]);
-    socket.send(JSON.stringify({ type: "task", task: { ...task, running: true } }));
+    // Its (empty) window has loaded (routeThread serves it as a task on items), and it starts.
+    await ui.run(["wait css=[data-thread=items]"]);
+    socket.send(JSON.stringify({ type: "task", task: { ...task, running: true, thread_source: "items" } }));
     const messages = forkedSkillMessages(task.id);
-    const send = (m) => socket.send(JSON.stringify({ type: "message", task_id: task.id, message: { ...m, id: m.id + 100000 } }));
+    // Each message as the thread events the server writes for it, numbered on from the window's seq.
+    const translator = new Translator();
+    let seq = SEQ;
+    const send = (m) => {
+      for (const e of convert([m], { from: translator, finished: false }).events)
+        socket.send(JSON.stringify({ type: "thread_event", task_id: task.id, event: { ...e, thread_id: task.id, seq: ++seq } }));
+    };
     send(messages[0]);
     await ui.run(["wait css=[data-tool-row] button:has-text('Skill')", "gone Subagents in this thread"]);
     send(messages[1]);

@@ -93,7 +93,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const pending = data.status === "pending";
-  // In a thread drawn from its items, with the thread's respond command.
+  // In a thread, with the thread's respond command.
   const commands = usePromptAnswers();
   const decide = async (d: "allow" | "allow_always" | "deny") => {
     setBusy(true);

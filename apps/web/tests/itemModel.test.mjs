@@ -1,7 +1,10 @@
-// The thread view on items (itemModel.ts) draws what the view on messages (threadModel.ts) does: the same messages,
-// translated into items by the server's translator (apps/server/src/threads/translate.ts, which is pure), give the same
-// rows, subagents and results.
+// The thread view (itemModel.ts) draws what the board drew from a thread's messages before threads moved onto items:
+// the messages, translated into items by the server's translator (apps/server/src/threads/translate.ts, which is pure),
+// give the rows, subagents and results the view on messages gave them (fixtures/threadHistoryDrawn.json, kept from it
+// when it was removed in HA-225: `prefixes` has a hash of what it drew after each of the history's messages).
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { register } from "node:module";
 import { test } from "vite-plus/test";
 import { forkedSkillMessages } from "./fixtures/forkedSkill.mjs";
@@ -16,7 +19,6 @@ const hook = `export async function resolve(spec, ctx, next) {
   return next(spec, ctx);
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
-const { buildModel, buildItems } = await import("../src/threadModel.ts");
 const { buildItemModel, keyOf, toolName } = await import("../src/itemModel.ts");
 const { convert } = await import("../../server/src/threads/translate.ts");
 const { apply_events, initial_state, snapshot_window, item_page, with_page } = await import("../src/threads.ts");
@@ -54,7 +56,7 @@ function drawn(model, children) {
   // A foreground subagent's report is its call's result: what its notification said (which items keep only for a
   // background one) shows only until then.
   const subs = [...model.subagents.values()]
-    .map(({ messageId: _, ...s }) => JSON.parse(JSON.stringify(s.background || !model.results.has(s.id) ? s : { ...s, summary: undefined })))
+    .map((s) => JSON.parse(JSON.stringify(s.background || !model.results.has(s.id) ? s : { ...s, summary: undefined })))
     .sort((a, b) => a.id.localeCompare(b.id));
   return {
     items: model.items.map(row),
@@ -66,33 +68,38 @@ function drawn(model, children) {
   };
 }
 
-const fromMessages = (messages, running) => {
-  const m = buildModel(messages, running);
-  return drawn(m, (id) => buildItems(m.children.get(id) ?? [], m.results));
-};
 const fromItems = (messages, running) => {
   const c = convert(messages, { finished: false });
   const m = buildItemModel({ items: c.items, requests: c.requests }, running);
   return drawn(m, (id) => m.childItems.get(id) ?? []);
 };
 
-test("a thread's items draw what its messages do", () => {
-  for (const running of [true, false]) assert.deepStrictEqual(fromItems(history(), running), fromMessages(history(), running), `running: ${running}`);
+/** What the view on messages drew (see the top). */
+const golden = JSON.parse(readFileSync(new URL("./fixtures/threadHistoryDrawn.json", import.meta.url), "utf8"));
+/** As JSON has it, keys sorted: what the fixture has, and what its hashes are of. */
+const canon = (v) =>
+  JSON.stringify(v, (_, x) =>
+    x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x,
+  );
+const hash = (v) => createHash("sha256").update(canon(v)).digest("hex").slice(0, 16);
+const asJson = (v) => JSON.parse(canon(v));
+
+test("a thread's items draw what its messages did", () => {
+  assert.deepStrictEqual(asJson(fromItems(history(), true)), golden.running, "running");
+  assert.deepStrictEqual(asJson(fromItems(history(), false)), golden.done, "done");
 });
 
 test("and so do a forked Skill's, its prompt from its task_started", () => {
   const messages = forkedSkillMessages();
-  assert.deepStrictEqual(fromItems(messages, true), fromMessages(messages, true));
+  assert.deepStrictEqual(asJson(fromItems(messages, true)), golden.forked);
   const sub = buildItemModel(convert(messages, { finished: false }), true).subagents.get("skill-review");
   assert.deepEqual([sub.prompt, sub.description, sub.endedAt], ["Review PR 139 for correctness bugs.", "/code-review", messages[6].created_at]);
 });
 
 test("at every point along the way, as live events bring it", () => {
   const all = history();
-  for (let n = 1; n <= all.length; n++) {
-    const part = all.slice(0, n);
-    assert.deepStrictEqual(fromItems(part, true), fromMessages(part, true), `after ${n} messages`);
-  }
+  assert.equal(golden.prefixes.length, all.length);
+  for (let n = 1; n <= all.length; n++) assert.equal(hash(fromItems(all.slice(0, n), true)), golden.prefixes[n - 1], `after ${n} messages`);
 });
 
 /** The snapshot `messages` translate to, as the thread API gives it. */
@@ -139,7 +146,7 @@ test("what an event leaves as it was stays the same objects", () => {
   assert.equal(buildItemModel(same, true, next).items, next.items, "nothing new: the same rows");
 });
 
-test("keys and tool names come back as the message path has them", () => {
+test("keys and tool names come back as the messages had them", () => {
   assert.deepEqual([keyOf("legacy:12"), keyOf("legacy:12:3"), keyOf("legacy:12:result"), keyOf("toolu_1")], ["12", "12.3", "12.result", "toolu_1"]);
   assert.equal(toolName({ name: "pr_view", kind: "mcp", server: "gh" }), "mcp__gh__pr_view");
   assert.equal(toolName({ name: "board", kind: "app" }), "mcp__app__board");
@@ -164,9 +171,8 @@ test("requests from before the board's metadata (converter 2) still draw as prom
 });
 
 // HA-218 review: a window's context had only the subagents still running, so a long thread's earlier subagents that had
-// ended were missing from its Agents list, which the messages path lists from the page's `subagents` (what lists the
-// subagents started before it, db::subagent_messages).
-test("a long thread's window lists every subagent before it, as the messages path's first page does", () => {
+// ended were missing from its Agents list.
+test("a long thread's window lists every subagent before it", () => {
   const out = [];
   const add = (kind, data) =>
     out.push({
@@ -199,12 +205,7 @@ test("a long thread's window lists every subagent before it, as the messages pat
   add("claude", { type: "system", subtype: "task_notification", task_id: "k2", status: "completed", summary: "Back", session_id: "s" });
   for (let i = 0; i < 400; i++) assistant([{ type: "text", text: `Reply ${i}` }]);
 
-  // The messages path: the latest page of 100, and the subagents' calls, results and task_* messages before it.
-  const page = out.slice(-100);
-  const block = (m) => m.data.message?.content?.[0]?.type;
-  const earlier = out.slice(0, -100).filter((m) => m.kind === "claude" && (m.data.type === "system" || block(m) === "tool_use" || block(m) === "tool_result"));
-  const messages = drawn(buildModel(page, false, undefined, earlier), () => []);
-  // The items path: the window of 300.
+  // The window of 300.
   const w = snapshot_window(snapshot(out), 300);
   assert.ok(w.start > 10);
   const items = drawn(buildItemModel(w, false), () => []);
@@ -212,7 +213,22 @@ test("a long thread's window lists every subagent before it, as the messages pat
     items.subagents.map((s) => s.id),
     ["toolu_bg", "toolu_sub"],
   );
-  assert.deepStrictEqual(items.subagents, messages.subagents);
+  // Ended, with what their ends said.
+  assert.deepEqual(
+    items.subagents.map(({ id, description, prompt, background, status, summary, toolUses }) => ({
+      id,
+      description,
+      prompt,
+      background,
+      status,
+      summary,
+      toolUses,
+    })),
+    [
+      { id: "toolu_bg", description: "Away", prompt: "Go away", background: true, status: "completed", summary: "Back", toolUses: undefined },
+      { id: "toolu_sub", description: "Look", prompt: "Look around", background: false, status: "completed", summary: undefined, toolUses: 2 },
+    ],
+  );
   // Its rows are the window's: the subagents' calls aren't drawn until their page loads.
   assert.ok(items.items.every((r) => r.type === "text"));
 });
