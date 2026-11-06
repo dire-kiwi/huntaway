@@ -600,16 +600,20 @@ function workflow_tools(profile: any, project_one: string): any[] {
       "The workflow's nodes and the edges between them. A run starts at its one trigger node and follows edges out of the port each node ends on. " +
       "A node runs once every node with an edge into it has finished and one of those edges was taken (join 'any', the default) or all of them (join 'all'); " +
       "otherwise it's skipped. No loops: to go round again, send to the task's agent (its next finished run triggers the workflow again). Node kinds and their ports: " +
-      "{kind: 'trigger', on: 'status', status} (the task entering that column) or {kind: 'trigger', on: 'manual'} (only run_workflow, or Run on the board) → out; " +
+      "{kind: 'trigger', on: 'status', status} (the task entering that column), {kind: 'trigger', on: 'finished'} (the task's agent finishing its work: the task then stays in In progress " +
+      "rather than going to In review, for the workflow to move it on) or {kind: 'trigger', on: 'manual'} (only run_workflow, or Run on the board) → out; " +
       "{kind: 'condition', check: 'changed'|'has_commits'|'has_pr'|'task_type'|'label', value} → yes, no ('changed': its commit or its agent's work changed since this workflow last finished on it; " +
       "value is the type, code or scratch, or the label, plan, artifact or diagram); " +
-      "{kind: 'agent', name, prompt, output: 'text'|'verdict', claude_config_id, model, effort, skills, tab} runs an agent read-only in the task's worktree, in a thread of its own: " +
+      "{kind: 'agent', name, prompt, output: 'text'|'verdict', claude_config_id, model, effort, skills, tab, input_only} runs an agent read-only in the task's worktree, in a thread of its own " +
+      "and a fresh conversation each run, given the output of the agent steps before it in the graph (with input_only, only that and its prompt, not where the task's work is): " +
       "output 'text' → done, failed (its last message is the output); 'verdict' → pass, issues, failed (it reports with submit_review, as a reviewer does). " +
       "With tab, its output shows in a tab of that name in the task's panel (steps can share one). prompt says what to do (empty: the project's In review prompt for a verdict); " +
       "prompts and messages take {{task.key}}, {{task.title}}, {{task.description}}, {{branch}}, {{commit}}, {{workflow}}, {{issues}} and {{<node id>.text}}, {{<node id>.issues}}; " +
       "{kind: 'send_to_task', message, max_rounds} sends the message (empty: the issues the run's verdict steps found) to the task's agent, ending the run, " +
       "at most max_rounds runs in a row (default 2), then → exhausted (with nothing after it, the task goes to needs_attention); " +
-      "{kind: 'set_status', status} moves the task → out. Each node has an id (letters, digits, - and _), and x and y for where the editor draws it.",
+      "{kind: 'set_status', status} moves the task → out; " +
+      "{kind: 'open_pr', title, body, draft} pushes the task's branch and opens its pull request with the gh tools (title and body are templates; empty: the task's key and title, and its agent's last message) " +
+      "→ opened, exists (it has one already), failed. Each node has an id (letters, digits, - and _), and x and y for where the editor draws it.",
     properties: {
       nodes: {
         type: "array",

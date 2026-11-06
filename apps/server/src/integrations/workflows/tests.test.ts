@@ -28,11 +28,16 @@ import {
   supersede,
   finished,
   update,
+  upstream,
   insert_run,
   type Run,
   type Workflow,
 } from "../workflows.ts";
-import { advance, MAX_CHAIN, plan, step_ended } from "./engine.ts";
+import { advance, engine_testing, MAX_CHAIN, plan, step_ended } from "./engine.ts";
+import { finish } from "../../agent/runner.ts";
+import * as gh_mcp from "../../mcp/gh_mcp.ts";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import * as prompt from "./prompt.ts";
 
 // As in Rust's tests, there's no ia-shim: this host can't run agents unless a test says it can (runs::TEST_CAN_RUN).
@@ -612,3 +617,201 @@ test("an_agent_steps_effort_and_model_are_checked", () => {
 function ApiErrorLike(e: any): boolean {
   return e?.status === 400;
 }
+
+// HA-276: a workflow that starts when the task's agent finishes, a pull request step, and steps fed by those before them.
+
+/** Ends a run of the task's agent as a finished one: the task was in progress. */
+function agent_finishes(s: AppState, task: Task) {
+  const r = db.insert_run(s.db(), task.id, "prompt");
+  db.run(s.db(), "UPDATE runs SET status='running' WHERE id=?1", r.id);
+  s.update_task(task.id, [
+    ["status", "in_progress"],
+    ["running", true],
+  ]);
+  finish(s, r.id, "Ok");
+}
+
+test("the_new_nodes_are_checked", () => {
+  const s = testing.state();
+  const [project] = setup(s);
+  const g = check_graph(s.db(), project, {
+    nodes: [
+      { id: "t", kind: "trigger", on: "finished", status: "in_review" },
+      { id: "pr", kind: "open_pr", title: " {{task.key}} ", draft: true },
+      { id: "a", kind: "agent", name: "A", input_only: true },
+    ],
+    edges: [
+      { from: "t", port: "out", to: "pr" },
+      { from: "pr", port: "opened", to: "a" },
+      { from: "pr", port: "exists", to: "a" },
+    ],
+  });
+  assert.deepEqual(g.nodes[0], { id: "t", kind: "trigger", on: "finished", x: 0, y: 0 }, "a finished trigger keeps no column");
+  assert.deepEqual(g.nodes[1], { id: "pr", kind: "open_pr", title: "{{task.key}}", body: "", draft: true, x: 0, y: 0 });
+  assert.equal((g.nodes[2] as any).input_only, true);
+  const plain: any = check_graph(s.db(), project, {
+    nodes: [
+      { id: "t", kind: "trigger", on: "manual" },
+      { id: "a", kind: "agent", name: "A" },
+    ],
+    edges: [],
+  });
+  assert.ok(!("input_only" in plain.nodes[1]));
+  assert.throws(
+    () =>
+      check_graph(s.db(), project, {
+        nodes: [
+          { id: "t", kind: "trigger", on: "manual" },
+          { id: "pr", kind: "open_pr" },
+        ],
+        edges: [{ from: "pr", port: "out", to: "t" }],
+      }),
+    ApiErrorLike,
+  );
+});
+
+test("a_finished_workflow_holds_the_task_in_progress_and_moves_it_on", async () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  // Without one, the agent's finished run goes to In review.
+  agent_finishes(s, task);
+  assert.equal(db.get_task(s.db(), task.id)!.status, "in_review");
+  const w = make(s, project, {
+    nodes: [
+      { id: "t", kind: "trigger", on: "finished" },
+      { id: "c", kind: "condition", check: "label", value: "plan" },
+      { id: "m", kind: "set_status", status: "backlog" },
+    ],
+    edges: [
+      { from: "t", port: "out", to: "c" },
+      { from: "c", port: "no", to: "m" },
+    ],
+  });
+  // An In progress workflow doesn't start on it: the task didn't enter In progress.
+  const entering = make(s, project, {
+    nodes: [
+      { id: "t", kind: "trigger", on: "status", status: "in_progress" },
+      { id: "m", kind: "set_status", status: "backlog" },
+    ],
+    edges: [{ from: "t", port: "out", to: "m" }],
+  });
+  update(s, entering.id, { enabled: true });
+  db.update_task(s.db(), task.id, [["status", "in_progress"]]);
+  agent_finishes(s, task);
+  await until(() => latest_run(s.db(), w.id, task.id)?.state === "done");
+  const run = latest_run(s.db(), w.id, task.id)!;
+  assert.equal(run.source, "finished");
+  assert.equal(db.get_task(s.db(), task.id)!.status, "backlog");
+  assert.equal(latest_run(s.db(), entering.id, task.id), null);
+  // Off, it leaves the agent's run to go to In review as before.
+  update(s, w.id, { enabled: false });
+  agent_finishes(s, task);
+  assert.equal(db.get_task(s.db(), task.id)!.status, "in_review");
+  // It doesn't start when the task enters a column, only when its agent finishes.
+  update(s, w.id, { enabled: true });
+  assert.equal(await start(s, w.id, task.id, false, 0, "status"), null);
+});
+
+test("an_agent_step_gets_only_the_output_of_the_steps_before_it", async () => {
+  // Which steps those are: those with a path to it, whatever is in between.
+  const g = Graph_from_json({
+    nodes: [
+      { id: "t", kind: "trigger", on: "manual" },
+      { id: "a", kind: "agent", name: "A" },
+      { id: "side", kind: "agent", name: "Aside" },
+      { id: "c", kind: "condition", check: "has_pr" },
+      { id: "b", kind: "agent", name: "B" },
+    ],
+    edges: [
+      { from: "t", port: "out", to: "a" },
+      { from: "t", port: "out", to: "side" },
+      { from: "a", port: "done", to: "c" },
+      { from: "c", port: "no", to: "b" },
+    ],
+  });
+  assert.deepEqual(
+    upstream(g, "b").map((n) => n.id),
+    ["a"],
+  );
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    const w = make(s, project, {
+      nodes: [
+        { id: "t", kind: "trigger", on: "manual" },
+        { id: "summary", kind: "agent", name: "Summary", prompt: "Summarise it." },
+        { id: "post", kind: "agent", name: "Post", prompt: "Turn it into a post.", skills: ["tldr"], input_only: true },
+      ],
+      edges: [
+        { from: "t", port: "out", to: "summary" },
+        { from: "summary", port: "done", to: "post" },
+      ],
+    });
+    const run = (await start(s, w.id, task.id, true))!;
+    const t = thread_of(s, run.id, "summary");
+    s.add_message(t.id, "claude", { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "It fixes the thing." }] } });
+    await end(s, run.id, "summary", "Ok");
+    const asked = last_user_text(s, thread_of(s, run.id, "post").id);
+    assert.ok(asked.includes('The step "Summary" before you said:\n\n> It fixes the thing.'), asked);
+    assert.ok(asked.includes("Turn it into a post.") && asked.includes("`/tldr`"), asked);
+    assert.ok(!asked.includes("checked out in your working directory") && !asked.includes("Make it work."), "an input-only step isn't told about the work");
+    // One that isn't is.
+    assert.ok(last_user_text(s, t.id).includes("checked out in your working directory"));
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});
+
+test("a_pull_request_step_pushes_the_branch_and_opens_it", async () => {
+  const s = testing.state();
+  const [project, task, dir] = setup(s);
+  const remote = testing.temp_dir();
+  git(remote, ["init", "-q", "--bare"]);
+  git(dir, ["remote", "add", "origin", remote]);
+  const bin = testing.temp_dir();
+  const gh = join(bin, "gh");
+  const log = join(bin, "log");
+  writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' "$@" >> '${log}'\necho https://github.com/o/r/pull/7\n`);
+  chmodSync(gh, 0o755);
+  gh_mcp.TEST_GH_PROGRAM.set(gh);
+  engine_testing.GITHUB = { remote: "origin", repo: "o/r" };
+  try {
+    s.add_message(task.id, "claude", { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Fixed the thing." }] } });
+    const w = make(s, project, {
+      nodes: [
+        { id: "t", kind: "trigger", on: "manual" },
+        { id: "pr", kind: "open_pr", title: "{{task.key}}: {{task.title}}", draft: true },
+        { id: "m", kind: "set_status", status: "in_review" },
+      ],
+      edges: [
+        { from: "t", port: "out", to: "pr" },
+        { from: "pr", port: "opened", to: "m" },
+        { from: "pr", port: "exists", to: "m" },
+      ],
+    });
+    db.update_task(s.db(), task.id, [["status", "in_progress"]]);
+    const run = (await start(s, w.id, task.id, true))!;
+    assert.deepEqual([run_node(run, "pr").state, run_node(run, "pr").port, run_node(run, "pr").text], ["done", "opened", "https://github.com/o/r/pull/7"]);
+    const t = db.get_task(s.db(), task.id)!;
+    assert.deepEqual([t.pr_url, t.status], ["https://github.com/o/r/pull/7", "in_review"]);
+    const args = readFileSync(log, "utf8").split("\n");
+    for (const a of ["pr", "create", "--title=X-1: Fix the thing", "--body=Fixed the thing.", "--base=master", "--head=ia/x-1", "--draft"]) {
+      assert.ok(args.includes(a), `${a} in ${JSON.stringify(args)}`);
+    }
+    execFileSync("git", ["-C", remote, "rev-parse", "--verify", "refs/heads/ia/x-1"]);
+    // Once it has one, the step finds it.
+    const again = (await start(s, w.id, task.id, true))!;
+    assert.equal(run_node(again, "pr").port, "exists");
+    // A branch without commits of its own has nothing to open one for.
+    db.update_task(s.db(), task.id, [["pr_url", null]]);
+    git(dir, ["checkout", "-q", "master"]);
+    db.update_task(s.db(), task.id, [["branch", "master"]]);
+    const none = (await start(s, w.id, task.id, true))!;
+    assert.equal(run_node(none, "pr").port, "failed");
+    assert.ok((run_node(none, "pr").text ?? "").includes("no commits of its own"), run_node(none, "pr").text);
+  } finally {
+    gh_mcp.TEST_GH_PROGRAM.set(null);
+    engine_testing.GITHUB = null;
+  }
+});

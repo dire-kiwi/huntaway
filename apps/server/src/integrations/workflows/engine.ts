@@ -31,7 +31,10 @@ import {
   save_run,
   settled,
   trigger_status,
+  on_finish,
+  upstream,
   WORKFLOW,
+  type TriggerOn,
   type Node,
   type NodeRun,
   type Run,
@@ -40,6 +43,7 @@ import {
 import * as prompt from "./prompt.ts";
 import type { Work } from "./prompt.ts";
 import * as history from "../../threads/history.ts";
+import * as gh_mcp from "../../mcp/gh_mcp.ts";
 
 /** Held while starting a run, so two can't start for one workflow on one task at once (made on first use: see PORTING.md). */
 let STARTING: AsyncMutex | null = null;
@@ -109,6 +113,40 @@ export function on_status(s: Shared, task: Task): void {
   }
 }
 
+/**
+ * The project's workflows that start when `task`'s agent finishes its work (HA-276), which then take the task on from
+ * "In progress" in its place: a task that has some stays in its column rather than going to "In review".
+ */
+export function on_finish_due(s: Shared, task: Task): string[] {
+  if (task.kind !== "task" || !task.project_id || task.subproject) return [];
+  try {
+    const p = db.get_project(s.db(), task.project_id);
+    if (!p || p.archived_at) return [];
+    return list(s.db(), task.project_id)
+      .filter((w) => w.enabled && on_finish(w.graph))
+      .map((w) => w.id);
+  } catch (e) {
+    console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
+    return [];
+  }
+}
+
+/** The task's agent finished its work (and it was left in its column for them): start the workflows `due` (see `on_finish_due`). */
+export function on_finished(s: Shared, task: Task, due: string[]): void {
+  for (const id of due) {
+    background(
+      "starting a workflow",
+      start(s, id, task.id, false, 0, "finished").catch((e) => {
+        let name = id;
+        try {
+          name = get(s.db(), id)?.name ?? id;
+        } catch {}
+        s.add_event(task.id, "warn", `Couldn't run the workflow "${name}"`, msg(e));
+      }),
+    );
+  }
+}
+
 function skip(manual: boolean, why: string): null {
   if (manual) throw ApiError.conflict(`Can't run the workflow: ${why}`);
   return null;
@@ -126,19 +164,20 @@ async function rev_parse(dir: string, rev: string): Promise<string | null> {
 
 /**
  * Run workflow `workflow_id` on task `task_id`. `manual` (the user, or an agent, asked for it) runs it whether or not
- * it's on or its trigger matches, with fresh rounds, and says why when it can't. Returns the run, or null when there
- * was nothing to do.
+ * it's on or its trigger matches, with fresh rounds, and says why when it can't. Otherwise `on` is what happened: the
+ * task entered its column (`status`) or its agent finished (`finished`). Returns the run, or null when there was
+ * nothing to do.
  */
-export async function start(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain = 0): Promise<Run | null> {
+export async function start(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain = 0, on: TriggerOn = "status"): Promise<Run | null> {
   const release = await (STARTING ??= new AsyncMutex()).lock();
   try {
-    return await start_locked(s, workflow_id, task_id, manual, chain);
+    return await start_locked(s, workflow_id, task_id, manual, chain, on);
   } finally {
     release();
   }
 }
 
-async function start_locked(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain: number): Promise<Run | null> {
+async function start_locked(s: Shared, workflow_id: string, task_id: string, manual: boolean, chain: number, on: TriggerOn): Promise<Run | null> {
   const w = get(s.db(), workflow_id);
   if (!w) throw ApiError.not_found("workflow");
   const task = db.get_task(s.db(), task_id);
@@ -147,12 +186,16 @@ async function start_locked(s: Shared, workflow_id: string, task_id: string, man
   const project = db.get_project(s.db(), w.project_id);
   if (!project) throw ApiError.not_found("project");
   if (project.archived_at) return skip(manual, "the project is archived");
-  if (!manual && (!w.enabled || trigger_status(w.graph) !== task.status)) return null;
+  if (!manual && !w.enabled) return null;
+  if (!manual && on === "status" && trigger_status(w.graph) !== task.status) return null;
+  if (!manual && on === "finished" && (!on_finish(w.graph) || task.status === "done" || task.merging)) return null;
   // Read before the check that it isn't running, so a run that starts in between counts as later (see below).
   const task_run = db.latest_run(s.db(), task.id, null);
   if (s.is_running(task.id)) return skip(manual, "the task's agent is still working");
   const previous = latest_run(s.db(), w.id, task.id);
   if (previous?.state === "running") return skip(manual, "it's already running on this task");
+  // Once for each time the agent finishes (a restart settles a plan task's column again, see runner::settle_plans).
+  if (!manual && on === "finished" && previous != null && previous.task_run === task_run) return null;
   const head = task.worktree_path && task.worktree_state === "ready" ? await rev_parse(task.worktree_path, "HEAD") : null;
   const at = now();
   const nodes: Record<string, NodeRun> = {};
@@ -163,7 +206,7 @@ async function start_locked(s: Shared, workflow_id: string, task_id: string, man
     id: new_id(),
     workflow_id: w.id,
     task_id: task.id,
-    source: manual ? "manual" : "status",
+    source: manual ? "manual" : on,
     state: "running",
     head,
     task_run,
@@ -320,6 +363,13 @@ export async function advance(s: Shared, run_id: string): Promise<void> {
         case "set_status":
           done = await move_task(s, run, node.status);
           break;
+        case "open_pr":
+          try {
+            done = await open_pr(s, run, node);
+          } catch (e) {
+            done = Done_failed(typeof e === "string" ? e : msg(e));
+          }
+          break;
       }
       if (done) record(s, run_id, id, done);
     }
@@ -350,6 +400,8 @@ export function node_name(n: Node): string {
       return "Send to the task's agent";
     case "set_status":
       return "Move the task";
+    case "open_pr":
+      return "Open a pull request";
   }
 }
 
@@ -474,9 +526,9 @@ async function start_agent(s: Shared, run: Run, node: Node): Promise<void> {
   const config_id = config?.id ?? null;
   const label = review.label(config, model, effort);
   const codex = config != null && db.is_codex(config);
-  // What the steps before it in the run said.
+  // What the steps before it in the graph said.
   const earlier: Array<[string, string]> = [];
-  for (const n of run.graph.nodes) {
+  for (const n of upstream(run.graph, node.id)) {
     if (n.kind !== "agent") continue;
     const r = run.nodes[n.id];
     if (r?.state === "done" && r.text != null) earlier.push([n.name, r.text]);
@@ -492,7 +544,7 @@ async function start_agent(s: Shared, run: Run, node: Node): Promise<void> {
   }
   const rendered = prompt.render(instructions, task, work.key, workflow, run);
   const asked = rendered.trim() ? rendered : output === "verdict" ? prompts.review(project) : `Read the work, and report on it as "${name}".`;
-  const text = prompt.agent(task, work, workflow, name, asked, output, skills, codex, earlier, replies, recheck);
+  const text = prompt.agent(task, work, workflow, name, asked, output, skills, codex, earlier, replies, recheck, node.input_only === true);
   const title = `${name} (${workflow}) of ${work.key}`;
   let thread: Task;
   if (existing) {
@@ -655,6 +707,65 @@ async function move_task(s: Shared, run: Run, status: string): Promise<Done> {
   } finally {
     MOVING.splice(MOVING.indexOf(key), 1);
   }
+}
+
+/** Hooks for tests: what `open_pr` finds the task's GitHub repository to be, in place of its remotes. */
+export const engine_testing = { GITHUB: null as worktree.Github | null };
+
+/** The first `https://` URL in gh's output: the pull request it made (or the one that's there already). */
+function pr_link(out: string): string | null {
+  return out.match(/https:\/\/\S+\/pull\/\d+/)?.[0] ?? null;
+}
+
+/**
+ * An open-a-pull-request step: pushes the task's branch and opens its pull request with the gh tools, as the task's
+ * GitHub account, into its base branch. Throws a string saying why it couldn't.
+ */
+async function open_pr(s: Shared, run: Run, node: Node): Promise<Done> {
+  if (node.kind !== "open_pr") return Done_failed("not a pull request step");
+  const task = db.get_task(s.db(), run.task_id);
+  if (!task) throw "the task is gone";
+  if (task.pr_url?.trim()) return { state: "done", port: "exists", text: task.pr_url };
+  const project = task.project_id ? db.get_project(s.db(), task.project_id) : null;
+  if (!project) throw "the task has no project";
+  const [work, is_elsewhere] = await elsewhere(s, task);
+  if (is_elsewhere) throw "the task's branch has no commits of its own to open a pull request for";
+  const dir = task.worktree_path!;
+  const branch = task.branch!;
+  const base = await worktree.remote_base(s, task, project);
+  const gh = engine_testing.GITHUB ?? (await worktree.github(project.repo_path, base));
+  if (!gh) throw "the task's repository isn't on GitHub (no remote to push to there)";
+  const account_name = runner.task_github_account(s, task);
+  const account = account_name ? gh_mcp.Account.parse(account_name) : null;
+  if (account_name && !account) throw `the GitHub account ${account_name} isn't one gh can use`;
+  const r: gh_mcp.GhRun = { cwd: dir, account, merge_gate: async () => null };
+  const call = async (tool: string, args: any): Promise<[string, boolean]> => {
+    try {
+      return await gh_mcp.run(tool, args, r);
+    } catch (e) {
+      return [msg(e), true];
+    }
+  };
+  let workflow = "";
+  try {
+    workflow = get(s.db(), run.workflow_id)?.name ?? "";
+  } catch {}
+  const [pushed, push_failed] = await call("git_push", { remote: gh.remote, branch });
+  if (push_failed) throw `couldn't push ${branch} to ${gh.remote}: ${pushed}`;
+  const title = prompt.render(node.title, task, work.key, workflow, run).trim() || `${work.key}: ${task.title}`;
+  const body =
+    prompt.render(node.body, task, work.key, workflow, run).trim() || history.last_assistant_text(s.db(), task.id)?.trim() || task.description.trim();
+  const args: any = { repo: gh.repo, head: branch, title, body: body || title };
+  if (base) args.base = base;
+  if (node.draft) args.draft = true;
+  const [out, failed] = await call("pr_create", args);
+  const url = pr_link(out);
+  // Opened meanwhile (by the agent, or by hand): gh says so, with its link.
+  const exists = failed && /already exists/i.test(out);
+  if (!url || (failed && !exists)) throw `couldn't open the pull request: ${out}`;
+  if (!db.get_task(s.db(), task.id)?.pr_url) s.update_task(task.id, [["pr_url", url]]);
+  s.add_event(task.id, "info", exists ? `The workflow "${workflow}" found the task's pull request` : `The workflow "${workflow}" opened a pull request`, url);
+  return { state: "done", port: exists ? "exists" : "opened", text: url };
 }
 
 /** The running run and node agent thread `thread` works for, if any. */

@@ -3,7 +3,9 @@
  * Workflows: a project's automations that act on its tasks, as graphs of nodes (HA-173, API 107).
  *
  * A workflow's **trigger** node starts a run on a task: when the task enters a column (such as *In review*, which is
- * where its agent's finished work goes), or only when it's run by hand (`POST /workflows/{id}/run`, `run_workflow`).
+ * where its agent's finished work goes), when the task's agent finishes its work (`on: finished`, HA-276: the task then
+ * stays in *In progress* rather than going to *In review*, and the workflow moves it on), or only when it's run by hand
+ * (`POST /workflows/{id}/run`, `run_workflow`).
  * From there the run follows the graph's edges, out of the **port** each node ends on:
  *
  * - a **condition** checks the task (`yes` or `no`): has its work changed since the workflow last ran on it, has
@@ -11,7 +13,12 @@
  * - an **agent** step runs an agent in a thread of its own, read-only in the task's worktree, as a reviewer does
  *   (a `review` thread of type `workflow` whose parent is the task, kept from one run to the next). Its output is
  *   its last message (`done`), or a verdict it reports with `submit_review` (`pass` or `issues`), or it `failed`.
- *   With a `tab`, its output shows in a tab of that name in the task's panel;
+ *   With a `tab`, its output shows in a tab of that name in the task's panel. It's given the output of the agent steps
+ *   before it in the graph (those with a path to it), and with `input_only` only that and its prompt, not the task's
+ *   work, so a step can process another's output (a summary, say) with a skill in a fresh context;
+ * - **open a pull request** for the task's branch, which the board does itself (pushing the branch and creating it
+ *   with the gh tools, as the task's GitHub account): `opened`, `exists` (the task has one already) or `failed`. Its
+ *   title and body are templates, so an agent step before it can write them;
  * - **send to the task's agent** sends a message (by default the issues the run's agents found) to the task's
  *   agent: at most `max_rounds` runs in a row (`sent`), then `exhausted`, which with nothing after it leaves the
  *   task in *Needs attention*. Sending ends the run, as the agent's work changes under it;
@@ -48,7 +55,7 @@ const MAX_TEXT = 20_000;
 // ---------- what a workflow is ----------
 
 export type Join = "any" | "all";
-export type TriggerOn = "status" | "manual";
+export type TriggerOn = "status" | "finished" | "manual";
 /**
  * `changed`: the workflow hasn't finished a run on the task, or its commit or its agent's work changed since.
  * `has_commits`: its branch has commits of its own. `has_pr`: it has a pull request. `task_type`: it's of type `value`
@@ -58,20 +65,24 @@ export type Check = "changed" | "has_commits" | "has_pr" | "task_type" | "label"
 /** `text`: its last message. `verdict`: `pass` or `issues`, reported with `submit_review`. */
 export type Output = "text" | "verdict";
 
-const TRIGGER_ONS: TriggerOn[] = ["status", "manual"];
+const TRIGGER_ONS: TriggerOn[] = ["status", "finished", "manual"];
 const CHECKS: Check[] = ["changed", "has_commits", "has_pr", "task_type", "label"];
 const OUTPUTS: Output[] = ["text", "verdict"];
-const KINDS = ["trigger", "condition", "agent", "send_to_task", "set_status"];
+const KINDS = ["trigger", "condition", "agent", "send_to_task", "set_status", "open_pr"];
 
 export type NodeKind =
-  /** What starts a run: the task entering `status` (`on: status`), or only a run by hand (`on: manual`). */
+  /**
+   * What starts a run: the task entering `status` (`on: status`), its agent finishing its work (`on: finished`), or only
+   * a run by hand (`on: manual`).
+   */
   | { kind: "trigger"; on: TriggerOn; status?: string }
   /** A check on the task: `yes` or `no`. `value` is the type or label for `task_type` and `label`. */
   | { kind: "condition"; check: Check; value?: string }
   /**
    * An agent in a thread of its own, read-only in the task's worktree. `name` is what it's called on the board, `prompt`
    * what it's asked to do (the board adds where the work is and how to report), no `claude_config_id` uses the task's,
-   * `skills` are skills it's asked to use, and `tab` the task panel tab its output shows in, if any.
+   * `skills` are skills it's asked to use, and `tab` the task panel tab its output shows in, if any. `input_only`: it's
+   * given only the output of the steps before it and its prompt, not where the task's work is.
    */
   | {
       kind: "agent";
@@ -83,11 +94,17 @@ export type NodeKind =
       effort?: string;
       skills?: string[];
       tab?: string;
+      input_only?: boolean;
     }
   /** A message to the task's agent; empty sends the issues the run's agent steps found. */
   | { kind: "send_to_task"; message: string; max_rounds: number }
   /** Moves the task to another column. */
-  | { kind: "set_status"; status: string };
+  | { kind: "set_status"; status: string }
+  /**
+   * Opens a pull request for the task's branch: `title` and `body` are templates (empty: the task's key and title, and
+   * its agent's last message), and `draft` opens it as a draft.
+   */
+  | { kind: "open_pr"; title: string; body: string; draft?: boolean };
 
 /** A node: its id, its kind's fields (flattened), `join` (left out when `any`) and where the editor draws it. */
 export type Node = { id: string } & NodeKind & { join?: Join; x: number; y: number };
@@ -113,6 +130,13 @@ function de_f64(v: any, k: string): number {
   const x = v[k];
   if (x === undefined) return 0;
   if (typeof x !== "number") fail(`invalid type for \`${k}\`: expected f64`);
+  return x;
+}
+
+function de_bool(v: any, k: string): boolean {
+  const x = v[k];
+  if (x == null) return false;
+  if (typeof x !== "boolean") fail(`invalid type for \`${k}\`: expected a boolean`);
   return x;
 }
 
@@ -155,6 +179,7 @@ export function Node_from_json(v: any): Node {
       for (const s of skills) if (typeof s !== "string") fail("invalid type for `skills`: expected a string");
       if (skills.length) n.skills = [...skills];
       put(n, "tab", de_opt_str(v, "tab"));
+      if (de_bool(v, "input_only")) n.input_only = true;
       break;
     }
     case "send_to_task":
@@ -163,6 +188,11 @@ export function Node_from_json(v: any): Node {
       break;
     case "set_status":
       n.status = de_str(v, "status");
+      break;
+    case "open_pr":
+      n.title = de_def_str(v, "title");
+      n.body = de_def_str(v, "body");
+      if (de_bool(v, "draft")) n.draft = true;
       break;
   }
   const join = de_enum<Join>(v, "join", ["any", "all"], "any");
@@ -195,6 +225,8 @@ export function ports(n: NodeKind): string[] {
       return n.output === "verdict" ? ["pass", "issues", "failed"] : ["done", "failed"];
     case "send_to_task":
       return ["sent", "exhausted"];
+    case "open_pr":
+      return ["opened", "exists", "failed"];
   }
 }
 
@@ -210,6 +242,27 @@ export function trigger(g: Graph): Node | undefined {
 export function trigger_status(g: Graph): string | null {
   const t = trigger(g);
   return t?.kind === "trigger" && t.on === "status" ? (t.status ?? null) : null;
+}
+
+/** Whether its trigger is the task's agent finishing its work. */
+export function on_finish(g: Graph): boolean {
+  const t = trigger(g);
+  return t?.kind === "trigger" && t.on === "finished";
+}
+
+/** The agent steps with a path to node `id`, in the graph's order: whose output it's given. */
+export function upstream(g: Graph, id: string): Node[] {
+  const seen = new Set<string>();
+  const stack = [id];
+  while (stack.length) {
+    const to = stack.pop()!;
+    for (const e of g.edges) {
+      if (e.to !== to || seen.has(e.from)) continue;
+      seen.add(e.from);
+      stack.push(e.from);
+    }
+  }
+  return g.nodes.filter((n) => n.kind === "agent" && n.id !== id && seen.has(n.id));
 }
 
 export interface Workflow {
@@ -455,7 +508,7 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
       case "trigger": {
         triggers += 1;
         set_opt(n, "status", trimmed(n.status));
-        if (n.on === "manual") delete n.status;
+        if (n.on !== "status") delete n.status;
         else if (!n.status || !db.STATUSES.includes(n.status)) throw bad(`trigger ${id} needs the column (status) whose tasks entering it start a run`);
         break;
       }
@@ -506,6 +559,12 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
         if (!db.STATUSES.includes(n.status) || n.status === "done") {
           throw bad(`move step ${id} needs a column: one of ${db.STATUSES.filter((s) => s !== "done").join(", ")}`);
         }
+        break;
+      }
+      case "open_pr": {
+        n.title = n.title.trim();
+        if (bytes(n.title) > 1000) throw bad(`pull request step ${id}'s title is longer than 1000 bytes`);
+        if (bytes(n.body) > MAX_TEXT) throw bad(`pull request step ${id}'s body is longer than ${MAX_TEXT} bytes`);
         break;
       }
     }

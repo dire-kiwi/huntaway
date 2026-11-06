@@ -115,7 +115,8 @@ export function fixes(workflow: string, list: string[]): string {
 
 /**
  * An agent step's prompt: the task, where its work is, what the steps before it said, what the step is asked to do
- * (`instructions`, already filled in), and how it reports.
+ * (`instructions`, already filled in), and how it reports. With `input_only`, it's not told where the work is (nor
+ * what the user said of it): it works on what the steps before it said.
  */
 export function agent(
   task: Task,
@@ -129,12 +130,20 @@ export function agent(
   earlier: Array<[string, string]>,
   replies: UserReplies | null,
   recheck: string[],
+  input_only = false,
 ): string {
   const key = work.key;
   let p = `You are "${step}", a step of the workflow "${workflow}", for task ${key}: "${task.title}".\n`;
-  if (task.description.trim()) p += `\nThe task's description:\n\n${task.description.trim()}\n`;
+  if (input_only) {
+    p +=
+      "\nYou work on what the steps before you said, which is below, rather than on the task's changes: you don't need to read " +
+      "them unless your instructions ask you to.\n";
+    if (!earlier.length) p += "\nNo step before you wrote any output.\n";
+  } else if (task.description.trim()) p += `\nThe task's description:\n\n${task.description.trim()}\n`;
   const { branch, commit } = work;
-  if (work.elsewhere) {
+  if (input_only) {
+    // Not where the work is.
+  } else if (work.elsewhere) {
     p +=
       `\nThe task's branch \`${branch}\`, checked out in your working directory, has no commits of its own (it's still at commit ` +
       `${commit}), so the agent made its changes somewhere else, such as in another repository, or made none. Find them from what ` +
@@ -157,7 +166,7 @@ export function agent(
       `gh MCP server's \`pr_view\` tool (pr \`${branch}\`) and read its changes (\`pr_diff\`). If it has no pull request, read ${fallback} ` +
       "instead.\n";
   }
-  if (replies) p += review.user_said(replies.replies, replies.earlier > 0);
+  if (replies && !input_only) p += review.user_said(replies.replies, replies.earlier > 0);
   for (const [name, said] of earlier) p += `\nThe step "${name}" before you said:\n\n${quote(said)}\n`;
   const ins = instructions.trim();
   if (ins) p += `\n${ins}\n`;
