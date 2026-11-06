@@ -7,9 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { launch, open } from "../../../scripts/ui-check.mjs";
+import { launch, open } from "../../../../scripts/ui-check.mjs";
 
-const script = fileURLToPath(new URL("../../../scripts/test-server.sh", import.meta.url));
+const script = fileURLToPath(new URL("../../../../scripts/test-server.sh", import.meta.url));
 
 /** Start a demo test server that can't run agents. Returns { url, token, dataDir, api, stop }. */
 export function startServer(...args) {
