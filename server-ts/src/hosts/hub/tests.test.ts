@@ -330,6 +330,24 @@ test("a_host_dialled_over_a_dead_connection_is_dialled_again", async () => {
   assert.equal(find_link(hub, "host"), second);
 });
 
+test("a_host_lets_go_of_a_hub_that_went_without_closing", async () => {
+  // HA-262: a hub that dials a host takes its agents' board tool calls (an up-link). One that went without closing (a
+  // laptop that slept) kept them waiting for its answers until they timed out (5 minutes each).
+  const [hub, host] = [node("hub", "hub"), node("host", "laptop")];
+  const p = await proxy(await serve(host));
+  const url = `http://${p.addr}`;
+  db.upsert_link(hub.db(), "host", "laptop", "outbound", url, "host-tok");
+  outbound(hub, outbound_link("host", url, "host-tok"));
+  const up = await until("the hub to say hello", () => host.uplinks.get("hub"));
+  // Pings keep it meanwhile.
+  await sleep(relay.SILENCE * 2);
+  assert.equal(host.uplinks.get("hub"), up);
+  // The hub goes, and doesn't come back.
+  p.freeze();
+  hub.link_tasks.get("host")?.();
+  await until("the host to let go of the hub", () => !host.uplinks.has("hub"));
+});
+
 test("a_host_dialled_in_through_a_broker_over_a_dead_connection_reconnects", test_broker.needs_broker(), async () => {
   const BROKER_TOKEN = "broker-token-0123456789";
   const b = await test_broker.start_test_broker(BROKER_TOKEN, {}, cleanups);
