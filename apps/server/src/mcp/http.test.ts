@@ -11,9 +11,6 @@ import * as testing from "../testing.ts";
 import { sleep } from "../util.ts";
 import * as runs from "../agent/runs.ts";
 import { VIA_BROKER } from "../hosts/broker.ts";
-import * as host from "../api/host.ts";
-import { makeReq } from "../api.ts";
-import { Ctx_from_server } from "../mcp.ts";
 import * as mcp_http from "./http.ts";
 import * as permissions from "./permissions.ts";
 
@@ -393,29 +390,4 @@ test("the_gh_server_is_the_runs", async () => {
   } finally {
     server.close();
   }
-});
-
-test("internal_mcp_takes_a_runs_secret_for_that_run_only", async () => {
-  const s = testing.state();
-  const [task, run] = running_task(s);
-  const [, other] = running_task(s);
-  const call = (run_id: string, token: string) => {
-    const body = Buffer.from(JSON.stringify({ run_id, call_id: `c-${run_id}-${token.slice(0, 4)}`, tool: "get_task", args: { task_id: task.id } }));
-    const r = makeReq("POST", "/api/internal/mcp", { authorization: `Bearer ${token}`, "content-type": "application/json" }, body);
-    return host.internal_mcp(s as any, r);
-  };
-  assert.equal((await call(run.id, mcp_http.run_secret(s.token, run.id))).result.id, task.id);
-  assert.equal((await call(run.id, s.token)).result.id, task.id);
-  await assert.rejects(call(other.id, mcp_http.run_secret(s.token, run.id)), (e: any) => e.status === 401);
-  await assert.rejects(call(run.id, "nope"), (e: any) => e.status === 401);
-});
-
-test("a_codex_adapter_finds_the_board_in_either_kind_of_entry", () => {
-  const s = testing.state();
-  s.internal_url = "http://127.0.0.1:7878";
-  const http = Ctx_from_server(mcp_http.servers(s, "run-1").huntaway);
-  assert.deepEqual([http.url, http.token, http.run_id], ["http://127.0.0.1:7878", mcp_http.run_secret(s.token, "run-1"), "run-1"]);
-  const stdio = Ctx_from_server({ type: "stdio", command: "huntaway", args: ["mcp"], env: { IA_URL: "http://x", IA_TOKEN: "t", IA_RUN_ID: "r" } });
-  assert.deepEqual([stdio.url, stdio.token, stdio.run_id], ["http://x", "t", "r"]);
-  assert.throws(() => Ctx_from_server({ type: "http", url: "http://elsewhere/mcp" }));
 });

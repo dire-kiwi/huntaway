@@ -820,18 +820,6 @@ export function tasks_to_watch(c: Conn): Array<[Task, string]> {
   ).map((r) => [Task_from_row(r), r.watch_mode]);
 }
 
-/** Whether the user (not the board or another agent) sent `task_id`'s agent a message after `since`. */
-export function user_wrote_since(c: Conn, task_id: string, since: string): boolean {
-  return !!value(
-    c,
-    // `+kind`: see db/messages.ts.
-    `SELECT EXISTS (SELECT 1 FROM messages WHERE task_id=?1 AND +kind='user' AND created_at > ?2
-           AND json_extract(data, '$.auto') IS NULL AND json_extract(data, '$.from_agent') IS NULL)`,
-    task_id,
-    since,
-  );
-}
-
 /**
  * Tasks queued for their dependencies, in a project (or every project for None), but not in an archived project, whose
  * agents don't start: they keep waiting, queued message and all.

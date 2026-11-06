@@ -5,18 +5,14 @@
  * input (Claude Code's `mcp_message` control requests, see agent/runner/requests.ts), and over HTTP (mcp/http.ts) to
  * Codex runs and compactions.
  *
- * `huntaway mcp` is the stdio server that runs started before that (HA-180) launched, one per run: it relays every call
- * to the server that started the run. Each call keeps one id across retries, so a server restart mid-call is harmless.
- *
  * The `mcp` folder has the rest of the board's MCP side: the tools runs call (`tools`), the GitHub server (`gh_mcp`),
  * `wait` and its pull request watches, and permission prompts and questions.
  *
- * `huntaway mcp` is a short-lived process per agent, so this file imports nothing of the server's but `util.ts` and `hosts/proto.ts` (no
- * database, no other parts): the few constants the tool schemas show are mirrored below, and `mcp.test.ts` checks
- * that they match the modules that own them.
+ * It was also `huntaway mcp`, a short-lived process per agent (until step 13 of docs/threads.md), so this file imports
+ * nothing of the server's but `util.ts` and `hosts/proto.ts` (no database, no other parts): the few constants the tool
+ * schemas show are mirrored below, and `mcp.test.ts` checks that they match the modules that own them.
  */
-import { createInterface } from "node:readline";
-import { new_id, sleep, err_str } from "./util.ts";
+import { err_str } from "./util.ts";
 import { VERSION } from "./hosts/proto.ts";
 
 // ---------- constants mirrored from the modules that own them (see mcp.test.ts) ----------
@@ -50,87 +46,13 @@ export const TASK_FIELD_DEFAULT_LIMIT = 2000;
 export const TASK_FIELD_MAX_LIMIT = 4000;
 
 /**
- * Where `handle` sends a run's tool calls: a helper's line to its server (`Ctx`), or the board itself, for a run it
- * serves over HTTP (see mcp/http.ts).
+ * Where `handle` sends a run's tool calls: the board itself, for a run it serves over HTTP (see mcp/http.ts), or its
+ * in-process server's handshake (agent/runner/requests.ts).
  */
 export interface Caller {
   /** A review thread's run: it gets the reviewers' tools. */
   review: boolean;
   call(tool: string, args: any): Promise<any>;
-}
-
-/** A run's line to the server that started it: board tool calls and permission prompts. */
-export class Ctx implements Caller {
-  url: string;
-  token: string;
-  run_id: string;
-  review = false;
-
-  constructor(url: string, token: string, run_id: string) {
-    this.url = url;
-    this.token = token;
-    this.run_id = run_id;
-  }
-
-  async call(tool: string, args: any): Promise<any> {
-    const call_id = new_id();
-    // Only helpers whose schema offers get_task_field may receive bounded task details.
-    const body = JSON.stringify({ run_id: this.run_id, call_id, tool, args: args ?? null, task_fields: true });
-    // Since the server stopped answering; a call can take long (`wait`) before that.
-    let failing_since: number | null = null;
-    let delay = 500;
-    for (;;) {
-      // [permanent, error], or the result.
-      let outcome: { ok: any } | { err: Error; permanent: boolean };
-      try {
-        const res = await fetch(`${this.url}/api/internal/mcp`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
-          body,
-        });
-        if (!res.ok) {
-          // A 4xx (other than a timeout or rate limit) is the server's answer, not it being down: a stale token, say,
-          // would otherwise be retried for half an hour.
-          const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
-          await res.arrayBuffer().catch(() => {});
-          outcome = { err: new Error(`server returned ${res.status} ${res.statusText}`.trim()), permanent };
-        } else outcome = { ok: await res.json() };
-      } catch (e) {
-        outcome = { err: e instanceof Error ? e : new Error(String(e)), permanent: false };
-      }
-      if ("ok" in outcome) {
-        const v = outcome.ok;
-        if (v && typeof v.error === "string") throw new Error(v.error);
-        return v?.result ?? null;
-      }
-      if (outcome.permanent) throw new Error("huntaway server refused the call", { cause: outcome.err });
-      failing_since ??= Date.now();
-      // The server is restarting; retry with the same call id so nothing runs twice.
-      if (Date.now() - failing_since >= 1800_000) throw new Error("huntaway server unreachable", { cause: outcome.err });
-      await sleep(delay);
-      delay = Math.min(delay * 2, 5000);
-    }
-  }
-}
-
-/**
- * A run's line to its server, from the run's `mcpServers` entry for the board (a Codex run's adapter makes its own calls
- * with it): a stdio helper's environment, or the URL and secret of the board's HTTP server for the run (mcp/http.ts),
- * whose secret `/api/internal/mcp` takes too.
- */
-export function Ctx_from_server(entry: any): Ctx {
-  if (typeof entry?.url === "string") {
-    const m = /^(.*)\/api\/mcp\/([^/]+)\/[^/]+$/.exec(entry.url);
-    const auth = entry.headers?.Authorization ?? entry.headers?.authorization;
-    if (!m || typeof auth !== "string" || !auth.startsWith("Bearer ")) throw new Error("mcp.json's board server isn't this board's");
-    return new Ctx(m[1], auth.slice(7), decodeURIComponent(m[2]));
-  }
-  const env = entry?.env ?? {};
-  const get = (k: string): string => {
-    if (typeof env[k] !== "string") throw new Error(`${k} missing from mcp.json`);
-    return env[k];
-  };
-  return new Ctx(get("IA_URL"), get("IA_TOKEN"), get("IA_RUN_ID"));
 }
 
 /** Sent with `initialize`; Claude Code adds it to the agent's system prompt. */
@@ -187,7 +109,10 @@ function submit_review_tool(): any {
  */
 const FOR_REVIEWERS = ["list_projects", "list_tasks", "get_task", "get_task_field", "get_project", "wait", "request_user_input", "submit_review"];
 
-/** Whether a review thread may call `tool`. permission_prompt is Claude Code's own, for the reviewer's other tools. */
+/**
+ * Whether a review thread may call `tool`. `permission_prompt` is the board's own, for Claude Code's and Codex's prompts
+ * about the reviewer's other tools (agent/runner/requests.ts), and no tool of its server any more.
+ */
 export function for_reviewers(tool: string): boolean {
   return tool === "permission_prompt" || FOR_REVIEWERS.includes(tool);
 }
@@ -284,15 +209,6 @@ function board_tools(): any[] {
   const project_ref = "Project id, key or name (<profile>:<key> for another profile's board), or 'all'";
   const project_one = "Project id, key or name (<profile>:<key> for another profile's board); defaults to the current project";
   const list: any[] = [
-    {
-      name: "permission_prompt",
-      description: "Internal: asks the user to approve a tool call.",
-      inputSchema: {
-        type: "object",
-        properties: { tool_name: { type: "string" }, input: { type: "object" }, tool_use_id: { type: "string" } },
-        required: ["tool_name", "input"],
-      },
-    },
     {
       name: "request_user_input",
       description:
@@ -1016,8 +932,7 @@ let schemas: any[] | null = null;
  */
 export function check_args(tool: string, args: any): string | null {
   schemas ??= [...board_tools(), submit_review_tool()];
-  // Internal, and filled in by Claude Code.
-  const schema = tool === "permission_prompt" ? undefined : schemas.find((t) => t.name === tool);
+  const schema = schemas.find((t) => t.name === tool);
   if (!schema) return null;
   const props: Record<string, any> = schema.inputSchema.properties;
   // serde_json's maps are sorted by key.
@@ -1044,11 +959,10 @@ export function initialize_result(protocol: string): any {
   return { protocolVersion: protocol, capabilities: { tools: {} }, serverInfo: { name: "huntaway", version: VERSION }, instructions: INSTRUCTIONS };
 }
 
-/** A `tools/call`'s result: what tool `name` gave (as JSON text), or its error. */
-export function call_result(name: string, r: { ok: any } | { err: string }): any {
+/** A `tools/call`'s result: what the tool gave (as JSON text), or its error. */
+export function call_result(r: { ok: any } | { err: string }): any {
   if ("err" in r) return { content: [{ type: "text", text: `Error: ${r.err}` }], isError: true };
-  // permission_prompt must return the raw decision JSON as text.
-  return { content: [{ type: "text", text: name === "permission_prompt" ? JSON.stringify(r.ok) : JSON.stringify(r.ok, null, 2) }] };
+  return { content: [{ type: "text", text: JSON.stringify(r.ok, null, 2) }] };
 }
 
 /** An MCP request's response, or null for a notification. */
@@ -1072,9 +986,9 @@ export async function handle(ctx: Caller, req: any): Promise<any | null> {
       const name = typeof req.params?.name === "string" ? req.params.name : "";
       const args = req.params?.arguments ?? null;
       try {
-        result = call_result(name, { ok: await ctx.call(name, args) });
+        result = call_result({ ok: await ctx.call(name, args) });
       } catch (e) {
-        result = call_result(name, { err: err_str(e) });
+        result = call_result({ err: err_str(e) });
       }
       break;
     }
@@ -1082,31 +996,4 @@ export async function handle(ctx: Caller, req: any): Promise<any | null> {
       error = { code: -32601, message: `method not found: ${method}` };
   }
   return error ? { jsonrpc: "2.0", id, error } : { jsonrpc: "2.0", id, result };
-}
-
-export async function serve_stdio(): Promise<void> {
-  const env = (k: string) => {
-    const v = process.env[k];
-    if (v === undefined) throw new Error(`${k} not set`);
-    return v;
-  };
-  const ctx = new Ctx(env("IA_URL"), env("IA_TOKEN"), env("IA_RUN_ID"));
-  ctx.review = process.env.IA_REVIEW === "1";
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  for await (const line of lines) {
-    let req: any;
-    try {
-      req = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    // Requests are handled concurrently: permission prompts can block for a long time.
-    handle(ctx, req)
-      .then((resp) => {
-        if (resp) process.stdout.write(`${JSON.stringify(resp)}\n`);
-      })
-      .catch((e) => console.error("mcp:", e));
-  }
-  // Claude Code closed our stdin: the calls still going (a `wait`, a prompt) go with us, as they do in Rust.
-  process.exit(0);
 }

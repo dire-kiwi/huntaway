@@ -351,26 +351,6 @@ test("an items task's readers: what it said since it was asked (workflows, summa
   assert.equal(rows(s, x.id), 0);
 });
 
-test("moving back onto messages is safe until the thread's next write", () => {
-  const { s, task } = setup();
-  const x = task();
-  on_messages(s, () => s.add_message(x.id, "user", { text: "go" }));
-  assert.equal(source.flip(s.db(), x.id), "moved");
-  source.flip_back(s.db(), x.id);
-  assert.equal(on(s, x.id), "messages");
-  // Through the command line too.
-  assert.equal(source.flip(s.db(), x.id), "moved");
-  const back = rebuild_cli.run(rebuild_cli.parse_args(["--back", x.id]), s.db(), () => {});
-  assert.deepEqual(back, [{ task_id: x.id, back: true }]);
-  s.add_message(x.id, "user", { text: "after" });
-  assert.equal(on(s, x.id), "items");
-  assert.throws(() => source.flip_back(s.db(), x.id), /has been written since it moved/);
-  // A task that started on items has no messages to go back to.
-  const y = task("new");
-  s.add_message(y.id, "user", { text: "hi" });
-  assert.throws(() => source.flip_back(s.db(), y.id), /written since it moved|started on items/);
-});
-
 test("a crash as a task moves onto items leaves it on its messages, and nothing of the message", () => {
   const { s, task } = setup();
   const x = task();
@@ -446,7 +426,8 @@ test("rebuilds, the batch and threads-rebuild leave items tasks alone", () => {
   assert.equal(write.ensure(s.db(), x.id), false);
   // Even with items an older converter wrote (from before it moved): there's nothing newer to rebuild them from.
   db.run(s.db(), "UPDATE threads SET converter=1 WHERE task_id=?1", x.id);
-  assert.equal(history.source(s.db(), x.id), "items");
+  assert.equal(history.last_assistant_text(s.db(), x.id), null);
+  assert.equal(db.value<number>(s.db(), "SELECT converter FROM threads WHERE task_id=?1", x.id), 1);
   assert.deepEqual(batch.pending(s.db()), []);
   assert.deepEqual(
     rebuild_cli.run(rebuild_cli.parse_args(["--all"]), s.db(), () => {}),

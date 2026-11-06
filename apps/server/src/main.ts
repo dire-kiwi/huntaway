@@ -1,5 +1,5 @@
-// Port of server/src/main.rs's command line. Each subcommand loads only its own modules: agents start `huntaway mcp`,
-// `gh-mcp` and `gh-hook` often, and they shouldn't load the whole server.
+// Port of server/src/main.rs's command line. Each subcommand loads only its own modules: agents start `gh-hook` and
+// `approval-hook` often, and they shouldn't load the whole server.
 import { mkdirSync } from "node:fs";
 import { err_str } from "./util.ts";
 
@@ -24,10 +24,6 @@ async function main() {
       const { serve, parse_serve_args } = await import("./serve.ts");
       return serve(parse_serve_args(rest));
     }
-    case "mcp":
-      return (await import("./mcp.ts")).serve_stdio();
-    case "gh-mcp":
-      return (await import("./mcp/gh_mcp.ts")).serve_stdio();
     case "gh-hook":
       return (await import("./mcp/gh_mcp.ts")).bash_hook();
     case "approval-hook": {
@@ -74,8 +70,6 @@ async function main() {
     }
     case "threads-rebuild":
       return (await import("./threads/rebuild.ts")).main(rest);
-    case "threads-readers":
-      return (await import("./threads/readers.ts")).main(rest);
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
     case "--version":
@@ -85,7 +79,7 @@ async function main() {
     case "--help":
     case "-h":
     case "help":
-      console.log("Usage: huntaway [serve|mcp|gh-mcp|token|google-auth] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see apps/server/PORTING.md).");
+      console.log("Usage: huntaway [serve|token|google-auth] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see apps/server/PORTING.md).");
       return;
     default:
       console.error(`error: unrecognized subcommand '${cmd}'`);

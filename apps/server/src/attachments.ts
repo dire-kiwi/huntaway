@@ -192,16 +192,15 @@ export function of_task(c: Conn, task_id: string): Set<string> {
 const THREAD_TABLES = ["messages", "thread_items", "thread_requests"];
 
 /**
- * Attachments referred to by any task. `threads` says where threads are read: in messages and items both (what the
- * pruner keeps), or one of them (to compare, see threads/readers.ts).
+ * Attachments referred to by any task: in threads' messages too, which tasks from before they moved onto items still
+ * have (until HA-226 deletes them).
  */
-export function referenced(c: Conn, threads: "both" | "messages" | "items" = "both"): Set<string> {
+export function referenced(c: Conn): Set<string> {
   const ids = new Set<string>();
   collect(c, "SELECT description FROM tasks WHERE instr(description, 'attachments') > 0", [], ids);
   collect(c, "SELECT queued_message FROM tasks WHERE instr(queued_message, 'attachments') > 0", [], ids);
   collect(c, "SELECT steering FROM tasks WHERE instr(steering, 'attachments') > 0", [], ids);
-  const tables = threads === "both" ? THREAD_TABLES : threads === "messages" ? ["messages"] : ["thread_items", "thread_requests"];
-  for (const table of tables) collect(c, `SELECT data FROM ${table} WHERE instr(data, 'attachments') > 0`, [], ids);
+  for (const table of THREAD_TABLES) collect(c, `SELECT data FROM ${table} WHERE instr(data, 'attachments') > 0`, [], ids);
   return ids;
 }
 

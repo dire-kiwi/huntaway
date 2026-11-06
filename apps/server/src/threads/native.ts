@@ -1,8 +1,8 @@
 // Items written straight into a thread rather than made from a message (step 11 of docs/threads.md): a Codex run's
-// notifications, which agent/codex/driver.ts maps onto the model's events itself, for a task whose items are its
-// source (threads/source.ts). The board's own messages in the same thread (the user's, its events, prompts and
-// questions, a turn's result) still go through the translator (threads/write.ts), which is told of what was written
-// here (`Translator.observe`), so a prompt for one of these calls, or a subagent's, finds it.
+// notifications, which agent/codex/driver.ts maps onto the model's events itself. The board's own messages in the same
+// thread (the user's, its events, prompts and questions, a turn's result) still go through the translator
+// (threads/write.ts), which is told of what was written here (`Translator.observe`), so a prompt for one of these calls,
+// or a subagent's, finds it.
 import { run, tx, value, type Conn } from "../db.ts";
 import { now, reached } from "../util.ts";
 import type { NewEvent, SavedEvent } from "./protocol.ts";

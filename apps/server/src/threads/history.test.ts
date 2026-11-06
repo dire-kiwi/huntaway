@@ -1,6 +1,6 @@
-// The board's readers of a thread (threads/history.ts): on a legacy history (its messages) and on its translation (the
-// items a rebuild makes of them), each gives the same answer, and the callers read items only for tasks whose readers
-// should. Then `huntaway threads-readers` (threads/readers.ts) on such histories, and the attachment scan.
+// The board's readers of a thread (threads/history.ts), on the items a rebuild makes of a history's messages (until
+// step 13 each was checked against the messages reader it replaced, which gave the answers these expect), and the
+// attachment scan.
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import * as db from "../db.ts";
@@ -12,7 +12,6 @@ import * as changes from "../git/changes.ts";
 import * as permissions from "../mcp/permissions.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as history from "./history.ts";
-import * as readers from "./readers.ts";
 import * as write from "./write.ts";
 import { CONVERTER_VERSION } from "./translate.ts";
 
@@ -47,13 +46,6 @@ function board(): { s: AppState; c: db.Conn; profile: string; task: (rows: Row[]
   return { s, c, profile, task };
 }
 
-/** `f` gives the same from messages as from items, and that's returned. */
-function same<T>(f: (from: history.Source) => T): T {
-  const m = f("messages");
-  assert.deepEqual(f("items"), m);
-  return m;
-}
-
 const user = (text: string, more: object = {}): Row => ["user", { text, ...more }];
 const assistant = (blocks: any[], more: object = {}): Row => ["claude", { type: "assistant", message: { content: blocks }, session_id: "s1", ...more }];
 const text = (t: string) => ({ type: "text", text: t });
@@ -65,37 +57,19 @@ const done = (text?: string, more: object = {}): Row => [
   { type: "result", subtype: "success", is_error: false, ...(text !== undefined ? { result: text } : {}), session_id: "s1", ...more },
 ];
 
-test("readers read items only for a flagged task whose thread this converter wrote, with no error", () => {
+test("a task still on messages has its items brought up to date before it's read", () => {
   const { c, task } = board();
-  const legacy = task([user("hi")], { translate: false });
-  assert.equal(history.source(c, legacy), "messages");
-  const id = task([user("hi")]);
-  assert.equal(history.source(c, id), "items");
-  // Its live writes stopped on an error: its items have a gap.
-  db.run(c, "UPDATE threads SET error='boom' WHERE task_id=?1", id);
-  assert.equal(history.source(c, id), "messages");
-  db.run(c, "UPDATE threads SET error=NULL WHERE task_id=?1", id);
-  // An older translator's items may lack the metas the readers read.
-  db.run(c, "UPDATE threads SET converter=?2 WHERE task_id=?1", id, CONVERTER_VERSION - 1);
-  assert.equal(history.source(c, id), "messages");
-  db.run(c, "UPDATE threads SET converter=?2 WHERE task_id=?1", id, CONVERTER_VERSION);
-  // Flagged, with no thread yet.
-  db.run(c, "UPDATE tasks SET thread_items=1 WHERE id=?1", legacy);
-  assert.equal(history.source(c, legacy), "messages");
-  // The callers read items when it says so: a task whose items differ from its messages (by hand) shows which.
-  db.run(c, "UPDATE thread_items SET data=json_set(data, '$.text', 'from items') WHERE task_id=?1", id);
-  db.run(
-    c,
-    "INSERT INTO messages (task_id, kind, data, created_at) VALUES (?1, 'claude', ?2, ?3)",
-    id,
-    JSON.stringify({ type: "assistant", message: { content: [text("from messages")] } }),
-    at(1),
-  );
-  assert.equal(history.user_replies(c, id, null).replies[0]?.[1], "from items");
-  assert.equal(history.last_assistant_text(c, id), null);
-  db.run(c, "UPDATE threads SET error='boom' WHERE task_id=?1", id);
-  assert.equal(history.user_replies(c, id, null).replies[0]?.[1], "hi");
-  assert.equal(history.last_assistant_text(c, id), "from messages");
+  const legacy = task([user("hi"), assistant([text("hello")])], { translate: false });
+  assert.equal(history.last_assistant_text(c, legacy), "hello");
+  assert.equal(db.value<number>(c, "SELECT converter FROM threads WHERE task_id=?1", legacy), CONVERTER_VERSION);
+  // An older translator's items are rebuilt too.
+  const old = task([user("hi"), assistant([text("hello")])]);
+  db.run(c, "UPDATE thread_items SET data=json_set(data, '$.text', 'stale') WHERE task_id=?1 AND type='assistant_message'", old);
+  db.run(c, "UPDATE threads SET converter=?2 WHERE task_id=?1", old, CONVERTER_VERSION - 1);
+  assert.equal(history.last_assistant_text(c, old), "hello");
+  // This build's are read as they are: they're the thread.
+  db.run(c, "UPDATE thread_items SET data=json_set(data, '$.text', 'by hand') WHERE task_id=?1 AND type='assistant_message'", old);
+  assert.equal(history.last_assistant_text(c, old), "by hand");
 });
 
 test("what the agent said: its messages' text, results' and API errors", () => {
@@ -112,68 +86,38 @@ test("what the agent said: its messages' text, results' and API errors", () => {
     // A result that says what no message did.
     done("All finished."),
   ]);
-  assert.equal(
-    same((from) => history.last_assistant_text(c, id, from)),
-    "All finished.",
-  );
-  assert.equal(
-    same((from) => history.said_since_asked(c, id, from)),
-    "All finished.",
-  );
-  const replies = same((from) => history.user_replies(c, id, null, from));
+  assert.equal(history.last_assistant_text(c, id), "All finished.");
+  assert.equal(history.said_since_asked(c, id), "All finished.");
+  const replies = history.user_replies(c, id, null);
   assert.deepEqual(replies, { replies: [["Done: two files.", "And now?"]], since: "All finished.".length ? "Working on it." : null, earlier: 0 });
 
   // A message's text blocks, joined; a subagent's message counts as the agent's too, as it always has.
   const joined = task([user("go"), assistant([text("one"), call("t1", "Read", { file_path: "/x" }), text("two")])]);
-  assert.equal(
-    same((from) => history.last_assistant_text(c, joined, from)),
-    "one\ntwo",
-  );
+  assert.equal(history.last_assistant_text(c, joined), "one\ntwo");
   // An API error in the agent's place.
   const limited = task([
     user("go"),
     assistant([text("Before.")]),
     assistant([text("You've hit your limit.")], { is_api_error_message: true, error: "rate_limit" }),
   ]);
-  assert.equal(
-    same((from) => history.last_assistant_text(c, limited, from)),
-    "You've hit your limit.",
-  );
-  assert.deepEqual(
-    same((from) => history.user_replies(c, limited, null, from)),
-    { replies: [[null, "go"]], since: "You've hit your limit.", earlier: 0 },
-  );
+  assert.equal(history.last_assistant_text(c, limited), "You've hit your limit.");
+  assert.deepEqual(history.user_replies(c, limited, null), { replies: [[null, "go"]], since: "You've hit your limit.", earlier: 0 });
   // Nothing since it was asked.
   const asked = task([assistant([text("Earlier.")]), user("Summarize?", { auto: true })]);
-  assert.equal(
-    same((from) => history.said_since_asked(c, asked, from)),
-    null,
-  );
-  assert.equal(
-    same((from) => history.last_assistant_text(c, asked, from)),
-    "Earlier.",
-  );
+  assert.equal(history.said_since_asked(c, asked), null);
+  assert.equal(history.last_assistant_text(c, asked), "Earlier.");
   // An empty thread, and an error result with no text.
   const empty = task([]);
-  assert.equal(
-    same((from) => history.last_assistant_text(c, empty, from)),
-    null,
-  );
+  assert.equal(history.last_assistant_text(c, empty), null);
   const failed = task([user("go"), assistant([text("Trying.")]), ["claude", { type: "result", subtype: "error_during_execution", is_error: true }]]);
-  assert.equal(
-    same((from) => history.said_since_asked(c, failed, from)),
-    "Trying.",
-  );
+  assert.equal(history.said_since_asked(c, failed), "Trying.");
   // HA-218: a routine's report, a notice in items (an error one for a failed run), is the board's, not the agent's.
   const reported = task([
     user("go"),
     assistant([text("Mine.")]),
     ["report", { automation: "Brief", task_id: "t2", key: "HA-2", outcome: "failed", text: "It broke" }],
   ]);
-  assert.equal(
-    same((from) => history.last_assistant_text(c, reported, from)),
-    "Mine.",
-  );
+  assert.equal(history.last_assistant_text(c, reported), "Mine.");
 });
 
 test("Telegram's: what the agent said in a turn, and how the latest turn ended", () => {
@@ -207,20 +151,17 @@ test("Telegram's: what the agent said in a turn, and how the latest turn ended",
     id,
   );
   assert.deepEqual(
-    ends.map((e) => same((from) => history.said_in_turn(c, id, e.id, from))),
+    ends.map((e) => history.said_in_turn(c, id, e.id)),
     ["Looking.\nFound it.", null, "All finished.", null, "Partly.", null],
   );
   // No such turn's end.
-  assert.equal(history.said_in_turn(c, id, 99999, "items"), null);
+  assert.equal(history.said_in_turn(c, id, 99999), null);
   assert.deepEqual(
     ends.map((e) => history.turn_end(JSON.parse(e.data))),
     ["reply", "reply", "reply", "compact", "failed", "failed"],
   );
   // The latest: an interrupted turn, then each before it as the latest.
-  assert.deepEqual(
-    same((from) => history.last_turn_end(c, id, from)),
-    { id: ends[5]!.id, end: "failed" },
-  );
+  assert.deepEqual(history.last_turn_end(c, id), { id: ends[5]!.id, end: "failed" });
   for (const [n, end] of [
     [4, "failed"],
     [3, "compact"],
@@ -231,13 +172,10 @@ test("Telegram's: what the agent said in a turn, and how the latest turn ended",
         .all<{ kind: string; data: string }>(c, "SELECT kind, data FROM messages WHERE task_id=?1 AND id<=?2 ORDER BY id", id, ends[n]!.id)
         .map((m) => [m.kind, JSON.parse(m.data)]),
     );
-    const last = same((from) => history.last_turn_end(c, cut, from));
+    const last = history.last_turn_end(c, cut);
     assert.equal(last?.end, end);
   }
-  assert.equal(
-    same((from) => history.last_turn_end(c, task([user("go")]), from)),
-    null,
-  );
+  assert.equal(history.last_turn_end(c, task([user("go")])), null);
 });
 
 test("the user's replies: their own words, with what the agent said before each, and limits", () => {
@@ -255,7 +193,6 @@ test("the user's replies: their own words, with what the agent said before each,
     user("Also round corners."),
     assistant([text("Will do.")]),
   ]);
-  for (const limit of [null, 0, 1, 2, 3, 10]) same((from) => history.user_replies(c, id, limit, from));
   assert.deepEqual(history.user_replies(c, id, null), {
     replies: [
       ["Which colour?", "Blue."],
@@ -292,9 +229,7 @@ test("tool calls since a time, and whether they changed code", () => {
     assistant([call("e3", "Edit", { file_path: "/c" })], { parent_tool_use_id: "x1" }),
     assistant([call("b2", "Bash", { command: "git commit -m x" })]),
   ]);
-  const calls = same((from) =>
-    history.tool_calls_since(c, id, null, from).map(([call, res]) => [call.id, call.name, res?.is_error ?? null, changes.changes_code(call, res)]),
-  );
+  const calls = history.tool_calls_since(c, id, null).map(([call, res]) => [call.id, call.name, res?.is_error ?? null, changes.changes_code(call, res)]);
   assert.deepEqual(calls, [
     ["e1", "Edit", true, false],
     ["b1", "Bash", true, false],
@@ -304,14 +239,12 @@ test("tool calls since a time, and whether they changed code", () => {
     ["e3", "Edit", null, false],
     ["b2", "Bash", null, true],
   ]);
-  for (let i = 0; i < 12; i++) same((from) => history.tool_calls_since(c, id, at(i), from).map(([call, res]) => [call.id, changes.changes_code(call, res)]));
   assert.deepEqual(
-    history.tool_calls_since(c, id, at(6), "items").map(([call]) => call.id),
+    history.tool_calls_since(c, id, at(6)).map(([call]) => call.id),
     ["e2", "e3", "b2"],
   );
   // A call's name and input, and whether the thread has one.
-  for (const call_id of ["e1", "m1", "a1", "b2", "nope"]) same((from) => history.tool_use(c, id, call_id, from));
-  assert.deepEqual(history.tool_use(c, id, "m1", "items"), ["mcp__huntaway__list_tasks", {}]);
+  assert.deepEqual(history.tool_use(c, id, "m1"), ["mcp__huntaway__list_tasks", {}]);
 });
 
 test("who wrote since a time", () => {
@@ -324,16 +257,10 @@ test("who wrote since a time", () => {
     assistant([text("ok")]),
     user("merge", { auto: true }),
   ]);
-  for (let i = -1; i < 7; i++) {
-    for (const t of [at(i), new Date(BASE + i * 1000 - 1).toISOString()]) {
-      same((from) => history.user_wrote_since(c, id, t, from));
-      same((from) => history.user_messaged_since(c, id, t, from));
-    }
-  }
-  assert.equal(history.user_wrote_since(c, id, at(2), "items"), true);
-  assert.equal(history.user_wrote_since(c, id, at(3), "items"), false);
-  assert.equal(history.user_messaged_since(c, id, at(5), "items"), true);
-  assert.equal(history.user_messaged_since(c, id, at(6), "items"), false);
+  assert.equal(history.user_wrote_since(c, id, at(2)), true);
+  assert.equal(history.user_wrote_since(c, id, at(3)), false);
+  assert.equal(history.user_messaged_since(c, id, at(5)), true);
+  assert.equal(history.user_messaged_since(c, id, at(6)), false);
 });
 
 test("a subagent's call, from what its lifecycle messages say", () => {
@@ -367,14 +294,8 @@ test("a subagent's call, from what its lifecycle messages say", () => {
     { task_id: "nope" },
     {},
   ];
-  const found = events.map((e) => same((from) => history.subagent_call(c, id, e, from)));
+  const found = events.map((e) => history.subagent_call(c, id, e));
   assert.deepEqual(found, ["ag1", "ag1", "ag1", null, null, null, null, "codex-sub-1", null, null]);
-  for (const call_id of ["ag1", "codex-sub-1", "nope"]) same((from) => history.has_call(c, id, call_id, from));
-  assert.equal(history.has_call(c, id, "codex-sub-1", "items"), true);
-  // The messages reader only looks at a message's first block (where the board writes a Codex subagent's call).
-  assert.equal(history.has_call(c, id, "sk1", "messages"), false);
-  assert.equal(history.has_call(c, id, "sk1", "items"), true);
-  assert.equal(history.has_call(c, id, "nope", "items"), false);
 });
 
 test("a question's conversation moving on, the first user message and turns' messages", () => {
@@ -390,22 +311,14 @@ test("a question's conversation moving on, the first user message and turns' mes
     user("[from x]\n\nmine", { user_text: "mine" }),
   ]);
   const ids = db.all<{ id: number; kind: string }>(c, "SELECT id, kind FROM messages WHERE task_id=?1 ORDER BY id", id);
-  for (const m of ids) same((from) => history.moved_on(c, id, m.id, from));
   assert.equal(permissions.moved_on(s, id, ids[2]!.id), true);
-  assert.equal(history.moved_on(c, id, ids[7]!.id, "items"), false);
-  assert.equal(
-    same((from) => history.first_user_message(c, id, from)),
-    ids[1]!.id,
-  );
-  assert.equal(
-    same((from) => history.first_user_message(c, task([assistant([text("x")])]), from)),
-    null,
-  );
+  assert.equal(history.moved_on(c, id, ids[7]!.id), false);
+  assert.equal(history.first_user_message(c, id), ids[1]!.id);
+  assert.equal(history.first_user_message(c, task([assistant([text("x")])])), null);
   // What the checkpoints and routine_call read of a turn's message.
   const pick = (d: any) =>
     d === undefined ? "none" : { text: d?.text, user_text: d?.user_text, auto: d?.auto, review_round: d?.review_round, routine: d?.routine, start: d?.start };
-  for (const m of ids.filter((m) => m.kind === "user")) same((from) => pick(history.user_message(c, id, m.id, from)));
-  assert.deepEqual(pick(history.user_message(c, id, ids[4]!.id, "items")), {
+  assert.deepEqual(pick(history.user_message(c, id, ids[4]!.id)), {
     text: "Fix these",
     user_text: undefined,
     auto: true,
@@ -413,7 +326,7 @@ test("a question's conversation moving on, the first user message and turns' mes
     routine: undefined,
     start: undefined,
   });
-  assert.equal(history.user_message(c, id, 99999, "items"), undefined);
+  assert.equal(history.user_message(c, id, 99999), undefined);
   // A routine run's calls: its turn's message says so.
   const run = db.insert_run(c, id, "prompt");
   db.run(c, "UPDATE runs SET turn_message_id=?2 WHERE id=?1", run.id, ids[5]!.id);
@@ -439,14 +352,14 @@ test("the questions still waiting for an answer", () => {
       { tool_name: "AskUserQuestion", input: { questions: [{ question: "Pick", options: [{ label: "x" }] }] }, request_id: "r1", status: "pending" },
     ],
   ]);
-  const open = same((from) => history.open_questions(c, id, from).map((m) => JSON.parse(m.data).question));
+  const open = history.open_questions(c, id).map((m) => JSON.parse(m.data).question);
   assert.deepEqual(open, ["Open?", "Merge?"]);
   // Answered since: its message's status says, and so do its items, written live.
   db.set_setting(c, write.SETTING, "true");
   const m = history.open_questions(c, id)[0]!;
   db.update_pending_message(c, m.id, { ...JSON.parse(m.data), status: "replied" });
   assert.deepEqual(
-    same((from) => history.open_questions(c, id, from).map((m) => JSON.parse(m.data).question)),
+    history.open_questions(c, id).map((m) => JSON.parse(m.data).question),
     ["Merge?"],
   );
   // The merge gate settles its card, found from the items.
@@ -489,13 +402,14 @@ test("pending approvals, from the thread's request and the request's row", () =>
   );
   ask("p333", "automation", "create_automation", { name: "nightly", workflow: { nodes: [] } });
   ask("p4444", "tool", "Bash", { command: "ls" });
-  assert.equal(history.source(c, id), "items");
-  for (const [d, a, w] of [
-    [true, true, true],
-    [false, false, false],
-    [true, true, false],
-  ] as const)
-    same((from) => permissions.pending_approvals(s, d, a, w, from));
+  assert.deepEqual(
+    permissions.pending_approvals(s, false, false, false).map((v) => v.request_id),
+    ["p1"],
+  );
+  assert.deepEqual(
+    permissions.pending_approvals(s, true, true, false).map((v) => v.request_id),
+    ["p1", "p22"],
+  );
   const all = permissions.pending_approvals(s, true, true, true);
   assert.deepEqual(
     all.map((v) => [v.request_id, v.kind, v.input]),
@@ -507,7 +421,7 @@ test("pending approvals, from the thread's request and the request's row", () =>
   );
 });
 
-test("prompt analytics and review stats' submissions", () => {
+test("prompt analytics", () => {
   const { c, profile, task } = board();
   const id = task([
     user("Do the thing, please", { auto: true, start: true }),
@@ -516,36 +430,19 @@ test("prompt analytics and review stats' submissions", () => {
     user('The user moved this task to "Ready for merge": merge it', { auto: true }),
     user("Review issues", { auto: true }),
   ]);
-  const legacy = task([user("Start working on this task.", { auto: true }), user("Another prompt")], { translate: false });
-  // Each task from where its readers read it, and every one from messages (the legacy one has no items to read).
   // (In time order: events of different tasks made at once may come in either order.)
-  const report = (from: history.Source, f = "", t = "9999") =>
-    analytics.report(c, profile, f, t, from === "items" ? "auto" : "messages").events.sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
-  same((from) => report(from));
-  same((from) => report(from, at(1), at(3)));
-  const events = report("items");
-  assert.deepEqual(events.map((e) => [e.at, e.task_id === id ? "items" : e.task_id === legacy ? "legacy" : e.task_id, e.kind, e.text]).sort(), [
-    [at(0), "items", "start", ""],
-    [at(0), "legacy", "start", ""],
-    [at(1), "items", "prompt", "A prompt"],
-    [at(1), "legacy", "prompt", "Another prompt"],
-    [at(3), "items", "merge", ""],
-  ]);
-
-  const review = task(
-    [
-      user("Review it", { auto: true }),
-      assistant([call("s1", "mcp__huntaway__submit_review", { verdict: "pass", summary: "Late" })]),
-      results([result("s1", "Error: nothing to submit: the round ended", true)]),
-      assistant([call("s2", "mcp__huntaway__submit_review", { verdict: "needs_fixes", serious_issues: ["x"], summary: "One" })]),
-      results([result("s2", "Submitted.")]),
-    ],
-    { kind: "review", parent: id },
-  );
-  const subs = same((from) => history.submissions(c, from));
+  const report = (f = "", t = "9999") => analytics.report(c, profile, f, t).events.sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
   assert.deepEqual(
-    subs.map((x) => [x.thread_id === review, x.parent_id === id, x.id, x.at]),
-    [[true, true, "s2", at(3)]],
+    report().map((e) => [e.at, e.task_id === id, e.kind, e.text]),
+    [
+      [at(0), true, "start", ""],
+      [at(1), true, "prompt", "A prompt"],
+      [at(3), true, "merge", ""],
+    ],
+  );
+  assert.deepEqual(
+    report(at(1), at(3)).map((e) => e.kind),
+    ["prompt"],
   );
 });
 
@@ -558,11 +455,9 @@ test("attachments a thread kept as items links are referenced, after its message
     assistant([call("r1", "Read", { file_path: `/data/attachments/${b}/notes.txt` })]),
   ]);
   const legacy = task([user(`/data/attachments/${b}/x.txt`)], { translate: false });
-  assert.deepEqual([...attachments.referenced(c, "messages")].sort(), [a, b].sort());
-  assert.deepEqual([...attachments.referenced(c, "items")].sort(), [a, b].sort());
+  assert.deepEqual([...attachments.referenced(c)].sort(), [a, b].sort());
   // Once step 10 stops writing messages, an items-only thread's are still found.
   db.run(c, "DELETE FROM messages WHERE task_id=?1", id);
-  assert.deepEqual([...attachments.referenced(c, "messages")], [b]);
   assert.deepEqual([...attachments.referenced(c)].sort(), [a, b].sort());
   assert.deepEqual([...attachments.of_task(c, id)].sort(), [a, b].sort());
   assert.deepEqual([...attachments.of_task(c, legacy)], [b]);
@@ -572,49 +467,4 @@ test("attachments a thread kept as items links are referenced, after its message
   ]);
   db.run(c, "DELETE FROM messages WHERE task_id=?1", asked);
   assert.deepEqual([...attachments.of_task(c, asked)], ["a".repeat(32)]);
-});
-
-test("threads-readers finds no differences on these histories, and writes nothing", () => {
-  const { c, task } = board();
-  const translated = task([user("go"), assistant([text("hi"), call("b1", "Bash", { command: "touch x" })]), results([result("b1", "")]), done("hi")]);
-  const legacy = task(
-    [
-      user("go", { auto: true, start: true }),
-      assistant([call("ag1", "Agent", { description: "d", prompt: "p" })]),
-      ["claude", { type: "system", subtype: "task_started", task_id: "T1", tool_use_id: "ag1", task_type: "local_agent", session_id: "s1" }],
-      ["question", { question: "Which?", options: [], status: "pending" }],
-      user("This one."),
-      assistant([text("Thanks.")]),
-    ],
-    { translate: false },
-  );
-  const r = readers.compare(c);
-  assert.deepEqual(r.differences, []);
-  assert.deepEqual(r.failed, []);
-  assert.equal(r.tasks, 2);
-  assert.equal(r.translated, 1);
-  for (const reader of [
-    "last_message",
-    "user_replies",
-    "said_in_turn",
-    "last_turn_end",
-    "tool_calls_since",
-    "subagent_call",
-    "moved_on",
-    "analytics",
-    "attachments.referenced",
-  ]) {
-    assert.ok(r.readers[reader]?.checked, reader);
-  }
-  // The translation was rolled back.
-  assert.equal(history.source(c, legacy), "messages");
-  assert.equal(db.value<number>(c, "SELECT COUNT(*) FROM thread_items WHERE task_id=?1", legacy), 0);
-  assert.equal(history.source(c, translated), "items");
-  // A difference is found: items changed by hand.
-  db.run(c, "UPDATE thread_items SET data=json_set(data, '$.text', 'changed') WHERE task_id=?1 AND type='assistant_message'", translated);
-  const changed = readers.compare(c, [translated]);
-  assert.ok(
-    changed.differences.some((d) => d.reader === "user_replies" && (d.items as any).since === "changed" && (d.messages as any).since === "hi"),
-    JSON.stringify(changed.differences),
-  );
 });

@@ -17,7 +17,6 @@
 import * as db from "../db.ts";
 import type { Conn } from "../db.ts";
 import { err_str, now } from "../util.ts";
-import * as history from "../threads/history.ts";
 
 /** Reviewer runs of a task started within this many seconds of the one before are one round's. */
 const ROUND_GAP = 120;
@@ -147,18 +146,81 @@ export function minor_list(args: any): string[] | null {
   return null;
 }
 
+/** A `submit_review` call in a review thread, for `backfill`. */
+interface Submitted {
+  thread_id: string;
+  /** The task it reviews. */
+  parent_id: string;
+  at: string;
+  id: string;
+  input: any;
+}
+
+/**
+ * Every `submit_review` call in review threads' messages (not summaries' or workflows' steps'), but those the board
+ * refused (its result says there was nothing to submit: a round that had ended), oldest first in each thread. Migration
+ * 79's backfill reads the messages: it runs before there were items (the threads' tables come with migration 89).
+ */
+function submissions(c: Conn): Submitted[] {
+  const reviews = "t.kind='review' AND COALESCE(t.task_type, '') NOT IN ('summary', 'workflow') AND t.parent_id IS NOT NULL";
+  const out: Submitted[] = [];
+  const rows = db.all<{ task_id: string; parent_id: string; created_at: string; data: string }>(
+    c,
+    `SELECT m.task_id, t.parent_id, m.created_at, m.data FROM messages m JOIN tasks t ON t.id=m.task_id
+     WHERE ${reviews} AND m.kind='claude' AND m.data LIKE '%submit_review%'
+     ORDER BY m.id`,
+  );
+  // The calls the board refused: its answer says so.
+  const refused = new Set<string>();
+  const refusing = db.all<{ task_id: string; data: string }>(
+    c,
+    `SELECT m.task_id, m.data FROM messages m JOIN tasks t ON t.id=m.task_id
+     WHERE t.kind='review' AND m.kind='claude' AND m.data LIKE '%nothing to submit%'`,
+  );
+  for (const { task_id, data } of refusing) {
+    let m: any;
+    try {
+      m = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const blocks = m?.message?.content;
+    if (!Array.isArray(blocks)) continue;
+    for (const b of blocks) {
+      if (b?.type === "tool_result" && JSON.stringify(b).includes("nothing to submit") && typeof b.tool_use_id === "string")
+        refused.add(`${task_id}\0${b.tool_use_id}`);
+    }
+  }
+  for (const { task_id, parent_id, created_at, data } of rows) {
+    let v: any;
+    try {
+      v = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const blocks = v?.message?.content;
+    if (!Array.isArray(blocks)) continue;
+    for (const b of blocks) {
+      if (!(b?.type === "tool_use" && typeof b.name === "string" && b.name.endsWith("submit_review"))) continue;
+      const id = typeof b.id === "string" ? b.id : "";
+      if (refused.has(`${task_id}\0${id}`)) continue;
+      out.push({ thread_id: task_id, parent_id, at: created_at, id, input: b.input });
+    }
+  }
+  return out;
+}
+
 /**
  * Every `submit_review` in review threads (Claude Code's tool calls, and Codex's as the board shows them), but those
  * the board refused (a round that had ended), for the task each reviews. The run is the thread's latest to start before
  * the call, and the reviewer's label the one the task's latest review has for the thread, if it's in it.
  */
-export function backfill(c: Conn, mode: history.Mode = "auto"): void {
+export function backfill(c: Conn): void {
   const done = !!db.value<number>(c, "SELECT EXISTS(SELECT 1 FROM review_stats)");
   if (done) return;
   // Each task's reviewer runs' rounds, worked out once.
   const rounds = new Map<string, Map<string, string>>();
-  // Read from each thread's items, if it has them (threads/history.ts).
-  for (const { thread_id, parent_id, at, input } of history.submissions(c, mode)) {
+  for (const { thread_id, parent_id, at, input } of submissions(c)) {
     const parent = db.one<{ review: string | null }>(c, "SELECT review FROM tasks WHERE id=?1", parent_id);
     if (!parent) continue;
     let label: string | null = null;

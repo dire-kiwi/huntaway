@@ -502,10 +502,10 @@ export async function serve(args: ServeArgs) {
   delete process.env.IA_RECOPY_DB;
   // Before serving: on the first start with the new file, it copies the older builds' database, which takes a while for a big one.
   const conn = new_file ? db_file.open(data_dir, args.recopy_db).conn : db.open(db_path(data_dir));
-  // Threads move onto items (threads/source.ts) only in huntaway-2.db: an older build, rolled back to, opens the older
-  // file with every thread whole.
-  thread_source.set_flips(conn, new_file);
-  if (!new_file) log.warn(`${db_file.ENV} is off: this server uses ${basename(db_path(data_dir))}, so threads stay on their messages`);
+  // Threads move onto items (threads/source.ts) in whichever file it is: on the older one, an older build rolled back to
+  // shows each thread as it was when its task moved (since step 13 of docs/threads.md, nothing reads messages).
+  thread_source.set_flips(conn, true);
+  if (!new_file) log.warn(`${db_file.ENV} is off: this server uses ${basename(db_path(data_dir))}, and moves its tasks onto items there`);
   // Once it's open, with its -wal and -shm files.
   make_private(data_dir);
   backup.record_version(data_dir, VERSION);
