@@ -524,9 +524,12 @@ async function createWindow() {
     backgroundColor: "#0b0b0e",
     autoHideMenuBar: true,
     title: "Huntaway",
-    // webviewTag: the board's browser pane (HA-275), held to web pages with nothing of the app's (attachBrowser).
-    webPreferences: { contextIsolation: true, sandbox: true, webviewTag: true, preload: path.join(__dirname, "preload.cjs") },
+    // The preload runs in frames too, to take WebRTC away from the pages agents write (see preload.cjs). webviewTag: the
+    // board's browser pane (HA-275), held to web pages with nothing of the app's (attachBrowser).
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegrationInSubFrames: true, webviewTag: true, preload: path.join(__dirname, "preload.cjs") },
   });
+  // And should that miss a frame, WebRTC there sends no UDP (STUN, TURN over UDP) that isn't proxied (HA-269).
+  win.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
   attachBrowser(win);
   // The board reloads once a rebuild has restarted the server. If that changed the app itself, start the new one.
   win.webContents.on("did-finish-load", () => {
