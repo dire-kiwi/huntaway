@@ -12,9 +12,7 @@ the install script and the desktop app from a checkout. **Make server changes in
 it was ported from (`server/src/`) was removed in HA-179; `apps/server/PORTING.md` has the conventions the code follows
 (one file per former Rust module, Rust's names, which new code keeps too) and says how to read the Rust in git history.
 What stays in Rust is `ia-shim` (`rust/shim/`), the per-run supervisor the TS server runs agents under, and the broker
-(`rust/broker/`): build the shim with `cargo build -p ia-shim` at the top of the checkout. `app/`, `server-ts/` and
-`scripts/legacy-update.sh` only forward checkouts and launchers from before HA-263 (see _The layout before HA-263_ in
-`docs/development.md`): don't add to them.
+(`rust/broker/`): build the shim with `cargo build -p ia-shim` at the top of the checkout.
 
 ## Task workflow
 

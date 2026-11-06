@@ -95,18 +95,3 @@ A checkout updates itself with **Rebuild & restart** (see _Restarting after a me
 packages the server for releases: the server compiled to `.js` by tsrs, its production dependencies (from
 `pnpm deploy`), Node, ia-shim and the UI. Inside a package the server keeps its old folder name, `server-ts/`, which
 installed releases look for.
-
-### The layout before HA-263
-
-Until HA-263 the server was in `server-ts/`, the UI in `app/`, the mobile app in `mobile/` and the Rust workspace in
-`server/`, each package with its own `package-lock.json`. So that what still names those paths keeps working:
-
-- `server-ts/bin/huntaway` and `server-ts/bin/issue-agent` run `apps/server/bin/…`: SSH hosts, desktop configs and
-  the MCP helpers of a server that was running when its checkout moved name them.
-- `app/package.json` is for a server from before the move, whose Rebuild & restart runs `npm install` and
-  `npm run build` in `app/`: its build runs `scripts/legacy-update.sh`, which builds the new layout. The server then
-  builds ia-shim with cargo in `server/` (cargo finds the workspace above it) and restarts through
-  `server-ts/bin/huntaway`. `app/package.json` also keeps the Electron that an older `scripts/install.sh` launcher
-  starts, with `app/` as its app, which loads `apps/web`'s; running `install.sh` again points the launcher there.
-
-They can go once every checkout that updates itself has updated past HA-263.

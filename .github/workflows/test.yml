@@ -52,9 +52,7 @@ jobs:
           git clean -ffd
           # Earlier jobs' screenshots of failed ui steps, which the ui job uploads.
           rm -f /tmp/ui-check-*-failed.png
-          # Builds of many branches pile up in the target directory: start again once it's over 20G. (server/target is
-          # where it was before HA-263.)
-          rm -rf server/target
+          # Builds of many branches pile up in the target directory: start again once it's over 20G.
           if [ -d target ] && [ "$(du -sm target | cut -f1)" -gt 20480 ]; then rm -rf target; fi
 
       - name: Rust toolchain
