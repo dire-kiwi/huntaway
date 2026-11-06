@@ -41,10 +41,10 @@ cp -R "$root/apps/web/dist" "$out/ui"
 
 # The code without its tests, compiled to .js (apps/server/tsconfig.build.json: types and comments stripped, imports of
 # ./x.ts rewritten to ./x.js), with the same layout as src/. Node then runs it as it is: run as .ts, every process
-# (the server, and each agent's MCP helpers) would load Node's TypeScript compiler, about 20 MB more each (HA-181).
+# (the server, and each agent's hooks) would load Node's TypeScript compiler, about 20 MB more each (HA-181).
 # The compiler is tsrs (HA-199), from the server's devDependencies; it type-checks too, so a type error fails the package.
 (cd "$server" && node_modules/.bin/tsrs -p tsconfig.build.json --outDir "$out/server-ts/src")
-[[ -f $out/server-ts/src/main.js && -f $out/server-ts/src/mcp_main.js && -f $out/server-ts/src/agent/approval_rules/hook_main.js ]] || { echo "tsrs didn't write the entry files (server-ts/src/main.js, mcp_main.js, agent/approval_rules/hook_main.js)" >&2; exit 1; }
+[[ -f $out/server-ts/src/main.js && -f $out/server-ts/src/agent/approval_rules/hook_main.js ]] || { echo "tsrs didn't write the entry files (server-ts/src/main.js, agent/approval_rules/hook_main.js)" >&2; exit 1; }
 cp "$server/package.json" "$out/server-ts/"
 if [[ -n ${VERSION:-} ]]; then
   node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));

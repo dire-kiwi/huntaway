@@ -403,3 +403,33 @@ test("a thread opened again has what came while it was closed, and a resync catc
     assert.deepEqual(asked, [`thread/events?after=${seq}`]);
   });
 });
+
+// HA-225 review: refreshProfileData's catch-up of the shown threads had ended up inside a comment, so after the events
+// socket reconnected (a server restart, a network drop) an open thread missed what came while it was down, until its
+// next event showed the gap. The socket itself goes and comes back here, not a resync event.
+test("an open thread catches up from its seq when the events socket reconnects", async () => {
+  const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Long job, socket dropped" });
+  const feed = threadFeed(task.id, messages(task.id));
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    const sockets = [];
+    await page.routeWebSocket(/\/api\/ws/, (ws) => {
+      sockets.push(ws);
+      ws.connectToServer();
+    });
+    const asked = await routeThread(page, task.id, feed);
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Step 350 of the job."]);
+    const before = sockets.length;
+    feed.socket = null;
+    const seq = feed.seq;
+    await sockets.at(-1).close();
+    // Said while the socket was down: no event reaches the page.
+    feed.add({ kind: "claude", data: { type: "assistant", message: { content: [{ type: "text", text: "Done while it was disconnected." }] } } });
+    asked.length = 0;
+    // The page reconnects (at once when the browser says it's online, rather than after its backoff).
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await ui.run(["wait Done while it was disconnected."]);
+    assert.ok(sockets.length > before, "it reconnected");
+    assert.ok(asked.includes(`thread/events?after=${seq}`), JSON.stringify(asked));
+  });
+});

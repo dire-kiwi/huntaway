@@ -283,7 +283,8 @@ export const useStore = create<State>((set, get) => ({
       archived: s.archived.filter((p) => live.has(p.host_id)),
       tasks: Object.fromEntries(Object.entries(s.tasks).filter(([, t]) => live.has(t.host_id))),
     }));
-    // The threads shown catch up from their seqs.    catchUpItemThreads();
+    // The threads shown catch up from their seqs.
+    catchUpItemThreads();
   },
 
   refreshHost: async (h) => {
