@@ -123,12 +123,13 @@ test("a brief's items are rated from the board's list, and nothing in the page c
     await popup.waitForLoadState().catch(() => {});
     await popup.close();
     assert.equal(await frame.locator("h1").innerText(), "Morning brief");
-    // Taken elsewhere all the same, the frame has nothing to rate with, and runs no scripts there either.
+    // Taken elsewhere all the same, the frame loads nothing there (the board's frame-src, index.html), has nothing to rate
+    // with, and runs no scripts either.
     await page.evaluate(() => {
       document.querySelector("iframe[title='Morning brief']").contentWindow.location.href = "http://evil.test/navigated";
     });
-    await frame.locator("#evil").waitFor();
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
+    assert.ok(!evil.includes("http://evil.test/navigated"), JSON.stringify(evil));
     assert.equal(await frame.locator("html").getAttribute("data-ran"), null);
     // The page's own scripts never ran, and nothing but the user's clicks was rated.
     assert.equal(rated.length, 3);

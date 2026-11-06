@@ -145,19 +145,19 @@ test("a reloaded plan goes back to where it was read, with a tall <ia-html> abov
 });
 
 test("a reloaded plan goes back to its place even when its load takes longer than the hold after it", async () => {
-  // An image that takes 4s, so load comes well after the page is parsed. The page is on the same server: from a page on
-  // another origin the image fails at once, and doesn't hold up load.
+  // A library from a CDN (the only other host the frame's policy lets it load from) that takes 4s, so load comes well
+  // after the page is parsed. It's answered here: in a browser of its own whose sandboxed frames stay in the page's
+  // process, as the request interception doesn't always see a new frame's first requests otherwise.
+  const own = await chromium.launch({ ...launchOptions(), args: ["--disable-features=IsolateSandboxedIframes"] });
   const frameHtml = `<iframe sandbox="allow-scripts" style="width: 800px; height: 600px; border: 0"></iframe>`;
-  const server = http.createServer((req, res) =>
-    req.url === "/"
-      ? res.writeHead(200, { "content-type": "text/html" }).end(frameHtml)
-      : setTimeout(() => res.writeHead(200, { "content-type": "image/svg+xml" }).end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'), 4000),
-  );
+  const server = http.createServer((req, res) => res.writeHead(200, { "content-type": "text/html" }).end(frameHtml));
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   try {
     const paragraphs = Array.from({ length: 120 }, (_, i) => `<p id="b${i}">Paragraph ${i}</p>`).join("\n");
-    const doc = frameDoc(themedPlan(`<h1>Slow</h1>${paragraphs}<img src="http://127.0.0.1:${server.address().port}/slow.svg">`, css), 2000, 0);
-    const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+    const lib = "https://cdn.jsdelivr.net/npm/slow-lib@1/slow.js";
+    const doc = frameDoc(themedPlan(`<h1>Slow</h1>${paragraphs}<script async src="${lib}"></script>`, css), 2000, 0);
+    const page = await own.newPage({ viewport: { width: 800, height: 600 } });
+    await page.route(lib, (route) => setTimeout(() => route.fulfill({ contentType: "text/javascript", body: "window.slow = true" }).catch(() => {}), 4000));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const started = Date.now();
     await page.evaluate(
@@ -172,10 +172,11 @@ test("a reloaded plan goes back to its place even when its load takes longer tha
     assert.ok(Date.now() - started > 3500, `loaded after ${Date.now() - started}ms`);
     const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame());
     await page.waitForTimeout(200);
-    assert.equal(await frame.evaluate(() => scrollY), 2000);
+    assert.equal(await frame.evaluate(() => [scrollY, window.slow]).then(String), "2000,true");
     await page.close();
   } finally {
     server.close();
+    await own.close();
   }
 });
 

@@ -394,11 +394,11 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
         </Field>
       </div>
       <div className="grid grid-cols-[1fr_90px] gap-3">
-        <Field label="huntaway on that machine" hint="Absolute path: a release's huntaway, or server-ts/bin/huntaway in a checkout that has built ia-shim.">
+        <Field label="huntaway on that machine" hint="Absolute path: a release's huntaway, or apps/server/bin/huntaway in a checkout that has built ia-shim.">
           <Input
             value={bin}
             onChange={(e) => setBin(e.target.value)}
-            placeholder="/home/you/huntaway/server-ts/bin/huntaway"
+            placeholder="/home/you/huntaway/apps/server/bin/huntaway"
             className="font-mono text-[12px]"
           />
         </Field>

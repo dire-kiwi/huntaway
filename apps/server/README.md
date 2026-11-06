@@ -19,8 +19,7 @@ pnpm typecheck && pnpm test                                # Vite+'s type check 
 It runs agents with the Rust `ia-shim` (`$IA_SHIM_BIN`, else the newer of `target/{release,debug}/ia-shim` at the top of
 the checkout, else `ia-shim` beside `bin/huntaway`), so build that with `cargo build -p ia-shim` there first.
 `bin/issue-agent` is the same command under the board's name from before the rename (see the top README), and release
-packages have it too. In a release package the server is in `server-ts/`, the folder's name before HA-263, and
-`server-ts/bin/huntaway` in a checkout forwards here for commands that still name that path.
+packages have it too. In a release package the server is in `server-ts/`, the folder's name before HA-263.
 `scripts/test-server.sh` runs `bin/huntaway`, and `IA_TEST_BIN` runs another build instead (as `scripts/ram-compare.mjs`
 does for a Rust release's server):
 
