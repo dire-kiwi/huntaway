@@ -138,24 +138,12 @@ export async function facts(s: AppState, t: Task): Promise<Facts> {
     } catch (e) {
       uncommitted_error = err_str(e);
     }
-    stray_commits = await stray(wt).catch(() => 0);
+    stray_commits = await worktree.stray(wt).catch(() => 0);
   }
   const uncommitted_count = uncommitted.length;
   uncommitted = uncommitted.slice(0, LISTED);
   const working = worktree.agent_in_worktree(s, t.id);
   return { id: t.id, run_secs, runs, working, uncommitted, uncommitted_count, uncommitted_error, stray_commits, branch, pushed: up };
-}
-
-/**
- * How many commits a worktree's HEAD has that no branch, remote branch or tag has: a detached HEAD's, which nothing but
- * the worktree keeps (they'd be garbage once it's gone).
- */
-async function stray(wt: string): Promise<number> {
-  const o = await worktree.git(wt, ["rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"]);
-  if (!o.ok) throw new Error(`git rev-list failed: ${o.stderr.trim()}`);
-  const t = o.stdout.trim();
-  if (!/^\d+$/.test(t)) throw new Error("invalid digit found in string");
-  return Number(t);
 }
 
 /** `GET /tasks/{id}/fanout`: `{tasks: [Facts]}` for the tasks made from the same prompt as this one, it among them. */
@@ -337,7 +325,7 @@ async function retire(s: AppState, o: Task, picked: string, b: Pick): Promise<Ou
     let strays: number | null = null;
     let stray_error: unknown = null;
     try {
-      strays = existsSync(wt) ? await stray(wt) : 0;
+      strays = existsSync(wt) ? await worktree.stray(wt) : 0;
     } catch (e) {
       stray_error = e;
     }

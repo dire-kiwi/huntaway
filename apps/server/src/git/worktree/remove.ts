@@ -141,7 +141,33 @@ export async function git_bytes(dir: string, args: string[]): Promise<Buffer> {
   return out.stdout;
 }
 
-/** Run the teardown script and remove the worktree. Refuses when the worktree has uncommitted changes unless `force` is set. */
+/**
+ * How many commits a worktree's HEAD has that no branch, remote branch or tag has: a detached HEAD's, which nothing but
+ * the worktree keeps (they'd be garbage once it's gone).
+ */
+export async function stray(wt: string): Promise<number> {
+  const o = await git(wt, ["rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"]);
+  if (!o.ok) throw new Error(`git rev-list failed: ${o.stderr.trim()}`);
+  const t = o.stdout.trim();
+  if (!/^\d+$/.test(t)) throw new Error("invalid digit found in string");
+  return Number(t);
+}
+
+/** Fails if worktree `wt` has commits on no branch (see `stray`), which removing it would lose. */
+async function no_strays(wt: string): Promise<void> {
+  let n: number;
+  try {
+    n = await stray(wt);
+  } catch (e) {
+    throw context("checking the worktree for commits on no branch", e);
+  }
+  if (n > 0) throw new Error(`worktree has ${n} commit${n === 1 ? "" : "s"} on no branch (a detached HEAD), which would be lost`);
+}
+
+/**
+ * Run the teardown script and remove the worktree. Refuses when the worktree has uncommitted changes or commits on no
+ * branch unless `force` is set.
+ */
 export async function teardown(state: AppState, task_id: string, force: boolean, delete_branch: boolean): Promise<Task> {
   const [task, project] = load(state, task_id);
   const repo = project.repo_path;
@@ -160,6 +186,7 @@ export async function teardown(state: AppState, task_id: string, force: boolean,
         throw context("checking the worktree for uncommitted changes", e);
       }
       if (status) throw new Error(`worktree has uncommitted changes:\n${truncate(status.trim(), 2000)}`);
+      await no_strays(wt);
     }
     state.update_task(task_id, [["worktree_state", "tearing_down"]]);
     // Its terminal would be left in a deleted directory.
@@ -205,6 +232,7 @@ export async function teardown(state: AppState, task_id: string, force: boolean,
           throw context("checking the worktree for uncommitted changes", e);
         }
         if (!left) {
+          await no_strays(wt);
           const o = await git(repo, ["worktree", "remove", wt_s]);
           if (!(o.ok || !existsSync(wt))) kept = new Error(`git worktree remove failed: ${o.stderr.trim()}`);
         } else kept = new Error(`the teardown script left uncommitted changes:\n${truncate(left, 2000)}`);

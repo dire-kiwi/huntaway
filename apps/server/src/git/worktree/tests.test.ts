@@ -275,6 +275,26 @@ test("a_worktree_removed_while_git_reads_its_diff_gives_its_branchs", async () =
   assert.ok(d.branch === undefined && JSON.stringify(d.untracked) === JSON.stringify(["draft"]), JSON.stringify(d));
 });
 
+// HA-262: a teardown that wasn't forced removed a worktree whose HEAD had commits on no branch (a detached HEAD, or a
+// rebase stopped part way), and they were lost with it.
+test("a_worktree_with_commits_on_no_branch_is_kept_unless_forced", async () => {
+  const s = testing.state();
+  const [repo, t, wt] = await task_with_work(s);
+  sh(wt, ["checkout", "-q", "--detach"]);
+  sh(wt, ["commit", "-q", "--allow-empty", "-m", "on no branch"]);
+  const head = rev(wt, "HEAD");
+  const e = await fails(teardown(s, t.id, false, false));
+  assert.ok(e.message.includes("1 commit on no branch"), e.message);
+  assert.ok(existsSync(wt));
+  assert.equal(db.get_task(s.db(), t.id)!.worktree_state, "ready");
+  assert.equal(rev(wt, "HEAD"), head);
+  // Forced, it goes.
+  await teardown(s, t.id, true, false);
+  assert.ok(!existsSync(wt));
+  assert.equal(db.get_task(s.db(), t.id)!.worktree_state, "none");
+  assert.ok(existsSync(repo));
+});
+
 const kept = (why: string): Removal => ({ Kept: why });
 const removed = (into: string): Removal => ({ Removed: into });
 
