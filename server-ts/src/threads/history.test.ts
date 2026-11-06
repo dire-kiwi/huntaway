@@ -455,6 +455,29 @@ test("prompt analytics and review stats' submissions", () => {
   assert.deepEqual(subs.map((x) => [x.thread_id === review, x.parent_id === id, x.id, x.at]), [[true, true, "s2", at(3)]]);
 });
 
+test("prompt analytics reads the user messages in its time range, and one task's queries that task's items", () => {
+  // HA-262: analytics read every item of the profile's tasks (thread_items had only its (task_id, pos) indexes). The index
+  // for it mustn't take over a query of one task's items either.
+  const { c, profile, task } = board();
+  const id = task([user("A prompt"), user("Another")]);
+  const sql: string[] = [];
+  const prepare = c.prepare;
+  c.prepare = (q: string) => {
+    sql.push(q);
+    return prepare.call(c, q);
+  };
+  try {
+    assert.equal(history.user_messages_between(c, profile, at(0), at(9), "t.id").length, 2);
+    assert.equal(history.user_messaged_since(c, id, at(1), "items"), true);
+  } finally {
+    c.prepare = prepare;
+  }
+  const [range, since] = sql.filter((q) => q.includes("FROM thread_items"));
+  const plan = (q: string, ...params: string[]) => (c.prepare(`EXPLAIN QUERY PLAN ${q}`).all(...params) as any[]).map((r) => r.detail).join("; ");
+  assert.match(plan(range, profile, at(0), at(9)), /SEARCH i USING INDEX thread_items_user_time \(type=\? AND created_at>\? AND created_at<\?\)/);
+  assert.match(plan(since, id, at(1)), /SEARCH thread_items USING INDEX thread_items_pos \(task_id=\?\)/);
+});
+
 test("attachments a thread kept as items links are referenced, after its messages are gone too", () => {
   const { c, task } = board();
   const a = "0123456789abcdef0123456789abcdef";
