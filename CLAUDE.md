@@ -1,6 +1,9 @@
 # Huntaway
 
-See `README.md` for layout, build and run instructions.
+See `README.md` for the layout and how to run it, `docs/development.md` for building and testing, and the guides in
+`docs/` for each feature. The repository is one npm workspace (`package.json` and `package-lock.json` at the root:
+`apps/server`, `apps/web`, `apps/mobile`, `packages/client`) with Vite+ for the UI's build and the linter, and one
+Cargo workspace (`Cargo.toml` at the root: `crates/shim`, `crates/broker`).
 
 ## The server is `apps/server/`
 
@@ -8,9 +11,9 @@ The server is the TypeScript one in `apps/server/` (Node 24+, run straight from 
 `apps/server/README.md`): every release since 0.4.0 runs it, and so do test servers, the install script and the
 desktop app from a checkout. **Make server changes in `apps/server/src/`.** The Rust server it was ported from
 (`server/src/`) was removed in HA-179; `apps/server/PORTING.md` has the conventions the code follows (one file per former
-Rust module, Rust's names, which new code keeps too) and says how to read the Rust in git history. What stays in Rust, in the `server/`
+Rust module, Rust's names, which new code keeps too) and says how to read the Rust in git history. What stays in Rust, in the Cargo
 workspace, is `ia-shim` (`crates/shim/`), the per-run supervisor the TS server runs agents under, and the broker
-(`crates/broker/`): build the shim with `cargo build -p ia-shim` in `server/`.
+(`crates/broker/`): build the shim with `cargo build -p ia-shim` at the repository's root.
 
 ## Task workflow
 
@@ -51,7 +54,7 @@ minutes after each push it's rebuilt from the PR's head, and it's removed when t
 - A preview is a board of its own, LAN-only, started with `--demo` and `--open-token` (any browser
   that opens it is signed in), so it has the sample Default profile and Demo project. It sleeps when
   idle and wakes on the next request.
-- It also has a `personal` profile (`--profile`, see `README.md`) on a Claude login shared by every
+- It also has a `personal` profile (`--profile`, see `docs/server.md`) on a Claude login shared by every
   preview, so agents can run there. Don't log it out or change that login's settings from a preview.
 - Its address isn't kept in this public repository. The board project's *Pull request previews*
   setting has it, and the board fills in the task's `preview_url` from its PR, so the card links it.
@@ -64,12 +67,12 @@ Task worktrees live inside that data dir, and the agent working in them is run b
 Keep test servers fully separate from it:
 
 - Your task has a temp folder of its own, `$TMPDIR`, which the board deletes once the task is done
-  (see *Temp folders* in `README.md`). Put env files, logs, screenshots and scratch folders there
+  (see *Temp folders* in `docs/concepts.md`). Put env files, logs, screenshots and scratch folders there
   rather than straight in `/tmp`, which is shared and fills up. `mktemp`, the server's tests and the
   test scripts already use it.
 - Start a test server with `scripts/test-server.sh --seed > $TMPDIR/ia<N>-env` (serve flags such as
-  `--demo` can follow). It runs this worktree's server (`apps/server/bin/huntaway`: run `npm ci` in
-  `apps/server/` and `cargo build -p ia-shim` in `server/` first) on a free port on 127.0.0.1, with a fresh
+  `--demo` can follow). It runs this worktree's server (`apps/server/bin/huntaway`: run `npm ci` and
+  `cargo build -p ia-shim` at the worktree's root first) on a free port on 127.0.0.1, with a fresh
   `mktemp -d` data dir and no hub (`IA_TEST_BIN` runs another build instead). Don't pick a fixed port: other agents' test servers are running
   too. It prints `export IA_TEST_URL=…` lines (`IA_TEST_TOKEN`, `IA_TEST_PID`, `IA_TEST_DATA_DIR`,
   `IA_TEST_ENV`), and writes them to `<data dir>/env` too. Shell variables don't survive between
@@ -119,13 +122,13 @@ Keep test servers fully separate from it:
   - `GET /api/permissions[?task_id=…]` lists pending permission prompts, and
     `POST /api/permissions/{id}` with `{"decision": "allow"}` (or `deny`) answers one. They're in
     the `permission_requests` table of `<data dir>/huntaway-2.db` (`huntaway.db` on a server started with
-    `IA_NEW_DB_FILE=0`; see *The database file* in `README.md`). A task whose thread is on items
+    `IA_NEW_DB_FILE=0`; see *The database file* in `docs/server.md`). A task whose thread is on items
     (`tasks.thread_source`, see `docs/threads.md`) has no `messages` rows: read its thread with `ia-api thread`.
   - `<data dir>/runs/<run id>/spec.json` shows how a run was launched (model, permission mode,
     config dir), so you can check launch flags without waiting for the model.
 - Build in the worktree, never in the main checkout (the board project's repository path), which is
-  the live daemon's source dir (no building, `git pull` or restarting there). `npm ci` in
-  `apps/server/` and a debug `cargo build -p ia-shim` in `server/` are enough for a test server.
+  the live daemon's source dir (no building, `git pull` or restarting there). `npm ci` at
+  the root and a debug `cargo build -p ia-shim` are enough for a test server.
 - Don't stop or restart the live daemon. That means no `pkill huntaway`/`pkill issue-agent`/`killall`, and no
   **Restart** or **Update** from the board. Stop processes by PID, and never `pkill -f` a pattern
   that also appears in your own command line (it kills your own shell). The same goes for
@@ -134,7 +137,7 @@ Keep test servers fully separate from it:
   wait for its notification, or use Monitor with an until-loop. To wait for a task's agent, use
   `ia-api wait-idle`, which has a deadline and also stops on `needs_attention`.
 - UI dev against the test server: `IA_SERVER=$IA_TEST_URL npm run dev`. Without `IA_SERVER`
-  Vite proxies to the live daemon. Don't use `npm run electron`, which attaches to or starts the
+  Vite+'s dev server proxies to the live daemon. Don't use `npm run electron`, which attaches to or starts the
   live server.
 - Test agent runs with haiku (the seeded profile's default) and the default permission mode
   (never Bypass), and answer prompts on the test server with `ia-api approve-all` or
@@ -148,7 +151,7 @@ A typecheck and a build don't show layout or behaviour, so look at UI changes in
 finish, and click through what you changed: typechecked-only UI changes have shipped lost drafts,
 stale forms and broken reordering that one interaction would have shown. Run the test server with a
 fresh `npm run build` (it serves `apps/web/dist`), then drive it with `scripts/ui-check.mjs`. It uses
-`playwright-core` from `node_modules` (so `npm ci` in `app/` first) and `/usr/bin/chromium` (or `$CHROMIUM`);
+`playwright-core` from the workspace's `node_modules` (so `npm ci` first) and `/usr/bin/chromium` (or `$CHROMIUM`);
 there's no other browser tooling to look for.
 
 ```sh
@@ -186,8 +189,8 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
 - For checks that need more than steps (`page.route` to fake a failed request, several pages, API
   calls in between), import `open` from `scripts/ui-check.mjs` and use `ui.page`, which is a
   Playwright page. Checks for bugs that are easy to bring back go in `apps/web/tests/ui/` and run with
-  `npm run test:ui` in `app/` (it builds the UI, and each file starts its own `--demo` test server
-  with agents switched off, so `npm ci` in `apps/server/` and `cargo build -p ia-shim` in `server/` first). Files run 8 at a time (`IA_UI_TEST_JOBS`
+  `npm run test:ui` in `apps/web/` (it builds the UI, and each file starts its own `--demo` test server
+  with agents switched off, so `npm ci` and `cargo build -p ia-shim` at the root first). Files run 8 at a time (`IA_UI_TEST_JOBS`
   changes that), so a check mustn't count on a quiet machine: wait for what it reads rather than read it
   at once. Run one file with `node --experimental-strip-types --test tests/ui/<file>`. They aren't part of `npm test`,
   but CI runs them, split between three runners (`Tests / ui (1/3)` to `(3/3)`; `IA_UI_TEST_SHARD=2/3` runs the second third). Run them when you change the UI they cover, and add one when an interaction found a bug.
@@ -209,18 +212,19 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
 - Give a test a folder with `testing.temp_dir()` (`apps/server/src/testing.ts`), which is removed when the file's tests
   end, not `os.tmpdir()`: tests that left their folders there filled `/tmp`. `testing.state()` gives an `AppState` on
   an in-memory database. `IA_KEEP_TEST_DIRS=1` keeps the folders.
-- New worktrees have no `node_modules`. Run `npm ci` in `app/` and `apps/server/` first, then use the package
-  scripts (`npm run typecheck`, `npm test`, `npm run build`). The typecheck in both is
+- New worktrees have no `node_modules`. Run `npm ci` at the root first (once, for every package), then use the
+  package scripts (`npm run typecheck`, `npm test`, `npm run build`, in a package's folder or from the root). The
+  typecheck of the server, the UI and `packages/client` is
   [tsrs](https://github.com/oxc-project/tsrs) (Cloudflare and VoidZero's Rust port of TypeScript 7, the `tsrs` dev
-  dependency, run as `tsrs`, with `tsc`'s flags), not `typescript`, which neither package has: `npx tsc` runs an
-  unrelated package.
-- The code is formatted by hand, with lines of up to about 160 characters, and there's no
-  Prettier, ESLint or rustfmt config. Don't run `prettier`, `eslint` or `cargo fmt`, because each
-  rewrites whole files. Match the surrounding style, and check `git diff --stat` before committing.
-- CI runs `npm run typecheck` and `npm test` in `apps/server/` and `app/` on every PR, `npm run test:ui` (against the
-  TS server) and `scripts/ia-api-test.py`, and `cargo test` in `server/` for ia-shim and the broker
-  (`.github/workflows/test.yml`, the `Tests / server-ts`, `Tests / app`, `Tests / ui (1/3)` to `(3/3)` and
-  `Tests / rust` checks, on self-hosted runners for the owner's own branches and GitHub-hosted ones
+  dependency, run as `tsrs`, with `tsc`'s flags), not `typescript` (the phone app's `tsc` is its own).
+- The code is formatted by hand, with lines of up to about 160 characters, and there's no formatter: Vite+'s is
+  switched off (`vite.config.ts`). Don't run `vp fmt`, `prettier` or `cargo fmt`, because each rewrites whole files.
+  Match the surrounding style, and check `git diff --stat` before committing. Do run `npm run lint` (Oxlint through
+  Vite+, with the rules in `vite.config.ts`): CI fails on any warning.
+- CI runs `npm run typecheck` and `npm test` in `apps/server/`, `apps/web/` and `apps/mobile/` on every PR, `vp lint
+  --deny-warnings` over the repository, `npm run test:ui` (against the server) and `scripts/ia-api-test.py`, and
+  `cargo test` for ia-shim and the broker (`.github/workflows/test.yml`, the `Tests / server`, `Tests / web`,
+  `Tests / mobile`, `Tests / ui (1/3)` to `(3/3)` and `Tests / rust` checks, on self-hosted runners for the owner's own branches and GitHub-hosted ones
   otherwise; see the workflow's header). Still run them
   yourself before pushing and after merging master, since CI takes a while and a failure there costs
   another round trip. Check the PR's checks (`pr_checks`) before you merge or report a PR as ready.
@@ -229,11 +233,11 @@ node scripts/ui-check.mjs --env $TMPDIR/ia<N>-env "goto /p/<project id>" "click 
   migration (`apps/server/src/db/schema.ts`), git may merge the two without a conflict. After merging master,
   check both numbers and move yours above master's.
 
-### The Rust workspace (`server/`: ia-shim and the broker)
+### The Rust workspace (`crates/`: ia-shim and the broker)
 
-- Run its tests with debug `cargo test` in `server/` (`-p ia-shim` or `-p huntaway-broker` for one crate), not
+- Run its tests with debug `cargo test` at the root (`-p ia-shim` or `-p huntaway-broker` for one crate), not
   `--release`: a release test build compiles a second copy of every dependency.
-- `cargo test` in `server/` runs each test binary in a `TMPDIR` of its own, which is removed when it exits, and fails
+- `cargo test` runs each test binary in a `TMPDIR` of its own, which is removed when it exits, and fails
   it if it left anything there (`.cargo/test-runner`), so a test that leaks fails locally as it does in CI.
   `cargo test --manifest-path` from another folder skips that. That `TMPDIR` is on disk, `/var/tmp/ia-cargo-test-*`
   (`IA_CARGO_TEST_TMPDIR` picks another folder), not in the task's `$TMPDIR`: `/tmp` is a tmpfs that every agent

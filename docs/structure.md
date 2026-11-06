@@ -5,24 +5,34 @@ largest files; HA-101 split the next five and HA-102 grouped the server's module
 HA-103 grouped the app's components into feature folders and split its largest files. The rest of
 the plan, under *Next*, is for follow-up tasks. Those splits were made in the Rust server (`server/src/`), and its
 TypeScript port in `apps/server/src/`, which is the server now (HA-174, HA-178), kept the same modules and file layout.
-The Rust server was removed in HA-179 (`apps/server/PORTING.md` says how to read it in git history); `server/` keeps
+The Rust server was removed in HA-179 (`apps/server/PORTING.md` says how to read it in git history); `crates/` has
 the Rust that's left, `ia-shim` and the broker.
 
 ## Layout
 
+The repository is one npm workspace (`package.json` and `package-lock.json` at the root, `npm ci` there installs every
+package, `npm ci -w <name>` one of them) with [Vite+](https://viteplus.dev) for the UI's builds and the linter, and one
+Cargo workspace (`Cargo.toml` at the root) for the Rust crates. HA-262 moved the packages into this layout.
+
 ```
-apps/server/src/       the server: one module per feature, grouped in folders by area (bin/huntaway runs it)
-server/              the Rust workspace (cargo build -p ia-shim, cargo test), with these two crates:
+apps/server/         @huntaway/server: the server, one module per feature, grouped in folders by area (bin/huntaway runs it)
+apps/web/            huntaway-app: the UI (React, built with Vite+) and the Electron desktop shell (electron/)
+apps/web/src/        App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
+apps/web/src/api/    the web board's client: packages/client's, for the page's own board
+apps/web/src/components/  React components in a folder per feature (see App modules)
+apps/web/tests/      unit tests (npm test); tests/ui/ browser tests (npm run test:ui)
+apps/mobile/         @huntaway/mobile: the phone app (Expo, React Native, Expo Router)
+packages/client/     @huntaway/client: the API's types and calls, a file per resource, shared by the web and phone apps
 crates/shim/         ia-shim, the per-run supervisor (Rust)
 crates/broker/       huntaway-broker (Rust)
-apps/web/src/             the UI: App.tsx, store.ts, router.ts and the helpers several features use (*.ts)
-apps/web/src/api/         the web board's client: packages/client's, for the page's own board
-packages/client/     the API's types and calls, a file per resource, shared with the mobile app
-apps/web/src/components/  React components in a folder per feature (see App modules)
-apps/web/tests/           unit tests (npm test); apps/web/tests/ui/ browser tests (npm run test:ui)
-scripts/             test servers, ia-api, ui-check and other tools (see README.md)
-docs/                notes like this one
+scripts/             test servers, ia-api, ui-check, install and packaging (see the top README)
+docs/                the guides, and notes like this one
+vite.config.ts       Vite+'s settings for the whole workspace (the linter's)
 ```
+
+The web app's package keeps the name `huntaway-app`: Electron names the desktop app's storage folder after it when it
+runs from a checkout. The release packages keep their own layout (`server-ts/` beside `huntaway`, see
+`scripts/package-server.sh`), which installed desktop apps and hosts look for.
 
 ## Server modules
 
@@ -126,7 +136,7 @@ Helpers several features use stay in `apps/web/src/` (`store.ts`, `router.ts`, `
   tab reads turns from `task/`); what every feature needs goes in `ui/` or `apps/web/src/`.
 - `packages/client/src/` (`@huntaway/client`) has a file per resource, as the server's `api/` has
   (`tasks`, `thread`, `git`, `projects`, `hosts`…), with `http.ts` for the requests themselves. It's
-  plain TypeScript with no DOM (`npm run typecheck` in `app/` checks it on its own), for the mobile
+  plain TypeScript with no DOM (`npm run typecheck` in `apps/web` checks it on its own), for the mobile
   app too: each resource's calls are made from a board's `Http` (`tasksApi(http)`), and
   `createClient(adapter)` puts them together for one board, whose address, token, storage and
   websocket address the adapter gives (an app with several boards makes a client for each).
@@ -163,11 +173,6 @@ The largest files left in the app are `Hosts.tsx`, `Automations.tsx` and `Analyt
 The largest files in `apps/server/src/` (not counting tests) are `db/schema.ts` (1,284 lines, most of them the
 migrations' SQL) and `agent/agent_tools.ts` (1,175), which would be the next to split; then `hosts/broker.ts` (920)
 and `mcp.ts` (867).
-
-### README
-
-`README.md` is 1,700 lines. Its *Concepts* section (about 750 lines) and the hosts and release
-sections could move to `docs/`, leaving the README with the overview, running it and links.
 
 ## Sources
 
