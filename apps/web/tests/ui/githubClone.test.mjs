@@ -107,7 +107,8 @@ async function startDevServer(server) {
       probe.close(() => resolve(port));
     });
   });
-  const vite = spawn(join(appDir, "node_modules/.bin/vite"), ["--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
+  // Vite+'s (`vp dev`): the web app's `vite` is Vite+'s core, which has no command of its own.
+  const vite = spawn(join(appDir, "node_modules/.bin/vp"), ["dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: appDir,
     env: { ...process.env, IA_SERVER: server.url },
     stdio: ["ignore", "pipe", "pipe"],
@@ -124,6 +125,7 @@ async function startDevServer(server) {
     vite.stdout.on("data", read);
     vite.stderr.on("data", read);
     vite.on("exit", (code) => (clearTimeout(timer), reject(new Error(`vite exited with ${code}:\n${log}`))));
+    vite.on("error", (e) => (clearTimeout(timer), reject(e)));
   });
   return { url: `http://127.0.0.1:${port}`, stop: () => vite.kill() };
 }
