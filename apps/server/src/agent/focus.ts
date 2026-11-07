@@ -60,7 +60,8 @@ export function put_in_now(s: Shared, task_id: string): Task | null {
  */
 export function updated(s: Shared, t: Task, body: Record<string, any>): Task {
   const keys = Object.keys(body);
-  const reorder_only = keys.length > 0 && keys.every((k) => k === "position");
+  // Nor moving it into or out of a pen (see db/pens.ts), which is arranging the board too.
+  const reorder_only = keys.length > 0 && keys.every((k) => k === "position" || k === "pen" || k === "pen_id");
   if (reorder_only || (body.now !== undefined && body.now !== null)) return t;
   return put_in_now(s, t.id) ?? t;
 }

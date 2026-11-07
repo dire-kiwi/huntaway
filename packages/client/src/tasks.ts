@@ -364,6 +364,8 @@ export interface Task {
   reminder?: string | null;
   /** When it was put in Now (API 97); unset for the tasks in Later, where tasks start. */
   now_at?: string | null;
+  /** The pen it's in (API 125, see pens.ts), if it's in one. */
+  pen_id?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
   /** The latest summary of its changes (API 84); the first of `summaries`. */
@@ -527,8 +529,11 @@ export const tasksApi = ({ on, storage }: Http) => ({
     on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks${assistant ? "?include_assistant=true" : ""}`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
    *  assistant (API 109), which is off the board. */
-  groupTasks: (h: string, profileId: string, assistant = false) =>
-    on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${assistant ? "?include_assistant=true" : ""}`),
+  /** With `pens`, the profile's pens thread too (API 125). */
+  groupTasks: (h: string, profileId: string, assistant = false, pens = false) => {
+    const q = [assistant && "include_assistant=true", pens && "include_pens=true"].filter(Boolean).join("&");
+    return on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${q ? `?${q}` : ""}`);
+  },
   createGroupTask: (
     h: string,
     profileId: string,
@@ -578,7 +583,11 @@ export const tasksApi = ({ on, storage }: Http) => ({
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { now?: boolean; start_from?: StartFrom | string | null }) => {
+  updateTask: (
+    h: string,
+    id: string,
+    b: Partial<Omit<Task, "start_from">> & { now?: boolean; start_from?: StartFrom | string | null; pen?: string | null },
+  ) => {
     // Noted before the request: the task event it causes reaches every tab before the response does.
     if (b.status) noteMove(storage, h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);

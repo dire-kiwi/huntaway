@@ -27,6 +27,7 @@ import { check_external_links, check_start_from, pick_config } from "./new_task.
 import { check_base_branch } from "./profiles.ts";
 import * as history from "../threads/history.ts";
 import * as thread_batch from "../threads/batch.ts";
+import { task_pen } from "./pens.ts";
 
 export async function list_project_tasks(s: AppState, r: Req) {
   const kind = r.query.kind ?? "task";
@@ -46,7 +47,7 @@ export async function list_profile_scratch(s: AppState, r: Req) {
 
 /** The profile's tasks in no project: its group and scratch tasks, and with `include_assistant` (API 109) its assistant. */
 export async function list_group_tasks(s: AppState, r: Req) {
-  return db.list_group_tasks(s.db(), r.params.id, query_bool(r, "include_assistant"));
+  return db.list_group_tasks(s.db(), r.params.id, query_bool(r, "include_assistant"), query_bool(r, "include_pens"));
 }
 
 export async function get_task(s: AppState, r: Req) {
@@ -104,10 +105,13 @@ export async function update_task_inner(s: AppState, id: string, b: Record<strin
   if (db.is_assistant(current) && typeof b.status === "string" && assistant.NOT_FOR_ASSISTANT.includes(b.status) && b.status !== current.status) {
     throw ApiError.bad("the assistant can't go to review, merge, Done or Backlog");
   }
+  if (db.is_pens_thread(current) && typeof b.status === "string" && assistant.NOT_FOR_ASSISTANT.includes(b.status) && b.status !== current.status) {
+    throw ApiError.bad("the pens thread can't go to review, merge, Done or Backlog");
+  }
   // A task with no changes to merge (and so no pull request) skips the merge and is done.
   const to_merge = b.status === "ready_for_merge" && current.status !== "ready_for_merge" && current.kind === "task";
   // A scratch task, or one that makes only documents (which the board keeps), has nothing to merge.
-  const own_folder = db.is_scratch(current) || db.is_assistants(current) || documents.documents_only(current);
+  const own_folder = db.is_scratch(current) || db.is_assistants(current) || db.is_pens_thread(current) || documents.documents_only(current);
   const nothing_to_merge = to_merge && (own_folder || !(await worktree.has_work_to_merge(s, current)));
   let fields: Fields = pick(b, UPDATABLE);
   check_reminder(current, fields);
@@ -117,6 +121,9 @@ export async function update_task_inner(s: AppState, id: string, b: Record<strin
     if (b.now && current.kind !== "task") throw ApiError.bad("only a task can be in now");
     fields.push(["now_at", b.now ? now() : null]);
   }
+  // Into a pen (by its name or id), or out of it (see db/pens.ts).
+  const pen_id = task_pen(s, current, b);
+  if (pen_id !== undefined) fields.push(["pen_id", pen_id]);
   // A title is text that isn't blank, and a description is text (null clears it): anything else is turned away rather
   // than kept as JSON text, or left to the database to refuse with a 500.
   const title_f = field(fields, "title");

@@ -1,6 +1,6 @@
 // Port of server/src/db/tasks.rs: tasks: the `Task` row, and queries over tasks, their dependencies and merges.
 import { ApiError } from "../http.ts";
-import { ASSISTANT, ROUTINE, SCRATCH, all, get_setting, hidden, json_list, json_to_sql, one, run, tx, value, type Conn } from "../db.ts";
+import { ASSISTANT, PENS, ROUTINE, SCRATCH, all, get_setting, hidden, json_list, json_to_sql, one, run, tx, value, type Conn } from "../db.ts";
 import { err_str, new_id, now } from "../util.ts";
 import { available_configs } from "./profiles.ts";
 import { get_project, list_projects, type Project } from "./projects.ts";
@@ -230,6 +230,8 @@ export interface Task {
    * the host's `now_expiry_hours` goes back (see agent/focus.rs).
    */
   now_at: string | null;
+  /** The pen it's in (see db/pens.ts), if it's in one. */
+  pen_id: string | null;
   /** The latest automatic review of the task's work. */
   review: Review | null;
   /** The first of its `summaries`, for clients from before there could be several (API 84). */
@@ -290,6 +292,14 @@ export function is_routine(t: Task): boolean {
  */
 export function is_assistants(t: Task): boolean {
   return is_assistant(t) || is_routine(t);
+}
+
+/**
+ * A profile's pens thread: its one thread in no project that arranges the profile's pens (see agent/pens.ts), keyed
+ * `S-<n>` among its scratch tasks. Like the assistant, it never goes to review or merge, and it's off the board's columns.
+ */
+export function is_pens_thread(t: Task): boolean {
+  return t.kind === "task" && t.task_type === PENS;
 }
 
 /** The column a task sits in while its agent works. */
@@ -376,6 +386,7 @@ export function Task_from_row(r: any): Task {
     remind_at: r.remind_at ?? null,
     reminder: r.reminder ?? null,
     now_at: r.now_at ?? null,
+    pen_id: r.pen_id ?? null,
     review: json_opt(r.review, Review_from_json),
     summary: summaries[0] ? structuredClone(summaries[0]) : null,
     summaries,
@@ -425,13 +436,14 @@ export function project_threads(c: Conn, project_id: string): Task[] {
  * A profile's group tasks (see Task.group_name), including any whose group is gone. With `assistant`, the profile's assistant
  * too, which is off the board (the sidebar opens it).
  */
-export function list_group_tasks(c: Conn, profile_id: string, assistant: boolean): Task[] {
+export function list_group_tasks(c: Conn, profile_id: string, assistant: boolean, pens = false): Task[] {
   return tasks(
     c,
     `SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
-           ORDER BY position`,
+           AND (?3 OR task_type IS NOT 'pens') ORDER BY position`,
     profile_id,
     assistant,
+    pens,
   );
 }
 
@@ -472,12 +484,43 @@ export function insert_scratch_task(c: Conn, t: NewTask): Task {
   run(
     c,
     `UPDATE tasks SET task_type=?2, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
-           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type=?2) WHERE id=?1`,
+           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?4)) WHERE id=?1`,
     created.id,
     SCRATCH,
     created.profile_id,
+    PENS,
   );
   return get_task(c, created.id)!;
+}
+
+/** A profile's pens thread, if it has one (see is_pens_thread). */
+export function pens_thread(c: Conn, profile_id: string): Task | null {
+  return task(c, "SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND task_type=?2", profile_id, PENS);
+}
+
+/**
+ * Adds a profile's pens thread, numbered among its scratch tasks (`S-<n>`). A profile has one at most (the index
+ * tasks_one_pens_thread), so this fails if it has one; agent/pens.get_or_create checks first.
+ */
+export function insert_pens_thread(c: Conn, t: NewTask): Task {
+  return tx(c, () => {
+    const created = insert_task(c, { ...t, project_id: null, kind: "task" });
+    run(
+      c,
+      `UPDATE tasks SET task_type=?2, title_pinned=1, number=(SELECT COALESCE(MAX(number),0)+1 FROM tasks
+           WHERE profile_id=?3 AND project_id IS NULL AND kind='task' AND task_type IN (?2, ?4)) WHERE id=?1`,
+      created.id,
+      PENS,
+      created.profile_id,
+      SCRATCH,
+    );
+    return get_task(c, created.id)!;
+  });
+}
+
+/** The tasks in a pen, in no particular order. */
+export function pen_tasks(c: Conn, pen_id: string): Task[] {
+  return tasks(c, "SELECT * FROM tasks WHERE pen_id=?1 AND kind='task' ORDER BY project_id, position", pen_id);
 }
 
 /** A profile's assistant, if it has one (see is_assistant). */
@@ -574,7 +617,14 @@ export function task_by_number(c: Conn, project_id: string, number: number): Tas
 
 /** A profile's scratch task by number (its key is `S-<n>`). */
 export function scratch_task_by_number(c: Conn, profile_id: string, number: number): Task | null {
-  return task(c, "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type=?3 AND number=?2", profile_id, number, SCRATCH);
+  return task(
+    c,
+    "SELECT * FROM tasks WHERE profile_id=?1 AND project_id IS NULL AND kind='task' AND task_type IN (?3, ?4) AND number=?2",
+    profile_id,
+    number,
+    SCRATCH,
+    PENS,
+  );
 }
 
 /** A profile's group task by number (its key is `G-<n>`). */
@@ -611,13 +661,14 @@ export function list_all_tasks(c: Conn): Task[] {
  * A profile's tasks, and with `assistant` its assistant (see is_assistant), which is off the board. Never its routine
  * threads (see is_routine).
  */
-export function list_tasks_for_profile(c: Conn, profile_id: string, assistant: boolean): Task[] {
+export function list_tasks_for_profile(c: Conn, profile_id: string, assistant: boolean, pens = false): Task[] {
   return tasks(
     c,
     `SELECT * FROM tasks WHERE profile_id=?1 AND kind='task' AND (?2 OR task_type IS NOT 'assistant') AND task_type IS NOT 'routine'
-           ORDER BY project_id, position`,
+           AND (?3 OR task_type IS NOT 'pens') ORDER BY project_id, position`,
     profile_id,
     assistant,
+    pens,
   );
 }
 
@@ -1017,6 +1068,7 @@ const TASK_COLUMNS = [
   "remind_at",
   "reminder",
   "now_at",
+  "pen_id",
   "review",
   "summary",
   "context",

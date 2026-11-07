@@ -59,8 +59,13 @@ export const PROTOCOL = 1;
  * API 124: Docs (HA-280): each profile's documents, which agents publish through the run's `docs` MCP server
  * (mcp/docs_mcp.ts): `GET /profiles/{id}/docs`, `GET`/`DELETE /profiles/{id}/docs/{slug}` and
  * `GET /profiles/{id}/docs/{slug}/versions/{n}` (see api/docs.ts), and `docs` events when one is published or deleted.
+ *
+ * API 125: Pens (HA-285): a profile's named sets of tasks across its projects, which the profile's board shows as tabs:
+ * `GET`/`POST /profiles/{id}/pens`, `PATCH`/`DELETE /pens/{id}` (see api/pens.ts), tasks' `pen_id` (set with `pen` or
+ * `pen_id` on `PATCH /tasks/{id}`), `pens` events, and each profile's pens thread (`GET /profiles/{id}/pens-thread`,
+ * task type `pens`, off the board unless `/group-tasks?include_pens=1`), which arranges them with the agents' pen tools.
  */
-export const API_VERSION = 124;
+export const API_VERSION = 125;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

@@ -26,6 +26,8 @@ import {
   wants_routines,
   Guards_of,
 } from "./automations.ts";
+import { pen_tool } from "./pens.ts";
+import * as pens_api from "../../api/pens.ts";
 import { change_workflow, resolve_workflow, run_workflow, workflow_creation, workflow_deletion, workflow_json, workflow_update } from "./workflows.ts";
 import * as wf from "../../integrations/workflows.ts";
 
@@ -51,6 +53,38 @@ function create_task_body(): any {
     fanout_id: null,
     start_from: null,
   };
+}
+
+/** The pen `create_task` puts its new task in, checked before the task is made: its name, or null for none. */
+function new_task_pen(args: any): string | null {
+  if (args.pen == null || args.pen === "") return null;
+  try {
+    return db.check_pen_name(args.pen);
+  } catch (e) {
+    throw ToolError.other(te(e).message);
+  }
+}
+
+/** Task `t`, just made, in pen `pen` (by name, made if need be), unless that's null. */
+function into_pen(s: Shared, t: Task, pen: string | null): Task {
+  if (pen === null) return t;
+  const id = pens_api.task_pen(s, t, { pen });
+  return id ? (s.update_task(t.id, [["pen_id", id]]) ?? t) : t;
+}
+
+/**
+ * Which tasks are in pen `pen` (a name or id) on the caller's boards, or with "none" in no pen. Not found if none of them
+ * has it, so linked hosts are asked.
+ */
+function pen_filter(s: Shared, ctx: Ctx, pen: string, profile: string | null): (t: Task) => boolean {
+  if (pen.toLowerCase() === "none") return (t) => t.pen_id === null;
+  const ids = new Set<string>();
+  for (const b of pick_boards(s, ctx, profile)) {
+    const p = db.get_pen(s.db(), pen) ?? db.pen_by_name(s.db(), b.id, pen);
+    if (p && p.profile_id === b.id) ids.add(p.id);
+  }
+  if (!ids.size) throw ToolError.not_found(`pen ${pen}`);
+  return (t) => t.pen_id !== null && ids.has(t.pen_id);
 }
 
 /** Run a board tool on this host. Throws a ToolError. */
@@ -93,7 +127,9 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       // A subproject's agents see its tasks unless they ask for more.
       else if (str_arg("project_id") === null) in_subproject = own_subproject ?? undefined;
       else in_subproject = undefined;
-      const pid = str_arg("project_id") ?? in_subproject?.project_id ?? own_project;
+      const pen = str_arg("pen");
+      // A pen's tasks are from every project, unless it's given one.
+      const pid = str_arg("project_id") ?? in_subproject?.project_id ?? (pen !== null ? null : own_project);
       let tasks: Task[];
       if (pid === null || pid === "all") {
         // Every task on the named board(s), else on the caller's own.
@@ -115,6 +151,10 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
         tasks = db.list_tasks_for_project(s.db(), p.id, "task");
       }
       const status = str_arg("status");
+      if (pen !== null) {
+        const in_pen = pen_filter(s, ctx, pen, profile);
+        tasks = tasks.filter(in_pen);
+      }
       return tasks
         .filter((t) => status === null || t.status === status)
         .filter((t) => in_subproject === undefined || (t.parent_id ?? null) === (in_subproject?.id ?? null))
@@ -149,8 +189,10 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
           labels: args.labels ?? null,
         };
         const marks = new_task_marks(args);
+        const pen = new_task_pen(args);
         let t = api.create_scratch_task_inner(s, board.id, body);
         t = created(s, ctx, t, marks);
+        t = into_pen(s, t, pen);
         return summarize(s, new_in_now(s, args, t));
       }
       let parent: Task | null = sp !== null && sp !== "none" ? subproject_arg(s, ctx, sp, profile) : null;
@@ -184,8 +226,10 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
         start_from: args.start_from ?? null,
       };
       const marks = new_task_marks(args);
+      const pen = new_task_pen(args);
       let t = api.create_task_inner(s, project.id, body);
       t = created(s, ctx, t, marks);
+      t = into_pen(s, t, pen);
       return summarize(s, new_in_now(s, args, t));
     }
     case "update_task": {
@@ -197,6 +241,7 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       const ids = dependency_ids(s, ctx, args.depends_on, profile);
       if (ids !== null) body.depends_on = ids;
       Object.assign(body, reminder_args(args));
+      if (typeof args.pen === "string") body.pen = args.pen;
       let t = await api.update_task_inner(s, found.id, body);
       // Updated by an agent, the task is in "now" like one updated from the board (unless `now` says otherwise).
       t = focus.updated(s, t, body);
@@ -325,6 +370,11 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
     }
     case "run_workflow":
       return run_workflow(s, ctx, args, profile, own_project);
+    case "list_pens":
+    case "create_pen":
+    case "update_pen":
+    case "delete_pen":
+      return pen_tool(s, ctx, tool, args, profile);
     default:
       throw ToolError.other(`unknown tool ${tool}`);
   }

@@ -92,6 +92,7 @@ export function tx<T>(c: Conn, f: () => T, immediate = false): T {
 export * from "./db/docs.ts";
 export * from "./db/links.ts";
 export * from "./db/messages.ts";
+export * from "./db/pens.ts";
 export * from "./db/profiles.ts";
 export * from "./db/projects.ts";
 export * from "./db/runs.ts";
@@ -131,6 +132,11 @@ export const ASSISTANT = "assistant";
  * by a routine (see integrations/automations.ts), off the board.
  */
 export const ROUTINE = "routine";
+/**
+ * The task type of a profile's pens thread (see is_pens_thread): the one thread that arranges the profile's pens (see
+ * db/pens.ts and agent/pens.ts). Made by the board, one per profile, off the board's columns.
+ */
+export const PENS = "pens";
 /**
  * The labels a task can have, each a document its agent writes besides its other work (see Task.labels and
  * agent/documents.rs), in the order the task shows them. They were task types of their own before API 71, which still

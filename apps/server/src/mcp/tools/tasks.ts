@@ -153,6 +153,11 @@ export function summarize(s: Shared, t: Task): any {
   if (db.is_scratch(t)) v.type = db.SCRATCH;
   if (db.is_assistant(t)) v.type = db.ASSISTANT;
   if (db.is_routine(t)) v.type = db.ROUTINE;
+  if (db.is_pens_thread(t)) v.type = db.PENS;
+  if (t.pen_id) {
+    const pen = db.get_pen(s.db(), t.pen_id);
+    if (pen) v.pen = pen.name;
+  }
   if (t.parent_id && t.kind === "task") {
     let sp: Task | null = null;
     try {

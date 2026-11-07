@@ -15,6 +15,7 @@ import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as summary from "../../review/summary.ts";
 import * as workflows from "../../integrations/workflows.ts";
 import { MCP_SERVER_NAME } from "../runner.ts";
+import * as pens from "../pens.ts";
 import { docs_note, gh_note, github_account, uses_docs_server, uses_gh_server } from "./access.ts";
 
 /** What else decides what a run is told (see `instructions`). */
@@ -177,7 +178,7 @@ export const GROUP_TASK_KEY = "G";
 export function key_prefix(task: Task, project: Project | null | undefined): string {
   if (project) return project.key;
   if (task.group_name != null) return GROUP_TASK_KEY;
-  if (db.is_scratch(task)) return db.SCRATCH_TASK_KEY;
+  if (db.is_scratch(task) || db.is_pens_thread(task)) return db.SCRATCH_TASK_KEY;
   if (db.is_assistants(task)) return db.ASSISTANT_TASK_KEY;
   return "T";
 }
@@ -192,7 +193,7 @@ export function start_prompt(task: Task, project: Project | null | undefined, te
   text = text.trim();
   // The assistant is a conversation, not a task to start on: its first prompt is the user's message. A routine thread's
   // is the routine's (see automations/routines.ts).
-  if (db.is_assistants(task)) return text;
+  if (db.is_assistants(task) || db.is_pens_thread(task)) return text;
   let p = "";
   if (is_slash_command(text)) p += `${text}\n\n`;
   p += `# ${key}-${task.number}: ${task.title}\n`;
@@ -291,7 +292,9 @@ export function system_prompt(
     "- While they work, wait for them with `wait` (listing them in `tasks`) rather than ending your turn.\n" +
     "- Run tasks that build on each other one after the other, and independent ones in parallel.";
   let s: string;
-  if (task.kind === "task" && db.is_assistant(task)) {
+  if (task.kind === "task" && db.is_pens_thread(task)) {
+    s = pens.system_prompt(task, tools);
+  } else if (task.kind === "task" && db.is_assistant(task)) {
     const dir = task.work_dir ?? "its own folder";
     s =
       "You are the personal assistant of this Huntaway profile: one long-lasting conversation with the user, " +

@@ -56,6 +56,7 @@ const RERUNNABLE = [
   "get_project",
   "list_automations",
   "list_workflows",
+  "list_pens",
 ];
 
 type CallResult = { ok: any } | { err: string };
@@ -535,7 +536,7 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
       throw fail(msg(e));
     }
   }
-  const fan_out = tool === "list_projects" || (tool === "list_tasks" && (args.project_id === "all" || args.profile === "all"));
+  const fan_out = tool === "list_projects" || tool === "list_pens" || (tool === "list_tasks" && (args.project_id === "all" || args.profile === "all"));
   if (fan_out) {
     // A profile that's only on other hosts isn't found here.
     let all: any[] = [];
@@ -632,6 +633,11 @@ const WORKFLOWS_API = 107;
 
 const WORKFLOW_TOOLS = ["list_workflows", "create_workflow", "update_workflow", "delete_workflow", "run_workflow"];
 
+/** The API version from which hosts have pens (HA-285): the pen tools, and `pen` on create_task, update_task and list_tasks. */
+export const PENS_API = 125;
+
+export const PEN_TOOLS = ["list_pens", "create_pen", "update_pen", "delete_pen"];
+
 export const TASK_FIELD_DEFAULT_LIMIT = 2000;
 export const TASK_FIELD_MAX_LIMIT = 4000;
 
@@ -671,6 +677,9 @@ export function too_old(host: string, api_version: number, tool: string, args: a
     return `${host} runs an older build without the automation tools; ask the user to update it, or to set it up in the project's settings`;
   }
   if (WORKFLOW_TOOLS.includes(tool) && api_version < WORKFLOWS_API) return `${host} runs an older build without workflows; ask the user to update it`;
+  if ((PEN_TOOLS.includes(tool) || (["create_task", "update_task", "list_tasks"].includes(tool) && args.pen != null)) && api_version < PENS_API) {
+    return `${host} runs an older build without pens; ask the user to update it`;
+  }
   if ((needs_project_settings_api(tool, args) && api_version < PROJECT_SETTINGS_API) || (move_repo && api_version < MOVE_REPO_API)) {
     return `${host} runs an older build that can't do this with ${tool}; ask the user to update it, or to make the change in the project's settings`;
   }
