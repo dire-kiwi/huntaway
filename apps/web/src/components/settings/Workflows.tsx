@@ -563,6 +563,34 @@ function edgePath(x1: number, y1: number, x2: number, y2: number) {
   return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 }
 
+type Pt = { x: number; y: number };
+
+/** Points along `edgePath`'s curve, to tell whether a cut crosses it. */
+function edgePoints(x1: number, y1: number, x2: number, y2: number, n = 24): Pt[] {
+  const dx = Math.max(40, Math.abs(x2 - x1) / 2);
+  const [ax, bx, cx, ex] = [x1, x1 + dx, x2 - dx, x2];
+  const pts: Pt[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const u = 1 - t;
+    const w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+    pts.push({ x: w[0] * ax + w[1] * bx + w[2] * cx + w[3] * ex, y: (w[0] + w[1]) * y1 + (w[2] + w[3]) * y2 });
+  }
+  return pts;
+}
+
+/** Whether segments ab and cd cross. */
+function crosses(a: Pt, b: Pt, c: Pt, d: Pt) {
+  const side = (p: Pt, q: Pt, r: Pt) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  return side(c, d, a) * side(c, d, b) < 0 && side(a, b, c) * side(a, b, d) < 0;
+}
+
+/** Whether a knife line drawn through `cut` crosses a curve through `curve`. */
+function cutCrosses(cut: Pt[], curve: Pt[]) {
+  for (let i = 1; i < cut.length; i++) for (let j = 1; j < curve.length; j++) if (crosses(cut[i - 1], cut[i], curve[j - 1], curve[j])) return true;
+  return false;
+}
+
 /**
  * Whether `to` reaches `from` already, so an edge from `from` to `to` would make a loop. A path into a column ends
  * there (the next run starts from it), so going round through a column is no loop.
@@ -609,12 +637,20 @@ function freshId(g: WorkflowGraph, base: string) {
   }
 }
 
-/** Where a new node of height `h` goes: the first place in view clear of the others, or else below them all. */
-function freeSpot(g: WorkflowGraph, h: number, view: HTMLElement | null) {
-  const left = view?.scrollLeft ?? 0;
-  const top = view?.scrollTop ?? 0;
-  const right = left + (view?.clientWidth ?? 800) - NODE_W - 20;
-  const bottom = top + (view?.clientHeight ?? 460) - h - 20;
+/** Where the canvas is looking: its offset on screen, and its zoom. */
+type View = { x: number; y: number; k: number };
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2;
+
+/**
+ * Where a new node of height `h` goes: the first place in view (`area`, in the graph's coordinates) clear of the others,
+ * or else below them all.
+ */
+function freeSpot(g: WorkflowGraph, h: number, area: { left: number; top: number; width: number; height: number }) {
+  const left = Math.max(0, area.left);
+  const top = Math.max(0, area.top);
+  const right = area.left + area.width - NODE_W - 20;
+  const bottom = area.top + area.height - h - 20;
   const clear = (x: number, y: number) =>
     g.nodes.every((n) => x + NODE_W + 20 <= n.x || n.x + NODE_W + 20 <= x || y + h + 20 <= n.y || n.y + nodeH(n) + 20 <= y);
   for (let y = Math.ceil((top + 20) / 10) * 10; y <= bottom; y += 30)
@@ -696,7 +732,14 @@ const NEW_VALUES: { kind: WorkflowNodeKindName; label: string; base: string; mak
 ];
 
 type Selection = { node: string } | { edge: number } | null;
-type Gesture = { kind: "move"; id: string; dx: number; dy: number } | { kind: "link"; from: string; port: string; data: boolean; x: number; y: number } | null;
+type Gesture =
+  | { kind: "move"; id: string; dx: number; dy: number }
+  | { kind: "link"; from: string; port: string; data: boolean; x: number; y: number }
+  /** Dragging the canvas around (from where the pointer and the view were). */
+  | { kind: "pan"; sx: number; sy: number; ox: number; oy: number }
+  /** A right-drag drawing a knife line: the wires it crosses are cut, as in Blender. */
+  | { kind: "cut"; pts: Pt[] }
+  | null;
 
 function WorkflowEditor({
   project,
@@ -726,13 +769,51 @@ function WorkflowEditor({
   const [err, setErr] = useState<string | null>(null);
   const inner = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const confirm = useConfirm();
   const dirty = name !== initialName || JSON.stringify(graph) !== JSON.stringify(initialGraph) || enabled !== (workflow?.enabled ?? true);
 
+  /** Where a pointer is, in the graph's coordinates (the canvas layer's box is moved and scaled by the view). */
   const at = (e: { clientX: number; clientY: number }) => {
     const r = inner.current!.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    const k = viewRef.current.k;
+    return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k };
   };
+  /** Zooms to `k`, keeping the viewport's point (`cx`, `cy`), by default its middle, where it is. */
+  const zoomTo = (k: number, cx?: number, cy?: number) =>
+    setView((v) => {
+      const el = scroller.current;
+      const nk = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, k));
+      const [px, py] = [cx ?? (el?.clientWidth ?? 800) / 2, cy ?? (el?.clientHeight ?? 460) / 2];
+      return { k: nk, x: px - ((px - v.x) * nk) / v.k, y: py - ((py - v.y) * nk) / v.k };
+    });
+  /** Fits the whole graph in view (Blender's View All). */
+  const fit = () => {
+    const el = scroller.current;
+    if (!el || !graph.nodes.length) return setView({ x: 0, y: 0, k: 1 });
+    const minX = Math.min(...graph.nodes.map((n) => n.x));
+    const minY = Math.min(...graph.nodes.map((n) => n.y));
+    const maxX = Math.max(...graph.nodes.map((n) => n.x + NODE_W));
+    const maxY = Math.max(...graph.nodes.map((n) => n.y + nodeH(n)));
+    const k = Math.min(1, Math.max(MIN_ZOOM, Math.min((el.clientWidth - 60) / (maxX - minX), (el.clientHeight - 60) / (maxY - minY))));
+    setView({ k, x: (el.clientWidth - (maxX - minX) * k) / 2 - minX * k, y: (el.clientHeight - (maxY - minY) * k) / 2 - minY * k });
+  };
+  // The wheel zooms around the pointer, as Blender's does (a listener of its own: React's wheel handlers are passive).
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      zoomTo(viewRef.current.k * Math.exp(-step * 0.0015), e.clientX - r.left, e.clientY - r.top);
+    };
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => el.removeEventListener("wheel", wheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (!gesture) return;
     const move = (e: PointerEvent) => {
@@ -741,9 +822,25 @@ function WorkflowEditor({
         const x = Math.max(0, Math.round((p.x - gesture.dx) / 10) * 10);
         const y = Math.max(0, Math.round((p.y - gesture.dy) / 10) * 10);
         setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === gesture.id ? { ...n, x, y } : n)) }));
+      } else if (gesture.kind === "pan") {
+        setView((v) => ({ ...v, x: gesture.ox + e.clientX - gesture.sx, y: gesture.oy + e.clientY - gesture.sy }));
+      } else if (gesture.kind === "cut") {
+        setGesture({ ...gesture, pts: [...gesture.pts, p] });
       } else setGesture({ ...gesture, x: p.x, y: p.y });
     };
     const up = (e: PointerEvent) => {
+      if (gesture.kind === "cut" && gesture.pts.length > 1) {
+        // The wires the knife line crosses go.
+        const cut = gesture.pts;
+        const kept = graph.edges.filter((ed) => {
+          const ends = edgeEnds(ed);
+          return !ends || !cutCrosses(cut, edgePoints(ends.x1, ends.y1, ends.x2, ends.y2));
+        });
+        if (kept.length !== graph.edges.length) {
+          setGraph((g) => ({ ...g, edges: kept }));
+          setSel(null);
+        }
+      }
       if (gesture.kind === "link") {
         const at = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
         if (gesture.data) {
@@ -793,7 +890,12 @@ function WorkflowEditor({
   const addNode = (spec: { base: string; make: (g: WorkflowGraph) => Partial<WorkflowNode> }) => {
     const id = freshId(graph, spec.base);
     const node = { ...spec.make(graph), id, x: 0, y: 0 } as WorkflowNode;
-    Object.assign(node, freeSpot(graph, nodeH(node), scroller.current));
+    const el = scroller.current;
+    const v = viewRef.current;
+    Object.assign(
+      node,
+      freeSpot(graph, nodeH(node), { left: -v.x / v.k, top: -v.y / v.k, width: (el?.clientWidth ?? 800) / v.k, height: (el?.clientHeight ?? 460) / v.k }),
+    );
     setGraph((g) => ({ ...g, nodes: [...g.nodes, node] }));
     setSel({ node: id });
   };
@@ -855,6 +957,14 @@ function WorkflowEditor({
   const selectedEdge = sel && "edge" in sel ? graph.edges[sel.edge] : undefined;
   const portPos = (n: WorkflowNode, port: string) => ({ x: n.x + NODE_W, y: n.y + portY(Math.max(0, portsOf(n).indexOf(port))) });
   const outPos = (n: WorkflowNode, k: string) => ({ x: n.x + NODE_W, y: n.y + outY(n, k) });
+  /** Where an edge's curve starts and ends. */
+  function edgeEnds(e: WorkflowEdge) {
+    const a = byId.get(e.from);
+    const b = byId.get(e.to);
+    if (!a || !b) return null;
+    const p = e.input != null ? outPos(a, e.port) : portPos(a, e.port);
+    return { x1: p.x, y1: p.y, x2: b.x, y2: b.y + (e.input != null ? inY(b, e.input) : IN_Y) };
+  }
 
   return (
     <Modal title={workflow ? `Edit ${workflow.name}` : "New workflow"} onClose={close} onSubmit={save} width="max-w-[1400px]">
@@ -876,7 +986,9 @@ function WorkflowEditor({
               <span className={KIND_STYLE[s.kind].tone}>{KIND_STYLE[s.kind].icon}</span> {s.label}
             </Button>
           ))}
-          <span className="ml-auto text-[11.5px] text-faint">Drag from a step's outcome to another step to connect them. Click a line to remove it.</span>
+          <span className="ml-auto text-[11.5px] text-faint">
+            Drag from a step's outcome to another step to connect them. Right-drag across lines to cut them; drag the background to pan, scroll to zoom.
+          </span>
         </div>
         {columns && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -892,13 +1004,33 @@ function WorkflowEditor({
         <div className="flex min-h-0 gap-3 narrow:flex-col">
           <div
             ref={scroller}
-            className="h-[460px] min-w-0 flex-1 overflow-auto rounded-md border border-line bg-[radial-gradient(circle,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:20px_20px]"
+            data-testid="workflow-viewport"
+            className={clsx(
+              "relative h-[460px] min-w-0 flex-1 touch-none overflow-hidden rounded-md border border-line bg-[radial-gradient(circle,rgba(255,255,255,0.06)_1px,transparent_1px)]",
+              gesture?.kind === "pan" ? "cursor-grabbing" : gesture?.kind === "cut" ? "cursor-crosshair" : "cursor-default",
+            )}
+            style={{ backgroundSize: `${20 * view.k}px ${20 * view.k}px`, backgroundPosition: `${view.x}px ${view.y}px` }}
+            onContextMenu={(e) => e.preventDefault()}
             onPointerDown={(e) => {
-              if (e.target === e.currentTarget || e.target === inner.current) setSel(null);
+              const background = e.target === e.currentTarget || e.target === inner.current || (e.target as Element).tagName === "svg";
+              if (e.button === 2) {
+                // Right-drag cuts wires (Blender's knife, with Ctrl there), over nodes as well.
+                e.preventDefault();
+                setGesture({ kind: "cut", pts: [at(e)] });
+              } else if (e.button === 1 || (e.button === 0 && background)) {
+                e.preventDefault();
+                if (e.button === 0) setSel(null);
+                setGesture({ kind: "pan", sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y });
+              }
             }}
           >
-            <div ref={inner} className="relative select-none" style={{ width, height }} data-testid="workflow-canvas">
-              <svg className="pointer-events-none absolute inset-0" width={width} height={height}>
+            <div
+              ref={inner}
+              className="absolute top-0 left-0 select-none"
+              style={{ width, height, transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})`, transformOrigin: "0 0" }}
+              data-testid="workflow-canvas"
+            >
+              <svg className="pointer-events-none absolute inset-0 overflow-visible" width={width} height={height}>
                 {graph.edges.map((e, i) => {
                   const a = byId.get(e.from);
                   const b = byId.get(e.to);
@@ -911,7 +1043,11 @@ function WorkflowEditor({
                     <g
                       key={`${e.from}-${e.port}-${e.to}-${e.input ?? ""}`}
                       className="pointer-events-auto cursor-pointer"
-                      onPointerDown={(ev) => (ev.stopPropagation(), setSel({ edge: i }))}
+                      onPointerDown={(ev) => {
+                        if (ev.button !== 0) return;
+                        ev.stopPropagation();
+                        setSel({ edge: i });
+                      }}
                     >
                       <path
                         d={d}
@@ -944,6 +1080,16 @@ function WorkflowEditor({
                       />
                     );
                   })()}
+                {gesture?.kind === "cut" && (
+                  <polyline
+                    points={gesture.pts.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill="none"
+                    className="stroke-red-400"
+                    strokeWidth={1.5 / view.k}
+                    strokeDasharray={`${5 / view.k} ${4 / view.k}`}
+                    data-testid="workflow-cut"
+                  />
+                )}
               </svg>
               {graph.nodes.map((n) => {
                 const style = KIND_STYLE[n.kind];
@@ -1052,6 +1198,29 @@ function WorkflowEditor({
                   </div>
                 );
               })}
+            </div>
+            <div
+              className="absolute right-2 bottom-2 flex items-center gap-0.5 rounded-md border border-line bg-panel/90 p-0.5 text-[11.5px] shadow-sm"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <Button size="sm" variant="ghost" title="Zoom out" onClick={() => zoomTo(view.k / 1.25)}>
+                −
+              </Button>
+              <button
+                type="button"
+                className="w-11 text-center text-muted tabular-nums hover:text-fg"
+                title="Back to 100%"
+                data-testid="workflow-zoom"
+                onClick={() => zoomTo(1)}
+              >
+                {Math.round(view.k * 100)}%
+              </button>
+              <Button size="sm" variant="ghost" title="Zoom in" onClick={() => zoomTo(view.k * 1.25)}>
+                +
+              </Button>
+              <Button size="sm" variant="ghost" title="Fit the whole workflow in view" onClick={fit}>
+                Fit
+              </Button>
             </div>
           </div>
           <div className="w-80 shrink-0 space-y-3 overflow-y-auto narrow:w-full md:max-h-[460px]" data-testid="workflow-inspector">

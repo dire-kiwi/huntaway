@@ -58,3 +58,52 @@ test("a wire into an input that goes from a template goes with it", async () => 
     await ui.run(["gone [data-edge='text1.text->compose1.b']", "gone [data-input='compose1.b']"]);
   });
 });
+
+const transform = (page) => page.locator("[data-testid=workflow-canvas]").evaluate((el) => el.style.transform);
+
+// HA-276: the canvas pans and zooms, and a right-drag across wires cuts them, as Blender's node editor does.
+test("the canvas pans and zooms, and a right-drag cuts the wires it crosses", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}/settings/workflows`, "click role=button[name='Open a PR when done']", "wait [data-edge='start.done->commits']"]);
+    const box = await page.locator("[data-testid=workflow-viewport]").boundingBox();
+    // The wheel zooms around the pointer.
+    await page.mouse.move(box.x + 200, box.y + 200);
+    await page.mouse.wheel(0, 400);
+    await ui.run(["assert document.querySelector('[data-testid=workflow-zoom]').textContent !== '100%'"]);
+    assert.match(await transform(page), /scale\(0\.\d+\)/);
+    // Dragging the background pans.
+    const before = await transform(page);
+    await page.mouse.move(box.x + box.width - 60, box.y + 30);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 160, box.y + 80, { steps: 5 });
+    await page.mouse.up();
+    assert.notEqual(await transform(page), before);
+    // Fit brings the whole workflow into view.
+    await page.getByTitle("Fit the whole workflow in view").click();
+    for (const id of ["start", "commits", "pr", "review", "attention"]) {
+      const b = await page.locator(`[data-node=${id}]`).boundingBox();
+      assert.ok(b.x >= box.x && b.x + b.width <= box.x + box.width && b.y >= box.y && b.y + b.height <= box.y + box.height, `${id} is in view`);
+    }
+    // Zoomed out, wiring a value still lands on its input.
+    await page.getByRole("button", { name: "Text", exact: true }).click();
+    await ui.run(["wait [data-node=text1]"]);
+    await page.getByTitle("Fit the whole workflow in view").click();
+    await drag(page, "[data-output='text1.text']", "[data-input='start.prompt']");
+    await ui.run(["wait [data-edge='text1.text->start.prompt']"]);
+    // A right-drag across the start's line to the check cuts it, and no menu opens.
+    const edge = await page.locator("[data-edge='start.done->commits']").boundingBox();
+    const [cx, cy] = [edge.x + edge.width / 2, edge.y + edge.height / 2];
+    await page.mouse.move(cx, cy - 40);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(cx, cy, { steps: 4 });
+    await page.mouse.move(cx, cy + 40, { steps: 4 });
+    await ui.run(["assert !!document.querySelector('[data-testid=workflow-cut]')"]);
+    await page.mouse.up({ button: "right" });
+    await ui.run([
+      "gone [data-edge='start.done->commits']",
+      "assert !document.querySelector('[data-testid=workflow-cut]')",
+      "wait [data-edge='commits.yes->pr']",
+    ]);
+  });
+});

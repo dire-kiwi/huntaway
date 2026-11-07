@@ -210,7 +210,9 @@ start}` or `{kind: "send_to_task", task_id, message}`. Changes and runs are broa
 
 A project's workflows (API 107, in its settings under _Workflows_; agents' tools `list_workflows`,
 `create_workflow`, `update_workflow`, `delete_workflow` and `run_workflow`) are graphs of steps that
-run on its tasks. The editor draws them as nodes: drag from a step's outcome to the next step. From
+run on its tasks. The editor draws them as nodes: drag from a step's outcome to the next step. As in
+Blender's node editor, drag the background (or middle-drag) to pan, scroll to zoom (_Fit_ shows it
+all), and right-drag across lines to cut them. From
 API 124 a workflow can hold a task's whole way across the board, column by column.
 
 - **Columns.** A _column_ step is a column of the board, with the prompt the task's agent is sent
