@@ -257,16 +257,15 @@ function asks_for_us(p: ReturnType<typeof parse>): boolean {
   return !p.response && p.questions.some(([name, type]) => lower(name) === SERVICE && (type === PTR || type === ANY));
 }
 
-/**
- * Join the mDNS group on each LAN address. Linux keeps a membership per interface, not per address, and drops it with
- * the interface, so this is done again every so often for all of them: one that's still joined fails (EADDRINUSE, as
- * after the interface was given a new address), and one dropped (the interface went and came back) is joined again.
- */
+/** Join the mDNS group on each LAN address (one joined already, as two addresses on one interface are, fails). */
 function join(sock: dgram.Socket) {
   for (const ip of lan_addresses()) {
     try {
       sock.addMembership(MDNS_GROUP, ip);
-    } catch {}
+    } catch (e: any) {
+      // A socket's memberships are capped (net.ipv4.igmp_max_memberships, 20 by default).
+      if (e?.code !== "EADDRINUSE") log.warn(`joining mDNS on ${ip}: ${e?.message ?? e}`);
+    }
   }
 }
 
@@ -311,21 +310,67 @@ function listen(port: number, address?: string): Promise<dgram.Socket | null> {
   });
 }
 
+/** A responder (see `respond`): the port it answers on, how many times its socket was renewed, and how to stop it. */
+export interface Responder {
+  port: number;
+  renewed: number;
+  close(): void;
+}
+
+export interface RespondOpts {
+  /** For tests, which answer direct queries on loopback only. */
+  port?: number;
+  address?: string;
+  /** How often the socket is renewed. */
+  renew_ms?: number;
+}
+
 /**
- * Advertise `ad()` on mDNS until the returned socket is closed: answer queries for the service on the group, and
- * direct ones (from another port than 5353, such as a hub asking a Tailscale peer) to whoever asked, if that's on a
- * private network. `port` and `address` are for tests, which answer on loopback only.
+ * Advertise `ad()` on mDNS until closed: answer queries for the service on the group, and direct ones (from another
+ * port than 5353, such as a hub asking a Tailscale peer) to whoever asked, if that's on a private network.
+ *
+ * Every `renew_ms` the socket is swapped for a new one, joined on the networks there are then. Linux keeps a socket's
+ * membership per interface, and keeps it for an interface that has gone until the socket closes, up to 20 a socket
+ * (net.ipv4.igmp_max_memberships): a VPN's `tun0` that reconnects, or a dock's Ethernet plugged in again, is a new
+ * interface each time, even with the same address, so one socket would soon be unable to join any. (Renewing whether
+ * or not the addresses changed: an interface that came back with the same address looks the same.) The new socket is
+ * bound before the old one closes, so no query falls between them.
  */
-export async function respond(ad: () => Ad, port = MDNS_PORT, address?: string): Promise<dgram.Socket | null> {
+export async function respond(ad: () => Ad, o: RespondOpts = {}): Promise<Responder | null> {
+  const first = await answer_on(ad, o.port ?? MDNS_PORT, o.address);
+  if (!first) return null;
+  let sock = first;
+  let closed = false;
+  const handle: Responder = {
+    port: first.address().port,
+    renewed: 0,
+    close: () => {
+      closed = true;
+      clearInterval(t);
+      sock.close();
+    },
+  };
+  const renew = async () => {
+    const next = await answer_on(ad, handle.port, o.address);
+    // Closed meanwhile, or the port couldn't be had again (the old socket goes on).
+    if (!next || closed) return next?.close();
+    sock.close();
+    sock = next;
+    handle.renewed++;
+  };
+  const t = setInterval(() => background("renewing the discovery socket", renew()), o.renew_ms ?? 30_000);
+  t.unref();
+  return handle;
+}
+
+/** A socket on `port` that answers queries for `ad()`, joined on the networks there are now. */
+async function answer_on(ad: () => Ad, port: number, address?: string): Promise<dgram.Socket | null> {
   const sock = await listen(port, address);
   if (!sock) return null;
   const send = serial_sender(sock);
   if (!address) {
     sock.setMulticastTTL(255);
     join(sock);
-    const t = setInterval(() => join(sock), 30_000);
-    t.unref();
-    sock.on("close", () => clearInterval(t));
   }
   sock.on("message", (msg, from) => {
     let p;

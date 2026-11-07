@@ -26,9 +26,9 @@ const ad = (host_id: string, port: number): Ad => ({ host_id, host_name: `name-$
 
 /** A host advertising `a` to direct queries on loopback (tests can't count on multicast). */
 async function responder(a: Ad) {
-  const sock = await respond(() => a, 0, "127.0.0.1");
+  const sock = await respond(() => a, { port: 0, address: "127.0.0.1" });
   assert.ok(sock);
-  return { sock, port: sock.address().port };
+  return { sock, port: sock.port };
 }
 
 const just = (port: number) => ({ port, targets: ["127.0.0.1"], peers: async () => null, wait_ms: 300 });
@@ -206,4 +206,25 @@ test("a responder's answers to queries that come together don't interleave", asy
   const send = serial_sender(sock);
   await Promise.all([send(query(), ["10.9.0.1", "10.9.1.1"]), send(query(), ["10.9.0.1", "10.9.1.1"])]);
   assert.deepEqual(out, ["10.9.0.1", "10.9.1.1", "10.9.0.1", "10.9.1.1"]);
+});
+
+// A socket keeps memberships of interfaces that have gone until it closes, and has room for 20: it's renewed.
+test("a responder renews its socket every so often, on the same port, and answers all along", async () => {
+  const r = await respond(() => ad("h4", 7004), { port: 0, address: "127.0.0.1", renew_ms: 50 });
+  assert.ok(r);
+  try {
+    for (let i = 0; i < 3; i++) {
+      const renewed = r.renewed;
+      while (r.renewed === renewed) await new Promise((ok) => setTimeout(ok, 10));
+      const found = await discover({ ...just(r.port), wait_ms: 150 });
+      assert.deepEqual(
+        found.hosts.map((h) => h.url),
+        ["http://127.0.0.1:7004"],
+      );
+    }
+  } finally {
+    r.close();
+  }
+  // Closed, it answers no more.
+  assert.deepEqual((await discover({ ...just(r.port), wait_ms: 150 })).hosts, []);
 });
