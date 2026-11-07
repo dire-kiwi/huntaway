@@ -74,8 +74,11 @@ export const PROTOCOL = 1;
  * task type `pens`, off the board unless `/group-tasks?include_pens=1`), which arranges them with the agents' pen tools.
  * Pens replace the Now/Later split (API 97), which is gone: tasks have no `now_at`, `now` on `PATCH /tasks/{id}` and
  * the task tools is ignored, and `/settings` has no `now_expiry_hours`.
+ *
+ * API 128: host discovery (HA-289): `GET /hosts/discover` lists hosts found on the LAN and Tailscale (see
+ * hosts/discovery.ts), which hosts advertise over mDNS (`_huntaway._tcp.local`) unless started with `--no-discovery`.
  */
-export const API_VERSION = 127;
+export const API_VERSION = 128;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

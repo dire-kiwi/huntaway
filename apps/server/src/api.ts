@@ -66,6 +66,7 @@ export function router(s: AppState): Router {
   host_routes(r);
   r.route("/hosts", { GET: hub.list_hosts, POST: hub.add_host });
   r.route("/hosts/join", { GET: hub.join_info });
+  r.route("/hosts/discover", { GET: hub.discover_hosts });
   r.route("/hosts/ssh-key", { GET: hub.ssh_key });
   r.route("/hosts/ssh", { POST: hub.add_ssh_host });
   r.route("/hosts/copy-claude-config", { POST: hub.copy_claude_config });

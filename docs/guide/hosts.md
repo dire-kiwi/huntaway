@@ -41,6 +41,17 @@ Settings → Hosts offers three ways to link a host:
   is needed, which suits cloud VMs or machines behind NAT. The hub's requests are tunnelled
   back over that connection.
 
+**Nearby hosts.** Settings → Hosts also lists hosts it finds on this machine's networks and on Tailscale that aren't
+on the board yet (`GET /api/hosts/discover`, API 128); **Link** opens _By URL and token_ with the host's URL filled in,
+so only its token is left to paste. Each host that listens beyond localhost (not `--host 127.0.0.1`, so not an SSH
+host) advertises itself over mDNS as the DNS-SD service `_huntaway._tcp.local`, with its id, name, port and version
+and never its token (`avahi-browse -r _huntaway._tcp` shows them too); `--no-discovery` (`IA_DISCOVERY=0`) stops it.
+mDNS passes ufw's and firewalld's default rules, and shares UDP port 5353 with avahi and browsers. Container and VM
+bridges (`docker0`, `br-…`, `virbr…`) are left out. Tailscale carries no multicast, so the board asks each online peer
+in `tailscale status --json` (`IA_TAILSCALE_BIN` for the CLI's path) directly, and tries its port 7878's
+`/api/health`, which finds a host from before API 128 too (named by its Tailscale name; a host on another port is
+found this way only if it answers the direct query).
+
 Both ends of a link ping each other every 20 seconds, and drop a connection they've heard nothing
 from for a minute (one that died without closing, say after a laptop slept or a NAT mapping
 expired), so the host is shown offline and the link is made again. `GET /api/hosts` gives each

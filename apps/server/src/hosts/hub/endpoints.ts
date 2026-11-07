@@ -15,6 +15,7 @@ import { API_COMPAT, API_VERSION, BUILD_ID, VERSION } from "../proto.ts";
 import * as relay from "../relay.ts";
 import * as broker from "../broker.ts";
 import * as ssh from "../ssh.ts";
+import * as discovery from "../discovery.ts";
 import { changed, http_call, misplaced, spawn_outbound } from "../hub.ts";
 
 /** A JSON answer, whatever the JSON value (a string too, which a `Reply` would send as text). */
@@ -211,6 +212,23 @@ export async function add_host(s: AppState, r: Req) {
   spawn_outbound(s, link);
   changed(s);
   return link;
+}
+
+/**
+ * Hosts on the LAN and Tailscale (see hosts/discovery.ts), but not this one: each with `linked` if it's linked already
+ * (by its id, or by its URL for one whose id isn't known).
+ */
+export async function discover_hosts(s: AppState, r: Req) {
+  devices.board_only(r.device, "find hosts");
+  const { hosts, tailscale } = await discovery.discover();
+  return { tailscale, hosts: mark_discovered(s, hosts) };
+}
+
+export function mark_discovered(s: AppState, hosts: discovery.Found[]) {
+  const links = db.list_links(s.db());
+  const ids = new Set(links.map((l) => l.id));
+  const urls = new Set(links.map((l) => l.url?.replace(/\/+$/, "")).filter(Boolean));
+  return hosts.filter((h) => h.host_id !== s.host_id).map((h) => ({ ...h, linked: (h.host_id !== null && ids.has(h.host_id)) || urls.has(h.url) }));
 }
 
 /** Rename a linked host, or let its agents use this board (or not). */

@@ -71,6 +71,19 @@ export interface Host {
   uplink?: boolean;
 }
 
+/** A host found on the LAN or Tailscale (API 128, `GET /hosts/discover`), to link by URL and token. */
+export interface DiscoveredHost {
+  /** Null for one that answered on Tailscale at its default port only (a host from before API 128). */
+  host_id: string | null;
+  name: string;
+  url: string;
+  via: "lan" | "tailscale";
+  version: string | null;
+  api_version: number | null;
+  /** Linked to this board already. */
+  linked: boolean;
+}
+
 export interface DirListing {
   path: string;
   parent: string | null;
@@ -103,6 +116,8 @@ export const hostsApi = ({ del, get, on, patch, post }: Http) => ({
   sshKey: () => get<{ public_key: string }>("/hosts/ssh-key"),
   addSshHost: (b: { target: string; ssh_port?: number; remote_port?: number }) => post<{ id: string; name: string; started: boolean }>("/hosts/ssh", b),
   joinInfo: () => get<{ hub_token: string; host_token: string; command: string }>("/hosts/join"),
+  /** Hosts on the LAN and Tailscale (API 128); `tailscale` is whether this board's machine is on Tailscale. */
+  discoverHosts: () => get<{ hosts: DiscoveredHost[]; tailscale: boolean }>("/hosts/discover"),
   /** Copy a Claude config (API 20 hosts) or a profile's config (older hosts) to another host. */
   copyClaudeConfig: (b: { config?: string; profile?: string; from_host: string; to_host: string; config_dir?: string; overwrite?: boolean }) =>
     post<{ ok: boolean; files: string[] }>("/hosts/copy-claude-config", b),
