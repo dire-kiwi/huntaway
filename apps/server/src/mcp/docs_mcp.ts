@@ -26,10 +26,15 @@ const INSTRUCTIONS =
   "Docs keeps Markdown documents for the user to read on this Huntaway board: reports, plans, research, write-ups. " +
   "Publish with `publish_document` (one or more pages; nested paths like `plan/phase-1` make a nested menu). Every " +
   'publish creates a new version, so you can revise freely; `mode: "merge"` keeps the other pages of the previous ' +
-  'version. Use format "mdx" for components such as callouts (call `list_components` for the list). Form fields ' +
-  "(`<Approval />`, inputs and the like) show read-only here and collect no answers, so ask the user in the thread " +
-  "for a decision or input instead. Documents belong to your profile on this board. Always give the reader the URL " +
-  "returned by `publish_document`.";
+  "version. If you can start sub-agents, have one write and publish the document: give it what the document should " +
+  "say, let it look up components, publish and fix any problems, and have it return the URL. That keeps the component " +
+  "reference and the page sources out of your own context. Plain Markdown needs no reference. For components " +
+  '(callouts, collapsible sections, form fields), call `list_components` for their names, props and examples, and use format "mdx". ' +
+  "Form fields (`<Approval />`, inputs and the like) show read-only here and collect no answers, so ask the user in the " +
+  "thread for a decision or input instead. `publish_document` is the check: it rejects a page it can't publish and says " +
+  "why, and returns warnings (an unknown component, a bad prop) with the URL; fix them and publish again. Don't install " +
+  "or run npm packages, renderers or other tools to check pages. Documents belong to your profile on this board. Always " +
+  "give the reader the URL returned by `publish_document`.";
 
 type Renderer = typeof import("@dire-kiwi/docs-render");
 let loaded: Promise<Renderer> | null = null;
