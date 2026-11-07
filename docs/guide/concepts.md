@@ -330,7 +330,9 @@
     head's required checks passed (all of its checks, when none is required), someone other than
     the agent's GitHub account commented or reviewed, it started to conflict with its base branch,
     or (always) it was merged or closed. `pull_request_events` picks some of `checks_failed`,
-    `checks_passed`, `comments` and `conflicts` (all by default). The call returns `ended:
+    `checks_passed`, `comments` and `conflicts` (all by default). A wait on checks also ends when
+    it conflicts and none of its checks is running, since GitHub runs no `pull_request` workflows
+    on a conflicting pull request, so they'd never come. The call returns `ended:
     "pull_request"` with `pull_request`: its state (merge state, review decision, checks' outcome
     with the failed ones' names and links, and those still running), the events, and the new
     comments with their author, kind (comment, review or review comment), file and line, and their

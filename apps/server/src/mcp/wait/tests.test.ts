@@ -459,6 +459,29 @@ test("ends_on_news_about_its_pull_request", () =>
     assert.deepEqual(pr_events(await ended_of(wait(s, run, task, "c4", req))), ["merged"]);
   }));
 
+test("a_wait_on_checks_ends_when_its_pull_request_conflicts_and_none_will_run", () =>
+  faked(async () => {
+    // HA-287: HA-276 waited on PR #222's checks alone, which conflicted with master, so GitHub never ran them.
+    const [s, task, run] = running();
+    const conflicting = (checks: Array<[string, string, string, boolean]>) => {
+      const v = response("me", "a1", checks, []);
+      v.data.repository.pullRequest.mergeable = "CONFLICTING";
+      return v;
+    };
+    const gh = new Github(conflicting([]));
+    const on_checks = (seconds: number): Request => ({ ...secs(seconds), pull_request: { target: o_r(7), events: ["checks_failed", "checks_passed"] } });
+    const started = performance.now();
+    const ended = await ended_of(wait(s, run, task, "c1", on_checks(30)));
+    assert.deepEqual(pr_events(ended), ["conflicts"]);
+    assert.equal((ended as any).news.mergeable, "conflicting");
+    assert.ok(performance.now() - started < 5000);
+    // Still conflicting, the next wait on checks ends too.
+    assert.deepEqual(pr_events(await ended_of(wait(s, run, task, "c2", on_checks(30)))), ["conflicts"]);
+    // Checks that are running end it themselves.
+    gh.set({ ok: conflicting([["test", "IN_PROGRESS", "", false]]) });
+    assert.deepEqual(await ended_of(wait(s, run, task, "c3", on_checks(0.5))), { kind: "Timeout" });
+  }));
+
 test("a_pull_request_that_cant_be_read_doesnt_start_the_wait", () =>
   faked(async () => {
     const [s, task, run] = running();
