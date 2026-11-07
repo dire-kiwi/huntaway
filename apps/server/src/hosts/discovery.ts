@@ -12,6 +12,7 @@
 import { execFile } from "node:child_process";
 import dgram from "node:dgram";
 import os from "node:os";
+import { background } from "../util.ts";
 
 const log = {
   info: (m: string) => console.error(new Date().toISOString(), " INFO huntaway::hosts::discovery:", m),
@@ -256,15 +257,40 @@ function asks_for_us(p: ReturnType<typeof parse>): boolean {
   return !p.response && p.questions.some(([name, type]) => lower(name) === SERVICE && (type === PTR || type === ANY));
 }
 
-/** Join the mDNS group on each LAN address not joined yet (they come and go with networks). */
-function join(sock: dgram.Socket, joined: Set<string>) {
+/**
+ * Join the mDNS group on each LAN address. Linux keeps a membership per interface, not per address, and drops it with
+ * the interface, so this is done again every so often for all of them: one that's still joined fails (EADDRINUSE, as
+ * after the interface was given a new address), and one dropped (the interface went and came back) is joined again.
+ */
+function join(sock: dgram.Socket) {
   for (const ip of lan_addresses()) {
-    if (joined.has(ip)) continue;
     try {
       sock.addMembership(MDNS_GROUP, ip);
-      joined.add(ip);
     } catch {}
   }
+}
+
+/** What `send_out` needs of a socket (a fake in tests). */
+export type Sends = Pick<dgram.Socket, "setMulticastInterface" | "send">;
+
+/**
+ * Send `msg` to the group out of each of `ips` (those current now, not when the socket was joined), one after another:
+ * `send` looks its address up on a later tick, so setting the next interface before the last send went would send them
+ * all out of the last one.
+ */
+export async function send_out(sock: Sends, msg: Buffer, ips: string[], port = MDNS_PORT, group = MDNS_GROUP): Promise<void> {
+  for (const ip of ips) {
+    try {
+      sock.setMulticastInterface(ip);
+      await new Promise<void>((ok) => sock.send(msg, port, group, () => ok()));
+    } catch {}
+  }
+}
+
+/** `send_out` on `sock`, a send at a time: two queries can come together, and their sends mustn't interleave. */
+export function serial_sender(sock: Sends): (msg: Buffer, ips: string[]) => Promise<void> {
+  let last = Promise.resolve();
+  return (msg, ips) => (last = last.then(() => send_out(sock, msg, ips)));
 }
 
 /** A UDP socket on `port` (shared with others on it), or null if it can't have it. */
@@ -293,11 +319,11 @@ function listen(port: number, address?: string): Promise<dgram.Socket | null> {
 export async function respond(ad: () => Ad, port = MDNS_PORT, address?: string): Promise<dgram.Socket | null> {
   const sock = await listen(port, address);
   if (!sock) return null;
-  const joined = new Set<string>();
+  const send = serial_sender(sock);
   if (!address) {
     sock.setMulticastTTL(255);
-    join(sock, joined);
-    const t = setInterval(() => join(sock, joined), 60_000);
+    join(sock);
+    const t = setInterval(() => join(sock), 30_000);
     t.unref();
     sock.on("close", () => clearInterval(t));
   }
@@ -314,14 +340,9 @@ export async function respond(ad: () => Ad, port = MDNS_PORT, address?: string):
       if (is_private(from.address)) sock.send(response(ad(), lan_addresses(), p.id), from.port, from.address);
       return;
     }
-    // On the group, out of each network we're on, for the hubs listening there.
-    const res = response(ad(), lan_addresses());
-    for (const ip of joined) {
-      try {
-        sock.setMulticastInterface(ip);
-        sock.send(res, MDNS_PORT, MDNS_GROUP);
-      } catch {}
-    }
+    // On the group, out of each network we're on now, for the hubs listening there.
+    const ips = lan_addresses();
+    background("answering a discovery query", send(response(ad(), ips), ips));
   });
   return sock;
 }
@@ -405,15 +426,9 @@ export async function discover(o: DiscoverOpts = {}): Promise<{ hosts: Found[]; 
   const group = o.targets ? null : await listen(MDNS_PORT);
   if (group) {
     group.on("message", heard);
-    const joined = new Set<string>();
-    join(group, joined);
+    join(group);
     group.setMulticastTTL(255);
-    for (const ip of joined) {
-      try {
-        group.setMulticastInterface(ip);
-        group.send(query(), MDNS_PORT, MDNS_GROUP);
-      } catch {}
-    }
+    await send_out(group, query(), lan_addresses());
   }
   // Direct queries go from a port of our own, not 5353, so they're answered to it (RFC 6762 §6.7's legacy unicast).
   const direct = await listen(0);

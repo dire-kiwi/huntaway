@@ -6,7 +6,21 @@ import type { AddressInfo } from "node:net";
 import * as testing from "../testing.ts";
 import * as hub from "./hub.ts";
 import * as db from "../db.ts";
-import { discover, hosts_in, is_private, lan_addresses, parse, parse_tailscale_status, query, respond, response, SERVICE, type Ad } from "./discovery.ts";
+import {
+  discover,
+  hosts_in,
+  is_private,
+  lan_addresses,
+  parse,
+  parse_tailscale_status,
+  query,
+  respond,
+  response,
+  send_out,
+  serial_sender,
+  SERVICE,
+  type Ad,
+} from "./discovery.ts";
 
 const ad = (host_id: string, port: number): Ad => ({ host_id, host_name: `name-${host_id}`, port, version: "1.2.3", api_version: 128 });
 
@@ -164,4 +178,32 @@ test("GET /hosts/discover leaves out this host, marks linked ones, and is refuse
     ],
   );
   await assert.rejects(hub.discover_hosts(s, { device: { id: "d" } } as any), /paired device/);
+});
+
+/** A socket whose sends go out of the interface set when they're sent, a tick after `send` is called, as dgram's do. */
+function fake_socket() {
+  const out: string[] = [];
+  let iface = "";
+  const sock = {
+    setMulticastInterface: (ip: string) => void (iface = ip),
+    send: (_msg: Buffer, _port: number, _group: string, cb: () => void) =>
+      process.nextTick(() => {
+        out.push(iface);
+        cb();
+      }),
+  } as any;
+  return { sock, out };
+}
+
+test("multicast goes out of each network in turn, not all of it out of the last", async () => {
+  const { sock, out } = fake_socket();
+  await send_out(sock, query(), ["10.9.0.1", "10.9.1.1"]);
+  assert.deepEqual(out, ["10.9.0.1", "10.9.1.1"]);
+});
+
+test("a responder's answers to queries that come together don't interleave", async () => {
+  const { sock, out } = fake_socket();
+  const send = serial_sender(sock);
+  await Promise.all([send(query(), ["10.9.0.1", "10.9.1.1"]), send(query(), ["10.9.0.1", "10.9.1.1"])]);
+  assert.deepEqual(out, ["10.9.0.1", "10.9.1.1", "10.9.0.1", "10.9.1.1"]);
 });
