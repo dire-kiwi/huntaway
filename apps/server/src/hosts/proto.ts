@@ -74,8 +74,13 @@ export const PROTOCOL = 1;
  * task type `pens`, off the board unless `/group-tasks?include_pens=1`), which arranges them with the agents' pen tools.
  * Pens replace the Now/Later split (API 97), which is gone: tasks have no `now_at`, `now` on `PATCH /tasks/{id}` and
  * the task tools is ignored, and `/settings` has no `now_expiry_hours`.
+ *
+ * API 128: computer use (HA-273, see desktop.ts): a host installs Cua Driver and lets its agents use its desktop
+ * (`GET`/`PATCH /desktop`, `POST`/`DELETE /desktop/install`, `POST /desktop/check` and `/desktop/stop`), through the runs' `desktop` MCP
+ * server (mcp/desktop_mcp.ts); and a task's viewer, `GET /desktop/frame?task_id=` (the window its agent last used) and
+ * `GET /tasks/{id}/desktop` (what it did there).
  */
-export const API_VERSION = 127;
+export const API_VERSION = 128;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

@@ -27,6 +27,7 @@ import * as documents from "./agent/documents.ts";
 import * as runs from "./agent/runs.ts";
 import * as analytics from "./analytics.ts";
 import * as disk from "./disk.ts";
+import * as desktop from "./api/desktop.ts";
 import * as docs from "./api/docs.ts";
 import * as pens from "./api/pens.ts";
 import * as attachments from "./attachments.ts";
@@ -199,6 +200,7 @@ function host_routes(r: Router) {
   r.route("/tasks/{id}/context", { GET: context.get });
   r.route("/tasks/{id}/skills", { GET: agent_tools.for_task });
   r.route("/tasks/{id}/document", { GET: documents.get });
+  r.route("/tasks/{id}/desktop", { GET: desktop.task_ops });
   r.route("/tasks/{id}/terminal", { GET: thread.terminal_status, DELETE: thread.kill_terminal });
   r.ws("/tasks/{id}/terminal/ws", thread.terminal_ws, { pre: thread.terminal_ws_check });
   r.route("/tasks/{id}/terminal/keepalive", { POST: thread.terminal_keepalive });
@@ -226,6 +228,11 @@ function host_routes(r: Router) {
   r.route("/admin/release/rollback", { POST: host.roll_back_release });
   r.route("/admin/database/recopy", { POST: host.recopy_database });
   r.route("/admin/service", { POST: host.install_service });
+  r.route("/desktop", { GET: desktop.status, PATCH: desktop.update });
+  r.route("/desktop/install", { POST: desktop.start_install, DELETE: desktop.uninstall });
+  r.route("/desktop/stop", { POST: desktop.stop });
+  r.route("/desktop/check", { POST: desktop.check });
+  r.route("/desktop/frame", { GET: desktop.frame });
   r.route("/admin/threads", { GET: host.threads_status });
   r.route("/admin/threads/batch", { POST: host.threads_batch });
   r.ws("/host/ws", ws);

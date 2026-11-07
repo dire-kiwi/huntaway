@@ -9,6 +9,8 @@ import type { Shared } from "../../state.ts";
 import { expand_tilde, home_dir, path_str } from "../../util.ts";
 import { run_cmd } from "../../proc.ts";
 import * as mcp from "../../mcp.ts";
+import * as desktop from "../../desktop.ts";
+import * as desktop_mcp from "../../mcp/desktop_mcp.ts";
 import * as docs_mcp from "../../mcp/docs_mcp.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as codex from "../codex.ts";
@@ -113,6 +115,39 @@ export function docs_note(codex: boolean): string {
     `\`${n}\` MCP server (${tool}; it's kept on this board, under your profile, with every version) and give them the ` +
     `URL it returns, rather than leaving it only in a message or a file. Its form fields (\`<Approval />\`, inputs) ` +
     `collect no answers here: ask in the thread for a decision or input.`
+  );
+}
+
+/**
+ * Whether a run gets our desktop server (mcp/desktop_mcp.ts): computer use is on for this host and it has a driver,
+ * unless the project turns the server off or has its own by that name. Compactions call no tools.
+ */
+export function uses_desktop_server(state: Shared, tools: agent_tools.RunTools): boolean {
+  const name = desktop_mcp.SERVER_NAME;
+  return desktop.available(state) && !Object.hasOwn(tools.mcp_servers, name) && !tools.disallowed.includes(agent_tools.tool_prefix(name));
+}
+
+/**
+ * The desktop tools a run may use without asking: the read-only ones. The rest ask (in Bypass, nothing asks). A
+ * reviewer, or a run in plan mode, gets only the read-only ones (`desktop_disallowed`).
+ */
+export const desktop_allowed = (): string[] => desktop_mcp.READS.map((t) => `mcp__${desktop_mcp.SERVER_NAME}__${t}`);
+
+/** The desktop tools a run doesn't get: the ones that act, for a reviewer and in plan mode. */
+export function desktop_disallowed(review: boolean, plan: boolean): string[] {
+  return review || plan ? [...desktop_mcp.WRITES] : [];
+}
+
+/** What a run with our desktop server is told about it (see `uses_desktop_server`), beside the server's own instructions. */
+export function desktop_note(codex: boolean, host: string): string {
+  const n = desktop_mcp.SERVER_NAME;
+  const t = (x: string) => (codex ? `\`${n}.${x}\`` : `mcp__${n}__${x}`);
+  return (
+    `\n\nYou can see and use the desktop of ${host}, the computer you run on, with the \`${n}\` MCP server (${t("windows")}, ` +
+    `${t("read")}, ${t("act")} and so on). Use it only for what needs a GUI, when the shell and other tools can't do it. ` +
+    `Someone may be using that desktop, and other tasks may need it: keep to the background (don't take focus or the ` +
+    `pointer unless the user allows it), leave it as you found it, and if the screen is locked or another task is using ` +
+    `it, say so rather than work around it.`
   );
 }
 

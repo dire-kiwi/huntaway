@@ -148,6 +148,11 @@ not its MCP server.
 
 ## What Huntaway could take
 
+> **Since done (HA-273's second part):** Huntaway now has computer use. The host's page installs Cua Driver, one
+> `cua-driver mcp` per host is run by the server, and runs get our own `desktop` MCP server (agentcast's shape, with a
+> lock gate, one task at a time and a journal), with a viewer in the task panel. See _Computer use_ in
+> [docs/guide/agents.md](../../guide/agents.md). What's below is the analysis from before.
+
 1. **Today, with no code:** install Cua Driver on the host and add a global MCP server
    `{"type": "stdio", "command": "cua-driver", "args": ["mcp"]}` (Settings → Skills and MCP servers), switched on for the
    projects that want it. Claude and Codex runs both get it. Not tried here. Things to check if we do:

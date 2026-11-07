@@ -4,6 +4,7 @@
 import { type ClientAdapter, createHttp } from "./http";
 import { hostsApi } from "./hosts";
 import { pushApi } from "./push";
+import { desktopApi } from "./desktop";
 import { devicesApi } from "./devices";
 import { profilesApi } from "./profiles";
 import { claudeConfigsApi } from "./claudeConfigs";
@@ -29,6 +30,7 @@ export { ApiError, type ClientAdapter, type Fetch, type FetchResponse, type KeyV
 export * from "./attachments";
 export * from "./hosts";
 export * from "./push";
+export * from "./desktop";
 export * from "./devices";
 export * from "./profiles";
 export * from "./claudeConfigs";
@@ -64,6 +66,7 @@ export function createClient(adapter: ClientAdapter) {
     wsUrl,
     ...hostsApi(http),
     ...pushApi(http),
+    ...desktopApi(http),
     ...devicesApi(http),
     ...profilesApi(http),
     ...claudeConfigsApi(http),

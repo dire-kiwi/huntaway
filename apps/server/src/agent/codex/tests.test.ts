@@ -90,6 +90,10 @@ test("converts_mcp_servers", () => {
   assert.deepEqual([board.default_tools_approval_mode, board.tools], ["approve", { wait: { approval_mode: "prompt" } }]);
   assert.equal(mcp_server_config(MCP_SERVER_NAME, { command: "ia" }, false, [], false).tools, undefined);
   assert.equal(mcp_server_config("s", stdio, true, [], true).tools, undefined);
+  // The desktop's read-only tools are approved and its actions ask (HA-273).
+  const desktop = mcp_server_config("desktop", http, false, ["act"], false);
+  assert.equal(desktop.default_tools_approval_mode, undefined);
+  assert.deepEqual([desktop.tools.read, desktop.tools.act, desktop.disabled_tools], [{ approval_mode: "approve" }, undefined, ["act"]]);
 });
 
 test("spots_claude_models", () => {
