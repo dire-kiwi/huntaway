@@ -141,8 +141,12 @@ export function this_server(state: AppState, port: number): Spec {
   // A server that started a release it updated to (in `<data dir>/app/`) has the one it was installed as in
   // IA_BUNDLED_SERVER (see release.ts's exec_installed), which starts the newest release again at startup.
   const exe = process.env.IA_BUNDLED_SERVER || admin.current_exe();
+  // A server started as bare `huntaway` has no arguments, which bin/huntaway runs as `serve`: the unit names it, since
+  // `huntaway --port N` isn't a command.
+  const args = admin.restart_args(state.meta.args);
+  if (args[0] !== "serve") args.unshift("serve");
   // On the port it has, which the unit is named for, rather than another free one for `--port 0`.
-  return { exe, args: [...admin.restart_args(state.meta.args), "--port", String(port)], env: kept_env(process.env), shell: login_shell(), port };
+  return { exe, args: [...args, "--port", String(port)], env: kept_env(process.env), shell: login_shell(), port };
 }
 
 export const login_shell = () => process.env.SHELL || "/bin/sh";

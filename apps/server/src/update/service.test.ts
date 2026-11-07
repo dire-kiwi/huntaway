@@ -183,6 +183,13 @@ test("this_server_runs_on_the_port_it_has", () => {
   assert.equal(sp.port, 7900);
 });
 
+// A server started as bare `huntaway` (no arguments, run as serve) got a unit running `huntaway --port N`, which exits
+// with "unrecognized subcommand", so Install service took the host down.
+test("this_server_names_serve_for_a_server_started_without_arguments", () => {
+  const sp = service.this_server(testing.state_with({ ...testing.meta(), args: [] }), 7878);
+  assert.deepEqual(sp.args, ["serve", "--port", "7878"]);
+});
+
 // GET /admin/server failed (500) on a state without a listener's URL, once systemd was there.
 test("server_status_has_the_service_for_its_port", async () => {
   fakes();
