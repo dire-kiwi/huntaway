@@ -334,7 +334,7 @@ export function PublishDialog({
                 </a>{" "}
                 (v{before.remote_version} there now).{" "}
                 <button type="button" className="text-[12px] text-faint underline hover:text-fg" onClick={another}>
-                  Publish to another slug
+                  Change the slug
                 </button>
               </>
             ) : (
@@ -346,7 +346,7 @@ export function PublishDialog({
               label={`Its slug on ${siteName(s.site_url)}`}
               hint={
                 before
-                  ? `It publishes there instead, and publishing again adds versions there rather than to ${before.remote_slug}.`
+                  ? `A slug other than ${before.remote_slug} publishes it there instead, and later publishes add versions to that one.`
                   : "Its address there: /d/<slug>/. Publishing again adds versions to it."
               }
             >
