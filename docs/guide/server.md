@@ -56,7 +56,7 @@ up new code.
 
 One caveat under `systemd`: by default a service restart kills its whole process group,
 shims (and the tmux server behind terminals) included. Use `KillMode=process` (or run the shims in their own scope) to keep agents
-alive across service restarts.
+alive across service restarts. The user service a host installs (see _Running a host as a service_ in `hosts.md`) does.
 
 ## The database file
 

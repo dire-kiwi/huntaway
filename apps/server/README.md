@@ -36,7 +36,8 @@ checkpoints and the git views, reviews, automations, status scripts, terminals, 
 and Web Push, restarting, rebuilding from a checkout (`pnpm install`, the UI, and the Rust
 `ia-shim`) and release updates (downloaded into `<data dir>/app/`, Update and Roll back onto a release, which may be one
 that runs the Rust server: 0.3.x and earlier, which `backup.ts`'s backup on a version change makes safe to go back to),
-SSH hosts (`ssh-host`, and hosts added over SSH) and the broker (`--broker`: the legacy relay, and managed tunnels with
+SSH hosts (`ssh-host`, and hosts added over SSH), running as a user systemd service (`install-service`,
+`POST /admin/service`: `src/update/service.ts`) and the broker (`--broker`: the legacy relay, and managed tunnels with
 cloudflared). An SSH target runs `bin/huntaway ssh-host` from its `authorized_keys`: `bin/huntaway` finds `node` on the
 PATH, in the usual install folders, or at `$IA_NODE`. `PORTING.md` has the conventions the port follows (one TS file per
 Rust file, Rust's names).

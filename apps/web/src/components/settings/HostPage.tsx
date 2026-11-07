@@ -72,6 +72,7 @@ export function HostPage({ hostId }: { hostId: string }) {
                 </section>
               )}
               {host.local ? <ServerPanel /> : <RemoteServer hostId={host.id} />}
+              <HostService hostId={host.id} />
             </>
           )}
 
@@ -305,6 +306,111 @@ function RemoteServer({ hostId }: { hostId: string }) {
           onStarted={() => setWatching(status.boot_id)}
           onClose={() => setAsking(null)}
         />
+      )}
+    </section>
+  );
+}
+
+/**
+ * A host on Linux with systemd (API 123): whether it runs as a user service, and if not, Install service, which writes
+ * the unit, turns lingering on and restarts the host under it. It's how a host is kept running now that a hub no longer
+ * starts one over SSH.
+ */
+function HostService({ hostId }: { hostId: string }) {
+  const [status, setStatus] = useState<ServerStatus | null>(null);
+  const [watching, setWatching] = useState<string | null>(null); // boot id before the switch
+  const [asking, setAsking] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const poll = () =>
+      api.serverStatus(hostId).then(
+        (s) => {
+          if (!alive) return;
+          setStatus(s);
+          if (watching && (s.boot_id !== watching || s.restart?.phase === "failed")) setWatching(null);
+        },
+        () => {},
+      );
+    void poll();
+    const id = setInterval(poll, watching ? 1500 : 30_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [hostId, watching]);
+  const svc = status?.service;
+  if (!svc) return null;
+  const failed = !watching && status?.restart?.phase === "failed" ? status.restart : null;
+  const install = async () => {
+    setErr(null);
+    try {
+      await api.installService(hostId);
+      setWatching(status!.boot_id);
+      setAsking(false);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  return (
+    <section>
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-[13px] font-semibold">Service</h2>
+        {!svc.running && !svc.other && (
+          <Button size="sm" disabled={!!watching} onClick={() => setAsking(true)}>
+            {svc.installed ? "Restart under the service" : "Install service"}
+          </Button>
+        )}
+      </div>
+      <div className="space-y-1 text-[12.5px] text-muted">
+        {svc.running ? (
+          <div>
+            Runs as the user service <span className="font-mono text-fg">{svc.unit}</span>
+            {svc.enabled ? (svc.linger ? ", started at boot." : `, started when ${svc.user} logs in.`) : ", which isn't enabled."}
+          </div>
+        ) : svc.other ? (
+          <div>
+            Runs as the systemd service <span className="font-mono text-fg">{svc.other}</span>, which keeps it running.
+          </div>
+        ) : svc.installed ? (
+          <div>
+            <span className="font-mono text-fg">{svc.unit}</span> is installed, but this server was started some other way. Restart it under the service to have
+            systemd keep it running.
+          </div>
+        ) : (
+          <div>Run this host as a user systemd service, so it starts at boot and comes back if it stops. A hub that links it over SSH needs it running.</div>
+        )}
+        {svc.running && !svc.linger && (
+          <div>
+            Lingering is off for {svc.user}: <span className="font-mono">sudo loginctl enable-linger {svc.user}</span> on that machine starts it at boot.
+          </div>
+        )}
+        {watching && (
+          <div className="flex items-center gap-2 pt-1 text-fg">
+            <Loader2 size={14} className="animate-spin text-accent" /> Restarting under {svc.unit}…
+          </div>
+        )}
+        {failed && <div className="rounded bg-red-500/10 p-2 font-mono text-[11.5px] whitespace-pre-wrap text-red-300">{failed.error}</div>}
+      </div>
+      {asking && (
+        <Modal title={svc.installed ? `Restart under ${svc.unit}` : "Install service"} onClose={() => setAsking(false)}>
+          <div className="space-y-3 text-[12.5px] text-muted">
+            <p>
+              This writes <span className="font-mono break-all text-fg">{svc.path}</span> to run this server with the flags and settings it has now, enables it,
+              turns lingering on for {svc.user} (so it starts at boot), and restarts the host under it.
+            </p>
+            <p>Agents keep running through the restart, and stopping or restarting the service later leaves them running too.</p>
+            {err && <div className="rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{err}</div>}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setAsking(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={install}>
+                {svc.installed ? "Restart under it" : "Install & restart"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </section>
   );

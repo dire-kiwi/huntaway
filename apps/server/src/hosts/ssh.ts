@@ -5,17 +5,17 @@
 //
 //   restrict,port-forwarding,permitopen="127.0.0.1:7878",command="/path/huntaway ssh-host --port 7878" ssh-ed25519 AAAA… huntaway-hub
 //
-// `ssh-host` starts a host if none is running (through the user's login shell, so agents get the usual PATH) and prints
-// how to talk to it. The hub then reaches the host through an SSH tunnel, so the host can listen on localhost only and
-// never needs to reach the hub. If the tunnel drops, agents keep running and the hub reconnects.
-import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+// `ssh-host` prints how to talk to the host running on that port. The host is kept running on that machine (on Linux,
+// as a user systemd service: see update/service.ts); `ssh-host` used to start one through the login shell, which it no
+// longer does (HA-278). The hub then reaches the host through an SSH tunnel, so the host can listen on localhost only
+// and never needs to reach the hub. If the tunnel drops, agents keep running and the hub reconnects.
+import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
 import * as db from "../db.ts";
 import type { Link } from "../db.ts";
 import type { AppState } from "../state.ts";
-import { default_exe } from "../state.ts";
 import { run_cmd } from "../proc.ts";
 import { background, context, err_str, path_str, sleep } from "../util.ts";
 import * as hub from "./hub.ts";
@@ -31,19 +31,15 @@ async function get(url: string, token: string | null = null): Promise<{ status: 
 }
 
 /**
- * How long `ssh-host` waits for a host that's down to come back by itself before starting one: a restart or an Update
- * leaves the port closed for a second or two (longer with a database backup), and a host started meanwhile takes the
- * port from the release being started, which then fails to listen (and the started host marks that release bad, as
- * one that didn't start: HA-271).
+ * How long `ssh-host` waits for a host that's down to come back before failing: a restart or an Update leaves the port
+ * closed for a second or two (longer with a database backup), and the hub would otherwise log a failed connection for
+ * each.
  */
-export const START_GRACE_MS = 15_000;
+export const WAIT_MS = 15_000;
 
-/**
- * `huntaway ssh-host`: make sure a host is running on `port` and print JSON describing it. With `start` false
- * (`--no-start`), a host that isn't running is an error rather than started, for a host that has its own supervisor.
- */
-export async function ssh_host(port: number, data_dir: string, name: string | null, opts: { start?: boolean; grace_ms?: number } = {}): Promise<void> {
-  const { start = true, grace_ms = START_GRACE_MS } = opts;
+/** `huntaway ssh-host`: print JSON describing the host running on `port`, waiting up to `wait_ms` for one that's down. */
+export async function ssh_host(port: number, data_dir: string, opts: { wait_ms?: number } = {}): Promise<void> {
+  const { wait_ms = WAIT_MS } = opts;
   const base = `http://127.0.0.1:${port}`;
   const healthy = async () => {
     try {
@@ -61,12 +57,11 @@ export async function ssh_host(port: number, data_dir: string, name: string | nu
     }
     return false;
   };
-  let started = false;
-  if (!(await healthy()) && !(await up_within(grace_ms))) {
-    if (!start) throw new Error(`no host is running on port ${port} (ssh-host --no-start doesn't start one)`);
-    start_detached(port, data_dir, name);
-    started = true;
-    if (!(await up_within(15_000))) throw new Error(`started a host on port ${port}, but it didn't come up; see ${path_str(join(data_dir, "serve.log"))}`);
+  if (!(await healthy()) && !(await up_within(wait_ms))) {
+    throw new Error(
+      `no host is running on port ${port}: start one on this machine` +
+        (process.platform === "linux" ? ` (\`huntaway install-service --host 127.0.0.1 --port ${port}\` runs it as a user systemd service)` : ""),
+    );
   }
   // A running host on the default data dir uses its token file; IA_TOKEN isn't visible here.
   let token: string;
@@ -78,35 +73,17 @@ export async function ssh_host(port: number, data_dir: string, name: string | nu
   const res = await get(`${base}/api/info`, token);
   const info = JSON.parse(res.text);
   if (typeof info?.host_id !== "string") throw new Error(`the host on port ${port} is too old to link; update it`);
-  // serde_json's maps are sorted by key.
-  console.log(JSON.stringify({ info, port, started, token }));
+  // serde_json's maps are sorted by key. `started` is always false since ssh-host stopped starting hosts.
+  console.log(JSON.stringify({ info, port, started: false, token }));
 }
 
-/** Start `huntaway serve` in its own session, via the user's login shell. */
-function start_detached(port: number, data_dir: string, name: string | null) {
-  mkdirSync(data_dir, { recursive: true });
-  const exe = default_exe();
-  const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
-  let cmd_line = `exec ${quote(exe)} serve --host 127.0.0.1 --port ${port} --data-dir ${quote(data_dir)}`;
-  if (name !== null) cmd_line += ` --name ${quote(name)}`;
-  const log = openSync(join(data_dir, "serve.log"), "a");
-  const shell = process.env.SHELL || "/bin/sh";
-  try {
-    // Outlive the SSH session: a session of its own (setsid), and not waited for.
-    const child = spawn(shell, ["-lc", cmd_line], { stdio: ["ignore", log, log], detached: true });
-    child.on("error", (e) => console.error(`starting huntaway serve: ${err_str(e)}`));
-    child.unref();
-  } finally {
-    closeSync(log);
-  }
-}
-
-/** `huntaway ssh-host [--port N] [--data-dir DIR] [--name NAME] [--no-start]`, the forced command on an SSH target. */
+/**
+ * `huntaway ssh-host [--port N] [--data-dir DIR]`, the forced command on an SSH target. `--name` and `--no-start`, which
+ * were for starting a host, are still taken (and ignored), so that older authorized_keys lines keep working.
+ */
 export async function ssh_host_cli(argv: string[]): Promise<void> {
   let port = 7878;
   let data_dir: string | null = process.env.IA_DATA_DIR || null;
-  let name: string | null = null;
-  let start = true;
   for (let i = 0; i < argv.length; i++) {
     let arg = argv[i];
     let val: string | undefined;
@@ -131,17 +108,17 @@ export async function ssh_host_cli(argv: string[]): Promise<void> {
         data_dir = next();
         break;
       case "--name":
-        name = next();
+        next();
         break;
       case "--no-start":
-        start = false;
         break;
       default:
         throw new Error(`unexpected argument '${argv[i]}'`);
     }
   }
   const { default_data_dir } = await import("../serve.ts");
-  await ssh_host(port, data_dir ?? default_data_dir(), name, { start });
+  // The hub asks for `link` when a host is being added, where waiting would only hold up the error.
+  await ssh_host(port, data_dir ?? default_data_dir(), { wait_ms: process.env.SSH_ORIGINAL_COMMAND === "link" ? 0 : WAIT_MS });
 }
 
 // ---------- on the hub ----------
@@ -271,10 +248,13 @@ async function run_ssh(args: string[], on_stop: (stop: () => void) => void): Pro
   return { success: child.exitCode === 0, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), status };
 }
 
-/** Run the target's forced command: starts its host if needed and returns its details. */
-export async function ensure(s: AppState, t: Target, on_stop: (stop: () => void) => void = () => {}): Promise<any> {
+/**
+ * Run the target's forced command: returns its host's details. With `adding` (a host being added), it says so, and
+ * `ssh-host` doesn't wait for a host that's down.
+ */
+export async function ensure(s: AppState, t: Target, on_stop: (stop: () => void) => void = () => {}, adding = false): Promise<any> {
   await public_key(s);
-  const out = await run_ssh(ssh_args(s, t, ["ensure"]), on_stop);
+  const out = await run_ssh(ssh_args(s, t, [adding ? "link" : "ensure"]), on_stop);
   const line = out.stdout
     .split("\n")
     .reverse()
@@ -285,7 +265,7 @@ export async function ensure(s: AppState, t: Target, on_stop: (stop: () => void)
   throw new Error(`ssh ${t.target} failed: ${err || out.stdout.trim()}`);
 }
 
-/** Keep an SSH host linked: start it if needed, tunnel to it, follow it; retry on failure. Returns the function that stops it. */
+/** Keep an SSH host linked: tunnel to it, follow it; retry on failure. Returns the function that stops it. */
 export function run(s: AppState, link: Link): () => void {
   const t = parse_target(link.ssh);
   if (!t) {
@@ -354,7 +334,7 @@ const can_connect = (port: number) =>
   });
 
 /**
- * One connection: ensure the host, open the tunnel, follow it until either ends. `on_abort` gets the function that ends
+ * One connection: ask for the host's details, open the tunnel, follow it until either ends. `on_abort` gets the function that ends
  * it (Rust aborts the task, which kills its ssh processes).
  */
 async function connect_once(s: AppState, link: Link, t: Target, on_abort: (abort: () => void) => void, stopped: () => boolean): Promise<void> {

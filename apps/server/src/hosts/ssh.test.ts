@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import * as testing from "../testing.ts";
-import { ssh_host } from "./ssh.ts";
+import { ssh_host, ssh_host_cli } from "./ssh.ts";
 
 /** A port nothing listens on (one the system just handed out and took back). */
 async function free_port(): Promise<number> {
@@ -40,29 +40,36 @@ async function printed(f: () => Promise<void>): Promise<string> {
 }
 
 // HA-271: a hub that reconnected while an Update restarted the host started a second one, which took the port from the
-// release being started (and marked it bad).
-test("ssh_host_waits_for_a_host_that_comes_back_rather_than_starting_one", async () => {
+// release being started (and marked it bad). Since HA-278 it never starts one, but still waits for one that's restarting.
+test("ssh_host_waits_for_a_host_that_comes_back", async () => {
   const data_dir = testing.temp_dir();
   writeFileSync(join(data_dir, "auth_token"), "tok\n");
   const port = await free_port();
   let host: Server | null = null;
   const later = setTimeout(async () => (host = await fake_host(port)), 1000);
   try {
-    const out = JSON.parse(await printed(() => ssh_host(port, data_dir, null, { grace_ms: 10_000 })));
+    const out = JSON.parse(await printed(() => ssh_host(port, data_dir, { wait_ms: 10_000 })));
     assert.equal(out.started, false);
     assert.equal(out.token, "tok");
     assert.equal(out.info.host_id, "h1");
-    // start_detached opens serve.log first.
-    assert.equal(existsSync(join(data_dir, "serve.log")), false);
   } finally {
     clearTimeout(later);
     (host as Server | null)?.close();
   }
 });
 
-test("ssh_host_no_start_does_not_start_a_host", async () => {
+// HA-278: ssh-host doesn't start a host (the machine keeps one running, as a user service on Linux), nor fail on the
+// flags that older authorized_keys lines give it.
+test("ssh_host_does_not_start_a_host", async () => {
   const data_dir = testing.temp_dir();
   const port = await free_port();
-  await assert.rejects(ssh_host(port, data_dir, null, { start: false, grace_ms: 500 }), /no host is running on port/);
+  await assert.rejects(ssh_host(port, data_dir, { wait_ms: 500 }), /no host is running on port/);
+  // As the hub runs it when a host is being added, which doesn't wait.
+  process.env.SSH_ORIGINAL_COMMAND = "link";
+  try {
+    await assert.rejects(ssh_host_cli(["--port", String(port), "--data-dir", data_dir, "--name", "x", "--no-start"]), /no host is running on port/);
+  } finally {
+    delete process.env.SSH_ORIGINAL_COMMAND;
+  }
   assert.equal(existsSync(join(data_dir, "serve.log")), false);
 });

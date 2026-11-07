@@ -12,6 +12,7 @@ import * as tools from "../mcp/tools.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as admin from "../update/admin.ts";
 import * as release from "../update/release.ts";
+import * as service from "../update/service.ts";
 import * as threads from "../threads/write.ts";
 import * as thread_batch from "../threads/batch.ts";
 import { debug_list, def_bool, def_str, def_value, json_map, opt_str, req_str } from "./extract.ts";
@@ -136,7 +137,35 @@ export async function remote_tool(s: AppState, r: Req) {
 // ---------- server admin ----------
 
 export async function server_status(s: AppState) {
-  return await admin.status(s);
+  const v = await admin.status(s);
+  // API 123: on Linux with systemd, the user service this host can run as (see update/service.ts).
+  const port = local_port(s);
+  const svc = port === null ? null : service.status(port);
+  if (svc !== null) v.service = svc;
+  return v;
+}
+
+/** The port this server listens on, from its internal URL (none in tests that have no listener). */
+function local_port(s: AppState): number | null {
+  try {
+    const u = new URL(s.internal_url);
+    return Number(u.port || (u.protocol === "https:" ? 443 : 80));
+  } catch {
+    return null;
+  }
+}
+
+/** API 123: install this host's user systemd service and restart under it, as a restart job. */
+export async function install_service(s: AppState) {
+  const port = local_port(s);
+  if (port === null) throw ApiError.bad("this server's port isn't known");
+  try {
+    service.install_and_switch(s, port);
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    throw ApiError.bad(err_str(e));
+  }
+  return { ok: true };
 }
 
 export async function restart_server(s: AppState, r: Req) {

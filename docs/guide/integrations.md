@@ -211,7 +211,7 @@ start}` or `{kind: "send_to_task", task_id, message}`. Changes and runs are broa
 A project's workflows (API 107, in its settings under _Workflows_; agents' tools `list_workflows`,
 `create_workflow`, `update_workflow`, `delete_workflow` and `run_workflow`) are graphs of steps that
 run on its tasks. The editor draws them as nodes: drag from a step's outcome to the next step. From
-API 123 a workflow can hold a task's whole way across the board, column by column.
+API 124 a workflow can hold a task's whole way across the board, column by column.
 
 - **Columns.** A _column_ step is a column of the board, with the prompt the task's agent is sent
   when the task enters it: in _In progress_ it's what the agent starts with (in place of the

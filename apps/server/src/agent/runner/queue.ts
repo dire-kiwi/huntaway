@@ -150,6 +150,8 @@ export function turn_ended(state: Shared, run: Run) {
   const waiting = (task?.steering ?? []).filter((s) => s.run_id === run.id).map((s) => s.id);
   if (!waiting.length) {
     if (runs.background_tasks(state, run.id) > 0) {
+      // The turn Claude Code takes once they've ended takes in those that ended in this one too.
+      runs.set_background_ended(state, run.id, null);
       let stopped = false;
       try {
         stopped = !!db.value<number>(state.db(), "SELECT stop_requested FROM runs WHERE id=?1", run.id);
@@ -159,11 +161,13 @@ export function turn_ended(state: Shared, run: Run) {
       runs.kill(state, run.id);
       return;
     }
-    // Its background tasks ended during the turn: Claude Code takes another on their outcome, which may ask for
-    // permission on its input (see `background_changed`).
-    if (runs.background_ended(state, run.id)) {
-      runs.set_background_ended(state, run.id, false);
-      if (runs.asks_on_output(state, run.id) && !stopping(state, run.id)) return close_unless_turn_starts(state, run, FOLLOW_UP_GRACE);
+    // Its background tasks ended during the turn: Claude Code takes another on the outcome of those it didn't give the
+    // agent in it, which may ask for permission on its input (see `background_changed`).
+    const ended = runs.background_ended(state, run.id);
+    if (ended) {
+      runs.set_background_ended(state, run.id, null);
+      const left = runs.not_taken_in(ended).length > 0;
+      if (left && runs.asks_on_output(state, run.id) && !stopping(state, run.id)) return close_unless_turn_starts(state, run, FOLLOW_UP_GRACE);
     }
     runs.close_input(state, run.id);
     return;
@@ -172,32 +176,50 @@ export function turn_ended(state: Shared, run: Run) {
 }
 
 /**
- * Claude Code said how many background tasks the agent has going. Once none are left, between turns, its input is
- * closed as at the end of a turn without them: Claude Code still takes the turn it does on their outcome, then exits.
- * An agent that asks for permission on its output (runs.asks_on_output) needs its input for that turn's prompts, which
- * Claude Code denies unasked once it's closed ("Stream closed"): it's left open for the turn, whose end closes it (see
- * `turn_ended`), unless no turn starts (see `close_unless_turn_starts`). Ended during a turn, Claude Code takes that turn
- * after it, so for such an agent that turn's end leaves the input open too (`runs.background_ended` remembers it, over a
- * restart too).
+ * Claude Code said which background tasks the agent has going (`ids`, see runs::background_ids). Once none are left,
+ * between turns, its input is closed as at the end of a turn without them: Claude Code still takes the turn it does on
+ * their outcome, then exits. An agent that asks for permission on its output (runs.asks_on_output) needs its input for
+ * that turn's prompts, which Claude Code denies unasked once it's closed ("Stream closed"): it's left open for the turn,
+ * whose end closes it (see `turn_ended`), unless no turn starts (see `close_unless_turn_starts`). Those that end during a
+ * turn are recorded (`runs.background_ended`, over a restart too): Claude Code usually gives the agent their outcome in
+ * that turn (see `took_in`), and takes a turn after it on those it didn't, so that turn's end leaves the input open
+ * only for those.
  */
-export function background_changed(state: Shared, run: Run, count: number) {
-  runs.set_background_tasks(state, run.id, count);
+export function background_changed(state: Shared, run: Run, ids: (string | null)[]) {
+  const before = runs.background_ids(state, run.id);
+  runs.set_background_tasks(state, run.id, ids);
   const asks = runs.asks_on_output(state, run.id);
-  if (count > 0) {
-    if (asks) runs.set_background_ended(state, run.id, false);
-    return;
-  }
   let r: { between_turns: number } | undefined;
   try {
     r = db.one(state.db(), "SELECT between_turns FROM runs WHERE id=?1 AND status != 'exited'", run.id);
   } catch {}
   if (!r) return;
   if (!r.between_turns) {
-    if (asks) runs.set_background_ended(state, run.id, true);
+    if (asks) {
+      // Those no longer going; one without an id, if fewer are.
+      const gone: (string | null)[] = before.filter((id): id is string => id !== null && !ids.includes(id));
+      if (before.includes(null) && ids.length < before.length) gone.push(null);
+      if (gone.length) {
+        const ended = runs.background_ended(state, run.id) ?? { ended: [], taken: [] };
+        runs.set_background_ended(state, run.id, { ...ended, ended: [...ended.ended, ...gone] });
+      }
+    }
     return;
   }
+  if (ids.length > 0) return;
   if (asks && !stopping(state, run.id)) close_unless_turn_starts(state, run, BACKGROUND_GRACE);
   else turn_ended(state, run);
+}
+
+/**
+ * Claude Code gave the agent the outcome of its background task `id`: the `<task-notification>` user message it
+ * replays then. One that ended during a turn and is given to it in that turn needs no turn after it (see
+ * `background_changed`).
+ */
+export function took_in(state: Shared, run: Run, id: string) {
+  if (!runs.asks_on_output(state, run.id)) return;
+  const ended = runs.background_ended(state, run.id) ?? { ended: [], taken: [] };
+  if (!ended.taken.includes(id)) runs.set_background_ended(state, run.id, { ...ended, taken: [...ended.taken, id] });
 }
 
 function stopping(state: Shared, run_id: string): boolean {
