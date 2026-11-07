@@ -391,3 +391,22 @@ test("the_gh_server_is_the_runs", async () => {
     server.close();
   }
 });
+
+test("only_a_run_launched_with_the_desktop_server_reaches_it", async () => {
+  // HA-273's review: a run's secret is its gh and docs servers' too, so one launched while computer use was off
+  // mustn't get desktop answers with it.
+  const s = testing.state();
+  const { server } = await listen(s);
+  try {
+    const msg = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    const [, without] = running_task(s);
+    assert.equal((await post(entry(s, without, "desktop"), msg)).status, 404);
+    const [, with_it] = running_task(s, { desktop: true });
+    const res = await post(entry(s, with_it, "desktop"), msg, "application/json");
+    assert.equal(res.status, 200);
+    const body: any = await res.json();
+    assert.ok(body.result.tools.some((t: any) => t.name === "act"));
+  } finally {
+    server.close();
+  }
+});

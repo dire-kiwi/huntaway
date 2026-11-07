@@ -32,7 +32,7 @@ const TOOLS = {
   verify_state: { ...session, pid: { type: "integer" }, expect: { type: "array" } },
   run_steps: { ...session, steps: { type: "array" }, observe: {} },
   launch_app: { name: { type: "string" } },
-  clipboard_read: { ...session },
+  clipboard_read: { ...session, include_text: { type: "boolean" } },
   clipboard_write: { ...session, text: { type: "string" } },
 };
 
@@ -72,7 +72,8 @@ function answer(tool, args) {
     case "launch_app":
       return text(`launched ${args.name}`, { pid: 5151, windows: [{ window_id: 9 }] });
     case "clipboard_read":
-      return text(clipboard);
+      // As Cua's: the text only when it's asked for.
+      return args.include_text ? text(clipboard, { supported: true, text: clipboard }) : text("text/plain", { supported: true, types: ["text/plain"] });
     case "clipboard_write":
       clipboard = args.text;
       return text("ok");

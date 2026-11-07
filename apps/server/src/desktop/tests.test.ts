@@ -138,6 +138,39 @@ test("an_action_is_journaled_and_one_with_an_op_id_runs_once", async () => {
   assert.equal(desktop_db.find_op(s.db(), r.task_id, "l1")?.status, "failed");
 });
 
+test("turned_off_its_tools_refuse_and_nothing_starts_the_driver_again", async () => {
+  // HA-273's review: turning computer use off stops the driver, and a run that was going kept acting by starting it.
+  const { s, r } = setup();
+  const step = { pid: 1, steps: [{ tool: "click", args: { x: 1, y: 1 } }] };
+  assert.equal((await desktop_mcp.call(s, r, "act", step)).isError, undefined);
+  db.set_setting(s.db(), desktop.SETTING, null);
+  driver.of(s).stop();
+  const before = calls().length;
+  for (const [tool, args] of [
+    ["act", step],
+    ["launch", { name: "x" }],
+    ["clipboard", {}],
+    ["windows", {}],
+  ] as const) {
+    const res = await desktop_mcp.call(s, r, tool, args);
+    assert.equal(res.isError, true);
+    assert.ok(text(res).includes("turned off"), text(res));
+  }
+  const health = JSON.parse(text(await desktop_mcp.call(s, r, "health", {})));
+  assert.ok(health.driver.error.includes("turned off"));
+  assert.equal(calls().length, before);
+  assert.equal(driver.of(s).status.state, "stopped");
+});
+
+test("the_clipboard_reads_its_text", async () => {
+  // HA-273's review: Cua's clipboard_read gives the text only when asked for it (include_text).
+  const { s, r } = setup();
+  await desktop_mcp.call(s, r, "clipboard", { text: "copied words" });
+  const read = await desktop_mcp.call(s, r, "clipboard", {});
+  assert.ok(text(read).includes("copied words"), text(read));
+  assert.deepEqual(calls().find((c) => c.tool === "clipboard_read")?.args, { include_text: true, session: `huntaway-${r.key}` });
+});
+
 test("an_op_left_running_by_an_earlier_server_is_interrupted_and_not_run_again", async () => {
   const { s, r } = setup();
   const op = desktop_db.start_op(s.db(), { task_id: r.task_id, run_id: r.run_id, op_id: "c1", tool: "clipboard", summary: "copy", args: {} });

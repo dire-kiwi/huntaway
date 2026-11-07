@@ -196,6 +196,10 @@ export function run_caller(s: Shared, run_id: string): DesktopRun | null {
 
 class ToolError extends Error {}
 
+/** What a call is told while computer use is off for the host. */
+const OFF = (s: Shared) =>
+  `Computer use has been turned off on ${s.host_name}, so its desktop can't be used. Don't try to work around it: tell the user if the task needs it.`;
+
 const text = (t: string, isError = false) => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
 const obj = (v: any): Record<string, any> => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
@@ -310,8 +314,10 @@ class Server {
 
   async health(): Promise<any> {
     const found = desktop.find(this.s);
-    let error: string | null = null;
-    if (found) {
+    const on = desktop.enabled(this.s.db());
+    let error: string | null = on ? null : OFF(this.s);
+    // Off, it only says so: the driver isn't started for it.
+    if (found && on) {
       try {
         await this.d.start();
       } catch (e) {
@@ -414,7 +420,9 @@ class Server {
     } else {
       const set = typeof a.text === "string";
       tool = set ? "clipboard_write" : "clipboard_read";
-      args = set ? { text: a.text } : {};
+      // Cua's clipboard_read says only what's on the clipboard (its types) unless it's asked for the text.
+      if (!set) await this.d.start();
+      args = set ? { text: a.text } : this.d.has("clipboard_read", "include_text") ? { include_text: true } : {};
       summary = set ? `copy ${JSON.stringify(truncate(a.text, 40))}` : "read the clipboard";
     }
     let op: desktop_db.DesktopOp;
@@ -446,6 +454,8 @@ export async function call(s: Shared, r: DesktopRun, name: string, args: any): P
   try {
     if (name === "health") return await server.health();
     if (name === "op_status") return await server.op_status(a);
+    // Turned off since the run started (the host's page stops the driver then): nothing starts it again.
+    if (!desktop.enabled(s.db()) && [...READS, ...WRITES].includes(name as any)) return text(OFF(s), true);
     if ((READS as readonly string[]).includes(name)) return await server.read_only(name, a);
     if ((WRITES as readonly string[]).includes(name)) return await server.write(name, a);
     return null;

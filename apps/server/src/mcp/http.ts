@@ -76,6 +76,8 @@ export interface RunSettings {
    * has no board server here: only gh's.
    */
   in_process: boolean;
+  /** It was launched with our desktop server (computer use was on, see runner/access.ts's uses_desktop_server). */
+  desktop: boolean;
 }
 
 /** The secret run `run_id` gives as its bearer token. Derived from the host's token, so a restart needn't keep it. */
@@ -132,6 +134,7 @@ export function settings(s: Shared, run_id: string): RunSettings | null {
       github_account: typeof v.github_account === "string" ? v.github_account : null,
       review: v.review === true,
       in_process: v.in_process === true,
+      desktop: v.desktop === true,
     };
   } catch {
     return null;
@@ -207,6 +210,8 @@ export async function serve(s: Shared, req: IncomingMessage, res: ServerResponse
   if (!set) return json(res, 404, { error: "unknown run" });
   // Its board tools are answered on its own output.
   if (set.in_process && server === runner.MCP_SERVER_NAME) return json(res, 404, { error: "not found" });
+  // Only a run launched with the desktop server has it: the run's secret is its gh and docs servers' too.
+  if (!set.desktop && server === desktop_mcp.SERVER_NAME) return json(res, 404, { error: "not found" });
 
   if (req.method === "GET") {
     const last = req.headers["last-event-id"];
@@ -351,7 +356,7 @@ function resume(s: Shared, res: ServerResponse, run_id: string, server: string, 
 }
 
 /** What the launch keeps for the run's servers (see `settings`). */
-export function settings_json(l: { cwd: string; github_account: string | null; review: boolean; in_process?: boolean }): string {
-  const v: RunSettings = { cwd: l.cwd, github_account: l.github_account, review: l.review, in_process: l.in_process === true };
+export function settings_json(l: { cwd: string; github_account: string | null; review: boolean; in_process?: boolean; desktop?: boolean }): string {
+  const v: RunSettings = { cwd: l.cwd, github_account: l.github_account, review: l.review, in_process: l.in_process === true, desktop: l.desktop === true };
   return JSON.stringify(v, null, 2);
 }

@@ -244,7 +244,10 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   // that gives a new Codex session them as dynamic tools: the adapter gives it the board's server only if Codex won't
   // take them (agent/codex/adapter.ts's start_thread).
   const in_process = !!l.tools_on_output || (!!l.board_tools_dynamic && !l.codex?.board_tools);
-  await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }));
+  await writeFile(
+    join(dir, mcp_http.SETTINGS_FILE),
+    mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process, desktop: !!l.desktop_server }),
+  );
   const servers: Record<string, any> = mcp_http.servers(state, l.run_id);
   if (in_process) delete servers[runner.MCP_SERVER_NAME];
   if (l.no_docs_server) delete servers[docs_mcp.SERVER_NAME];
