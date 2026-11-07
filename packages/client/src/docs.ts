@@ -20,6 +20,8 @@ export type DocPublished = {
   local_version: number;
   url: string;
   version_url: string;
+  /** The site's username it was published as, if it was known (HA-286; missing from hosts before it). */
+  login?: string | null;
   published_at: string;
 };
 
@@ -44,6 +46,9 @@ export type HostedDocsStatus = {
 };
 
 export type DocPublishResult = { published: DocPublished; warnings: { page: string; warning: string }[] };
+
+/** The site's document at the slug a publish with `ask` would have added a version to (HA-286), for the user to confirm. */
+export type DocPublishExists = { slug: string; title: string; latest_version: number | null; url: string | null; owner: string | null };
 
 export type DocSummary = {
   profile_id: string;
@@ -109,10 +114,15 @@ export type RenderedDocVersion = {
 export const docsApi = ({ on }: Http) => ({
   docs: (h: string, profileId: string) => on(h).get<DocSummary[]>(`/profiles/${enc(profileId)}/docs`),
   doc: (h: string, profileId: string, slug: string) => on(h).get<DocDetail>(`/profiles/${enc(profileId)}/docs/${enc(slug)}`),
-  /** A version's pages, rendered (`version` a number or `latest`); `path` for only one, `baseUrl` for links other than the board's own. */
-  docVersion: (h: string, profileId: string, slug: string, version: number | "latest", o: { path?: string; baseUrl?: string } = {}) => {
+  /**
+   * A version's pages, rendered (`version` a number or `latest`); `path` for only one, `first` for only the first (or, with
+   * `path`, the first if there's no such page; hosts before HA-286 give all of them), `baseUrl` for links other than
+   * the board's own.
+   */
+  docVersion: (h: string, profileId: string, slug: string, version: number | "latest", o: { path?: string; first?: boolean; baseUrl?: string } = {}) => {
     const q = new URLSearchParams();
     if (o.path !== undefined) q.set("path", o.path);
+    if (o.first) q.set("first", "1");
     if (o.baseUrl !== undefined) q.set("base_url", o.baseUrl);
     const qs = q.toString();
     return on(h).get<RenderedDocVersion>(`/profiles/${enc(profileId)}/docs/${enc(slug)}/versions/${version}${qs ? `?${qs}` : ""}`);
@@ -127,7 +137,11 @@ export const docsApi = ({ on }: Http) => ({
   hostedDocsToken: (h: string, profileId: string, siteUrl: string, token: string) =>
     on(h).post<HostedDocsStatus>(`/profiles/${enc(profileId)}/hosted_docs/token`, { site_url: siteUrl, token }),
   hostedDocsDisconnect: (h: string, profileId: string) => on(h).del<HostedDocsStatus>(`/profiles/${enc(profileId)}/hosted_docs`),
-  /** Publish a version (the latest by default) to the profile's docs site; `slug`, the remote one, only the first time. */
-  publishDoc: (h: string, profileId: string, slug: string, o: { version?: number; slug?: string } = {}) =>
-    on(h).post<DocPublishResult>(`/profiles/${enc(profileId)}/docs/${enc(slug)}/publish`, o),
+  /**
+   * Publish a version (the latest by default) to the profile's docs site; `slug` is the remote one (by default the one
+   * it went to, else the local one; another re-targets it). With `ask`, a host since HA-286 answers `{exists}` instead
+   * of adding to a document of the user's at a slug it wasn't published to.
+   */
+  publishDoc: (h: string, profileId: string, slug: string, o: { version?: number; slug?: string; ask?: boolean } = {}) =>
+    on(h).post<DocPublishResult | { exists: DocPublishExists }>(`/profiles/${enc(profileId)}/docs/${enc(slug)}/publish`, o),
 });

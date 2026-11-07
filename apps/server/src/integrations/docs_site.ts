@@ -8,8 +8,9 @@
  *   The access token lasts an hour and is renewed with the refresh token, which rotates on every use. The fallback is a
  *   personal access token the user pastes (the site's **Access** page).
  * - Publishing calls the site's `/mcp` `publish_document` tool (JSON-RPC over Streamable HTTP, with the bearer token)
- *   with a local version's pages, and remembers where it went (db/docs_site.ts), so publishing again adds a version to
- *   the same remote document.
+ *   with a local version's pages, and remembers where it went and as whom (db/docs_site.ts), so publishing again adds a
+ *   version to the same remote document. Before a document's first publish to a slug, the board can ask whether the site
+ *   has a document there already (`ask`, HA-286), so it isn't added to without the user's say-so.
  *
  * The tokens stay on this host: the API only says whether a profile is connected, and as whom. Nothing logs them, nor
  * the device code.
@@ -132,18 +133,37 @@ interface Pending {
   error: string | null;
 }
 
-/** Each state's sign-ins under way, by profile, and its tokens' refreshes in flight. */
+/**
+ * Each state's sign-ins under way, by profile, its tokens' refreshes in flight, its publishes in flight by document, and
+ * the site each profile was last connected to (HA-286: so that after a disconnect it's still the one shown).
+ */
 const state = new WeakMap<
   Shared,
-  { pending: Map<string, Pending>; refreshing: Map<string, Promise<db.DocsSiteConnection>>; publishing: Map<string, Promise<unknown>> }
+  {
+    pending: Map<string, Pending>;
+    refreshing: Map<string, Promise<db.DocsSiteConnection>>;
+    publishing: Map<string, Promise<unknown>>;
+    last_site: Map<string, string>;
+  }
 >();
 function mine(s: Shared) {
   let st = state.get(s);
-  if (!st) state.set(s, (st = { pending: new Map(), refreshing: new Map(), publishing: new Map() }));
+  if (!st) state.set(s, (st = { pending: new Map(), refreshing: new Map(), publishing: new Map(), last_site: new Map() }));
   return st;
 }
 
 const changed = (s: Shared, profile_id: string) => s.emit({ type: "docs_site", profile_id });
+
+/** Forget the profile's connection (or, with `access_token`, only if it's still the one with that token), keeping its site. */
+function forget(s: Shared, profile_id: string, access_token?: string) {
+  const c = db.docs_site_connection(s.db(), profile_id);
+  if (db.delete_docs_site_connection(s.db(), profile_id, access_token) && c) mine(s).last_site.set(profile_id, c.site_url);
+}
+
+/** The profile's site: the one it's connected to (or signing in to), else the one it was last, else the default. */
+function site_of(s: Shared, profile_id: string, c = db.docs_site_connection(s.db(), profile_id)): string {
+  return c?.site_url ?? mine(s).pending.get(profile_id)?.site_url ?? mine(s).last_site.get(profile_id) ?? DEFAULT_SITE;
+}
 
 /** What the board is shown of a profile's connection: never its tokens. */
 export function status(s: Shared, profile_id: string) {
@@ -151,7 +171,7 @@ export function status(s: Shared, profile_id: string) {
   const p = mine(s).pending.get(profile_id);
   return {
     default_site_url: DEFAULT_SITE,
-    site_url: c?.site_url ?? p?.site_url ?? DEFAULT_SITE,
+    site_url: site_of(s, profile_id, c),
     connected: !!c,
     kind: c?.kind ?? null,
     login: c?.login ?? null,
@@ -292,7 +312,7 @@ export async function connect_token(s: Shared, profile_id: string, site: string,
 /** Forget the profile's connection (its tokens stay valid on the site until they expire, or the user revokes them there). */
 export function disconnect(s: Shared, profile_id: string) {
   stop_pending(s, profile_id);
-  db.delete_docs_site_connection(s.db(), profile_id);
+  forget(s, profile_id);
   changed(s, profile_id);
   return status(s, profile_id);
 }
@@ -340,6 +360,15 @@ async function rpc(site: string, token: string, method: string, params: any): Pr
   return r;
 }
 
+/** A tool's error answer (a 400 with the site's message), and its text as the site gave it. */
+class ToolFailed extends ApiError {
+  text: string;
+  constructor(message: string, text: string) {
+    super(400, message);
+    this.text = text;
+  }
+}
+
 /** A `tools/call`'s result: its JSON (or text), or the tool's error as a 400 with the site's message. */
 function tool_result(site: string, r: Reply): { v: any; text: string } {
   if (r.status !== 200 || !r.body)
@@ -347,7 +376,7 @@ function tool_result(site: string, r: Reply): { v: any; text: string } {
   if (r.body.error) throw new ApiError(502, `${site_name(site)}: ${r.body.error.message ?? JSON.stringify(r.body.error)}`);
   const res = r.body.result ?? {};
   const text = Array.isArray(res.content) ? res.content.map((c: any) => (typeof c?.text === "string" ? c.text : "")).join("\n") : "";
-  if (res.isError) throw ApiError.bad(`${site_name(site)}: ${text || "the tool failed"}`);
+  if (res.isError) throw new ToolFailed(`${site_name(site)}: ${text || "the tool failed"}`, text);
   let v = res.structuredContent;
   if (v === undefined) {
     try {
@@ -382,7 +411,7 @@ function refresh(s: Shared, profile_id: string, c: db.DocsSiteConnection): Promi
       }
       if (r.status === 400 || r.status === 401) {
         // Expired, revoked, or the user is no longer allowed: the profile has to sign in again.
-        db.delete_docs_site_connection(s.db(), profile_id, c.access_token);
+        forget(s, profile_id, c.access_token);
         changed(s, profile_id);
         throw ApiError.conflict(`The sign-in to ${site_name(c.site_url)} has expired or was revoked (${oauth_text(r)}): connect again.`);
       }
@@ -406,7 +435,7 @@ export async function call_tool(s: Shared, profile_id: string, name: string, arg
     r = await rpc(c.site_url, c.access_token, "tools/call", { name, arguments: args });
   }
   if (r.status === 401) {
-    db.delete_docs_site_connection(s.db(), profile_id, c.access_token);
+    forget(s, profile_id, c.access_token);
     changed(s, profile_id);
     const why = r.body?.error_description ?? "the token is invalid or expired";
     throw ApiError.conflict(`${site_name(c.site_url)} no longer accepts this profile's sign-in (${why}): connect again.`);
@@ -414,23 +443,39 @@ export async function call_tool(s: Shared, profile_id: string, name: string, arg
   return tool_result(c.site_url, r).v;
 }
 
-/** The document's publish state on the profile's site (the one it's connected to, else the default). */
+/** Whether a document was published as another account than the one connected (as far as is known: either may not be). */
+const other_account = (p: db.DocsSitePublished, c: db.DocsSiteConnection) => p.login !== null && c.login !== null && p.login !== c.login;
+
+/**
+ * The document's publish state on the profile's site (the one it's connected to, else the one it was last, else the
+ * default): none if it was published there as another account (HA-286).
+ */
 export function published(s: Shared, profile_id: string, doc_id: string): db.DocsSitePublished | null {
-  const site = db.docs_site_connection(s.db(), profile_id)?.site_url ?? DEFAULT_SITE;
-  return db.docs_site_published(s.db(), doc_id, site);
+  const c = db.docs_site_connection(s.db(), profile_id);
+  const p = db.docs_site_published(s.db(), doc_id, site_of(s, profile_id, c));
+  return p && c && other_account(p, c) ? null : p;
+}
+
+/** How to publish: the remote slug (`slug`), and whether to ask first if the site has a document there (`ask`). */
+export interface PublishOptions {
+  slug?: unknown;
+  ask?: unknown;
 }
 
 /**
- * Publish version `number` (null: the latest) of the profile's document `slug` to its site: as a new remote document
- * (with slug `remote_slug`, by default the local one) the first time, and as a new version of it after that.
+ * Publish version `number` (null: the latest) of the profile's document `slug` to its site: as a new version of the
+ * remote document it was published to before, or, the first time (or with a remote slug other than that one's), to
+ * `o.slug` (by default the local slug). With `o.ask`, a publish to a slug the document wasn't published to before first
+ * looks it up: if the site has a document there of the user's, it answers `{exists}` rather than add a version to it,
+ * for the user to confirm (publishing again without `ask`) or choose another slug; if it's another user's, it says so.
  * Publishes of one document go one at a time.
  */
-export async function publish(s: Shared, profile_id: string, slug: string, number: number | null, remote_slug: unknown) {
+export async function publish(s: Shared, profile_id: string, slug: string, number: number | null, o: PublishOptions = {}) {
   const d = db.get_doc(s.db(), profile_id, slug);
   if (!d) throw ApiError.not_found("document");
   const st = mine(s);
   const before = st.publishing.get(d.id) ?? Promise.resolve();
-  const p = before.catch(() => {}).then(() => publish_now(s, profile_id, d, number, remote_slug));
+  const p = before.catch(() => {}).then(() => publish_now(s, profile_id, d, number, o));
   st.publishing.set(d.id, p);
   try {
     return await p;
@@ -439,18 +484,62 @@ export async function publish(s: Shared, profile_id: string, slug: string, numbe
   }
 }
 
-async function publish_now(s: Shared, profile_id: string, d: db.Doc, number: number | null, remote_slug: unknown) {
-  const c = db.docs_site_connection(s.db(), profile_id);
-  if (!c) throw not_connected(DEFAULT_SITE);
+/** Find the profile's username if it isn't known yet, quietly: a publish goes on without it. */
+async function try_learn_login(s: Shared, profile_id: string, slug?: string) {
+  if (db.docs_site_connection(s.db(), profile_id)?.login) return;
+  try {
+    await learn_login(s, profile_id, slug);
+  } catch {}
+}
+
+/** The site's document at `slug`, if it has one the user can see, and whether it's another user's. */
+async function remote_doc(s: Shared, profile_id: string, slug: string): Promise<{ v: any; theirs: boolean } | null> {
+  let v: any;
+  try {
+    v = await call_tool(s, profile_id, "get_document", { slug });
+  } catch (e) {
+    if (e instanceof ToolFailed && e.text.startsWith("no document")) return null;
+    throw e;
+  }
+  const login = db.docs_site_connection(s.db(), profile_id)?.login ?? null;
+  // The site gives its owner `sharing` (null for others), and names the owner.
+  const theirs = typeof v?.owner === "string" && (login !== null ? v.owner !== login : v.sharing === null);
+  return { v, theirs };
+}
+
+async function publish_now(s: Shared, profile_id: string, d: db.Doc, number: number | null, o: PublishOptions) {
+  if (!db.docs_site_connection(s.db(), profile_id)) throw not_connected(DEFAULT_SITE);
   const v = db.doc_version(s.db(), d.id, number);
   if (!v) throw ApiError.not_found("version");
-  const before = db.docs_site_published(s.db(), d.id, c.site_url);
-  let target: string;
-  if (remote_slug !== undefined && remote_slug !== null && remote_slug !== "") {
-    if (typeof remote_slug !== "string") throw ApiError.bad("slug must be a string");
-    target = db.doc_slug(remote_slug);
-    if (before && before.remote_slug !== target) throw ApiError.bad(`it's published as “${before.remote_slug}” already: publishing again adds a version to it`);
-  } else target = before?.remote_slug ?? d.slug;
+  const remote_slug = o.slug;
+  if (remote_slug !== undefined && remote_slug !== null && remote_slug !== "" && typeof remote_slug !== "string") throw ApiError.bad("slug must be a string");
+  // Who's connected, to tell a document published as another account (one connected before, say) from this one's.
+  await try_learn_login(s, profile_id);
+  const c = db.docs_site_connection(s.db(), profile_id);
+  if (!c) throw not_connected(DEFAULT_SITE);
+  const known = db.docs_site_published(s.db(), d.id, c.site_url);
+  const before = known && !other_account(known, c) ? known : null;
+  // Another slug than the one it went to re-targets it: a remote document that was deleted and taken by someone else,
+  // say, leaves the old one unusable.
+  const target = typeof remote_slug === "string" && remote_slug !== "" ? db.doc_slug(remote_slug) : (before?.remote_slug ?? d.slug);
+  if (o.ask && before?.remote_slug !== target) {
+    const there = await remote_doc(s, profile_id, target);
+    if (there?.theirs) {
+      throw ApiError.bad(`${site_name(c.site_url)} has “${target}” already, as ${there.v.owner}'s document: choose another slug`);
+    }
+    if (there) {
+      const x = there.v;
+      return {
+        exists: {
+          slug: target,
+          title: typeof x.title === "string" ? x.title : target,
+          latest_version: typeof x.latest_version === "number" ? x.latest_version : null,
+          url: web_url(x.url) ? x.url : null,
+          owner: typeof x.owner === "string" ? x.owner : null,
+        },
+      };
+    }
+  }
   const pages = db.doc_pages_full(s.db(), v.id).map((p) => ({ path: p.path, title: p.title, format: p.format, content: p.source }));
   const args: any = { slug: target, title: d.title, pages, mode: "replace" };
   if (v.message !== null) args.message = v.message;
@@ -458,6 +547,8 @@ async function publish_now(s: Shared, profile_id: string, d: db.Doc, number: num
   if (typeof out?.slug !== "string" || typeof out?.version !== "number" || !web_url(out?.url)) {
     throw new ApiError(502, `${site_name(c.site_url)} published it, but its answer isn't what was expected: ${JSON.stringify(out).slice(0, 300)}`);
   }
+  // A first publish as a user with no documents before: the one published says who it is.
+  await try_learn_login(s, profile_id, out.slug);
   const row = {
     site_url: c.site_url,
     remote_slug: out.slug,
@@ -465,9 +556,9 @@ async function publish_now(s: Shared, profile_id: string, d: db.Doc, number: num
     local_version: v.number,
     url: out.url,
     version_url: web_url(out.version_url) ? out.version_url : out.url,
+    login: db.docs_site_connection(s.db(), profile_id)?.login ?? null,
   };
   db.set_docs_site_published(s.db(), d.id, row);
   s.emit({ type: "docs", profile_id, slug: d.slug });
-  if (!c.login) background("finding the docs site's username", learn_login(s, profile_id, out.slug));
   return { published: db.docs_site_published(s.db(), d.id, c.site_url), warnings: Array.isArray(out.warnings) ? out.warnings : [] };
 }

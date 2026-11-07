@@ -345,6 +345,20 @@ test("the_board_lists_renders_and_deletes_a_profiles_documents", async () => {
   assert.equal((await call(s, "GET", `${p}/plan/versions/latest?base_url=https://evil.example/`))[0], 400);
   assert.equal((await call(s, "GET", `${p}/plan/versions/9`))[0], 404);
   assert.equal((await call(s, "GET", `${p}/plan/versions/latest?path=nope`))[0], 404);
+  const [, gone] = await call(s, "GET", `${p}/plan/versions/9`);
+  assert.equal(gone.error, "version not found");
+  assert.equal((await call(s, "GET", `${p}/plan/versions/latest?path=nope`))[1].error, "page not found");
+  // HA-286: only the first page, for a document opened at a page it may not have (an index), or at none.
+  for (const q of ["path=nope&first=1", "path=&first=1", "first=1"]) {
+    const [st, first] = await call(s, "GET", `${p}/plan/versions/1?${q}`);
+    assert.equal(st, 200, q);
+    assert.deepEqual([first.pages.map((pg: any) => pg.path), first.nav.length], [["index"], 2], q);
+  }
+  const [, phase] = await call(s, "GET", `${p}/plan/versions/1?path=plan/phase-1&first=1`);
+  assert.deepEqual(
+    phase.pages.map((pg: any) => pg.path),
+    ["plan/phase-1"],
+  );
 
   // Another profile's documents aren't reached through this one.
   assert.equal((await call(s, "GET", `/api/profiles/${other.profile_id}/docs/plan`))[0], 404);

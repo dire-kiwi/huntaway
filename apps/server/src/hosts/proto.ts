@@ -63,8 +63,12 @@ export const PROTOCOL = 1;
  * API 125: hosted docs (HA-282): a profile connects to a docs site (`/profiles/{id}/hosted_docs`, its `device` sign-in
  * and `token`) and publishes its documents there (`POST /profiles/{id}/docs/{slug}/publish`); documents have
  * `published`, and `docs_site` events say a profile's connection changed (see api/docs.ts).
+ *
+ * API 126: hosted docs fixes (HA-286): a document's publish (`POST /profiles/{id}/docs/{slug}/publish`) takes `ask`, to
+ * be told of a remote document at the slug (`{exists}`) rather than add to it, and another `slug` re-targets it; its
+ * `published` is the connected account's only; and `GET /profiles/{id}/docs/{slug}/versions/{n}` takes `first=1`.
  */
-export const API_VERSION = 125;
+export const API_VERSION = 126;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

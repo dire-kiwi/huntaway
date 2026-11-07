@@ -202,7 +202,8 @@ class Server {
     } catch (e) {
       // The renderer reads the pages with serde_json::from_str ("invalid pages: … at line 1 column 9"); the hosted
       // server reads them with the rest of the arguments ("invalid arguments: …", with no position).
-      if (typeof e === "string" && e.startsWith("invalid pages: ")) throw new ToolError(`invalid arguments: ${e.slice(15).replace(/ at line \d+ column \d+$/, "")}`);
+      if (typeof e === "string" && e.startsWith("invalid pages: "))
+        throw new ToolError(`invalid arguments: ${e.slice(15).replace(/ at line \d+ column \d+$/, "")}`);
       throw e;
     }
     const { pages: valid, warnings } = checked;
