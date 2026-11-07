@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
 import * as devices from "../devices.ts";
+import * as docs from "./docs.ts";
 import { path_str } from "../util.ts";
 import { config_for_dir } from "./profiles.ts";
 import { ASSISTANT_TASK_KEY, SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
@@ -847,9 +848,13 @@ export function open(path: string): Conn {
     if (deleted) batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
   }
   if (version < 103) {
+    // Docs (HA-280): each profile's documents, their versions and their pages (see db/docs.ts).
+    batch(`BEGIN; ${docs.SCHEMA} PRAGMA user_version=103; COMMIT;`);
+  }
+  if (version < 104) {
     // Whether a run's agent said its work is done (`finish_work`), for workflow columns that wait for it (HA-276).
     const add = has_column(conn, "runs", "finished") ? "" : "ALTER TABLE runs ADD COLUMN finished INTEGER NOT NULL DEFAULT 0;";
-    batch(`BEGIN; ${add} PRAGMA user_version=103; COMMIT;`);
+    batch(`BEGIN; ${add} PRAGMA user_version=104; COMMIT;`);
   }
   return conn;
 }
@@ -896,7 +901,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 103;
+export const VERSION = 104;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

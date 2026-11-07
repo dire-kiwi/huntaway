@@ -15,7 +15,7 @@ import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as summary from "../../review/summary.ts";
 import * as workflows from "../../integrations/workflows.ts";
 import { MCP_SERVER_NAME } from "../runner.ts";
-import { gh_note, github_account, uses_gh_server } from "./access.ts";
+import { docs_note, gh_note, github_account, uses_docs_server, uses_gh_server } from "./access.ts";
 
 /** What else decides what a run is told (see `instructions`). */
 export interface Told {
@@ -25,6 +25,8 @@ export interface Told {
   plan: boolean;
   /** It has our gh server (see uses_gh_server). */
   gh_tools: boolean;
+  /** It has our docs server (see uses_docs_server). */
+  docs_tools: boolean;
   github_account: string | null;
   /** The host's profiles, and the run's own. */
   profiles: Profile[];
@@ -56,6 +58,7 @@ export function instructions(s: string, task: Task, to: Told): string {
   } else if (to.gh_tools) {
     s += gh_note(to.github_account);
   }
+  if (to.docs_tools && task.kind !== "review") s += docs_note(to.codex);
   if (to.tmp != null) {
     s +=
       `\n\nYour temp folder is ${to.tmp} (\`$TMPDIR\` in your shell${task.kind === "review" ? ", shared with the task's agent" : ""}). ` +
@@ -159,7 +162,8 @@ export async function preview(state: Shared, project: Project, o: PreviewOptions
   const account = github_account(project, profile);
   const base = system_prompt(task, project, null, [], docs, github, gh_tools, workflows.board_opens_pr(state, task));
   const tmp = path_str(task_tmp.dir(state, task));
-  const to: Told = { codex, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: "" };
+  const docs_tools = uses_docs_server(tools);
+  const to: Told = { codex, plan: permission_mode === "plan", gh_tools, docs_tools, github_account: account, profiles, profile, tmp, memory: "" };
   return [instructions(base, task, to), codex, permission_mode];
 }
 

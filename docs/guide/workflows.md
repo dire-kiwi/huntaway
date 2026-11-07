@@ -5,7 +5,7 @@ the board, column by column, and the steps between the columns (reviews, summari
 task's agent). Agents can read and change them too, with the board's `list_workflows`, `create_workflow`,
 `update_workflow`, `delete_workflow` and `run_workflow` tools (a change other than turning one off asks you first).
 
-This page covers hosts from API 124 (HA-276). Older hosts have a start node that runs when a task enters a column, and
+This page covers hosts from API 125 (HA-276). Older hosts have a start node that runs when a task enters a column, and
 a _Move task_ step, instead of column nodes and values; see [the end of this page](#workflows-from-before-column-nodes).
 
 ## The editor

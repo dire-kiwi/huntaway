@@ -154,6 +154,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@dire-kiwi/docs-render':
+        specifier: https://github.com/dire-kiwi/docs/releases/download/render-v0.1.0/dire-kiwi-docs-render-0.1.0.tgz
+        version: https://github.com/dire-kiwi/docs/releases/download/render-v0.1.0/dire-kiwi-docs-render-0.1.0.tgz
       ws:
         specifier: ^8.18.0
         version: 8.22.1
@@ -783,6 +786,11 @@ packages:
   '@csstools/css-tokenizer@3.0.4':
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
+
+  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.1.0/dire-kiwi-docs-render-0.1.0.tgz':
+    resolution: {integrity: sha512-x9QRp73Jpnx1j09wWRw0MxLOgYmpoBJayk1NUVEgLvR48n1udnruxnrNpq79P4679/yauQ0PO4U2+O9NySIOVA==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.1.0/dire-kiwi-docs-render-0.1.0.tgz}
+    version: 0.1.0
+    engines: {node: '>=20'}
 
   '@electron-internal/extract-zip@1.0.6':
     resolution: {integrity: sha512-/aQLgFDdCSnwChfUwqekSmE1q2dCTzhUy5saIHBb5vyYn5LzWaKPaIz1wM0lDMCZYBoIG4svJNvAJb6vkI8BuA==}
@@ -7475,6 +7483,8 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
 
   '@csstools/css-tokenizer@3.0.4': {}
+
+  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.1.0/dire-kiwi-docs-render-0.1.0.tgz': {}
 
   '@electron-internal/extract-zip@1.0.6': {}
 
