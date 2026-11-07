@@ -32,6 +32,7 @@ import {
   settled,
   trigger,
   column_node,
+  COLUMN_ROUNDS,
   agent_works,
   after_done,
   data_inputs,
@@ -668,14 +669,15 @@ export function plan(run: Run): string[] {
   }
 }
 
-/** Ends the run once no node is left to run: its sends that weren't reached give their rounds back. */
+/** Ends the run once no node is left to run: its sends (and In progress) that weren't reached give their rounds back. */
 function settle(run: Run): boolean {
   if (run.state !== "running" || run.graph.nodes.some((n) => !is_data(n) && !settled(run_node(run, n.id)))) return false;
   // A send this run could have reached but went another way (its review passed, say) ends its rounds in a row. One
   // past a column the run doesn't start at is the next run's: its rounds go on.
   const reach = reachable(run);
   for (const n of run.graph.nodes) {
-    if (n.kind === "send_to_task" && run_node(run, n.id).state === "skipped" && reach.has(n.id)) delete run.rounds[n.id];
+    const counts = n.kind === "send_to_task" || (n.kind === "column" && n.status === "in_progress");
+    if (counts && run_node(run, n.id).state === "skipped" && reach.has(n.id)) delete run.rounds[n.id];
   }
   run.state = "done";
   run.finished_at = now();
@@ -1228,6 +1230,11 @@ async function enter_column(s: Shared, run: Run, node: Node): Promise<Done | nul
   if (node.kind !== "column") return Done_failed("not a column");
   let task = db.get_task(s.db(), run.task_id);
   if (!task) return Done_failed("the task is gone");
+  // Each time in a row this gives the agent its work is a round, as a send's are: a line round through the columns
+  // (a review that keeps finding issues, say) ends in Needs attention once they're used up.
+  const used = node.status === "in_progress" ? (run.rounds[node.id] ?? 0) : 0;
+  const max_rounds = node.max_rounds ?? COLUMN_ROUNDS;
+  if (node.status === "in_progress" && used >= max_rounds) return out_of_rounds(s, run, task, used);
   if (task.status !== node.status) {
     const moved = await move_task(s, run, node.status);
     if (moved.state === "failed") return moved;
@@ -1254,6 +1261,7 @@ async function enter_column(s: Shared, run: Run, node: Node): Promise<Done | nul
   const current = get_run(s.db(), run.id);
   if (!current || current.state !== "running") return null;
   const at = now();
+  current.rounds[node.id] = used + 1;
   const r = node_entry(current, node.id);
   r.state = "done";
   delete r.port;
@@ -1271,6 +1279,36 @@ async function enter_column(s: Shared, run: Run, node: Node): Promise<Done | nul
     s.add_event(task.id, "error", `The workflow "${w?.name ?? ""}" couldn't give the agent its work`, msg(e));
   }
   return null;
+}
+
+/**
+ * An edge into In progress with no rounds left: the task isn't moved, and goes to Needs attention with the issues the
+ * run found (unless the user or its agent has moved on).
+ */
+function out_of_rounds(s: Shared, run: Run, task: Task, used: number): Done {
+  let workflow = "";
+  try {
+    workflow = get(s.db(), run.workflow_id)?.name ?? "";
+  } catch {}
+  const issues = prompt.issues(run);
+  const n = issues.length;
+  const times = used === 1 ? "once" : `${used} times`;
+  const reason =
+    n === 0
+      ? `The workflow "${workflow}" gave the agent its work ${times} in a row, as many as it can`
+      : `The workflow "${workflow}" found ${n} serious issue${n === 1 ? "" : "s"} after ${used === 1 ? "a round" : `${used} rounds`} of fixes`;
+  s.add_event(task.id, "warn", reason, n ? issues.join("\n\n") : null);
+  if (!s.is_running(task.id) && task.status !== "done" && !task.merging) {
+    try {
+      s.update_task(task.id, [
+        ["status", "needs_attention"],
+        ["attention_reason", reason],
+      ]);
+    } catch (e) {
+      console.error(`flagging a task: ${err_str(e)}`);
+    }
+  }
+  return Done_failed("out of rounds: the agent was given its work as many times in a row as the column allows");
 }
 
 /** A node that ended without an outcome: a column, whose outcome is the next run's. */

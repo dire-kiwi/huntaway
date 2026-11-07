@@ -86,3 +86,40 @@ test("an agent step's input-only switch is saved", async () => {
     assert.deepEqual([n.summary.input_only, "input_only" in n.skill], [true, false]);
   });
 });
+
+// Review of HA-276: lines back into In progress give the agent its work a limited number of times in a row, which
+// In progress's step sets once a line goes into it.
+test("In progress's rounds are set once a line goes back into it", async () => {
+  const { workflows } = await server.api("GET", `/projects/${project.id}/workflows`);
+  for (const w of workflows) await server.api("DELETE", `/workflows/${w.id}`);
+  const w = await server.api("POST", `/projects/${project.id}/workflows`, {
+    name: "Loop back",
+    graph: {
+      nodes: [
+        { id: "work", kind: "column", status: "in_progress", x: 0, y: 0 },
+        { id: "review", kind: "column", status: "in_review", x: 300, y: 0 },
+        { id: "c", kind: "condition", check: "has_pr", x: 600, y: 0 },
+      ],
+      edges: [
+        { from: "work", port: "done", to: "review" },
+        { from: "review", port: "done", to: "c" },
+        { from: "c", port: "no", to: "work" },
+      ],
+    },
+  });
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([
+      `goto /p/${project.id}/settings/workflows`,
+      "click role=button[name=/^Edit$/]",
+      "wait [data-node=work]",
+      "click [data-node=work]",
+      "wait Rounds",
+      "click [data-testid=workflow-inspector] input[type=number]",
+      "type 5",
+      "click Save",
+      "gone [role=dialog]",
+    ]);
+  });
+  const saved = await server.api("GET", `/workflows/${w.id}`);
+  assert.equal(saved.graph.nodes.find((n) => n.id === "work").max_rounds, 5);
+});

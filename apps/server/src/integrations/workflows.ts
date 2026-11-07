@@ -57,8 +57,10 @@ export const WORKFLOW = "workflow";
 /** Most nodes a workflow can have, and agent steps among them. */
 export const MAX_NODES = 80;
 export const MAX_AGENTS = 8;
-/** Most rounds a send can be given. */
+/** Most rounds a send (or an edge into In progress) can be given. */
 export const MAX_ROUNDS = 20;
+/** How many times in a row edges into In progress give the task's agent its work, for a column node without `max_rounds`. */
+export const COLUMN_ROUNDS = 3;
 const MAX_TEXT = 20_000;
 
 // ---------- what a workflow is ----------
@@ -115,9 +117,10 @@ export type NodeKind =
    * sent then (see `agent_works`): for In progress, it's the task's start prompt, and for Ready for merge its merge
    * instructions. Its `done` port is when that work is done: the agent's run ending (or, with `done_when: finish`, its
    * calling `finish_work`), its merge, or straight away where the agent has no work. An edge into it moves the task
-   * there, which ends that path of the run: what comes after the column is the next run's.
+   * there, which ends that path of the run: what comes after the column is the next run's. An edge into In progress
+   * gives the agent its work again, at most `max_rounds` times in a row (`COLUMN_ROUNDS` without it), as a send does.
    */
-  | { kind: "column"; status: string; prompt: string; done_when?: DoneWhen }
+  | { kind: "column"; status: string; prompt: string; done_when?: DoneWhen; max_rounds?: number }
   /** A check on the task: `yes` or `no`. `value` is the type or label for `task_type` and `label`. */
   | { kind: "condition"; check: Check; value?: string }
   /**
@@ -233,6 +236,7 @@ export function Node_from_json(v: any): Node {
       n.status = de_str(v, "status");
       n.prompt = de_def_str(v, "prompt");
       if (de_enum(v, "done_when", DONE_WHENS, "run_end") === "finish") n.done_when = "finish";
+      if (v.max_rounds !== undefined) n.max_rounds = de_uint(v, "max_rounds");
       break;
     case "condition":
       n.check = de_enum(v, "check", CHECKS);
@@ -780,6 +784,10 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
         }
         if (!agent_works(n, g)) delete n.done_when;
         else if (n.status === "ready_for_merge" && n.done_when) throw bad(`column ${id}'s work is done when the task is merged, not when the agent says so`);
+        // Only edges into In progress give the agent work (see engine's `enter_column`).
+        if (n.status !== "in_progress") delete n.max_rounds;
+        else if (n.max_rounds !== undefined && (n.max_rounds < 1 || n.max_rounds > MAX_ROUNDS))
+          throw bad(`column ${id} can give the agent its work 1 to ${MAX_ROUNDS} times in a row`);
         break;
       }
       case "condition": {

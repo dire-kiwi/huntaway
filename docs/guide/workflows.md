@@ -96,7 +96,10 @@ A column of the board: In progress, In review, Ready for merge, Needs attention,
   question for you, or with **Done when: the agent says so**, only once it calls the board's `finish_work` tool in its
   turn (a turn that ends without it moves the task to Needs attention, whether it did the work or revised a plan task's
   plan as it went). Only code tasks, which get In progress's prompt, are asked for it; the fixes and messages the
-  workflow sends them end saying so too. The agent's work after a message you send it counts as well.
+  workflow sends them end saying so too. The agent's work after a message you send it counts as well. Lines back into
+  In progress give the agent its work at most **Rounds** times in a row (3 when blank), as a _Send_ step does: once
+  they're used up the task isn't moved but goes to Needs attention, with the issues the run found. A run that could
+  have gone back into In progress but went another way (its review passed, say) gives the rounds back.
 - **Ready for merge**: the prompt is how the agent merges, in place of the project's merge instructions. `done` comes
   once the task is merged.
 - **Any other column with a prompt**: the prompt is sent to the task's agent when the task enters the column, and

@@ -12,6 +12,8 @@ export type WorkflowTrigger = { kind: "trigger"; on: "status"; status: Status } 
  * steps and agent steps' input_only (HA-276). Hosts before it have triggers on a column and set_status moves instead.
  */
 export const COLUMN_WORKFLOWS_API = 127;
+/** How many times in a row lines back into In progress give the agent its work, for a column node without `max_rounds`. */
+export const COLUMN_ROUNDS = 3;
 
 /** When a column node's work is done: when the agent's run ends, or when it says so with `finish_work`. */
 export type WorkflowDoneWhen = "run_end" | "finish";
@@ -27,7 +29,7 @@ export type WorkflowNodeKind =
    * prompt; in Ready for merge, how to merge). `done` once that work is (see `workflowWaits`). An edge into it moves
    * the task there.
    */
-  | { kind: "column"; status: Status; prompt: string; done_when?: WorkflowDoneWhen }
+  | { kind: "column"; status: Status; prompt: string; done_when?: WorkflowDoneWhen; max_rounds?: number }
   | { kind: "condition"; check: WorkflowCheck; value?: string | null }
   | {
       kind: "agent";

@@ -14,6 +14,7 @@ import { now, sleep } from "../../util.ts";
 import {
   Graph_from_json,
   check_graph,
+  COLUMN_ROUNDS,
   create,
   delete_,
   get_run,
@@ -1571,4 +1572,84 @@ test("finish_work is asked of the runs that are told about it, and a merge pushe
   } finally {
     runs.TEST_CAN_RUN.set(false);
   }
+});
+
+// Review of HA-276: an edge back into In progress gave the agent its work every time, and the run its finishing started
+// counted no chain, so a line round through the columns (here a check that never passes) went on for ever.
+test("a line back into In progress ends in Needs attention once its rounds are used up", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    db.update_task(s.db(), task.id, [["session_id", "sess"]]);
+    const w = make(s, project, {
+      nodes: [
+        { id: "work", kind: "column", status: "in_progress", prompt: "Work on {{task.key}}." },
+        { id: "review", kind: "column", status: "in_review" },
+        { id: "c", kind: "condition", check: "has_pr" },
+      ],
+      edges: [
+        { from: "work", port: "done", to: "review" },
+        { from: "review", port: "done", to: "c" },
+        { from: "c", port: "no", to: "work" },
+      ],
+    });
+    const runs_of = () => db.value(s.db(), "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1", w.id) as number;
+    const entered = () => latest_run(s.db(), w.id, task.id);
+    // From In review: each time, back to In progress with the column's prompt, and its work done there takes it to In
+    // review again.
+    let run = (await start(s, w.id, task.id, false, 0, "status", "review"))!;
+    for (let round = 1; round <= COLUMN_ROUNDS; round++) {
+      assert.deepEqual([run_node(run, "work").state, run.rounds], ["done", { work: round }], `round ${round}`);
+      assert.equal(db.get_task(s.db(), task.id)!.status, "in_progress");
+      assert.ok(last_user_text(s, task.id).startsWith("Work on X-1."), last_user_text(s, task.id));
+      const before = run.id;
+      // Its launch fails in tests: that ends first, then its work is done.
+      await until(() => !s.is_running(task.id), 15000);
+      db.run(s.db(), "UPDATE runs SET status='exited' WHERE task_id=?1", task.id);
+      agent_finishes(s, db.get_task(s.db(), task.id)!);
+      // In progress's run moves it to In review, whose run is the next round.
+      await until(() => {
+        const r = entered();
+        return r != null && r.id !== before && r.source === "status" && r.state === "done";
+      }, 5000);
+      run = entered()!;
+    }
+    // Out of rounds: not moved, and the task needs attention.
+    assert.equal(run_node(run, "work").state, "failed");
+    const t = db.get_task(s.db(), task.id)!;
+    assert.equal(t.status, "needs_attention");
+    assert.ok((t.attention_reason ?? "").includes(`gave the agent its work ${COLUMN_ROUNDS} times in a row`), t.attention_reason ?? "");
+    const total = runs_of();
+    await sleep(300);
+    assert.equal(runs_of(), total, "no more runs");
+    assert.equal(total, 2 * COLUMN_ROUNDS + 1);
+
+    // A run that goes another way gives the rounds back; a node's own max_rounds is its limit.
+    db.update_task(s.db(), task.id, [
+      ["pr_url", "https://github.com/o/r/pull/1"],
+      ["status", "in_review"],
+    ]);
+    run = (await start(s, w.id, task.id, false, 0, "status", "review"))!;
+    assert.deepEqual([run_node(run, "c").port, run.rounds], ["yes", {}]);
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});
+
+test("an In progress node's max_rounds is checked", () => {
+  const s = testing.state();
+  const [project] = setup(s);
+  const g = (n: any) => ({
+    nodes: [
+      { id: "work", kind: "column", status: "in_progress", ...n },
+      { id: "c", kind: "condition", check: "has_pr" },
+    ],
+    edges: [{ from: "work", port: "done", to: "c" }],
+  });
+  assert.equal((check_graph(s.db(), project, g({ max_rounds: 5 })).nodes[0] as any).max_rounds, 5);
+  assert.throws(() => check_graph(s.db(), project, g({ max_rounds: 0 })), /1 to 20 times/);
+  assert.throws(() => check_graph(s.db(), project, g({ max_rounds: 21 })), /1 to 20 times/);
+  const review = check_graph(s.db(), project, { nodes: [{ id: "r", kind: "column", status: "in_review", max_rounds: 5 }], edges: [] });
+  assert.equal((review.nodes[0] as any).max_rounds, undefined);
 });

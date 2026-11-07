@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
+  COLUMN_ROUNDS,
   COLUMN_WORKFLOWS_API,
   hostStatuses,
   hostSupports,
@@ -1661,6 +1662,23 @@ function ColumnInspector({
             <option value="run_end">The agent's turn ends (not asking you anything)</option>
             <option value="finish">The agent says so, with finish_work</option>
           </select>
+        </Field>
+      )}
+      {n.status === "in_progress" && graph.edges.some((e) => e.input == null && e.to === n.id) && (
+        <Field
+          label="Rounds"
+          hint={`A line back into In progress gives the agent its work again. How many times in a row it can before the task moves to Needs attention instead (${COLUMN_ROUNDS} when blank).`}
+        >
+          <div className="w-24">
+            <Input
+              type="number"
+              min={1}
+              max={20}
+              placeholder={String(COLUMN_ROUNDS)}
+              value={n.max_rounds ?? ""}
+              onChange={(e) => onChange({ max_rounds: e.target.value === "" ? undefined : Math.max(1, Math.min(20, Math.floor(Number(e.target.value) || 1))) })}
+            />
+          </div>
         </Field>
       )}
       {note && (
