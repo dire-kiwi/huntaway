@@ -104,7 +104,7 @@ export class Watcher implements EnvSlot {
     }
     const first = row === null;
     const r = row ?? Row_default();
-    const [quiet, news] = compare(first ? null : r.seen, pr, events);
+    const [quiet, news] = compare(first ? null : r.seen, pr, events, true);
     if (news) r.pending = { call_id, told: news[1] };
     else delete r.pending;
     r.seen = quiet;

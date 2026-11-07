@@ -225,6 +225,39 @@ test("a_conflict_is_news_once_until_it_clears", () => {
   assert.deepEqual(events(compare(quiet, withm("CONFLICTING"), all())[1]), ["conflicts"]);
 });
 
+test("a_conflict_ends_a_wait_on_checks_that_wont_run", () => {
+  // HA-287: GitHub runs no pull_request workflows on a conflicting pull request, so a wait on checks alone never ended.
+  const withm = (m: string, checks: Array<[string, string, string, boolean]>) => {
+    const v = response("me", "a1", checks, []);
+    v.data.repository.pullRequest.mergeable = m;
+    return pr(v);
+  };
+  const checks = ["checks_failed", "checks_passed"];
+  const [quiet, news] = compare(Seen_default(), withm("CONFLICTING", []), checks, true);
+  assert.deepEqual(events(news), ["conflicts"]);
+  assert.equal(note(news![0]), "Pull request #7: it conflicts with main (see pull_request).");
+  // Not counted as told: the next wait on checks hears of it again, and so does one that wants conflicts.
+  assert.ok(!news![1].conflicting && !quiet.conflicting);
+  assert.deepEqual(events(compare(news![1], withm("CONFLICTING", []), checks, true)[1]), ["conflicts"]);
+  assert.deepEqual(events(compare(news![1], withm("CONFLICTING", []), all(), true)[1]), ["conflicts"]);
+  // Even after a wait that wanted conflicts was told of it.
+  const [, told] = compare(Seen_default(), withm("CONFLICTING", []), all(), true);
+  assert.ok(told![1].conflicting);
+  assert.deepEqual(events(compare(told![1], withm("CONFLICTING", []), all(), true)[1]), ["conflicts"]);
+  // Checks that are still running will end it themselves.
+  const running: Array<[string, string, string, boolean]> = [["test", "IN_PROGRESS", "", false]];
+  assert.equal(compare(Seen_default(), withm("CONFLICTING", running), checks, true)[1], null);
+  // Unknown (after a push) and mergeable don't end it, nor does a conflict end a wait on comments alone.
+  assert.equal(compare(Seen_default(), withm("UNKNOWN", []), checks, true)[1], null);
+  assert.equal(compare(Seen_default(), withm("MERGEABLE", []), checks, true)[1], null);
+  assert.equal(compare(Seen_default(), withm("CONFLICTING", []), ["comments"], true)[1], null);
+  // Checks' news is reported as such, with the merge state in the report.
+  const [, failed] = compare(Seen_default(), withm("CONFLICTING", [["test", "COMPLETED", "FAILURE", false]]), checks, true);
+  assert.deepEqual(events(failed), ["checks_failed"]);
+  // The in-review watcher (not a wait) doesn't wake the agent with a conflict it was told of on every read.
+  assert.equal(compare(told![1], withm("CONFLICTING", []), wake_events("failures"))[1], null);
+});
+
 test("merged_or_closed_always_ends_it", () => {
   for (const [state, event] of [
     ["MERGED", "merged"],

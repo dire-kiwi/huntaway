@@ -284,7 +284,7 @@ function board_tools(): any[] {
             type: "array",
             items: { type: "string", enum: PR_EVENTS },
             description:
-              "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does.",
+              "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does, and a wait on checks also ends when it conflicts and none of its checks is running, since GitHub runs no pull request checks on it then.",
           },
           command: {
             type: "string",
