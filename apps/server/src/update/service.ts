@@ -114,6 +114,8 @@ export interface Spec {
   /** The login shell it runs through. */
   shell: string;
   port: number;
+  /** The folder it runs in, which relative paths in its flags and environment (`--data-dir board`) are from. */
+  cwd: string;
 }
 
 /**
@@ -146,7 +148,7 @@ export function this_server(state: AppState, port: number): Spec {
   const args = admin.restart_args(state.meta.args);
   if (args[0] !== "serve") args.unshift("serve");
   // On the port it has, which the unit is named for, rather than another free one for `--port 0`.
-  return { exe, args: [...args, "--port", String(port)], env: kept_env(process.env), shell: login_shell(), port };
+  return { exe, args: [...args, "--port", String(port)], env: kept_env(process.env), shell: login_shell(), port, cwd: process.cwd() };
 }
 
 export const login_shell = () => process.env.SHELL || "/bin/sh";
@@ -162,7 +164,7 @@ function unit_quote(s: string, dollar: boolean): string {
 }
 
 export function unit_text(spec: Spec): string {
-  for (const s of [spec.exe, spec.shell, ...spec.args, ...spec.env.flat()]) {
+  for (const s of [spec.exe, spec.shell, spec.cwd, ...spec.args, ...spec.env.flat()]) {
     if (/[\n\r\0]/.test(s)) throw new Error(`${JSON.stringify(s)} can't go in a unit file`);
   }
   const command = `exec ${[spec.exe, ...spec.args].map(sh_quote).join(" ")}`;
@@ -174,6 +176,9 @@ export function unit_text(spec: Spec): string {
     "[Service]",
     ...spec.env.map(([k, v]) => `Environment=${unit_quote(`${k}=${v}`, false)}`),
     // Through the login shell, so agents get the PATH they'd get from a terminal.
+    // systemd starts user units in the home folder. A path as it is (systemd doesn't unquote this one), with only
+    // specifiers escaped; `-`: a folder that's gone doesn't stop the unit.
+    `WorkingDirectory=-${spec.cwd.replaceAll("%", "%%")}`,
     `ExecStart=${unit_quote(spec.shell, true)} -lc ${unit_quote(command, true)}`,
     "Restart=on-failure",
     "RestartSec=5",
@@ -300,7 +305,7 @@ export async function install_cli(argv: string[]): Promise<void> {
   }
   const port = parse_serve_args(argv).port;
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("install-service needs the port the host is to listen on (--port N)");
-  const spec: Spec = { exe: admin.current_exe(), args: ["serve", ...argv], env: kept_env(process.env), shell: login_shell(), port };
+  const spec: Spec = { exe: admin.current_exe(), args: ["serve", ...argv], env: kept_env(process.env), shell: login_shell(), port, cwd: process.cwd() };
   const st = await install(spec, (l) => console.log(l));
   const active = (await ctl(systemctl(), ["--user", "is-active", st.unit])).success;
   if (active) {

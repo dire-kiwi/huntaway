@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, test } from "vite-plus/test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as testing from "../testing.ts";
@@ -39,6 +40,7 @@ const spec = (more: Partial<service.Spec> = {}): service.Spec => ({
   args: ["serve", "--host", "127.0.0.1", "--port", "7878"],
   env: [["IA_RELEASE_UPDATES", "dire-kiwi/huntaway"]],
   shell: "/bin/bash",
+  cwd: "/home/me",
   port: 7878,
   ...more,
 });
@@ -94,6 +96,16 @@ test("unit_text_quotes_for_systemd_and_the_shell", () => {
   const exec = text.split("\n").find((l) => l.startsWith("ExecStart="))!;
   assert.equal(exec, `ExecStart="/bin/bash" -lc "exec '/home/a b/it'\\\\''s/huntaway' 'serve' '--name' 'my \\"box\\" 100%%' '--data-dir' '/d/$$HOME'"`);
   assert.throws(() => service.unit_text(spec({ args: ["serve", "--name", "a\nb"] })), /can't go in a unit file/);
+});
+
+// systemd starts user units in the home folder, so a host started as `huntaway serve --data-dir board` in ~/hosts/a came
+// back on ~/board, a new and empty board.
+test("the_unit_runs_in_the_folder_the_server_was_started_in", () => {
+  const text = service.unit_text(spec({ args: ["serve", "--data-dir", "board"], cwd: "/home/me/hosts/100% a" }));
+  assert.match(text, /^WorkingDirectory=-\/home\/me\/hosts\/100%% a$/m);
+  const s = testing.state_with({ ...testing.meta(), args: ["serve", "--data-dir", "board"] });
+  assert.equal(service.this_server(s, 7878).cwd, process.cwd());
+  assert.match(service.unit_text(service.this_server(s, 7878)), new RegExp(`^WorkingDirectory=-${process.cwd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
 });
 
 test("install_writes_and_enables_the_unit_and_turns_lingering_on", async () => {
@@ -198,4 +210,20 @@ test("server_status_has_the_service_for_its_port", async () => {
   assert.equal((await server_status(s)).service.unit, "huntaway-7900.service");
   process.env.IA_SYSTEMD_BOOTED = "0";
   assert.equal((await server_status(s)).service, undefined);
+});
+
+// systemd's own parser, where it's installed: it warns about a value it ignores (a quoted WorkingDirectory=, which it
+// doesn't unquote, isn't absolute) and prints nothing for a unit it reads as written.
+test("systemd_reads_the_unit_without_complaint", (t) => {
+  const dir = testing.temp_dir();
+  const cwd = join(dir, "100% a b");
+  mkdirSync(cwd);
+  const file = join(dir, "huntaway-7999.service");
+  writeFileSync(
+    file,
+    service.unit_text(spec({ exe: "/bin/true", shell: "/bin/sh", cwd, port: 7999, env: [["IA_X", 'a"b%c$d\\e']], args: ["serve", "--name", "it's 100%"] })),
+  );
+  const r = spawnSync("systemd-analyze", ["verify", file], { encoding: "utf8" });
+  if (r.error) return t.skip("no systemd-analyze here");
+  assert.equal(`${r.stdout}${r.stderr}`.trim(), "");
 });
