@@ -6,6 +6,7 @@ import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
 import * as devices from "../devices.ts";
 import * as docs from "./docs.ts";
+import * as docs_site from "./docs_site.ts";
 import { path_str } from "../util.ts";
 import { config_for_dir } from "./profiles.ts";
 import { ASSISTANT_TASK_KEY, SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
@@ -852,9 +853,19 @@ export function open(path: string): Conn {
     batch(`BEGIN; ${docs.SCHEMA} PRAGMA user_version=103; COMMIT;`);
   }
   if (version < 104) {
+    // Hosted docs (HA-282): profiles' connections to docs sites, and what they published there (see db/docs_site.ts).
+    batch(`BEGIN; ${docs_site.DOCS_SITE_SCHEMA} PRAGMA user_version=104; COMMIT;`);
+  }
+  if (version < 105) {
+    // Hosted docs (HA-286): the account each document was published as. HA-276's branch had another 104, so its
+    // databases (its PR preview's) skipped the one above: its tables are made here if they're missing.
+    const add = has_column(conn, "docs_site_published", "login") ? "" : docs_site.DOCS_SITE_LOGIN;
+    batch(`BEGIN; ${docs_site.DOCS_SITE_SCHEMA} ${add} PRAGMA user_version=105; COMMIT;`);
+  }
+  if (version < 106) {
     // Whether a run's agent said its work is done (`finish_work`), for workflow columns that wait for it (HA-276).
     const add = has_column(conn, "runs", "finished") ? "" : "ALTER TABLE runs ADD COLUMN finished INTEGER NOT NULL DEFAULT 0;";
-    batch(`BEGIN; ${add} PRAGMA user_version=104; COMMIT;`);
+    batch(`BEGIN; ${add} PRAGMA user_version=106; COMMIT;`);
   }
   return conn;
 }
@@ -901,7 +912,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 104;
+export const VERSION = 106;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

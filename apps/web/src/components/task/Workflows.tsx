@@ -111,7 +111,7 @@ export function WorkflowTabView({ task, label }: { task: Task; label: string }) 
   const data = useWorkflowRuns(task);
   if (!data) return <div className="text-[12.5px] text-muted">Loading…</div>;
   // Each step from its workflow's latest run that ran it (a run from one column skips the steps after another), or
-  // else its latest. Runs come newest first, with earlier ones for such steps from API 125.
+  // else its latest. Runs come newest first, with earlier ones for such steps from API 127.
   const shown = new Map<string, string[]>();
   const placed = new Set<string>();
   const ran = (r: WorkflowRun, id: string) => !!r.nodes[id] && r.nodes[id].state !== "pending" && r.nodes[id].state !== "skipped";

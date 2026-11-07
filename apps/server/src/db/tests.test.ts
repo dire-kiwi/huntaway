@@ -1846,3 +1846,43 @@ test("a_database_from_version_99_has_its_workflows_approvals_say_workflow", () =
   assert.deepEqual(requests, ["workflow", "automation"]);
   c.close();
 });
+
+test("a_database_from_version_104_keeps_its_published_documents_with_no_account", () => {
+  // HA-286: documents published before the account was kept are taken as the connected account's.
+  const path = db_path();
+  const c0 = open(path);
+  const p = db.insert_profile(c0, "p", [], null);
+  const page = { path: "index", title: "T", format: "md", source: "# T", position: 0 };
+  db.publish_doc(c0, { profile_id: p.id, slug: "d", title: "T", message: null, pages: [page], merge: false, delete: [], task_id: null, run_id: null });
+  const doc_id = db.get_doc(c0, p.id, "d")!.id;
+  c0.close();
+  prepare_at(path, (c) => {
+    c.exec("ALTER TABLE docs_site_published DROP COLUMN login; PRAGMA user_version=104;");
+    db.run(
+      c,
+      "INSERT INTO docs_site_published (doc_id, site_url, remote_slug, remote_version, local_version, url, version_url, published_at) VALUES (?1,'https://s','d',1,1,'https://s/d/','https://s/d/-/v/1/','2026-11-07')",
+      doc_id,
+    );
+  });
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  assert.deepEqual([db.docs_site_published(c, doc_id, "https://s")?.remote_slug, db.docs_site_published(c, doc_id, "https://s")?.login], ["d", null]);
+});
+
+test("a_database_from_ha_276s_version_104_gets_the_hosted_docs_tables_it_skipped", () => {
+  // HA-276's branch had `runs.finished` as version 104, so its databases (its PR preview's) skipped master's 104, the
+  // hosted docs tables; 105 makes them.
+  const path = db_path();
+  open(path).close();
+  prepare_at(path, (c) => c.exec("DROP TABLE docs_site_published; DROP TABLE docs_site_connections; DROP TABLE docs_site_clients; PRAGMA user_version=104;"));
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  for (const [table, column] of [
+    ["runs", "finished"],
+    ["docs_site_published", "login"],
+    ["docs_site_connections", "site_url"],
+    ["docs_site_clients", "client_id"],
+  ])
+    assert.ok(has_column(c, table, column), `${table}.${column}`);
+  c.close();
+});

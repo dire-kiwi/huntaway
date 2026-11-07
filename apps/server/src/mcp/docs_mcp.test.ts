@@ -174,7 +174,12 @@ test("publishing_checks_the_pages_as_the_hosted_server_does", async () => {
     'page "a" is listed twice',
   );
   assert.match(await err({ pages: [{ path: "index", content: "<Callout>never closed", format: "mdx" }] }), /^page "index" is not valid mdx: /);
-  assert.match(await err({ pages: [{ path: "index" }] }), /missing field `content`/);
+  // Badly shaped pages fail as the hosted server's arguments do (HA-286), without serde_json's position.
+  assert.equal(await err({ pages: [{ path: "index" }] }), "invalid arguments: missing field `content`");
+  assert.equal(await err({ pages: ["index"] }), 'invalid arguments: invalid type: string "index", expected struct PageInput');
+  assert.equal(await err({ pages: "index" }), 'invalid arguments: invalid type: string "index", expected a sequence');
+  assert.equal(await err({ pages: null }), "invalid arguments: invalid type: null, expected a sequence");
+  assert.equal(await err({ pages: { path: "index", content: "x" } }), "invalid arguments: invalid type: a map, expected a sequence");
   assert.equal(await err({ pages: [{ path: "a", content: "x" }], title: 5 }), "invalid arguments: invalid type: integer `5`, expected a string");
   // Nothing was made.
   assert.deepEqual((await tool(s, r, "list_documents")).v.documents, []);
@@ -227,6 +232,8 @@ test("its_tools_are_the_hosted_ones_but_feedback_and_sharing", async () => {
   const init = await docs_mcp.handle(s, { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-06-18" } }, r);
   assert.equal(init.result.protocolVersion, "2025-06-18");
   assert.match(init.result.instructions, /publish_document/);
+  // Local documents keep no answers (HA-281).
+  assert.match(init.result.instructions, /read-only here and collect no answers/);
   const list = await docs_mcp.handle(s, { jsonrpc: "2.0", id: 1, method: "tools/list" }, r);
   const names = list.result.tools.map((t: any) => t.name);
   assert.deepEqual(names.sort(), ["get_document", "list_components", "list_documents", "publish_document", "read_page"]);
@@ -290,8 +297,8 @@ test("the_board_lists_renders_and_deletes_a_profiles_documents", async () => {
 
   const [, list] = await call(s, "GET", p);
   assert.deepEqual(
-    list.map((d: any) => [d.slug, d.title, d.latest_version, d.page_count]),
-    [["plan", "The plan", 2, 3]],
+    list.map((d: any) => [d.slug, d.title, d.latest_version, d.page_count, d.task?.title]),
+    [["plan", "The plan", 2, 3, "p's task"]],
   );
   const [, doc] = await call(s, "GET", `${p}/plan`);
   assert.deepEqual(
@@ -338,6 +345,20 @@ test("the_board_lists_renders_and_deletes_a_profiles_documents", async () => {
   assert.equal((await call(s, "GET", `${p}/plan/versions/latest?base_url=https://evil.example/`))[0], 400);
   assert.equal((await call(s, "GET", `${p}/plan/versions/9`))[0], 404);
   assert.equal((await call(s, "GET", `${p}/plan/versions/latest?path=nope`))[0], 404);
+  const [, gone] = await call(s, "GET", `${p}/plan/versions/9`);
+  assert.equal(gone.error, "version not found");
+  assert.equal((await call(s, "GET", `${p}/plan/versions/latest?path=nope`))[1].error, "page not found");
+  // HA-286: only the first page, for a document opened at a page it may not have (an index), or at none.
+  for (const q of ["path=nope&first=1", "path=&first=1", "first=1"]) {
+    const [st, first] = await call(s, "GET", `${p}/plan/versions/1?${q}`);
+    assert.equal(st, 200, q);
+    assert.deepEqual([first.pages.map((pg: any) => pg.path), first.nav.length], [["index"], 2], q);
+  }
+  const [, phase] = await call(s, "GET", `${p}/plan/versions/1?path=plan/phase-1&first=1`);
+  assert.deepEqual(
+    phase.pages.map((pg: any) => pg.path),
+    ["plan/phase-1"],
+  );
 
   // Another profile's documents aren't reached through this one.
   assert.equal((await call(s, "GET", `/api/profiles/${other.profile_id}/docs/plan`))[0], 404);

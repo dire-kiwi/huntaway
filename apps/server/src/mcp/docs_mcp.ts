@@ -26,8 +26,10 @@ const INSTRUCTIONS =
   "Docs keeps Markdown documents for the user to read on this Huntaway board: reports, plans, research, write-ups. " +
   "Publish with `publish_document` (one or more pages; nested paths like `plan/phase-1` make a nested menu). Every " +
   'publish creates a new version, so you can revise freely; `mode: "merge"` keeps the other pages of the previous ' +
-  'version. Use format "mdx" for components such as callouts (call `list_components` for the list). Documents belong ' +
-  "to your profile on this board. Always give the reader the URL returned by `publish_document`.";
+  'version. Use format "mdx" for components such as callouts (call `list_components` for the list). Form fields ' +
+  "(`<Approval />`, inputs and the like) show read-only here and collect no answers, so ask the user in the thread " +
+  "for a decision or input instead. Documents belong to your profile on this board. Always give the reader the URL " +
+  "returned by `publish_document`.";
 
 type Renderer = typeof import("@dire-kiwi/docs-render");
 let loaded: Promise<Renderer> | null = null;
@@ -190,10 +192,21 @@ class Server {
     const message = a.opt_str("message");
     const mode = a.opt_str("mode") ?? "replace";
     const delete_paths = a.str_list("delete_paths");
-    const given = a.a.pages ?? [];
+    const given = a.a.pages === undefined ? [] : a.a.pages;
+    if (!Array.isArray(given)) throw new ToolError(`invalid arguments: invalid type: ${json_kind(given)}, expected a sequence`);
     if (mode !== "replace" && mode !== "merge") throw new ToolError(`mode must be "replace" or "merge", not ${JSON.stringify(mode)}`);
-    if (Array.isArray(given) && given.length === 0 && delete_paths.length === 0) throw new ToolError("pass at least one page");
-    const { pages: valid, warnings } = this.lib.validatePages(given);
+    if (given.length === 0 && delete_paths.length === 0) throw new ToolError("pass at least one page");
+    let checked: ReturnType<Renderer["validatePages"]>;
+    try {
+      checked = this.lib.validatePages(given);
+    } catch (e) {
+      // The renderer reads the pages with serde_json::from_str ("invalid pages: … at line 1 column 9"); the hosted
+      // server reads them with the rest of the arguments ("invalid arguments: …", with no position).
+      if (typeof e === "string" && e.startsWith("invalid pages: "))
+        throw new ToolError(`invalid arguments: ${e.slice(15).replace(/ at line \d+ column \d+$/, "")}`);
+      throw e;
+    }
+    const { pages: valid, warnings } = checked;
     // validatePages gives the pages in the order they came, without their sources.
     const pages: db.NewDocPage[] = valid.map((p, i) => ({ path: p.path, title: p.title, format: p.format, position: p.position, source: given[i].content }));
     const exists = slug !== null && db.doc_exists(this.c, this.r.profile_id, slug);

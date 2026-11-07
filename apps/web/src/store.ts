@@ -699,6 +699,26 @@ export function onWorkflowsChanged(fn: WorkflowListener) {
   };
 }
 
+/** Told when a profile's document is published or deleted on a host (`docs` events, API 124). */
+type DocsListener = (hostId: string, profileId: string, slug: string) => void;
+const docsListeners = new Set<DocsListener>();
+export function onDocs(fn: DocsListener) {
+  docsListeners.add(fn);
+  return () => {
+    docsListeners.delete(fn);
+  };
+}
+
+/** Told when a profile's connection to its hosted docs site changes on a host (`docs_site` events, API 125). */
+type DocsSiteListener = (hostId: string, profileId: string) => void;
+const docsSiteListeners = new Set<DocsSiteListener>();
+export function onDocsSite(fn: DocsSiteListener) {
+  docsSiteListeners.add(fn);
+  return () => {
+    docsSiteListeners.delete(fn);
+  };
+}
+
 /** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
 export function onAutomationsChanged(fn: AutomationListener) {
   automationListeners.add(fn);
@@ -765,6 +785,12 @@ export function handleEvent(ev: any) {
       break;
     case "telegram":
       for (const fn of telegramListeners) fn(h, ev.profile_id);
+      break;
+    case "docs":
+      for (const fn of docsListeners) fn(h, ev.profile_id, ev.slug);
+      break;
+    case "docs_site":
+      for (const fn of docsSiteListeners) fn(h, ev.profile_id);
       break;
     case "workflows_changed":
       for (const fn of workflowListeners) fn(h, { projectId: ev.project_id });

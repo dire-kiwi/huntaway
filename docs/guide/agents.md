@@ -109,11 +109,14 @@ errors and warnings, from its renderer `@dire-kiwi/docs-render`), but the docume
 host, in the profile of the run's task: each publish makes a new version of the document, with its
 Markdown or MDX pages (`mode: "merge"` keeps the previous version's other pages, `delete_paths`
 drops some), and slugs are unique per profile. Feedback and sharing (`get_feedback`,
-`share_document`) aren't there yet. Its tools run without asking (in `--allowedTools`, or approved
+`share_document`) aren't there yet, so agents are told that form fields collect no answers here and
+to ask in the thread instead. Its tools run without asking (in `--allowedTools`, or approved
 in Codex's config), and agents are told to publish write-ups there and give the user the URL it
 returns: `<board>/docs/<profile id>/d/<slug>/` (the host's _Public URL_, or its own address), with
-`-/v/<n>/` for a version. The board reads them at `/api/profiles/{id}/docs` (API 124). A project
-can turn the server off, or replace it with its own named `docs`.
+`-/v/<n>/` for a version. The board reads them at `/api/profiles/{id}/docs` (API 124), and shows
+them on the profile's Docs page (see [board.md](board.md)), with links built from its own address. A project
+can turn the server off (its runs then have no `docs` server at all, nor the note about it), or
+replace it with its own named `docs`.
 
 **GitHub accounts.** gh can be signed in to several accounts on a host (`gh auth login` once for
 each), and each profile can pick which one its agents act as there (_GitHub account_ in Settings →

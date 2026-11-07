@@ -13,12 +13,17 @@ const hook = `export async function resolve(spec, ctx, next) {
 register("data:text/javascript," + encodeURIComponent(hook));
 // The router listens to the window as it loads.
 globalThis.window = { addEventListener() {}, location: { pathname: "/", search: "", hash: "" }, history: { pushState() {}, replaceState() {} } };
-const { href, parse } = await import("../src/router.ts");
+const { docBase, href, parse } = await import("../src/router.ts");
 
 test("routes round-trip through their paths", () => {
   for (const route of [
     { name: "profile", profile: "work" },
     { name: "assistant", profile: "my work" },
+    { name: "docs", profile: "my work" },
+    { name: "docs", profile: "work", slug: "plan", page: "" },
+    { name: "docs", profile: "work", slug: "plan", page: "plan/phase 1" },
+    { name: "docs", profile: "work", slug: "plan", version: 3, page: "" },
+    { name: "docs", profile: "work", slug: "plan", version: 3, page: "notes" },
     { name: "board", projectId: "p1" },
     { name: "projectSettings", projectId: "p1", tab: "agents" },
     { name: "task", taskId: "t1" },
@@ -41,4 +46,17 @@ test("a path with a malformed escape still parses", () => {
   assert.deepEqual(parse("/profile/%E0%A4%A"), { name: "profile", profile: "%E0%A4%A" });
   assert.deepEqual(parse("/p/p1/settings/%"), { name: "projectSettings", projectId: "p1", tab: "%" });
   assert.deepEqual(parse("/profile/100%25"), { name: "profile", profile: "100%" });
+});
+
+// HA-281: the links the docs server gives agents (doc_base in apps/server/src/mcp/docs_mcp.ts) open the Docs page.
+test("a document's links parse as the docs route", () => {
+  assert.deepEqual(parse("/docs/p1/d/plan/"), { name: "docs", profile: "p1", slug: "plan", page: "" });
+  assert.deepEqual(parse("/docs/p1/d/plan/plan/"), { name: "docs", profile: "p1", slug: "plan", page: "plan" });
+  assert.deepEqual(parse("/docs/p1/d/plan/-/v/2/plan/phase-1"), { name: "docs", profile: "p1", slug: "plan", version: 2, page: "plan/phase-1" });
+  assert.deepEqual(parse("/docs/p1/d/plan/-/v/x/"), { name: "docs", profile: "p1", slug: "plan", page: "-/v/x" });
+  assert.deepEqual(parse("/docs/p1"), { name: "docs", profile: "p1" });
+  assert.deepEqual(parse("/docs/p1/d"), { name: "docs", profile: "p1" });
+  assert.deepEqual(parse("/docs"), { name: "home" });
+  assert.equal(docBase("my work", "plan"), "/docs/my%20work/d/plan/");
+  assert.equal(docBase("p1", "plan", 2), "/docs/p1/d/plan/-/v/2/");
 });

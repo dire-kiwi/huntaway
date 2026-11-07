@@ -5,6 +5,13 @@ export type Route =
   | { name: "profile"; profile: string }
   /** The profile's assistant (API 109), full width. */
   | { name: "assistant"; profile: string }
+  /**
+   * The profile's documents (HA-281): its list, or document `slug` (its latest version, or version `version`) at page
+   * `page`, the page's URL suffix (`plan/phase-1`, `plan` for `plan/index`, `` for `index`). `profile` is its name, or
+   * a profile's id, as the links agents get have it (`/docs/<profile id>/d/<slug>/[-/v/<n>/][<page>]`, see doc_base in
+   * apps/server/src/mcp/docs_mcp.ts).
+   */
+  | { name: "docs"; profile: string; slug?: string; version?: number; page?: string }
   | { name: "board"; projectId: string }
   | { name: "group"; hostId: string; group: string }
   /** `tab` is the section of the settings open, the first one when it's missing. */
@@ -35,6 +42,18 @@ export function parse(path: string): Route {
     case "assistant":
       if (parts[1]) return { name: "assistant", profile: decode(parts[1]) };
       break;
+    case "docs": {
+      if (!parts[1]) break;
+      const profile = decode(parts[1]);
+      if (parts[2] !== "d" || !parts[3]) return { name: "docs", profile };
+      let rest = parts.slice(4);
+      let version: number | undefined;
+      if (rest[0] === "-" && rest[1] === "v" && /^[0-9]{1,15}$/.test(rest[2] ?? "")) {
+        version = Number(rest[2]);
+        rest = rest.slice(3);
+      }
+      return { name: "docs", profile, slug: decode(parts[3]), ...(version !== undefined && { version }), page: rest.map(decode).join("/") };
+    }
     case "settings":
       return { name: "settings" };
     case "analytics":
@@ -67,6 +86,8 @@ export function href(r: Route): string {
       return `/profile/${encodeURIComponent(r.profile)}`;
     case "assistant":
       return `/assistant/${encodeURIComponent(r.profile)}`;
+    case "docs":
+      return docsHref(r);
     case "settings":
       return "/settings";
     case "analytics":
@@ -87,6 +108,16 @@ export function href(r: Route): string {
       return `/p/${r.projectId}/settings${r.tab ? `/${encodeURIComponent(r.tab)}` : ""}`;
   }
 }
+
+function docsHref(r: Extract<Route, { name: "docs" }>): string {
+  const list = `/docs/${encodeURIComponent(r.profile)}`;
+  if (r.slug === undefined) return list;
+  return `${docBase(r.profile, r.slug, r.version)}${(r.page ?? "").split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
+}
+
+/** Where a document's pages are (its latest version's, or version `version`'s), ending in `/`: the base its relative links are rendered against. */
+export const docBase = (profile: string, slug: string, version?: number) =>
+  `/docs/${encodeURIComponent(profile)}/d/${encodeURIComponent(slug)}/${version !== undefined ? `-/v/${version}/` : ""}`;
 
 const listeners = new Set<() => void>();
 window.addEventListener("popstate", () => listeners.forEach((l) => l()));

@@ -59,11 +59,20 @@ export const PROTOCOL = 1;
  * API 124: Docs (HA-280): each profile's documents, which agents publish through the run's `docs` MCP server
  * (mcp/docs_mcp.ts): `GET /profiles/{id}/docs`, `GET`/`DELETE /profiles/{id}/docs/{slug}` and
  * `GET /profiles/{id}/docs/{slug}/versions/{n}` (see api/docs.ts), and `docs` events when one is published or deleted.
- * API 125: workflows as a task's way across the board (HA-276): column nodes (with `done_when` and the `finish_work`
+ *
+ * API 125: hosted docs (HA-282): a profile connects to a docs site (`/profiles/{id}/hosted_docs`, its `device` sign-in
+ * and `token`) and publishes its documents there (`POST /profiles/{id}/docs/{slug}/publish`); documents have
+ * `published`, and `docs_site` events say a profile's connection changed (see api/docs.ts).
+ *
+ * API 126: hosted docs fixes (HA-286): a document's publish (`POST /profiles/{id}/docs/{slug}/publish`) takes `ask`, to
+ * be told of a remote document at the slug (`{exists}`) rather than add to it, and another `slug` re-targets it; its
+ * `published` is the connected account's only; and `GET /profiles/{id}/docs/{slug}/versions/{n}` takes `first=1`.
+ *
+ * API 127: workflows as a task's way across the board (HA-276): column nodes (with `done_when` and the `finish_work`
  * tool), data wires (edges with `input`) and data nodes, `open_pr` steps, agent steps' `input_only`, and runs'
  * `finished` and `merged` sources.
  */
-export const API_VERSION = 125;
+export const API_VERSION = 127;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;
