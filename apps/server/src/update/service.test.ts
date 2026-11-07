@@ -213,7 +213,7 @@ test("server_status_has_the_service_for_its_port", async () => {
 });
 
 // systemd's own parser, where it's installed: it warns about a value it ignores (a quoted WorkingDirectory=, which it
-// doesn't unquote, isn't absolute) and prints nothing for a unit it reads as written.
+// doesn't unquote, isn't absolute), starting with the file's path, and says nothing about a unit it reads as written.
 test("systemd_reads_the_unit_without_complaint", (t) => {
   const dir = testing.temp_dir();
   const cwd = join(dir, "100% a b");
@@ -225,5 +225,8 @@ test("systemd_reads_the_unit_without_complaint", (t) => {
   );
   const r = spawnSync("systemd-analyze", ["verify", file], { encoding: "utf8" });
   if (r.error) return t.skip("no systemd-analyze here");
-  assert.equal(`${r.stdout}${r.stderr}`.trim(), "");
+  // Only what it says about this unit: it reads the units this one depends on by default too, and warns about theirs
+  // (GitHub's runners have system units with options systemd has dropped).
+  const mine = `${r.stdout}${r.stderr}`.split("\n").filter((l) => l.includes(file) || l.includes("huntaway-7999.service"));
+  assert.deepEqual(mine, []);
 });
