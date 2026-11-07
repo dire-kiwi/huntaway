@@ -66,7 +66,8 @@ export const STEER_GRACE = IN_TEST ? 1000 : 30_000;
 export const BACKGROUND_GRACE = IN_TEST ? 1000 : 120_000;
 /**
  * The same for background tasks that ended during a turn (ms): Claude Code starts the turn on their outcome as soon as
- * that turn ends, if it hadn't taken their outcome in already.
+ * that turn ends, if it hadn't given the agent their outcome in it. It usually has, and then the run ends with the turn
+ * (see queue::took_in).
  */
 export const FOLLOW_UP_GRACE = IN_TEST ? 500 : 15_000;
 

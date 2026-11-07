@@ -659,3 +659,70 @@ test("a_run_that_asks_through_the_helper_closes_at_the_end_of_a_turn_its_backgro
   output(state, run, [background(1), said("a"), background(0), result()]);
   assert.ok(input_closed(state, run));
 });
+
+// HA-279: Claude Code usually gives the agent the outcome of a background task that ends during a turn in that turn (it
+// replays the `<task-notification>` it gave it), and takes no turn after it: the run ends when the turn does, rather than
+// sitting idle for FOLLOW_UP_GRACE (twice, when Claude Code writes something after its result).
+const tasks = (...ids: string[]) => ({
+  type: "system",
+  subtype: "background_tasks_changed",
+  tasks: ids.map((task_id) => ({ task_id, task_type: "local_bash" })),
+});
+const notified = (id: string, parent: string | null = null) => ({
+  type: "user",
+  isReplay: true,
+  uuid: `n-${id}`,
+  parent_tool_use_id: parent,
+  origin: { kind: "task-notification", producer: "session-task" },
+  message: { role: "user", content: `<task-notification>\n<task-id>${id}</task-id>\n<status>completed</status>\n</task-notification>` },
+});
+
+test("background_tasks_whose_outcome_the_turn_took_in_close_the_input_when_it_ends", () => {
+  const [state, , run] = running();
+  output(state, run, [tasks("b1"), said("Running the tests."), tasks(), notified("b1"), said("They passed."), result()]);
+  assert.ok(input_closed(state, run));
+  assert.equal(runs.background_ended(state, run.id), null);
+});
+
+test("a_background_task_whose_outcome_the_turn_didnt_take_in_leaves_the_input_open_for_a_while", async () => {
+  const [state, , run] = running();
+  output(state, run, [tasks("b1", "b2"), said("a"), tasks("b2"), notified("b1"), tasks(), said("b"), result()]);
+  assert.ok(!input_closed(state, run));
+  // Claude Code takes its turn on b2's outcome, which the turn's end closes.
+  output(state, run, [init(), notified("b2"), said("b2 finished too."), result()]);
+  assert.ok(input_closed(state, run));
+});
+
+test("an_outcome_given_before_its_task_is_said_to_have_ended_counts", () => {
+  const [state, , run] = running();
+  output(state, run, [tasks("b1"), said("a"), notified("b1"), tasks(), said("b"), result()]);
+  assert.ok(input_closed(state, run));
+});
+
+test("a_subagents_task_notification_isnt_the_agents", async () => {
+  const [state, , run] = running();
+  output(state, run, [tasks("b1"), said("a"), tasks(), notified("b1", "toolu_sub"), said("b"), result()]);
+  assert.ok(!input_closed(state, run));
+  await sleep(FOLLOW_UP_GRACE * 1.5);
+  assert.ok(input_closed(state, run));
+});
+
+test("background_tasks_recorded_before_their_ids_were_kept_still_get_the_turn_after", async () => {
+  const [state, task, run] = running();
+  // A server from before HA-279 recorded only that they ended in the turn.
+  output(state, run, [said("a")]);
+  writeFileSync(join(runs.run_dir(state, run.id), "background-ended"), "");
+  state.runs.delete(task.id);
+  load_active(state);
+  output(state, run, [notified("b1"), result()]);
+  assert.ok(!input_closed(state, run));
+  await sleep(FOLLOW_UP_GRACE * 1.5);
+  assert.ok(input_closed(state, run));
+});
+
+test("a_task_without_an_id_that_ends_in_a_turn_still_gets_the_turn_after", () => {
+  const [state, , run] = running();
+  writeFileSync(join(runs.run_dir(state, run.id), "background"), "2\n");
+  output(state, run, [said("a"), tasks("b1"), notified("b1"), result()]);
+  assert.ok(!input_closed(state, run));
+});
