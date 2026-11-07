@@ -5,6 +5,7 @@ import { api, pairingLink, type PairedDevice, type PairingCode } from "../../api
 import { useStore } from "../../store";
 import { copyText } from "../ui/links";
 import { Button, IconButton, Input, timeAgo, useConfirm } from "../ui";
+import { GuideLink } from "./Guide";
 
 /** Where the phone reaches the board: the host's public address if it has one, else this page's, if it's HTTPS. */
 function defaultAddress(publicUrl: string | null | undefined) {
@@ -121,7 +122,10 @@ export function DevicesPanel() {
       <p>
         Pair the Huntaway app on a phone by scanning a QR code. It holds this board's address and a code that works once, for five minutes, and the phone gets a
         token of its own, which you can revoke here at any time. The phone reaches the board over HTTPS, such as with <code>tailscale serve</code> (see{" "}
-        <i>The mobile app</i> in docs/guide/mobile.md).
+        <GuideLink page="mobile" hash="the-mobile-app">
+          The mobile app
+        </GuideLink>{" "}
+        in the guide).
       </p>
       {!pairing ? (
         <Button size="sm" variant="primary" onClick={start}>

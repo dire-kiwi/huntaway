@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bell, BellRing, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
+import { Bell, BellRing, BookOpen, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../activeProfile";
 import { api, hostCompat, hostSupports, isAssistant, isAssistants, readyToCheck, taskKey, type Project, type Status, type Task } from "../../api";
@@ -619,6 +619,9 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
         ))}
         <NavItem active={route.name === "analytics"} onClick={() => navigate({ name: "analytics" })} icon={<ChartColumn size={15} />}>
           Analytics
+        </NavItem>
+        <NavItem active={route.name === "guide"} onClick={() => navigate({ name: "guide" })} icon={<BookOpen size={15} />} title="How the board works">
+          Guide
         </NavItem>
       </nav>
 

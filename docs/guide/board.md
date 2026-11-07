@@ -5,7 +5,8 @@ of how many of its tasks are in progress (blue), need attention (amber), in revi
 merging or waiting to merge (pink), leaving out the columns with none. Clicking one opens the
 **profile's board**: all of its tasks together, from every project and every host that has the
 profile, with its group and scratch tasks. Its _New task_ form picks the project, or makes a
-scratch task.
+scratch task. Below the profiles, _Guide_ opens this guide in the app, a page at a time, with the
+open page's sections beside it.
 
 The sidebar's project list is one profile's: the one whose board you opened last, which is marked
 with a bar beside its name (its initial in colour, the others' grey) and named on the _Projects_

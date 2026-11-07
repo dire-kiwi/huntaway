@@ -83,6 +83,8 @@ docs/             the guide (docs/guide/), design notes, and dated research and 
 
 ## Documentation
 
+The guide (`docs/guide/`) is in the app too: _Guide_ in the sidebar.
+
 - [Using the board](docs/guide/board.md): profiles, projects, groups and favorites, the sidebar, the board and its
   views.
 - [Concepts](docs/guide/concepts.md): agent configs, threads, worktrees, reviews and merging, subprojects, plans and

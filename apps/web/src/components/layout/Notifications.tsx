@@ -15,6 +15,7 @@ import {
 import { chime, notifyPermission, showNotification, unlockSound } from "../../notifier";
 import { currentSubscription, pushSupport, subscribe, unsubscribe } from "../../push";
 import { Button, IconButton, timeAgo, Toggle } from "../ui";
+import { GuideLink } from "../settings/Guide";
 
 /** Settings → Notifications: how this browser tells the user that a task needs them. */
 export function NotificationsPanel() {
@@ -317,8 +318,11 @@ function PushNote({ support }: { support: ReturnType<typeof pushSupport> }) {
       return (
         <>
           Push needs the board on HTTPS, and this page is plain HTTP on <span className="font-mono">{window.location.hostname}</span>. Serve the board over
-          HTTPS at an address the device can reach, such as with <code>tailscale serve</code> (see <i>Push notifications on a phone</i> in
-          docs/guide/mobile.md), and open it there.
+          HTTPS at an address the device can reach, such as with <code>tailscale serve</code> (see{" "}
+          <GuideLink page="mobile" hash="push-notifications-on-a-phone">
+            Push notifications on a phone
+          </GuideLink>{" "}
+          in the guide), and open it there.
         </>
       );
     case "install":

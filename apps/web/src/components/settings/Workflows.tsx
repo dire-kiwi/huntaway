@@ -47,6 +47,7 @@ import { onWorkflowsChanged, useAvailableConfigs, useHost } from "../../store";
 import type { Reviewer } from "../../api";
 import { ReviewerRow } from "../task/Reviewers";
 import { Button, Field, Input, Modal, Textarea, Toggle, useConfirm } from "../ui";
+import { GuideLink } from "./Guide";
 
 /** The project settings' Workflows tab: the project's workflows, each a graph of steps that runs on its tasks (API 107). */
 export function ProjectWorkflows({ project }: { project: Project }) {
@@ -95,7 +96,7 @@ export function ProjectWorkflows({ project }: { project: Project }) {
           threads of their own (or process what the steps before them wrote, with a skill, in a fresh context), pull requests, messages to the task's agent, and
           the next column, which moves the task there. The prompt tells the agent what the board does when it's done. The review and summary in the Review tab
           can be set up as one: start from <i>Review and summarise</i>, or <i>From the Review tab</i> for its reviewers and summarizers, and turn them off
-          there. <i>Workflows</i> in docs/guide/workflows.md explains each node, its inputs and outputs.
+          there. <GuideLink page="workflows">Workflows</GuideLink> in the guide explains each node, its inputs and outputs.
         </p>
       ) : (
         <p className="text-[12.5px] text-muted">

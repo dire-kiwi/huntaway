@@ -27,6 +27,8 @@ test("routes round-trip through their paths", () => {
     { name: "host", hostId: "h1" },
     { name: "settings" },
     { name: "analytics" },
+    { name: "guide" },
+    { name: "guide", page: "workflows" },
   ]) {
     assert.deepEqual(parse(new URL(href(route), "http://x").pathname), route, href(route));
   }

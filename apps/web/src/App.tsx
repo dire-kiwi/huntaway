@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { activeProfile, loadActiveProfile } from "./activeProfile";
 import { fetchOpenToken, getToken, isAssistant, isRoutine, setUnauthorizedHandler } from "./api";
 import { Analytics } from "./components/settings/Analytics";
+import { Guide } from "./components/settings/Guide";
 import { ProjectApprovals } from "./components/task/Approvals";
 import { Board, GroupBoard, ProfileBoard, SubprojectBoard } from "./components/board/Board";
 import { HostPage } from "./components/settings/HostPage";
@@ -124,6 +125,7 @@ export function App() {
           {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
           {route.name === "settings" && <Settings />}
           {route.name === "analytics" && <Analytics />}
+          {route.name === "guide" && <Guide page={route.page} />}
           {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
         </div>
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
