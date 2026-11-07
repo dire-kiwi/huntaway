@@ -1097,6 +1097,7 @@ async function start_agent(s: Shared, run: Run, node: Node): Promise<void> {
   if (s.is_running(thread.id)) throw `its thread's agent (${label}) is busy`;
   const after_run = db.latest_run(s.db(), thread.id, null) ?? "";
   db.set_thread_skills(s.db(), thread.id, skills);
+  db.set_thread_disabled_mcp_servers(s.db(), thread.id, node.disabled_mcp_servers ?? []);
   // A fresh conversation each run; the thread keeps every one's messages.
   s.update_task(thread.id, [["session_id", null]]);
   context.clear(s, thread.id);

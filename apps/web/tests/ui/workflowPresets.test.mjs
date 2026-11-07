@@ -155,3 +155,34 @@ test("a template's values are completed as they're typed", async () => {
     assert.equal(text, "Fix {{reviewer.issues}} for {{task.title}} {{");
   });
 });
+
+// An agent step picks the skills it's asked to use and the project's MCP servers it has, as a thread does.
+test("an agent step's skills and MCP servers are picked and saved", async () => {
+  for (const w of (await server.api("GET", `/projects/${project.id}/workflows`)).workflows) await server.api("DELETE", `/workflows/${w.id}`);
+  const config = { type: "stdio", command: "x" };
+  await server.api("POST", `/projects/${project.id}/agent-tools/mcp-servers`, { name: "search", config });
+  await server.api("POST", `/projects/${project.id}/agent-tools/mcp-servers`, { name: "docs-db", config });
+  await server.api("POST", `/projects/${project.id}/agent-tools/skills`, {
+    name: "security-review",
+    content: "---\nname: security-review\ndescription: d\n---\nx",
+  });
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([
+      `goto /p/${project.id}/settings/workflows`,
+      "click role=button[name='Work, PR and review']",
+      "wait Pushes the branch",
+      // The summary and skill-on-its-input steps are agent steps now.
+      "gone role=button[name='Summary']",
+      "gone role=button[name='Skill on its input']",
+      "click [data-node=reviewer]",
+      "click role=button[name=/security-review/]",
+      "click role=button[name=/docs-db/]",
+      "wait [data-testid=step-mcp-servers] button[aria-pressed=false]",
+      "click Create workflow",
+      "gone [role=dialog]",
+    ]);
+  });
+  const [w] = (await server.api("GET", `/projects/${project.id}/workflows`)).workflows;
+  const reviewer = w.graph.nodes.find((n) => n.id === "reviewer");
+  assert.deepEqual([reviewer.skills, reviewer.disabled_mcp_servers], [["security-review"], ["docs-db"]]);
+});

@@ -126,8 +126,9 @@ export type NodeKind =
   /**
    * An agent in a thread of its own, read-only in the task's worktree. `name` is what it's called on the board, `prompt`
    * what it's asked to do (the board adds where the work is and how to report), no `claude_config_id` uses the task's,
-   * `skills` are skills it's asked to use, and `tab` the task panel tab its output shows in, if any. `input_only`: it's
-   * given only the output of the steps before it and its prompt, not where the task's work is.
+   * `skills` are skills it's asked to use, `disabled_mcp_servers` the project's MCP servers its thread doesn't get, and
+   * `tab` the task panel tab its output shows in, if any. `input_only`: it's given only the output of the steps before
+   * it and its prompt, not where the task's work is.
    */
   | {
       kind: "agent";
@@ -138,6 +139,7 @@ export type NodeKind =
       model?: string;
       effort?: string;
       skills?: string[];
+      disabled_mcp_servers?: string[];
       tab?: string;
       input_only?: boolean;
     }
@@ -164,8 +166,11 @@ export type NodeKind =
    */
   | { kind: "open_pr"; title: string; body: string; draft?: boolean };
 
-/** A node: its id, its kind's fields (flattened), `join` (left out when `any`) and where the editor draws it. */
-export type Node = { id: string } & NodeKind & { join?: Join; x: number; y: number };
+/**
+ * A node: its id, its kind's fields (flattened), `join` (left out when `any`) and where the editor draws it. A data
+ * node's `label` is the name the editor shows it by (without one, its kind's).
+ */
+export type Node = { id: string } & NodeKind & { join?: Join; x: number; y: number; label?: string };
 
 /**
  * An edge from `from`'s `port` to `to`: the way a run goes. With `input`, it's a data wire instead: `from`'s data output
@@ -252,6 +257,14 @@ export function Node_from_json(v: any): Node {
       const skills = v.skills === undefined ? [] : Array.isArray(v.skills) ? v.skills : fail("invalid type for `skills`: expected a sequence");
       for (const s of skills) if (typeof s !== "string") fail("invalid type for `skills`: expected a string");
       if (skills.length) n.skills = [...skills];
+      const off =
+        v.disabled_mcp_servers === undefined
+          ? []
+          : Array.isArray(v.disabled_mcp_servers)
+            ? v.disabled_mcp_servers
+            : fail("invalid type for `disabled_mcp_servers`: expected a sequence");
+      for (const s of off) if (typeof s !== "string") fail("invalid type for `disabled_mcp_servers`: expected a string");
+      if (off.length) n.disabled_mcp_servers = [...off];
       put(n, "tab", de_opt_str(v, "tab"));
       if (de_bool(v, "input_only")) n.input_only = true;
       break;
@@ -291,6 +304,7 @@ export function Node_from_json(v: any): Node {
   }
   const join = de_enum<Join>(v, "join", ["any", "all"], "any");
   if (join !== "any") n.join = join;
+  put(n, "label", de_opt_str(v, "label"));
   n.x = de_f64(v, "x");
   n.y = de_f64(v, "y");
   return n;
@@ -768,6 +782,9 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
       n.y = 0;
     }
     const id = n.id;
+    // Only a data node has a label of its own: a step's name says what it is.
+    set_opt(n, "label", is_data(n) ? trimmed(n.label) : undefined);
+    if (n.label !== undefined && chars(n.label) > 60) throw bad(`value ${id}'s name is longer than 60 characters`);
     switch (n.kind) {
       case "trigger":
         triggers += 1;
@@ -823,6 +840,11 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
         if (skills.length > 10) throw bad(`agent step ${id} has more than 10 skills`);
         if (skills.length) n.skills = skills;
         else delete n.skills;
+        const off = [...new Set((n.disabled_mcp_servers ?? []).map((s) => s.trim()).filter(Boolean))];
+        if (off.length > 50 || off.some((s) => chars(s) > 100))
+          throw bad(`agent step ${id} turns off more than 50 MCP servers, or one with a name over 100 characters`);
+        if (off.length) n.disabled_mcp_servers = off;
+        else delete n.disabled_mcp_servers;
         set_opt(n, "tab", trimmed(n.tab));
         if (n.tab !== undefined && chars(n.tab) > 30) throw bad(`agent step ${id}'s tab name is longer than 30 characters`);
         break;

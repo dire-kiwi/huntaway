@@ -854,6 +854,12 @@ function run_tools(state: Shared, scope: Scope, sync: boolean): RunTools {
     const extra: string[] = thread_id !== null ? db.thread_skills(c, thread_id) : [];
     [skills, servers] = effective_with(c, project, extra);
     o = get_overrides(c, project_id);
+    // A workflow's agent step can turn some of them off for its thread.
+    const off = thread_id !== null ? db.thread_disabled_mcp_servers(c, thread_id) : [];
+    if (off.length) {
+      servers = servers.filter((s) => !off.includes(s.name));
+      o = { ...o, disabled_mcp_servers: [...o.disabled_mcp_servers, ...off] };
+    }
     root = thread_id !== null && extra.length ? thread_skills_root(state, project_id, thread_id) : skills_root(state, project_id);
   } else {
     [skills, servers] = effective_for_profile(c, scope.profile);

@@ -49,6 +49,8 @@ import type { Reviewer } from "../../api";
 import { ReviewerRow } from "../task/Reviewers";
 import { Button, Field, Input, Modal, Toggle, useConfirm } from "../ui";
 import { GuideLink } from "./Guide";
+import { arrange, type LayoutGeometry } from "../../workflowLayout";
+import { AgentStepTools } from "./AgentStepTools";
 import { TemplateField } from "./TemplateField";
 
 /** The project settings' Workflows tab: the project's workflows, each a graph of steps that runs on its tasks (API 107). */
@@ -264,8 +266,13 @@ function legacyGraph(g: WorkflowGraph): WorkflowGraph {
   };
 }
 
-/** A node's title on the canvas. */
+/** A node's title on the canvas: a value's name, if it has one, or its kind's. */
 export function nodeTitle(n: WorkflowNode) {
+  if (isDataNode(n) && n.label?.trim()) return n.label.trim();
+  return kindTitle(n);
+}
+
+function kindTitle(n: WorkflowNode) {
   switch (n.kind) {
     case "trigger":
       return "Start";
@@ -558,6 +565,14 @@ const insOf = (n: WorkflowNode) => workflowDataInputs(n);
 /** A node's rows: its outcomes and values on the right, then its inputs on the left (as Blender lays out a node). */
 const nodeH = (n: WorkflowNode) => HEAD + (portsOf(n).length + outsOf(n).length + insOf(n).length) * PORT_H + 6;
 const portY = (i: number) => HEAD + i * PORT_H + PORT_H / 2;
+/** How Arrange sees the nodes as they're drawn: where an edge leaves its node (an outcome, or a value) and arrives (the top, or an input). */
+const LAYOUT: LayoutGeometry = {
+  width: NODE_W,
+  height: (n) => nodeH(n),
+  fromY: (n, e) => (e.input != null ? outY(n, e.port) : portY(Math.max(0, portsOf(n).indexOf(e.port)))),
+  toY: (n, e) => (e.input != null ? inY(n, e.input) : IN_Y),
+  isData: (n) => isDataNode(n),
+};
 const outY = (n: WorkflowNode, k: string) => portY(portsOf(n).length + Math.max(0, outsOf(n).indexOf(k)));
 const inY = (n: WorkflowNode, k: string) => portY(portsOf(n).length + outsOf(n).length + Math.max(0, insOf(n).indexOf(k)));
 
@@ -691,27 +706,6 @@ const NEW_NODES: {
     base: "review",
     make: () => ({ kind: "agent", name: "Reviewer", prompt: "", output: "verdict", tab: "Review", skills: [] }),
   },
-  {
-    kind: "agent",
-    label: "Summary",
-    base: "summary",
-    make: () => ({ kind: "agent", name: "Summary", prompt: SUMMARY_PROMPT, output: "text", tab: "Summary", skills: [] }),
-  },
-  {
-    kind: "agent",
-    label: "Skill on its input",
-    base: "skill",
-    api: COLUMN_WORKFLOWS_API,
-    make: () => ({
-      kind: "agent",
-      name: "Skill",
-      prompt: "Process what the steps before you wrote with your skill.",
-      output: "text",
-      tab: null,
-      skills: [],
-      input_only: true,
-    }),
-  },
   { kind: "open_pr", label: "Open a PR", base: "pr", api: COLUMN_WORKFLOWS_API, make: () => ({ kind: "open_pr", title: "", body: "" }) },
   { kind: "send_to_task", label: "Send to task", base: "send", make: () => ({ kind: "send_to_task", message: "", max_rounds: 2 }) },
   {
@@ -797,13 +791,13 @@ function WorkflowEditor({
       return { k: nk, x: px - ((px - v.x) * nk) / v.k, y: py - ((py - v.y) * nk) / v.k };
     });
   /** Fits the whole graph in view (Blender's View All). */
-  const fit = () => {
+  const fit = (g: WorkflowGraph = graph) => {
     const el = scroller.current;
-    if (!el || !graph.nodes.length) return setView({ x: 0, y: 0, k: 1 });
-    const minX = Math.min(...graph.nodes.map((n) => n.x));
-    const minY = Math.min(...graph.nodes.map((n) => n.y));
-    const maxX = Math.max(...graph.nodes.map((n) => n.x + NODE_W));
-    const maxY = Math.max(...graph.nodes.map((n) => n.y + nodeH(n)));
+    if (!el || !g.nodes.length) return setView({ x: 0, y: 0, k: 1 });
+    const minX = Math.min(...g.nodes.map((n) => n.x));
+    const minY = Math.min(...g.nodes.map((n) => n.y));
+    const maxX = Math.max(...g.nodes.map((n) => n.x + NODE_W));
+    const maxY = Math.max(...g.nodes.map((n) => n.y + nodeH(n)));
     const k = Math.min(1, Math.max(MIN_ZOOM, Math.min((el.clientWidth - 60) / (maxX - minX), (el.clientHeight - 60) / (maxY - minY))));
     setView({ k, x: (el.clientWidth - (maxX - minX) * k) / 2 - minX * k, y: (el.clientHeight - (maxY - minY) * k) / 2 - minY * k });
   };
@@ -1256,8 +1250,20 @@ function WorkflowEditor({
               <Button size="sm" variant="ghost" title="Zoom in" onClick={() => zoomTo(view.k * 1.25)}>
                 +
               </Button>
-              <Button size="sm" variant="ghost" title="Fit the whole workflow in view" onClick={fit}>
+              <Button size="sm" variant="ghost" title="Fit the whole workflow in view" onClick={() => fit()}>
                 Fit
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Lay the nodes out in columns along the way a run goes, so few wires cross"
+                onClick={() => {
+                  const g = arrange(graph, LAYOUT);
+                  setGraph(g);
+                  fit(g);
+                }}
+              >
+                Arrange
               </Button>
             </div>
           </div>
@@ -1360,7 +1366,6 @@ function NodeInspector({
   const host = useHost(project.host_id);
   const configs = useAvailableConfigs(project.host_id, project.profile_id, project);
   const [id, setId] = useState(n.id);
-  const [skills, setSkills] = useState(n.kind === "agent" ? (n.skills ?? []).join(", ") : "");
   const statuses = hostStatuses(host);
   const style = KIND_STYLE[n.kind];
   return (
@@ -1490,22 +1495,18 @@ function NodeInspector({
               <TemplateField graph={graph} self={n.id} rows={6} className="text-[12.5px]" value={n.prompt} onChange={(prompt) => onChange({ prompt })} />
             </Wired>
           </Field>
-          <Field label="Skills" hint="Skills it uses, separated by commas.">
-            <Input
-              className="h-7"
-              value={skills}
-              placeholder="e.g. security-review"
-              onChange={(e) => {
-                setSkills(e.target.value);
-                onChange({
-                  skills: e.target.value
-                    .split(",")
-                    .map((s) => s.trim().replace(/^[/$]/, ""))
-                    .filter(Boolean),
-                });
-              }}
-            />
-          </Field>
+          <AgentStepTools
+            project={project}
+            configId={n.claude_config_id ?? null}
+            skills={n.skills ?? []}
+            disabled={n.disabled_mcp_servers ?? []}
+            onChange={(p) =>
+              onChange({
+                ...(p.skills && { skills: p.skills }),
+                ...(p.disabled_mcp_servers && { disabled_mcp_servers: p.disabled_mcp_servers.length ? p.disabled_mcp_servers : undefined }),
+              })
+            }
+          />
           {(n.input_only || hostSupports(host, COLUMN_WORKFLOWS_API)) && (
             <Toggle checked={!!n.input_only} onChange={(v) => onChange({ input_only: v || undefined })} label="Work only on what the steps before it wrote" />
           )}
@@ -1566,7 +1567,10 @@ function NodeInspector({
               />
             </Wired>
           </Field>
-          <Field label="Body" hint="Blank is the task's agent's last message. An agent step before it can write one: {{<step id>.text}}.">
+          <Field
+            label="Body"
+            hint="Blank is the task's agent's last message (or else the task's description), written by the board, not an agent. An agent step before it can write one: {{<step id>.text}}, or wire its text in."
+          >
             <Wired graph={graph} node={n} input="body" onUnwire={onUnwire}>
               <TemplateField graph={graph} self={n.id} rows={5} className="text-[12.5px]" value={n.body} onChange={(body) => onChange({ body })} />
             </Wired>
@@ -1779,6 +1783,15 @@ function ValueInspector({
   const uses = graph.edges.filter((e) => e.input != null && e.from === n.id).length;
   return (
     <>
+      <Field label="Name" hint="What the canvas and the wires from it call it.">
+        <Input
+          className="h-7"
+          value={n.label ?? ""}
+          maxLength={60}
+          placeholder={kindTitle(n)}
+          onChange={(e) => onChange({ label: e.target.value || undefined })}
+        />
+      </Field>
       {n.kind === "text" && (
         <Field
           label="Text"

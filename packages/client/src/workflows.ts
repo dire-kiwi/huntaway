@@ -41,6 +41,8 @@ export type WorkflowNodeKind =
       model?: string | null;
       effort?: string | null;
       skills?: string[];
+      /** The project's MCP servers its thread doesn't get (API 128). */
+      disabled_mcp_servers?: string[];
       /** The task panel tab its output shows in. */
       tab?: string | null;
       /** It's given only the output of the steps before it and its prompt, not where the task's work is (API 128). */
@@ -62,7 +64,8 @@ export type WorkflowNodeKind =
 
 export type WorkflowNodeKindName = WorkflowNodeKind["kind"];
 
-export type WorkflowNode = WorkflowNodeKind & { id: string; x: number; y: number; join?: "any" | "all" };
+/** A node; a data node's `label` is the name the editor shows it by (API 128; without one, its kind's). */
+export type WorkflowNode = WorkflowNodeKind & { id: string; x: number; y: number; join?: "any" | "all"; label?: string };
 
 /** The way a run goes from `from`'s `port` to `to`; with `input`, a data wire from `from`'s value `port` to `to`'s input. */
 export interface WorkflowEdge {

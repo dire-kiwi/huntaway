@@ -879,9 +879,10 @@ export function open(path: string): Conn {
     // Whether a run's agent said its work is done (`finish_work`), for workflow columns that wait for it (HA-276).
     // HA-276's branch had this as 106, so its databases (its PR preview's) skipped the pens above: they're made here.
     batch("BEGIN;");
+    // And the MCP servers a workflow's agent step turns off for its thread.
     if (!has_column(conn, "runs", "finished")) batch("ALTER TABLE runs ADD COLUMN finished INTEGER NOT NULL DEFAULT 0;");
     add_pens();
-    batch("PRAGMA user_version=107; COMMIT;");
+    batch(`${SCHEMA_V107} PRAGMA user_version=107; COMMIT;`);
   }
   return conn;
 }
@@ -925,6 +926,14 @@ CREATE TABLE IF NOT EXISTS approval_log (
 );
 CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, created_at);
 CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
+`;
+
+/** Migration 107's MCP servers that a workflow's agent step turns off in its thread (see db.thread_disabled_mcp_servers). */
+const SCHEMA_V107 = `
+CREATE TABLE IF NOT EXISTS thread_mcp_servers (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  disabled TEXT NOT NULL DEFAULT '[]'
+);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */

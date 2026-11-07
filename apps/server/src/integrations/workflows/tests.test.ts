@@ -45,6 +45,7 @@ import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as prompt from "./prompt.ts";
+import * as agent_tools from "../../agent/agent_tools.ts";
 
 // As in Rust's tests, there's no ia-shim: this host can't run agents unless a test says it can (runs::TEST_CAN_RUN).
 process.env.IA_SHIM_BIN = "/nonexistent/ia-shim";
@@ -268,14 +269,21 @@ test("a_graph_needs_a_start_real_ports_and_no_loops", () => {
   const g = check_graph(c, project, {
     nodes: [
       { id: "a", kind: "trigger", on: "manual", status: "todo" },
-      { id: "b", kind: "agent", name: " R ", model: " ", skills: ["/tldr", ""] },
+      { id: "b", kind: "agent", name: " R ", model: " ", skills: ["/tldr", ""], disabled_mcp_servers: [" docs ", "docs", ""], label: "Not a value" },
+      { id: "c", kind: "text", text: "Hi", label: " Rules " },
+      { id: "d", kind: "agent", name: "S", disabled_mcp_servers: [" "] },
     ],
     edges: [],
   });
   assert.deepEqual(g.nodes[0], { id: "a", kind: "trigger", on: "manual", x: 0, y: 0 });
   const b: any = g.nodes[1];
-  assert.deepEqual([b.name, b.model, b.skills], ["R", undefined, ["tldr"]]);
+  assert.deepEqual([b.name, b.model, b.skills, b.disabled_mcp_servers], ["R", undefined, ["tldr"], ["docs"]]);
   assert.ok(!("model" in b), "a blank model isn't kept");
+  // A value's label is kept, trimmed; a step has its name instead.
+  assert.ok(!("label" in b));
+  assert.equal((g.nodes[2] as any).label, "Rules");
+  assert.ok(!("disabled_mcp_servers" in g.nodes[3]));
+  bad({ nodes: [manual, { id: "c", kind: "text", text: "", label: "x".repeat(61) }], edges: [] }, "name is longer than 60");
 });
 
 test("a_node_runs_when_its_inputs_are_taken_and_is_skipped_otherwise", () => {
@@ -796,7 +804,7 @@ test("an_agent_step_gets_only_the_output_of_the_steps_before_it", async () => {
       nodes: [
         { id: "t", kind: "trigger", on: "manual" },
         { id: "summary", kind: "agent", name: "Summary", prompt: "Summarise it." },
-        { id: "post", kind: "agent", name: "Post", prompt: "Turn it into a post.", skills: ["tldr"], input_only: true },
+        { id: "post", kind: "agent", name: "Post", prompt: "Turn it into a post.", skills: ["tldr"], input_only: true, disabled_mcp_servers: ["docs"] },
       ],
       edges: [
         { from: "t", port: "out", to: "summary" },
@@ -813,6 +821,14 @@ test("an_agent_step_gets_only_the_output_of_the_steps_before_it", async () => {
     assert.ok(!asked.includes("checked out in your working directory") && !asked.includes("Make it work."), "an input-only step isn't told about the work");
     // One that isn't is.
     assert.ok(last_user_text(s, t.id).includes("checked out in your working directory"));
+    // The servers a step turns off aren't in its thread's runs, and the other steps' threads have them.
+    const config = { type: "stdio", command: "x" };
+    agent_tools.create_mcp_server_in(s.db(), project.id, { name: "docs", config });
+    agent_tools.create_mcp_server_in(s.db(), project.id, { name: "search", config });
+    const post = agent_tools.for_run(s, project.id, thread_of(s, run.id, "post").id);
+    assert.deepEqual(Object.keys(post.mcp_servers).sort(), ["search"]);
+    assert.ok(post.disallowed.includes("mcp__docs"), post.disallowed.join());
+    assert.deepEqual(Object.keys(agent_tools.for_run(s, project.id, t.id).mcp_servers).sort(), ["docs", "search"]);
   } finally {
     runs.TEST_CAN_RUN.set(false);
   }

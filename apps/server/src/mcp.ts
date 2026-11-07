@@ -671,14 +671,15 @@ function workflow_tools(profile: any, project_one: string): any[] {
       "starts at the node for the task's column) → out; " +
       "{kind: 'condition', check: 'changed'|'has_commits'|'has_pr'|'task_type'|'label', value} → yes, no ('changed': its commit or its agent's work changed since this workflow last finished on it; " +
       "value is the type, code or scratch, or the label, plan, artifact or diagram); " +
-      "{kind: 'agent', name, prompt, output: 'text'|'verdict', claude_config_id, model, effort, skills, tab, input_only} runs an agent read-only in the task's worktree, in a thread of its own " +
+      "{kind: 'agent', name, prompt, output: 'text'|'verdict', claude_config_id, model, effort, skills, disabled_mcp_servers, tab, input_only} runs an agent read-only in the task's worktree, in a thread of its own " +
+      "(skills: skills it's asked to use; disabled_mcp_servers: names of the project's MCP servers its thread doesn't get) " +
       "and a fresh conversation each run, given the output of the agent steps before it in the graph (with input_only, only that and its prompt, not where the task's work is): " +
       "output 'text' → done, failed (its last message is the output); 'verdict' → pass, issues, failed (it reports with submit_review, as a reviewer does). " +
       "With tab, its output shows in a tab of that name in the task's panel (steps can share one). prompt says what to do (empty: the project's In review prompt for a verdict); " +
       "prompts and messages take {{task.key}}, {{task.title}}, {{task.description}}, {{branch}}, {{commit}}, {{workflow}}, {{issues}} and {{<node id>.text}}, {{<node id>.issues}}; " +
       "{kind: 'send_to_task', message, max_rounds} sends the message (empty: the issues the run's verdict steps found) to the task's agent, ending the run, " +
       "at most max_rounds runs in a row (default 2), then → exhausted (with nothing after it, the task goes to needs_attention); " +
-      "{kind: 'open_pr', title, body, draft} pushes the task's branch and opens its pull request with the gh tools (title and body are templates; empty: the task's key and title, and its agent's last message) " +
+      "{kind: 'open_pr', title, body, draft} pushes the task's branch and opens its pull request with the gh tools (title and body are templates; empty: '<task key>: <task title>', and the task's agent's last message, or else its description) " +
       "→ opened, exists (it has one already, which gets the branch's new commits), failed; while one comes after In progress's done, the agent isn't told to open one. " +
       "Data wires build prompts: an edge with input, {from, port, to, input}, gives node to's input (one wire each) the value port of node from, in place of " +
       "the input's own text: column prompt, agent prompt, send_to_task message, open_pr title and body, a compose node's {{name}}s (without a dot), a join's " +
@@ -689,7 +690,7 @@ function workflow_tools(profile: any, project_one: string): any[] {
       "{kind: 'join', separator, count} → text (its inputs with text, separated; \\n is a newline); {kind: 'switch', check: 'has_pr'|'task_type'|'label', " +
       "value} → text (its yes or no). Values can't go round in a loop among data nodes. " +
       "The kinds from before column nodes, {kind: 'trigger', on: 'status', status}, {kind: 'trigger', on: 'finished'} and {kind: 'set_status', status}, are read as column nodes. " +
-      "Each node has an id (letters, digits, - and _), and x and y for where the editor draws it.",
+      "Each node has an id (letters, digits, - and _), and x and y for where the editor draws it; a data node can have a label, the name the editor shows it by.",
     properties: {
       nodes: {
         type: "array",
@@ -712,6 +713,7 @@ function workflow_tools(profile: any, project_one: string): any[] {
             model: { type: "string" },
             effort: { type: "string", enum: THREAD_EFFORTS },
             skills: { type: "array", items: { type: "string" } },
+            disabled_mcp_servers: { type: "array", items: { type: "string" } },
             tab: { type: "string" },
             input_only: { type: "boolean" },
             done_when: { type: "string", enum: ["run_end", "finish"] },
@@ -726,6 +728,7 @@ function workflow_tools(profile: any, project_one: string): any[] {
             message: { type: "string" },
             max_rounds: { type: "integer", minimum: 0, maximum: WORKFLOW_MAX_ROUNDS },
             join: { type: "string", enum: ["any", "all"] },
+            label: { type: "string" },
             x: { type: "number" },
             y: { type: "number" },
           },

@@ -156,3 +156,31 @@ test("a node can be moved left of and above the first ones", async () => {
     assert.ok(n.x >= v.x && n.y >= v.y, `start at ${n.x}, ${n.y}; the view at ${v.x}, ${v.y}`);
   });
 });
+
+// Arrange lays the steps out along the way a run goes; a value can be given a name of its own.
+test("Arrange puts the steps in columns in order, and a value's name shows and is saved", async () => {
+  for (const w of (await server.api("GET", `/projects/${project.id}/workflows`)).workflows) await server.api("DELETE", `/workflows/${w.id}`);
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}/settings/workflows`, "click role=button[name='Open a PR when done']", "wait [data-node=start]"]);
+    // In progress dragged to the far right, past the rest.
+    const node = await page.locator("[data-node=start]").boundingBox();
+    await page.mouse.move(node.x + 60, node.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(node.x + 700, node.y + 12, { steps: 8 });
+    await page.mouse.up();
+    const left = (id) => page.locator(`[data-node=${id}]`).evaluate((el) => parseFloat(el.style.left));
+    assert.ok((await left("start")) > (await left("review")));
+    await ui.run(["click role=button[name=Arrange]"]);
+    const xs = [await left("start"), await left("commits"), await left("pr"), await left("review")];
+    assert.ok(xs[0] < xs[1] && xs[1] < xs[2] && xs[2] < xs[3], xs.join());
+    await ui.run(["click role=button[name=/^Text$/]", "wait [data-testid=workflow-inspector] >> text=What the canvas"]);
+    await page.locator("[data-testid=workflow-inspector]").getByPlaceholder("Text", { exact: true }).fill("House rules");
+    await ui.run(["wait css=[data-node] >> text=House rules", "click Create workflow", "gone [role=dialog]"]);
+  });
+  const [w] = (await server.api("GET", `/projects/${project.id}/workflows`)).workflows;
+  const text = w.graph.nodes.find((n) => n.kind === "text");
+  assert.equal(text.label, "House rules");
+  const at = Object.fromEntries(w.graph.nodes.map((n) => [n.id, n.x]));
+  assert.ok(at.start < at.commits && at.commits < at.pr && at.pr < at.review, JSON.stringify(at));
+});

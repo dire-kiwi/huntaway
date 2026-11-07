@@ -18,6 +18,10 @@ a _Move task_ step, instead of column nodes and values; see [the end of this pag
   panel. Right-drag across lines to cut every line the knife crosses. A selected line has a _Remove_ button too.
 - **Pan** by dragging the background, or with the middle button anywhere. **Zoom** with the scroll wheel (around the
   pointer) or the corner's − and +; the percentage goes back to 100%, and _Fit_ shows the whole workflow.
+- **Arrange** (in the corner) lays the nodes out for you: the steps in columns along the way a run goes (a line back
+  round, into In progress say, doesn't count), each value in the column before the step it goes into, and each column's
+  nodes in the order that keeps their lines straightest, so few cross. A line that skips a column is drawn straight
+  across it, so it can still pass behind a node there. Nothing is saved until you save, so _Cancel_ undoes it.
 - Nothing is saved until you press _Save_ (or _Create workflow_); closing with changes asks first.
 
 ## How a run goes
@@ -148,10 +152,11 @@ It checks one of:
 - **The task is of a type**: code or scratch.
 - **The task has a label**: plan, artifact or diagram.
 
-### Agent (Review, Summary, Skill on its input)
+### Agent (Review)
 
 An agent in a thread of its own, with read-only tools in the task's worktree, in a fresh conversation each run (the
-thread keeps every run's messages). _Review_, _Summary_ and _Skill on its input_ are agent steps set up for those jobs.
+thread keeps every run's messages). _Review_ is an agent step set up to review. For a summary, or a step that runs a
+skill on what the steps before it wrote, add an _Agent_ and give it the instructions, skills and switch it needs.
 
 | Socket    | Kind    | Is                                                             |
 | --------- | ------- | -------------------------------------------------------------- |
@@ -172,7 +177,10 @@ thread keeps every run's messages). _Review_, _Summary_ and _Skill on its input_
 - **Instructions**: what it's asked to do; blank is the project's review instructions for a verdict, or "report on the
   work" for text. The board adds where the work is, what the agent steps before it in the graph said, and how to
   report. A review that ran before, whose issues were sent to the agent since, is asked to check they're fixed.
-- **Skills**: skills it's asked to use.
+- **Skills**: skills it's asked to use, picked from the project's agents' (the board's own, the global ones on for the
+  project, and those its runs reported), or typed in.
+- **MCP servers**: it has the project's servers, as the task's threads do; click one to turn it off for this step
+  (`disabled_mcp_servers`).
 - **Work only on what the steps before it wrote** (`input_only`): it isn't told where the task's work is, only what the
   steps before it said, so it can process a summary (with a skill, say) in a fresh context.
 
@@ -184,14 +192,15 @@ it started from.
 | Socket    | Kind    | Is                                                                                                            |
 | --------- | ------- | ------------------------------------------------------------------------------------------------------------- |
 | line in   | in      | Push and open it                                                                                              |
-| `title`   | input   | Its title (blank: the task's key and title)                                                                   |
-| `body`    | input   | Its body (blank: the task's agent's last message)                                                             |
+| `title`   | input   | Its title (blank: `<task key>: <task title>`)                                                                 |
+| `body`    | input   | Its body (blank: the task's agent's last message, or else the task's description)                             |
 | `opened`  | outcome | It opened the pull request                                                                                    |
 | `had one` | outcome | The task has one already, which it pushed the branch's new commits to                                         |
 | `failed`  | outcome | The task has no worktree, its branch no commits of its own, its repository isn't on GitHub, or GitHub refused |
 | `url`     | value   | The pull request's link                                                                                       |
 
-_Open it as a draft_ opens a draft.
+_Open it as a draft_ opens a draft. No agent writes the title and body unless you wire one in: an _Agent_ step before
+it can write them, with its `text` wired into `title` or `body`.
 
 ### Send to the task's agent
 
@@ -211,7 +220,7 @@ with nothing after `out of rounds`, the task moves to Needs attention, with the 
 ## Values
 
 Value nodes have no line in or outcome: no run goes into them. Their values are read when a step they're wired into
-runs.
+runs. Each can have a _Name_ of its own (`label`), which the canvas and the wired fields show it by.
 
 ### Text
 
