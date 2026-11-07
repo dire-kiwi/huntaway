@@ -3,7 +3,7 @@
 // whether it's connected, as whom, and the code of a device sign-in under way.
 import { ExternalLink, Globe, Loader2, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, hasHostedDocs, type DocDetail, type DocPublished, type DocPublishResult, type HostedDocsStatus } from "../../api";
+import { api, hasHostedDocs, type DocDetail, type DocPublished, type DocPublishExists, type DocPublishResult, type HostedDocsStatus } from "../../api";
 import type { DocsHome } from "../../docs";
 import { onDocsSite, useStore } from "../../store";
 import { Button, ErrorBox, errorText, Field, Input, Modal, ModalFooter, useAsyncAction } from "../ui";
@@ -221,24 +221,41 @@ export function PublishDialog({
 }) {
   const hosted = useHostedDocs(home);
   const [slug, setSlug] = useState(detail.slug);
+  // Publishing it to another slug than the one it went to (HA-286: that one was deleted and taken, say).
+  const [elsewhere, setElsewhere] = useState(false);
+  // The site's document at the slug, which publishing would add a version to: the user says whether to.
+  const [exists, setExists] = useState<DocPublishExists | null>(null);
   const [done, setDone] = useState<DocPublishResult | null>(null);
   const action = useAsyncAction();
   const s = hosted.status;
   const v = detail.versions.find((x) => x.number === version);
-  // Where it was published on the site it's connected to now (the document's `published` is for that site).
+  // Where it was published on the site it's connected to now (the document's `published` is for that site and account).
   const before = detail.published && s && detail.published.site_url === s.site_url ? detail.published : null;
-  const publish = () =>
+  const choosing = !before || elsewhere;
+  /** Publish, asking first (`ask`) if the site has a document at a slug it wasn't published to. */
+  const publish = (ask: boolean) =>
     void action.run(async () => {
-      const out = await api.publishDoc(home.hostId, home.profileId, detail.slug, { version, ...(before ? {} : { slug: slug.trim() || detail.slug }) });
-      setDone(out);
+      const out = await api.publishDoc(home.hostId, home.profileId, detail.slug, { version, ...(choosing ? { slug: slug.trim() || detail.slug } : {}), ask });
+      if ("exists" in out) setExists(out.exists);
+      else setDone(out);
     });
+  const another = () => {
+    setExists(null);
+    setElsewhere(true);
+    if (before) setSlug(before.remote_slug);
+  };
   // A sign-in that expired while publishing shows as not connected.
   useEffect(() => {
     if (action.error) hosted.reload();
   }, [action.error, hosted.reload]);
 
   return (
-    <Modal title={`Publish “${detail.title}” to docs`} onClose={onClose} onSubmit={s?.connected && !done ? publish : undefined} width="max-w-md">
+    <Modal
+      title={`Publish “${detail.title}” to docs`}
+      onClose={onClose}
+      onSubmit={s?.connected && !done && !exists ? () => publish(true) : undefined}
+      width="max-w-md"
+    >
       {!s ? (
         hosted.error ? (
           <ErrorBox>{hosted.error}</ErrorBox>
@@ -278,25 +295,61 @@ export function PublishDialog({
             </Button>
           </ModalFooter>
         </div>
+      ) : exists ? (
+        <div className="space-y-4 text-[13px]" aria-label="Already on the site">
+          <p className="text-muted">
+            {siteName(s.site_url)} has a document at <span className="font-mono text-[12px] text-fg">{exists.slug}</span> already:{" "}
+            {exists.url ? (
+              <a href={exists.url} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+                “{exists.title}”
+              </a>
+            ) : (
+              <span className="text-fg">“{exists.title}”</span>
+            )}
+            {exists.latest_version !== null ? ` (v${exists.latest_version})` : ""}
+            {exists.owner ? `, ${exists.owner}'s` : ""}. Publishing v{version} there adds it as a new version of that document.
+          </p>
+          <ModalFooter className="space-y-3">
+            {action.error && <ErrorBox>{action.error}</ErrorBox>}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" disabled={action.busy} onClick={another}>
+                Choose another slug
+              </Button>
+              <Button variant="primary" disabled={action.busy} onClick={() => publish(false)}>
+                {action.busy ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Publish over it
+              </Button>
+            </div>
+          </ModalFooter>
+        </div>
       ) : (
         <div className="space-y-4 text-[13px]">
           <p className="text-muted">
             Publishes <span className="text-fg">v{version}</span>
             {v?.message ? <> (“{v.message}”)</> : null} with all its pages to <span className="text-fg">{connectedAs(s)}</span>
-            {before ? (
+            {before && !elsewhere ? (
               <>
                 , as a new version of{" "}
                 <a href={before.url} target="_blank" rel="noopener noreferrer" className="font-mono text-[12px] text-accent hover:underline">
                   {before.remote_slug}
                 </a>{" "}
-                (v{before.remote_version} there now).
+                (v{before.remote_version} there now).{" "}
+                <button type="button" className="text-[12px] text-faint underline hover:text-fg" onClick={another}>
+                  Change the slug
+                </button>
               </>
             ) : (
               "."
             )}
           </p>
-          {!before && (
-            <Field label={`Its slug on ${siteName(s.site_url)}`} hint="Its address there: /d/<slug>/. Publishing again adds versions to it.">
+          {choosing && (
+            <Field
+              label={`Its slug on ${siteName(s.site_url)}`}
+              hint={
+                before
+                  ? `A slug other than ${before.remote_slug} publishes it there instead, and later publishes add versions to that one.`
+                  : "Its address there: /d/<slug>/. Publishing again adds versions to it."
+              }
+            >
               <Input value={slug} onChange={(e) => setSlug(e.target.value)} aria-label="Remote slug" />
             </Field>
           )}
@@ -306,7 +359,7 @@ export function PublishDialog({
               <Button variant="ghost" onClick={onClose}>
                 Cancel
               </Button>
-              <Button variant="primary" disabled={action.busy} onClick={publish}>
+              <Button variant="primary" disabled={action.busy} onClick={() => publish(true)}>
                 {action.busy ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Publish
               </Button>
             </div>

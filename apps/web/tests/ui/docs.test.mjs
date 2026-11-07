@@ -45,7 +45,9 @@ test("the sidebar's Docs lists the profile's documents, and a document's links, 
       "the entry is marked",
     );
 
-    // The latest version's index, in the reader's styles with the board's colours.
+    // The latest version's index, in the reader's styles with the board's colours, in one request for one page (HA-286).
+    const asked = [];
+    page.on("request", (r) => r.url().includes("/versions/") && asked.push(new URL(r.url()).search));
     await ui.run(["click Rollout plan"]);
     await waitPath(page, DOC);
     const frame = reader(page);
@@ -57,6 +59,12 @@ test("the sidebar's Docs lists the profile's documents, and a document's links, 
     assert.deepEqual(look, { bg: "rgb(11, 11, 14)", rule: "solid" });
     await ui.run(["wait Add phase 2 and the open questions"]);
     assert.equal(await page.getByRole("combobox", { name: "Version" }).inputValue(), "2");
+    // The merged version's menu reads in order (HA-286: its pages' `order:`, as a merge keeps the others' positions).
+    assert.deepEqual(await page.locator("nav[aria-label=Pages] button").allInnerTexts(), ["Rollout plan", "Phases", "Phase 1", "Phase 2", "Notes"]);
+    assert.deepEqual(
+      asked.map((q) => new URLSearchParams(q).get("first")),
+      ["1"],
+    );
 
     // A link to a heading in the page stays in the page (in a srcdoc frame it would load the board's address there).
     await frame.locator("h2 .anchor").click();
@@ -109,6 +117,11 @@ test("the sidebar's Docs lists the profile's documents, and a document's links, 
     await page.goBack();
     await waitPath(page, `${DOC}/-/v/1/plan/phase-1`);
     await ui.run(["wait First draft of the rollout plan"]);
+
+    // A version that isn't there says so (HA-286), and offers the latest.
+    await ui.run([`goto ${DOC}/-/v/9/plan`, "wait Version 9 not found.", "click Read the latest"]);
+    await waitPath(page, `${DOC}/plan`);
+    await reader(page).locator("h1", { hasText: "Phases" }).waitFor();
   });
 });
 
@@ -133,7 +146,8 @@ test("an agent's link to a version's page opens it, with the profile's Docs mark
 test("a task's thread links to the document it published, on the board's Docs page", async () => {
   const project = await demoProject(server);
   const task = await server.api("POST", `/projects/${project.id}/tasks`, { title: "Publishes a plan" });
-  const result = JSON.stringify({ slug: "rollout-plan", version: 2, url: `http://127.0.0.1:9/docs/${profile.id}/d/rollout-plan/`, pages: [] });
+  const url = `http://127.0.0.1:9/docs/${profile.id}/d/rollout-plan/`;
+  const result = JSON.stringify({ slug: "rollout-plan", version: 1, url, version_url: `${url}-/v/1/`, pages: [] });
   const messages = [
     { kind: "user", data: { text: "Write the plan up." } },
     {
@@ -152,11 +166,13 @@ test("a task's thread links to the document it published, on the board's Docs pa
     const { page } = ui;
     await routeThread(page, task.id, messages);
     await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Thread", "wait Published it."]);
-    const link = page.getByRole("link", { name: "Open “Rollout plan” (v2) in Docs" });
-    assert.equal(await link.getAttribute("href"), `/docs/${profile.id}/d/rollout-plan/`);
+    // The version it published (HA-286), not the latest.
+    const link = page.getByRole("link", { name: "Open “Rollout plan” (v1) in Docs" });
+    assert.equal(await link.getAttribute("href"), `/docs/${profile.id}/d/rollout-plan/-/v/1/`);
     await link.click();
-    await waitPath(page, `/docs/${profile.id}/d/rollout-plan`);
+    await waitPath(page, `/docs/${profile.id}/d/rollout-plan/-/v/1`);
     await reader(page).locator("h1", { hasText: "Rollout plan" }).waitFor();
+    await ui.run(["wait First draft of the rollout plan"]);
   });
 });
 

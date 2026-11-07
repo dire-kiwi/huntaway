@@ -33,24 +33,37 @@ export const docsProfileName = (profiles: Profile[], segment: string) => profile
 export const pageSuffix = (path: string) => (path === "index" ? "" : path.replace(/\/index$/, ""));
 
 /**
- * The board's own path for the document a `publish_document` call's result names, or null if it names none. Its URLs
- * start with the host's address, which is its internal one (127.0.0.1) unless it has a public URL, and so not one
- * another device or a hub's user can open: the path is taken from them, for the board this page is served from.
+ * The board's own path for the version a `publish_document` call's result names (its `version_url`, else its `url`), or
+ * null if it names none. Its URLs start with the host's address, which is its internal one (127.0.0.1) unless it has a
+ * public URL, and so not one another device or a hub's user can open: the path is taken from them, for the board this
+ * page is served from. A public URL may have a path of its own before the board's (`https://example.com/board/docs/…`).
  */
 export function publishedDocPath(content: string): { path: string; slug: string; version: number | null } | null {
-  let out: { url?: unknown; slug?: unknown; version?: unknown };
+  let out: { url?: unknown; version_url?: unknown; slug?: unknown; version?: unknown };
   try {
     out = JSON.parse(content);
   } catch {
     return null;
   }
-  if (typeof out?.url !== "string") return null;
-  let route;
+  const url = typeof out?.version_url === "string" ? out.version_url : out?.url;
+  if (typeof url !== "string") return null;
+  let pathname: string;
   try {
-    route = parse(new URL(out.url, "http://board").pathname);
+    pathname = new URL(url, "http://board").pathname;
   } catch {
     return null;
   }
-  if (route.name !== "docs" || route.slug === undefined) return null;
-  return { path: href(route), slug: route.slug, version: typeof out.version === "number" ? out.version : null };
+  // The board's path is the first from a `/docs/` on that's a document's.
+  for (let i = pathname.indexOf("/docs/"); i >= 0; i = pathname.indexOf("/docs/", i + 1)) {
+    let route;
+    try {
+      route = parse(pathname.slice(i));
+    } catch {
+      continue;
+    }
+    if (route.name === "docs" && route.slug !== undefined) {
+      return { path: href(route), slug: route.slug, version: route.version ?? (typeof out.version === "number" ? out.version : null) };
+    }
+  }
+  return null;
 }

@@ -224,7 +224,7 @@ export const isWorkflowThread = (t: Pick<Task, "kind" | "task_type">) => t.kind 
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
 /** What goes before a task's number: its project's key, `G` for a group task, `S` for a scratch task (and the profile's
- *  pens thread, API 126), or `A` for its profile's assistant and its routines' threads. */
+ *  pens thread, API 127), or `A` for its profile's assistant and its routines' threads. */
 export const keyPrefix = (t: Task, project?: Pick<Project, "key">) =>
   project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) || t.task_type === "pens" ? "S" : isAssistants(t) ? "A" : "T");
 
@@ -362,7 +362,7 @@ export interface Task {
   remind_at?: string | null;
   /** What the reminder is for (API 48). */
   reminder?: string | null;
-  /** The pen it's in (API 126, see pens.ts), if it's in one. */
+  /** The pen it's in (API 127, see pens.ts), if it's in one. */
   pen_id?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
@@ -527,7 +527,7 @@ export const tasksApi = ({ on, storage }: Http) => ({
     on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks${assistant ? "?include_assistant=true" : ""}`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
    *  assistant (API 109), which is off the board. */
-  /** With `pens`, the profile's pens thread too (API 126). */
+  /** With `pens`, the profile's pens thread too (API 127). */
   groupTasks: (h: string, profileId: string, assistant = false, pens = false) => {
     const q = [assistant && "include_assistant=true", pens && "include_pens=true"].filter(Boolean).join("&");
     return on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${q ? `?${q}` : ""}`);

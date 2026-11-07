@@ -116,7 +116,7 @@ like `2h`, or a time) and `reminder` on `create_task` and `update_task` (API 48)
 reminders are saved on the task's host; which of the two sections are collapsed is saved in this
 browser.
 
-**Pens** (API 126) gather tasks from any of a profile's projects, and its tasks in no project, into
+**Pens** (API 127) gather tasks from any of a profile's projects, and its tasks in no project, into
 named sets: the work you're on today, a feature that spans projects, or tasks you've parked to
 come back to in a few days. The profile's board shows them as tabs over its columns: _All_, with
 every task, then a tab for each pen that isn't hidden, in the pens' order, each with how many

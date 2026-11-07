@@ -53,7 +53,7 @@ interface State {
   usage: Record<string, Usage>;
   /** Project changes agents are waiting for the user to approve, on every host, oldest first. */
   approvals: HostApproval[];
-  /** Every profile's pens on every host that has them (API 126, see pens.ts), tagged with host_id. */
+  /** Every profile's pens on every host that has them (API 127, see pens.ts), tagged with host_id. */
   pens: (Pen & { host_id: string })[];
 
   setAuthed: (v: boolean) => void;

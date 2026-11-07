@@ -7,7 +7,7 @@ import { useShallow } from "zustand/react/shallow";
 import { api, ApiError, hasHostedDocs, type DocDetail, type DocNavNode, type DocPublisher, type DocSummary, type RenderedDocVersion } from "../../api";
 import { docsHomes, pageSuffix, type DocsHome } from "../../docs";
 import { docBase, href, navigate, type Route } from "../../router";
-import { onDocs, useStore } from "../../store";
+import { onDocs, onDocsSite, useStore } from "../../store";
 import { followsFrameInput, fromFrame, openable, trackBoardInput } from "../task/htmlFrame";
 import { Ago, Button, errorText, IconButton, MenuButton, useConfirm } from "../ui";
 import { boardTheme, docFrame } from "./docFrame";
@@ -47,6 +47,13 @@ function useDocsChanged(homes: DocsHome[], fn: () => void, slug?: string) {
       }),
     [homes, slug],
   );
+}
+
+/** Calls `fn` when the hosted docs connection of one of `homes` changes (HA-286: documents' published state is for it). */
+function useDocsSiteChanged(homes: DocsHome[], fn: () => void) {
+  const call = useRef(fn);
+  call.current = fn;
+  useEffect(() => onDocsSite((hostId, profileId) => homes.some((h) => h.hostId === hostId && h.profileId === profileId) && call.current()), [homes]);
 }
 
 /** A link within the board: navigates here on a plain click, and opens in a new tab as links do otherwise. */
@@ -124,6 +131,7 @@ function DocsList({ segment, name, homes }: { segment: string; name: string; hom
   }, [homes]);
   useEffect(load, [load]);
   useDocsChanged(homes, load);
+  useDocsSiteChanged(homes, load);
 
   // A document's link names its profile by id where the name stands for several hosts' profiles.
   const docLink = (d: Row) => href({ name: "docs", profile: homes.length > 1 ? d.profileId : segment, slug: d.slug, page: "" });
@@ -252,7 +260,7 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
   const page = route.page ?? "";
   const { home, detail, missing, error: homeError, reload } = useDocHome(homes, slug);
   const [shown, setShown] = useState<RenderedDocVersion | null>(null);
-  const [error, setError] = useState<{ text: string; missingPage?: boolean } | null>(null);
+  const [error, setError] = useState<{ text: string; missingPage?: boolean; missingVersion?: boolean } | null>(null);
   const [asked, setAsked] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const canPublish = useCanPublish(home);
@@ -266,11 +274,13 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
     if (!hostId || !profileId) return;
     const n = ++seq.current;
     const v = version ?? "latest";
+    // A document without an index page opens at its first page.
     api
-      .docVersion(hostId, profileId, slug, v, { path: page, baseUrl: base })
+      .docVersion(hostId, profileId, slug, v, { path: page, first: page === "", baseUrl: base })
       .catch((e) => {
-        // A document without an index page opens at its first page.
-        if (page === "" && e instanceof ApiError && e.status === 404) return api.docVersion(hostId, profileId, slug, v, { baseUrl: base });
+        // A host before HA-286 has no `first`: it gives every page (only the first is shown).
+        if (page === "" && e instanceof ApiError && e.status === 404 && e.message === "page not found")
+          return api.docVersion(hostId, profileId, slug, v, { baseUrl: base });
         throw e;
       })
       .then(
@@ -282,6 +292,8 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
         (e) => {
           if (n !== seq.current) return;
           const status = e instanceof ApiError ? e.status : 0;
+          // HA-286: a version that isn't there isn't a page that isn't.
+          if (status === 404 && e.message === "version not found") return setError({ text: `Version ${version} not found.`, missingVersion: true });
           const which = version === undefined ? "This document" : `Version ${version} of this document`;
           setError({ text: status === 404 ? `${which} has no page “${page || "index"}”.` : errorText(e), missingPage: status === 404 && page !== "" });
         },
@@ -297,23 +309,30 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
     },
     slug,
   );
+  // Connecting or disconnecting changes its published state.
+  useDocsSiteChanged(homes, reload);
 
   const theme = useMemo(() => boardTheme(), []);
   const current = shown?.pages[0];
-  // Where the reader is in the page (the frame reports it), to stay there when it's shown again with a new version.
-  const place = useRef<{ key: string; y: number }>({ key: "", y: 0 });
+  // Where the reader is in the page (the frame reports it), to stay there when it's shown again with a new version, and
+  // the `#heading` it opened at until then. Kept with the page, so that working it out again (StrictMode does, in dev)
+  // gives the same frame (HA-286).
+  const place = useRef<{ key: string; y: number; hash: string }>({ key: "", y: 0, hash: "" });
   const doc = useMemo(() => {
     if (current?.html == null) return null;
-    const again = place.current.key === current.path;
-    if (!again) place.current = { key: current.path, y: 0 };
-    return docFrame(current.html, theme, again ? "" : window.location.hash.slice(1), place.current.y);
+    if (place.current.key !== current.path) place.current = { key: current.path, y: 0, hash: window.location.hash.slice(1) };
+    return docFrame(current.html, theme, place.current.hash, place.current.y);
   }, [current, theme]);
 
   // The frame's links: those to the board's own pages open here, others in a new tab, after the user's own click.
   useEffect(() => {
     trackBoardInput();
     const onMessage = (e: MessageEvent) => {
-      if (e.source === frame.current?.contentWindow && typeof e.data?.iaScroll === "number") place.current.y = e.data.iaScroll;
+      if (e.source === frame.current?.contentWindow && typeof e.data?.iaScroll === "number") {
+        // Scrolled (to the heading, or from it): a new version opens where the reader is.
+        place.current.y = e.data.iaScroll;
+        place.current.hash = "";
+      }
       if (typeof e.data?.iaOpen !== "string" || !fromFrame(frame.current, e.source)) return;
       let url: URL;
       try {
@@ -449,6 +468,11 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
                   {error.missingPage && (
                     <BoardLink to={href({ name: "docs", profile: route.profile, slug, version, page: "" })} className="text-accent hover:underline">
                       Open its first page
+                    </BoardLink>
+                  )}
+                  {error.missingVersion && (
+                    <BoardLink to={href({ name: "docs", profile: route.profile, slug, page })} className="text-accent hover:underline">
+                      Read the latest
                     </BoardLink>
                   )}
                 </Notice>

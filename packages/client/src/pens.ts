@@ -2,10 +2,10 @@ import { enc, type Http } from "./http";
 import { type Host, hostSupports } from "./hosts";
 import type { Task } from "./tasks";
 
-/** Pens (API 126): a profile's named sets of tasks from any of its projects, which its board shows as tabs (see
+/** Pens (API 127): a profile's named sets of tasks from any of its projects, which its board shows as tabs (see
  *  apps/server/src/api/pens.ts). A task is in one pen at most (`Task.pen_id`). Each host keeps its own; a board spanning
  *  hosts merges them by name. */
-export const PENS_API = 126;
+export const PENS_API = 127;
 
 export const hasPens = (h: Host | undefined) => hostSupports(h, PENS_API);
 
@@ -22,7 +22,7 @@ export type Pen = {
   task_count: number;
 };
 
-/** A profile's pens thread (API 126): the one thread that arranges its pens, off the board's columns, keyed `S-<n>`. */
+/** A profile's pens thread (API 127): the one thread that arranges its pens, off the board's columns, keyed `S-<n>`. */
 export const isPensThread = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "pens";
 
 export const pensApi = ({ on }: Http) => ({

@@ -1,4 +1,4 @@
-// Pens (HA-285, API 126): a profile's named sets of tasks, which its board shows as tabs (see db/pens.ts). They're this
+// Pens (HA-285, API 127): a profile's named sets of tasks, which its board shows as tabs (see db/pens.ts). They're this
 // host's own, so a hub reaches them through `/h/{host}/…` like the rest; a board spanning hosts merges them by name.
 //
 // - `GET /profiles/{id}/pens`: its pens in their tabs' order, each with its `task_count`.

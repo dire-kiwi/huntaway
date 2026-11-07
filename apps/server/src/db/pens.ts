@@ -5,7 +5,7 @@
 import { all, one, run, tx, value, type Conn } from "../db.ts";
 import { new_id, now } from "../util.ts";
 
-/** The table (migration 105), and tasks' `pen_id`. */
+/** The table (migration 106), and tasks' `pen_id`. */
 export const PENS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS pens (
   id TEXT PRIMARY KEY,

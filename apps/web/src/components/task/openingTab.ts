@@ -31,7 +31,7 @@ export function openingTab(task: Task | undefined): string {
   if (task && summaryReady(task)) return "summary";
   if (task && documentsOnly(task)) return "thread";
   // As `isAssistant`, which the unit tests can't import (its module's imports have no extensions).
-  // So is the profile's pens thread (API 126).
+  // So is the profile's pens thread (API 127).
   if (task && task.kind === "task" && (task.task_type === "assistant" || task.task_type === "pens")) return "thread";
   return task?.status === "todo" || task?.status === "backlog" ? "details" : "thread";
 }

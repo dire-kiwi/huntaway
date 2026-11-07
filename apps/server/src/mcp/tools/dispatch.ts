@@ -647,7 +647,7 @@ const WORKFLOWS_API = 107;
 const WORKFLOW_TOOLS = ["list_workflows", "create_workflow", "update_workflow", "delete_workflow", "run_workflow"];
 
 /** The API version from which hosts have pens (HA-285): the pen tools, and `pen` on create_task, update_task and list_tasks. */
-export const PENS_API = 126;
+export const PENS_API = 127;
 
 export const PEN_TOOLS = ["list_pens", "create_pen", "update_pen", "delete_pen"];
 

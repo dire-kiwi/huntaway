@@ -257,7 +257,7 @@
   the browser tab; _Sort_ (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
-- **Now and Later** (HA-109, API 97) were taken out by HA-285 (API 126): pens took their place
+- **Now and Later** (HA-109, API 97) were taken out by HA-285 (API 127): pens took their place
   (see _Pens_ in [Using the board](board.md)). Hosts ignore `now` on `PATCH /tasks/{id}` and the
   agents' task tools, tasks no longer have `now_at`, and `/settings` no longer has
   `now_expiry_hours`.

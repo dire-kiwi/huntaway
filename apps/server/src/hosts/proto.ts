@@ -64,14 +64,18 @@ export const PROTOCOL = 1;
  * and `token`) and publishes its documents there (`POST /profiles/{id}/docs/{slug}/publish`); documents have
  * `published`, and `docs_site` events say a profile's connection changed (see api/docs.ts).
  *
- * API 126: Pens (HA-285): a profile's named sets of tasks across its projects, which the profile's board shows as tabs:
+ * API 126: hosted docs fixes (HA-286): a document's publish (`POST /profiles/{id}/docs/{slug}/publish`) takes `ask`, to
+ * be told of a remote document at the slug (`{exists}`) rather than add to it, and another `slug` re-targets it; its
+ * `published` is the connected account's only; and `GET /profiles/{id}/docs/{slug}/versions/{n}` takes `first=1`.
+ *
+ * API 127: Pens (HA-285): a profile's named sets of tasks across its projects, which the profile's board shows as tabs:
  * `GET`/`POST /profiles/{id}/pens`, `PATCH`/`DELETE /pens/{id}` (see api/pens.ts), tasks' `pen_id` (set with `pen` or
  * `pen_id` on `PATCH /tasks/{id}`), `pens` events, and each profile's pens thread (`GET /profiles/{id}/pens-thread`,
  * task type `pens`, off the board unless `/group-tasks?include_pens=1`), which arranges them with the agents' pen tools.
  * Pens replace the Now/Later split (API 97), which is gone: tasks have no `now_at`, `now` on `PATCH /tasks/{id}` and
  * the task tools is ignored, and `/settings` has no `now_expiry_hours`.
  */
-export const API_VERSION = 126;
+export const API_VERSION = 127;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

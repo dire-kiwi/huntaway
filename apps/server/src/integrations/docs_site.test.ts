@@ -24,8 +24,8 @@ class Site {
   /** Valid access tokens → user; refresh tokens → user (each works once). */
   access = new Map<string, string>();
   refresh = new Map<string, string>();
-  /** Documents by slug: owner and versions. */
-  docs = new Map<string, { owner: string; title: string; versions: { message: string | null; pages: any[] }[] }>();
+  /** Documents by slug: owner, who else can see it, and versions. */
+  docs = new Map<string, { owner: string; shared?: string[]; title: string; versions: { message: string | null; pages: any[] }[] }>();
   log: string[] = [];
   expires_in = 3600;
   n = 0;
@@ -142,8 +142,11 @@ class Site {
             documents: [...this.docs].map(([slug, d]) => ({ slug, title: d.title, owner: d.owner, shared_with_you: d.owner !== user })),
           });
         case "get_document": {
+          // As the site does: only a document the user can see, with its sharing for its owner only.
           const d = this.docs.get(a.slug);
-          return d ? ok({ slug: a.slug, title: d.title, owner: d.owner, latest_version: d.versions.length }) : fail(`no document "${a.slug}"`);
+          if (!d || (d.owner !== user && !d.shared?.includes(user))) return fail(`no document "${a.slug}"; call list_documents to see what exists`);
+          const sharing = d.owner === user ? { shared_with: d.shared ?? [] } : null;
+          return ok({ sharing, slug: a.slug, title: d.title, owner: d.owner, url: `${this.url}/d/${a.slug}/`, latest_version: d.versions.length });
         }
         case "publish_document": {
           let d = this.docs.get(a.slug);
@@ -344,13 +347,11 @@ test("publish, then publish again: a new remote version of the same document, an
   const [, detail] = await call(s, "GET", `/api/profiles/${p}/docs/the-plan`);
   assert.equal(detail.published.remote_slug, "our-plan");
 
-  // Publishing again (the latest) adds a version to the same remote document; the slug can't change.
-  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { slug: "another" });
-  assert.equal(st, 400);
-  assert.match(out.error, /published as “our-plan” already/);
-  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, {});
+  // Publishing again (the latest) adds a version to the same remote document, without asking.
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { ask: true });
   assert.equal(st, 200, JSON.stringify(out));
   assert.deepEqual([out.published.remote_slug, out.published.remote_version, out.published.local_version], ["our-plan", 2, 2]);
+  assert.equal(out.published.login, "ivan");
   assert.equal(sent.versions.length, 2);
   assert.equal(sent.versions[1].message, "v2");
   assert.equal(site_.docs.size, 1);
@@ -397,6 +398,78 @@ test("the site's errors come back as they are: a slug taken, a version or docume
   assert.equal(st, 200, JSON.stringify(out));
 });
 
+test("a first publish asks before adding to the user's document at the slug, and says whose another user's is", async () => {
+  // HA-286: the same slug published from another profile or host, or by an agent straight to the site.
+  const site_ = await site();
+  const { s, p } = setup();
+  await connect(s, p, site_);
+  site_.docs.set("the-plan", { owner: "ivan", title: "Published elsewhere", versions: [{ message: null, pages: [] }] });
+  let [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { ask: true });
+  assert.equal(st, 200, JSON.stringify(out));
+  assert.deepEqual(out, {
+    exists: { slug: "the-plan", title: "Published elsewhere", latest_version: 1, url: `${site_.url}/d/the-plan/`, owner: "ivan" },
+  });
+  const doc_id = db.get_doc(s.db(), p, "the-plan")!.id;
+  assert.equal(site_.docs.get("the-plan")!.versions.length, 1, "nothing was published");
+  assert.equal(db.docs_site_published(s.db(), doc_id, site_.url), null);
+  // Confirmed: it's added to.
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, {});
+  assert.equal(st, 200, JSON.stringify(out));
+  assert.deepEqual([out.published.remote_slug, out.published.remote_version], ["the-plan", 2]);
+
+  // Another user's document that the user can see: theirs, so another slug it is.
+  site_.docs.set("shared", { owner: "alice", shared: ["ivan"], title: "Alice's", versions: [{ message: null, pages: [] }] });
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { slug: "shared", ask: true });
+  assert.equal(st, 400);
+  assert.equal(out.error, `${new URL(site_.url).host} has “shared” already, as alice's document: choose another slug`);
+  // A slug with nothing there publishes straight away, and re-targets the document.
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { slug: "Fresh Plan", ask: true });
+  assert.equal(st, 200, JSON.stringify(out));
+  assert.deepEqual([out.published.remote_slug, out.published.remote_version], ["fresh-plan", 1]);
+  assert.equal(db.docs_site_published(s.db(), doc_id, site_.url)!.remote_slug, "fresh-plan");
+});
+
+test("a document published as another account, or to a remote one taken since, publishes again under a new slug", async () => {
+  // HA-286: these used to fail with "taken by another user's document", and no other slug was allowed.
+  const site_ = await site();
+  const { s, p } = setup();
+  await connect(s, p, site_);
+  let [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, {});
+  assert.equal(st, 200, JSON.stringify(out));
+  const doc_id = db.get_doc(s.db(), p, "the-plan")!.id;
+  assert.equal(db.docs_site_published(s.db(), doc_id, site_.url)!.login, "ivan");
+
+  // Connected again, as bob (who has a document there, so the site says who he is): it isn't published as bob.
+  site_.access.set("bob-token", "bob");
+  site_.docs.set("bobs-notes", { owner: "bob", title: "Notes", versions: [{ message: null, pages: [] }] });
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/hosted_docs/token`, { site_url: site_.url, token: "bob-token" });
+  assert.equal(st, 200, JSON.stringify(out));
+  assert.equal(out.login, "bob");
+  let [, list] = await call(s, "GET", `/api/profiles/${p}/docs`);
+  assert.equal(list[0].published, null);
+  let [, detail] = await call(s, "GET", `/api/profiles/${p}/docs/the-plan`);
+  assert.equal(detail.published, null);
+  // Its slug is ivan's there (and bob can't see it): the site says so, and another slug works.
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { ask: true });
+  assert.equal(st, 400);
+  assert.match(out.error, /the slug "the-plan" is taken by another user's document/);
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { slug: "bobs-plan", ask: true });
+  assert.equal(st, 200, JSON.stringify(out));
+  assert.deepEqual([out.published.remote_slug, out.published.remote_version, out.published.login], ["bobs-plan", 1, "bob"]);
+  [, list] = await call(s, "GET", `/api/profiles/${p}/docs`);
+  assert.equal(list[0].published.remote_slug, "bobs-plan");
+
+  // The remote document was deleted, and someone else took its slug: publishing to it fails, and a new slug works.
+  site_.docs.set("bobs-plan", { owner: "mallory", title: "Mine now", versions: [] });
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, {});
+  assert.equal(st, 400);
+  assert.match(out.error, /taken by another user's document/);
+  [st, out] = await call(s, "POST", `/api/profiles/${p}/docs/the-plan/publish`, { slug: "bobs-plan-2", ask: true });
+  assert.equal(st, 200, JSON.stringify(out));
+  [, detail] = await call(s, "GET", `/api/profiles/${p}/docs/the-plan`);
+  assert.deepEqual([detail.published.remote_slug, detail.published.remote_version], ["bobs-plan-2", 1]);
+});
+
 test("an expired access token is renewed once for calls at once, the rotated refresh token is kept, and a revoked one disconnects", async () => {
   const site_ = await site();
   const { s, p, events } = setup();
@@ -425,9 +498,10 @@ test("an expired access token is renewed once for calls at once, the rotated ref
   assert.match(out.error, /expired or was revoked .*connect again/);
   assert.equal(db.docs_site_connection(s.db(), p), null);
   assert.ok(events.some((e) => e.type === "docs_site"));
-  // Where it was published is still known, for when it's connected again.
+  // Where it was published is still known, and still shown: the profile is still on that site (HA-286).
   const [, list] = await call(s, "GET", `/api/profiles/${p}/docs`);
-  assert.equal(list[0].published?.remote_slug, undefined, "not on the default site");
+  assert.equal(list[0].published?.remote_slug, "the-plan");
+  assert.equal(docs_site.status(s, p).site_url, site_.url);
   assert.equal(db.docs_site_published(s.db(), db.get_doc(s.db(), p, "the-plan")!.id, site_.url)!.remote_version, 1);
 });
 
@@ -467,7 +541,10 @@ test("disconnecting forgets the tokens, and a site that isn't a docs site or can
   const [st, out] = await call(s, "DELETE", `/api/profiles/${p}/hosted_docs`);
   assert.equal(st, 200);
   assert.equal(out.connected, false);
-  assert.equal(out.site_url, "https://docs.nest.dire.nz");
+  // Still on the site it was connected to (HA-286), not the default.
+  assert.equal(out.site_url, site_.url);
+  assert.equal(out.default_site_url, "https://docs.nest.dire.nz");
+  assert.equal(docs_site.status(s, p).site_url, site_.url);
   assert.equal(Number(db.value(s.db(), "SELECT COUNT(*) FROM docs_site_connections")), 0);
 
   let [st2, bad] = await call(s, "POST", `/api/profiles/${p}/hosted_docs/device`, { site_url: `${site_.url}/elsewhere` });

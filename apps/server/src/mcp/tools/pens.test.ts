@@ -208,15 +208,15 @@ test("older_hosts_arent_asked_about_pens", () => {
   assert.equal(too_old("box", PENS_API, "create_pen", { name: "x" }), null);
 });
 
-// A database at version 104 (hosted docs, HA-282, which took that number first) gets pens' table and column.
+// A database at version 105 (hosted docs' fixes, HA-286, which took that number first) gets pens' table and column.
 test("a_database_from_before_pens_gets_them", () => {
   const path = join(testing.temp_dir(), "db.sqlite");
   let c = db.open(path);
-  c.exec("DROP INDEX tasks_pen; DROP INDEX tasks_one_pens_thread; ALTER TABLE tasks DROP COLUMN pen_id; DROP TABLE pens; PRAGMA user_version=104;");
+  c.exec("DROP INDEX tasks_pen; DROP INDEX tasks_one_pens_thread; ALTER TABLE tasks DROP COLUMN pen_id; DROP TABLE pens; PRAGMA user_version=105;");
   c.close();
   c = db.open(path);
   assert.equal(Number(db.value(c, "PRAGMA user_version")), db.VERSION);
-  assert.equal(db.VERSION, 105);
+  assert.equal(db.VERSION, 106);
   const p = db.insert_profile(c, "p", [], null);
   const pen = db.insert_pen(c, p.id, "Today");
   assert.deepEqual(
