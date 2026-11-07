@@ -213,6 +213,7 @@ function host_routes(r: Router) {
   r.route("/admin/release/update", { POST: host.update_to_release });
   r.route("/admin/release/rollback", { POST: host.roll_back_release });
   r.route("/admin/database/recopy", { POST: host.recopy_database });
+  r.route("/admin/service", { POST: host.install_service });
   r.route("/admin/threads", { GET: host.threads_status });
   r.route("/admin/threads/batch", { POST: host.threads_batch });
   r.ws("/host/ws", ws);

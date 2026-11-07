@@ -8,26 +8,29 @@ laptop somewhere else) can connect to the same host and see the same data.
 
 Settings → Hosts offers three ways to link a host:
 
-- **Add host → Over SSH** (the hub starts the host and tunnels to it): enter `user@host`, the SSH
-  port, the absolute path of `huntaway` on that machine (with `ia-shim` beside it) and the host's
-  port, then add the line the dialog shows to that machine's `~/.ssh/authorized_keys`. The line
-  holds the hub's own key (made on first use in `<hub data dir>/ssh/`), restricted to running
-  `huntaway ssh-host` and forwarding to the host's port:
+- **Add host → Over SSH** (the hub tunnels to a host running on that machine): enter `user@host`,
+  the SSH port, the absolute path of `huntaway` on that machine (with `ia-shim` beside it) and the
+  host's port. Start the host there (on Linux, the command the dialog shows,
+  `huntaway install-service --host 127.0.0.1 --port 7878`, runs it as a user systemd service: see
+  _Running a host as a service_ below), then add the line the dialog shows to that machine's
+  `~/.ssh/authorized_keys`. The line holds the hub's own key (made on first use in
+  `<hub data dir>/ssh/`), restricted to running `huntaway ssh-host` and forwarding to the host's
+  port:
 
   ```text
   restrict,port-forwarding,permitopen="127.0.0.1:7878",command="/path/huntaway ssh-host --port 7878" ssh-ed25519 AAAA… huntaway-hub@<hub>
   ```
 
-  `ssh-host` starts `huntaway serve --host 127.0.0.1` through the login shell if nothing answers on
-  that port, and gives the hub the token from its data dir; add `--data-dir '<data dir>'` to the
+  `ssh-host` gives the hub the token from the host's data dir; add `--data-dir '<data dir>'` to the
   command if the host's isn't the default (`scripts/install-release-host.sh` prints the whole
-  command). Before starting one it waits 15 seconds for a host that's restarting (a Restart or an
-  Update leaves the port closed for a moment), so it doesn't start a second server that takes the
-  port from the release being started. With `--no-start` it never starts one, for a host that's kept
-  running some other way (a desktop app or a service manager): while it's down, the hub's
-  connection fails and retries. The host never listens beyond localhost or needs to reach the hub. The first connection
-  trusts the machine's SSH host key, and a changed one is refused later. If the tunnel drops, agents
-  keep running and the hub reconnects. The hub needs `ssh` and `ssh-keygen`.
+  command). It doesn't start a host (before HA-278 it started `huntaway serve` through the login
+  shell; `--no-start` and `--name` from those lines are still taken, and ignored): while nothing
+  answers on the port, it waits 15 seconds for a host that's restarting (a Restart or an Update
+  leaves the port closed for a moment), then fails, and the hub's connection retries. Adding a host
+  fails at once when none is running. The host never listens beyond localhost or needs to reach
+  the hub. The first connection trusts the machine's SSH host key, and a changed one is refused
+  later. If the tunnel drops, agents keep running and the hub reconnects. The hub needs `ssh` and
+  `ssh-keygen`.
 
 - **Add host → By URL and token** (the hub connects to the host): enter the host's URL and its token
   (`huntaway token` on that machine). This works whenever the hub can reach the host,
@@ -113,6 +116,31 @@ version, so it can update release hosts but not checkouts).
 **Agent defaults** (Settings): each host has a default model, effort (`--effort`) and
 permission mode for its agents. A model set on a thread, project or profile, or a permission
 mode set on a thread or project, takes precedence.
+
+## Running a host as a service
+
+On Linux with systemd, a host can run as a user service, which starts it at boot and starts it
+again if it stops. That's how to keep an SSH host running, since the hub doesn't start one.
+
+- **From the board**: the host's page (Settings → Hosts → the host) has a _Service_ section (API
+  123). **Install service** writes `~/.config/systemd/user/huntaway.service` (`huntaway-<port>.service`
+  on a port other than 7878) to run the server with the flags and `IA_*` settings it has now (the
+  release it was installed as, for a host that updated to a newer one: that one starts the newest
+  again), enables it, turns lingering on (`loginctl enable-linger`, so it starts at boot rather than
+  when the user logs in), and restarts the host under it. A host already run by a systemd service,
+  or by the desktop app, isn't offered one. `POST /api/admin/service` does the same, as a restart
+  job (`GET /api/admin/server`'s `service` says how it stands).
+- **On the machine**: `huntaway install-service [serve flags…]` writes and enables the same unit for
+  `huntaway serve [serve flags…]`, with the `IA_*` variables it's run with, and starts it (or
+  restarts it, if it's running). It leaves a host that's running on the port some other way alone:
+  stop that one, then `systemctl --user start huntaway.service`.
+
+The unit runs the server through the user's login shell, so agents get the PATH they'd get in a
+terminal, with `KillMode=process`, so stopping or restarting the service leaves agents and
+terminals running (see _Agents survive restarts_ in `server.md`), and `Restart=on-failure`. Its log
+is `journalctl --user -u huntaway.service`. Where lingering can't be turned on without root, the
+board says so, and `sudo loginctl enable-linger <user>` does it. To stop running as a service:
+`systemctl --user disable --now huntaway.service`, then remove the unit file.
 
 ## Reaching a host from anywhere
 
