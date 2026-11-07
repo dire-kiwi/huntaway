@@ -650,8 +650,7 @@ const MAX_ZOOM = 2;
  * or else below them all.
  */
 function freeSpot(g: WorkflowGraph, h: number, area: { left: number; top: number; width: number; height: number }) {
-  const left = Math.max(0, area.left);
-  const top = Math.max(0, area.top);
+  const { left, top } = area;
   const right = area.left + area.width - NODE_W - 20;
   const bottom = area.top + area.height - h - 20;
   const clear = (x: number, y: number) =>
@@ -772,7 +771,12 @@ function WorkflowEditor({
   const [err, setErr] = useState<string | null>(null);
   const inner = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
+  // Nodes can be anywhere, left of and above the origin too: the view starts with the graph's top left corner in it.
+  const [view, setView] = useState<View>(() => {
+    const ns = initialGraph.nodes;
+    const out = (c: number[]) => (ns.length && Math.min(...c) < 0 ? 20 - Math.min(...c) : 0);
+    return { x: out(ns.map((n) => n.x)), y: out(ns.map((n) => n.y)), k: 1 };
+  });
   const viewRef = useRef(view);
   viewRef.current = view;
   const confirm = useConfirm();
@@ -822,8 +826,8 @@ function WorkflowEditor({
     const move = (e: PointerEvent) => {
       const p = at(e);
       if (gesture.kind === "move") {
-        const x = Math.max(0, Math.round((p.x - gesture.dx) / 10) * 10);
-        const y = Math.max(0, Math.round((p.y - gesture.dy) / 10) * 10);
+        const x = Math.round((p.x - gesture.dx) / 10) * 10;
+        const y = Math.round((p.y - gesture.dy) / 10) * 10;
         setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === gesture.id ? { ...n, x, y } : n)) }));
       } else if (gesture.kind === "pan") {
         setView((v) => ({ ...v, x: gesture.ox + e.clientX - gesture.sx, y: gesture.oy + e.clientY - gesture.sy }));

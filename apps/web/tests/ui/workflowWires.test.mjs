@@ -126,3 +126,33 @@ test("delete and x remove the selected node or line", async () => {
     await ui.run(["wait [data-node=pr]"]);
   });
 });
+
+// Nodes go anywhere, left of and above where the graph starts too, and the editor opens with them in view.
+test("a node can be moved left of and above the first ones", async () => {
+  // In progress belongs to one workflow that's on.
+  for (const w of (await server.api("GET", `/projects/${project.id}/workflows`)).workflows) await server.api("DELETE", `/workflows/${w.id}`);
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}/settings/workflows`, "click role=button[name='Open a PR when done']", "wait [data-node=start]"]);
+    const view = await page.locator("[data-testid=workflow-viewport]").boundingBox();
+    // Pans right and down from an empty corner, for room to the left of and above the nodes.
+    await page.mouse.move(view.x + 30, view.y + view.height - 30);
+    await page.mouse.down();
+    await page.mouse.move(view.x + 330, view.y + view.height + 170, { steps: 6 });
+    await page.mouse.up();
+    const node = await page.locator("[data-node=start]").boundingBox();
+    await page.mouse.move(node.x + 60, node.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(node.x - 190, node.y - 188, { steps: 8 });
+    await page.mouse.up();
+    await ui.run(["click Create workflow", "gone [role=dialog]"]);
+    const { workflows } = await server.api("GET", `/projects/${project.id}/workflows`);
+    const start = workflows[0].graph.nodes.find((n) => n.id === "start");
+    assert.ok(start.x < 0 && start.y < 0, `start is at ${start.x}, ${start.y}`);
+    // Opened again, it's in view.
+    await ui.run([`goto /p/${project.id}/settings/workflows`, "click role=button[name=/^Edit$/]", "wait [data-node=start]"]);
+    const v = await page.locator("[data-testid=workflow-viewport]").boundingBox();
+    const n = await page.locator("[data-node=start]").boundingBox();
+    assert.ok(n.x >= v.x && n.y >= v.y, `start at ${n.x}, ${n.y}; the view at ${v.x}, ${v.y}`);
+  });
+});
