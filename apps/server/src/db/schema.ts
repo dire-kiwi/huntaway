@@ -858,17 +858,35 @@ export function open(path: string): Conn {
     batch(`BEGIN; ${docs_site.DOCS_SITE_SCHEMA} PRAGMA user_version=104; COMMIT;`);
   }
   if (version < 105) {
-    // Hosted docs (HA-286): the account each document was published as.
+    // Hosted docs (HA-286): the account each document was published as. HA-276's branch had another 104, so its
+    // databases (its PR preview's) skipped the one above: its tables are made here if they're missing.
     const add = has_column(conn, "docs_site_published", "login") ? "" : docs_site.DOCS_SITE_LOGIN;
-    batch(`BEGIN; ${add} PRAGMA user_version=105; COMMIT;`);
+    batch(`BEGIN; ${docs_site.DOCS_SITE_SCHEMA} ${add} PRAGMA user_version=105; COMMIT;`);
   }
-  if (version < 106) {
-    // Pens (HA-285): a profile's named sets of tasks, which its board shows as tabs (see db/pens.ts), each task in one
-    // at most; and each profile's one pens thread (see is_pens_thread).
-    batch("BEGIN;");
+  // Pens (HA-285): a profile's named sets of tasks, which its board shows as tabs (see db/pens.ts), each task in one at
+  // most; and each profile's one pens thread (see is_pens_thread).
+  const add_pens = () => {
     if (!has_column(conn, "tasks", "pen_id")) batch("ALTER TABLE tasks ADD COLUMN pen_id TEXT;");
     batch(`${pens.PENS_SCHEMA} CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_pens_thread ON tasks(profile_id) WHERE task_type='pens';
-           CREATE INDEX IF NOT EXISTS tasks_pen ON tasks(pen_id) WHERE pen_id IS NOT NULL; PRAGMA user_version=106; COMMIT;`);
+           CREATE INDEX IF NOT EXISTS tasks_pen ON tasks(pen_id) WHERE pen_id IS NOT NULL;`);
+  };
+  if (version < 106) {
+    batch("BEGIN;");
+    add_pens();
+    batch("PRAGMA user_version=106; COMMIT;");
+  }
+  if (version < 107) {
+    // Whether a run's agent said its work is done (`finish_work`), for workflow columns that wait for it (HA-276).
+    // HA-276's branch had this as 106, so its databases (its PR preview's) skipped the pens above: they're made here.
+    batch("BEGIN;");
+    if (!has_column(conn, "runs", "finished")) batch("ALTER TABLE runs ADD COLUMN finished INTEGER NOT NULL DEFAULT 0;");
+    add_pens();
+    batch("PRAGMA user_version=107; COMMIT;");
+  }
+  if (version < 108) {
+    // The MCP servers a workflow's agent step turns off for its thread (HA-276). For a while this branch made the table
+    // in 107, so a database from then has it already.
+    batch(`BEGIN; ${SCHEMA_V108} PRAGMA user_version=108; COMMIT;`);
   }
   return conn;
 }
@@ -914,8 +932,16 @@ CREATE INDEX IF NOT EXISTS approval_log_profile ON approval_log(profile_id, crea
 CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
+/** Migration 108's MCP servers that a workflow's agent step turns off in its thread (see db.thread_disabled_mcp_servers). */
+const SCHEMA_V108 = `
+CREATE TABLE IF NOT EXISTS thread_mcp_servers (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  disabled TEXT NOT NULL DEFAULT '[]'
+);
+`;
+
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 106;
+export const VERSION = 108;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

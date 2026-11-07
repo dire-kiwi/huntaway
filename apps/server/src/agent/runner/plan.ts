@@ -53,9 +53,10 @@ export async function changed_only_plan(state: Shared, task: Task, run: Run): Pr
  * The column for the end of run `run_id` of `task` (a `candidate` that would otherwise go to "In review"), once its
  * checkpoints are taken: "Needs attention" if it changed only the plan, else "In review". The task is left as it is if
  * a run has started on it since, or it was moved meanwhile. Calls `entered` with the task once it's in its column (to
- * start what entering it starts: a review, the column's workflows).
+ * start what entering it starts: a review, the column's workflows). With `stay` (workflows take the task on from its
+ * column, see workflows::on_finish_due), it stays where it is rather than going to "In review".
  */
-export async function settle(state: Shared, task: Task, run: Run, entered: (t: Task) => void): Promise<void> {
+export async function settle(state: Shared, task: Task, run: Run, entered: (t: Task) => void, stay = false): Promise<void> {
   let waits = false;
   try {
     waits = await changed_only_plan(state, task, run);
@@ -63,18 +64,13 @@ export async function settle(state: Shared, task: Task, run: Run, entered: (t: T
     console.error(`task ${task.id}: telling whether its run changed only the plan: ${err_str(e)}`);
   }
   const [status, reason] = waits ? ["needs_attention", PLAN_READY] : ["in_review", null];
-  const updated = state.update_task_if(
-    task.id,
-    [
-      ["status", status],
-      ["attention_reason", reason],
-    ],
-    (c) => {
-      if (db.later_run(c, task.id, run.id)) return false;
-      const t = db.get_task(c, task.id);
-      return t != null && !t.running && t.status === task.status;
-    },
-  );
+  const fields: Array<[string, any]> = [["attention_reason", reason]];
+  if (waits || !stay) fields.unshift(["status", status]);
+  const updated = state.update_task_if(task.id, fields, (c) => {
+    if (db.later_run(c, task.id, run.id)) return false;
+    const t = db.get_task(c, task.id);
+    return t != null && !t.running && t.status === task.status;
+  });
   if (updated) entered(updated);
 }
 

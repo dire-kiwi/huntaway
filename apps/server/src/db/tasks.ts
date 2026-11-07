@@ -736,6 +736,23 @@ export function set_thread_skills(c: Conn, thread_id: string, skills: string[]):
   }
 }
 
+/** The project's MCP servers a workflow agent step's thread doesn't get (see integrations/workflows.ts). */
+export function thread_disabled_mcp_servers(c: Conn, thread_id: string): string[] {
+  return json_list(value<string>(c, "SELECT disabled FROM thread_mcp_servers WHERE task_id=?1", thread_id));
+}
+
+/** Sets the MCP servers thread `thread_id` doesn't get (none gives it all the project's). */
+export function set_thread_disabled_mcp_servers(c: Conn, thread_id: string, names: string[]): void {
+  if (!names.length) run(c, "DELETE FROM thread_mcp_servers WHERE task_id=?1", thread_id);
+  else
+    run(
+      c,
+      "INSERT INTO thread_mcp_servers (task_id, disabled) VALUES (?1,?2) ON CONFLICT(task_id) DO UPDATE SET disabled=?2",
+      thread_id,
+      JSON.stringify(names),
+    );
+}
+
 /** A task's summary threads (review threads that summarise its changes, see review/summary.rs), oldest first. */
 export function summary_threads(c: Conn, task_id: string): Task[] {
   return tasks(c, "SELECT * FROM tasks WHERE parent_id=?1 AND kind='review' AND task_type='summary' ORDER BY created_at, number", task_id);

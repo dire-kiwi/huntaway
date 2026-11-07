@@ -43,15 +43,16 @@ export function issues(run: Run): string[] {
   return steps.flatMap(([name, r]) => (r.issues ?? []).map((i) => (several ? `(${name}) ${i}` : i)));
 }
 
-function numbered(list: string[]): string {
+export function numbered(list: string[]): string {
   return list.map((s, i) => `${i + 1}. ${s}`).join("\n\n");
 }
 
 /**
- * `text` with its `{{…}}` filled in: `task.key`, `task.title`, `task.description`, `branch`, `commit`, `workflow`,
- * `issues` (those the run found), and `<node id>.text`, `<node id>.issues` and `<node id>.verdict` for its steps.
+ * `text` with its `{{…}}` filled in: `vars` (a compose node's wired inputs) first, then `task.key`, `task.title`,
+ * `task.description`, `branch`, `commit`, `workflow`, `issues` (those the run found), and `<node id>.text`,
+ * `<node id>.issues` and `<node id>.verdict` for its steps.
  */
-export function render(text: string, task: Task, key: string, workflow: string, run: Run): string {
+export function render(text: string, task: Task, key: string, workflow: string, run: Run | null, vars: Record<string, string> = {}): string {
   let out = "";
   let rest = text;
   for (;;) {
@@ -62,8 +63,8 @@ export function render(text: string, task: Task, key: string, workflow: string, 
     const j = after.indexOf("}}");
     if (j < 0) return out + rest.slice(i);
     const name = after.slice(0, j).trim();
-    let value: string | null = null;
-    switch (name) {
+    let value: string | null = Object.hasOwn(vars, name) ? vars[name] : null;
+    switch (value == null ? name : "") {
       case "task.key":
         value = key;
         break;
@@ -77,17 +78,17 @@ export function render(text: string, task: Task, key: string, workflow: string, 
         value = task.branch ?? "";
         break;
       case "commit":
-        value = run.head ?? "";
+        value = run?.head ?? "";
         break;
       case "workflow":
         value = workflow;
         break;
       case "issues":
-        value = numbered(issues(run));
+        value = run ? numbered(issues(run)) : "";
         break;
       default: {
         const dot = name.indexOf(".");
-        const r = dot >= 0 ? run.nodes[name.slice(0, dot)] : undefined;
+        const r = dot >= 0 ? run?.nodes[name.slice(0, dot)] : undefined;
         if (r) {
           const field = name.slice(dot + 1);
           if (field === "text") value = r.text ?? "";
@@ -115,7 +116,8 @@ export function fixes(workflow: string, list: string[]): string {
 
 /**
  * An agent step's prompt: the task, where its work is, what the steps before it said, what the step is asked to do
- * (`instructions`, already filled in), and how it reports.
+ * (`instructions`, already filled in), and how it reports. With `input_only`, it's not told where the work is (nor
+ * what the user said of it): it works on what the steps before it said.
  */
 export function agent(
   task: Task,
@@ -129,12 +131,20 @@ export function agent(
   earlier: Array<[string, string]>,
   replies: UserReplies | null,
   recheck: string[],
+  input_only = false,
 ): string {
   const key = work.key;
   let p = `You are "${step}", a step of the workflow "${workflow}", for task ${key}: "${task.title}".\n`;
-  if (task.description.trim()) p += `\nThe task's description:\n\n${task.description.trim()}\n`;
+  if (input_only) {
+    p +=
+      "\nYou work on what the steps before you said, which is below, rather than on the task's changes: you don't need to read " +
+      "them unless your instructions ask you to.\n";
+    if (!earlier.length) p += "\nNo step before you wrote any output.\n";
+  } else if (task.description.trim()) p += `\nThe task's description:\n\n${task.description.trim()}\n`;
   const { branch, commit } = work;
-  if (work.elsewhere) {
+  if (input_only) {
+    // Not where the work is.
+  } else if (work.elsewhere) {
     p +=
       `\nThe task's branch \`${branch}\`, checked out in your working directory, has no commits of its own (it's still at commit ` +
       `${commit}), so the agent made its changes somewhere else, such as in another repository, or made none. Find them from what ` +
@@ -157,7 +167,7 @@ export function agent(
       `gh MCP server's \`pr_view\` tool (pr \`${branch}\`) and read its changes (\`pr_diff\`). If it has no pull request, read ${fallback} ` +
       "instead.\n";
   }
-  if (replies) p += review.user_said(replies.replies, replies.earlier > 0);
+  if (replies && !input_only) p += review.user_said(replies.replies, replies.earlier > 0);
   for (const [name, said] of earlier) p += `\nThe step "${name}" before you said:\n\n${quote(said)}\n`;
   const ins = instructions.trim();
   if (ins) p += `\n${ins}\n`;

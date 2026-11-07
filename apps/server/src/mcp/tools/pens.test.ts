@@ -216,7 +216,7 @@ test("a_database_from_before_pens_gets_them", () => {
   c.close();
   c = db.open(path);
   assert.equal(Number(db.value(c, "PRAGMA user_version")), db.VERSION);
-  assert.equal(db.VERSION, 106);
+  assert.ok(db.VERSION >= 106);
   const p = db.insert_profile(c, "p", [], null);
   const pen = db.insert_pen(c, p.id, "Today");
   assert.deepEqual(

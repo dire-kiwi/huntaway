@@ -271,3 +271,45 @@ test("a_restart_leaves_a_subproject_its_tasks_hold_in_progress_alone", async () 
   await sleep(50);
   assert.deepEqual([moves, db.get_task(s.db(), sp.id)!.status], [[], "in_progress"]);
 });
+
+// Review of HA-276: a plan task's run that did the work (and updated its plan) went on from In progress's workflow node
+// without the finish_work it waits for, there and after a restart.
+test("a_plan_tasks_work_needs_finish_work_where_its_workflow_waits_for_it", async () => {
+  const s = testing.state();
+  const task = await plan_task(s);
+  const workflows = await import("../../integrations/workflows.ts");
+  workflows.create(s, task.project_id!, {
+    name: "Work",
+    graph: {
+      nodes: [
+        { id: "work", kind: "column", status: "in_progress", done_when: "finish" },
+        { id: "c", kind: "condition", check: "has_pr" },
+      ],
+      edges: [{ from: "work", port: "done", to: "c" }],
+    },
+  });
+  const work = (finished: boolean) => (t: Task) => {
+    write_plan(s)(t);
+    write(t.worktree_path!, "f.txt", `${Math.random()}\n`);
+    if (finished) db.run(s.db(), "UPDATE runs SET finished=1 WHERE task_id=?1 AND status='running'", t.id);
+  };
+  const flagged = async (id: string) => {
+    for (let i = 0; i < 100 && db.get_task(s.db(), id)!.status === "in_progress"; i++) await sleep(10);
+    return db.get_task(s.db(), id)!;
+  };
+  let t = await flagged((await run(s, task, work(false))).id);
+  assert.deepEqual(
+    [t.status, t.attention_reason],
+    ["needs_attention", "The agent ended its turn without saying its work in In progress is done (with finish_work)"],
+  );
+  // Said so: the workflow takes it on, and with nothing to move it, it goes to In review.
+  t = await flagged((await run(s, t, work(true))).id);
+  assert.deepEqual([t.status, t.attention_reason], ["in_review", null]);
+  // After a restart, the same.
+  await run_cut_short(s, t, work(false));
+  t = await flagged((await restart(s, t)).id);
+  assert.deepEqual(
+    [t.status, t.attention_reason],
+    ["needs_attention", "The agent ended its turn without saying its work in In progress is done (with finish_work)"],
+  );
+});

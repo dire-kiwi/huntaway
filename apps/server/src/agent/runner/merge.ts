@@ -10,6 +10,7 @@ import * as merge_gate from "../../review/merge_gate.ts";
 import { key_prefix } from "./prompt.ts";
 import { clone } from "../runner.ts";
 import { send_as } from "./send.ts";
+import * as workflows from "../../integrations/workflows.ts";
 
 /**
  * Other tasks wait to merge while this one does, so a merge that turns out to need changes steps out of the queue to
@@ -40,7 +41,7 @@ export function request_merge(state: Shared, task: Task): Task {
   const what = task.branch != null ? `Merge branch \`${task.branch}\` into ${into}` : `Merge this task's work into ${into}`;
   const approved = task.merge_approval === merge_gate.APPROVED ? " The user approved the merge." : "";
   let text =
-    `The user moved this task to "Ready for merge".${approved} ${what}.${stacked}\n\n${prompts.merge(project)}\n\nIf you can't merge, call \`request_user_input\` ` +
+    `The user moved this task to "Ready for merge".${approved} ${what}.${stacked}\n\n${workflows.merge_instructions(state, task) ?? prompts.merge(project)}\n\nIf you can't merge, call \`request_user_input\` ` +
     `explaining why. Once it is merged, call \`update_task\` to set this task's status to \`done\`.\n\n${STEP_OUT}`;
   if (task.subproject) {
     const key = project?.key ?? "T";

@@ -1867,3 +1867,59 @@ test("a_database_from_version_104_keeps_its_published_documents_with_no_account"
   assert.equal(user_version(c), VERSION);
   assert.deepEqual([db.docs_site_published(c, doc_id, "https://s")?.remote_slug, db.docs_site_published(c, doc_id, "https://s")?.login], ["d", null]);
 });
+
+test("a_database_from_ha_276s_version_106_gets_the_pens_it_skipped", () => {
+  // HA-276's branch had `runs.finished` as version 106, so its databases (its PR preview's) skipped master's 106, the
+  // pens; 107 makes them.
+  const path = db_path();
+  open(path).close();
+  prepare_at(path, (c) =>
+    c.exec("DROP INDEX tasks_pen; DROP INDEX tasks_one_pens_thread; ALTER TABLE tasks DROP COLUMN pen_id; DROP TABLE pens; PRAGMA user_version=106;"),
+  );
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  for (const [table, column] of [
+    ["runs", "finished"],
+    ["tasks", "pen_id"],
+    ["pens", "name"],
+  ])
+    assert.ok(has_column(c, table, column), `${table}.${column}`);
+  c.close();
+});
+
+test("a_database_at_version_107_gets_the_table_of_steps_mcp_servers", () => {
+  // HA-276's 107 was pushed (and run by its PR preview) before the table was added to it; 108 makes it.
+  const path = db_path();
+  open(path).close();
+  prepare_at(path, "DROP TABLE thread_mcp_servers; PRAGMA user_version=107;");
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  assert.ok(has_column(c, "thread_mcp_servers", "disabled"));
+  const p = db.insert_profile(c, "p", [], null);
+  const t = db.insert_task(c, { profile_id: p.id, project_id: null, kind: "review", title: "t", description: "", status: "todo", use_worktree: false });
+  db.set_thread_disabled_mcp_servers(c, t.id, ["docs"]);
+  assert.deepEqual(db.thread_disabled_mcp_servers(c, t.id), ["docs"]);
+  c.close();
+  // And opening it again changes nothing.
+  const again = open(path);
+  assert.deepEqual(db.thread_disabled_mcp_servers(again, t.id), ["docs"]);
+  again.close();
+});
+
+test("a_database_from_ha_276s_version_104_gets_the_hosted_docs_tables_it_skipped", () => {
+  // HA-276's branch had `runs.finished` as version 104, so its databases (its PR preview's) skipped master's 104, the
+  // hosted docs tables; 105 makes them.
+  const path = db_path();
+  open(path).close();
+  prepare_at(path, (c) => c.exec("DROP TABLE docs_site_published; DROP TABLE docs_site_connections; DROP TABLE docs_site_clients; PRAGMA user_version=104;"));
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  for (const [table, column] of [
+    ["runs", "finished"],
+    ["docs_site_published", "login"],
+    ["docs_site_connections", "site_url"],
+    ["docs_site_clients", "client_id"],
+  ])
+    assert.ok(has_column(c, table, column), `${table}.${column}`);
+  c.close();
+});

@@ -48,6 +48,7 @@ const fail = (m: string) => new Error(m);
 const RERUNNABLE = [
   "permission_prompt",
   "request_user_input",
+  "finish_work",
   "submit_review",
   "wait",
   "list_projects",
@@ -316,6 +317,10 @@ async function execute_mcp(s: Shared, c: Required<McpCall>): Promise<any> {
         : "The user will be notified. End your turn now with your question.";
       return { ok: true, note };
     }
+    case "finish_work":
+      // Read when the run ends (see runner/output.ts), and cleared when another turn starts in it (runner/queue.ts).
+      db.run(s.db(), "UPDATE runs SET finished=1 WHERE id=?1", c.run_id);
+      return { ok: true, note: "Recorded that the work is done. End your turn now with a summary of what you did." };
     case "submit_review":
       if (workflows.is_workflow(task)) return workflows.submit(s, task, run.id, args);
       return review.submit(s, task, run.id, args);
@@ -445,7 +450,7 @@ export async function handle_remote(s: Shared, tool: string, profile_name: strin
 }
 
 /** The tools that act for the calling agent's own thread, which only its own host can run. */
-const THREAD_TOOLS = ["permission_prompt", "request_user_input", "submit_review", "wait"];
+const THREAD_TOOLS = ["permission_prompt", "request_user_input", "finish_work", "submit_review", "wait"];
 
 /**
  * A board tool call from an agent on linked host `host_id` that it passed up its link (see hosts/uplink.ts), once

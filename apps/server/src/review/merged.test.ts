@@ -164,7 +164,18 @@ test("a_task_its_pull_request_moves_starts_the_workflows_of_its_new_column", asy
   const [merged_url, closed_url] = ["https://github.com/o/r/pull/7", "https://github.com/o/r/pull/8"];
   const [, pid, a] = await task_in_review(s, profile.id, merged_url);
   const b = await new_task(s, pid, closed_url);
-  const on = (status: string) => workflows.create(s, pid, { name: status, graph: { nodes: [{ id: "t", kind: "trigger", on: "status", status }], edges: [] } });
+  // A step after the column: a column with nothing after it runs nothing.
+  const on = (status: string) =>
+    workflows.create(s, pid, {
+      name: status,
+      graph: {
+        nodes: [
+          { id: "t", kind: "column", status },
+          { id: "c", kind: "condition", check: "has_pr" },
+        ],
+        edges: [{ from: "t", port: "done", to: "c" }],
+      },
+    });
   const [done, flagged] = [on("done"), on("needs_attention")];
   const [prs] = fake_github();
   prs.set(merged_url, "MERGED");

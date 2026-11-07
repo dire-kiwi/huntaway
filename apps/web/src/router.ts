@@ -20,6 +20,8 @@ export type Route =
   | { name: "subproject"; taskId: string }
   | { name: "settings" }
   | { name: "analytics" }
+  /** A page of the guide (docs/guide/<page>.md), its first one when `page` is missing. */
+  | { name: "guide"; page?: string }
   | { name: "host"; hostId: string };
 
 /** A path segment, decoded; one with a malformed escape (a truncated or mangled link) is taken as it is. */
@@ -56,6 +58,8 @@ export function parse(path: string): Route {
       return { name: "settings" };
     case "analytics":
       return { name: "analytics" };
+    case "guide":
+      return parts[1] ? { name: "guide", page: decode(parts[1]) } : { name: "guide" };
     case "hosts":
       if (parts[1]) return { name: "host", hostId: parts[1] };
       break;
@@ -88,6 +92,8 @@ export function href(r: Route): string {
       return "/settings";
     case "analytics":
       return "/analytics";
+    case "guide":
+      return r.page ? `/guide/${encodeURIComponent(r.page)}` : "/guide";
     case "host":
       return `/hosts/${r.hostId}`;
     case "task":

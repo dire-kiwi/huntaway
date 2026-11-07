@@ -50,7 +50,7 @@ test("a workflow made in its editor saves the graph it shows", async () => {
     assert.equal(workflows.length, 1);
     const g = workflows[0].graph;
     const edges = g.edges.map((e) => `${e.from}.${e.port}->${e.to}`).sort();
-    assert.deepEqual(edges, ["reviewer.failed->agent1", "reviewer.issues->fix", "reviewer.pass->summary", "start.out->changed"]);
+    assert.deepEqual(edges, ["reviewer.failed->agent1", "reviewer.issues->fix", "reviewer.pass->summary", "start.done->changed"]);
     const notes = g.nodes.find((n) => n.id === "agent1");
     assert.equal(notes.kind, "agent");
     assert.equal(notes.name, "Notes");

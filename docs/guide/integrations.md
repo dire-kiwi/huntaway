@@ -205,3 +205,11 @@ also takes `rotate_token: true`; a blank `secret` removes it), `POST /automation
 `{kind: "create_task", title, description, task_type, claude_config_id, model, effort, status,
 start}` or `{kind: "send_to_task", task_id, message}`. Changes and runs are broadcast as
 `automations_changed` events.
+
+## Workflows
+
+A project's workflows (in its settings under _Workflows_) are graphs of nodes that run on its tasks: a task's way across
+the board, column by column, with the prompt its agent is sent in each, and the steps between them (checks, agent steps
+that review or summarise its work, pull requests, messages to its agent). Values wired into the steps' inputs build
+those prompts, as in Blender's node editor. [Workflows](workflows.md) explains each node, its inputs and outputs, and
+how a run goes.

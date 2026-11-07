@@ -2428,8 +2428,8 @@ test("agents_create_change_run_and_delete_workflows_once_the_user_approves", asy
   assert.deepEqual([asked.input.workflow.name, asked.input.workflow.graph.nodes.length], ["Park", 2]);
   assert.equal(db.get_task(s.db(), caller.id)!.attention_reason, "Approve a workflow?");
   // A graph that doesn't check out isn't asked about.
-  const looped = { nodes: MOVE_GRAPH.nodes, edges: [...MOVE_GRAPH.edges, { from: "m", port: "out", to: "m" }] };
-  assert.ok((await err(call(s, me("c2"), "create_workflow", { name: "Bad", graph: looped }))).includes("loop through m"));
+  const bad = { nodes: MOVE_GRAPH.nodes, edges: [...MOVE_GRAPH.edges, { from: "t", port: "nope", to: "m" }] };
+  assert.ok((await err(call(s, me("c2"), "create_workflow", { name: "Bad", graph: bad }))).includes("has no port nope"));
   // Approved: it's made as it was shown.
   [res] = await Promise.all([settle(call(s, me("c3"), "create_workflow", args)), shown(true)]);
   const made = unwrap(res);

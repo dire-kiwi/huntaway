@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, CircleSlash, Loader2, MessageSquareText, Play, Square, Workflow as WorkflowIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
-import { api, hostSupports, type Task, type WorkflowNodeRun, type WorkflowRun } from "../../api";
+import { api, hostSupports, workflowWaitingAt, type Task, type WorkflowNodeRun, type WorkflowRun } from "../../api";
 import { openTask } from "../../router";
 import { onWorkflowsChanged, useHost } from "../../store";
 import { Button, timeAgo } from "../ui";
@@ -110,19 +110,33 @@ function runLine(r: WorkflowRun) {
 export function WorkflowTabView({ task, label }: { task: Task; label: string }) {
   const data = useWorkflowRuns(task);
   if (!data) return <div className="text-[12.5px] text-muted">Loading…</div>;
-  const runs = data.runs.filter((r) => r.graph.nodes.some((n) => n.kind === "agent" && n.tab === label && r.nodes[n.id]));
+  // Each step from its workflow's latest run that ran it (a run from one column skips the steps after another), or
+  // else its latest. Runs come newest first, with earlier ones for such steps from API 128.
+  const shown = new Map<string, string[]>();
+  const placed = new Set<string>();
+  const ran = (r: WorkflowRun, id: string) => !!r.nodes[id] && r.nodes[id].state !== "pending" && r.nodes[id].state !== "skipped";
+  for (const r of data.runs) {
+    for (const n of r.graph.nodes) {
+      const key = `${r.workflow_id}|${n.id}`;
+      if (n.kind !== "agent" || n.tab !== label || !r.nodes[n.id] || placed.has(key)) continue;
+      const pick = data.runs.find((x) => x.workflow_id === r.workflow_id && ran(x, n.id)) ?? r;
+      placed.add(key);
+      shown.set(pick.id, [...(shown.get(pick.id) ?? []), n.id]);
+    }
+  }
+  const runs = data.runs.filter((r) => shown.has(r.id));
   if (!runs.length) return <div className="text-[12.5px] text-muted">Nothing here yet: a workflow's steps show their output here once they run.</div>;
   return (
     <div className="space-y-5 text-[12.5px]">
       {runs.map((r) => (
-        <RunBlock key={r.id} task={task} run={r} label={label} />
+        <RunBlock key={r.id} task={task} run={r} label={label} only={shown.get(r.id)!} />
       ))}
     </div>
   );
 }
 
-function RunBlock({ task, run, label }: { task: Task; run: WorkflowRun; label: string }) {
-  const steps = run.graph.nodes.filter((n) => n.kind === "agent" && n.tab === label);
+function RunBlock({ task, run, label, only }: { task: Task; run: WorkflowRun; label: string; only: string[] }) {
+  const steps = run.graph.nodes.filter((n) => n.kind === "agent" && n.tab === label && only.includes(n.id));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const act = async (fn: () => Promise<unknown>) => {
@@ -232,7 +246,11 @@ export function WorkflowsList({ task }: { task: Task }) {
             >
               {w.name}
             </span>
-            {last && <span className="shrink-0 text-[11.5px] text-faint">{last.state === "running" ? "running" : timeAgo(last.created_at)}</span>}
+            {last && (
+              <span className="shrink-0 text-[11.5px] text-faint">
+                {last.state !== "running" ? timeAgo(last.created_at) : workflowWaitingAt(last) ? "waiting for the agent" : "running"}
+              </span>
+            )}
             {last?.state === "running" ? (
               <Loader2 size={12} className="animate-spin text-st-review" />
             ) : (

@@ -5,6 +5,7 @@ import { Copy, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type GoogleStatus, type Task } from "../../api";
 import { Button, copyText, IconButton } from "../ui";
+import { GuideLink } from "../settings/Guide";
 
 /** A command to run, with a button that copies it. */
 function Command({ text }: { text: string }) {
@@ -99,7 +100,13 @@ export function GoogleCard({ assistant }: { assistant: Task }) {
               then sign in on {st.host}, and open the link it prints here:
               <Command text={st.consent_command} />
             </li>
-            <li>Check again. An assistant host in docs/guide/assistant.md has the details.</li>
+            <li>
+              Check again.{" "}
+              <GuideLink page="assistant" hash="an-assistant-host">
+                An assistant host
+              </GuideLink>{" "}
+              in the guide has the details.
+            </li>
           </ol>
         </details>
       )}
