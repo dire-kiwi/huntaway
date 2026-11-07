@@ -234,6 +234,10 @@ test("its_tools_are_the_hosted_ones_but_feedback_and_sharing", async () => {
   assert.match(init.result.instructions, /publish_document/);
   // Local documents keep no answers (HA-281).
   assert.match(init.result.instructions, /read-only here and collect no answers/);
+  // A sub-agent writes the pages, and publish_document checks them, not npm (HA-288).
+  assert.match(init.result.instructions, /sub-agent/);
+  assert.match(init.result.instructions, /`publish_document` is the check/);
+  assert.match(init.result.instructions, /Don't install or run npm packages/);
   const list = await docs_mcp.handle(s, { jsonrpc: "2.0", id: 1, method: "tools/list" }, r);
   const names = list.result.tools.map((t: any) => t.name);
   assert.deepEqual(names.sort(), ["get_document", "list_components", "list_documents", "publish_document", "read_page"]);
