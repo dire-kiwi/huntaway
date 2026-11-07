@@ -27,6 +27,7 @@ import * as documents from "./agent/documents.ts";
 import * as runs from "./agent/runs.ts";
 import * as analytics from "./analytics.ts";
 import * as disk from "./disk.ts";
+import * as docs from "./api/docs.ts";
 import * as attachments from "./attachments.ts";
 import * as git_view from "./git/git_view.ts";
 import * as checkpoints from "./git/checkpoints.ts";
@@ -119,6 +120,9 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/context-stats", { GET: analytics.context });
   r.route("/profiles/{id}/token-stats", { GET: analytics.tokens });
   r.route("/profiles/{id}/disk-usage", { GET: disk.get });
+  r.route("/profiles/{id}/docs", { GET: docs.list });
+  r.route("/profiles/{id}/docs/{slug}", { GET: docs.get, DELETE: docs.remove });
+  r.route("/profiles/{id}/docs/{slug}/versions/{n}", { GET: docs.version });
   r.route("/profiles/{id}/asana/tasks", { GET: profiles.asana_tasks });
   r.route("/projects/{id}", { GET: projects.get_project, PATCH: projects.update_project, DELETE: projects.delete_project });
   r.route("/projects/{id}/tasks", { GET: tasks.list_project_tasks, POST: new_task.create_task });

@@ -132,3 +132,38 @@ test("in_auto_mode_a_dynamic_wait_is_the_boards_to_ask_about", async () => {
   const l = await launched(state, task);
   assert.deepEqual([l.spec.approvals_reviewer, l.spec.review_waits], ["auto_review", false]);
 });
+
+test("every_run_has_the_docs_server_and_uses_it_without_asking", async () => {
+  // HA-280: Codex approves its tools up front, Claude has it in --allowedTools, and both are told of it.
+  const state = testing.state();
+  const codex = await launched(state, codex_task(state));
+  assert.ok(codex.servers.docs?.url.endsWith(`/api/mcp/${codex.run_id}/docs`));
+  assert.ok(codex.spec.approved_mcp_servers.includes("docs"));
+  assert.ok(codex.spec.developer_instructions.includes("`docs.publish_document`"), codex.spec.developer_instructions);
+
+  const claude = codex_task(state);
+  db.run(state.db(), "UPDATE tasks SET claude_config_id=NULL WHERE id=?1", claude);
+  send(state, claude, "go");
+  const deadline = Date.now() + 5000;
+  let dir = "";
+  while (!dir || !existsSync(join(dir, "pid"))) {
+    assert.ok(Date.now() < deadline, "the run didn't start");
+    await sleep(10);
+    const run_id = state.runs.get(claude)?.run_id;
+    dir = run_id ? runs.run_dir(state, run_id) : "";
+  }
+  const args: string[] = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")).args;
+  const allowed = args.slice(args.indexOf("--allowedTools") + 1);
+  assert.ok(
+    allowed
+      .slice(
+        0,
+        allowed.findIndex((a) => a.startsWith("--")),
+      )
+      .includes("mcp__docs"),
+    args.join(" "),
+  );
+  assert.ok(JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8")).mcpServers.docs);
+  assert.ok(readFileSync(join(dir, "system-prompt.md"), "utf8").includes("mcp__docs__publish_document"));
+  stop(state, claude);
+});

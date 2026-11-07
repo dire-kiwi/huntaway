@@ -55,8 +55,12 @@ export const PROTOCOL = 1;
  *
  * API 123: a host on Linux with systemd offers to run as a user service (HA-278): `GET /admin/server`'s `service`, and
  * `POST /admin/service`, which installs it and restarts the host under it. `ssh-host` no longer starts a host.
+ *
+ * API 124: Docs (HA-280): each profile's documents, which agents publish through the run's `docs` MCP server
+ * (mcp/docs_mcp.ts): `GET /profiles/{id}/docs`, `GET`/`DELETE /profiles/{id}/docs/{slug}` and
+ * `GET /profiles/{id}/docs/{slug}/versions/{n}` (see api/docs.ts), and `docs` events when one is published or deleted.
  */
-export const API_VERSION = 123;
+export const API_VERSION = 124;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

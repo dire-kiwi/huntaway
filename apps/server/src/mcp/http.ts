@@ -1,9 +1,10 @@
 /**
  * The board's MCP servers, served over HTTP (MCP's streamable HTTP transport) to the runs this host starts (HA-180):
- * the board's tools (`huntaway`, mcp.ts) and GitHub through gh (`gh`, mcp/gh_mcp.ts). Runs used to start a stdio helper
+ * the board's tools (`huntaway`, mcp.ts), GitHub through gh (`gh`, mcp/gh_mcp.ts) and the profile's documents (`docs`,
+ * mcp/docs_mcp.ts, HA-280). Runs used to start a stdio helper
  * process for each (`huntaway mcp` and `huntaway gh-mcp`, gone since step 13 of docs/threads.md), which under Node
  * cost about 90 MB apiece. Claude runs that take input (all but a compaction's) call the board's tools on their
- * own output instead (HA-221, see agent/runner/requests.ts), so for them this serves only gh's; Codex runs and
+ * own output instead (HA-221, see agent/runner/requests.ts), so for them this serves only gh's and docs'; Codex runs and
  * compactions still call the board's here.
  *
  * Each run has its servers at `/api/mcp/<run id>/<server>` on the host's internal URL, with a secret of its own as its
@@ -33,6 +34,7 @@ import { VIA_BROKER } from "../hosts/broker.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import type { Shared } from "../state.ts";
 import { background, err_str, new_id, same_secret } from "../util.ts";
+import * as docs_mcp from "./docs_mcp.ts";
 import * as gh_mcp from "./gh_mcp.ts";
 import * as tools from "./tools.ts";
 
@@ -51,7 +53,7 @@ export const RETRY_MS = 5000;
 /** A progress notification (or a comment) on a call's stream this often (see `reply`). */
 const KEEPALIVE_MS = 20_000;
 
-/** How long a gh call's answer is kept for a client that reconnects for it. */
+/** How long a gh or docs call's answer is kept for a client that reconnects for it. */
 const KEPT_MS = 10 * 60_000;
 
 /** Claude Code's per-server `timeout` (ms): without one, it gives up on an HTTP server's call after 5 minutes without news. */
@@ -88,13 +90,24 @@ export function server_url(s: Shared, run_id: string, server: string): string {
   return `${s.internal_url}${PREFIX}${encodeURIComponent(run_id)}/${server}`;
 }
 
-/** The run's `mcpServers` entries for the board's two servers. */
+/** The run's `mcpServers` entries for the board's servers. */
 export function servers(s: Shared, run_id: string): Record<string, any> {
   const headers = { Authorization: `Bearer ${run_secret(s.token, run_id)}` };
   return {
     [runner.MCP_SERVER_NAME]: { type: "http", url: server_url(s, run_id, runner.MCP_SERVER_NAME), headers, timeout: BOARD_TIMEOUT_MS },
     [gh_mcp.SERVER_NAME]: { type: "http", url: server_url(s, run_id, gh_mcp.SERVER_NAME), headers, timeout: GH_TIMEOUT_MS },
+    [docs_mcp.SERVER_NAME]: { type: "http", url: server_url(s, run_id, docs_mcp.SERVER_NAME), headers },
   };
+}
+
+/** Whether `name` is one of the servers a run has here (see `servers`). A function: runner.ts imports this module. */
+const is_server = (name: string) => name === runner.MCP_SERVER_NAME || name === gh_mcp.SERVER_NAME || name === docs_mcp.SERVER_NAME;
+
+/** A docs call from run `run_id`: its documents are its task's profile's (an error answer for a run that's gone). */
+async function docs_answer(s: Shared, run_id: string, msg: any): Promise<any> {
+  const r = docs_mcp.run_caller(s, run_id);
+  if (!r) return rpc_error(msg.id, -32000, "unknown run");
+  return await docs_mcp.handle(s, msg, r);
 }
 
 /** What the launch kept for run `run_id`'s servers (see `settings_json`), or null for a run it kept nothing for. */
@@ -132,8 +145,8 @@ function gh_run(s: Shared, run_id: string, set: RunSettings): gh_mcp.GhRun {
   };
 }
 
-/** gh calls' answers, by their streams' event id, while they run and for `KEPT_MS` after. Board calls are in `mcp_calls`. */
-const gh_calls = new Map<string, Promise<any>>();
+/** gh and docs calls' answers, by their streams' event id, while they run and for `KEPT_MS` after. Board calls are in `mcp_calls`. */
+const kept_calls = new Map<string, Promise<any>>();
 
 const b64 = (v: any) => Buffer.from(JSON.stringify(v ?? null)).toString("base64url");
 const unb64 = (s: string) => JSON.parse(Buffer.from(s, "base64url").toString());
@@ -175,7 +188,7 @@ export async function serve(s: Shared, req: IncomingMessage, res: ServerResponse
     return json(res, 404, { error: "not found" });
   }
   const server = m[2];
-  if (server !== runner.MCP_SERVER_NAME && server !== gh_mcp.SERVER_NAME) return json(res, 404, { error: "not found" });
+  if (!is_server(server)) return json(res, 404, { error: "not found" });
   if (!run_authorized(s, run_id, req.headers)) return json(res, 401, { error: "unauthorized" });
   const set = settings(s, run_id);
   if (!set) return json(res, 404, { error: "unknown run" });
@@ -202,7 +215,12 @@ export async function serve(s: Shared, req: IncomingMessage, res: ServerResponse
 
   if (msg.method !== "tools/call") {
     const caller = board(s, run_id, set, new_id());
-    const answer = server === gh_mcp.SERVER_NAME ? await gh_mcp.handle(msg, gh_run(s, run_id, set)) : await mcp.handle(caller, msg);
+    const answer =
+      server === gh_mcp.SERVER_NAME
+        ? await gh_mcp.handle(msg, gh_run(s, run_id, set))
+        : server === docs_mcp.SERVER_NAME
+          ? await docs_answer(s, run_id, msg)
+          : await mcp.handle(caller, msg);
     return json(res, 200, answer);
   }
   const call_id = new_id();
@@ -210,10 +228,10 @@ export async function serve(s: Shared, req: IncomingMessage, res: ServerResponse
   const progress = typeof token === "string" || typeof token === "number" ? token : undefined;
   const id = event_id(server, call_id, msg.id, progress);
   let answer: Promise<any>;
-  if (server === gh_mcp.SERVER_NAME) {
-    answer = gh_mcp.handle(msg, gh_run(s, run_id, set));
-    gh_calls.set(id, answer);
-    const forget = () => setTimeout(() => gh_calls.delete(id), KEPT_MS).unref();
+  if (server === gh_mcp.SERVER_NAME || server === docs_mcp.SERVER_NAME) {
+    answer = server === gh_mcp.SERVER_NAME ? gh_mcp.handle(msg, gh_run(s, run_id, set)) : docs_answer(s, run_id, msg);
+    kept_calls.set(id, answer);
+    const forget = () => setTimeout(() => kept_calls.delete(id), KEPT_MS).unref();
     answer.then(forget, forget);
   } else {
     answer = mcp.handle(board(s, run_id, set, call_id), msg);
@@ -267,14 +285,14 @@ function resume(s: Shared, res: ServerResponse, run_id: string, server: string, 
   if (!ev || ev.server !== server) return json(res, 404, rpc_error(null, -32000, "unknown event id"));
   console.error(`${new Date().toISOString()}  INFO mcp: run=${run_id} reconnected for its ${server} call ${ev.call_id}`);
   const fake = { headers: { accept: "text/event-stream" } } as unknown as IncomingMessage;
-  if (server === gh_mcp.SERVER_NAME) {
-    const kept = gh_calls.get(last);
+  if (server === gh_mcp.SERVER_NAME || server === docs_mcp.SERVER_NAME) {
+    const kept = kept_calls.get(last);
     const answer =
       kept ??
       Promise.resolve(
         tool_error(
           ev.rpc_id,
-          "The board's server restarted while this gh call ran, so its output is lost: it may or may not have taken effect. Check before you run it again.",
+          `The board's server restarted while this ${server} call ran, so its output is lost: it may or may not have taken effect. Check before you run it again.`,
         ),
       );
     return reply(fake, res, last, ev.rpc_id, ev.progress, answer);

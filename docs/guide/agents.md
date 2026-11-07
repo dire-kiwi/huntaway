@@ -102,6 +102,19 @@ running `gh` (`cd x && gh pr view`, `$(gh …)`, `bash -c 'gh …'` and the like
 tools instead. Codex has no such hook, so Codex agents are only told. A project that turns the
 server off, or has its own `gh`, gets neither.
 
+**Docs.** Each run also gets the `docs` MCP server (HA-280), for documents the user reads on the
+board: reports, plans, research. Its tools are the hosted docs app's (`publish_document`,
+`list_documents`, `get_document`, `read_page` and `list_components`, with the same schemas, checks,
+errors and warnings, from its renderer `@dire-kiwi/docs-render`), but the documents are kept on the
+host, in the profile of the run's task: each publish makes a new version of the document, with its
+Markdown or MDX pages (`mode: "merge"` keeps the previous version's other pages, `delete_paths`
+drops some), and slugs are unique per profile. Feedback and sharing (`get_feedback`,
+`share_document`) aren't there yet. Its tools run without asking (in `--allowedTools`, or approved
+in Codex's config), and agents are told to publish write-ups there and give the user the URL it
+returns: `<board>/docs/<profile id>/d/<slug>/` (the host's _Public URL_, or its own address), with
+`-/v/<n>/` for a version. The board reads them at `/api/profiles/{id}/docs` (API 124). A project
+can turn the server off, or replace it with its own named `docs`.
+
 **GitHub accounts.** gh can be signed in to several accounts on a host (`gh auth login` once for
 each), and each profile can pick which one its agents act as there (_GitHub account_ in Settings →
 Profiles → Edit, per host); a project can pick its own in its settings, overriding the profile's.
@@ -168,7 +181,7 @@ which an older build that's rolled back to stops rather than follow, as it could
 calls.
 
 Older Codex sessions and compactions reach the board's tools over MCP's streamable HTTP transport, and every
-run reaches the `gh` server that way, at `/api/mcp/<run id>/huntaway` and `/api/mcp/<run id>/gh` on
+run reaches the `gh` and `docs` servers that way, at `/api/mcp/<run id>/huntaway`, `/api/mcp/<run id>/gh` and `/api/mcp/<run id>/docs` on
 the host's internal address (`127.0.0.1:<port>`, the host that runs the agent). Each run's `mcp.json` has them as `http` servers with a bearer token of the
 run's own (an HMAC of the run's id with the host's token), which only acts as that run: the server
 says which run a call is for, not the agent, and the agent never holds the host's token. What the
