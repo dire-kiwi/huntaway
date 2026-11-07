@@ -1,5 +1,24 @@
 import clsx from "clsx";
-import { ArrowRightLeft, Bot, Columns3, Flag, GitFork, GitPullRequest, Play, Plus, Send, Trash2, Workflow as WorkflowIcon } from "lucide-react";
+import {
+  ArrowRightLeft,
+  Bot,
+  Braces,
+  ClipboardList,
+  Columns3,
+  Flag,
+  GitFork,
+  GitPullRequest,
+  Play,
+  Plus,
+  Rows3,
+  ScrollText,
+  Send,
+  ToggleLeft,
+  Trash2,
+  Type,
+  Unplug,
+  Workflow as WorkflowIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
@@ -9,8 +28,12 @@ import {
   LABELS,
   STATUSES,
   WORKFLOW_CHECKS,
+  isDataNode,
+  workflowDataInputs,
+  workflowDataOutputs,
   workflowPorts,
   workflowWaits,
+  workflowWire,
   type Project,
   type Status,
   type Workflow,
@@ -188,7 +211,8 @@ export function doneNote(g: WorkflowGraph, id: string) {
   if (!node || node.kind !== "column") return "";
   const then: string[] = [];
   const seen = new Set([id]);
-  let next = g.edges.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
+  const flow = g.edges.filter((e) => e.input == null);
+  let next = flow.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
   while (next.length) {
     const later: string[] = [];
     for (const to of next) {
@@ -204,7 +228,7 @@ export function doneNote(g: WorkflowGraph, id: string) {
       else if (n.kind === "agent") then.push(n.output === "verdict" ? `has "${n.name}" review your work` : `has "${n.name}" read your work`);
       else if (n.kind === "send_to_task") then.push("sends you what it found to fix");
       // What happens when it goes well: not after a failure, or a send out of rounds.
-      later.push(...g.edges.filter((e) => e.from === to && e.port !== "failed" && e.port !== "exhausted").map((e) => e.to));
+      later.push(...flow.filter((e) => e.from === to && e.port !== "failed" && e.port !== "exhausted").map((e) => e.to));
     }
     next = later;
   }
@@ -254,6 +278,18 @@ export function nodeTitle(n: WorkflowNode) {
       return "Open a pull request";
     case "column":
       return statusLabel(n.status);
+    case "text":
+      return "Text";
+    case "task":
+      return "Task";
+    case "project_prompt":
+      return "Project prompt";
+    case "compose":
+      return "Compose";
+    case "join":
+      return "Join";
+    case "switch":
+      return "Switch";
   }
 }
 
@@ -274,6 +310,18 @@ export function nodeText(n: WorkflowNode) {
       return `${n.draft ? "A draft · " : ""}Pushes the branch`;
     case "column":
       return columnText(n);
+    case "text":
+      return firstLine(n.text) || "Empty";
+    case "task":
+      return "Its title, description, branch…";
+    case "project_prompt":
+      return `The ${n.which} prompt`;
+    case "compose":
+      return firstLine(n.template) || "An empty template";
+    case "join":
+      return `${n.count} texts${n.separator === "\\n\\n" || n.separator === "\n\n" ? ", a blank line between" : ""}`;
+    case "switch":
+      return `${n.check === "task_type" || n.check === "label" ? `${CHECK_LABELS[n.check]}: ${n.value ?? "?"}` : CHECK_LABELS[n.check]}?`;
   }
 }
 
@@ -285,7 +333,28 @@ export const KIND_STYLE: Record<WorkflowNodeKindName, { icon: ReactNode; tone: s
   set_status: { icon: <ArrowRightLeft size={12} />, tone: "text-violet-400" },
   open_pr: { icon: <GitPullRequest size={12} />, tone: "text-teal-400" },
   column: { icon: <Columns3 size={12} />, tone: "text-emerald-400" },
+  text: { icon: <Type size={12} />, tone: "text-amber-300" },
+  task: { icon: <ClipboardList size={12} />, tone: "text-amber-300" },
+  project_prompt: { icon: <ScrollText size={12} />, tone: "text-amber-300" },
+  compose: { icon: <Braces size={12} />, tone: "text-amber-300" },
+  join: { icon: <Rows3 size={12} />, tone: "text-amber-300" },
+  switch: { icon: <ToggleLeft size={12} />, tone: "text-amber-300" },
 };
+
+/** What a node's values and inputs are called on the canvas. */
+const DATA_LABELS: Record<string, string> = {
+  next: "what happens next",
+  pr: "pull request",
+  in1: "1",
+  in2: "2",
+  in3: "3",
+  in4: "4",
+  in5: "5",
+  in6: "6",
+  in7: "7",
+  in8: "8",
+};
+const dataLabel = (k: string) => DATA_LABELS[k] ?? k;
 
 export const PORT_LABELS: Record<string, string> = {
   out: "then",
@@ -481,8 +550,13 @@ const HEAD = 46;
 const PORT_H = 18;
 const IN_Y = 15;
 const portsOf = (n: WorkflowNode) => workflowPorts(n);
-const nodeH = (n: WorkflowNode) => HEAD + portsOf(n).length * PORT_H + 6;
+const outsOf = (n: WorkflowNode) => workflowDataOutputs(n);
+const insOf = (n: WorkflowNode) => workflowDataInputs(n);
+/** A node's rows: its outcomes and values on the right, then its inputs on the left (as Blender lays out a node). */
+const nodeH = (n: WorkflowNode) => HEAD + (portsOf(n).length + outsOf(n).length + insOf(n).length) * PORT_H + 6;
 const portY = (i: number) => HEAD + i * PORT_H + PORT_H / 2;
+const outY = (n: WorkflowNode, k: string) => portY(portsOf(n).length + Math.max(0, outsOf(n).indexOf(k)));
+const inY = (n: WorkflowNode, k: string) => portY(portsOf(n).length + outsOf(n).length + Math.max(0, insOf(n).indexOf(k)));
 
 function edgePath(x1: number, y1: number, x2: number, y2: number) {
   const dx = Math.max(40, Math.abs(x2 - x1) / 2);
@@ -503,7 +577,26 @@ function reaches(g: WorkflowGraph, to: string, from: string) {
     if (id === from) return true;
     if (seen.has(id)) continue;
     seen.add(id);
-    for (const e of g.edges) if (e.from === id && !column(e.to)) stack.push(e.to);
+    for (const e of g.edges) if (e.input == null && e.from === id && !column(e.to)) stack.push(e.to);
+  }
+  return false;
+}
+
+/** Whether a wire from data node `from` into data node `to` would make its value depend on itself. */
+function dataLoop(g: WorkflowGraph, from: string, to: string) {
+  const data = (id: string) => {
+    const n = g.nodes.find((x) => x.id === id);
+    return !!n && isDataNode(n);
+  };
+  if (!data(from) || !data(to)) return false;
+  const seen = new Set<string>();
+  const stack = [to];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (id === from) return true;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const e of g.edges) if (e.input != null && e.from === id && data(e.to)) stack.push(e.to);
   }
   return false;
 }
@@ -592,8 +685,18 @@ const NEW_NODES: {
   },
 ];
 
+/** The data nodes the editor adds, which build the text that goes into steps' inputs. */
+const NEW_VALUES: { kind: WorkflowNodeKindName; label: string; base: string; make: () => Partial<WorkflowNode> }[] = [
+  { kind: "text", label: "Text", base: "text", make: () => ({ kind: "text", text: "" }) },
+  { kind: "task", label: "Task", base: "task", make: () => ({ kind: "task" }) },
+  { kind: "project_prompt", label: "Project prompt", base: "prompt", make: () => ({ kind: "project_prompt", which: "start" }) },
+  { kind: "compose", label: "Compose", base: "compose", make: () => ({ kind: "compose", template: "{{a}}\n\n{{b}}" }) },
+  { kind: "join", label: "Join", base: "join", make: () => ({ kind: "join", separator: "\n\n", count: 2 }) },
+  { kind: "switch", label: "Switch", base: "switch", make: () => ({ kind: "switch", check: "has_pr" }) },
+];
+
 type Selection = { node: string } | { edge: number } | null;
-type Gesture = { kind: "move"; id: string; dx: number; dy: number } | { kind: "link"; from: string; port: string; x: number; y: number } | null;
+type Gesture = { kind: "move"; id: string; dx: number; dy: number } | { kind: "link"; from: string; port: string; data: boolean; x: number; y: number } | null;
 
 function WorkflowEditor({
   project,
@@ -642,8 +745,19 @@ function WorkflowEditor({
     };
     const up = (e: PointerEvent) => {
       if (gesture.kind === "link") {
-        const to = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>("[data-node]")?.dataset.node;
-        if (to) connect(gesture.from, gesture.port, to);
+        const at = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+        if (gesture.data) {
+          // A value goes into an input: the socket it's dropped on, or a node's only input.
+          const socket = at?.closest<HTMLElement>("[data-input]")?.dataset.input;
+          const nodeId = socket ? socket.slice(0, socket.lastIndexOf(".")) : at?.closest<HTMLElement>("[data-node]")?.dataset.node;
+          const target = graph.nodes.find((n) => n.id === nodeId);
+          const input = socket ? socket.slice(socket.lastIndexOf(".") + 1) : target && insOf(target).length === 1 ? insOf(target)[0] : null;
+          if (nodeId && input) connectData(gesture.from, gesture.port, nodeId, input);
+          else if (nodeId) setErr("Drop the value on one of the step's inputs (the diamonds on its left).");
+        } else {
+          const to = at?.closest<HTMLElement>("[data-node]")?.dataset.node;
+          if (to) connect(gesture.from, gesture.port, to);
+        }
       }
       setGesture(null);
     };
@@ -661,13 +775,22 @@ function WorkflowEditor({
     const target = graph.nodes.find((n) => n.id === to);
     if (!target || to === from) return;
     if (target.kind === "trigger") return setErr("Nothing goes into the start: it's where a run begins.");
+    if (isDataNode(target)) return setErr(`${nodeTitle(target)} gives values: wire a value into one of its inputs instead.`);
     if (target.kind === "column" && target.status === "done") return setErr("Nothing goes into Done: a task is done once it's merged, from Ready for merge.");
     if (graph.edges.some((e) => e.from === from && e.port === port && e.to === to)) return;
     if (reaches(graph, to, from))
       return setErr("That would make a loop. To go round again, go through a column, or send to the task's agent: its next turn starts the workflow again.");
     setGraph((g) => ({ ...g, edges: [...g.edges, { from, port, to }] }));
   };
-  const addNode = (spec: (typeof NEW_NODES)[number]) => {
+  /** A data wire from `from`'s value `port` into `to`'s `input`, in place of the one there. */
+  const connectData = (from: string, port: string, to: string, input: string) => {
+    setErr(null);
+    if (from === to && isDataNode(graph.nodes.find((n) => n.id === from)!)) return;
+    if (dataLoop(graph, from, to)) return setErr("That would make the value depend on itself.");
+    setGraph((g) => ({ ...g, edges: [...g.edges.filter((e) => !(e.to === to && e.input === input)), { from, port, to, input }] }));
+  };
+  const unwire = (to: string, input: string) => setGraph((g) => ({ ...g, edges: g.edges.filter((e) => !(e.to === to && e.input === input)) }));
+  const addNode = (spec: { base: string; make: (g: WorkflowGraph) => Partial<WorkflowNode> }) => {
     const id = freshId(graph, spec.base);
     const node = { ...spec.make(graph), id, x: 0, y: 0 } as WorkflowNode;
     Object.assign(node, freeSpot(graph, nodeH(node), scroller.current));
@@ -683,7 +806,13 @@ function WorkflowEditor({
     setSel(null);
   };
   const updateNode = (id: string, patch: Partial<WorkflowNode>) =>
-    setGraph((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === id ? ({ ...n, ...patch } as WorkflowNode) : n)) }));
+    setGraph((g) => {
+      const nodes = g.nodes.map((n) => (n.id === id ? ({ ...n, ...patch } as WorkflowNode) : n));
+      // A wire into an input the node no longer has (a name gone from a template, say) goes with it.
+      const changed = nodes.find((n) => n.id === id)!;
+      const inputs = workflowDataInputs(changed);
+      return { nodes, edges: g.edges.filter((e) => e.to !== id || e.input == null || inputs.includes(e.input)) };
+    });
   const renameNode = (id: string, raw: string) => {
     const next = raw.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40);
     if (!next || next === id || graph.nodes.some((n) => n.id === next)) return;
@@ -725,6 +854,7 @@ function WorkflowEditor({
   const selected = sel && "node" in sel ? byId.get(sel.node) : undefined;
   const selectedEdge = sel && "edge" in sel ? graph.edges[sel.edge] : undefined;
   const portPos = (n: WorkflowNode, port: string) => ({ x: n.x + NODE_W, y: n.y + portY(Math.max(0, portsOf(n).indexOf(port))) });
+  const outPos = (n: WorkflowNode, k: string) => ({ x: n.x + NODE_W, y: n.y + outY(n, k) });
 
   return (
     <Modal title={workflow ? `Edit ${workflow.name}` : "New workflow"} onClose={close} onSubmit={save} width="max-w-[1400px]">
@@ -742,12 +872,23 @@ function WorkflowEditor({
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[12px] text-faint">Add a step:</span>
           {newNodes.map((s) => (
-            <Button key={s.label} size="sm" variant="ghost" disabled={graph.nodes.length >= 40} onClick={() => addNode(s)}>
+            <Button key={s.label} size="sm" variant="ghost" disabled={graph.nodes.length >= (columns ? 80 : 40)} onClick={() => addNode(s)}>
               <span className={KIND_STYLE[s.kind].tone}>{KIND_STYLE[s.kind].icon}</span> {s.label}
             </Button>
           ))}
           <span className="ml-auto text-[11.5px] text-faint">Drag from a step's outcome to another step to connect them. Click a line to remove it.</span>
         </div>
+        {columns && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[12px] text-faint">Add a value:</span>
+            {NEW_VALUES.map((v) => (
+              <Button key={v.label} size="sm" variant="ghost" disabled={graph.nodes.length >= 80} onClick={() => addNode(v)}>
+                <span className={KIND_STYLE[v.kind].tone}>{KIND_STYLE[v.kind].icon}</span> {v.label}
+              </Button>
+            ))}
+            <span className="ml-auto text-[11.5px] text-faint">Drag from a value (◆ on the right) to an input (◆ on the left) to build a prompt.</span>
+          </div>
+        )}
         <div className="flex min-h-0 gap-3 narrow:flex-col">
           <div
             ref={scroller}
@@ -762,17 +903,29 @@ function WorkflowEditor({
                   const a = byId.get(e.from);
                   const b = byId.get(e.to);
                   if (!a || !b) return null;
-                  const p = portPos(a, e.port);
-                  const d = edgePath(p.x, p.y, b.x, b.y + IN_Y);
+                  const data = e.input != null;
+                  const p = data ? outPos(a, e.port) : portPos(a, e.port);
+                  const d = edgePath(p.x, p.y, b.x, b.y + (data ? inY(b, e.input!) : IN_Y));
                   const on = sel && "edge" in sel && sel.edge === i;
                   return (
                     <g
-                      key={`${e.from}-${e.port}-${e.to}`}
+                      key={`${e.from}-${e.port}-${e.to}-${e.input ?? ""}`}
                       className="pointer-events-auto cursor-pointer"
                       onPointerDown={(ev) => (ev.stopPropagation(), setSel({ edge: i }))}
                     >
-                      <path d={d} fill="none" stroke="transparent" strokeWidth={12} data-edge={`${e.from}.${e.port}->${e.to}`} />
-                      <path d={d} fill="none" className={on ? "stroke-accent" : "stroke-line-strong"} strokeWidth={on ? 2.5 : 1.75} />
+                      <path
+                        d={d}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth={12}
+                        data-edge={data ? `${e.from}.${e.port}->${e.to}.${e.input}` : `${e.from}.${e.port}->${e.to}`}
+                      />
+                      <path
+                        d={d}
+                        fill="none"
+                        className={on ? "stroke-accent" : data ? "stroke-amber-400/70" : "stroke-line-strong"}
+                        strokeWidth={on ? 2.5 : data ? 1.5 : 1.75}
+                      />
                     </g>
                   );
                 })}
@@ -780,8 +933,16 @@ function WorkflowEditor({
                   (() => {
                     const a = byId.get(gesture.from);
                     if (!a) return null;
-                    const p = portPos(a, gesture.port);
-                    return <path d={edgePath(p.x, p.y, gesture.x, gesture.y)} fill="none" className="stroke-accent" strokeWidth={1.75} strokeDasharray="4 3" />;
+                    const p = gesture.data ? outPos(a, gesture.port) : portPos(a, gesture.port);
+                    return (
+                      <path
+                        d={edgePath(p.x, p.y, gesture.x, gesture.y)}
+                        fill="none"
+                        className={gesture.data ? "stroke-amber-400" : "stroke-accent"}
+                        strokeWidth={1.75}
+                        strokeDasharray="4 3"
+                      />
+                    );
                   })()}
               </svg>
               {graph.nodes.map((n) => {
@@ -805,7 +966,7 @@ function WorkflowEditor({
                       setGesture({ kind: "move", id: n.id, dx: p.x - n.x, dy: p.y - n.y });
                     }}
                   >
-                    {n.kind !== "trigger" && (
+                    {n.kind !== "trigger" && !isDataNode(n) && (
                       <span className="absolute -left-1.5 h-3 w-3 rounded-full border border-line-strong bg-raised" style={{ top: IN_Y - 6 }} />
                     )}
                     <div className="space-y-0.5 px-2.5 pt-1.5">
@@ -837,11 +998,57 @@ function WorkflowEditor({
                             if (e.button !== 0) return;
                             e.stopPropagation();
                             const at0 = at(e);
-                            setGesture({ kind: "link", from: n.id, port: p, x: at0.x, y: at0.y });
+                            setGesture({ kind: "link", from: n.id, port: p, data: false, x: at0.x, y: at0.y });
                           }}
                         />
                       </div>
                     ))}
+                    {outsOf(n).map((k) => (
+                      <div
+                        key={`out-${k}`}
+                        className="absolute right-0 flex items-center gap-1.5 text-[11px] text-amber-200/80"
+                        style={{ top: outY(n, k) - PORT_H / 2, height: PORT_H }}
+                      >
+                        <span>{dataLabel(k)}</span>
+                        <span
+                          role="button"
+                          aria-label={`Wire ${nodeTitle(n)}: ${dataLabel(k)}`}
+                          data-output={`${n.id}.${k}`}
+                          className={clsx(
+                            "-mr-1.5 h-2.5 w-2.5 rotate-45 cursor-crosshair border",
+                            graph.edges.some((e) => e.input != null && e.from === n.id && e.port === k)
+                              ? "border-amber-400 bg-amber-400"
+                              : "border-amber-400/70 bg-raised hover:bg-amber-400/60",
+                          )}
+                          onPointerDown={(e) => {
+                            if (e.button !== 0) return;
+                            e.stopPropagation();
+                            const at0 = at(e);
+                            setGesture({ kind: "link", from: n.id, port: k, data: true, x: at0.x, y: at0.y });
+                          }}
+                        />
+                      </div>
+                    ))}
+                    {insOf(n).map((k) => {
+                      const w = workflowWire(graph, n.id, k);
+                      return (
+                        <div
+                          key={`in-${k}`}
+                          data-input={`${n.id}.${k}`}
+                          className="absolute left-0 flex w-full items-center gap-1.5 pr-2 text-[11px] text-amber-200/80"
+                          style={{ top: inY(n, k) - PORT_H / 2, height: PORT_H }}
+                        >
+                          <span
+                            className={clsx(
+                              "-ml-1.5 h-2.5 w-2.5 shrink-0 rotate-45 border",
+                              w ? "border-amber-400 bg-amber-400" : "border-amber-400/70 bg-raised",
+                            )}
+                          />
+                          <span className="shrink-0">{dataLabel(k)}</span>
+                          <span className="truncate text-faint">{w ? `← ${nodeTitle(byId.get(w.from) ?? n)} · ${dataLabel(w.port)}` : ownText(n, k)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -855,16 +1062,26 @@ function WorkflowEditor({
                 node={selected}
                 inputs={graph.edges.filter((e) => e.to === selected.id).length}
                 graph={graph}
+                onUnwire={(input) => unwire(selected.id, input)}
                 onChange={(patch) => updateNode(selected.id, patch)}
                 onRename={(id) => renameNode(selected.id, id)}
                 onRemove={selected.kind !== "trigger" || (columns && graph.nodes.some((n) => n.kind === "column")) ? () => removeNode(selected.id) : undefined}
               />
             ) : selectedEdge ? (
               <div className="space-y-2 text-[12.5px]">
-                <div className="font-medium">Connection</div>
+                <div className="font-medium">{selectedEdge.input != null ? "Wire" : "Connection"}</div>
                 <div className="text-muted">
-                  When <b>{nodeTitle(byId.get(selectedEdge.from)!)}</b> ends with <i>{PORT_LABELS[selectedEdge.port] ?? selectedEdge.port}</i>,{" "}
-                  <b>{nodeTitle(byId.get(selectedEdge.to)!)}</b> runs.
+                  {selectedEdge.input != null ? (
+                    <>
+                      <b>{nodeTitle(byId.get(selectedEdge.from)!)}</b>'s <i>{dataLabel(selectedEdge.port)}</i> goes into{" "}
+                      <b>{nodeTitle(byId.get(selectedEdge.to)!)}</b>'s <i>{dataLabel(selectedEdge.input)}</i>.
+                    </>
+                  ) : (
+                    <>
+                      When <b>{nodeTitle(byId.get(selectedEdge.from)!)}</b> ends with <i>{PORT_LABELS[selectedEdge.port] ?? selectedEdge.port}</i>,{" "}
+                      <b>{nodeTitle(byId.get(selectedEdge.to)!)}</b> runs.
+                    </>
+                  )}
                 </div>
                 <Button size="sm" variant="ghost" onClick={() => removeEdge((sel as { edge: number }).edge)}>
                   <Trash2 size={12} /> Remove
@@ -918,6 +1135,7 @@ function NodeInspector({
   node: n,
   inputs,
   graph,
+  onUnwire,
   onChange,
   onRename,
   onRemove,
@@ -926,6 +1144,7 @@ function NodeInspector({
   node: WorkflowNode;
   inputs: number;
   graph: WorkflowGraph;
+  onUnwire: (input: string) => void;
   onChange: (patch: Partial<WorkflowNode>) => void;
   onRename: (id: string) => void;
   /** None for the start a workflow can't do without. */
@@ -981,7 +1200,8 @@ function NodeInspector({
           <p className="text-[11.5px] text-faint">Any workflow can be run on a task by hand too, from the task's details.</p>
         </>
       )}
-      {n.kind === "column" && <ColumnInspector node={n} graph={graph} statuses={statuses} onChange={onChange} />}
+      {n.kind === "column" && <ColumnInspector node={n} graph={graph} statuses={statuses} onChange={onChange} onUnwire={onUnwire} />}
+      {isDataNode(n) && <ValueInspector node={n} graph={graph} onChange={onChange} onUnwire={onUnwire} />}
       {n.kind === "condition" && (
         <>
           <Field label="Checks whether">
@@ -1059,7 +1279,9 @@ function NodeInspector({
               </>
             }
           >
-            <Textarea rows={6} className="text-[12.5px]" value={n.prompt} onChange={(e) => onChange({ prompt: e.target.value })} />
+            <Wired graph={graph} node={n} input="prompt" onUnwire={onUnwire}>
+              <Textarea rows={6} className="text-[12.5px]" value={n.prompt} onChange={(e) => onChange({ prompt: e.target.value })} />
+            </Wired>
           </Field>
           <Field label="Skills" hint="Skills it uses, separated by commas.">
             <Input
@@ -1096,7 +1318,9 @@ function NodeInspector({
               </>
             }
           >
-            <Textarea rows={5} className="text-[12.5px]" value={n.message} onChange={(e) => onChange({ message: e.target.value })} />
+            <Wired graph={graph} node={n} input="message" onUnwire={onUnwire}>
+              <Textarea rows={5} className="text-[12.5px]" value={n.message} onChange={(e) => onChange({ message: e.target.value })} />
+            </Wired>
           </Field>
           <Field
             label="Rounds"
@@ -1124,10 +1348,14 @@ function NodeInspector({
               </>
             }
           >
-            <Input className="h-7" value={n.title} placeholder="{{task.key}}: {{task.title}}" onChange={(e) => onChange({ title: e.target.value })} />
+            <Wired graph={graph} node={n} input="title" onUnwire={onUnwire}>
+              <Input className="h-7" value={n.title} placeholder="{{task.key}}: {{task.title}}" onChange={(e) => onChange({ title: e.target.value })} />
+            </Wired>
           </Field>
           <Field label="Body" hint="Blank is the task's agent's last message. An agent step before it can write one: {{<step id>.text}}.">
-            <Textarea rows={5} className="text-[12.5px]" value={n.body} onChange={(e) => onChange({ body: e.target.value })} />
+            <Wired graph={graph} node={n} input="body" onUnwire={onUnwire}>
+              <Textarea rows={5} className="text-[12.5px]" value={n.body} onChange={(e) => onChange({ body: e.target.value })} />
+            </Wired>
           </Field>
           <Toggle checked={!!n.draft} onChange={(v) => onChange({ draft: v || undefined })} label="Open it as a draft" />
           <p className="text-[11.5px] text-faint">
@@ -1172,17 +1400,21 @@ function ColumnInspector({
   graph,
   statuses,
   onChange,
+  onUnwire,
 }: {
   node: Extract<WorkflowNode, { kind: "column" }>;
   graph: WorkflowGraph;
   statuses: { id: Status; label: string }[];
   onChange: (patch: Partial<WorkflowNode>) => void;
+  onUnwire: (input: string) => void;
 }) {
   const taken = new Set(graph.nodes.filter((x) => x.kind === "column" && x.id !== n.id).map((x) => (x as { status: Status }).status));
   const promptless = n.status === "needs_attention" || n.status === "done";
   const merge = n.status === "ready_for_merge";
   const note = doneNote(graph, n.id);
-  const waits = workflowWaits(n);
+  const waits = workflowWaits(n, graph);
+  // The note goes where `next` is wired, if it is, rather than at the end.
+  const placed = graph.edges.some((e) => e.input != null && e.from === n.id && e.port === "next");
   return (
     <>
       <Field label="Column" hint="A workflow has one step for each column.">
@@ -1213,7 +1445,9 @@ function ColumnInspector({
                 : "Sent to the task's agent when the task enters the column. Blank sends nothing, and what comes after runs at once."
           }
         >
-          <Textarea rows={5} className="text-[12.5px]" value={n.prompt} onChange={(e) => onChange({ prompt: e.target.value })} />
+          <Wired graph={graph} node={n} input="prompt" onUnwire={onUnwire}>
+            <Textarea rows={5} className="text-[12.5px]" value={n.prompt} onChange={(e) => onChange({ prompt: e.target.value })} />
+          </Wired>
         </Field>
       )}
       {waits && !merge && (
@@ -1230,7 +1464,7 @@ function ColumnInspector({
       )}
       {note && (
         <div className="space-y-1">
-          <span className="block text-xs font-medium text-muted">Added to the prompt</span>
+          <span className="block text-xs font-medium text-muted">{placed ? "What happens next, where it's wired" : "Added to the prompt"}</span>
           <p className="rounded border border-line/70 bg-raised/40 p-2 text-[11.5px] whitespace-pre-wrap text-muted" data-testid="column-done-note">
             {note}
           </p>
@@ -1245,6 +1479,189 @@ function ColumnInspector({
               : "Its done comes once the agent's turn ends: one that asks you something leaves the task in Needs attention until the agent is done. Meanwhile the task stays in In progress rather than going to In review: with nothing after done, it goes there then."
             : "Its done comes as soon as a task moves here."}{" "}
         A line into it moves the task here.
+      </p>
+    </>
+  );
+}
+
+/** An input's own field, or, when a value is wired into it, where the value comes from and a way to unwire it. */
+function Wired({
+  graph,
+  node,
+  input,
+  onUnwire,
+  children,
+}: {
+  graph: WorkflowGraph;
+  node: WorkflowNode;
+  input: string;
+  onUnwire: (input: string) => void;
+  children: ReactNode;
+}) {
+  const w = workflowWire(graph, node.id, input);
+  if (!w) return <>{children}</>;
+  const from = graph.nodes.find((x) => x.id === w.from);
+  return (
+    <div
+      className="flex items-center gap-2 rounded border border-amber-400/40 bg-amber-400/5 px-2 py-1.5 text-[12px] text-muted"
+      data-testid={`wired-${input}`}
+    >
+      <span className="h-2 w-2 shrink-0 rotate-45 bg-amber-400" />
+      <span className="min-w-0 flex-1 truncate">
+        From <b>{from ? nodeTitle(from) : w.from}</b> · {dataLabel(w.port)}
+      </span>
+      <Button size="sm" variant="ghost" title="Unwire it, to use its own text" onClick={() => onUnwire(input)}>
+        <Unplug size={12} />
+      </Button>
+    </div>
+  );
+}
+
+/** An input's own text, in a line, as its row on the canvas shows it when nothing is wired into it. */
+function ownText(n: WorkflowNode, input: string): string {
+  const own =
+    n.kind === "column" || n.kind === "agent"
+      ? n.prompt
+      : n.kind === "send_to_task"
+        ? n.message
+        : n.kind === "open_pr"
+          ? input === "title"
+            ? n.title
+            : n.body
+          : "";
+  return firstLine(own);
+}
+
+/** A data node's settings. */
+function ValueInspector({
+  node: n,
+  graph,
+  onChange,
+  onUnwire,
+}: {
+  node: WorkflowNode;
+  graph: WorkflowGraph;
+  onChange: (patch: Partial<WorkflowNode>) => void;
+  onUnwire: (input: string) => void;
+}) {
+  const inputs = workflowDataInputs(n);
+  const uses = graph.edges.filter((e) => e.input != null && e.from === n.id).length;
+  return (
+    <>
+      {n.kind === "text" && (
+        <Field
+          label="Text"
+          hint={
+            <>
+              Templates: <code className="text-[11px]">{TEMPLATES}</code>.
+            </>
+          }
+        >
+          <Textarea rows={6} className="text-[12.5px]" value={n.text} onChange={(e) => onChange({ text: e.target.value })} />
+        </Field>
+      )}
+      {n.kind === "task" && <p className="text-[11.5px] text-faint">The task's title, description, key, branch, commit, pull request and labels, as values.</p>}
+      {n.kind === "project_prompt" && (
+        <Field label="Prompt" hint="The project's own, from its Prompts settings, or the board's if it has none.">
+          <select className={selectClass} value={n.which} onChange={(e) => onChange({ which: e.target.value as "start" | "review" | "merge" })}>
+            <option value="start">Starting a task</option>
+            <option value="review">Reviewing its changes</option>
+            <option value="merge">Merging it</option>
+          </select>
+        </Field>
+      )}
+      {n.kind === "compose" && (
+        <Field
+          label="Template"
+          hint={
+            <>
+              Each <code className="text-[11px]">{"{{name}}"}</code> without a dot is an input to wire a value into; unwired, it's the template's own value
+              (such as <code className="text-[11px]">{"{{issues}}"}</code>) or left as it is. Templates: <code className="text-[11px]">{TEMPLATES}</code>.
+            </>
+          }
+        >
+          <Textarea rows={6} className="font-mono text-[12px]" value={n.template} onChange={(e) => onChange({ template: e.target.value })} />
+        </Field>
+      )}
+      {n.kind === "join" && (
+        <>
+          <Field label="Inputs">
+            <div className="w-24">
+              <Input
+                type="number"
+                min={1}
+                max={8}
+                value={n.count}
+                onChange={(e) => onChange({ count: Math.max(1, Math.min(8, Math.floor(Number(e.target.value) || 1))) })}
+              />
+            </div>
+          </Field>
+          <Field label="Between them" hint="\n is a new line. The inputs without text are left out.">
+            <Input
+              className="h-7 font-mono text-[12px]"
+              value={n.separator.replaceAll("\n", "\\n")}
+              onChange={(e) => onChange({ separator: e.target.value.replaceAll("\\n", "\n") })}
+            />
+          </Field>
+        </>
+      )}
+      {n.kind === "switch" && (
+        <>
+          <Field label="Gives its yes input when">
+            <select
+              className={selectClass}
+              value={n.check}
+              onChange={(e) => {
+                const check = e.target.value as WorkflowCheck;
+                onChange({ check, value: check === "task_type" ? "code" : check === "label" ? LABELS[0] : null });
+              }}
+            >
+              {(["has_pr", "task_type", "label"] as const).map((c) => (
+                <option key={c} value={c}>
+                  {CHECK_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {n.check === "task_type" && (
+            <Field label="Type">
+              <select className={selectClass} value={n.value ?? "code"} onChange={(e) => onChange({ value: e.target.value })}>
+                <option value="code">Code</option>
+                <option value="scratch">Scratch</option>
+              </select>
+            </Field>
+          )}
+          {n.check === "label" && (
+            <Field label="Label">
+              <select className={selectClass} value={n.value ?? LABELS[0]} onChange={(e) => onChange({ value: e.target.value })}>
+                {LABELS.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+        </>
+      )}
+      {inputs.length > 0 && (
+        <div className="space-y-1">
+          <span className="block text-xs font-medium text-muted">Inputs</span>
+          {inputs.map((k) => (
+            <div key={k} className="flex items-center gap-2 text-[12px] text-muted">
+              <span className="w-14 shrink-0 font-mono text-[11.5px]">{dataLabel(k)}</span>
+              <div className="min-w-0 flex-1">
+                <Wired graph={graph} node={n} input={k} onUnwire={onUnwire}>
+                  <span className="text-[11.5px] text-faint">Nothing wired</span>
+                </Wired>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-[11.5px] text-faint">
+        A value is read when the step it goes into runs: a step's output is from its run, or the workflow's last run on the task that ran it.{" "}
+        {uses ? `It goes into ${uses} input${uses === 1 ? "" : "s"}.` : "Wire it into an input to use it."}
       </p>
     </>
   );

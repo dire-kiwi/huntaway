@@ -55,7 +55,7 @@ export * from "./workflows/handlers.ts";
 /** The task type of a workflow's agent thread. */
 export const WORKFLOW = "workflow";
 /** Most nodes a workflow can have, and agent steps among them. */
-export const MAX_NODES = 40;
+export const MAX_NODES = 80;
 export const MAX_AGENTS = 8;
 /** Most rounds a send can be given. */
 export const MAX_ROUNDS = 20;
@@ -85,7 +85,27 @@ const TRIGGER_ONS = ["status", "finished", "manual"];
 const DONE_WHENS: DoneWhen[] = ["run_end", "finish"];
 const CHECKS: Check[] = ["changed", "has_commits", "has_pr", "task_type", "label"];
 const OUTPUTS: Output[] = ["text", "verdict"];
-const KINDS = ["trigger", "condition", "agent", "send_to_task", "set_status", "open_pr", "column"];
+const KINDS = [
+  "trigger",
+  "condition",
+  "agent",
+  "send_to_task",
+  "set_status",
+  "open_pr",
+  "column",
+  "text",
+  "task",
+  "project_prompt",
+  "compose",
+  "join",
+  "switch",
+];
+/** The kinds of data nodes, which only give values to other nodes' inputs (see `data_outputs`): no run reaches them. */
+export const DATA_KINDS = ["text", "task", "project_prompt", "compose", "join", "switch"];
+/** The checks a switch makes, which it can make without reading git. */
+const SWITCH_CHECKS: Check[] = ["has_pr", "task_type", "label"];
+/** Most inputs a join takes. */
+const MAX_JOIN = 8;
 
 export type NodeKind =
   /** A run by hand (`POST /workflows/{id}/run`). Its `on: status` and `on: finished` from before are read as column nodes. */
@@ -122,6 +142,19 @@ export type NodeKind =
   | { kind: "send_to_task"; message: string; max_rounds: number }
   /** Moves the task to another column: from before HA-276, and read as a column node. */
   | { kind: "set_status"; status: string }
+  // Data nodes (HA-276): values for other nodes' inputs, read when the node they go into runs (see engine.input_value).
+  /** Text, its templates filled in. */
+  | { kind: "text"; text: string }
+  /** The task's title, description, key, branch, commit, pull request and labels. */
+  | { kind: "task" }
+  /** The project's start, review or merge prompt (or the board's, if it has none). */
+  | { kind: "project_prompt"; which: "start" | "review" | "merge" }
+  /** A template whose `{{name}}`s (without a dot) are inputs, and fall back to the template's own values unwired. */
+  | { kind: "compose"; template: string }
+  /** Its inputs `in1`… (`count` of them), those with text, with `separator` between them. */
+  | { kind: "join"; separator: string; count: number }
+  /** Its input `yes` or `no`, by a check on the task. */
+  | { kind: "switch"; check: Check; value?: string }
   /**
    * Opens a pull request for the task's branch: `title` and `body` are templates (empty: the task's key and title, and
    * its agent's last message), and `draft` opens it as a draft.
@@ -131,11 +164,15 @@ export type NodeKind =
 /** A node: its id, its kind's fields (flattened), `join` (left out when `any`) and where the editor draws it. */
 export type Node = { id: string } & NodeKind & { join?: Join; x: number; y: number };
 
-/** An edge from `from`'s `port` to `to`. */
+/**
+ * An edge from `from`'s `port` to `to`: the way a run goes. With `input`, it's a data wire instead: `from`'s data output
+ * `port` (see `data_outputs`) gives `to`'s input `input` its value.
+ */
 export interface Edge {
   from: string;
   port: string;
   to: string;
+  input?: string;
 }
 
 /** A workflow's nodes and the edges between them. */
@@ -228,6 +265,25 @@ export function Node_from_json(v: any): Node {
       n.body = de_def_str(v, "body");
       if (de_bool(v, "draft")) n.draft = true;
       break;
+    case "text":
+      n.text = de_def_str(v, "text");
+      break;
+    case "task":
+      break;
+    case "project_prompt":
+      n.which = de_enum(v, "which", ["start", "review", "merge"], "start");
+      break;
+    case "compose":
+      n.template = de_def_str(v, "template");
+      break;
+    case "join":
+      n.separator = v.separator === undefined ? "\n\n" : de_str(v, "separator");
+      n.count = v.count === undefined ? 2 : de_uint(v, "count");
+      break;
+    case "switch":
+      n.check = de_enum(v, "check", CHECKS);
+      put(n, "value", de_opt_str(v, "value"));
+      break;
   }
   const join = de_enum<Join>(v, "join", ["any", "all"], "any");
   if (join !== "any") n.join = join;
@@ -238,7 +294,10 @@ export function Node_from_json(v: any): Node {
 
 function Edge_from_json(v: any): Edge {
   if (v === null || typeof v !== "object" || Array.isArray(v)) fail("invalid type: expected struct Edge");
-  return { from: de_str(v, "from"), port: v.port === undefined ? "out" : de_str(v, "port"), to: de_str(v, "to") };
+  const e: Edge = { from: de_str(v, "from"), port: v.port === undefined ? "out" : de_str(v, "port"), to: de_str(v, "to") };
+  const input = de_opt_str(v, "input");
+  if (input != null) e.input = input;
+  return e;
 }
 
 export function Graph_from_json(v: any): Graph {
@@ -252,12 +311,79 @@ export function Graph_from_json(v: any): Graph {
       .filter((n: any) => n?.kind === "set_status" || (n?.kind === "trigger" && n?.on !== "manual"))
       .map((n: any) => n.id),
   );
-  for (const e of edges) if (e.port === "out" && read_as_column.has(e.from)) e.port = "done";
+  for (const e of edges) if (e.input == null && e.port === "out" && read_as_column.has(e.from)) e.port = "done";
   return { nodes, edges };
+}
+
+/** Whether it's a data node (see `DATA_KINDS`). */
+export function is_data(n: NodeKind): boolean {
+  return DATA_KINDS.includes(n.kind);
+}
+
+/** The graph's edges that a run goes along, without its data wires. */
+export function flow_edges(g: Graph): Edge[] {
+  return g.edges.filter((e) => e.input == null);
+}
+
+/** The data wire into node `id`'s input `input`, if it has one. */
+export function wire(g: Graph, id: string, input: string): Edge | undefined {
+  return g.edges.find((e) => e.to === id && e.input === input);
+}
+
+/** The inputs a node takes values on: its text fields, which a wire replaces (see engine.input_value). */
+export function data_inputs(n: NodeKind): string[] {
+  switch (n.kind) {
+    case "column":
+      return n.status === "needs_attention" || n.status === "done" ? [] : ["prompt"];
+    case "agent":
+      return ["prompt"];
+    case "send_to_task":
+      return ["message"];
+    case "open_pr":
+      return ["title", "body"];
+    case "compose":
+      return template_inputs(n.template);
+    case "join":
+      return Array.from({ length: Math.min(Math.max(n.count, 1), MAX_JOIN) }, (_, i) => `in${i + 1}`);
+    case "switch":
+      return ["yes", "no"];
+    default:
+      return [];
+  }
+}
+
+/** The `{{name}}`s of a compose node's template that are inputs: those without a dot, in order. */
+export function template_inputs(t: string): string[] {
+  const out: string[] = [];
+  for (const m of t.matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)) if (!out.includes(m[1])) out.push(m[1]);
+  return out;
+}
+
+/** The values a node gives other nodes' inputs. */
+export function data_outputs(n: NodeKind): string[] {
+  switch (n.kind) {
+    case "agent":
+      return ["text", "issues", "verdict"];
+    case "open_pr":
+      return ["url"];
+    case "column":
+      return ["next"];
+    case "task":
+      return ["title", "description", "key", "branch", "commit", "pr", "labels"];
+    case "text":
+    case "project_prompt":
+    case "compose":
+    case "join":
+    case "switch":
+      return ["text"];
+    default:
+      return [];
+  }
 }
 
 /** The ports a node of this kind can end on. */
 export function ports(n: NodeKind): string[] {
+  if (is_data(n)) return [];
   switch (n.kind) {
     case "trigger":
     case "set_status":
@@ -272,6 +398,8 @@ export function ports(n: NodeKind): string[] {
       return ["sent", "exhausted"];
     case "open_pr":
       return ["opened", "exists", "failed"];
+    default:
+      return [];
   }
 }
 
@@ -295,8 +423,8 @@ export function column_node(g: Graph, status: string): ColumnNode | undefined {
  * (its agent's work), Ready for merge (its merge), and any other column with a prompt (which the agent is sent). In
  * the other columns `done` follows at once. Needs attention, where the agent waits for the user, has no prompt.
  */
-export function agent_works(n: Node): boolean {
-  return n.kind === "column" && (n.status === "in_progress" || n.status === "ready_for_merge" || n.prompt.trim() !== "");
+export function agent_works(n: Node, g: Graph): boolean {
+  return n.kind === "column" && (n.status === "in_progress" || n.status === "ready_for_merge" || n.prompt.trim() !== "" || wire(g, n.id, "prompt") != null);
 }
 
 /**
@@ -306,7 +434,8 @@ export function agent_works(n: Node): boolean {
 export function after_done(g: Graph, id: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>([id]);
-  let next = g.edges.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
+  const edges = flow_edges(g);
+  let next = edges.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
   while (next.length) {
     const later: string[] = [];
     for (const to of next) {
@@ -322,7 +451,7 @@ export function after_done(g: Graph, id: string): string[] {
       else if (n.kind === "agent") out.push(n.output === "verdict" ? `has "${n.name}" review your work` : `has "${n.name}" read your work`);
       else if (n.kind === "send_to_task") out.push("sends you what it found to fix");
       // What happens when it goes well: not after a failure, or a send out of rounds.
-      later.push(...g.edges.filter((e) => e.from === to && e.port !== "failed" && e.port !== "exhausted").map((e) => e.to));
+      later.push(...edges.filter((e) => e.from === to && e.port !== "failed" && e.port !== "exhausted").map((e) => e.to));
     }
     next = later;
   }
@@ -332,7 +461,8 @@ export function after_done(g: Graph, id: string): string[] {
 /** Whether the board opens the pull request once column node `id`'s work is done (before it moves the task on). */
 export function opens_pr(g: Graph, id: string): boolean {
   const seen = new Set<string>([id]);
-  const stack = g.edges.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
+  const edges = flow_edges(g);
+  const stack = edges.filter((e) => e.from === id && e.port === "done").map((e) => e.to);
   while (stack.length) {
     const to = stack.pop()!;
     if (seen.has(to)) continue;
@@ -340,7 +470,7 @@ export function opens_pr(g: Graph, id: string): boolean {
     const n = graph_node(g, to);
     if (!n || n.kind === "column") continue;
     if (n.kind === "open_pr") return true;
-    stack.push(...g.edges.filter((e) => e.from === to).map((e) => e.to));
+    stack.push(...edges.filter((e) => e.from === to).map((e) => e.to));
   }
   return false;
 }
@@ -365,7 +495,7 @@ export function upstream(g: Graph, id: string): Node[] {
   const stack = [id];
   while (stack.length) {
     const to = stack.pop()!;
-    for (const e of g.edges) {
+    for (const e of flow_edges(g)) {
       if (e.to !== to || seen.has(e.from)) continue;
       seen.add(e.from);
       stack.push(e.from);
@@ -648,7 +778,7 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
         if (n.status === "needs_attention" && n.prompt.trim()) {
           throw bad(`column ${id} can't have a prompt: in Needs attention the agent waits for the user`);
         }
-        if (!agent_works(n)) delete n.done_when;
+        if (!agent_works(n, g)) delete n.done_when;
         else if (n.status === "ready_for_merge" && n.done_when) throw bad(`column ${id}'s work is done when the task is merged, not when the agent says so`);
         break;
       }
@@ -707,6 +837,32 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
         if (bytes(n.body) > MAX_TEXT) throw bad(`pull request step ${id}'s body is longer than ${MAX_TEXT} bytes`);
         break;
       }
+      case "text":
+        if (bytes(n.text) > MAX_TEXT) throw bad(`text ${id} is longer than ${MAX_TEXT} bytes`);
+        break;
+      case "task":
+      case "project_prompt":
+        break;
+      case "compose":
+        if (bytes(n.template) > MAX_TEXT) throw bad(`compose ${id}'s template is longer than ${MAX_TEXT} bytes`);
+        if (template_inputs(n.template).length > 20) throw bad(`compose ${id} has more than 20 inputs`);
+        break;
+      case "join":
+        if (n.count < 1 || n.count > MAX_JOIN) throw bad(`join ${id} takes 1 to ${MAX_JOIN} inputs`);
+        if (chars(n.separator) > 100) throw bad(`join ${id}'s separator is longer than 100 characters`);
+        break;
+      case "switch": {
+        set_opt(n, "value", trimmed(n.value));
+        if (!SWITCH_CHECKS.includes(n.check)) throw bad(`switch ${id} checks ${SWITCH_CHECKS.join(", ")}`);
+        if (n.check === "task_type") {
+          const t = n.value;
+          if (!(t === "code" || (t !== undefined && db.TASK_TYPES.includes(t))))
+            throw bad(`switch ${id} needs a task type: code or ${db.TASK_TYPES.join(", ")}`);
+        } else if (n.check === "label") {
+          if (!(n.value !== undefined && db.LABELS.includes(n.value))) throw bad(`switch ${id} needs a label: ${db.LABELS.join(", ")}`);
+        } else delete n.value;
+        break;
+      }
     }
   }
   if (triggers > 1) throw bad("a workflow has one start for runs by hand at most");
@@ -718,8 +874,18 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
     if (!from) throw bad(`an edge comes from node ${e.from}, which isn't in the graph`);
     const to = graph_node(g, e.to);
     if (!to) throw bad(`an edge goes to node ${e.to}, which isn't in the graph`);
-    if (!ports(from).includes(e.port)) throw bad(`node ${e.from} has no port ${e.port} (it has ${ports(from).join(", ")})`);
+    if (e.input != null) {
+      // A data wire: from a value to an input, one wire to each.
+      if (!data_outputs(from).includes(e.port)) throw bad(`node ${e.from} gives no value ${e.port} (it gives ${data_outputs(from).join(", ") || "none"})`);
+      if (!data_inputs(to).includes(e.input)) throw bad(`node ${e.to} has no input ${e.input} (it has ${data_inputs(to).join(", ") || "none"})`);
+      const key = JSON.stringify([e.to, e.input]);
+      if (seen.has(key)) throw bad(`node ${e.to}'s input ${e.input} has two wires into it`);
+      seen.add(key);
+      continue;
+    }
+    if (!ports(from).includes(e.port)) throw bad(`node ${e.from} has no port ${e.port} (it has ${ports(from).join(", ") || "none: it gives values"})`);
     if (to.kind === "trigger") throw bad("no edge can go into the start");
+    if (is_data(to)) throw bad(`node ${e.to} gives values, so no run goes into it: wire a value into one of its inputs instead`);
     if (to.kind === "column" && to.status === "done") throw bad("no edge can go into Done: a task is done once it's merged (from Ready for merge)");
     const key = JSON.stringify([e.from, e.port, e.to]);
     if (seen.has(key)) throw bad(`the edge from ${e.from}.${e.port} to ${e.to} is there twice`);
@@ -731,7 +897,36 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
       `the graph goes round in a loop through ${c_}: a run goes forward from where it starts (go round again through a column, or by sending to the task's agent)`,
     );
   }
+  const d = data_cycle(g);
+  if (d !== null) throw bad(`values go round in a loop through ${d}: a data node can't take its own value`);
   return g;
+}
+
+/**
+ * A data node whose value depends on itself through data wires, if any. A step's outputs come from its run (or an
+ * earlier one), so a wire from a step back into one before it is no loop.
+ */
+export function data_cycle(g: Graph): string | null {
+  const data = new Set(g.nodes.filter(is_data).map((n) => n.id));
+  const wires = g.edges.filter((e) => e.input != null && data.has(e.from) && data.has(e.to));
+  const state = new Map<string, number>();
+  const visit = (id: string): string | null => {
+    if (state.get(id) === 2) return null;
+    if (state.get(id) === 1) return id;
+    state.set(id, 1);
+    for (const e of wires)
+      if (e.from === id) {
+        const c = visit(e.to);
+        if (c != null) return c;
+      }
+    state.set(id, 2);
+    return null;
+  };
+  for (const id of [...data].sort()) {
+    const c = visit(id);
+    if (c != null) return c;
+  }
+  return null;
 }
 
 /**
@@ -740,7 +935,7 @@ export function check_graph(c: Conn, p: Project, v: any): Graph {
  */
 export function cycle(g: Graph): string | null {
   const into_column = (e: Edge) => graph_node(g, e.to)?.kind === "column";
-  const edges = g.edges.filter((e) => !into_column(e));
+  const edges = flow_edges(g).filter((e) => !into_column(e));
   const indegree = new Map<string, number>(g.nodes.map((n) => [n.id, 0]));
   for (const e of edges) indegree.set(e.to, (indegree.get(e.to) ?? 0) + 1);
   const ready = [...indegree].filter(([, d]) => d === 0).map(([n]) => n);
@@ -774,7 +969,7 @@ function check_columns(c: Conn, project_id: string, except: string | null, graph
     for (const n of graph.nodes) {
       if (n.kind !== "column") continue;
       const other = column_node(w.graph, n.status);
-      if (other && (agent_works(n) || agent_works(other))) {
+      if (other && (agent_works(n, graph) || agent_works(other, w.graph))) {
         throw ApiError.conflict(
           `the workflow "${w.name}" has the column ${status_label(n.status)} already, where the task's agent works: a column with the agent's work belongs to one workflow that's on`,
         );

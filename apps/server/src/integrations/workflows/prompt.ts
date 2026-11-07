@@ -43,15 +43,16 @@ export function issues(run: Run): string[] {
   return steps.flatMap(([name, r]) => (r.issues ?? []).map((i) => (several ? `(${name}) ${i}` : i)));
 }
 
-function numbered(list: string[]): string {
+export function numbered(list: string[]): string {
   return list.map((s, i) => `${i + 1}. ${s}`).join("\n\n");
 }
 
 /**
- * `text` with its `{{…}}` filled in: `task.key`, `task.title`, `task.description`, `branch`, `commit`, `workflow`,
- * `issues` (those the run found), and `<node id>.text`, `<node id>.issues` and `<node id>.verdict` for its steps.
+ * `text` with its `{{…}}` filled in: `vars` (a compose node's wired inputs) first, then `task.key`, `task.title`,
+ * `task.description`, `branch`, `commit`, `workflow`, `issues` (those the run found), and `<node id>.text`,
+ * `<node id>.issues` and `<node id>.verdict` for its steps.
  */
-export function render(text: string, task: Task, key: string, workflow: string, run: Run | null): string {
+export function render(text: string, task: Task, key: string, workflow: string, run: Run | null, vars: Record<string, string> = {}): string {
   let out = "";
   let rest = text;
   for (;;) {
@@ -62,8 +63,8 @@ export function render(text: string, task: Task, key: string, workflow: string, 
     const j = after.indexOf("}}");
     if (j < 0) return out + rest.slice(i);
     const name = after.slice(0, j).trim();
-    let value: string | null = null;
-    switch (name) {
+    let value: string | null = Object.hasOwn(vars, name) ? vars[name] : null;
+    switch (value == null ? name : "") {
       case "task.key":
         value = key;
         break;

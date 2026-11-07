@@ -34,6 +34,11 @@ import {
   column_node,
   agent_works,
   after_done,
+  data_inputs,
+  flow_edges,
+  is_data,
+  template_inputs,
+  wire,
   opens_pr,
   status_label,
   upstream,
@@ -187,7 +192,7 @@ export function on_finish_due(s: Shared, task: Task): Due | null {
       if (n && db.later_run(c, task.id, r.task_run ?? "")) return { workflow_id: r.workflow_id, node: n, run_id: r.id };
     }
     // With nothing after it (and not waiting for finish_work), there's nothing to hold the task for.
-    const [found] = columns(c, task.project_id, "in_progress").filter(([w, n]) => n.done_when === "finish" || w.graph.edges.some((e) => e.from === n.id));
+    const [found] = columns(c, task.project_id, "in_progress").filter(([w, n]) => n.done_when === "finish" || flow_edges(w.graph).some((e) => e.from === n.id));
     return found ? { workflow_id: found[0].id, node: found[1], run_id: null } : null;
   } catch (e) {
     console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
@@ -274,7 +279,7 @@ export function on_merged(s: Shared, task: Task): void {
 function work_column(s: Shared, task: Task, status: string): [Workflow, ColumnNode] | null {
   if (task.kind !== "task" || !task.project_id || task.subproject) return null;
   try {
-    return columns(s.db(), task.project_id, status).find(([, n]) => agent_works(n)) ?? null;
+    return columns(s.db(), task.project_id, status).find(([w, n]) => agent_works(n, w.graph)) ?? null;
   } catch (e) {
     console.error(`reading workflows for task ${task.id}: ${err_str(e)}`);
     return null;
@@ -297,11 +302,134 @@ export function done_note(g: Graph, n: ColumnNode): string {
   return p;
 }
 
-/** Column node `n`'s prompt for `task` (its templates filled in), with what to do when its work is done. */
-function column_text(task: Task, key: string, w: Workflow, n: ColumnNode, run: Run | null, fallback: string): string {
-  const own = n.prompt.trim() ? prompt.render(n.prompt, task, key, w.name, run).trim() : fallback;
-  const note = done_note(w.graph, n);
-  return note ? `${own}\n\n${note}` : own;
+// ---------- values: what data wires give the inputs they go into ----------
+
+/** Where values are read from: the graph, its workflow, the task, and the run (none before one, say for a start prompt). */
+export interface Source {
+  graph: Graph;
+  workflow: { id: string; name: string };
+  task: Task;
+  key: string;
+  run: Run | null;
+}
+
+function source(s: Shared, w: { id: string; name: string; graph: Graph }, task: Task, run: Run | null): Source {
+  return { graph: run?.graph ?? w.graph, workflow: { id: w.id, name: w.name }, task, key: task_key(s.db(), task), run };
+}
+
+/**
+ * What node `node`'s input `input` reads: the value wired into it (see `output_value`), or else its own text `own`,
+ * its templates filled in.
+ */
+export function input_value(s: Shared, src: Source, node: Node, input: string, own: string): string {
+  const e = wire(src.graph, node.id, input);
+  if (!e) return prompt.render(own, src.task, src.key, src.workflow.name, src.run);
+  return output_value(s, src, e.from, e.port, 0);
+}
+
+/**
+ * Node `id`'s value `port`, read now: a data node's from its inputs, and a step's from what it did in the run, or else
+ * in the workflow's latest run on the task that ran it (so a prompt can take the issues of the last review).
+ */
+function output_value(s: Shared, src: Source, id: string, port: string, depth: number): string {
+  const n = graph_node(src.graph, id);
+  if (!n || depth > 40) return "";
+  const input = (name: string): string => {
+    const e = wire(src.graph, id, name);
+    return e ? output_value(s, src, e.from, e.port, depth + 1) : "";
+  };
+  const { task } = src;
+  switch (n.kind) {
+    case "agent": {
+      const r = step_output(s, src, id);
+      if (!r) return "";
+      return port === "issues" ? prompt.numbered(r.issues ?? []) : port === "verdict" ? (r.verdict ?? "") : (r.text ?? "");
+    }
+    case "open_pr":
+      return step_output(s, src, id)?.text ?? task.pr_url ?? "";
+    case "column":
+      return done_note(src.graph, n);
+    case "text":
+      return prompt.render(n.text, task, src.key, src.workflow.name, src.run);
+    case "task":
+      switch (port) {
+        case "title":
+          return task.title;
+        case "description":
+          return task.description;
+        case "key":
+          return src.key;
+        case "branch":
+          return task.branch ?? "";
+        case "commit":
+          return src.run?.head ?? "";
+        case "pr":
+          return task.pr_url ?? "";
+        case "labels":
+          return task.labels.join(", ");
+      }
+      return "";
+    case "project_prompt": {
+      let p: Project | null = null;
+      try {
+        p = task.project_id ? db.get_project(s.db(), task.project_id) : null;
+      } catch {}
+      return n.which === "review" ? prompts.review(p) : n.which === "merge" ? prompts.merge(p) : prompts.start(p);
+    }
+    case "compose": {
+      const vars: Record<string, string> = {};
+      for (const name of template_inputs(n.template)) if (wire(src.graph, id, name)) vars[name] = input(name);
+      return prompt.render(n.template, task, src.key, src.workflow.name, src.run, vars);
+    }
+    case "join":
+      return data_inputs(n)
+        .map((i) => input(i).trim())
+        .filter((t) => t)
+        .join(n.separator.replaceAll("\\n", "\n"));
+    case "switch":
+      return input(switch_check(task, n.check, n.value ?? null) ? "yes" : "no");
+  }
+  return "";
+}
+
+/** A switch's check, which it makes without git: has the task a pull request, or a type or label. */
+function switch_check(task: Task, check: Check, value: string | null): boolean {
+  if (check === "has_pr") return !!task.pr_url?.trim();
+  if (check === "task_type") return (task.task_type ?? "code") === (value ?? "code");
+  if (check === "label") return value != null && task.labels.includes(value);
+  return false;
+}
+
+/** What step `id` did: in the run, or else in the workflow's latest run on the task that it finished in. */
+function step_output(s: Shared, src: Source, id: string): NodeRun | null {
+  const now_ = src.run?.nodes[id];
+  if (now_?.state === "done") return now_;
+  try {
+    const rows = db.all(
+      s.db(),
+      "SELECT * FROM workflow_runs WHERE workflow_id=?1 AND task_id=?2 AND id!=?3 ORDER BY rowid DESC LIMIT 20",
+      src.workflow.id,
+      src.task.id,
+      src.run?.id ?? "",
+    );
+    for (const row of rows) {
+      const r = JSON.parse(row.nodes)[id];
+      if (r?.state === "done") return r;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Column node `n`'s prompt for `task` (wired, or its own with its templates filled in; `fallback` if that's empty), with
+ * what to do when its work is done, unless its `next` is wired somewhere to say so.
+ */
+function column_text(s: Shared, task: Task, w: Workflow, n: ColumnNode, run: Run | null, fallback: string): string {
+  const src = source(s, w, task, run);
+  const own = input_value(s, src, n, "prompt", n.prompt).trim() || fallback;
+  const placed = src.graph.edges.some((e) => e.input != null && e.from === n.id && e.port === "next");
+  const note = placed ? "" : done_note(src.graph, n);
+  return note && own ? `${own}\n\n${note}` : note || own;
 }
 
 /**
@@ -313,14 +441,16 @@ export function start_instructions(s: Shared, task: Task, project: Project | nul
   const found = work_column(s, task, "in_progress");
   if (!found) return null;
   const [w, n] = found;
-  return column_text(task, task_key(s.db(), task), w, n, null, prompts.start(project));
+  return column_text(s, task, w, n, null, prompts.start(project));
 }
 
 /** How the task's agent merges it, if the project's workflow's Ready for merge node has a prompt. */
 export function merge_instructions(s: Shared, task: Task): string | null {
   const found = work_column(s, task, "ready_for_merge");
-  if (!found || !found[1].prompt.trim()) return null;
-  return prompt.render(found[1].prompt, task, task_key(s.db(), task), found[0].name, null).trim();
+  if (!found) return null;
+  const [w, n] = found;
+  const text = input_value(s, source(s, w, task, null), n, "prompt", n.prompt).trim();
+  return text || null;
 }
 
 /** Whether the project's workflow opens the task's pull request once its agent's work in In progress is done. */
@@ -399,10 +529,10 @@ async function start_locked(
     if (on === "merged" && task.status !== "done") return null;
   }
   // Waiting at a column whose prompt the agent is sent, for that work to be done (see `on_finished`).
-  const waits = !manual && on === "status" && agent_works(from);
+  const waits = !manual && on === "status" && agent_works(from, w.graph);
   // A column with nothing after it is only where lines end: entering it runs nothing (a run would hide the last
   // one's output in the task's tabs).
-  if (!manual && !waits && on !== "finished" && !w.graph.edges.some((e) => e.from === from.id)) return null;
+  if (!manual && !waits && on !== "finished" && !flow_edges(w.graph).some((e) => e.from === from.id)) return null;
   // Read before the check that it isn't running, so a run that starts in between counts as later (see below).
   const task_run = db.latest_run(s.db(), task.id, null);
   // A merge ends while the agent that merged it is still going.
@@ -416,6 +546,8 @@ async function start_locked(
   const at_ = now();
   const nodes: Record<string, NodeRun> = {};
   for (const n of w.graph.nodes) {
+    // Data nodes have no part in a run: they're read (see `output_value`).
+    if (is_data(n)) continue;
     if (n.id !== from.id) nodes[n.id] = { state: "pending" };
     else if (waits) nodes[n.id] = { state: "running", start: true, started_at: at_ };
     else nodes[n.id] = { state: "done", port: n.kind === "trigger" ? "out" : "done", start: true, started_at: at_, finished_at: at_ };
@@ -444,7 +576,7 @@ async function start_locked(
   runs_changed(s, task.id);
   if (waits && from.kind === "column") {
     try {
-      runner.send_as(s, task.id, column_text(task, task_key(s.db(), task), w, from, run, ""), true);
+      runner.send_as(s, task.id, column_text(s, task, w, from, run, ""), true);
     } catch (e) {
       record(s, run.id, from.id, Done_failed(`couldn't send the agent the column's prompt: ${msg(e)}`));
     }
@@ -463,8 +595,8 @@ export function plan(run: Run): string[] {
     const ready: string[] = [];
     let changed = false;
     for (const n of run.graph.nodes) {
-      if (run_node(run, n.id).state !== "pending") continue;
-      const incoming = run.graph.edges.filter((e) => e.to === n.id);
+      if (is_data(n) || run_node(run, n.id).state !== "pending") continue;
+      const incoming = flow_edges(run.graph).filter((e) => e.to === n.id);
       // A column's `done` comes only where the run starts (waiting there until it does): others end their paths.
       const from_settled = (from: string) =>
         graph_node(run.graph, from)?.kind === "column" ? run_node(run, from).state !== "running" : settled(run_node(run, from));
@@ -490,7 +622,7 @@ export function plan(run: Run): string[] {
 
 /** Ends the run once no node is left to run: its sends that weren't reached give their rounds back. */
 function settle(run: Run): boolean {
-  if (run.state !== "running" || run.graph.nodes.some((n) => !settled(run_node(run, n.id)))) return false;
+  if (run.state !== "running" || run.graph.nodes.some((n) => !is_data(n) && !settled(run_node(run, n.id)))) return false;
   for (const n of run.graph.nodes) {
     if (n.kind === "send_to_task" && run_node(run, n.id).state === "skipped") delete run.rounds[n.id];
   }
@@ -565,7 +697,7 @@ export async function advance(s: Shared, run_id: string): Promise<void> {
     for (const id of ready) {
       const node = graph_node(run.graph, id);
       if (!node) continue;
-      let done: Done | null;
+      let done: Done | null = null;
       switch (node.kind) {
         case "trigger":
           done = Done_port("out");
@@ -705,6 +837,8 @@ export function node_name(n: Node): string {
       return "Open a pull request";
     case "column":
       return status_label(n.status);
+    default:
+      return n.kind;
   }
 }
 
@@ -847,7 +981,13 @@ async function start_agent(s: Shared, run: Run, node: Node): Promise<void> {
     const n = last?.nodes[node.id];
     if (n?.port === "issues") recheck = n.issues ?? [];
   }
-  const rendered = prompt.render(instructions, task, work.key, workflow, run);
+  const rendered = input_value(
+    s,
+    { graph: run.graph, workflow: { id: run.workflow_id, name: workflow }, task, key: work.key, run },
+    node,
+    "prompt",
+    instructions,
+  );
   const asked = rendered.trim() ? rendered : output === "verdict" ? prompts.review(project) : `Read the work, and report on it as "${name}".`;
   const text = prompt.agent(task, work, workflow, name, asked, output, skills, codex, earlier, replies, recheck, node.input_only === true);
   const title = `${name} (${workflow}) of ${work.key}`;
@@ -916,12 +1056,10 @@ function send(s: Shared, run: Run, node: Node, message: string, max_rounds: numb
   } catch {}
   const key = task_key(s.db(), task);
   const issues = prompt.issues(run);
-  let text: string;
-  if (!message.trim()) {
+  let text = input_value(s, { graph: run.graph, workflow: { id: run.workflow_id, name: workflow }, task, key, run }, node, "message", message).trim();
+  if (!text) {
     if (!issues.length) return Done_failed("there are no issues to send (and the step has no message of its own)");
     text = prompt.fixes(workflow, issues);
-  } else {
-    text = prompt.render(message, task, key, workflow, run);
   }
   const used = run.rounds[node.id] ?? 0;
   if (used >= max_rounds) {
@@ -989,6 +1127,7 @@ function end_nodes(run: Run, why: string): string[] {
   const threads: string[] = [];
   const at = now();
   for (const n of run.graph.nodes) {
+    if (is_data(n)) continue;
     const r = node_entry(run, n.id);
     if (r.state === "pending") r.state = "skipped";
     else if (r.state === "running") {
@@ -1020,15 +1159,18 @@ async function enter_column(s: Shared, run: Run, node: Node): Promise<Done | nul
   if (node.status !== "in_progress" || task.status !== "in_progress" || task.waiting || task.merging || s.is_running(task.id)) return Done_port_none();
   const w = get(s.db(), run.workflow_id);
   const issues = prompt.issues(run);
-  const key = task_key(s.db(), task);
+  // A prompt that's wired is the one to send, which can take the issues itself; one of its own is the start prompt.
+  const wired = wire(run.graph, node.id, "prompt") != null;
   const text =
     task.session_id == null
       ? ""
-      : issues.length
-        ? prompt.fixes(w?.name ?? "", issues)
-        : w && node.prompt.trim()
-          ? column_text(task, key, w, node, run, "")
-          : null;
+      : w && wired
+        ? column_text(s, task, w, node, run, "") || null
+        : issues.length
+          ? prompt.fixes(w?.name ?? "", issues)
+          : w && node.prompt.trim()
+            ? column_text(s, task, w, node, run, "")
+            : null;
   if (text == null) return Done_port_none();
   // Ends the run, and stops its other steps: the agent's work is about to change.
   const current = get_run(s.db(), run.id);
@@ -1129,9 +1271,9 @@ async function open_pr(s: Shared, run: Run, node: Node): Promise<Done> {
   const [pushed, push_failed] = await call("git_push", { remote: gh.remote, branch });
   if (push_failed) throw `couldn't push ${branch} to ${gh.remote}: ${pushed}`;
   if (has) return has;
-  const title = prompt.render(node.title, task, work.key, workflow, run).trim() || `${work.key}: ${task.title}`;
-  const body =
-    prompt.render(node.body, task, work.key, workflow, run).trim() || history.last_assistant_text(s.db(), task.id)?.trim() || task.description.trim();
+  const src: Source = { graph: run.graph, workflow: { id: run.workflow_id, name: workflow }, task, key: work.key, run };
+  const title = input_value(s, src, node, "title", node.title).trim() || `${work.key}: ${task.title}`;
+  const body = input_value(s, src, node, "body", node.body).trim() || history.last_assistant_text(s.db(), task.id)?.trim() || task.description.trim();
   const args: any = { repo: gh.repo, head: branch, title, body: body || title };
   if (base) args.base = base;
   if (node.draft) args.draft = true;
@@ -1320,6 +1462,7 @@ export function resume(s: Shared): void {
   for (const run of rs) {
     let changed = false;
     for (const n of run.graph.nodes) {
+      if (is_data(n)) continue;
       const r = node_entry(run, n.id);
       if (r.state !== "running") continue;
       // Agents carry on over a restart, and their runs' ends end their steps (see `finished`), as the task's agent's

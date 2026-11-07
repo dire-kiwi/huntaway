@@ -241,6 +241,20 @@ API 123 a workflow can hold a task's whole way across the board, column by colum
   agent step before it, `{{<step id>.text}}`; one it has already gets the new commits); and _send to
   the task's agent_ (the issues found, or a message of its own, for up to so many rounds). A
   workflow can also have a start for runs by hand from the task.
+- **Values and wires.** As in Blender's node editor, a workflow has two kinds of sockets: the
+  outcomes a run goes along (circles), and values (diamonds) that build the text steps use. Every
+  text field of a step is an input: a column's prompt, an agent step's instructions, a send's
+  message, a pull request's title and body. Drag a value onto it and the wire replaces the field's
+  own text. Values come from steps (an agent step's text, issues or verdict, a pull request's URL, a
+  column's _what happens next_) and from value nodes, which no run goes into: _Text_ (with
+  templates), _Task_ (its title, description, key, branch, commit, pull request and labels),
+  _Project prompt_ (the project's start, review or merge prompt), _Compose_ (a template whose
+  `{{name}}`s are its inputs), _Join_ (its inputs with text, with a separator between them) and
+  _Switch_ (its yes or no input, by whether the task has a pull request, a type or a label). A
+  value is read when the step it goes into runs: a step's output is from the run, or else from the
+  workflow's last run on the task that ran it, so In progress's prompt can take the issues of the
+  last review. Values can't go round in a loop. A column's _what happens next_ is added to its
+  prompt unless it's wired somewhere, in which case it goes only where it's wired.
 - **Pipelines.** An agent step is given the output of the agent steps before it in the graph. With
   _Work only on what the steps before it wrote_ (`input_only`) it isn't told where the task's work
   is either, so a summary can be passed to another agent that processes it with a skill, in a

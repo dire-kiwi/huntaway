@@ -1326,3 +1326,151 @@ test("a_task_held_for_a_run_that_doesnt_start_goes_to_review", async () => {
   const t = await left_in_progress(s, task.id);
   assert.equal(t.status, "in_review");
 });
+
+test("data_wires_go_from_a_value_to_an_input_one_each_and_never_round", () => {
+  const s = testing.state();
+  const [project] = setup(s);
+  const c = s.db();
+  const bad = (g: any, what: string) =>
+    assert.throws(
+      () => check_graph(c, project, g),
+      (e: any) => e.status === 400 && e.message.includes(what),
+    );
+  const nodes = [
+    { id: "work", kind: "column", status: "in_progress" },
+    { id: "t", kind: "text", text: "Use TDD." },
+    { id: "u", kind: "text", text: "Be brief." },
+    { id: "c", kind: "compose", template: "{{a}} {{b}}" },
+    { id: "d", kind: "compose", template: "{{x}}" },
+  ];
+  check_graph(c, project, {
+    nodes,
+    edges: [
+      { from: "t", port: "text", to: "c", input: "a" },
+      { from: "u", port: "text", to: "c", input: "b" },
+      { from: "c", port: "text", to: "work", input: "prompt" },
+    ],
+  });
+  bad({ nodes, edges: [{ from: "t", port: "nope", to: "c", input: "a" }] }, "gives no value nope");
+  bad({ nodes, edges: [{ from: "t", port: "text", to: "c", input: "zz" }] }, "has no input zz");
+  bad(
+    {
+      nodes,
+      edges: [
+        { from: "t", port: "text", to: "c", input: "a" },
+        { from: "u", port: "text", to: "c", input: "a" },
+      ],
+    },
+    "two wires",
+  );
+  bad({ nodes, edges: [{ from: "work", port: "done", to: "t" }] }, "gives values, so no run goes into it");
+  bad({ nodes, edges: [{ from: "t", port: "done", to: "work" }] }, "has no port done");
+  bad(
+    {
+      nodes,
+      edges: [
+        { from: "c", port: "text", to: "d", input: "x" },
+        { from: "d", port: "text", to: "c", input: "a" },
+      ],
+    },
+    "values go round in a loop",
+  );
+  // A step's value back into a step before it is no loop: it's read from its run, or an earlier one.
+  check_graph(c, project, {
+    nodes: [
+      { id: "work", kind: "column", status: "in_progress" },
+      { id: "r", kind: "agent", name: "R", output: "verdict" },
+    ],
+    edges: [
+      { from: "work", port: "done", to: "r" },
+      { from: "r", port: "issues", to: "work", input: "prompt" },
+    ],
+  });
+});
+
+test("a_prompt_built_from_wires_takes_the_task_the_last_review_and_the_note_where_its_put", () => {
+  const s = testing.state();
+  const [project, task] = setup(s);
+  db.update_task(s.db(), task.id, [["labels", JSON.stringify(["plan"])]]);
+  const graph = (o: { next?: boolean } = {}) => ({
+    nodes: [
+      { id: "work", kind: "column", status: "in_progress" },
+      { id: "review", kind: "column", status: "in_review" },
+      { id: "reviewer", kind: "agent", name: "Reviewer", output: "verdict" },
+      { id: "task", kind: "task" },
+      { id: "rules", kind: "text", text: "Rules for {{task.key}}." },
+      { id: "base", kind: "project_prompt", which: "start" },
+      { id: "plan", kind: "switch", check: "label", value: "plan" },
+      { id: "planned", kind: "text", text: "Follow the plan." },
+      { id: "join", kind: "join", separator: "\\n", count: 3 },
+      { id: "compose", kind: "compose", template: "# {{title}}\n\n{{body}}\n\nFix: {{issues}}{{note}}" },
+    ],
+    edges: [
+      { from: "work", port: "done", to: "review" },
+      { from: "review", port: "done", to: "reviewer" },
+      { from: "task", port: "title", to: "compose", input: "title" },
+      { from: "base", port: "text", to: "join", input: "in1" },
+      { from: "rules", port: "text", to: "join", input: "in2" },
+      { from: "plan", port: "text", to: "join", input: "in3" },
+      { from: "planned", port: "text", to: "plan", input: "yes" },
+      { from: "join", port: "text", to: "compose", input: "body" },
+      { from: "reviewer", port: "issues", to: "compose", input: "issues" },
+      ...(o.next ? [{ from: "work", port: "next", to: "compose", input: "note" }] : []),
+      { from: "compose", port: "text", to: "work", input: "prompt" },
+    ],
+  });
+  const w = make(s, project, graph());
+  // The last review found an issue.
+  const r = bare_run(w.graph, task.id, null);
+  Object.assign(r, {
+    id: "earlier",
+    workflow_id: w.id,
+    state: "done",
+    nodes: { review: { state: "done", port: "done", start: true }, reviewer: { state: "done", port: "issues", issues: ["It crashes."] } },
+  });
+  insert_run(s.db(), r);
+  const t = db.get_task(s.db(), task.id)!;
+  const note = "When you're done, end your turn with a summary of what you did. The board then moves the task to In review.";
+  // {{note}} isn't wired: unwired, a name with no value of the template's own is left as it is.
+  assert.equal(
+    start_instructions(s, t, project),
+    `# Fix the thing\n\nStart working on this task.\nRules for X-1.\nFollow the plan.\n\nFix: 1. It crashes.{{note}}\n\n${note}`,
+  );
+  // With `next` wired, the note is where it's put, and only there.
+  update(s, w.id, { graph: graph({ next: true }) });
+  assert.equal(
+    start_instructions(s, t, project),
+    `# Fix the thing\n\nStart working on this task.\nRules for X-1.\nFollow the plan.\n\nFix: 1. It crashes.${note}`,
+  );
+  // Without the label, the switch gives its no, which isn't wired: that line goes.
+  db.update_task(s.db(), task.id, [["labels", "[]"]]);
+  assert.ok(!start_instructions(s, db.get_task(s.db(), task.id)!, project)!.includes("Follow the plan."));
+});
+
+test("a_send_and_a_pull_request_take_their_wired_text", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    db.update_task(s.db(), task.id, [["session_id", "sess"]]);
+    const w = make(s, project, {
+      nodes: [
+        { id: "start", kind: "trigger", on: "manual" },
+        { id: "send", kind: "send_to_task", message: "unused", max_rounds: 2 },
+        { id: "msg", kind: "compose", template: "Hello {{who}}, about {{task.key}}." },
+        { id: "who", kind: "task" },
+      ],
+      edges: [
+        { from: "start", port: "out", to: "send" },
+        { from: "who", port: "title", to: "msg", input: "who" },
+        { from: "msg", port: "text", to: "send", input: "message" },
+      ],
+    });
+    const run = (await start(s, w.id, task.id, true))!;
+    // Data nodes take no part in the run, which ends as it would without them.
+    assert.deepEqual([run.state, Object.keys(run.nodes).sort()], ["done", ["send", "start"]]);
+    assert.equal(last_user_text(s, task.id), "Hello Fix the thing, about X-1.");
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});

@@ -630,6 +630,14 @@ function workflow_tools(profile: any, project_one: string): any[] {
       "at most max_rounds runs in a row (default 2), then → exhausted (with nothing after it, the task goes to needs_attention); " +
       "{kind: 'open_pr', title, body, draft} pushes the task's branch and opens its pull request with the gh tools (title and body are templates; empty: the task's key and title, and its agent's last message) " +
       "→ opened, exists (it has one already, which gets the branch's new commits), failed; while one comes after In progress's done, the agent isn't told to open one. " +
+      "Data wires build prompts: an edge with input, {from, port, to, input}, gives node to's input (one wire each) the value port of node from, in place of " +
+      "the input's own text: column prompt, agent prompt, send_to_task message, open_pr title and body, a compose node's {{name}}s (without a dot), a join's " +
+      "in1…in<count>, a switch's yes and no. Values: agent text, issues, verdict (from the run, or else the workflow's latest run on the task that ran it, so " +
+      "In progress's prompt can take the last review's issues); open_pr url; column next (what the board does once its work is done, which is added to its " +
+      "prompt unless next is wired somewhere); and data nodes, which no run goes into: {kind: 'text', text} → text (a template); {kind: 'task'} → title, " +
+      "description, key, branch, commit, pr, labels; {kind: 'project_prompt', which: 'start'|'review'|'merge'} → text; {kind: 'compose', template} → text; " +
+      "{kind: 'join', separator, count} → text (its inputs with text, separated; \\n is a newline); {kind: 'switch', check: 'has_pr'|'task_type'|'label', " +
+      "value} → text (its yes or no). Values can't go round in a loop among data nodes. " +
       "The kinds from before column nodes, {kind: 'trigger', on: 'status', status}, {kind: 'trigger', on: 'finished'} and {kind: 'set_status', status}, are read as column nodes. " +
       "Each node has an id (letters, digits, - and _), and x and y for where the editor draws it.",
     properties: {
@@ -639,7 +647,10 @@ function workflow_tools(profile: any, project_one: string): any[] {
           type: "object",
           properties: {
             id: { type: "string" },
-            kind: { type: "string", enum: ["column", "trigger", "condition", "agent", "send_to_task", "open_pr"] },
+            kind: {
+              type: "string",
+              enum: ["column", "trigger", "condition", "agent", "send_to_task", "open_pr", "text", "task", "project_prompt", "compose", "join", "switch"],
+            },
             on: { type: "string", enum: ["manual"] },
             status: { type: "string", enum: STATUSES },
             check: { type: "string", enum: ["changed", "has_commits", "has_pr", "task_type", "label"] },
@@ -657,6 +668,11 @@ function workflow_tools(profile: any, project_one: string): any[] {
             title: { type: "string" },
             body: { type: "string" },
             draft: { type: "boolean" },
+            text: { type: "string" },
+            which: { type: "string", enum: ["start", "review", "merge"] },
+            template: { type: "string" },
+            separator: { type: "string" },
+            count: { type: "integer", minimum: 1, maximum: 8 },
             message: { type: "string" },
             max_rounds: { type: "integer", minimum: 0, maximum: WORKFLOW_MAX_ROUNDS },
             join: { type: "string", enum: ["any", "all"] },
@@ -668,7 +684,11 @@ function workflow_tools(profile: any, project_one: string): any[] {
       },
       edges: {
         type: "array",
-        items: { type: "object", properties: { from: { type: "string" }, port: { type: "string" }, to: { type: "string" } }, required: ["from", "port", "to"] },
+        items: {
+          type: "object",
+          properties: { from: { type: "string" }, port: { type: "string" }, to: { type: "string" }, input: { type: "string" } },
+          required: ["from", "port", "to"],
+        },
       },
     },
     required: ["nodes", "edges"],

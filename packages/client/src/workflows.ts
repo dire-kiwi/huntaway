@@ -48,16 +48,26 @@ export type WorkflowNodeKind =
   /** Moves the task, on hosts before API 123. */
   | { kind: "set_status"; status: Status }
   /** Pushes the task's branch and opens its pull request: title and body are templates (empty: the defaults). API 123. */
-  | { kind: "open_pr"; title: string; body: string; draft?: boolean };
+  | { kind: "open_pr"; title: string; body: string; draft?: boolean }
+  // Data nodes (API 123): values for other nodes' inputs, through data wires (see `workflowDataInputs`). No run goes into them.
+  | { kind: "text"; text: string }
+  | { kind: "task" }
+  | { kind: "project_prompt"; which: "start" | "review" | "merge" }
+  /** A template whose `{{name}}`s without a dot are inputs. */
+  | { kind: "compose"; template: string }
+  | { kind: "join"; separator: string; count: number }
+  | { kind: "switch"; check: WorkflowCheck; value?: string | null };
 
 export type WorkflowNodeKindName = WorkflowNodeKind["kind"];
 
 export type WorkflowNode = WorkflowNodeKind & { id: string; x: number; y: number; join?: "any" | "all" };
 
+/** The way a run goes from `from`'s `port` to `to`; with `input`, a data wire from `from`'s value `port` to `to`'s input. */
 export interface WorkflowEdge {
   from: string;
   port: string;
   to: string;
+  input?: string;
 }
 
 export interface WorkflowGraph {
@@ -112,8 +122,68 @@ export interface WorkflowRun {
   finished_at: string | null;
 }
 
+export const WORKFLOW_DATA_KINDS = ["text", "task", "project_prompt", "compose", "join", "switch"] as const;
+
+/** Whether it's a data node, which gives values and no run goes into. */
+export const isDataNode = (n: WorkflowNodeKind) => (WORKFLOW_DATA_KINDS as readonly string[]).includes(n.kind);
+
+/** The `{{name}}`s of a compose template that are its inputs: those without a dot. */
+export function templateInputs(t: string): string[] {
+  const out: string[] = [];
+  for (const m of t.matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)) if (!out.includes(m[1])) out.push(m[1]);
+  return out;
+}
+
+/** The inputs a node takes values on, which a data wire replaces its own text in. */
+export function workflowDataInputs(n: WorkflowNodeKind): string[] {
+  switch (n.kind) {
+    case "column":
+      return n.status === "needs_attention" || n.status === "done" ? [] : ["prompt"];
+    case "agent":
+      return ["prompt"];
+    case "send_to_task":
+      return ["message"];
+    case "open_pr":
+      return ["title", "body"];
+    case "compose":
+      return templateInputs(n.template);
+    case "join":
+      return Array.from({ length: Math.min(Math.max(n.count, 1), 8) }, (_, i) => `in${i + 1}`);
+    case "switch":
+      return ["yes", "no"];
+    default:
+      return [];
+  }
+}
+
+/** The values a node gives other nodes' inputs. */
+export function workflowDataOutputs(n: WorkflowNodeKind): string[] {
+  switch (n.kind) {
+    case "agent":
+      return ["text", "issues", "verdict"];
+    case "open_pr":
+      return ["url"];
+    case "column":
+      return ["next"];
+    case "task":
+      return ["title", "description", "key", "branch", "commit", "pr", "labels"];
+    case "text":
+    case "project_prompt":
+    case "compose":
+    case "join":
+    case "switch":
+      return ["text"];
+    default:
+      return [];
+  }
+}
+
+/** The data wire into node `id`'s input `input`, if any. */
+export const workflowWire = (g: WorkflowGraph, id: string, input: string) => g.edges.find((e) => e.to === id && e.input === input);
+
 /** The ports a node of this kind ends on, which its edges go out of. */
 export function workflowPorts(n: WorkflowNodeKind): string[] {
+  if (isDataNode(n)) return [];
   switch (n.kind) {
     case "trigger":
     case "set_status":
@@ -128,6 +198,8 @@ export function workflowPorts(n: WorkflowNodeKind): string[] {
       return ["exhausted"];
     case "open_pr":
       return ["opened", "exists", "failed"];
+    default:
+      return [];
   }
 }
 
@@ -135,8 +207,9 @@ export function workflowPorts(n: WorkflowNodeKind): string[] {
  * Whether a column node's `done` waits for the task's agent's work there: In progress, Ready for merge (its merge),
  * and a column with a prompt. Elsewhere it follows at once.
  */
-export const workflowWaits = (n: WorkflowNodeKind) =>
-  n.kind === "column" && (n.status === "in_progress" || n.status === "ready_for_merge" || n.prompt.trim() !== "");
+export const workflowWaits = (n: WorkflowNodeKind & { id?: string }, g?: WorkflowGraph) =>
+  n.kind === "column" &&
+  (n.status === "in_progress" || n.status === "ready_for_merge" || n.prompt.trim() !== "" || (!!g && !!n.id && !!workflowWire(g, n.id, "prompt")));
 
 /** The column node a run waits at for the task's agent's work there, which it was sent the prompt of. */
 export function workflowWaitingAt(r: WorkflowRun): Extract<WorkflowNode, { kind: "column" }> | null {
