@@ -153,7 +153,8 @@ function new_task(profile_id: string, project_id: string | null, title: string, 
 }
 
 /** A document in the profile's Docs (HA-281), as an agent publishes one: its versions' messages and pages. The second
- *  version merges into the first. */
+ *  version merges into the first. A merge keeps the carried-over pages' positions, as the hosted server's does, so its
+ *  pages give their menu order (`order:`) for Phase 2 to follow Phase 1 (HA-286). */
 const DOC_VERSIONS: Array<{ message: string; pages: Array<{ path: string; content: string; format?: string }> }> = [
   {
     message: "First draft of the rollout plan",
@@ -161,12 +162,15 @@ const DOC_VERSIONS: Array<{ message: string; pages: Array<{ path: string; conten
       {
         path: "index",
         content:
-          "# Rollout plan\n\nHow the new board ships, in two phases. See [Phase 1](plan/phase-1) for the details, " +
+          "---\norder: 0\n---\n# Rollout plan\n\nHow the new board ships, in two phases. See [Phase 1](plan/phase-1) for the details, " +
           "and [the notes](notes) for open questions.\n\n## Goals\n\n- Every profile has its own documents.\n- Agents publish them as they work.\n\n" +
           "Pages render as in [the docs app](https://github.com/dire-kiwi/docs).\n",
       },
-      { path: "plan/index", content: "# Phases\n\nThe rollout is split into phases:\n\n1. [Phase 1](phase-1): the store.\n" },
-      { path: "plan/phase-1", content: "# Phase 1\n\nThe document store and the agents' `docs` server.\n\n## Steps\n\n1. Store versions.\n2. Render pages.\n" },
+      { path: "plan/index", content: "---\norder: 1\n---\n# Phases\n\nThe rollout is split into phases:\n\n1. [Phase 1](phase-1): the store.\n" },
+      {
+        path: "plan/phase-1",
+        content: "---\norder: 2\n---\n# Phase 1\n\nThe document store and the agents' `docs` server.\n\n## Steps\n\n1. Store versions.\n2. Render pages.\n",
+      },
     ],
   },
   {
@@ -174,14 +178,18 @@ const DOC_VERSIONS: Array<{ message: string; pages: Array<{ path: string; conten
     pages: [
       {
         path: "plan/index",
-        content: "# Phases\n\nThe rollout is split into phases:\n\n1. [Phase 1](phase-1): the store.\n2. [Phase 2](phase-2): the board's page.\n",
+        content:
+          "---\norder: 1\n---\n# Phases\n\nThe rollout is split into phases:\n\n1. [Phase 1](phase-1): the store.\n2. [Phase 2](phase-2): the board's page.\n",
       },
-      { path: "plan/phase-2", content: "# Phase 2\n\nThe board's Docs page: the list, the menu, the versions.\n\n[Back to the plan](../)\n" },
+      {
+        path: "plan/phase-2",
+        content: "---\norder: 3\n---\n# Phase 2\n\nThe board's Docs page: the list, the menu, the versions.\n\n[Back to the plan](../)\n",
+      },
       {
         path: "notes",
         format: "mdx",
         content:
-          '# Notes\n\n<Callout type="warning">Forms in local documents collect no answers.</Callout>\n\n' +
+          '---\norder: 4\n---\n# Notes\n\n<Callout type="warning">Forms in local documents collect no answers.</Callout>\n\n' +
           '<Approval />\n\n<TextInput name="why" label="Anything to add?" />\n',
       },
     ],

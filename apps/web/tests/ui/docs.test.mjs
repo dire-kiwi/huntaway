@@ -59,6 +59,8 @@ test("the sidebar's Docs lists the profile's documents, and a document's links, 
     assert.deepEqual(look, { bg: "rgb(11, 11, 14)", rule: "solid" });
     await ui.run(["wait Add phase 2 and the open questions"]);
     assert.equal(await page.getByRole("combobox", { name: "Version" }).inputValue(), "2");
+    // The merged version's menu reads in order (HA-286: its pages' `order:`, as a merge keeps the others' positions).
+    assert.deepEqual(await page.locator("nav[aria-label=Pages] button").allInnerTexts(), ["Rollout plan", "Phases", "Phase 1", "Phase 2", "Notes"]);
     assert.deepEqual(
       asked.map((q) => new URLSearchParams(q).get("first")),
       ["1"],
