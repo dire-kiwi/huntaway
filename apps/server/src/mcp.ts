@@ -611,7 +611,7 @@ function workflow_tools(profile: any, project_one: string): any[] {
       "ends that path: the column's own outcome is the next run's. No loops but through a column (or by sending to the task's agent). Node kinds and their ports: " +
       "{kind: 'column', status, prompt, done_when, max_rounds} (one per column) → done. A task entering the column starts a run there. prompt (a template) is what the " +
       "task's agent is sent then, with what the board does once its work is done (the steps after done): for in_progress it's the task's start prompt " +
-      "(empty: the project's), and an edge into in_progress gives a started task the issues the run found, or else the prompt, at most max_rounds (default 3) runs in a row, then needs_attention; for ready_for_merge it's how " +
+      "(empty: the project's), and an edge into in_progress gives a started task the issues the run found, or else the prompt (empty: the project's start prompt), at most max_rounds (default 3) runs in a row, then needs_attention; for ready_for_merge it's how " +
       "the agent merges. done comes when that work is: for in_progress and a column with a prompt, when the agent's run ends (a question for the user or a " +
       "failure leaves it in needs_attention, waiting), or with done_when 'finish' only once the agent calls finish_work in its turn (without it, " +
       "needs_attention); for ready_for_merge once the task is merged; elsewhere at once. Meanwhile the task stays in In progress rather than going to " +

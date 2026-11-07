@@ -92,7 +92,8 @@ A column of the board: In progress, In review, Ready for merge, Needs attention,
 
 - **In progress**: the prompt is what the agent starts with, after the task's title and description, in place of the
   project's start prompt (blank: the project's). A line into In progress for a task that has started gives its agent
-  the issues the run found, or, if its prompt is wired, the prompt. `done` comes when the agent's turn ends without a
+  the issues the run found, or, if its prompt is wired or there are none, the prompt (blank: the project's start
+  prompt, as it started with). `done` comes when the agent's turn ends without a
   question for you, or with **Done when: the agent says so**, only once it calls the board's `finish_work` tool in its
   turn (a turn that ends without it moves the task to Needs attention, whether it did the work or revised a plan task's
   plan as it went). Only code tasks, which get In progress's prompt, are asked for it; the fixes and messages the

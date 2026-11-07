@@ -1653,3 +1653,36 @@ test("an In progress node's max_rounds is checked", () => {
   const review = check_graph(s.db(), project, { nodes: [{ id: "r", kind: "column", status: "in_review", max_rounds: 5 }], edges: [] });
   assert.equal((review.nodes[0] as any).max_rounds, undefined);
 });
+
+// Review of HA-276: a line into In progress with no issues, and In progress with no prompt of its own (as in every
+// preset), left a started task in In progress with nothing to do; it's given In progress's start text, as a round.
+test("a line into a blank In progress gives a started task the start prompt again", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    db.run(s.db(), "UPDATE projects SET start_prompt='Read the CONTRIBUTING file first.' WHERE id=?1", project.id);
+    db.update_task(s.db(), task.id, [["session_id", "sess"]]);
+    const w = make(s, project, {
+      nodes: [
+        { id: "work", kind: "column", status: "in_progress" },
+        { id: "review", kind: "column", status: "in_review" },
+        { id: "c", kind: "condition", check: "has_pr" },
+      ],
+      edges: [
+        { from: "work", port: "done", to: "review" },
+        { from: "review", port: "done", to: "c" },
+        { from: "c", port: "no", to: "work" },
+      ],
+    });
+    const run = (await start(s, w.id, task.id, false, 0, "status", "review"))!;
+    assert.deepEqual([run.state, run_node(run, "work").state, run.rounds], ["done", "done", { work: 1 }]);
+    const t = db.get_task(s.db(), task.id)!;
+    assert.equal(t.status, "in_progress");
+    const sent = last_user_text(s, task.id);
+    assert.ok(sent.startsWith("Read the CONTRIBUTING file first.\n\nWhen you're done"), sent);
+    assert.ok(sent.includes("moves the task to In review"), sent);
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});

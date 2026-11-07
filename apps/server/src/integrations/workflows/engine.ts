@@ -1244,18 +1244,19 @@ async function enter_column(s: Shared, run: Run, node: Node): Promise<Done | nul
   if (node.status !== "in_progress" || task.status !== "in_progress" || task.waiting || task.merging || s.is_running(task.id)) return Done_port_none();
   const w = get(s.db(), run.workflow_id);
   const issues = prompt.issues(run);
-  // A prompt that's wired is the one to send, which can take the issues itself; one of its own is the start prompt.
+  // A prompt that's wired is the one to send, which can take the issues itself; else the issues, or else In progress's
+  // start text, as the agent started with (its prompt, or the project's start prompt): the task isn't left in In
+  // progress with nothing to do.
   const wired = wire(run.graph, node.id, "prompt") != null;
+  const project = task.project_id ? db.get_project(s.db(), task.project_id) : null;
   const text =
     task.session_id == null
       ? ""
-      : w && wired
-        ? column_text(s, task, w, node, run, "") || null
-        : issues.length
-          ? with_finish(s, task, prompt.fixes(w?.name ?? "", issues))
-          : w && node.prompt.trim()
-            ? column_text(s, task, w, node, run, "")
-            : null;
+      : !w
+        ? null
+        : issues.length && !wired
+          ? with_finish(s, task, prompt.fixes(w.name, issues))
+          : column_text(s, task, w, node, run, prompts.start_task(task, project));
   if (text == null) return Done_port_none();
   // Ends the run, and stops its other steps: the agent's work is about to change.
   const current = get_run(s.db(), run.id);
