@@ -1027,9 +1027,8 @@ test("a_database_at_version_76_has_every_task_in_later", () => {
   );
   const c = open(path);
   assert.equal(user_version(c), VERSION);
-  assert.equal(get_task(c, "t")!.now_at, null);
-  const t = update_task(c, "t", [["now_at", "2030-01-01T00:00:00.000Z"]])!;
-  assert.equal(t.now_at, "2030-01-01T00:00:00.000Z");
+  // The column is there, though nothing uses it since HA-285.
+  assert.equal(db.value(c, "SELECT now_at FROM tasks WHERE id='t'"), null);
   c.close();
 });
 

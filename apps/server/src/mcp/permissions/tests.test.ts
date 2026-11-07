@@ -127,8 +127,6 @@ test("answers_to_claudes_questions_go_back_as_its_tool_takes_them", async () => 
   assert.deepEqual([shown.status, shown.answers], ["allowed", [["Summer"], ["Cats", "Birds", "a lizard"]]]);
   t = db.get_task(s.db(), task.id)!;
   assert.deepEqual([t.status, t.attention_reason], ["in_progress", null]);
-  // Answers to a question the agent is waiting for are a prompt too; a permission decision isn't.
-  assert.ok(t.now_at != null);
   // Not as an always-allowed tool.
   assert.equal(t.auto_allow.length, 0);
 });
@@ -263,12 +261,8 @@ test("a_question_or_plan_whose_run_ended_is_answered_by_message", async () => {
   assert.throws(() => answer(s, id, true, false, null, answers([["Winter"], ["Dogs"]])));
   assert.equal(prompt_message(s, id).status, "expired");
 
-  assert.equal(db.get_task(s.db(), task.id)!.now_at, null, "not sent, so not a prompt");
-
   s.runs.set(task.id, { run_id: run.id, cancel: null });
   assert.equal(answer(s, id, true, false, null, answers([["Winter"], ["Dogs"]])), "allowed");
-  // The answers are the user's prompt: it puts the task in now.
-  assert.ok(db.get_task(s.db(), task.id)!.now_at != null);
   const queued = db.get_task(s.db(), task.id)!.queued_message;
   assert.equal(queued, "My answers to the questions you asked:\n\n- Which season?\n  Winter\n- Which pets?\n  Dogs");
   const shown = prompt_message(s, id);

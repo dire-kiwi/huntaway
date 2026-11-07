@@ -128,7 +128,7 @@ test("another_profiles_pens_are_out_of_reach", async () => {
   assert.equal(status, 404);
 });
 
-test("the_api_moves_tasks_between_pens_without_putting_them_in_now", async () => {
+test("the_api_moves_tasks_between_pens", async () => {
   const { s, p, web } = await board();
   const events: any[] = [];
   s.events.subscribe((e) => events.push(e));
@@ -138,15 +138,11 @@ test("the_api_moves_tasks_between_pens_without_putting_them_in_now", async () =>
   assert.ok(events.some((e) => e.type === "pens" && e.profile_id === p.id));
   [status] = await request(s, "POST", `/profiles/${p.id}/pens`, { name: "TODAY" });
   assert.equal(status, 409);
-  // Out of Now first, so that a move that put it back would show.
-  db.update_task(s.db(), web.id, [["now_at", null]]);
   let [, t] = await request(s, "PATCH", `/tasks/${web.id}`, { pen_id: pen.id });
   assert.equal(t.pen_id, pen.id);
-  assert.equal(t.now_at, null);
   [, t] = await request(s, "PATCH", `/tasks/${web.id}`, { pen: "Parked" });
   const parked = db.pen_by_name(s.db(), p.id, "parked")!;
   assert.equal(t.pen_id, parked.id);
-  assert.equal(t.now_at, null);
   let [, list] = await request(s, "GET", `/profiles/${p.id}/pens`);
   assert.deepEqual(
     list.map((x: any) => [x.name, x.task_count]),

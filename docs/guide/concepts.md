@@ -257,32 +257,21 @@
   the browser tab; _Sort_ (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
-- **Now and Later** (HA-109, API 97): every task is in _Later_ until it's put in _Now_, which is
-  what you're working on at the moment. A prompt you send a task from its thread or the new task
-  dialog, or an answer to one of its question cards (not one from an automation or the board itself) puts it in Now. So does any
-  update to it (`PATCH /tasks/{id}` or an agent's `update_task`, unless the same request sets `now` or only changes `position`, as the board does renumbering a column), an agent's `send_to_task`
-  (a parent starting its subproject's tasks, say), and creating it with `create_task` (`now: false` starts it in Later). So does
-  _Move to Now_ in its right-click menu (_Move to Later_ puts
-  it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
-  `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
-  (_Now_, _Later_, _All_, which starts on _All_ and is kept for every board) applies to every
-  view: the board, list, triage and graph, with the search and filters. A task in
-  Now has a bolt on its card and row, and the switch counts them. A task goes back to Later once
-  nothing has happened on it for a day: no prompt from you, no message in its thread (the
-  agent's included), and its agent not running. The day is the host's _Tasks in Now go back to
-  Later after N hours_ setting in its page in Settings (`now_expiry_hours` in `/settings`; 0
-  keeps them in Now until they're moved, null is the default 24), looked at every minute.
+- **Now and Later** (HA-109, API 97) were taken out by HA-285 (API 126): pens took their place
+  (see _Pens_ in [Using the board](board.md)). Hosts ignore `now` on `PATCH /tasks/{id}` and the
+  agents' task tools, tasks no longer have `now_at`, and `/settings` no longer has
+  `now_expiry_hours`.
   - **Lasso:** hold Ctrl and drag with the right mouse button on a board, in any view, to draw a
     loop; the tasks it goes round or over are picked (outlined) as it's drawn, and the browser's
     own menu stays shut. Add Shift to keep those already picked. Ctrl + right-click (without a
     drag) on a card picks it, or lets it go if it was. A bar at the foot of the board counts the
-    picked tasks and moves them to _Now_ or _Later_; so does the right-click menu of any of them
-    (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
+    picked tasks, and its _Pen_ puts them in a pen or takes them out; so does the right-click menu
+    of any of them (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
     use a card's menu button.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
   _Board_ and _List_, the view switch has two more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
-  1500px the switch names only the current view, and below 1320px none.
+  1500px the switch names only the current view, and below 1180px none.
   - _Triage_: what each task needs from you, most pressing first: an answer (_Needs
     attention_), a review (_In review_), a reminder that's come round, an agent that stopped
     before it finished, a start; then the agents at work. Each shows the agent's last words

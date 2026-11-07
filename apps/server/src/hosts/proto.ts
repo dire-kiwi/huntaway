@@ -68,6 +68,8 @@ export const PROTOCOL = 1;
  * `GET`/`POST /profiles/{id}/pens`, `PATCH`/`DELETE /pens/{id}` (see api/pens.ts), tasks' `pen_id` (set with `pen` or
  * `pen_id` on `PATCH /tasks/{id}`), `pens` events, and each profile's pens thread (`GET /profiles/{id}/pens-thread`,
  * task type `pens`, off the board unless `/group-tasks?include_pens=1`), which arranges them with the agents' pen tools.
+ * Pens replace the Now/Later split (API 97), which is gone: tasks have no `now_at`, `now` on `PATCH /tasks/{id}` and
+ * the task tools is ignored, and `/settings` has no `now_expiry_hours`.
  */
 export const API_VERSION = 126;
 

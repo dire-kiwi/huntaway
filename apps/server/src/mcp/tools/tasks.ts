@@ -4,7 +4,6 @@ import * as db from "../../db.ts";
 import type { Task } from "../../db.ts";
 import type { Shared } from "../../state.ts";
 import * as api from "../../api.ts";
-import * as focus from "../../agent/focus.ts";
 import * as documents from "../../agent/documents.ts";
 import { path_str } from "../../util.ts";
 import { ToolError, type Ctx } from "../tools.ts";
@@ -189,18 +188,13 @@ export function created(s: Shared, ctx: Ctx, t: Task, marks: Array<[string, any]
   return t;
 }
 
-/** Task `t`, just made by `create_task`, in "now" like every task made from the board, unless the caller said `now: false`. */
-export function new_in_now(s: Shared, args: any, t: Task): Task {
-  return args.now === false ? t : (focus.put_in_now(s, t.id) ?? t);
-}
-
 /**
- * `starred`, `remind_at`, `reminder` and (on update_task) `now` from `create_task` or `update_task`, with the time made
+ * `starred`, `remind_at` and `reminder` from `create_task` or `update_task`, with the time made
  * absolute (see reminder_time). The API checks the rest.
  */
 export function reminder_args(args: any): Record<string, any> {
   const body: Record<string, any> = {};
-  for (const k of ["starred", "reminder", "now"]) if (args[k] != null) body[k] = args[k];
+  for (const k of ["starred", "reminder"]) if (args[k] != null) body[k] = args[k];
   const at = args.remind_at;
   if (typeof at === "string") {
     const t = reminder_time(at, new Date());
@@ -296,6 +290,5 @@ export function summary(s: Shared, t: Task): any {
     v.remind_at = t.remind_at;
     v.reminder = t.reminder ?? null;
   }
-  if (t.now_at != null) v.now = true;
   return v;
 }

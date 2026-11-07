@@ -134,8 +134,7 @@ agent finds those tasks, puts them in pens (making them as needed), and hides th
 on. It's one lasting thread per profile (keyed `S-<n>` among its scratch tasks), in no project
 and off the board's columns; like the assistant, it never goes to review or merge. Any agent can
 do the same with the pen tools (`list_pens`, `create_pen`, `update_pen`, `delete_pen`, and `pen`
-on `create_task`, `update_task` and `list_tasks`). Moving a task between pens doesn't put it in
-Now. Pens are kept on each host, per profile; a profile's board spanning hosts merges them by
+on `create_task`, `update_task` and `list_tasks`). Pens are kept on each host, per profile; a profile's board spanning hosts merges them by
 name, and a task on a host without the pen yet makes it there as it moves in. `GET`/`POST
 /profiles/{id}/pens`, `PATCH`/`DELETE /pens/{id}`, `pen` (a name) or `pen_id` on `PATCH /tasks/{id}`,
 and `GET /profiles/{id}/pens-thread` (see `apps/server/src/api/pens.ts`).

@@ -21,7 +21,6 @@ import * as staging from "./update/staging.ts";
 import * as runner from "./agent/runner.ts";
 import * as usage from "./agent/usage.ts";
 import * as window from "./agent/window.ts";
-import * as focus from "./agent/focus.ts";
 import * as runs from "./agent/runs.ts";
 import * as task_tmp from "./agent/task_tmp.ts";
 import * as permissions from "./mcp/permissions.ts";
@@ -611,7 +610,6 @@ export async function serve(args: ServeArgs) {
   runner.auto_compact(state);
   usage.resume_loop(state);
   window.start(state);
-  focus.start(state);
   pr_watch.watch_in_review(state);
   terminal.start_reaper(state);
   attachments.start_pruner(state);

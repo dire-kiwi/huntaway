@@ -224,12 +224,6 @@ export interface Task {
   remind_at: string | null;
   /** What the reminder is for, set with it. */
   reminder: string | null;
-  /**
-   * When the task went into "now" (UTC, RFC 3339), which the board's Now view lists; unset for the tasks in "later" (all
-   * of them to begin with). It's set when the user prompts the task or moves it there, and a task with no activity for
-   * the host's `now_expiry_hours` goes back (see agent/focus.rs).
-   */
-  now_at: string | null;
   /** The pen it's in (see db/pens.ts), if it's in one. */
   pen_id: string | null;
   /** The latest automatic review of the task's work. */
@@ -385,7 +379,6 @@ export function Task_from_row(r: any): Task {
     starred: !!r.starred,
     remind_at: r.remind_at ?? null,
     reminder: r.reminder ?? null,
-    now_at: r.now_at ?? null,
     pen_id: r.pen_id ?? null,
     review: json_opt(r.review, Review_from_json),
     summary: summaries[0] ? structuredClone(summaries[0]) : null,
@@ -1067,7 +1060,6 @@ const TASK_COLUMNS = [
   "starred",
   "remind_at",
   "reminder",
-  "now_at",
   "pen_id",
   "review",
   "summary",

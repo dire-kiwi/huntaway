@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vite-plus/test";
 import { clipped, pointInPolygon, polygonHitsRect, reach } from "../src/lasso.ts";
-import { FOCUSES, inFocus, isFocus, isNow } from "../src/focus.ts";
 
 const square = (l, t, r, b) => [
   { x: l, y: t },
@@ -69,15 +68,4 @@ test("a press that hardly moved is a click", () => {
 test("a card is only as big as what shows of it", () => {
   assert.deepEqual(clipped(card, { left: 0, top: 0, right: 150, bottom: 120 }), { left: 100, top: 100, right: 150, bottom: 120 });
   assert.equal(clipped(card, { left: 0, top: 0, right: 90, bottom: 500 }), null);
-});
-
-test("a task is in Later until it has a time for Now", () => {
-  assert.ok(!isNow({}));
-  assert.ok(!isNow({ now_at: null }));
-  assert.ok(isNow({ now_at: "2026-11-02T00:00:00.000Z" }));
-  const [now, later] = [{ now_at: "2026-11-02T00:00:00.000Z" }, { now_at: null }];
-  assert.deepEqual([inFocus(now, "now"), inFocus(later, "now")], [true, false]);
-  assert.deepEqual([inFocus(now, "later"), inFocus(later, "later")], [false, true]);
-  assert.deepEqual([inFocus(now, "all"), inFocus(later, "all")], [true, true]);
-  assert.ok(FOCUSES.every((f) => isFocus(f.id)) && !isFocus("soon"));
 });

@@ -388,7 +388,6 @@ function board_tools(): any[] {
           starred,
           remind_at,
           reminder,
-          now: { type: "boolean", default: true, description: "New tasks start in the board's Now view; pass false to start this one in Later instead." },
           pen,
         },
         required: ["title"],
@@ -425,11 +424,6 @@ function board_tools(): any[] {
           remind_at,
           reminder,
           pen,
-          now: {
-            type: "boolean",
-            description:
-              "Put the task in the board's Now view (true) or send it back to Later (false). Tasks start in Now (create_task can start one in Later), and any update to one (or a message to it) puts it back there; a task with no activity for a day (the host's setting) goes back.",
-          },
         },
         required: ["task_id"],
       },

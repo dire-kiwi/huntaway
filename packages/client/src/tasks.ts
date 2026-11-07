@@ -362,8 +362,6 @@ export interface Task {
   remind_at?: string | null;
   /** What the reminder is for (API 48). */
   reminder?: string | null;
-  /** When it was put in Now (API 97); unset for the tasks in Later, where tasks start. */
-  now_at?: string | null;
   /** The pen it's in (API 126, see pens.ts), if it's in one. */
   pen_id?: string | null;
   /** The latest automatic review of its work (API 12). */
@@ -583,11 +581,7 @@ export const tasksApi = ({ on, storage }: Http) => ({
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (
-    h: string,
-    id: string,
-    b: Partial<Omit<Task, "start_from">> & { now?: boolean; start_from?: StartFrom | string | null; pen?: string | null },
-  ) => {
+  updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { start_from?: StartFrom | string | null; pen?: string | null }) => {
     // Noted before the request: the task event it causes reaches every tab before the response does.
     if (b.status) noteMove(storage, h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);

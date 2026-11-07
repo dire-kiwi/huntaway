@@ -10,7 +10,6 @@ import { pick } from "../api.ts";
 import * as runner from "../agent/runner.ts";
 import * as runs from "../agent/runs.ts";
 import * as documents from "../agent/documents.ts";
-import * as focus from "../agent/focus.ts";
 import * as title from "../agent/title.ts";
 import * as agent_tools from "../agent/agent_tools.ts";
 import * as assistant from "../agent/assistant.ts";
@@ -64,9 +63,7 @@ export async function get_task(s: AppState, r: Req) {
 
 export async function update_task(s: AppState, r: Req) {
   const b = json_map(r);
-  const t = await update_task_inner(s, r.params.id, b);
-  // Any update to a task puts it in "now" (see agent::focus).
-  return focus.updated(s, t, b);
+  return update_task_inner(s, r.params.id, b);
 }
 
 const UPDATABLE = [
@@ -115,12 +112,6 @@ export async function update_task_inner(s: AppState, id: string, b: Record<strin
   const nothing_to_merge = to_merge && (own_folder || !(await worktree.has_work_to_merge(s, current)));
   let fields: Fields = pick(b, UPDATABLE);
   check_reminder(current, fields);
-  // "now" puts the task in the Now view (from this moment), "later" takes it out.
-  if (b.now !== undefined && b.now !== null) {
-    if (typeof b.now !== "boolean") throw ApiError.bad("now must be true or false");
-    if (b.now && current.kind !== "task") throw ApiError.bad("only a task can be in now");
-    fields.push(["now_at", b.now ? now() : null]);
-  }
   // Into a pen (by its name or id), or out of it (see db/pens.ts).
   const pen_id = task_pen(s, current, b);
   if (pen_id !== undefined) fields.push(["pen_id", pen_id]);

@@ -30,7 +30,6 @@ import {
   type TerminalTool,
 } from "../../api";
 import { useShallow } from "zustand/react/shallow";
-import { NOW_API } from "../../focus";
 import { defaultCloneDir } from "./repoSource";
 import { navigate } from "../../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../../store";
@@ -1223,29 +1222,6 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           </Field>
         )}
       </div>
-      {hostSupports(host, NOW_API) && (
-        <label className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">
-          Tasks in Now go back to Later after
-          <Input
-            key={settings.now_expiry_hours ?? "default"}
-            type="number"
-            min={0}
-            max={24 * 365}
-            step={1}
-            aria-label="Hours in Now without activity"
-            defaultValue={settings.now_expiry_hours ?? 24}
-            className="h-7 w-20"
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              const hours = v === "" ? null : Math.round(Number(v));
-              if (hours !== null && !(hours >= 0 && hours <= 24 * 365)) return setErr("Hours must be 0 to 8760");
-              if (hours !== (settings.now_expiry_hours ?? 24)) save({ now_expiry_hours: hours });
-            }}
-            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          />
-          hours without activity <span className="text-faint">(0 keeps them there until you move them)</span>
-        </label>
-      )}
       {hostSupports(host, THREAD_ITEMS_API) && (
         <div className="mt-3">
           <Toggle checked={!!settings.thread_items} onChange={(on) => save({ thread_items: on })} label="Keep threads as items" />

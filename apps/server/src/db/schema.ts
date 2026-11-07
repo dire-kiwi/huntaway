@@ -594,7 +594,7 @@ export function open(path: string): Conn {
     batch("PRAGMA user_version=76; COMMIT;");
   }
   if (version < 77) {
-    // When a task went into "now" (see Task.now_at); the others are in "later". Added only if it isn't there, in case
+    // When a task went into "now" (the board's Now/Later split, which HA-285 removed: the column is unused since). Added only if it isn't there, in case
     // another migration takes this version first.
     batch("BEGIN;");
     if (!has_column(conn, "tasks", "now_at")) batch("ALTER TABLE tasks ADD COLUMN now_at TEXT;");

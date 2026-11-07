@@ -4,13 +4,12 @@ import type { Task } from "../../db.ts";
 import type { Shared } from "../../state.ts";
 import * as api from "../../api.ts";
 import * as runner from "../../agent/runner.ts";
-import * as focus from "../../agent/focus.ts";
 import * as assistant from "../../agent/assistant.ts";
 import * as au from "../../integrations/automations.ts";
 import * as permissions from "../permissions.ts";
 import { ToolError, is_own, te, type Ctx } from "../tools.ts";
 import { dependency_ids, pick_boards, project_json, project_settings_json, resolve_project, resolve_task, subproject_arg } from "./resolve.ts";
-import { created, new_in_now, new_task_marks, reminder_args, summarize, task_details, task_field, task_overview } from "./tasks.ts";
+import { created, new_task_marks, reminder_args, summarize, task_details, task_field, task_overview } from "./tasks.ts";
 import { create_project, project_creation, project_or_own, update_project } from "./projects.ts";
 import { deletion, delete_task, resume_approval } from "./approvals.ts";
 import {
@@ -193,7 +192,7 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
         let t = api.create_scratch_task_inner(s, board.id, body);
         t = created(s, ctx, t, marks);
         t = into_pen(s, t, pen);
-        return summarize(s, new_in_now(s, args, t));
+        return summarize(s, t);
       }
       let parent: Task | null = sp !== null && sp !== "none" ? subproject_arg(s, ctx, sp, profile) : null;
       let project: db.Project;
@@ -230,7 +229,7 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       let t = api.create_task_inner(s, project.id, body);
       t = created(s, ctx, t, marks);
       t = into_pen(s, t, pen);
-      return summarize(s, new_in_now(s, args, t));
+      return summarize(s, t);
     }
     case "update_task": {
       const found = resolve_task(s, ctx, str_arg("task_id") ?? "", profile);
@@ -242,10 +241,7 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       if (ids !== null) body.depends_on = ids;
       Object.assign(body, reminder_args(args));
       if (typeof args.pen === "string") body.pen = args.pen;
-      let t = await api.update_task_inner(s, found.id, body);
-      // Updated by an agent, the task is in "now" like one updated from the board (unless `now` says otherwise).
-      t = focus.updated(s, t, body);
-      return summarize(s, t);
+      return summarize(s, await api.update_task_inner(s, found.id, body));
     }
     case "delete_task": {
       // A call retried after a restart carries on with the deletion it asked about.
@@ -260,8 +256,7 @@ async function local_inner(s: Shared, ctx: Ctx, tool: string, args: any): Promis
       const found = resolve_task(s, ctx, str_arg("task_id") ?? "", profile);
       if (ctx.task && ctx.task.id === found.id) throw ToolError.other("cannot send a message to your own task");
       const t = runner.send_from_agent(s, found.id, str_arg("message") ?? "");
-      // A task another agent has sent to (a parent starting its subproject's tasks, say) is in "now".
-      return summarize(s, focus.put_in_now(s, t.id) ?? t);
+      return summarize(s, t);
     }
     case "get_project":
     case "update_project": {

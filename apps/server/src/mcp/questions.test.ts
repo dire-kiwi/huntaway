@@ -112,8 +112,6 @@ test("a_question_with_options_is_answered_from_its_card", async () => {
 
   const t = answer(s, task.id, id, pick(["Red"], null));
   assert.equal(t.queued_message, "> Which colour?\n\nRed");
-  // The answer is the user's prompt: it puts the task in now.
-  assert.ok(t.now_at != null && db.get_task(s.db(), task.id)!.now_at != null);
   const data = questions(s, task.id)[0].data;
   assert.deepEqual([data.status, data.answer], ["answered", { choices: ["Red"], text: null }]);
   // A second answer (another tab's) isn't sent.
