@@ -1474,3 +1474,55 @@ test("a_send_and_a_pull_request_take_their_wired_text", async () => {
     runs.TEST_CAN_RUN.set(false);
   }
 });
+
+// Review of HA-276: In progress's run, which moves the task to In review, skipped the send after the review and gave its
+// round back, so the review and its fixes went round without end; and a check after In review compared with that run,
+// where it hadn't run (as the review's recheck did), so it saw no change. The preset's shape, with a check in place of
+// the reviewer (whose agent can't run here): In progress → In review → changed → no pull request → send, one round.
+test("rounds of review and fixes through In progress end once they're used up", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    const w = make(s, project, {
+      nodes: [
+        { id: "work", kind: "column", status: "in_progress" },
+        { id: "review", kind: "column", status: "in_review" },
+        { id: "changed", kind: "condition", check: "changed" },
+        { id: "has_pr", kind: "condition", check: "has_pr" },
+        { id: "fix", kind: "send_to_task", message: "Open its pull request.", max_rounds: 1 },
+      ],
+      edges: [
+        { from: "work", port: "done", to: "review" },
+        { from: "review", port: "done", to: "changed" },
+        { from: "changed", port: "yes", to: "has_pr" },
+        { from: "has_pr", port: "no", to: "fix" },
+      ],
+    });
+    // Round 1, from In review: sent to the agent.
+    const r1 = (await start(s, w.id, task.id, false, 0, "status", "review"))!;
+    assert.deepEqual([run_node(r1, "fix").port, r1.rounds], ["sent", { fix: 1 }]);
+    // The agent works on it (its run fails to start in tests: let that end first), and its work in In progress is done.
+    await until(() => !s.is_running(task.id) && !db.get_task(s.db(), task.id)!.running, 15000);
+    assert.ok(!s.is_running(task.id), "the agent's launch has ended");
+    db.run(s.db(), "UPDATE runs SET status='exited' WHERE task_id=?1", task.id);
+    db.update_task(s.db(), task.id, [
+      ["running", false],
+      ["status", "in_progress"],
+    ]);
+    const r2 = (await start(s, w.id, task.id, false, 0, "finished", "work"))!;
+    assert.deepEqual([r2.state, run_node(r2, "fix").state, r2.rounds], ["done", "skipped", { fix: 1 }], "the round is kept past In review");
+    // In review again, which In progress's run moved it to: the check sees the agent's work since round 1 (not since
+    // In progress's run), and with no round left the task needs attention.
+    const latest = () => latest_run(s.db(), w.id, task.id);
+    await until(() => latest()?.id !== r2.id && latest()?.state === "done", 15000);
+    const r3 = latest()!;
+    assert.notEqual(r3.id, r2.id, "round 2 ran");
+    assert.deepEqual([run_node(r3, "changed").port, run_node(r3, "fix").port], ["yes", "exhausted"]);
+    const t = db.get_task(s.db(), task.id)!;
+    assert.equal(t.status, "needs_attention");
+    assert.ok((t.attention_reason ?? "").includes("is out of rounds"), t.attention_reason ?? "");
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});

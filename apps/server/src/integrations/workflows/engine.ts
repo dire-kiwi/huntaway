@@ -623,13 +623,36 @@ export function plan(run: Run): string[] {
 /** Ends the run once no node is left to run: its sends that weren't reached give their rounds back. */
 function settle(run: Run): boolean {
   if (run.state !== "running" || run.graph.nodes.some((n) => !is_data(n) && !settled(run_node(run, n.id)))) return false;
+  // A send this run could have reached but went another way (its review passed, say) ends its rounds in a row. One
+  // past a column the run doesn't start at is the next run's: its rounds go on.
+  const reach = reachable(run);
   for (const n of run.graph.nodes) {
-    if (n.kind === "send_to_task" && run_node(run, n.id).state === "skipped") delete run.rounds[n.id];
+    if (n.kind === "send_to_task" && run_node(run, n.id).state === "skipped" && reach.has(n.id)) delete run.rounds[n.id];
   }
   run.state = "done";
   run.finished_at = now();
   run.updated_at = now();
   return true;
+}
+
+/**
+ * The nodes a run can reach from where it starts: along its flow edges, up to the columns it moves the task to (whose
+ * outcomes are the next run's).
+ */
+export function reachable(run: Run): Set<string> {
+  const from = start_node(run);
+  const seen = new Set<string>();
+  if (!from) return seen;
+  const edges = flow_edges(run.graph);
+  const stack = [from.id];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (id !== from.id && graph_node(run.graph, id)?.kind === "column") continue;
+    for (const e of edges) if (e.from === id) stack.push(e.to);
+  }
+  return seen;
 }
 
 /** What a node did. */
@@ -704,7 +727,7 @@ export async function advance(s: Shared, run_id: string): Promise<void> {
           break;
         case "condition":
           try {
-            done = Done_port((await condition(s, run, node.check, node.value ?? null)) ? "yes" : "no");
+            done = Done_port((await condition(s, run, node.id, node.check, node.value ?? null)) ? "yes" : "no");
           } catch (e) {
             done = { state: "failed", port: null, text: typeof e === "string" ? e : err_str(e) };
           }
@@ -842,20 +865,26 @@ export function node_name(n: Node): string {
   }
 }
 
-/** The run's last finished run of the same workflow on the same task, before it. */
-function last_done(c: Conn, run: Run): Run | null {
-  const r = db.one(
+/** The last finished run of the same workflow on the same task before `run`, in which node `node_id` ran. */
+function last_done(c: Conn, run: Run, node_id: string): Run | null {
+  // A run from another column (In progress's, which moves the task to In review, say) may not have reached the node:
+  // the last one that ran it is the one to compare with.
+  const rows = db.all(
     c,
-    "SELECT * FROM workflow_runs WHERE workflow_id=?1 AND task_id=?2 AND id!=?3 AND state='done' ORDER BY rowid DESC LIMIT 1",
+    "SELECT * FROM workflow_runs WHERE workflow_id=?1 AND task_id=?2 AND id!=?3 AND state='done' ORDER BY rowid DESC LIMIT 20",
     run.workflow_id,
     run.task_id,
     run.id,
   );
-  return r ? Run_from_row(r) : null;
+  for (const row of rows) {
+    const st = JSON.parse(row.nodes)[node_id]?.state;
+    if (st != null && st !== "pending" && st !== "skipped") return Run_from_row(row);
+  }
+  return null;
 }
 
 /** A check on the task. Throws a string saying why it couldn't be made. */
-async function condition(s: Shared, run: Run, check: Check, value: string | null): Promise<boolean> {
+async function condition(s: Shared, run: Run, node_id: string, check: Check, value: string | null): Promise<boolean> {
   let task: Task | null;
   try {
     task = db.get_task(s.db(), run.task_id);
@@ -877,10 +906,10 @@ async function condition(s: Shared, run: Run, check: Check, value: string | null
     case "changed": {
       // A run by hand is asked for whatever changed.
       if (run.source === "manual") return true;
-      // Since the latest of its runs on the task that finished.
+      // Since the latest of its runs on the task that finished, and got as far as this check.
       let last: Run | null;
       try {
-        last = last_done(s.db(), run);
+        last = last_done(s.db(), run, node_id);
       } catch (e) {
         throw err_str(e);
       }
@@ -977,7 +1006,7 @@ async function start_agent(s: Shared, run: Run, node: Node): Promise<void> {
   // Issues it found last time, if the agent was sent them since.
   let recheck: string[] = [];
   if (output === "verdict" && Object.keys(run.rounds).length) {
-    const last = last_done(s.db(), run);
+    const last = last_done(s.db(), run, node.id);
     const n = last?.nodes[node.id];
     if (n?.port === "issues") recheck = n.issues ?? [];
   }
