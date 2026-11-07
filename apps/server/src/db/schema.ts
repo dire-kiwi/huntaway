@@ -6,6 +6,7 @@ import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
 import * as devices from "../devices.ts";
 import * as docs from "./docs.ts";
+import * as docs_site from "./docs_site.ts";
 import { path_str } from "../util.ts";
 import { config_for_dir } from "./profiles.ts";
 import { ASSISTANT_TASK_KEY, SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
@@ -851,6 +852,10 @@ export function open(path: string): Conn {
     // Docs (HA-280): each profile's documents, their versions and their pages (see db/docs.ts).
     batch(`BEGIN; ${docs.SCHEMA} PRAGMA user_version=103; COMMIT;`);
   }
+  if (version < 104) {
+    // Hosted docs (HA-282): profiles' connections to docs sites, and what they published there (see db/docs_site.ts).
+    batch(`BEGIN; ${docs_site.DOCS_SITE_SCHEMA} PRAGMA user_version=104; COMMIT;`);
+  }
   return conn;
 }
 
@@ -896,7 +901,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 103;
+export const VERSION = 104;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

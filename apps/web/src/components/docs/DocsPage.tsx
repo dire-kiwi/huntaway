@@ -1,16 +1,17 @@
 // `/docs/<profile>` (HA-281): the profile's documents, which its agents publish through the `docs` MCP server (HA-280),
 // and each document's pages, with its menu and versions. See docs.ts for where they're kept.
 import clsx from "clsx";
-import { BookOpen, ChevronRight, FileText, Folder, Loader2, Trash2, X } from "lucide-react";
+import { BookOpen, ChevronRight, FileText, Folder, Loader2, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { api, ApiError, type DocDetail, type DocNavNode, type DocPublisher, type DocSummary, type RenderedDocVersion } from "../../api";
+import { api, ApiError, hasHostedDocs, type DocDetail, type DocNavNode, type DocPublisher, type DocSummary, type RenderedDocVersion } from "../../api";
 import { docsHomes, pageSuffix, type DocsHome } from "../../docs";
 import { docBase, href, navigate, type Route } from "../../router";
 import { onDocs, useStore } from "../../store";
 import { followsFrameInput, fromFrame, openable, trackBoardInput } from "../task/htmlFrame";
 import { Ago, Button, errorText, IconButton, MenuButton, useConfirm } from "../ui";
 import { boardTheme, docFrame } from "./docFrame";
+import { HostedDocsButton, PublishDialog, PublishedState, useCanPublish } from "./HostedDocs";
 
 type DocsRoute = Extract<Route, { name: "docs" }>;
 
@@ -143,6 +144,7 @@ function DocsList({ segment, name, homes }: { segment: string; name: string; hom
       <Header>
         <h1 className="text-[14px] font-semibold">Docs</h1>
         <span className="truncate text-[12px] text-faint">{name}'s documents</span>
+        <HostedDocsButtons homes={homes} />
       </Header>
       {!homes.length ? (
         <NoHomes name={name} />
@@ -178,6 +180,12 @@ function DocsList({ segment, name, homes }: { segment: string; name: string; hom
                         </BoardLink>
                         <div className="truncate pl-[22px] font-mono text-[11.5px] text-faint">
                           {d.slug} · {d.page_count} page{d.page_count === 1 ? "" : "s"}
+                          {d.published && (
+                            <span className={d.published.local_version === d.latest_version ? "" : "text-amber-200/80"} aria-label="Published state">
+                              {" "}
+                              · {d.published.local_version === d.latest_version ? `published v${d.published.remote_version}` : "changed since published"}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="py-2 pr-3 text-muted narrow:hidden">v{d.latest_version}</td>
@@ -203,6 +211,19 @@ function DocsList({ segment, name, homes }: { segment: string; name: string; hom
         </div>
       )}
       {dialog}
+    </div>
+  );
+}
+
+/** A connection button for each of the homes whose host can publish to hosted docs, named by host when there are several. */
+function HostedDocsButtons({ homes }: { homes: DocsHome[] }) {
+  const hosts = useStore((s) => s.hosts);
+  const able = homes.filter((h) => hasHostedDocs(hosts.find((x) => x.id === h.hostId)));
+  return (
+    <div className="no-drag ml-auto flex shrink-0 items-center gap-1">
+      {able.map((h) => (
+        <HostedDocsButton key={`${h.hostId}\n${h.profileId}`} home={h} label={able.length > 1 ? hosts.find((x) => x.id === h.hostId)?.name : undefined} />
+      ))}
     </div>
   );
 }
@@ -233,6 +254,8 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
   const [shown, setShown] = useState<RenderedDocVersion | null>(null);
   const [error, setError] = useState<{ text: string; missingPage?: boolean } | null>(null);
   const [asked, setAsked] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const canPublish = useCanPublish(home);
   const frame = useRef<HTMLIFrameElement>(null);
   const base = docBase(route.profile, slug, version);
   const seq = useRef(0);
@@ -345,7 +368,15 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
             ))}
           </select>
         )}
+        {detail && selected !== undefined && canPublish && (
+          <Button size="sm" className="no-drag shrink-0" onClick={() => setPublishing(true)} title={`Publish v${selected} to hosted docs`}>
+            <Upload size={13} /> Publish
+          </Button>
+        )}
       </Header>
+      {publishing && home && detail && selected !== undefined && (
+        <PublishDialog home={home} detail={detail} version={selected} onClose={() => setPublishing(false)} />
+      )}
       {!homes.length ? (
         <NoHomes name={name} />
       ) : missing ? (
@@ -373,6 +404,7 @@ function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; 
                   by <Publisher task={shown.task} />
                 </span>
               )}
+              {detail && <PublishedState published={detail.published} latest={detail.latest_version} />}
               {version !== undefined && latest !== undefined && version !== latest && (
                 <span className="ml-auto flex items-center gap-2 text-amber-200">
                   An older version: the latest is v{latest}.
