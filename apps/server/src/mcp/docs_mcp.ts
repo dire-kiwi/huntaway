@@ -192,10 +192,21 @@ class Server {
     const message = a.opt_str("message");
     const mode = a.opt_str("mode") ?? "replace";
     const delete_paths = a.str_list("delete_paths");
-    const given = a.a.pages ?? [];
+    const given = a.a.pages === undefined ? [] : a.a.pages;
+    if (!Array.isArray(given)) throw new ToolError(`invalid arguments: invalid type: ${json_kind(given)}, expected a sequence`);
     if (mode !== "replace" && mode !== "merge") throw new ToolError(`mode must be "replace" or "merge", not ${JSON.stringify(mode)}`);
-    if (Array.isArray(given) && given.length === 0 && delete_paths.length === 0) throw new ToolError("pass at least one page");
-    const { pages: valid, warnings } = this.lib.validatePages(given);
+    if (given.length === 0 && delete_paths.length === 0) throw new ToolError("pass at least one page");
+    let checked: ReturnType<Renderer["validatePages"]>;
+    try {
+      checked = this.lib.validatePages(given);
+    } catch (e) {
+      // The renderer reads the pages with serde_json::from_str ("invalid pages: … at line 1 column 9"); the hosted
+      // server reads them with the rest of the arguments ("invalid arguments: …", with no position).
+      if (typeof e === "string" && e.startsWith("invalid pages: "))
+        throw new ToolError(`invalid arguments: ${e.slice(15).replace(/ at line \d+ column \d+$/, "")}`);
+      throw e;
+    }
+    const { pages: valid, warnings } = checked;
     // validatePages gives the pages in the order they came, without their sources.
     const pages: db.NewDocPage[] = valid.map((p, i) => ({ path: p.path, title: p.title, format: p.format, position: p.position, source: given[i].content }));
     const exists = slug !== null && db.doc_exists(this.c, this.r.profile_id, slug);

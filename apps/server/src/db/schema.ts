@@ -856,6 +856,11 @@ export function open(path: string): Conn {
     // Hosted docs (HA-282): profiles' connections to docs sites, and what they published there (see db/docs_site.ts).
     batch(`BEGIN; ${docs_site.DOCS_SITE_SCHEMA} PRAGMA user_version=104; COMMIT;`);
   }
+  if (version < 105) {
+    // Hosted docs (HA-286): the account each document was published as.
+    const add = has_column(conn, "docs_site_published", "login") ? "" : docs_site.DOCS_SITE_LOGIN;
+    batch(`BEGIN; ${add} PRAGMA user_version=105; COMMIT;`);
+  }
   return conn;
 }
 
@@ -901,7 +906,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 104;
+export const VERSION = 105;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

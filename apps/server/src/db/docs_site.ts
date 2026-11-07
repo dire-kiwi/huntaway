@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS docs_site_published (
 );
 `;
 
+/** Migration 105 (HA-286): the docs site's account a document was published as, so another account's isn't taken for it. */
+export const DOCS_SITE_LOGIN = "ALTER TABLE docs_site_published ADD COLUMN login TEXT;";
+
 /** A profile's connection to a docs site. `kind` is `oauth` (the device flow's tokens) or `token` (a pasted one). */
 export interface DocsSiteConnection {
   profile_id: string;
@@ -56,6 +59,8 @@ export interface DocsSitePublished {
   local_version: number;
   url: string;
   version_url: string;
+  /** The site's username it was published as, if it was known (HA-286: null for those published before). */
+  login: string | null;
   published_at: string;
 }
 
@@ -135,7 +140,7 @@ export function delete_docs_site_connection(c: Conn, profile_id: string, access_
 export function docs_site_published(c: Conn, doc_id: string, site_url: string): DocsSitePublished | null {
   const r = one<any>(
     c,
-    "SELECT site_url, remote_slug, remote_version, local_version, url, version_url, published_at FROM docs_site_published WHERE doc_id=?1 AND site_url=?2",
+    "SELECT site_url, remote_slug, remote_version, local_version, url, version_url, login, published_at FROM docs_site_published WHERE doc_id=?1 AND site_url=?2",
     doc_id,
     site_url,
   );
@@ -145,10 +150,10 @@ export function docs_site_published(c: Conn, doc_id: string, site_url: string): 
 export function set_docs_site_published(c: Conn, doc_id: string, p: Omit<DocsSitePublished, "published_at">) {
   run(
     c,
-    `INSERT INTO docs_site_published (doc_id, site_url, remote_slug, remote_version, local_version, url, version_url, published_at)
-     VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(doc_id, site_url) DO UPDATE SET remote_slug=excluded.remote_slug,
+    `INSERT INTO docs_site_published (doc_id, site_url, remote_slug, remote_version, local_version, url, version_url, login, published_at)
+     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(doc_id, site_url) DO UPDATE SET remote_slug=excluded.remote_slug,
      remote_version=excluded.remote_version, local_version=excluded.local_version, url=excluded.url, version_url=excluded.version_url,
-     published_at=excluded.published_at`,
+     login=excluded.login, published_at=excluded.published_at`,
     doc_id,
     p.site_url,
     p.remote_slug,
@@ -156,6 +161,7 @@ export function set_docs_site_published(c: Conn, doc_id: string, p: Omit<DocsSit
     p.local_version,
     p.url,
     p.version_url,
+    p.login,
     now(),
   );
 }

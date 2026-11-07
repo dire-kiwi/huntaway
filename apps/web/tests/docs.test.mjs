@@ -43,7 +43,23 @@ test("a published document links to the board's own Docs page, not the host's ad
     url: "http://127.0.0.1:7878/docs/p1/d/the-plan/",
     version_url: "http://127.0.0.1:7878/docs/p1/d/the-plan/-/v/3/",
   });
-  assert.deepEqual(publishedDocPath(result), { path: "/docs/p1/d/the-plan/", slug: "the-plan", version: 3 });
+  // HA-286: the version it published, which the link says.
+  assert.deepEqual(publishedDocPath(result), { path: "/docs/p1/d/the-plan/-/v/3/", slug: "the-plan", version: 3 });
+  // From a host before version_url, the document.
+  assert.deepEqual(publishedDocPath(JSON.stringify({ slug: "the-plan", version: 3, url: "http://127.0.0.1:7878/docs/p1/d/the-plan/" })), {
+    path: "/docs/p1/d/the-plan/",
+    slug: "the-plan",
+    version: 3,
+  });
+  // A public URL with a path of its own (HA-286), even one with docs in it.
+  for (const prefix of ["/board", "/docs", "/a/docs/b"]) {
+    const url = `https://example.com${prefix}/docs/p1/d/the-plan/`;
+    assert.deepEqual(
+      publishedDocPath(JSON.stringify({ slug: "the-plan", version: 2, url, version_url: `${url}-/v/2/` })),
+      { path: "/docs/p1/d/the-plan/-/v/2/", slug: "the-plan", version: 2 },
+      prefix,
+    );
+  }
   // Another server's documents (a project's own `docs`), and results that aren't JSON, have none.
   assert.equal(publishedDocPath(JSON.stringify({ url: "https://docs.example.com/d/plan/" })), null);
   assert.equal(publishedDocPath("no document"), null);
