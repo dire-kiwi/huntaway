@@ -1,7 +1,10 @@
 import clsx from "clsx";
 import { ChevronLeft, ChevronRight, Folder, FolderGit2, GitBranch, Layers, MessagesSquare, Settings2 } from "lucide-react";
-import { useMemo } from "react";
-import { needsWorktreeSetup, type Project, type Task } from "../../api";
+import { useCallback, useMemo, useState } from "react";
+import { isArchived, isAssistants, isPensThread, needsWorktreeSetup, type Project, type Task } from "../../api";
+import { inTab, loadTab, moveToPen, saveTab } from "../../pens";
+import { useShallow } from "zustand/react/shallow";
+import { PenTabs, tabCounts, usePenTabs } from "./Pens";
 import { groupProjects, groupTasks } from "../../projectGroups";
 import { navigate, openTask } from "../../router";
 import { scratchHost, useHost, useStore } from "../../store";
@@ -172,6 +175,27 @@ export function ProfileBoard({ profile }: { profile: string }) {
   // Recomputed with the hosts and their settings, which pick where scratch tasks go.
   const hostSettings = useStore((s) => s.hostSettings);
   const scratch = useMemo(() => scratchHost(profile), [profile, profiles, hosts, hostSettings]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Its pens' tabs (HA-285): the one picked last on this client, while it's there.
+  const tabs = usePenTabs(ids);
+  const [picked, setPicked] = useState(() => loadTab(profile));
+  const tab = tabs.find((t) => t.key === picked);
+  const pickTab = (key: string) => {
+    setPicked(key);
+    saveTab(profile, key);
+  };
+  const only = useMemo(() => (tab ? (t: Task) => inTab(tab, t) : undefined), [tab]);
+  // A task made on a pen's tab goes in the pen.
+  const onCreated = useCallback((made: Task[]) => tab && void moveToPen(made, tab.name).catch(() => {}), [tab]);
+  // What each tab has: the tasks on the board, not counting archived ones.
+  const boardTasks = useStore(
+    useShallow((s) =>
+      Object.values(s.tasks).filter(
+        (t) =>
+          t.kind === "task" && !isAssistants(t) && !isPensThread(t) && !t.parent_id && ids.has(`${t.host_id}:${t.profile_id}`) && !isArchived(t, Date.now()),
+      ),
+    ),
+  );
+  const counts = useMemo(() => tabCounts(tabs, boardTasks), [tabs, boardTasks]);
   if (!ids.size) return <div className="p-8 text-muted">{loaded ? "Profile not found." : "Loading…"}</div>;
   const on = hosts.filter((h) => profiles.some((p) => p.host_id === h.id && p.name === profile));
   return (
@@ -183,22 +207,27 @@ export function ProfileBoard({ profile }: { profile: string }) {
       targets={targets}
       scratch={scratch}
       ready={loaded}
+      only={only}
+      onCreated={onCreated}
       header={({ controls, newTask }) => (
-        <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
-          <MenuButton />
-          <ProfileAvatar name={profile} />
-          <div className="flex min-w-0 items-baseline gap-2">
-            <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{profile}</h1>
-            <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
-              {hosts.length > 1 && <span className="mr-1.5 text-muted">{on.map((h) => h.name).join(", ")} ·</span>}
-              {projects.length ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : "No projects yet"}
-            </span>
-          </div>
-          <div className="no-drag ml-auto flex items-center gap-1.5">
-            {controls}
-            {(targets.length > 0 || scratch) && <NewTaskButton onClick={newTask} />}
-          </div>
-        </header>
+        <>
+          <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
+            <MenuButton />
+            <ProfileAvatar name={profile} />
+            <div className="flex min-w-0 items-baseline gap-2">
+              <h1 className="shrink-0 text-[14px] font-semibold narrow:min-w-0 narrow:truncate">{profile}</h1>
+              <span className="min-w-0 truncate text-[11.5px] text-faint narrow:hidden">
+                {hosts.length > 1 && <span className="mr-1.5 text-muted">{on.map((h) => h.name).join(", ")} ·</span>}
+                {projects.length ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : "No projects yet"}
+              </span>
+            </div>
+            <div className="no-drag ml-auto flex items-center gap-1.5">
+              {controls}
+              {(targets.length > 0 || scratch) && <NewTaskButton onClick={newTask} />}
+            </div>
+          </header>
+          <PenTabs profile={profile} profiles={ids} tabs={tabs} selected={tab ? tab.key : ""} onSelect={pickTab} counts={counts} />
+        </>
       )}
     />
   );

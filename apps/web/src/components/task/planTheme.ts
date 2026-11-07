@@ -1,4 +1,4 @@
-import { linksInNewTabs } from "./htmlFrame";
+import { linksInNewTabs, noWebRtc } from "./htmlFrame";
 
 /**
  * Sizes an <ia-html>'s frame to its content (not the window, which the frame sets): it reports the
@@ -336,6 +336,6 @@ export function themedPlan(
   return (
     `<!doctype html><meta charset="utf-8"><style>${css}</style>\n${html}\n` +
     `<script>(${iaForm})(${answers}, ${!!form.readOnly}, ${JSON.stringify(form.key ?? null).replace(/</g, "\\u003c")})</script>\n` +
-    `<script>(${iaHtml})(${JSON.stringify(form.board ? `(${fitFrame})();(${linksInNewTabs})()` : `(${fitFrame})()`)}, ${!form.board})</script>\n<script>(${iaDiagrams})()</script>`
+    `<script>(${iaHtml})(${JSON.stringify(form.board ? `(${noWebRtc})();(${fitFrame})();(${linksInNewTabs})()` : `(${fitFrame})()`)}, ${!form.board})</script>\n<script>(${iaDiagrams})()</script>`
   );
 }

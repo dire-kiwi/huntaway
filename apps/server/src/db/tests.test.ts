@@ -1027,9 +1027,8 @@ test("a_database_at_version_76_has_every_task_in_later", () => {
   );
   const c = open(path);
   assert.equal(user_version(c), VERSION);
-  assert.equal(get_task(c, "t")!.now_at, null);
-  const t = update_task(c, "t", [["now_at", "2030-01-01T00:00:00.000Z"]])!;
-  assert.equal(t.now_at, "2030-01-01T00:00:00.000Z");
+  // The column is there, though nothing uses it since HA-285.
+  assert.equal(db.value(c, "SELECT now_at FROM tasks WHERE id='t'"), null);
   c.close();
 });
 
@@ -1845,4 +1844,26 @@ test("a_database_from_version_99_has_its_workflows_approvals_say_workflow", () =
   const requests = db.all(c, "SELECT json_extract(data, '$.metadata.kind') AS k FROM thread_requests WHERE task_id=?1 ORDER BY pos", task).map((r: any) => r.k);
   assert.deepEqual(requests, ["workflow", "automation"]);
   c.close();
+});
+
+test("a_database_from_version_104_keeps_its_published_documents_with_no_account", () => {
+  // HA-286: documents published before the account was kept are taken as the connected account's.
+  const path = db_path();
+  const c0 = open(path);
+  const p = db.insert_profile(c0, "p", [], null);
+  const page = { path: "index", title: "T", format: "md", source: "# T", position: 0 };
+  db.publish_doc(c0, { profile_id: p.id, slug: "d", title: "T", message: null, pages: [page], merge: false, delete: [], task_id: null, run_id: null });
+  const doc_id = db.get_doc(c0, p.id, "d")!.id;
+  c0.close();
+  prepare_at(path, (c) => {
+    c.exec("ALTER TABLE docs_site_published DROP COLUMN login; PRAGMA user_version=104;");
+    db.run(
+      c,
+      "INSERT INTO docs_site_published (doc_id, site_url, remote_slug, remote_version, local_version, url, version_url, published_at) VALUES (?1,'https://s','d',1,1,'https://s/d/','https://s/d/-/v/1/','2026-11-07')",
+      doc_id,
+    );
+  });
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  assert.deepEqual([db.docs_site_published(c, doc_id, "https://s")?.remote_slug, db.docs_site_published(c, doc_id, "https://s")?.login], ["d", null]);
 });

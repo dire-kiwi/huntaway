@@ -257,32 +257,21 @@
   the browser tab; _Sort_ (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
-- **Now and Later** (HA-109, API 97): every task is in _Later_ until it's put in _Now_, which is
-  what you're working on at the moment. A prompt you send a task from its thread or the new task
-  dialog, or an answer to one of its question cards (not one from an automation or the board itself) puts it in Now. So does any
-  update to it (`PATCH /tasks/{id}` or an agent's `update_task`, unless the same request sets `now` or only changes `position`, as the board does renumbering a column), an agent's `send_to_task`
-  (a parent starting its subproject's tasks, say), and creating it with `create_task` (`now: false` starts it in Later). So does
-  _Move to Now_ in its right-click menu (_Move to Later_ puts
-  it back), the lasso's bar, and `update_task`'s `now` (`PATCH /tasks/{id}` takes `now: true` or
-  `false`; tasks have `now_at`, when it went in, or null). The switch in the board's header
-  (_Now_, _Later_, _All_, which starts on _All_ and is kept for every board) applies to every
-  view: the board, list, triage and graph, with the search and filters. A task in
-  Now has a bolt on its card and row, and the switch counts them. A task goes back to Later once
-  nothing has happened on it for a day: no prompt from you, no message in its thread (the
-  agent's included), and its agent not running. The day is the host's _Tasks in Now go back to
-  Later after N hours_ setting in its page in Settings (`now_expiry_hours` in `/settings`; 0
-  keeps them in Now until they're moved, null is the default 24), looked at every minute.
+- **Now and Later** (HA-109, API 97) were taken out by HA-285 (API 127): pens took their place
+  (see _Pens_ in [Using the board](board.md)). Hosts ignore `now` on `PATCH /tasks/{id}` and the
+  agents' task tools, tasks no longer have `now_at`, and `/settings` no longer has
+  `now_expiry_hours`.
   - **Lasso:** hold Ctrl and drag with the right mouse button on a board, in any view, to draw a
     loop; the tasks it goes round or over are picked (outlined) as it's drawn, and the browser's
     own menu stays shut. Add Shift to keep those already picked. Ctrl + right-click (without a
     drag) on a card picks it, or lets it go if it was. A bar at the foot of the board counts the
-    picked tasks and moves them to _Now_ or _Later_; so does the right-click menu of any of them
-    (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
+    picked tasks, and its _Pen_ puts them in a pen or takes them out; so does the right-click menu
+    of any of them (it says how many). Escape, or the bar's ✕, lets them go. On a touch screen there's no lasso:
     use a card's menu button.
 - **Other views** (HA-5, a first try at ways to see the board other than by status): beside
   _Board_ and _List_, the view switch has two more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
-  1500px the switch names only the current view, and below 1320px none.
+  1500px the switch names only the current view, and below 1180px none.
   - _Triage_: what each task needs from you, most pressing first: an answer (_Needs
     attention_), a review (_In review_), a reminder that's come round, an agent that stopped
     before it finished, a start; then the agents at work. Each shows the agent's last words
@@ -341,7 +330,9 @@
     head's required checks passed (all of its checks, when none is required), someone other than
     the agent's GitHub account commented or reviewed, it started to conflict with its base branch,
     or (always) it was merged or closed. `pull_request_events` picks some of `checks_failed`,
-    `checks_passed`, `comments` and `conflicts` (all by default). The call returns `ended:
+    `checks_passed`, `comments` and `conflicts` (all by default). A wait on checks also ends when
+    it conflicts and none of its checks is running, since GitHub runs no `pull_request` workflows
+    on a conflicting pull request, so they'd never come. The call returns `ended:
     "pull_request"` with `pull_request`: its state (merge state, review decision, checks' outcome
     with the failed ones' names and links, and those still running), the events, and the new
     comments with their author, kind (comment, review or review comment), file and line, and their
@@ -831,6 +822,17 @@
   ends tool sessions that nobody is attached to and nobody has renewed for 90 seconds.
   Reloading the page keeps them. **Close** ends one straight away. If a tool exits with an
   error, the message stays on screen until you press Enter (API 13).
+- **Browser pane:** in the desktop app, the globe button in a task's header opens a browser beside
+  its thread (HA-275), to look at the app the agent is building: an address bar (a bare port such
+  as `5173` opens `localhost:5173`), back, forward, reload, the page's DevTools, and _Open in your
+  browser_. Drag the bar between them to resize it (double-click for half and half). Each task
+  remembers the page it was last on, or opens on its PR preview; closing the pane keeps the page
+  loaded until another task is opened. It shows only `http:` and `https:` pages, in a session of
+  their own (`persist:huntaway-browser`: cookies and storage apart from the board's), with no
+  access to the app and no permissions beyond the clipboard and full screen; a link that opens a
+  new window opens in the pane. A browser's board has no pane, since its frames hold only the
+  board's own pages (`frame-src 'self'`, for agent-written documents' sake, HA-266), and
+  `localhost` is the machine the app runs on, not a linked host's.
 - **Permissions:** in _Ask_ mode, Claude's permission prompts are routed to an approval card in
   the thread: Allow, Always allow (for that thread), or Deny. Claude asks on its own output
   (`--permission-prompt-tool stdio`: a `can_use_tool` control request in the run's `out.jsonl`)

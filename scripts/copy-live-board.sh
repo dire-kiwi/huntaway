@@ -110,4 +110,8 @@ SQL
 if [[ -n $(sqlite3 "$db" "SELECT 1 FROM pragma_table_info('profiles') WHERE name='asana_token'") ]]; then
   sqlite3 "$db" "UPDATE profiles SET asana_token=NULL, asana_user=NULL;"
 fi
+# Nor their sign-ins to hosted docs sites (migration 104 on), which would publish as the user.
+if [[ -n $(sqlite3 "$db" "SELECT 1 FROM sqlite_master WHERE name='docs_site_connections'") ]]; then
+  sqlite3 "$db" "DELETE FROM docs_site_connections;"
+fi
 "$root/scripts/test-server.sh" restart "$dir"

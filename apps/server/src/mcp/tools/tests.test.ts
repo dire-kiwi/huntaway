@@ -31,6 +31,7 @@ import { now, path_str, sleep } from "../../util.ts";
 import { ToolError, msg, type Ctx } from "../tools.ts";
 import {
   MARKS_API,
+  PENS_API,
   TASK_FIELDS_API,
   TASK_FIELD_DEFAULT_LIMIT,
   TASK_FIELD_MAX_LIMIT,
@@ -415,6 +416,37 @@ async function link_fake_host(s: Shared, name: string, api_version: number, answ
   servers.push(() => conn.kind.type === "http" && conn.kind.agent.destroy());
 }
 
+// HA-285: a host from before pens would ignore list_tasks's `pen` and send back all of its tasks, which would be merged in
+// as the pen's: it isn't asked.
+test("a_pens_tasks_arent_asked_of_linked_hosts_from_before_pens", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  project(s, p, "web", "WEB");
+  const me = ctx(p);
+  await call(s, me, "create_task", { title: "Ours", project_id: "WEB", pen: "Today" });
+  await call(s, me, "create_task", { title: "Not in it", project_id: "WEB" });
+  const asked: string[] = [];
+  for (const [name, api_version] of [
+    ["old", PENS_API - 1],
+    ["new", PENS_API],
+  ] as const) {
+    await link_fake_host(s, name, api_version, (tool, body) => {
+      asked.push(`${name}:${tool}`);
+      // The old host returns everything it has, as one that doesn't know `pen` would; the new one its pen's.
+      if (tool === "list_tasks")
+        return name === "old" ? [{ id: "old-1", title: "Everything on old" }] : [{ id: "new-1", title: "Today on new", pen: body.args.pen }];
+      throw new Error(`unexpected ${tool}`);
+    });
+  }
+  const list = await dispatch(s, me, "list_tasks", { project_id: "all", pen: "Today" });
+  assert.deepEqual(list.map((t: any) => t.title).sort(), ["Ours", "Today on new"]);
+  assert.deepEqual(asked, ["new:list_tasks"]);
+  // Without a pen, both are asked as before.
+  asked.length = 0;
+  await dispatch(s, me, "list_tasks", { project_id: "all" });
+  assert.deepEqual(asked.sort(), ["new:list_tasks", "old:list_tasks"]);
+});
+
 test("reads_task_fields_on_new_and_legacy_linked_hosts", async () => {
   const s = state();
   const p = db.insert_profile(s.db(), "personal", [], null);
@@ -604,88 +636,6 @@ test("sets_a_pull_request", async () => {
   assert.ok(e.includes("pr_url must be"), e);
   t = await call(s, me, "update_task", { task_id: "KIW-1", pr_url: "" });
   assert.equal(t.pr_url, null);
-});
-
-test("puts_tasks_in_now_and_later", async () => {
-  const s = state();
-  const p = db.insert_profile(s.db(), "personal", [], null);
-  project(s, p, "kiwicd", "KIW");
-  const me = ctx(p);
-  let t = await call(s, me, "create_task", { title: "Soon", project_id: "KIW", now: false });
-  assert.equal(t.now, undefined);
-  t = await call(s, me, "update_task", { task_id: "KIW-1", now: true });
-  assert.equal(t.now, true);
-  assert.ok(db.get_task(s.db(), t.id)!.now_at != null);
-  t = await call(s, me, "update_task", { task_id: "KIW-1", now: false });
-  assert.equal(t.now, undefined);
-  assert.equal(db.get_task(s.db(), t.id)!.now_at, null);
-  const e = await err(call(s, me, "update_task", { task_id: "KIW-1", now: "yes" }));
-  assert.ok(e.includes("now must be"), e);
-});
-
-test("a_task_an_agent_creates_and_starts_is_in_now", async () => {
-  runs.TEST_CAN_RUN.set(true);
-  try {
-    const s = state();
-    const p = db.insert_profile(s.db(), "personal", [], null);
-    project(s, p, "kiwicd", "KIW");
-    const me = ctx(p);
-    const first = await call(s, me, "create_task", { title: "First", project_id: "KIW" });
-    // Started, but waiting for what it depends on, so nothing runs here: it's only that it was sent to.
-    const t = await call(s, me, "create_task", { title: "Second", project_id: "KIW", depends_on: [first.id], start: true });
-    const made = db.get_task(s.db(), t.id)!;
-    assert.ok(made.waiting, "started");
-    assert.ok(made.now_at != null);
-  } finally {
-    runs.TEST_CAN_RUN.set(false);
-  }
-});
-
-test("created_tasks_start_in_now", async () => {
-  const s = state();
-  const p = db.insert_profile(s.db(), "personal", [], null);
-  project(s, p, "kiwicd", "KIW");
-  const me = ctx(p);
-  const now_at = (t: any) => db.get_task(s.db(), t.id)!.now_at;
-  let t = await call(s, me, "create_task", { title: "Default", project_id: "KIW" });
-  assert.ok(now_at(t) != null);
-  t = await call(s, me, "create_task", { title: "Explicit", project_id: "KIW", now: true });
-  assert.ok(now_at(t) != null);
-  t = await call(s, me, "create_task", { title: "Later", project_id: "KIW", now: false });
-  assert.equal(now_at(t), null);
-  t = await call(s, me, "create_task", { title: "Scratch", type: "scratch" });
-  assert.ok(now_at(t) != null);
-});
-
-test("updating_a_task_puts_it_in_now", async () => {
-  runs.TEST_CAN_RUN.set(true);
-  try {
-    const s = state();
-    const p = db.insert_profile(s.db(), "personal", [], null);
-    project(s, p, "kiwicd", "KIW");
-    const me = ctx(p);
-    const now_at = (id: string) => db.get_task(s.db(), id)!.now_at;
-    const later = async (title: string, extra: any) => {
-      const t = await call(s, me, "create_task", { title, project_id: "KIW", now: false, ...extra });
-      assert.equal(now_at(t.id), null);
-      return t;
-    };
-    const edited = await later("Edited", {});
-    const kept = await later("Kept in later", {});
-    const first = await later("First", {});
-    // Any update puts it in Now, whoever makes it...
-    await call(s, me, "update_task", { task_id: edited.id, description: "More" });
-    assert.ok(now_at(edited.id) != null);
-    // ...unless the same call says where it goes.
-    await call(s, me, "update_task", { task_id: kept.id, description: "More", now: false });
-    assert.equal(now_at(kept.id), null);
-    // A message from another agent (a parent starting its subproject's tasks) too. Held for what it depends on, so nothing runs.
-    const messaged = await later("Messaged", { depends_on: [first.id] });
-    await call(s, me, "send_to_task", { task_id: messaged.id, message: "Go" });
-    assert.ok(now_at(messaged.id) != null);
-  } finally {
-    runs.TEST_CAN_RUN.set(false);
-  }
 });
 
 test("stars_and_sets_reminders", async () => {

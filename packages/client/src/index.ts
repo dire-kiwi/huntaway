@@ -22,6 +22,8 @@ import { workflowsApi } from "./workflows";
 import { assistantApi } from "./assistant";
 import { approvalRulesApi } from "./approvalRules";
 import { telegramApi } from "./telegram";
+import { docsApi } from "./docs";
+import { pensApi } from "./pens";
 
 export { ApiError, type ClientAdapter, type Fetch, type FetchResponse, type KeyValueStorage } from "./http";
 export * from "./attachments";
@@ -45,6 +47,8 @@ export * from "./workflows";
 export * from "./assistant";
 export * from "./approvalRules";
 export * from "./telegram";
+export * from "./docs";
+export * from "./pens";
 
 /** A client for one board: its calls, and its token. An app with several boards makes one for each. */
 export function createClient(adapter: ClientAdapter) {
@@ -78,6 +82,8 @@ export function createClient(adapter: ClientAdapter) {
     ...assistantApi(http),
     ...approvalRulesApi(http),
     ...telegramApi(http),
+    ...docsApi(http),
+    ...pensApi(http),
   };
 }
 

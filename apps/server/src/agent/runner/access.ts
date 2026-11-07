@@ -9,6 +9,7 @@ import type { Shared } from "../../state.ts";
 import { expand_tilde, home_dir, path_str } from "../../util.ts";
 import { run_cmd } from "../../proc.ts";
 import * as mcp from "../../mcp.ts";
+import * as docs_mcp from "../../mcp/docs_mcp.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as codex from "../codex.ts";
 import * as agent_tools from "../agent_tools.ts";
@@ -92,6 +93,27 @@ export function gh_allowed(task: Task): string[] {
 export function uses_gh_server(tools: agent_tools.RunTools): boolean {
   const name = gh_mcp.SERVER_NAME;
   return !Object.hasOwn(tools.mcp_servers, name) && !tools.disallowed.includes(agent_tools.tool_prefix(name));
+}
+
+/**
+ * Whether a run gets our docs server (mcp/docs_mcp.ts), whose tools it uses without asking (they only read and write the
+ * profile's documents on this board): unless the project turns it off or has its own by that name.
+ */
+export function uses_docs_server(tools: agent_tools.RunTools): boolean {
+  const name = docs_mcp.SERVER_NAME;
+  return !Object.hasOwn(tools.mcp_servers, name) && !tools.disallowed.includes(agent_tools.tool_prefix(name));
+}
+
+/** What a run with our docs server is told about it (see `uses_docs_server`). */
+export function docs_note(codex: boolean): string {
+  const n = docs_mcp.SERVER_NAME;
+  const tool = codex ? `\`${n}.publish_document\`` : `mcp__${n}__publish_document`;
+  return (
+    `\n\nTo give the user a report, plan, research or other write-up to read, publish it as a document with the ` +
+    `\`${n}\` MCP server (${tool}; it's kept on this board, under your profile, with every version) and give them the ` +
+    `URL it returns, rather than leaving it only in a message or a file. Its form fields (\`<Approval />\`, inputs) ` +
+    `collect no answers here: ask in the thread for a decision or input.`
+  );
 }
 
 /** The GitHub account a run's gh tools act as: the project's, or else its profile's. */

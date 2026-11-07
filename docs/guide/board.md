@@ -16,6 +16,30 @@ menu pins the projects it lists); pinned projects show a pin, and the initial of
 profile when it's another one. The active profile and pinned projects are saved in this browser,
 and the board opens on the active profile's board.
 
+Under the active profile's **Assistant** (see [assistant.md](assistant.md)), **Docs** lists its
+documents (HA-281): the reports, plans and write-ups its agents publish with the `docs` MCP server
+(see _Docs_ in [agents.md](agents.md)), with each one's latest version, when it was updated and the
+task that published it, which opens from there. A document opens on its pages, at
+`/docs/<profile>/d/<slug>/`: a menu of them (nested by their paths), the page, and a picker of its
+versions with each one's message. Links between pages open them there, in the same version; links out
+open in a new tab. Pages come rendered from their host and show in a sandboxed frame, as plans do.
+Local documents collect no answers yet, so their form fields (`<Approval />`, inputs) are read-only.
+A task's thread links each document it published to its page here. Docs is there for a profile with
+a connected host that has it (API 124), and lists the documents of every host the profile is on.
+
+Documents can be published to a hosted docs site (HA-282, API 125): [dire-kiwi/docs](https://github.com/dire-kiwi/docs),
+https://docs.nest.dire.nz by default, where they can be read and shared. **Connect to hosted docs** at the top of
+Docs connects the profile: **Sign in** shows a code and a link to the site, where you sign in, check the code and
+choose **Allow** (the OAuth device flow; the host waits for it), or paste a personal access token from the site's
+**Access** page. The host keeps the sign-in and renews it; the board only sees whether it's connected and as whom.
+**Disconnect** forgets it on the host (revoke it under **Access** to end it on the site too). A document's
+**Publish** publishes the version shown, with all its pages, its title and its version's message. The first time
+it asks for the slug on the site (the local one by default); after that each publish adds a new version of the same
+document there. The document then shows the version published there, with a link, or that it has local changes
+since. The site's errors (a slug another user has, a sign-in that has expired or been revoked) show in the dialog.
+To try it against a local site, run `DOCS_DEV_LOGIN=1 cargo run` in a checkout of dire-kiwi/docs (after building
+its `frontend`, see its README), and connect to `http://localhost:3000`.
+
 Add a project with the **+** by the _Projects_ heading. Its _Folder_ tab picks a folder on the
 host (a repository, or a new folder that's created for it). Its _GitHub_ tab (API 55) clones a
 repository instead: it lists the ones gh can reach on the host as the profile's GitHub account (see
@@ -92,6 +116,29 @@ like `2h`, or a time) and `reminder` on `create_task` and `update_task` (API 48)
 reminders are saved on the task's host; which of the two sections are collapsed is saved in this
 browser.
 
+**Pens** (API 127) gather tasks from any of a profile's projects, and its tasks in no project, into
+named sets: the work you're on today, a feature that spans projects, or tasks you've parked to
+come back to in a few days. The profile's board shows them as tabs over its columns: _All_, with
+every task, then a tab for each pen that isn't hidden, in the pens' order, each with how many
+tasks it has; the board stays on the tab you picked last (in this browser). A task is in one pen
+at most. Put one in a pen from its card's menu (_Pen: …_, or _New pen…_; with tasks picked with
+the lasso, the selection bar's _Pen_ does it to all of them), by dropping its card on the pen's
+tab, or by making it on that tab; _Out of …_ in its menu, or dropping it on _All_, takes it out.
+The **+** after the tabs makes a pen. Right-click a tab (or click it again once it's open) to
+rename, hide, move or delete it; deleting a pen leaves its tasks on the board, in no pen. Hidden
+pens are listed under _N hidden_ at the end of the tab bar, which shows one again.
+
+The **pens thread** at the end of the tab bar is a conversation that arranges the pens for you:
+tell it "today I'm on the login fix and the pricing page, and park the release notes" and its
+agent finds those tasks, puts them in pens (making them as needed), and hides the pens you're not
+on. It's one lasting thread per profile (keyed `S-<n>` among its scratch tasks), in no project
+and off the board's columns; like the assistant, it never goes to review or merge. Any agent can
+do the same with the pen tools (`list_pens`, `create_pen`, `update_pen`, `delete_pen`, and `pen`
+on `create_task`, `update_task` and `list_tasks`). Pens are kept on each host, per profile; a profile's board spanning hosts merges them by
+name, and a task on a host without the pen yet makes it there as it moves in. `GET`/`POST
+/profiles/{id}/pens`, `PATCH`/`DELETE /pens/{id}`, `pen` (a name) or `pen_id` on `PATCH /tasks/{id}`,
+and `GET /profiles/{id}/pens-thread` (see `apps/server/src/api/pens.ts`).
+
 A group's _New task_ form can also start a **group task** (pick _Group task_ in its project
 picker). It isn't in any project: it sits on the group's board (keyed `G-<n>`, numbered across
 the profile's groups; no project can use the key `G`, and one that had it moves to `GP`) and its agent
@@ -115,17 +162,31 @@ Mermaid diagram. With a plan, it writes the plan first and waits for you to appr
 starts the work; once you do, it can carry it out in the task or break it into tasks, and the
 card shows how many of those are done. Each label gets a tab in the task, before the thread,
 showing its document as the agent writes it: HTML in a sandboxed frame (its scripts run, but it
-can't reach the board, and a Content-Security-Policy lets it load only scripts, styles and fonts from
-cdnjs, jsDelivr, unpkg and Google Fonts: no remote images, requests, frames or form posts. Its links
-open in a new tab after your click in the page; one it opens otherwise, the board asks you about first.
-A page can still send data out in a hostname, though: WebRTC isn't held by the policy, and in a
-browser (not the desktop app) a frame it points at another host is refused only after Chrome has
-looked the host up and connected to it, TLS SNI included), a
-diagram drawn in the board with zoom, an SVG download and a button that
-sends a parse error back to the agent. Reply under the document to ask for changes. The board
-keeps a version from each turn that changed the file (`GET /tasks/{id}/document?label=plan`, with
+can't reach the board or other hosts: see below), a diagram drawn in the board with zoom, an SVG
+download and a button that sends a parse error back to the agent. Reply under the document to ask
+for changes. The board keeps a version from each turn that changed the file (`GET /tasks/{id}/document?label=plan`, with
 `&version=N` for an earlier one), and the task opens on its first label's document once there's
 one to read. The board's _Type_ filter finds tasks by their labels too.
+
+An HTML document's frame has a Content-Security-Policy that lets it load only scripts, styles and
+fonts from cdnjs, jsDelivr, unpkg and Google Fonts (no remote images, requests, frames or form
+posts), and no WebRTC (its policy also requires Trusted Types, which keeps a `javascript:` URL frame
+in it from getting WebRTC back), so a page an agent wrote (say, prompted by a poisoned issue) can't send
+what's in it, or your answers to it, somewhere else. Its links open in a new tab after your click in
+the page; one it opens otherwise, the board asks you about first. In a browser, a page can still
+send data out in a hostname of its choosing, without a click (HA-269):
+
+- When the policy refuses a frame (one the page makes, or the page's own frame going to another
+  host), Chrome has already looked the host up and connected to it, with the hostname in TLS SNI.
+- For a `<link rel="preconnect">` (in the page's HTML or added by its script), Chrome looks the host
+  up and connects to it the same way.
+- A frame the page makes with its own HTML (`srcdoc`) can still use WebRTC: a STUN or TURN
+  server's hostname, or a TURN username.
+
+Chrome doesn't do the first two when its _Preload pages_ setting (in Settings, under Performance) is
+off. The desktop app does none of them: it makes no connection or lookup for a frame it refuses or a
+preconnect link, and it takes WebRTC away in every frame. Browsers other than Chrome and Chromium
+weren't checked.
 
 Before API 71, plan, artifact and diagram were types of task whose agents made only the document,
 in the task's own folder, with no worktree, review or merge. Tasks made as one have it as their

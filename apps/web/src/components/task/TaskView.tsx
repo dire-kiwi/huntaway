@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ChevronLeft, ChevronRight, Clock, Folder, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Folder, Globe, Kanban, Layers, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -12,6 +12,7 @@ import {
   hasMemory,
   hasRoutines,
   isAssistant,
+  isPensThread,
   isRoutine,
   isScratch,
   keyPrefix,
@@ -42,6 +43,7 @@ import { useSubproject } from "./view/hooks";
 import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout";
 import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowTabs } from "./Workflows";
 import { ReviewThreadView } from "./view/ReviewThreadView";
+import { BrowserPane, canBrowse, useBrowserShare } from "./Browser";
 import { TabContent } from "./view/TabContent";
 import { TitleEditor } from "./view/Title";
 
@@ -146,10 +148,18 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   }, [tab, mounted]);
   // The opening tab is picked when the task opens (or once it's loaded), not again as its status moves on.
   const found = !!task;
+  // The browser pane beside the main area (HA-275), mounted from when it's first opened, so closing it keeps the page.
+  const [browser, setBrowser] = useState(false);
+  const [browserMounted, setBrowserMounted] = useState(false);
+  const [share, splitter] = useBrowserShare();
   useEffect(() => {
     setTab(openingTab(useStore.getState().tasks[taskId]));
     setMounted([]);
   }, [taskId, found]);
+  useEffect(() => {
+    setBrowser(false);
+    setBrowserMounted(false);
+  }, [taskId]);
   // A thread off every list the board loads (a routine's run of the assistant, API 110) is fetched by itself, from the
   // hosts that have them, when it's opened by its link.
   const [seeking, setSeeking] = useState(false);
@@ -203,16 +213,18 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // its workspace, with no repository.
   const assistant = isAssistant(task);
   const routine = isRoutine(task);
+  // The profile's pens thread (API 127): a conversation in no repository, like the assistant.
+  const pensThread = isPensThread(task);
   // One in no project is on its profile's board (a scratch task can be in a project since API 51).
   const profileScratch = scratch && !task.project_id;
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
-  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
+  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])];
   // The assistant's morning brief (API 113), its memory files (API 111) and routines (API 110).
   if (assistant && hasBrief(host)) tabs.push("brief");
   if (assistant && hasMemory(host)) tabs.push("memory");
   if (assistant && hasRoutines(host)) tabs.push("routines");
-  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant && !routine;
+  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant && !routine && !pensThread;
   if (reviews) tabs.push("review");
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
@@ -244,6 +256,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const selectTab = (t: Tab) => {
     if (isTerminalTab(t) && mode === "panel") setPanelExpanded(true);
     setTab(t);
+  };
+  // It needs the room as well.
+  const toggleBrowser = () => {
+    if (!browser && mode === "panel") setPanelExpanded(true);
+    setBrowser(!browser);
+    setBrowserMounted(true);
   };
   const showTool = (t: TerminalTool) => {
     openTool({ hostId: task.host_id, taskId: task.id, toolId: t.id });
@@ -288,7 +306,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       !task.session_id &&
       agents &&
       !assistant &&
-      !routine && (
+      !routine &&
+      !pensThread && (
         <Button
           size="sm"
           variant="primary"
@@ -357,6 +376,16 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             </button>
           ))}
         </div>
+      )}
+      {canBrowse() && (
+        <IconButton
+          title={browser ? "Close the browser" : "A browser beside the thread"}
+          aria-pressed={browser}
+          className={clsx("border border-line bg-panel", browser && "bg-raised! text-fg")}
+          onClick={toggleBrowser}
+        >
+          <Globe size={14} />
+        </IconButton>
       )}
       {!narrow && run}
     </>
@@ -447,7 +476,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         )}
       </header>
       <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
+        {/* Too narrow for both: the browser takes the main area's place. */}
+        <main className={clsx("min-w-0 flex-1", browser && !wide && "hidden")}>
           {mounted.includes("terminal") && (
             <div className={clsx("h-full", tab !== "terminal" && "hidden")}>
               <Suspense fallback={null}>
@@ -466,8 +496,16 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             ))}
           <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} onShowThread={() => setTab("thread")} />
         </main>
-        {/* A document, and the changes' panels, get the room. */}
-        {wide && !isTerminalTab(tab) && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && (
+        {browserMounted && (
+          <>
+            {browser && wide && splitter}
+            <div className={clsx("min-w-0", !browser && "hidden", wide ? "shrink-0" : "flex-1")} style={wide ? { width: `${share * 100}%` } : undefined}>
+              <BrowserPane key={`${task.host_id}:${task.id}`} task={task} onClose={() => setBrowser(false)} />
+            </div>
+          </>
+        )}
+        {/* A document, and the changes' panels, get the room; so does the browser. */}
+        {wide && !browser && !isTerminalTab(tab) && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>

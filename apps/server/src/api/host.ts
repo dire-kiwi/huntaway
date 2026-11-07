@@ -6,12 +6,12 @@ import * as db from "../db.ts";
 import { ApiError, Reply, type Req } from "../http.ts";
 import type { AppState } from "../state.ts";
 import { err_str, expand_tilde, home_dir, path_str } from "../util.ts";
-import * as focus from "../agent/focus.ts";
 import * as terminal from "../hosts/terminal.ts";
 import * as tools from "../mcp/tools.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as admin from "../update/admin.ts";
 import * as release from "../update/release.ts";
+import * as service from "../update/service.ts";
 import * as threads from "../threads/write.ts";
 import * as thread_batch from "../threads/batch.ts";
 import { debug_list, def_bool, def_str, def_value, json_map, opt_str, req_str } from "./extract.ts";
@@ -25,7 +25,6 @@ export async function get_settings(s: AppState) {
     scratch_host: db.get_setting(c, "scratch_host"),
     terminal_tools: terminal.tools(c),
     public_url: db.get_setting(c, "public_url"),
-    now_expiry_hours: focus.expiry_hours(c),
     release_prereleases: db.get_setting(c, release.PRERELEASES) === "true",
     thread_items: threads.setting_on(c),
   };
@@ -39,9 +38,7 @@ const STRING_SETTINGS = ["default_model", "default_effort", "default_permission_
  * id). And the TUI programs offered as shortcuts in task terminals (`terminal_tools`, a list of `{id?, name,
  * command}`). And the address it's reached at from outside (`public_url`, API 63), which its automations' webhook URLs
  * are shown with. And whether release checks include prereleases (`release_prereleases`, API 88), which checks again
- * when it changes. And how many hours a task can go without activity in the board's Now view before it goes back to
- * Later (`now_expiry_hours`, API 97; 0 for never, null for the default of a day). And whether tasks started from now
- * on keep their threads as items as well as messages (`thread_items`, API 116; on by default since API 121, so null
+ * when it changes. And whether tasks started from now on keep their threads as items as well as messages (`thread_items`, API 116; on by default since API 121, so null
  * is on; see threads/write.ts).
  */
 export async function update_settings(s: AppState, r: Req) {
@@ -64,13 +61,6 @@ export async function update_settings(s: AppState, r: Req) {
       throw ApiError.bad("public_url must be an http(s) URL, like https://board.example.com");
     }
     b.public_url = url;
-  }
-  let now_expiry: number | null | undefined = undefined;
-  if (Object.hasOwn(b, "now_expiry_hours")) {
-    const v = b.now_expiry_hours;
-    if (v === null) now_expiry = null;
-    else if (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= focus.MAX_EXPIRY_HOURS) now_expiry = v;
-    else throw ApiError.bad(`now_expiry_hours must be a whole number of hours, 0 to ${focus.MAX_EXPIRY_HOURS}, or null`);
   }
   let prereleases: boolean | null = null;
   if (Object.hasOwn(b, release.PRERELEASES)) {
@@ -96,7 +86,6 @@ export async function update_settings(s: AppState, r: Req) {
   for (const key of STRING_SETTINGS) {
     if (Object.hasOwn(b, key)) db.set_setting(s.db(), key, typeof b[key] === "string" ? b[key] : null);
   }
-  if (now_expiry !== undefined) db.set_setting(s.db(), focus.EXPIRY_SETTING, now_expiry === null ? null : String(now_expiry));
   if (thread_items !== undefined) db.set_setting(s.db(), threads.SETTING, thread_items === false ? "false" : null);
   if (terminal_tools !== null) db.set_setting(s.db(), "terminal_tools", terminal_tools.length ? JSON.stringify(terminal_tools) : null);
   if (prereleases !== null && release.prereleases(s) !== prereleases) {
@@ -136,7 +125,35 @@ export async function remote_tool(s: AppState, r: Req) {
 // ---------- server admin ----------
 
 export async function server_status(s: AppState) {
-  return await admin.status(s);
+  const v = await admin.status(s);
+  // API 123: on Linux with systemd, the user service this host can run as (see update/service.ts).
+  const port = local_port(s);
+  const svc = port === null ? null : service.status(port);
+  if (svc !== null) v.service = svc;
+  return v;
+}
+
+/** The port this server listens on, from its internal URL (none in tests that have no listener). */
+function local_port(s: AppState): number | null {
+  try {
+    const u = new URL(s.internal_url);
+    return Number(u.port || (u.protocol === "https:" ? 443 : 80));
+  } catch {
+    return null;
+  }
+}
+
+/** API 123: install this host's user systemd service and restart under it, as a restart job. */
+export async function install_service(s: AppState) {
+  const port = local_port(s);
+  if (port === null) throw ApiError.bad("this server's port isn't known");
+  try {
+    service.install_and_switch(s, port);
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    throw ApiError.bad(err_str(e));
+  }
+  return { ok: true };
 }
 
 export async function restart_server(s: AppState, r: Req) {

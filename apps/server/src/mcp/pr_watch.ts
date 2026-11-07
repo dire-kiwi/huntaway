@@ -6,7 +6,8 @@
 // - `checks_passed`: all of its head commit's required checks passed (all of its checks, when none is required);
 // - `comments`: someone other than the agent's own GitHub account commented or reviewed;
 // - `conflicts`: it started to conflict with its base branch;
-// - and, whatever it picked, its being merged or closed.
+// - and, whatever it picked, its being merged or closed. A wait on checks (either of the first two) also ends when it
+//   conflicts and none of its checks is running, since GitHub doesn't run `pull_request` workflows then (HA-287).
 //
 // The server reads it with one GraphQL query every `POLL` (and one more for each page of review threads past the
 // first, see `Watcher.read_all`), as the GitHub account the task's gh tools act as (its project's or profile's, see

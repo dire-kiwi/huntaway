@@ -130,6 +130,7 @@ const FOR_PLANNING = [
   "get_project",
   "list_automations",
   "list_workflows",
+  "list_pens",
   "wait",
   "request_user_input",
   "submit_review",
@@ -207,6 +208,12 @@ function board_tools(): any[] {
       "Needs approval. Git-ignored folders of the repository (paths relative to it, one per line, e.g. models/cache) symlinked into each new worktree instead of copied, so changes in them change the original",
   };
   const project_ref = "Project id, key or name (<profile>:<key> for another profile's board), or 'all'";
+  const pen_ref = { type: "string", description: "The pen's name (in any case) or id" };
+  const pen = {
+    type: "string",
+    description:
+      "Put the task in this pen (a named set of tasks the board shows as a tab, see list_pens), by its name; the pen is made if the profile has none by that name. A task is in one pen at most; an empty string takes it out of its pen.",
+  };
   const project_one = "Project id, key or name (<profile>:<key> for another profile's board); defaults to the current project";
   const list: any[] = [
     {
@@ -277,7 +284,7 @@ function board_tools(): any[] {
             type: "array",
             items: { type: "string", enum: PR_EVENTS },
             description:
-              "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does.",
+              "With pull_request, the news that ends the wait (default all of it): checks_failed, checks_passed, comments (comments and reviews), conflicts. Its being merged or closed always does, and a wait on checks also ends when it conflicts and none of its checks is running, since GitHub runs no pull request checks on it then.",
           },
           command: {
             type: "string",
@@ -306,6 +313,10 @@ function board_tools(): any[] {
           status: { type: "string", enum: status_enum },
           subproject: { type: "string", description: "Only the tasks of this subproject (task id or key), 'none' for top-level tasks only, or 'all'" },
           include_assistant: { type: "boolean", description: "Also list your profile's assistant (key A-<n>), which is left out otherwise" },
+          pen: {
+            type: "string",
+            description: "Only the tasks in this pen (its name or id), or 'none' for those in no pen. Without project_id, from every project on the board.",
+          },
         },
       },
     },
@@ -377,7 +388,7 @@ function board_tools(): any[] {
           starred,
           remind_at,
           reminder,
-          now: { type: "boolean", default: true, description: "New tasks start in the board's Now view; pass false to start this one in Later instead." },
+          pen,
         },
         required: ["title"],
       },
@@ -412,11 +423,7 @@ function board_tools(): any[] {
           starred,
           remind_at,
           reminder,
-          now: {
-            type: "boolean",
-            description:
-              "Put the task in the board's Now view (true) or send it back to Later (false). Tasks start in Now (create_task can start one in Later), and any update to one (or a message to it) puts it back there; a task with no activity for a day (the host's setting) goes back.",
-          },
+          pen,
         },
         required: ["task_id"],
       },
@@ -441,6 +448,49 @@ function board_tools(): any[] {
         },
         required: ["task_id"],
       },
+    },
+    {
+      name: "list_pens",
+      description:
+        "List your profile's pens (or another board's, with profile): named sets of tasks from any of its projects, which the board shows as tabs (those not hidden, in this order) beside an All tab. Each comes with its tasks (key, title, status, project). A task is in one pen at most; move one with update_task's pen.",
+      inputSchema: { type: "object", properties: { profile } },
+    },
+    {
+      name: "create_pen",
+      description: "Make a pen (a named set of tasks the board shows as a tab), at the end of the tabs. Put tasks in it with update_task's pen.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Its name, shown on its tab (e.g. Today, Parked, Billing rework)" },
+          hidden: { type: "boolean", description: "Make it hidden from the tabs (default false)" },
+          profile,
+        },
+        required: ["name"],
+      },
+    },
+    {
+      name: "update_pen",
+      description: "Rename a pen, hide it from the board's tabs or show it again, or move its tab; leave out what to keep. A hidden pen keeps its tasks.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          pen: pen_ref,
+          name: { type: "string", description: "Its new name" },
+          hidden: { type: "boolean", description: "Hide it from the tabs (true) or show it (false)" },
+          index: {
+            type: "integer",
+            minimum: 0,
+            description: "Where its tab goes among the profile's pens (hidden ones too, as list_pens has them): 0 is the first",
+          },
+          profile,
+        },
+        required: ["pen"],
+      },
+    },
+    {
+      name: "delete_pen",
+      description: "Delete a pen. Its tasks aren't deleted: they're in no pen after. Ask the user before deleting one that has tasks.",
+      inputSchema: { type: "object", properties: { pen: pen_ref, profile }, required: ["pen"] },
     },
     {
       name: "send_to_task",

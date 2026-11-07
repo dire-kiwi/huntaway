@@ -436,6 +436,11 @@ export function supervisor_started() {
   }
 }
 
+/** The process id of `bin/huntaway`, when it started this server: the server's process as a service manager sees it. */
+export function supervisor_pid(): number | null {
+  return supervisor?.pid ?? null;
+}
+
 /** Whether this server can exec (`bin/huntaway` started it). */
 export function can_exec(): boolean {
   return supervisor !== null;

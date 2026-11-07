@@ -255,9 +255,9 @@ export function outcome(checks: Check[]): string {
 /**
  * What's news in `pr` to an agent that was told `seen` (null for its first wait on it), of `events`: what to store as
  * seen meanwhile (its own comments, a conflict that's gone), and the news, if any, with what it will have been told once
- * it gets it.
+ * it gets it. `waiting` for a `wait`, which a conflict also ends when it wants checks and none is running (see below).
  */
-export function compare(seen: Seen | null, pr: Pr, events: string[]): [Seen, [any, Seen] | null] {
+export function compare(seen: Seen | null, pr: Pr, events: string[], waiting = false): [Seen, [any, Seen] | null] {
   const wants = (e: string) => events.includes(e);
   const first = seen === null;
   const quiet = seen ? Seen_clone(seen) : Seen_default();
@@ -313,6 +313,18 @@ export function compare(seen: Seen | null, pr: Pr, events: string[]): [Seen, [an
   if (wants("conflicts") && conflicting === true && !quiet.conflicting) {
     found.push("conflicts");
     told.conflicting = true;
+  } else if (
+    waiting &&
+    (wants("checks_failed") || wants("checks_passed")) &&
+    conflicting === true &&
+    !found.length &&
+    !pr.checks.some((c) => c.state === "Pending")
+  ) {
+    // GitHub doesn't run `pull_request` workflows on a pull request that conflicts with its base, so a wait on checks
+    // with none of them running would never end (HA-287). Said to each such wait, even one that was told of it before,
+    // and not counted as told, so a wait that wants conflicts still hears of it. Not for the in-review watcher, which
+    // would wake the agent with it on every read.
+    found.push("conflicts");
   }
   if (pr.state === "merged" || pr.state === "closed") found.push(pr.state === "merged" ? "merged" : "closed");
   if (!found.length) return [quiet, null];

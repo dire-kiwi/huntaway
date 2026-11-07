@@ -5,6 +5,9 @@ import { dirname, join } from "node:path";
 import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
 import * as devices from "../devices.ts";
+import * as docs from "./docs.ts";
+import * as docs_site from "./docs_site.ts";
+import * as pens from "./pens.ts";
 import { path_str } from "../util.ts";
 import { config_for_dir } from "./profiles.ts";
 import { ASSISTANT_TASK_KEY, SCRATCH_TASK_KEY, clear_projectless_dependencies, free_group_task_key, free_task_key } from "./tasks.ts";
@@ -591,7 +594,7 @@ export function open(path: string): Conn {
     batch("PRAGMA user_version=76; COMMIT;");
   }
   if (version < 77) {
-    // When a task went into "now" (see Task.now_at); the others are in "later". Added only if it isn't there, in case
+    // When a task went into "now" (the board's Now/Later split, which HA-285 removed: the column is unused since). Added only if it isn't there, in case
     // another migration takes this version first.
     batch("BEGIN;");
     if (!has_column(conn, "tasks", "now_at")) batch("ALTER TABLE tasks ADD COLUMN now_at TEXT;");
@@ -846,6 +849,27 @@ export function open(path: string): Conn {
     // In WAL mode VACUUM writes the whole file to the WAL: the checkpoint gives that room back.
     if (deleted) batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
   }
+  if (version < 103) {
+    // Docs (HA-280): each profile's documents, their versions and their pages (see db/docs.ts).
+    batch(`BEGIN; ${docs.SCHEMA} PRAGMA user_version=103; COMMIT;`);
+  }
+  if (version < 104) {
+    // Hosted docs (HA-282): profiles' connections to docs sites, and what they published there (see db/docs_site.ts).
+    batch(`BEGIN; ${docs_site.DOCS_SITE_SCHEMA} PRAGMA user_version=104; COMMIT;`);
+  }
+  if (version < 105) {
+    // Hosted docs (HA-286): the account each document was published as.
+    const add = has_column(conn, "docs_site_published", "login") ? "" : docs_site.DOCS_SITE_LOGIN;
+    batch(`BEGIN; ${add} PRAGMA user_version=105; COMMIT;`);
+  }
+  if (version < 106) {
+    // Pens (HA-285): a profile's named sets of tasks, which its board shows as tabs (see db/pens.ts), each task in one
+    // at most; and each profile's one pens thread (see is_pens_thread).
+    batch("BEGIN;");
+    if (!has_column(conn, "tasks", "pen_id")) batch("ALTER TABLE tasks ADD COLUMN pen_id TEXT;");
+    batch(`${pens.PENS_SCHEMA} CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_pens_thread ON tasks(profile_id) WHERE task_type='pens';
+           CREATE INDEX IF NOT EXISTS tasks_pen ON tasks(pen_id) WHERE pen_id IS NOT NULL; PRAGMA user_version=106; COMMIT;`);
+  }
   return conn;
 }
 
@@ -891,7 +915,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 102;
+export const VERSION = 106;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

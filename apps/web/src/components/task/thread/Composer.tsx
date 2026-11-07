@@ -5,6 +5,7 @@ import {
   api,
   dependencyQueued,
   isAssistant,
+  isPensThread,
   limitQueued,
   hostSupports,
   runningAgentSteers,
@@ -277,7 +278,7 @@ export function Composer({ task, placeholder }: { task: Task; placeholder?: stri
   };
 
   // The assistant has nothing to start on but the user's message.
-  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running && !isAssistant(task);
+  const canStartEmpty = task.kind === "task" && !task.session_id && !task.running && !isAssistant(task) && !isPensThread(task);
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">

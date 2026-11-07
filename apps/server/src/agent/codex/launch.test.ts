@@ -11,6 +11,7 @@ import type { Shared } from "../../state.ts";
 import * as testing from "../../testing.ts";
 import { sleep } from "../../util.ts";
 import * as runs from "../runs.ts";
+import * as agent_tools from "../agent_tools.ts";
 import { MCP_SERVER_NAME, stop } from "../runner.ts";
 import { send } from "../runner/queue.ts";
 import * as mcp_http from "../../mcp/http.ts";
@@ -23,14 +24,28 @@ writeFileSync(shim, '#!/bin/sh\necho $$ > "$1/pid"\n', { mode: 0o755 });
 process.env.IA_SHIM_BIN = shim;
 runs.TEST_CAN_RUN.set(true);
 
-function codex_task(state: Shared, kind = "scratch", session: string | null = null): string {
+function codex_task(state: Shared, kind = "scratch", session: string | null = null, project = false): string {
   const home = testing.temp_dir();
   set_test_models(home, []);
   const cfg = db.insert_claude_config(state.db(), "Codex", home, "codex");
   const p = db.insert_profile(state.db(), "p", [], null);
+  const dir = testing.temp_dir();
+  const pr = project
+    ? db.insert_project(state.db(), {
+        id: `pr-${p.id}`,
+        profile_id: p.id,
+        name: "x",
+        key: "X",
+        repo_path: dir,
+        scratch_path: dir,
+        worktrees_root: dir,
+        base_branch: null,
+        use_worktrees: false,
+      })
+    : null;
   const task = db.insert_task(state.db(), {
     profile_id: p.id,
-    project_id: null,
+    project_id: pr?.id ?? null,
     kind,
     title: "t",
     description: "",
@@ -131,4 +146,53 @@ test("in_auto_mode_a_dynamic_wait_is_the_boards_to_ask_about", async () => {
   state.update_task(task, [["permission_mode", "auto"]]);
   const l = await launched(state, task);
   assert.deepEqual([l.spec.approvals_reviewer, l.spec.review_waits], ["auto_review", false]);
+});
+
+test("every_run_has_the_docs_server_and_uses_it_without_asking", async () => {
+  // HA-280: Codex approves its tools up front, Claude has it in --allowedTools, and both are told of it.
+  const state = testing.state();
+  const codex = await launched(state, codex_task(state));
+  assert.ok(codex.servers.docs?.url.endsWith(`/api/mcp/${codex.run_id}/docs`));
+  assert.ok(codex.spec.approved_mcp_servers.includes("docs"));
+  assert.ok(codex.spec.developer_instructions.includes("`docs.publish_document`"), codex.spec.developer_instructions);
+
+  const claude = codex_task(state);
+  db.run(state.db(), "UPDATE tasks SET claude_config_id=NULL WHERE id=?1", claude);
+  send(state, claude, "go");
+  const deadline = Date.now() + 5000;
+  let dir = "";
+  while (!dir || !existsSync(join(dir, "pid"))) {
+    assert.ok(Date.now() < deadline, "the run didn't start");
+    await sleep(10);
+    const run_id = state.runs.get(claude)?.run_id;
+    dir = run_id ? runs.run_dir(state, run_id) : "";
+  }
+  const args: string[] = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")).args;
+  const allowed = args.slice(args.indexOf("--allowedTools") + 1);
+  assert.ok(
+    allowed
+      .slice(
+        0,
+        allowed.findIndex((a) => a.startsWith("--")),
+      )
+      .includes("mcp__docs"),
+    args.join(" "),
+  );
+  assert.ok(JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8")).mcpServers.docs);
+  assert.ok(readFileSync(join(dir, "system-prompt.md"), "utf8").includes("mcp__docs__publish_document"));
+  stop(state, claude);
+});
+
+test("a_project_that_turns_the_docs_server_off_gets_no_docs_server", async () => {
+  // HA-286: not only unapproved and untold, but not in the run's mcp.json at all.
+  const state = testing.state();
+  const task = codex_task(state, "scratch", null, true);
+  const project = db.get_task(state.db(), task)!.project_id!;
+  agent_tools.set_overrides(state.db(), project, { disabled_skills: [], disabled_mcp_servers: ["docs"], seen: {} });
+  const l = await launched(state, task);
+  assert.deepEqual(Object.keys(l.servers).sort(), ["gh", "huntaway"]);
+  assert.ok(!l.spec.approved_mcp_servers.includes("docs"));
+  assert.ok(!l.spec.developer_instructions.includes("publish_document"));
+  // A project that doesn't has it.
+  assert.ok((await launched(state, codex_task(state, "scratch", null, true))).servers.docs);
 });

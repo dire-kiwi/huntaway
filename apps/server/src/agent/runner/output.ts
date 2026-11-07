@@ -28,7 +28,7 @@ import { start_unblocked } from "./send.ts";
 import * as plan from "./plan.ts";
 import * as thread_source from "../../threads/source.ts";
 import { is_initialized, on_control_cancel, on_control_request } from "./requests.ts";
-import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, turn_ended, turn_started } from "./queue.ts";
+import { background_changed, has_queued, requeue_steers, send_queued, set_writes_documents, steered, took_in, turn_ended, turn_started } from "./queue.ts";
 
 const SUBAGENT_EVENTS = ["task_started", "task_progress", "task_updated", "task_notification"];
 
@@ -108,6 +108,18 @@ export function on_output(state: Shared, run_id: string, offset: number, data: s
   try {
     db.run(state.db(), "UPDATE runs SET out_offset=?1 WHERE id=?2", end, run_id);
   } catch {}
+}
+
+/**
+ * The background task whose outcome a replayed user message gives the agent: Claude Code's `<task-notification>`, in
+ * the top-level thread (a subagent's are its own).
+ */
+export function task_notification(v: any): string | null {
+  if (v?.origin?.kind !== "task-notification" || v.parent_tool_use_id != null) return null;
+  const c = v.message?.content;
+  const text = typeof c === "string" ? c : Array.isArray(c) ? c.map((b: any) => (typeof b?.text === "string" ? b.text : "")).join("") : "";
+  const m = /<task-id>([^<]+)<\/task-id>/.exec(text);
+  return m ? m[1].trim() : null;
 }
 
 /** Rust's `str::lines`: split on `\n`, dropping a final empty line and a `\r` before each `\n`. */
@@ -191,7 +203,12 @@ export function handle_line(state: Shared, run: Run, line: string) {
     context.on_compacted(state, run, v.compact_metadata ?? null);
   } else if (type === "system" && v.subtype === "background_tasks_changed") {
     // The background tasks it has going, all of them: they keep it from exiting (see queue::turn_ended).
-    if (Array.isArray(v.tasks)) background_changed(state, run, v.tasks.length);
+    if (Array.isArray(v.tasks))
+      background_changed(
+        state,
+        run,
+        v.tasks.map((t: any) => (typeof t?.task_id === "string" ? t.task_id : null)),
+      );
   } else if (type === "system" && typeof v.subtype === "string" && SUBAGENT_EVENTS.includes(v.subtype)) {
     // Subagent lifecycle (Agent/Task tool), keyed by the launching `tool_use_id`.
     delete v.output_file;
@@ -225,6 +242,8 @@ export function handle_line(state: Shared, run: Run, line: string) {
       if (config) rate_limit_event(state, config, { rate_limit_info: v.api_error_params.rate_limit_info });
     }
     if (type === "user" && v.isReplay === true) {
+      const notified = task_notification(v);
+      if (notified !== null) took_in(state, run, notified);
       if (typeof v.uuid === "string") steered(state, run, v.uuid);
       return;
     }
@@ -511,8 +530,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   } else if (task.remerge) {
     // It stepped out of the merge queue to make changes, and now rejoins it.
     [status, reason] = ["ready_for_merge", null];
-  } else if (db.is_assistant(task)) {
-    // The assistant never goes to review: it waits for the user's next message.
+  } else if (db.is_assistant(task) || db.is_pens_thread(task)) {
+    // The assistant (and the pens thread) never goes to review: it waits for the user's next message.
     [status, reason] = ["todo", null];
   } else if (db.is_routine(task)) {
     // A routine's run is done once it's reported (see automations/routines.ts).

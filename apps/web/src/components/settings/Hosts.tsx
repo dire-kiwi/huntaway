@@ -30,7 +30,6 @@ import {
   type TerminalTool,
 } from "../../api";
 import { useShallow } from "zustand/react/shallow";
-import { NOW_API } from "../../focus";
 import { defaultCloneDir } from "./repoSource";
 import { navigate } from "../../router";
 import { defaultAgentHost, profileConfigLabel, profileNames, useStore } from "../../store";
@@ -350,7 +349,7 @@ function AddHostModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Start a host on a machine over SSH, with a key restricted to that job. */
+/** Link a host running on a machine over SSH, with a key restricted to that job. The board doesn't start it (HA-278). */
 function AddSshHost({ onClose }: { onClose: () => void }) {
   const [target, setTarget] = useState("");
   const [bin, setBin] = useState("");
@@ -382,8 +381,8 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
   return (
     <div className="space-y-4">
       <p className="text-[12.5px] text-muted">
-        This board starts <code>huntaway</code> on the machine if it isn't running, then connects through an SSH tunnel. The host only listens on that machine's
-        localhost, and its agents keep running if the connection drops.
+        This board connects to <code>huntaway</code> running on the machine through an SSH tunnel. The host only listens on that machine's localhost, and its
+        agents keep running if the connection drops.
       </p>
       <div className="grid grid-cols-[1fr_90px] gap-3">
         <Field label="SSH target">
@@ -406,6 +405,12 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
           <Input value={port} onChange={(e) => setPort(e.target.value)} className="font-mono text-[12px]" />
         </Field>
       </div>
+      <Field
+        label="Start the host on that machine"
+        hint="On Linux, this runs it as a user systemd service, started at boot (its page here can install one later too). Elsewhere, keep huntaway serve --host 127.0.0.1 running."
+      >
+        <CopyLine value={`${binPath} install-service --host 127.0.0.1 --port ${p}`} />
+      </Field>
       <Field label="Add this line to ~/.ssh/authorized_keys on that machine" hint="The key can only run huntaway ssh-host and forward to the host's port.">
         <CopyLine value={line} />
       </Field>
@@ -416,7 +421,7 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
             Cancel
           </Button>
           <Button variant="primary" disabled={busy || !target.includes("@")} onClick={submit}>
-            {busy ? "Connecting…" : "Start & connect"}
+            {busy ? "Connecting…" : "Connect"}
           </Button>
         </div>
       </ModalFooter>
@@ -1217,29 +1222,6 @@ export function AgentDefaultsRow({ host, showName }: { host: Host; showName: boo
           </Field>
         )}
       </div>
-      {hostSupports(host, NOW_API) && (
-        <label className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">
-          Tasks in Now go back to Later after
-          <Input
-            key={settings.now_expiry_hours ?? "default"}
-            type="number"
-            min={0}
-            max={24 * 365}
-            step={1}
-            aria-label="Hours in Now without activity"
-            defaultValue={settings.now_expiry_hours ?? 24}
-            className="h-7 w-20"
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              const hours = v === "" ? null : Math.round(Number(v));
-              if (hours !== null && !(hours >= 0 && hours <= 24 * 365)) return setErr("Hours must be 0 to 8760");
-              if (hours !== (settings.now_expiry_hours ?? 24)) save({ now_expiry_hours: hours });
-            }}
-            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          />
-          hours without activity <span className="text-faint">(0 keeps them there until you move them)</span>
-        </label>
-      )}
       {hostSupports(host, THREAD_ITEMS_API) && (
         <div className="mt-3">
           <Toggle checked={!!settings.thread_items} onChange={(on) => save({ thread_items: on })} label="Keep threads as items" />

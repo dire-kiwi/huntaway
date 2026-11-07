@@ -1,6 +1,8 @@
 import clsx from "clsx";
-import { Bot, ChevronRight, FileText, Globe, LayoutGrid, ListChecks, Loader2, Pencil, Search, Terminal, Wrench, X } from "lucide-react";
+import { BookOpen, Bot, ChevronRight, FileText, Globe, LayoutGrid, ListChecks, Loader2, Pencil, Search, Terminal, Wrench, X } from "lucide-react";
 import { memo, useContext, useEffect, useState, type ReactNode } from "react";
+import { publishedDocPath } from "../../../docs";
+import { navigate } from "../../../router";
 import type { Call } from "../../../threadModel";
 import { lineage, ThreadCtx, usePendingFocus, useThread } from "./context";
 import { SubagentRow } from "./subagents";
@@ -53,7 +55,33 @@ export function toolMeta(name: string, input: Any, cwd?: string | null): { icon:
       summary: `${tool}${input?.title ? `  “${input.title}”` : input?.question ? `  ${input.question}` : ""}`,
     };
   }
+  // The run's docs server (HA-280).
+  if (name.startsWith("mcp__docs__")) {
+    const what = input?.title ?? input?.slug;
+    return { icon: <BookOpen size={s} />, label: "Docs", summary: `${name.slice("mcp__docs__".length)}${what ? `  “${what}”` : ""}` };
+  }
   return { icon: <Wrench size={s} />, label: name.replace(/^mcp__/, "").replace(/__/g, " · "), summary: "" };
+}
+
+/** A link to the document a `publish_document` call published, on this board's Docs page (HA-281). */
+function PublishedDoc({ call }: { call: Call }) {
+  if (call.name !== "mcp__docs__publish_document" || !call.result || call.result.isError) return null;
+  const doc = publishedDocPath(call.result.content);
+  if (!doc) return null;
+  return (
+    <a
+      href={doc.path}
+      onClick={(e) => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        navigate(doc.path);
+      }}
+      className="ml-7 flex w-fit items-center gap-1.5 rounded px-2 py-0.5 text-[12.5px] text-accent hover:bg-white/[0.03] hover:underline"
+    >
+      <BookOpen size={12} />
+      Open “{call.input?.title ?? doc.slug}”{doc.version !== null ? ` (v${doc.version})` : ""} in Docs
+    </a>
+  );
 }
 
 function EditDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
@@ -180,6 +208,7 @@ function PlainToolRow({ call, running, cwd }: { call: Call; running: boolean; cw
           ) : null}
         </span>
       </button>
+      <PublishedDoc call={call} />
       {open && (
         <div className="space-y-2 px-2 pb-2 pl-7">
           <ToolInput name={call.name} input={call.input} />

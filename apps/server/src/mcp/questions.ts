@@ -12,7 +12,6 @@ import type { Shared } from "../state.ts";
 import * as permissions from "./permissions.ts";
 import * as merge_gate from "../review/merge_gate.ts";
 import * as runner from "../agent/runner.ts";
-import * as focus from "../agent/focus.ts";
 import * as history from "../threads/history.ts";
 
 /** The most options a question can have: keys 1–9 pick them. */
@@ -129,9 +128,6 @@ export function answer(s: Shared, task_id: string, message_id: number, answer: A
     } catch {}
     throw e;
   }
-  // The user's answer is a prompt to the agent: it puts the task in "now" like a message does (not the board's own
-  // merge decision).
-  if (!merge_approval) task = focus.put_in_now(s, task_id) ?? task;
   emit(s, message_id, undefined, task_id);
   // Any other question it was waiting on is settled by this reply.
   replied(s, task_id);

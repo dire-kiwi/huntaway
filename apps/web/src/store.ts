@@ -9,11 +9,13 @@ import {
   canRunAgents,
   hostSupports,
   hasAssistant,
+  hasPens,
   usableHost,
   wsUrl,
   type ClaudeConfig,
   type Host,
   type HostSettings,
+  type Pen,
   type Profile,
   type Project,
   type Task,
@@ -51,6 +53,8 @@ interface State {
   usage: Record<string, Usage>;
   /** Project changes agents are waiting for the user to approve, on every host, oldest first. */
   approvals: HostApproval[];
+  /** Every profile's pens on every host that has them (API 127, see pens.ts), tagged with host_id. */
+  pens: (Pen & { host_id: string })[];
 
   setAuthed: (v: boolean) => void;
   loadAll: () => Promise<void>;
@@ -63,6 +67,10 @@ interface State {
   upsertTask: (t: Task) => void;
   upsertProject: (p: Project) => void;
   removeProject: (hostId: string, id: string) => void;
+  /** Loads the pens of a profile on a host again (after a `pens` event). */
+  loadPens: (hostId: string, profileId: string) => Promise<void>;
+  upsertPen: (p: Pen & { host_id: string }) => void;
+  removePen: (hostId: string, id: string) => void;
 }
 
 const usableHosts = (hosts: Host[]) => hosts.filter(usableHost);
@@ -218,6 +226,7 @@ export const useStore = create<State>((set, get) => ({
   hostSettings: {},
   usage: {},
   approvals: [],
+  pens: [],
 
   setAuthed: (v) => set({ authed: v }),
 
@@ -281,6 +290,7 @@ export const useStore = create<State>((set, get) => ({
       approvals: s.approvals.filter((a) => boardHosts(s.hosts).some((h) => h.id === a.host_id)),
       projects: s.projects.filter((p) => live.has(p.host_id)),
       archived: s.archived.filter((p) => live.has(p.host_id)),
+      pens: s.pens.filter((p) => live.has(p.host_id)),
       tasks: Object.fromEntries(Object.entries(s.tasks).filter(([, t]) => live.has(t.host_id))),
     }));
     // The threads shown catch up from their seqs.
@@ -303,6 +313,9 @@ export const useStore = create<State>((set, get) => ({
     );
     // The profile's assistant too, for the sidebar and its page: the boards leave it out.
     const assistants = hasAssistant(get().hosts.find((x) => x.id === h));
+    // Its pens, and its pens thread, which the profile's board opens.
+    const pens = hasPens(get().hosts.find((x) => x.id === h));
+    let penList: Pen[] = [];
     let projects: Project[] = [];
     let archived: Project[] = [];
     let tasks: Task[] = [];
@@ -314,16 +327,18 @@ export const useStore = create<State>((set, get) => ({
       const loaded = await Promise.all(
         profiles.map(async (profile) => {
           // Group and scratch tasks are in no project.
-          const [ps, projectless, gone] = await Promise.all([
+          const [ps, projectless, gone, penned] = await Promise.all([
             api.projects(h, profile.id),
-            groups ? api.groupTasks(h, profile.id, assistants) : [],
+            groups ? api.groupTasks(h, profile.id, assistants, pens) : [],
             archiving ? api.projects(h, profile.id, true) : [],
+            // Pens that don't load leave the board without its tabs, rather than without its tasks.
+            pens ? api.pens(h, profile.id).catch(() => [] as Pen[]) : [],
           ]);
           // A project deleted since it was listed has no tasks (and its project_deleted event follows).
           const tasksOf = (id: string, kind: Task["kind"]) =>
             api.projectTasks(h, id, kind).catch((e) => (e instanceof ApiError && e.status === 404 ? [] : Promise.reject(e)));
           const lists = await Promise.all(ps.flatMap((p) => [tasksOf(p.id, "task"), ...(reviews ? [tasksOf(p.id, "review")] : [])]));
-          return { projects: ps, archived: gone, tasks: [...projectless, ...lists.flat()] };
+          return { projects: ps, archived: gone, pens: penned, tasks: [...projectless, ...lists.flat()] };
         }),
       );
       projects = tag(
@@ -338,6 +353,7 @@ export const useStore = create<State>((set, get) => ({
         loaded.flatMap((l) => l.tasks),
         h,
       );
+      penList = loaded.flatMap((l) => l.pens);
     } catch {
       load.done();
       return; // host dropped mid-load; hosts_changed will follow
@@ -369,7 +385,12 @@ export const useStore = create<State>((set, get) => ({
       ]))
         changed(h, "tasks", id, gen);
       for (const p of [...s.projects, ...s.archived].filter(ours).concat(projects, archived)) changed(h, "projects", p.id, gen);
-      return { projects: sortProjects(nextProjects), archived: nextArchived, tasks: next };
+      return {
+        projects: sortProjects(nextProjects),
+        archived: nextArchived,
+        tasks: next,
+        pens: [...s.pens.filter((p) => p.host_id !== h), ...tag(penList, h)],
+      };
     });
   },
 
@@ -475,6 +496,20 @@ export const useStore = create<State>((set, get) => ({
         .finally(load.done);
     }
   },
+
+  loadPens: async (h, profileId) => {
+    if (!hasPens(get().hosts.find((x) => x.id === h))) return;
+    try {
+      const list = tag(await api.pens(h, profileId), h);
+      set((s) => ({ pens: [...s.pens.filter((p) => !(p.host_id === h && p.profile_id === profileId)), ...list] }));
+    } catch {
+      /* host dropped; hosts_changed will follow */
+    }
+  },
+
+  upsertPen: (p) => set((s) => ({ pens: [...s.pens.filter((x) => !(x.host_id === p.host_id && x.id === p.id)), p] })),
+
+  removePen: (h, id) => set((s) => ({ pens: s.pens.filter((p) => !(p.host_id === h && p.id === id)) })),
 
   removeProject: (h, id) => {
     changed(h, "projects", id);
@@ -699,6 +734,26 @@ export function onWorkflowsChanged(fn: WorkflowListener) {
   };
 }
 
+/** Told when a profile's document is published or deleted on a host (`docs` events, API 124). */
+type DocsListener = (hostId: string, profileId: string, slug: string) => void;
+const docsListeners = new Set<DocsListener>();
+export function onDocs(fn: DocsListener) {
+  docsListeners.add(fn);
+  return () => {
+    docsListeners.delete(fn);
+  };
+}
+
+/** Told when a profile's connection to its hosted docs site changes on a host (`docs_site` events, API 125). */
+type DocsSiteListener = (hostId: string, profileId: string) => void;
+const docsSiteListeners = new Set<DocsSiteListener>();
+export function onDocsSite(fn: DocsSiteListener) {
+  docsSiteListeners.add(fn);
+  return () => {
+    docsSiteListeners.delete(fn);
+  };
+}
+
 /** Calls `fn` whenever an automation (or its runs) changes on a host. Returns the unsubscribe. */
 export function onAutomationsChanged(fn: AutomationListener) {
   automationListeners.add(fn);
@@ -747,6 +802,9 @@ export function handleEvent(ev: any) {
     case "profiles_changed":
       s.loadProfiles().catch(() => {});
       break;
+    case "pens":
+      s.loadPens(h, ev.profile_id).catch(() => {});
+      break;
     case "hosts_changed":
       s.loadAll().catch(() => {});
       break;
@@ -765,6 +823,12 @@ export function handleEvent(ev: any) {
       break;
     case "telegram":
       for (const fn of telegramListeners) fn(h, ev.profile_id);
+      break;
+    case "docs":
+      for (const fn of docsListeners) fn(h, ev.profile_id, ev.slug);
+      break;
+    case "docs_site":
+      for (const fn of docsSiteListeners) fn(h, ev.profile_id);
       break;
     case "workflows_changed":
       for (const fn of workflowListeners) fn(h, { projectId: ev.project_id });

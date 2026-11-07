@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import * as db from "../db.ts";
 import * as runner from "./runner.ts";
 import * as mcp_http from "../mcp/http.ts";
+import * as docs_mcp from "../mcp/docs_mcp.ts";
 import * as tokens from "./tokens.ts";
 import type { Spec } from "./codex.ts";
 import * as codex from "./codex.ts";
@@ -68,6 +69,8 @@ export interface Launch {
   review: boolean;
   /** The project's own MCP servers (see agent/agent_tools.rs). */
   mcp_servers: Record<string, any>;
+  /** The project turned our docs server off (see runner/access.ts's `uses_docs_server`): its `mcp.json` has none. */
+  no_docs_server?: boolean;
   /** The GitHub account the gh server acts as (see gh_mcp::Account), if not gh's active one. */
   github_account: string | null;
   /** Run Codex instead of Claude Code: `args` are ignored, and the adapter gets this as `codex.json` (see agent/codex.ts). */
@@ -241,6 +244,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }));
   const servers: Record<string, any> = mcp_http.servers(state, l.run_id);
   if (in_process) delete servers[runner.MCP_SERVER_NAME];
+  if (l.no_docs_server) delete servers[docs_mcp.SERVER_NAME];
   for (const [name, server] of Object.entries(l.mcp_servers ?? {})) {
     if (name !== runner.MCP_SERVER_NAME) servers[name] = server;
   }
@@ -302,18 +306,32 @@ export function write_input(state: Shared, run_id: string, line: string): boolea
  * the messages sent meanwhile (see queue::turn_ended). Kept in the run's folder, `background`, for a restarted server.
  */
 export function background_tasks(state: Shared, run_id: string): number {
-  try {
-    const n = Number.parseInt(readFileSync(join(run_dir(state, run_id), "background"), "utf8"), 10);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
-  }
+  return background_ids(state, run_id).length;
 }
 
-export function set_background_tasks(state: Shared, run_id: string, count: number): void {
+/**
+ * The ids of those tasks (`task_id`), null for one without, or recorded before the ids were kept (just their count, in
+ * `background`).
+ */
+export function background_ids(state: Shared, run_id: string): (string | null)[] {
+  let text: string;
+  try {
+    text = readFileSync(join(run_dir(state, run_id), "background"), "utf8");
+  } catch {
+    return [];
+  }
+  try {
+    const ids = JSON.parse(text);
+    if (Array.isArray(ids)) return ids.map((id) => (typeof id === "string" ? id : null));
+  } catch {}
+  const n = Number.parseInt(text, 10);
+  return Number.isFinite(n) && n > 0 ? Array.from({ length: n }, () => null) : [];
+}
+
+export function set_background_tasks(state: Shared, run_id: string, ids: (string | null)[]): void {
   const path = join(run_dir(state, run_id), "background");
   try {
-    if (count > 0) writeFileSync(path, `${count}\n`);
+    if (ids.length > 0) writeFileSync(path, `${JSON.stringify(ids)}\n`);
     else rmSync(path, { force: true });
   } catch (e) {
     log.error(`run=${run_id} recording the agent's background tasks: ${err_str(e)}`);
@@ -321,21 +339,52 @@ export function set_background_tasks(state: Shared, run_id: string, count: numbe
 }
 
 /**
- * Whether the run's background tasks last ended during a turn (see queue::background_changed), for an agent that asks on
- * its output: the turn on their outcome follows that turn. Kept in the run's folder, `background-ended`.
+ * The background tasks that ended during the agent's turn (see queue::background_changed), for an agent that asks on
+ * its output, and those whose outcome Claude Code has given it (`taken`: the `<task-notification>` user message it
+ * replays when it does, see queue::took_in). One whose outcome it hasn't been given gets a turn of its own after that turn
+ * (null is one without an id, which is never known to have been taken in).
  */
-export function background_ended(state: Shared, run_id: string): boolean {
-  return existsSync(join(run_dir(state, run_id), "background-ended"));
+export interface BackgroundEnded {
+  ended: (string | null)[];
+  taken: string[];
 }
 
-export function set_background_ended(state: Shared, run_id: string, ended: boolean): void {
+/**
+ * The run's `BackgroundEnded`, null if none ended in its turn. Kept in the run's folder, `background-ended` (empty
+ * before HA-279, when it said only that some had: none of them is known to have been taken in).
+ */
+export function background_ended(state: Shared, run_id: string): BackgroundEnded | null {
+  let text: string;
+  try {
+    text = readFileSync(join(run_dir(state, run_id), "background-ended"), "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const v = JSON.parse(text);
+    if (Array.isArray(v?.ended) && Array.isArray(v?.taken)) {
+      return {
+        ended: v.ended.map((id: unknown) => (typeof id === "string" ? id : null)),
+        taken: v.taken.filter((id: unknown) => typeof id === "string"),
+      };
+    }
+  } catch {}
+  return { ended: [null], taken: [] };
+}
+
+export function set_background_ended(state: Shared, run_id: string, ended: BackgroundEnded | null): void {
   const path = join(run_dir(state, run_id), "background-ended");
   try {
-    if (ended) writeFileSync(path, "");
+    if (ended) writeFileSync(path, JSON.stringify(ended));
     else rmSync(path, { force: true });
   } catch (e) {
     log.error(`run=${run_id} recording that the agent's background tasks ended: ${err_str(e)}`);
   }
+}
+
+/** The tasks in `e` whose outcome Claude Code hasn't given the agent yet. */
+export function not_taken_in(e: BackgroundEnded): (string | null)[] {
+  return e.ended.filter((id) => id === null || !e.taken.includes(id));
 }
 
 /** End the agent's input: it exits once it has dealt with what it was sent. */

@@ -5,8 +5,8 @@
 #
 # Downloads huntaway-server-<v>-linux-<arch>.tar.gz (the latest release by default), checks it against the sha256
 # GitHub lists for it, unpacks it into <dir>/<v>/ (default ~/.local/share/huntaway-server), checks that it runs, and
-# points <dir>/current at it. It changes nothing else: it prints how to start the host with release updates on, and
-# the forced command for a hub that starts it over SSH.
+# points <dir>/current at it. It changes nothing else: it prints how to start the host with release updates on (as a
+# user systemd service on Linux, or by hand), and the forced command for a hub that links it over SSH.
 set -eu
 
 repo=dire-kiwi/huntaway
@@ -73,20 +73,23 @@ server=$dir/current/huntaway
 
 # For the shell: single-quoted, with any ' in it as '\''.
 q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
-# The same data dir for both: without --data-dir, ssh-host would start a board in the default one instead. In
+# The same data dir for all: without --data-dir, ssh-host would look for the token in the default one instead. In
 # authorized_keys' command="…", sshd only undoes \" (opt_dequote), and leaves other backslashes as they are.
 serve="IA_RELEASE_UPDATES=$repo $(q "$server") serve --data-dir $(q "$data_dir")"
+service="IA_RELEASE_UPDATES=$repo $(q "$server") install-service --host 127.0.0.1 --port 7878 --data-dir $(q "$data_dir")"
 ssh_host="IA_RELEASE_UPDATES=$repo $(q "$server") ssh-host --port 7878 --data-dir $(q "$data_dir")"
 
 cat <<EOF
 
 Installed $version in $target, and pointed $dir/current at it.
 
-Start it with release updates on (agents of a host running now keep running when you stop it):
+Run it with release updates on as a user systemd service, started at boot and now (stop a host
+that's running on that port first; its agents keep running):
+  $service
+(leave out --host 127.0.0.1 for a host reached by URL), or start it yourself:
   $serve …
-For a host a hub starts over SSH, change the command in the hub's line in ~/.ssh/authorized_keys to
+For a hub that links it over SSH, change the command in the hub's line in ~/.ssh/authorized_keys to
   command="$(printf '%s' "$ssh_host" | sed 's/"/\\"/g')"
-(with your port), stop the host that's running now, and let the hub start it when it reconnects (or
-run that command yourself). Its board then shows new releases under Settings → Server, and a hub's
+(with your port). Its board then shows new releases under Settings → Server, and a hub's
 Settings → Hosts offers Update to the release the hub runs.
 EOF

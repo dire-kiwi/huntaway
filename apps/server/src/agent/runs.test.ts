@@ -467,12 +467,21 @@ test("a_run_that_calls_the_board_on_its_output_has_no_board_server_in_its_mcp_co
     return { servers: Object.keys(read("mcp.json").mcpServers).sort(), format: read("run.json").format, in_process: read(mcp_http.SETTINGS_FILE).in_process };
   };
   try {
-    assert.deepEqual(await started({ asks_on_output: true, tools_on_output: true }), { servers: ["gh", "own"], format: 4, in_process: true });
+    assert.deepEqual(await started({ asks_on_output: true, tools_on_output: true }), { servers: ["docs", "gh", "own"], format: 4, in_process: true });
     // In Bypass, with nothing to ask: its tools still need its input.
-    assert.deepEqual(await started({ tools_on_output: true }), { servers: ["gh", "own"], format: 4, in_process: true });
+    assert.deepEqual(await started({ tools_on_output: true }), { servers: ["docs", "gh", "own"], format: 4, in_process: true });
     // A compaction (no input), and older runs' formats.
-    assert.deepEqual(await started({ input: false }), { servers: ["gh", "huntaway", "own"], format: 2, in_process: false });
-    assert.deepEqual(await started({ asks_on_output: true }), { servers: ["gh", "huntaway", "own"], format: 3, in_process: false });
+    assert.deepEqual(await started({ input: false }), { servers: ["docs", "gh", "huntaway", "own"], format: 2, in_process: false });
+    assert.deepEqual(await started({ asks_on_output: true }), { servers: ["docs", "gh", "huntaway", "own"], format: 3, in_process: false });
+    // A project's own server by the name of one of ours replaces it.
+    await started({ mcp_servers: { docs: { type: "stdio", command: "mine" } } });
+    const last = db.value<string>(state.db(), "SELECT id FROM runs ORDER BY rowid DESC LIMIT 1")!;
+    assert.deepEqual(JSON.parse(readFileSync(join(run_dir(state, last), "mcp.json"), "utf8")).mcpServers.docs, { type: "stdio", command: "mine" });
+    // A project that turns our docs server off gets none (HA-286), and one of its own by that name still replaces it.
+    assert.deepEqual((await started({ no_docs_server: true })).servers, ["gh", "huntaway", "own"]);
+    await started({ no_docs_server: true, mcp_servers: { docs: { type: "stdio", command: "mine" } } });
+    const own = db.value<string>(state.db(), "SELECT id FROM runs ORDER BY rowid DESC LIMIT 1")!;
+    assert.deepEqual(JSON.parse(readFileSync(join(run_dir(state, own), "mcp.json"), "utf8")).mcpServers.docs, { type: "stdio", command: "mine" });
   } finally {
     if (before === undefined) delete process.env.IA_SHIM_BIN;
     else process.env.IA_SHIM_BIN = before;

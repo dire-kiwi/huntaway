@@ -72,6 +72,8 @@ async function main() {
       return (await import("./threads/rebuild.ts")).main(rest);
     case "ssh-host":
       return (await import("./hosts/ssh.ts")).ssh_host_cli(rest);
+    case "install-service":
+      return (await import("./update/service.ts")).install_cli(rest);
     case "--version":
     case "-V":
       console.log(`huntaway ${(await import("./hosts/proto.ts")).VERSION}`);
@@ -79,7 +81,9 @@ async function main() {
     case "--help":
     case "-h":
     case "help":
-      console.log("Usage: huntaway [serve|token|google-auth] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see apps/server/PORTING.md).");
+      console.log(
+        "Usage: huntaway [serve|token|google-auth|install-service] [OPTIONS]\n\nThe TypeScript port of the huntaway server (see apps/server/PORTING.md).",
+      );
       return;
     default:
       console.error(`error: unrecognized subcommand '${cmd}'`);

@@ -470,25 +470,18 @@ test("profiles_connect_to_asana_and_search_it", async () => {
   assert.equal((await call(s, "GET", search))[0], 409);
 });
 
-test("updating_a_task_from_the_api_puts_it_in_now", async () => {
+// HA-285 took out the board's Now/Later split: an older board's or agent's `now` is let be, and changes nothing.
+test("now_from_an_older_board_is_let_be", async () => {
   const s = testing.state();
   const p = db.insert_profile(s.db(), "p", [], null);
   const project = db.insert_project(s.db(), new_project(p.id));
   const t = create_task_inner(s, project.id, { title: "Fix it" });
-  assert.equal(t.now_at, null);
-  const patch = async (v: any): Promise<[any, any]> => {
-    const shown = await update_task(s, req(v, { id: t.id }));
-    return [shown.now_at ?? null, db.get_task(s.db(), shown.id)!.now_at ?? null];
-  };
-  // Asking for Later in the same request keeps it there; any other update is a reason for Now.
-  assert.deepEqual(await patch({ description: "More", now: false }), [null, null]);
-  const [shown, kept] = await patch({ description: "Even more" });
-  assert.ok(kept != null && shown === kept);
-  await patch({ now: false });
-  // The board renumbers a column's positions when a card is dropped: that touches no other card.
-  assert.deepEqual(await patch({ position: 7.5 }), [null, null]);
-  // The dropped card's own request moves it too.
-  assert.ok((await patch({ status: "in_progress", position: 8.5 }))[1] != null);
+  const shown = await update_task(s, req({ description: "More", now: true }, { id: t.id }));
+  assert.equal(shown.description, "More");
+  assert.equal((shown as any).now_at, undefined);
+  assert.equal(db.value(s.db(), "SELECT now_at FROM tasks WHERE id=?1", t.id), null);
+  assert.equal((await update_task(s, req({ now: "soon" }, { id: t.id }))).id, t.id);
+  assert.equal(((await get_settings(s)) as any).now_expiry_hours, undefined);
 });
 
 test("a_tasks_fields_are_checked_for_type_before_theyre_stored", async () => {
@@ -547,60 +540,6 @@ function waiting_for_another(s: AppState): [Project, Task] {
   const first = create_task_inner(s, project.id, { title: "First" });
   return [project, first];
 }
-
-test("the_users_prompts_put_a_task_in_now_but_agents_and_starts_do_not", async () => {
-  await can_run(async () => {
-    const s = testing.state();
-    const [project, first] = waiting_for_another(s);
-    const make = (v: any): Promise<Task> => create_task(s, req({ depends_on: [first.id], title: "T", ...v }, { id: project.id }));
-    // Made from the board with a prompt, it's in now; started without one (or by an agent: create_task_inner), it isn't.
-    assert.ok((await make({ start: "Do it" })).now_at != null);
-    // The new task dialog sends `start: true` with the description they typed (its title is made from it).
-    const dialog = { description: "Implement the feature", start: true, status: "in_progress" };
-    assert.ok((await make(dialog)).now_at != null);
-    assert.equal((await make({ start: true })).now_at ?? null, null);
-    assert.equal((await make({ description: "  ", start: true })).now_at ?? null, null);
-    assert.equal((await make({ description: "Implement the feature" })).now_at ?? null, null);
-    // The same for the dialog's scratch and group tasks, which share it.
-    const profile = project.profile_id;
-    const body = (extra: any) => ({ title: "T", ...extra });
-    let scratch = await create_scratch_task(s, req(body(dialog), { id: profile }));
-    assert.ok(scratch.now_at != null);
-    scratch = await create_scratch_task(s, req(body({ start: true }), { id: profile }));
-    assert.equal(scratch.now_at ?? null, null);
-    await update_project_inner(s, project.id, { group_name: "Shop" });
-    const group = (extra: any) => ({ group: "Shop", ...body(extra) });
-    let g = await create_group_task(s, req(group(dialog), { id: profile }));
-    assert.ok(g.now_at != null);
-    g = await create_group_task(s, req(group({ start: true }), { id: profile }));
-    assert.equal(g.now_at ?? null, null);
-    assert.equal((await make({})).now_at ?? null, null);
-    const by_agent = create_task_inner(s, project.id, { title: "T", depends_on: [first.id], start: "Do it" });
-    assert.equal(by_agent.now_at ?? null, null);
-
-    // A prompt sent on its thread, not an empty one that starts its agent.
-    const t = await make({ start: true });
-    await send_message(s, req({ text: "  " }, { id: t.id }));
-    assert.equal(db.get_task(s.db(), t.id)!.now_at ?? null, null);
-    await send_message(s, req({ text: "and this" }, { id: t.id }));
-    assert.ok(db.get_task(s.db(), t.id)!.now_at != null);
-  });
-});
-
-test("how_long_a_task_stays_in_now_is_a_setting", async () => {
-  const s = testing.state();
-  const set = (v: any) => update_settings(s, req(v));
-  assert.equal((await get_settings(s)).now_expiry_hours, 24);
-  assert.equal((await set({ now_expiry_hours: 6 })).now_expiry_hours, 6);
-  // 0 keeps tasks there for good, and null goes back to a day.
-  assert.equal((await set({ now_expiry_hours: 0 })).now_expiry_hours, 0);
-  assert.equal((await set({})).now_expiry_hours, 0);
-  assert.equal((await set({ now_expiry_hours: null })).now_expiry_hours, 24);
-  for (const bad of [{ now_expiry_hours: -1 }, { now_expiry_hours: 1.5 }, { now_expiry_hours: "soon" }, { now_expiry_hours: 999999 }]) {
-    const e = await err(set(bad));
-    assert.equal(e.status, 400, `${JSON.stringify(bad)}: ${e.message}`);
-  }
-});
 
 test("keeping_threads_as_items_is_a_setting_on_by_default", async () => {
   const s = testing.state();
@@ -1522,8 +1461,6 @@ test("a_merge_waits_for_the_users_approval_of_its_summary", async () => {
     assert.deepEqual([t.status, t.merging, t.merge_approval, t.running], ["ready_for_merge", true, "approved", true]);
     assert.ok(last_prompt(s, t.id).includes("The user approved the merge."), last_prompt(s, t.id));
     assert.deepEqual(approval_cards(s, t.id)[0].data.answer.choices, ["Approve"]);
-    // The board's own question isn't a prompt of the user's.
-    assert.equal(t.now_at ?? null, null);
     assert.equal(blocked(t.id), null);
     assert.throws(() => questions.answer(s, t.id, cards[0].id, pick("Deny")), "answered once");
     // The run's gh server asks the board.

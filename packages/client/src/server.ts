@@ -32,6 +32,25 @@ export interface ServerStatus {
   release?: ReleaseStatus;
   /** API 108, on a server that keeps the board in `huntaway-2.db` (`IA_NEW_DB_FILE`): which file the database is in. */
   database?: DatabaseFile;
+  /** API 123, on Linux with systemd (not the desktop app's server): the user service this host can run as. */
+  service?: ServiceStatus;
+}
+
+/** A host's user systemd service (`huntaway.service`, or `huntaway-<port>.service` on another port). */
+export interface ServiceStatus {
+  unit: string;
+  /** The unit file, in `~/.config/systemd/user/`. */
+  path: string;
+  installed: boolean;
+  /** Started at boot (or at login, without lingering). */
+  enabled: boolean;
+  /** This server runs as that service. */
+  running: boolean;
+  /** Another systemd service this server runs as already (`<unit>`, or `<unit> (system)`). */
+  other: string | null;
+  /** Lingering is on for `user`, so their services start at boot rather than when they log in. */
+  linger: boolean;
+  user: string;
 }
 
 /** The database file of a server that keeps the board in `huntaway-2.db`, copied from the one older builds use
@@ -134,8 +153,6 @@ export interface HostSettings {
   public_url?: string | null;
   /** Whether release checks include prereleases (API 88). Changing it checks again. */
   release_prereleases?: boolean;
-  /** Hours a task can go without activity in Now before it goes back to Later (API 97): 0 for never, null for the default of a day. */
-  now_expiry_hours?: number | null;
   /**
    * Keep threads as items (API 116): tasks whose first message comes while it's on keep their threads as items as well
    * as messages (docs/threads.md), and stay so. Off by default before API 121, on since (null sets it back to that).
@@ -188,6 +205,8 @@ export const serverApi = ({ on }: Http) => ({
   /** API 108: copy `database.older_changed` into `database.file` again as the server restarts, as a restart job. It
    * discards what's been done in `database.file` since it was copied (kept in `<file>.replaced` until the next copy). */
   recopyDatabase: (h: string) => on(h).post<{ ok: boolean }>("/admin/database/recopy"),
+  /** API 123: install the host's user systemd service and restart the host under it, as a restart job. */
+  installService: (h: string) => on(h).post<{ ok: boolean }>("/admin/service"),
   /** API 121: the batch rebuild of threads as items. */
   threadsStatus: (h: string) => on(h).get<ThreadsStatus>("/admin/threads"),
   /** API 121: starts the batch rebuild (or goes on with it), or with `stop`, stops it after the task it's on. */

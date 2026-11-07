@@ -7,6 +7,7 @@ import type { AppState } from "./state.ts";
 import { path_str } from "./util.ts";
 import { create_project_inner } from "./api/projects.ts";
 import * as documents from "./agent/documents.ts";
+import * as docs_mcp from "./mcp/docs_mcp.ts";
 
 const README = "# Demo\n\nA scratch folder for the demo project that this preview creates on its first start.\n";
 
@@ -151,6 +152,70 @@ function new_task(profile_id: string, project_id: string | null, title: string, 
   return { profile_id, project_id, kind: "task", title, description, status, use_worktree: false, model: null, effort: null, claude_config_id: null };
 }
 
+/** A document in the profile's Docs (HA-281), as an agent publishes one: its versions' messages and pages. The second
+ *  version merges into the first. A merge keeps the carried-over pages' positions, as the hosted server's does, so its
+ *  pages give their menu order (`order:`) for Phase 2 to follow Phase 1 (HA-286). */
+const DOC_VERSIONS: Array<{ message: string; pages: Array<{ path: string; content: string; format?: string }> }> = [
+  {
+    message: "First draft of the rollout plan",
+    pages: [
+      {
+        path: "index",
+        content:
+          "---\norder: 0\n---\n# Rollout plan\n\nHow the new board ships, in two phases. See [Phase 1](plan/phase-1) for the details, " +
+          "and [the notes](notes) for open questions.\n\n## Goals\n\n- Every profile has its own documents.\n- Agents publish them as they work.\n\n" +
+          "Pages render as in [the docs app](https://github.com/dire-kiwi/docs).\n",
+      },
+      { path: "plan/index", content: "---\norder: 1\n---\n# Phases\n\nThe rollout is split into phases:\n\n1. [Phase 1](phase-1): the store.\n" },
+      {
+        path: "plan/phase-1",
+        content: "---\norder: 2\n---\n# Phase 1\n\nThe document store and the agents' `docs` server.\n\n## Steps\n\n1. Store versions.\n2. Render pages.\n",
+      },
+    ],
+  },
+  {
+    message: "Add phase 2 and the open questions",
+    pages: [
+      {
+        path: "plan/index",
+        content:
+          "---\norder: 1\n---\n# Phases\n\nThe rollout is split into phases:\n\n1. [Phase 1](phase-1): the store.\n2. [Phase 2](phase-2): the board's page.\n",
+      },
+      {
+        path: "plan/phase-2",
+        content: "---\norder: 3\n---\n# Phase 2\n\nThe board's Docs page: the list, the menu, the versions.\n\n[Back to the plan](../)\n",
+      },
+      {
+        path: "notes",
+        format: "mdx",
+        content:
+          '---\norder: 4\n---\n# Notes\n\n<Callout type="warning">Forms in local documents collect no answers.</Callout>\n\n' +
+          '<Approval />\n\n<TextInput name="why" label="Anything to add?" />\n',
+      },
+    ],
+  },
+];
+
+/** Publish the demo's document, by task `task_id`. */
+async function seed_doc(s: AppState, profile_id: string, task_id: string) {
+  const lib = await docs_mcp.renderer();
+  for (const v of DOC_VERSIONS) {
+    const { pages } = lib.validatePages(v.pages);
+    db.publish_doc(s.db(), {
+      profile_id,
+      slug: "rollout-plan",
+      // A new document's title is its index page's, as publish_document gives it.
+      title: pages.find((p) => p.path === "index")?.title ?? null,
+      message: v.message,
+      pages: pages.map((p, i) => ({ ...p, source: v.pages[i].content })),
+      merge: true,
+      delete: [],
+      task_id,
+      run_id: null,
+    });
+  }
+}
+
 /** Seed the demo data, unless this host already has profiles (it's only for a fresh data dir). */
 export async function seed(s: AppState) {
   if (db.list_profiles(s.db()).length) return;
@@ -166,7 +231,8 @@ export async function seed(s: AppState) {
   } catch (e: any) {
     throw new Error(e?.message ?? String(e));
   }
-  for (const [title, description, status] of TASKS) db.insert_task(s.db(), new_task(profile.id, project.id, title, description, status));
+  const tasks = TASKS.map(([title, description, status]) => db.insert_task(s.db(), new_task(profile.id, project.id, title, description, status)));
+  await seed_doc(s, profile.id, tasks.find((t) => t.status === "in_review")!.id);
   // Done for longer than the board keeps it in Done, so it's archived.
   const old = db.insert_task(
     s.db(),
