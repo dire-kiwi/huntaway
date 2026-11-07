@@ -21,6 +21,7 @@ import {
   hostSupports,
   isArchived,
   isAssistants,
+  isPensThread,
   keyPrefix,
   moveTask,
   STATUSES,
@@ -57,6 +58,7 @@ import { REMINDERS_API } from "../../reminders";
 import { FOCUSES, inFocus, isFocus, isNow, type Focus } from "../../focus";
 import { useSelection } from "../../selection";
 import { focusItems, moveToFocus } from "./focusActions";
+import { penItems, useNewPen } from "./Pens";
 import { LassoPath, SelectionBar, useClearSelection, useLasso } from "./Lasso";
 import { GraphView } from "./GraphView";
 import { TriageView } from "./TriageView";
@@ -131,6 +133,8 @@ export function TaskBoard({
   ready = true,
   notice,
   header,
+  only,
+  onCreated,
 }: {
   /** Which board it is, to keep its search and filters by (each board has its own; give it as the `key` too). */
   boardKey: string;
@@ -156,6 +160,10 @@ export function TaskBoard({
   notice?: ReactNode;
   /** The header, given the search, filter, sort and view controls to show in it. */
   header: (slots: { controls: ReactNode; newTask: () => void }) => ReactNode;
+  /** Only the tasks it keeps (a pen's, on a profile's board), the same function while it keeps the same ones. */
+  only?: (t: Task) => boolean;
+  /** Told of the tasks New task made. */
+  onCreated?: (tasks: Task[]) => void;
 }) {
   const choices = targets ?? projects;
   const project = choices[0] as Project | undefined;
@@ -177,6 +185,9 @@ export function TaskBoard({
   const [renaming, setRenaming] = useState<Task | null>(null);
   // Asks before a task whose work isn't merged goes into Done.
   const { confirmDone, dialog: doneDialog } = useConfirmDone();
+  // Where the picked tasks' pen menu is, from the selection bar.
+  const [penMenu, setPenMenu] = useState<{ x: number; y: number } | null>(null);
+  const { newPen, dialog: newPenDialog } = useNewPen(setDropErr);
   const [query, setQuery] = useState(() => loadQuery(boardKey));
   const narrow = useNarrow();
   const [column, setColumn] = useState<Status | null>(() => localStorage.getItem(columnKey(boardKey)) as Status | null);
@@ -247,12 +258,16 @@ export function TaskBoard({
       picked = [
         ...list.filter((t) => t.project_id && byId.has(`${t.host_id}:${t.project_id}`) && t.kind === "task" && (t.parent_id ?? null) === parentId),
         ...(group && hostId && !subproject ? groupTasks(list, hostId, group) : []),
-        // Not the profile's assistant, which the sidebar opens, nor its routines' threads.
-        ...(profiles ? list.filter((t) => !t.project_id && t.kind === "task" && !isAssistants(t) && profiles.has(`${t.host_id}:${t.profile_id}`)) : []),
+        // Not the profile's assistant, which the sidebar opens, nor its routines' threads, nor its pens thread, which the
+        // pens' tab bar does.
+        ...(profiles
+          ? list.filter((t) => !t.project_id && t.kind === "task" && !isAssistants(t) && !isPensThread(t) && profiles.has(`${t.host_id}:${t.profile_id}`))
+          : []),
       ];
+      if (only) picked = picked.filter(only);
       return picked;
     };
-  }, [byId, parentId, group, hostId, subproject, profiles]);
+  }, [byId, parentId, group, hostId, subproject, profiles, only]);
   const tasks = useStore(useShallow(pickTasks));
 
   // Done tasks are archived as they pass two days in Done, while the board is open too.
@@ -894,6 +909,7 @@ export function TaskBoard({
               ? [starItem(menuTask, setDropErr, true), ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr)]
               : []),
             ...focusItems(menuTask, picked, setDropErr, !hostSupports(hostOf(menuTask), REMINDERS_API)),
+            ...penItems(menuTask, picked, setDropErr, newPen),
             titleItem(() => setRenaming(menuTask), true),
             ...(menuSiblings > 1 && hostSupports(hostOf(menuTask), COMPARE_API)
               ? [{ label: `Compare all ${menuSiblings} from its prompt`, divider: true, onSelect: () => openCompare(menuTask.id) }]
@@ -906,6 +922,23 @@ export function TaskBoard({
       {picking && <ReminderModal task={picking} onClose={() => setPicking(null)} />}
       {renaming && <TitleModal task={renaming} onClose={() => setRenaming(null)} />}
       {doneDialog}
+      {newPenDialog}
+      {penMenu && picked.length > 0 && (
+        <ContextMenu
+          x={penMenu.x}
+          y={penMenu.y}
+          title={`Put ${picked.length} task${picked.length === 1 ? "" : "s"} in a pen`}
+          items={penItems(picked[0], picked, setDropErr, newPen).map((i) => ({
+            ...i,
+            divider: false,
+            onSelect: () => {
+              i.onSelect();
+              useSelection.getState().clear();
+            },
+          }))}
+          onClose={() => setPenMenu(null)}
+        />
+      )}
       <LassoPath path={lassoPath} />
       <SelectionBar
         count={picked.length}
@@ -920,6 +953,7 @@ export function TaskBoard({
             .finally(() => useSelection.getState().clear())
         }
         onClear={() => useSelection.getState().clear()}
+        onPen={picked.some((t) => penItems(t, picked, setDropErr, newPen).length) ? (e) => setPenMenu({ x: e.clientX, y: e.clientY }) : undefined}
       />
       {newIn && canAdd && ready && (
         <NewTaskModal
@@ -931,6 +965,7 @@ export function TaskBoard({
           scratch={scratch}
           status={newIn}
           onClose={() => setNewIn(null)}
+          onCreated={onCreated}
         />
       )}
     </div>

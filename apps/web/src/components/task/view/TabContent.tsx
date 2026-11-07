@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { isAssistant, ownWorkDir, type DocumentType, type Project, type Task } from "../../../api";
+import { isAssistant, isPensThread, ownWorkDir, type DocumentType, type Project, type Task } from "../../../api";
 import { ActionLog } from "../ActionLog";
 import { DocumentView } from "../Document";
 import { ChangeSummaryView, ReviewSummary } from "../Review";
@@ -23,6 +23,13 @@ const NOT_STARTED = (
 const ASSISTANT_EMPTY = (
   <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
     This is your assistant: one conversation that lasts, outside every project. Ask it anything; it hands code work to project tasks.
+  </div>
+);
+
+const PENS_EMPTY = (
+  <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">
+    This thread keeps your pens: the tabs over the profile's board. Tell it what you're working on, or what to park, and it puts those tasks in pens, makes,
+    renames and orders them, and hides the ones you're not on.
   </div>
 );
 
@@ -52,8 +59,14 @@ export function TabContent({
       key={`${task.host_id}:${task.id}`}
       task={task}
       cwd={task.worktree_path ?? ownWorkDir(task) ?? project?.repo_path}
-      empty={isAssistant(task) ? ASSISTANT_EMPTY : NOT_STARTED}
-      placeholder={isAssistant(task) ? "Message your assistant…" : undefined}
+      empty={isAssistant(task) ? ASSISTANT_EMPTY : isPensThread(task) ? PENS_EMPTY : NOT_STARTED}
+      placeholder={
+        isAssistant(task)
+          ? "Message your assistant…"
+          : isPensThread(task)
+            ? "What are you working on? E.g. today it's the pricing page and the footer fix"
+            : undefined
+      }
     />
   ) : docShown ? (
     <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />

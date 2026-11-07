@@ -1,5 +1,5 @@
-import { X, Zap } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fence, X, Zap } from "lucide-react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { clipped, polygonHitsRect, reach, type Point, type Rect } from "../../lasso";
 import { useSelection } from "../../selection";
 import { Button, IconButton } from "../ui";
@@ -141,7 +141,20 @@ export function useClearSelection(active: boolean) {
 }
 
 /** Over the board's foot while tasks are picked: what to do with them. */
-export function SelectionBar({ count, onNow, onLater, onClear }: { count: number; onNow: () => void; onLater: () => void; onClear: () => void }) {
+export function SelectionBar({
+  count,
+  onNow,
+  onLater,
+  onClear,
+  onPen,
+}: {
+  count: number;
+  onNow: () => void;
+  onLater: () => void;
+  onClear: () => void;
+  /** Opens the menu that puts them in a pen (HA-285), where they can be. */
+  onPen?: (e: ReactMouseEvent<HTMLButtonElement>) => void;
+}) {
   if (!count) return null;
   return (
     <div
@@ -159,6 +172,11 @@ export function SelectionBar({ count, onNow, onLater, onClear }: { count: number
       <Button size="sm" onClick={onLater} title="Move the picked tasks to Later">
         Later
       </Button>
+      {onPen && (
+        <Button size="sm" onClick={onPen} title="Put the picked tasks in a pen, or take them out">
+          <Fence size={13} /> Pen
+        </Button>
+      )}
       <IconButton className="h-7 w-7" title="Let go of the picked tasks (Esc)" onClick={onClear}>
         <X size={14} />
       </IconButton>

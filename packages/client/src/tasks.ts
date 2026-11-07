@@ -223,10 +223,10 @@ export const isWorkflowThread = (t: Pick<Task, "kind" | "task_type">) => t.kind 
 
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
-/** What goes before a task's number: its project's key, `G` for a group task, `S` for a scratch task, or `A` for its
- *  profile's assistant and its routines' threads. */
+/** What goes before a task's number: its project's key, `G` for a group task, `S` for a scratch task (and the profile's
+ *  pens thread, API 125), or `A` for its profile's assistant and its routines' threads. */
 export const keyPrefix = (t: Task, project?: Pick<Project, "key">) =>
-  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistants(t) ? "A" : "T");
+  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) || t.task_type === "pens" ? "S" : isAssistants(t) ? "A" : "T");
 
 export const taskKey = (t: Task, projects: Pick<Project, "id" | "key">[]) =>
   `${keyPrefix(
@@ -286,7 +286,7 @@ export interface Task {
    *  a routine's run of it (API 110, see `isRoutine`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
-  task_type?: TaskType | "assistant" | "routine" | DocumentType | null;
+  task_type?: TaskType | "assistant" | "routine" | "pens" | DocumentType | null;
   /** The documents its agent writes besides its other work, each shown in a tab of the task (API 71). */
   labels?: DocumentType[];
   /** When one of its documents last changed (API 42). */

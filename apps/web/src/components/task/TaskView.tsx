@@ -12,6 +12,7 @@ import {
   hasMemory,
   hasRoutines,
   isAssistant,
+  isPensThread,
   isRoutine,
   isScratch,
   keyPrefix,
@@ -212,16 +213,18 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // its workspace, with no repository.
   const assistant = isAssistant(task);
   const routine = isRoutine(task);
+  // The profile's pens thread (API 125): a conversation in no repository, like the assistant.
+  const pensThread = isPensThread(task);
   // One in no project is on its profile's board (a scratch task can be in a project since API 51).
   const profileScratch = scratch && !task.project_id;
   const labels = taskLabels(task);
   const docsOnly = documentsOnly(task);
-  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || docsOnly ? ["thread"] : ["thread", "changes"])];
+  const tabs: Tab[] = [...labels, ...(group || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])];
   // The assistant's morning brief (API 113), its memory files (API 111) and routines (API 110).
   if (assistant && hasBrief(host)) tabs.push("brief");
   if (assistant && hasMemory(host)) tabs.push("memory");
   if (assistant && hasRoutines(host)) tabs.push("routines");
-  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant && !routine;
+  const reviews = hostSupports(host, 12) && task.kind === "task" && !group && !docsOnly && !scratch && !assistant && !routine && !pensThread;
   if (reviews) tabs.push("review");
   // Once there's a summary, or a review that passed to summarise (API 84): the tabs fit a phone's width until then.
   const summaries = reviews && hostSupports(host, 84) && (!!task.summary || task.review?.state === "passed");
@@ -303,7 +306,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       !task.session_id &&
       agents &&
       !assistant &&
-      !routine && (
+      !routine &&
+      !pensThread && (
         <Button
           size="sm"
           variant="primary"
