@@ -95,7 +95,7 @@ export function ProjectWorkflows({ project }: { project: Project }) {
           threads of their own (or process what the steps before them wrote, with a skill, in a fresh context), pull requests, messages to the task's agent, and
           the next column, which moves the task there. The prompt tells the agent what the board does when it's done. The review and summary in the Review tab
           can be set up as one: start from <i>Review and summarise</i>, or <i>From the Review tab</i> for its reviewers and summarizers, and turn them off
-          there.
+          there. <i>Workflows</i> in docs/guide/workflows.md explains each node, its inputs and outputs.
         </p>
       ) : (
         <p className="text-[12.5px] text-muted">
@@ -907,6 +907,36 @@ function WorkflowEditor({
     setGraph((g) => ({ ...g, edges: g.edges.filter((_, k) => k !== i) }));
     setSel(null);
   };
+  /** Whether a node can go: not the start a workflow can't do without. */
+  const removable = (n: WorkflowNode, g = graph) => n.kind !== "trigger" || (columns && g.nodes.some((x) => x.kind === "column"));
+  // Delete, Backspace or X removes the selected node or line, as in Blender (not while typing in a field).
+  const selRef = useRef(sel);
+  selRef.current = sel;
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace" && e.key !== "x" && e.key !== "X") return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+      const cur = selRef.current;
+      if (!cur) return;
+      if ("edge" in cur) {
+        e.preventDefault();
+        removeEdge(cur.edge);
+        return;
+      }
+      const n = graphRef.current.nodes.find((x) => x.id === cur.node);
+      if (n && removable(n, graphRef.current)) {
+        e.preventDefault();
+        removeNode(n.id);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns]);
   const updateNode = (id: string, patch: Partial<WorkflowNode>) =>
     setGraph((g) => {
       const nodes = g.nodes.map((n) => (n.id === id ? ({ ...n, ...patch } as WorkflowNode) : n));
@@ -987,7 +1017,8 @@ function WorkflowEditor({
             </Button>
           ))}
           <span className="ml-auto text-[11.5px] text-faint">
-            Drag from a step's outcome to another step to connect them. Right-drag across lines to cut them; drag the background to pan, scroll to zoom.
+            Drag from a step's outcome to another step to connect them. Right-drag across lines to cut them; Delete or X removes what's selected. Drag the
+            background to pan, scroll to zoom.
           </span>
         </div>
         {columns && (
@@ -1234,7 +1265,7 @@ function WorkflowEditor({
                 onUnwire={(input) => unwire(selected.id, input)}
                 onChange={(patch) => updateNode(selected.id, patch)}
                 onRename={(id) => renameNode(selected.id, id)}
-                onRemove={selected.kind !== "trigger" || (columns && graph.nodes.some((n) => n.kind === "column")) ? () => removeNode(selected.id) : undefined}
+                onRemove={removable(selected) ? () => removeNode(selected.id) : undefined}
               />
             ) : selectedEdge ? (
               <div className="space-y-2 text-[12.5px]">

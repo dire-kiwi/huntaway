@@ -90,6 +90,8 @@ docs/             the guide (docs/guide/), design notes, and dated research and 
 - [Agents](docs/guide/agents.md): Codex agents, and the board's tools that agents get (MCP).
 - [Pull requests and checks](docs/guide/github.md): pull requests, failed checks and preview URLs.
 - [Asana and automations](docs/guide/integrations.md): Asana tasks, and automations (scheduled and triggered runs).
+- [Workflows](docs/guide/workflows.md): a task's way across the board as a graph of nodes, and each node's inputs and
+  outputs.
 - [The personal assistant](docs/guide/assistant.md): its thread, memory, approval rules, Google, a machine of its
   own, and Telegram.
 - [Running a server](docs/guide/server.md): server options, agents across restarts, the database file, restarting

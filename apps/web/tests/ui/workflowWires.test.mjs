@@ -107,3 +107,22 @@ test("the canvas pans and zooms, and a right-drag cuts the wires it crosses", as
     ]);
   });
 });
+
+// HA-276: Delete or X removes the selected node or line, as in Blender, but not while typing in a field.
+test("delete and x remove the selected node or line", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui;
+    await ui.run([`goto /p/${project.id}/settings/workflows`, "click role=button[name='Open a PR when done']", "wait [data-edge='start.done->commits']"]);
+    await page.locator("[data-edge='start.done->commits']").click({ force: true });
+    await page.keyboard.press("Delete");
+    await ui.run(["gone [data-edge='start.done->commits']"]);
+    await ui.run(["click [data-node=attention]"]);
+    await page.keyboard.press("x");
+    await ui.run(["gone [data-node=attention]", "gone [data-edge='pr.failed->attention']"]);
+    // Typing an x in a field types it.
+    await ui.run(["click [data-node=pr]"]);
+    await page.locator("[data-testid=workflow-inspector] input").nth(1).click();
+    await page.keyboard.type("x");
+    await ui.run(["wait [data-node=pr]"]);
+  });
+});
