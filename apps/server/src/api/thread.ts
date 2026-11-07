@@ -10,7 +10,6 @@ import { err_str } from "../util.ts";
 import * as runner from "../agent/runner.ts";
 import * as assistant from "../agent/assistant.ts";
 import * as approval_rules from "../agent/approval_rules.ts";
-import * as focus from "../agent/focus.ts";
 import * as worktree from "../git/worktree.ts";
 import * as terminal from "../hosts/terminal.ts";
 import * as permissions from "../mcp/permissions.ts";
@@ -83,10 +82,7 @@ export async function thread_command(s: AppState, r: Req) {
 export async function send_message(s: AppState, r: Req) {
   const id = r.params.id;
   const text = def_str(json_map(r), "text");
-  let t = runner.send(s, id, text);
-  // The user's prompt puts the task in "now" (or keeps it there, for another day). Not the agents' and the board's own
-  // messages, which are sent from elsewhere.
-  if (text.trim()) t = focus.put_in_now(s, id) ?? t;
+  const t = runner.send(s, id, text);
   // The user's reply answers the questions the agent asked (see mcp/questions.rs).
   if (text.trim()) questions.replied(s, t.id);
   return t;

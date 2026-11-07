@@ -8,7 +8,6 @@ import { err_str } from "../util.ts";
 import * as runner from "../agent/runner.ts";
 import * as title from "../agent/title.ts";
 import * as documents from "../agent/documents.ts";
-import * as focus from "../agent/focus.ts";
 import * as worktree from "../git/worktree.ts";
 import { debug_list, json_map, opt_bool, opt_str, opt_strings, opt_value, def_str, req_str } from "./extract.ts";
 
@@ -155,8 +154,7 @@ function start_of(b: CreateTask): string | null {
 
 export async function create_scratch_task(s: AppState, r: Req) {
   const b = CreateTask_from_json(json_map(r));
-  const prompted = is_prompt(b);
-  return prompted_now(s, prompted, create_scratch_task_inner(s, r.params.id, b));
+  return create_scratch_task_inner(s, r.params.id, b);
 }
 
 /** `POST /profiles/{id}/tasks`: a scratch task (see db::Task::is_scratch), which is in no project. Without a title or description it's called "New scratch task". */
@@ -207,25 +205,6 @@ export function create_scratch_task_inner(s: AppState, profile_id: string, b: Cr
   return start !== null ? runner.send(s, t.id, start) : t;
 }
 
-/**
- * Whether the task starts with a prompt the user wrote: a `start` that's text, or `start: true` (what the board's new
- * task dialog sends) to start from the description they typed. Not a bare start with nothing to say.
- */
-function is_prompt(b: CreateTask): boolean {
-  if (typeof b.start === "string") return !!b.start.trim();
-  if (b.start === true) return !!description_of(b).trim();
-  return false;
-}
-
-/**
- * A task made with the user's own prompt, from the board, is in "now" like one they prompt later. Not the ones
- * automations make (they go through `create_task_inner` directly), which start in "later"; agents' `create_task` puts its
- * tasks in "now" itself (see mcp::tools::tasks::new_in_now).
- */
-function prompted_now(s: AppState, prompted: boolean, t: Task): Task {
-  return prompted ? (focus.put_in_now(s, t.id) ?? t) : t;
-}
-
 /** A group task: the group (of the profile's projects) it plans for, and the task. */
 export interface CreateGroupTask {
   group: string;
@@ -245,7 +224,6 @@ export function create_group_task_inner(s: AppState, id: string, gb: CreateGroup
   const group = gb.group.trim();
   if (!group || db.group_projects(s.db(), id, group).length === 0) throw ApiError.bad("group must name a group of the profile's projects");
   const b = gb.task;
-  const prompted = is_prompt(b);
   if ((b.kind != null && b.kind !== "task") || b.parent_id != null || b.subproject === true || (b.depends_on != null && b.depends_on.length > 0)) {
     throw ApiError.bad("a group task can't be a subproject, be in one, or have dependencies");
   }
@@ -295,15 +273,14 @@ export function create_group_task_inner(s: AppState, id: string, gb: CreateGroup
   const start = start_of(b);
   if (generate_title) {
     title.generate(s, t, start);
-    return prompted_now(s, prompted, t);
+    return t;
   }
-  return prompted_now(s, prompted, start !== null ? runner.send(s, t.id, start) : t);
+  return start !== null ? runner.send(s, t.id, start) : t;
 }
 
 export async function create_task(s: AppState, r: Req) {
   const b = CreateTask_from_json(json_map(r));
-  const prompted = is_prompt(b);
-  return prompted_now(s, prompted, create_task_inner(s, r.params.id, b));
+  return create_task_inner(s, r.params.id, b);
 }
 
 export function create_task_inner(s: AppState, project_id: string, b: CreateTask): Task {

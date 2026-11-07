@@ -21,6 +21,7 @@ export function useSubmit(p: {
   opened: Opened;
   status: Status;
   onClose: () => void;
+  onCreated?: (tasks: Task[]) => void;
   origin: Origin;
   ed: EditorText;
   where: Where;
@@ -30,7 +31,7 @@ export function useSubmit(p: {
   options: Options;
   blocks: Blocks;
 }) {
-  const { status, onClose } = p;
+  const { status, onClose, onCreated } = p;
   const { projects, subproject } = p.opened;
   const { group, setBase, draft } = p.origin;
   const { setClosedAt, edit, description } = p.ed;
@@ -144,6 +145,9 @@ export function useSubmit(p: {
         }
       }
       setPending(null);
+      // As the store has them: with the host they were made on.
+      const madeOn = noProject || (asGroup && group) ? target.host_id : project!.host_id;
+      onCreated?.(tasks.map((t) => ({ ...t, host_id: madeOn })));
       // One harness is what's picked from then on; several (or what's left of them) leave what was picked as it was.
       const only = fanout ? null : runs[0];
       if (only) {

@@ -117,6 +117,29 @@ like `2h`, or a time) and `reminder` on `create_task` and `update_task` (API 48)
 reminders are saved on the task's host; which of the two sections are collapsed is saved in this
 browser.
 
+**Pens** (API 127) gather tasks from any of a profile's projects, and its tasks in no project, into
+named sets: the work you're on today, a feature that spans projects, or tasks you've parked to
+come back to in a few days. The profile's board shows them as tabs over its columns: _All_, with
+every task, then a tab for each pen that isn't hidden, in the pens' order, each with how many
+tasks it has; the board stays on the tab you picked last (in this browser). A task is in one pen
+at most. Put one in a pen from its card's menu (_Pen: …_, or _New pen…_; with tasks picked with
+the lasso, the selection bar's _Pen_ does it to all of them), by dropping its card on the pen's
+tab, or by making it on that tab; _Out of …_ in its menu, or dropping it on _All_, takes it out.
+The **+** after the tabs makes a pen. Right-click a tab (or click it again once it's open) to
+rename, hide, move or delete it; deleting a pen leaves its tasks on the board, in no pen. Hidden
+pens are listed under _N hidden_ at the end of the tab bar, which shows one again.
+
+The **pens thread** at the end of the tab bar is a conversation that arranges the pens for you:
+tell it "today I'm on the login fix and the pricing page, and park the release notes" and its
+agent finds those tasks, puts them in pens (making them as needed), and hides the pens you're not
+on. It's one lasting thread per profile (keyed `S-<n>` among its scratch tasks), in no project
+and off the board's columns; like the assistant, it never goes to review or merge. Any agent can
+do the same with the pen tools (`list_pens`, `create_pen`, `update_pen`, `delete_pen`, and `pen`
+on `create_task`, `update_task` and `list_tasks`). Pens are kept on each host, per profile; a profile's board spanning hosts merges them by
+name, and a task on a host without the pen yet makes it there as it moves in. `GET`/`POST
+/profiles/{id}/pens`, `PATCH`/`DELETE /pens/{id}`, `pen` (a name) or `pen_id` on `PATCH /tasks/{id}`,
+and `GET /profiles/{id}/pens-thread` (see `apps/server/src/api/pens.ts`).
+
 A group's _New task_ form can also start a **group task** (pick _Group task_ in its project
 picker). It isn't in any project: it sits on the group's board (keyed `G-<n>`, numbered across
 the profile's groups; no project can use the key `G`, and one that had it moves to `GP`) and its agent

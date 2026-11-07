@@ -12,7 +12,6 @@ import type { Shared } from "../state.ts";
 import { new_id, now } from "../util.ts";
 import * as documents from "../agent/documents.ts";
 import * as runner from "../agent/runner.ts";
-import * as focus from "../agent/focus.ts";
 import * as approval_rules from "../agent/approval_rules.ts";
 import type { Rule } from "../agent/approval_rules.ts";
 import * as history from "../threads/history.ts";
@@ -496,9 +495,6 @@ export function answer_by(s: Shared, id: string, allow: boolean, always: boolean
     if (picked_mode !== null) v.mode = picked_mode;
     if (late) v.late = true;
   });
-  // The user's answers to the agent's questions are a prompt to it: they put the task in "now", like a message does
-  // (not the other permission decisions, which only let the agent carry on).
-  if (answers) focus.put_in_now(s, task_id);
   if (always && task) {
     const list = [...task.auto_allow];
     if (!list.includes(tool_name)) list.push(tool_name);

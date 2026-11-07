@@ -1,7 +1,7 @@
 // Port of server/src/integrations/workflows.rs (HA-173's branch, ported by HA-189).
 /**
  * Workflows: a project's automations that act on its tasks, as graphs of nodes (HA-173, API 107): since HA-276 (API
- * 127), a task's whole way across the board, column by column.
+ * 128), a task's whole way across the board, column by column.
  *
  * A **column** node starts a run on a task that enters its column. Its prompt is what the task's agent is sent then,
  * with what the board does once that work is done: for In progress, the task's start prompt (an edge into In progress

@@ -57,6 +57,7 @@ const RERUNNABLE = [
   "get_project",
   "list_automations",
   "list_workflows",
+  "list_pens",
 ];
 
 type CallResult = { ok: any } | { err: string };
@@ -540,7 +541,7 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
       throw fail(msg(e));
     }
   }
-  const fan_out = tool === "list_projects" || (tool === "list_tasks" && (args.project_id === "all" || args.profile === "all"));
+  const fan_out = tool === "list_projects" || tool === "list_pens" || (tool === "list_tasks" && (args.project_id === "all" || args.profile === "all"));
   if (fan_out) {
     // A profile that's only on other hosts isn't found here.
     let all: any[] = [];
@@ -553,7 +554,14 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
       if (err.kind !== "NotFound") throw fail(err.message);
       missing = err.message;
     }
+    // Not hosts on a build that would ignore what it can't do (list_tasks's `pen`, say) and answer as if it hadn't been
+    // asked: their whole list would come back as the answer.
+    const skipped: string[] = [];
     for (const link of links_for(s, ctx)) {
+      if (too_old(link.name, link.version.api_version, tool, args) !== null) {
+        skipped.push(link.name);
+        continue;
+      }
       try {
         const v = await hub.call_tool(s, link, tool, ctx.profile_name, args, ctx.task_fields);
         if (Array.isArray(v)) {
@@ -564,17 +572,23 @@ export async function dispatch(s: Shared, ctx: Ctx, tool: string, args: any): Pr
         if (process.env.IA_DEBUG) console.error(`${tool} on ${link.name}: ${err_str(e)}`);
       }
     }
-    // A hub's list covers its other hosts, which may be ours too: each item once.
+    if (skipped.length && process.env.IA_DEBUG) console.error(`${tool}: ${skipped.join(", ")} run an older build that can't do this, so they weren't asked`);
+    // A hub's list covers its other hosts, which may be ours too: each item once. A hub doesn't say which build it runs,
+    // so a pen's tasks from it are only those it says are in a pen (one from before pens says nothing of them).
+    const in_pen = tool === "list_tasks" && typeof args.pen === "string" && args.pen !== "" && args.pen.toLowerCase() !== "none";
     const call_id = up_call_id(ctx);
     for (const up of uplinks(s, ctx)) {
       const o = await up.call(call_id, tool, ctx.profile_name, args, ctx.task_fields);
       if (o.kind === "Ok" && Array.isArray(o.value)) {
         const seen = new Set(all.map((i) => i?.id).filter((id) => typeof id === "string"));
-        all.push(...o.value.filter((i: any) => typeof i?.id !== "string" || !seen.has(i.id)));
+        all.push(...o.value.filter((i: any) => (typeof i?.id !== "string" || !seen.has(i.id)) && (!in_pen || typeof i?.pen === "string")));
         missing = null;
       } else if (o.kind === "Err" && process.env.IA_DEBUG) console.error(`${tool} on ${up.hub_name}: ${o.error}`);
     }
-    if (missing !== null && !all.length) throw fail(`not found: ${missing}`);
+    if (missing !== null && !all.length) {
+      const note = skipped.length ? ` (${skipped.join(", ")} run an older build that can't do this, so they weren't asked)` : "";
+      throw fail(`not found: ${missing}${note}`);
+    }
     return all;
   }
   try {
@@ -637,6 +651,11 @@ const WORKFLOWS_API = 107;
 
 const WORKFLOW_TOOLS = ["list_workflows", "create_workflow", "update_workflow", "delete_workflow", "run_workflow"];
 
+/** The API version from which hosts have pens (HA-285): the pen tools, and `pen` on create_task, update_task and list_tasks. */
+export const PENS_API = 127;
+
+export const PEN_TOOLS = ["list_pens", "create_pen", "update_pen", "delete_pen"];
+
 export const TASK_FIELD_DEFAULT_LIMIT = 2000;
 export const TASK_FIELD_MAX_LIMIT = 4000;
 
@@ -676,6 +695,9 @@ export function too_old(host: string, api_version: number, tool: string, args: a
     return `${host} runs an older build without the automation tools; ask the user to update it, or to set it up in the project's settings`;
   }
   if (WORKFLOW_TOOLS.includes(tool) && api_version < WORKFLOWS_API) return `${host} runs an older build without workflows; ask the user to update it`;
+  if ((PEN_TOOLS.includes(tool) || (["create_task", "update_task", "list_tasks"].includes(tool) && args.pen != null)) && api_version < PENS_API) {
+    return `${host} runs an older build without pens; ask the user to update it`;
+  }
   if ((needs_project_settings_api(tool, args) && api_version < PROJECT_SETTINGS_API) || (move_repo && api_version < MOVE_REPO_API)) {
     return `${host} runs an older build that can't do this with ${tool}; ask the user to update it, or to make the change in the project's settings`;
   }

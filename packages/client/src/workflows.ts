@@ -2,7 +2,7 @@ import { enc, type Http } from "./http";
 import type { Status } from "./tasks";
 
 /**
- * What starts a workflow's run on a task: a run by hand, or before API 127 the task entering a column (from API 127,
+ * What starts a workflow's run on a task: a run by hand, or before API 128 the task entering a column (from API 128,
  * column nodes, which the host reads these as).
  */
 export type WorkflowTrigger = { kind: "trigger"; on: "status"; status: Status } | { kind: "trigger"; on: "manual"; status?: null };
@@ -11,7 +11,7 @@ export type WorkflowTrigger = { kind: "trigger"; on: "status"; status: Status } 
  * Column nodes (a task's way across the board, column by column, with the prompt its agent is sent in each), open_pr
  * steps and agent steps' input_only (HA-276). Hosts before it have triggers on a column and set_status moves instead.
  */
-export const COLUMN_WORKFLOWS_API = 127;
+export const COLUMN_WORKFLOWS_API = 128;
 /** How many times in a row lines back into In progress give the agent its work, for a column node without `max_rounds`. */
 export const COLUMN_ROUNDS = 3;
 
@@ -25,7 +25,7 @@ export type WorkflowCheck = (typeof WORKFLOW_CHECKS)[number];
 export type WorkflowNodeKind =
   | WorkflowTrigger
   /**
-   * A column (API 127): a task entering it starts a run here, and its agent is sent `prompt` (in In progress, its start
+   * A column (API 128): a task entering it starts a run here, and its agent is sent `prompt` (in In progress, its start
    * prompt; in Ready for merge, how to merge). `done` once that work is (see `workflowWaits`). An edge into it moves
    * the task there.
    */
@@ -43,15 +43,15 @@ export type WorkflowNodeKind =
       skills?: string[];
       /** The task panel tab its output shows in. */
       tab?: string | null;
-      /** It's given only the output of the steps before it and its prompt, not where the task's work is (API 127). */
+      /** It's given only the output of the steps before it and its prompt, not where the task's work is (API 128). */
       input_only?: boolean;
     }
   | { kind: "send_to_task"; message: string; max_rounds: number }
-  /** Moves the task, on hosts before API 127. */
+  /** Moves the task, on hosts before API 128. */
   | { kind: "set_status"; status: Status }
-  /** Pushes the task's branch and opens its pull request: title and body are templates (empty: the defaults). API 127. */
+  /** Pushes the task's branch and opens its pull request: title and body are templates (empty: the defaults). API 128. */
   | { kind: "open_pr"; title: string; body: string; draft?: boolean }
-  // Data nodes (API 127): values for other nodes' inputs, through data wires (see `workflowDataInputs`). No run goes into them.
+  // Data nodes (API 128): values for other nodes' inputs, through data wires (see `workflowDataInputs`). No run goes into them.
   | { kind: "text"; text: string }
   | { kind: "task" }
   | { kind: "project_prompt"; which: "start" | "review" | "merge" }
@@ -220,7 +220,7 @@ export function workflowWaitingAt(r: WorkflowRun): Extract<WorkflowNode, { kind:
   return null;
 }
 
-/** The columns a workflow has nodes for, counting a host's from before API 127 (its start's column). */
+/** The columns a workflow has nodes for, counting a host's from before API 128 (its start's column). */
 export function workflowColumns(g: WorkflowGraph): Status[] {
   return g.nodes.flatMap((n) => (n.kind === "column" || (n.kind === "trigger" && n.on === "status") ? [n.status] : []));
 }

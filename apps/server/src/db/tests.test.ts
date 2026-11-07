@@ -1027,9 +1027,8 @@ test("a_database_at_version_76_has_every_task_in_later", () => {
   );
   const c = open(path);
   assert.equal(user_version(c), VERSION);
-  assert.equal(get_task(c, "t")!.now_at, null);
-  const t = update_task(c, "t", [["now_at", "2030-01-01T00:00:00.000Z"]])!;
-  assert.equal(t.now_at, "2030-01-01T00:00:00.000Z");
+  // The column is there, though nothing uses it since HA-285.
+  assert.equal(db.value(c, "SELECT now_at FROM tasks WHERE id='t'"), null);
   c.close();
 });
 
@@ -1867,6 +1866,25 @@ test("a_database_from_version_104_keeps_its_published_documents_with_no_account"
   const c = open(path);
   assert.equal(user_version(c), VERSION);
   assert.deepEqual([db.docs_site_published(c, doc_id, "https://s")?.remote_slug, db.docs_site_published(c, doc_id, "https://s")?.login], ["d", null]);
+});
+
+test("a_database_from_ha_276s_version_106_gets_the_pens_it_skipped", () => {
+  // HA-276's branch had `runs.finished` as version 106, so its databases (its PR preview's) skipped master's 106, the
+  // pens; 107 makes them.
+  const path = db_path();
+  open(path).close();
+  prepare_at(path, (c) =>
+    c.exec("DROP INDEX tasks_pen; DROP INDEX tasks_one_pens_thread; ALTER TABLE tasks DROP COLUMN pen_id; DROP TABLE pens; PRAGMA user_version=106;"),
+  );
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  for (const [table, column] of [
+    ["runs", "finished"],
+    ["tasks", "pen_id"],
+    ["pens", "name"],
+  ])
+    assert.ok(has_column(c, table, column), `${table}.${column}`);
+  c.close();
 });
 
 test("a_database_from_ha_276s_version_104_gets_the_hosted_docs_tables_it_skipped", () => {
