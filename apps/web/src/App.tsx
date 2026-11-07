@@ -13,6 +13,7 @@ import { TokenScreen } from "./components/settings/TokenScreen";
 import { Sidebar } from "./components/layout/Sidebar";
 import { TaskPanel, TaskView } from "./components/task/TaskView";
 import { AssistantPage } from "./components/task/AssistantPage";
+import { DocsPage } from "./components/docs/DocsPage";
 import { UnhandledErrors } from "./components/layout/UnhandledErrors";
 import { useDrawer, useNarrow } from "./narrow";
 import { startNotifications } from "./notifier";
@@ -117,6 +118,7 @@ export function App() {
         <div className="h-full min-w-0">
           {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
           {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
+          {route.name === "docs" && <DocsPage key={route.profile} route={route} />}
           {route.name === "board" && <Board projectId={route.projectId} />}
           {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
           {route.name === "task" && <TaskView taskId={route.taskId} />}

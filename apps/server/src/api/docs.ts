@@ -1,7 +1,8 @@
 // Docs (HA-280, API 124): a profile's documents for the board to show, which its agents publish through the `docs` MCP
 // server (mcp/docs_mcp.ts). They're this host's own, so a hub reaches them through `/h/{host}/…` like the rest.
 //
-// - `GET /profiles/{id}/docs`: its documents, most recently updated first.
+// - `GET /profiles/{id}/docs`: its documents, most recently updated first, each with the task that published its latest
+//   version (`task`, HA-281).
 // - `GET /profiles/{id}/docs/{slug}`: one, with its versions (newest first) and its latest version's pages.
 // - `GET /profiles/{id}/docs/{slug}/versions/{n}` (`n` a number or `latest`): the version's pages, rendered (`html`,
 //   `toc`), and its menu (`nav`). Relative links between pages point under `base_url`: the board's page for the
@@ -35,7 +36,10 @@ function shown<T extends { id: string }>(row: T): Omit<T, "id"> {
 }
 
 export async function list(s: AppState, r: Req) {
-  return db.list_docs(s.db(), profile(s, r).id).map(shown);
+  return db.list_docs(s.db(), profile(s, r).id).map((d) => {
+    const latest = db.doc_version(s.db(), d.id, null);
+    return { ...shown(d), task: latest ? publisher(s, latest) : null };
+  });
 }
 
 /** The task that published a version, if it's still there: its title and key, for the board to link. */

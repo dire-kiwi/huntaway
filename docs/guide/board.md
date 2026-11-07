@@ -16,6 +16,17 @@ menu pins the projects it lists); pinned projects show a pin, and the initial of
 profile when it's another one. The active profile and pinned projects are saved in this browser,
 and the board opens on the active profile's board.
 
+Under the active profile's **Assistant** (see [assistant.md](assistant.md)), **Docs** lists its
+documents (HA-281): the reports, plans and write-ups its agents publish with the `docs` MCP server
+(see _Docs_ in [agents.md](agents.md)), with each one's latest version, when it was updated and the
+task that published it, which opens from there. A document opens on its pages, at
+`/docs/<profile>/d/<slug>/`: a menu of them (nested by their paths), the page, and a picker of its
+versions with each one's message. Links between pages open them there, in the same version; links out
+open in a new tab. Pages come rendered from their host and show in a sandboxed frame, as plans do.
+Local documents collect no answers yet, so their form fields (`<Approval />`, inputs) are read-only.
+A task's thread links each document it published to its page here. Docs is there for a profile with
+a connected host that has it (API 124), and lists the documents of every host the profile is on.
+
 Add a project with the **+** by the _Projects_ heading. Its _Folder_ tab picks a folder on the
 host (a repository, or a new folder that's created for it). Its _GitHub_ tab (API 55) clones a
 repository instead: it lists the ones gh can reach on the host as the profile's GitHub account (see
