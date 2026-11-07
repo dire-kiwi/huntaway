@@ -123,3 +123,35 @@ test("In progress's rounds are set once a line goes back into it", async () => {
   const saved = await server.api("GET", `/workflows/${w.id}`);
   assert.equal(saved.graph.nodes.find((n) => n.id === "work").max_rounds, 5);
 });
+
+// A template's {{…}} values are listed as one is typed: the task's, and each step's output by its id.
+test("a template's values are completed as they're typed", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([
+      `goto /p/${project.id}/settings/workflows`,
+      "click role=button[name='Work, PR and review']",
+      "wait Pushes the branch",
+      "click [data-node=fix]",
+      "click [data-testid=workflow-inspector] textarea",
+      "type Fix {{iss",
+      "wait role=option[name=/reviewer\\.issues/]",
+      "press ArrowDown",
+      "press Enter",
+      "gone [role=listbox]",
+      "press Space",
+      "type for {{ task.ti",
+      "wait role=option[name=/task\\.title/]",
+      "press Tab",
+      "gone [role=listbox]",
+      "press Space",
+      "type {{",
+      "wait [role=listbox]",
+      "press Escape",
+      "gone [role=listbox]",
+      // Escape closed the list, not the dialog.
+      "wait Pushes the branch",
+    ]);
+    const text = await ui.page.inputValue("[data-testid=workflow-inspector] textarea");
+    assert.equal(text, "Fix {{reviewer.issues}} for {{task.title}} {{");
+  });
+});

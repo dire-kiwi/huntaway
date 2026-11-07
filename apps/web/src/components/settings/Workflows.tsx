@@ -47,8 +47,9 @@ import {
 import { onWorkflowsChanged, useAvailableConfigs, useHost } from "../../store";
 import type { Reviewer } from "../../api";
 import { ReviewerRow } from "../task/Reviewers";
-import { Button, Field, Input, Modal, Textarea, Toggle, useConfirm } from "../ui";
+import { Button, Field, Input, Modal, Toggle, useConfirm } from "../ui";
 import { GuideLink } from "./Guide";
+import { TemplateField } from "./TemplateField";
 
 /** The project settings' Workflows tab: the project's workflows, each a graph of steps that runs on its tasks (API 107). */
 export function ProjectWorkflows({ project }: { project: Project }) {
@@ -1482,7 +1483,7 @@ function NodeInspector({
             }
           >
             <Wired graph={graph} node={n} input="prompt" onUnwire={onUnwire}>
-              <Textarea rows={6} className="text-[12.5px]" value={n.prompt} onChange={(e) => onChange({ prompt: e.target.value })} />
+              <TemplateField graph={graph} self={n.id} rows={6} className="text-[12.5px]" value={n.prompt} onChange={(prompt) => onChange({ prompt })} />
             </Wired>
           </Field>
           <Field label="Skills" hint="Skills it uses, separated by commas.">
@@ -1521,7 +1522,7 @@ function NodeInspector({
             }
           >
             <Wired graph={graph} node={n} input="message" onUnwire={onUnwire}>
-              <Textarea rows={5} className="text-[12.5px]" value={n.message} onChange={(e) => onChange({ message: e.target.value })} />
+              <TemplateField graph={graph} self={n.id} rows={5} className="text-[12.5px]" value={n.message} onChange={(message) => onChange({ message })} />
             </Wired>
           </Field>
           <Field
@@ -1551,12 +1552,19 @@ function NodeInspector({
             }
           >
             <Wired graph={graph} node={n} input="title" onUnwire={onUnwire}>
-              <Input className="h-7" value={n.title} placeholder="{{task.key}}: {{task.title}}" onChange={(e) => onChange({ title: e.target.value })} />
+              <TemplateField
+                graph={graph}
+                self={n.id}
+                className="h-7"
+                value={n.title}
+                placeholder="{{task.key}}: {{task.title}}"
+                onChange={(title) => onChange({ title })}
+              />
             </Wired>
           </Field>
           <Field label="Body" hint="Blank is the task's agent's last message. An agent step before it can write one: {{<step id>.text}}.">
             <Wired graph={graph} node={n} input="body" onUnwire={onUnwire}>
-              <Textarea rows={5} className="text-[12.5px]" value={n.body} onChange={(e) => onChange({ body: e.target.value })} />
+              <TemplateField graph={graph} self={n.id} rows={5} className="text-[12.5px]" value={n.body} onChange={(body) => onChange({ body })} />
             </Wired>
           </Field>
           <Toggle checked={!!n.draft} onChange={(v) => onChange({ draft: v || undefined })} label="Open it as a draft" />
@@ -1648,7 +1656,7 @@ function ColumnInspector({
           }
         >
           <Wired graph={graph} node={n} input="prompt" onUnwire={onUnwire}>
-            <Textarea rows={5} className="text-[12.5px]" value={n.prompt} onChange={(e) => onChange({ prompt: e.target.value })} />
+            <TemplateField graph={graph} self={n.id} rows={5} className="text-[12.5px]" value={n.prompt} onChange={(prompt) => onChange({ prompt })} />
           </Wired>
         </Field>
       )}
@@ -1776,7 +1784,7 @@ function ValueInspector({
             </>
           }
         >
-          <Textarea rows={6} className="text-[12.5px]" value={n.text} onChange={(e) => onChange({ text: e.target.value })} />
+          <TemplateField graph={graph} self={n.id} rows={6} className="text-[12.5px]" value={n.text} onChange={(text) => onChange({ text })} />
         </Field>
       )}
       {n.kind === "task" && <p className="text-[11.5px] text-faint">The task's title, description, key, branch, commit, pull request and labels, as values.</p>}
@@ -1799,7 +1807,14 @@ function ValueInspector({
             </>
           }
         >
-          <Textarea rows={6} className="font-mono text-[12px]" value={n.template} onChange={(e) => onChange({ template: e.target.value })} />
+          <TemplateField
+            graph={graph}
+            self={n.id}
+            rows={6}
+            className="font-mono text-[12px]"
+            value={n.template}
+            onChange={(template) => onChange({ template })}
+          />
         </Field>
       )}
       {n.kind === "join" && (

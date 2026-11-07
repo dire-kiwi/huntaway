@@ -75,7 +75,9 @@ A step's own text, a _Text_ node and a _Compose_ template can use these, filled 
 | `{{<node id>.text}}`               | That agent step's output in the run                       |
 | `{{<node id>.issues}}`, `.verdict` | That review step's issues, numbered, or `pass`/`issues`   |
 
-A template a name doesn't match is left as it is.
+A template a name doesn't match is left as it is. In the editor, typing `{{` in a step's text lists the templates it can use, the
+other steps' outputs by their ids among them (an _Open a PR_ step's `.text` is its pull request's address): pick one with the
+arrow keys and Enter or Tab, or click it, and Escape closes the list.
 
 ## Steps
 
