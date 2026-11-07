@@ -15,7 +15,7 @@ export type DocSummary = {
   updated_at: string;
   latest_version: number;
   /** How many pages its latest version has. */
-  pages: number;
+  page_count: number;
 };
 
 /** The task that published a version, if it's still there. */

@@ -146,7 +146,7 @@ class Server {
         title: d.title,
         url: this.url(d.slug, null, "index"),
         latest_version: d.latest_version,
-        pages: d.pages,
+        pages: d.page_count,
         updated_at: d.updated_at,
       })),
     };

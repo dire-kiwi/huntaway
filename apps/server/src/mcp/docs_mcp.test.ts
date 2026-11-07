@@ -290,7 +290,7 @@ test("the_board_lists_renders_and_deletes_a_profiles_documents", async () => {
 
   const [, list] = await call(s, "GET", p);
   assert.deepEqual(
-    list.map((d: any) => [d.slug, d.title, d.latest_version, d.pages]),
+    list.map((d: any) => [d.slug, d.title, d.latest_version, d.page_count]),
     [["plan", "The plan", 2, 3]],
   );
   const [, doc] = await call(s, "GET", `${p}/plan`);

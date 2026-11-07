@@ -46,7 +46,7 @@ export interface Doc {
   updated_at: string;
   latest_version: number;
   /** How many pages its latest version has. */
-  pages: number;
+  page_count: number;
 }
 
 export interface DocVersion {
@@ -97,10 +97,10 @@ export interface Publish {
 const DOC = `SELECT d.id, d.profile_id, d.slug, d.title, d.created_at, d.updated_at,
   (SELECT MAX(number) FROM doc_versions v WHERE v.doc_id = d.id) AS latest_version,
   (SELECT COUNT(*) FROM doc_pages p JOIN doc_versions v ON v.id = p.version_id
-     WHERE v.doc_id = d.id AND v.number = (SELECT MAX(number) FROM doc_versions WHERE doc_id = d.id)) AS pages
+     WHERE v.doc_id = d.id AND v.number = (SELECT MAX(number) FROM doc_versions WHERE doc_id = d.id)) AS page_count
   FROM docs d`;
 
-const doc_row = (r: any): Doc => ({ ...r, latest_version: Number(r.latest_version ?? 0), pages: Number(r.pages) });
+const doc_row = (r: any): Doc => ({ ...r, latest_version: Number(r.latest_version ?? 0), page_count: Number(r.page_count) });
 
 /** A profile's documents, most recently updated first. */
 export function list_docs(c: Conn, profile_id: string): Doc[] {
