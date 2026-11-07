@@ -52,8 +52,11 @@ export const PROTOCOL = 1;
  * API 122: items become the source (HA-222, step 10 of docs/threads.md): tasks' `thread_source` (`items`: no messages
  * are written for the task since it moved onto items, so it's drawn from its items whatever the `thread_items`
  * setting, which is only for tasks still on messages).
+ *
+ * API 123: a host on Linux with systemd offers to run as a user service (HA-278): `GET /admin/server`'s `service`, and
+ * `POST /admin/service`, which installs it and restarts the host under it. `ssh-host` no longer starts a host.
  */
-export const API_VERSION = 122;
+export const API_VERSION = 123;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

@@ -106,7 +106,7 @@ export async function ssh_key(s: AppState) {
   return { public_key: await ssh.public_key(s) };
 }
 
-/** Link a host over SSH: starts it on the target if needed, then keeps a tunnel to it. */
+/** Link a host over SSH: the one running on the target (`ssh-host` doesn't start one), then keeps a tunnel to it. */
 export async function add_ssh_host(s: AppState, r: Req) {
   devices.board_only(r.device, "link hosts");
   let t: ssh.Target;
@@ -119,7 +119,7 @@ export async function add_ssh_host(s: AppState, r: Req) {
   if (!t.target.includes("@")) throw ApiError.bad("enter the target as user@host");
   let details: any;
   try {
-    details = await ssh.ensure(s, t);
+    details = await ssh.ensure(s, t, undefined, true);
   } catch (e) {
     throw ApiError.bad(err_str(e));
   }

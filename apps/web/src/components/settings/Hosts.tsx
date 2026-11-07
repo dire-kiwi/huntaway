@@ -350,7 +350,7 @@ function AddHostModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Start a host on a machine over SSH, with a key restricted to that job. */
+/** Link a host running on a machine over SSH, with a key restricted to that job. The board doesn't start it (HA-278). */
 function AddSshHost({ onClose }: { onClose: () => void }) {
   const [target, setTarget] = useState("");
   const [bin, setBin] = useState("");
@@ -382,8 +382,8 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
   return (
     <div className="space-y-4">
       <p className="text-[12.5px] text-muted">
-        This board starts <code>huntaway</code> on the machine if it isn't running, then connects through an SSH tunnel. The host only listens on that machine's
-        localhost, and its agents keep running if the connection drops.
+        This board connects to <code>huntaway</code> running on the machine through an SSH tunnel. The host only listens on that machine's localhost, and its
+        agents keep running if the connection drops.
       </p>
       <div className="grid grid-cols-[1fr_90px] gap-3">
         <Field label="SSH target">
@@ -406,6 +406,12 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
           <Input value={port} onChange={(e) => setPort(e.target.value)} className="font-mono text-[12px]" />
         </Field>
       </div>
+      <Field
+        label="Start the host on that machine"
+        hint="On Linux, this runs it as a user systemd service, started at boot (its page here can install one later too). Elsewhere, keep huntaway serve --host 127.0.0.1 running."
+      >
+        <CopyLine value={`${binPath} install-service --host 127.0.0.1 --port ${p}`} />
+      </Field>
       <Field label="Add this line to ~/.ssh/authorized_keys on that machine" hint="The key can only run huntaway ssh-host and forward to the host's port.">
         <CopyLine value={line} />
       </Field>
@@ -416,7 +422,7 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
             Cancel
           </Button>
           <Button variant="primary" disabled={busy || !target.includes("@")} onClick={submit}>
-            {busy ? "Connecting…" : "Start & connect"}
+            {busy ? "Connecting…" : "Connect"}
           </Button>
         </div>
       </ModalFooter>

@@ -183,7 +183,9 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
    sh install-release-host.sh
    ```
 
-   It prints the command that starts the host with release updates, and the forced command for SSH.
+   It prints the command that runs the host with release updates as a user systemd service
+   (`huntaway install-service`, see _Running a host as a service_ in `hosts.md`): run it. It also
+   prints the forced command for SSH.
    The host's data dir is made private at start (`0700`, and its databases `0600`; every host does
    this), so other users of that machine can't read the assistant's threads.
 
@@ -195,8 +197,8 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
    restrict,port-forwarding,permitopen="127.0.0.1:7878",command="IA_RELEASE_UPDATES=dire-kiwi/huntaway '/home/me/.local/share/huntaway-server/current/huntaway' ssh-host --port 7878 --data-dir '/home/me/.local/share/huntaway'" ssh-ed25519 AAAA… huntaway-hub@<hub>
    ```
 
-   The hub starts the host through that command and tunnels to it, so it listens on its own
-   localhost only and never needs to reach the hub. When the hub's machine sleeps or changes network,
+   The hub tunnels to the host through that command, so it listens on its own localhost only and
+   never needs to reach the hub. When the hub's machine sleeps or changes network,
    the link drops and comes back by itself; the assistant keeps running there meanwhile.
 
 3. **Give it a Claude login.** Settings → Agent configs → **Copy login** copies the config's login
