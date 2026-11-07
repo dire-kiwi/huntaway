@@ -1887,6 +1887,25 @@ test("a_database_from_ha_276s_version_106_gets_the_pens_it_skipped", () => {
   c.close();
 });
 
+test("a_database_at_version_107_gets_the_table_of_steps_mcp_servers", () => {
+  // HA-276's 107 was pushed (and run by its PR preview) before the table was added to it; 108 makes it.
+  const path = db_path();
+  open(path).close();
+  prepare_at(path, "DROP TABLE thread_mcp_servers; PRAGMA user_version=107;");
+  const c = open(path);
+  assert.equal(user_version(c), VERSION);
+  assert.ok(has_column(c, "thread_mcp_servers", "disabled"));
+  const p = db.insert_profile(c, "p", [], null);
+  const t = db.insert_task(c, { profile_id: p.id, project_id: null, kind: "review", title: "t", description: "", status: "todo", use_worktree: false });
+  db.set_thread_disabled_mcp_servers(c, t.id, ["docs"]);
+  assert.deepEqual(db.thread_disabled_mcp_servers(c, t.id), ["docs"]);
+  c.close();
+  // And opening it again changes nothing.
+  const again = open(path);
+  assert.deepEqual(db.thread_disabled_mcp_servers(again, t.id), ["docs"]);
+  again.close();
+});
+
 test("a_database_from_ha_276s_version_104_gets_the_hosted_docs_tables_it_skipped", () => {
   // HA-276's branch had `runs.finished` as version 104, so its databases (its PR preview's) skipped master's 104, the
   // hosted docs tables; 105 makes them.
