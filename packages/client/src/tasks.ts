@@ -223,10 +223,10 @@ export const isWorkflowThread = (t: Pick<Task, "kind" | "task_type">) => t.kind 
 
 export const isScratch = (t: Pick<Task, "kind" | "task_type">) => t.kind === "task" && t.task_type === "scratch";
 
-/** What goes before a task's number: its project's key, `G` for a group task, `S` for a scratch task, or `A` for its
- *  profile's assistant and its routines' threads. */
+/** What goes before a task's number: its project's key, `G` for a group task, `S` for a scratch task (and the profile's
+ *  pens thread, API 127), or `A` for its profile's assistant and its routines' threads. */
 export const keyPrefix = (t: Task, project?: Pick<Project, "key">) =>
-  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) ? "S" : isAssistants(t) ? "A" : "T");
+  project?.key ?? (t.project_id ? "T" : t.group_name ? "G" : isScratch(t) || t.task_type === "pens" ? "S" : isAssistants(t) ? "A" : "T");
 
 export const taskKey = (t: Task, projects: Pick<Project, "id" | "key">[]) =>
   `${keyPrefix(
@@ -286,7 +286,7 @@ export interface Task {
    *  a routine's run of it (API 110, see `isRoutine`).
    *  On hosts before API 71, also a plan, artifact or diagram task (API 42), whose agent writes a document the board keeps
    *  and shows: see `taskLabels`. */
-  task_type?: TaskType | "assistant" | "routine" | DocumentType | null;
+  task_type?: TaskType | "assistant" | "routine" | "pens" | DocumentType | null;
   /** The documents its agent writes besides its other work, each shown in a tab of the task (API 71). */
   labels?: DocumentType[];
   /** When one of its documents last changed (API 42). */
@@ -362,8 +362,8 @@ export interface Task {
   remind_at?: string | null;
   /** What the reminder is for (API 48). */
   reminder?: string | null;
-  /** When it was put in Now (API 97); unset for the tasks in Later, where tasks start. */
-  now_at?: string | null;
+  /** The pen it's in (API 127, see pens.ts), if it's in one. */
+  pen_id?: string | null;
   /** The latest automatic review of its work (API 12). */
   review?: Review | null;
   /** The latest summary of its changes (API 84); the first of `summaries`. */
@@ -527,8 +527,11 @@ export const tasksApi = ({ on, storage }: Http) => ({
     on(h).get<Task[]>(`/profiles/${enc(profileId)}/tasks${assistant ? "?include_assistant=true" : ""}`),
   /** The profile's tasks in no project: its group tasks (API 34) and scratch tasks (API 47), and with `assistant` its
    *  assistant (API 109), which is off the board. */
-  groupTasks: (h: string, profileId: string, assistant = false) =>
-    on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${assistant ? "?include_assistant=true" : ""}`),
+  /** With `pens`, the profile's pens thread too (API 127). */
+  groupTasks: (h: string, profileId: string, assistant = false, pens = false) => {
+    const q = [assistant && "include_assistant=true", pens && "include_pens=true"].filter(Boolean).join("&");
+    return on(h).get<Task[]>(`/profiles/${enc(profileId)}/group-tasks${q ? `?${q}` : ""}`);
+  },
   createGroupTask: (
     h: string,
     profileId: string,
@@ -578,7 +581,7 @@ export const tasksApi = ({ on, storage }: Http) => ({
     },
   ) => on(h).post<Task>(`/projects/${enc(projectId)}/tasks`, b),
   task: (h: string, id: string) => on(h).get<TaskDetail>(`/tasks/${enc(id)}`),
-  updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { now?: boolean; start_from?: StartFrom | string | null }) => {
+  updateTask: (h: string, id: string, b: Partial<Omit<Task, "start_from">> & { start_from?: StartFrom | string | null; pen?: string | null }) => {
     // Noted before the request: the task event it causes reaches every tab before the response does.
     if (b.status) noteMove(storage, h, id, b.status);
     return on(h).patch<Task>(`/tasks/${enc(id)}`, b);

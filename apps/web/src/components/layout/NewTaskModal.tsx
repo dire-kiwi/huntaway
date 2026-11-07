@@ -32,6 +32,7 @@ export function NewTaskModal({
   scratch,
   onClose,
   status = "todo",
+  onCreated,
 }: {
   /** Where it goes. Without one, it can only be a scratch task (`scratch`). */
   project?: Project;
@@ -45,6 +46,8 @@ export function NewTaskModal({
   scratch?: Profile | null;
   onClose: () => void;
   status?: Status;
+  /** Told of the tasks it makes (on a pen's tab, to put them in the pen). */
+  onCreated?: (tasks: Task[]) => void;
 }) {
   const opened = { initial, projects, subproject, groupName, scratch };
   // Where the dialog starts and its draft, the text, where its `@` (or type) sends it, and what it runs with there.
@@ -57,7 +60,7 @@ export function NewTaskModal({
   useProjectRefresh(place.project);
   const options = useOptions(place, tok, subproject);
   const blocks = submitBlocks(place, agent, tok, options);
-  const submission = useSubmit({ opened, status, onClose, origin, ed, where: place, agent, tok, kept, options, blocks });
+  const submission = useSubmit({ opened, status, onClose, onCreated, origin, ed, where: place, agent, tok, kept, options, blocks });
   const completion = useCompletion(opened, origin, ed, place, agent, tok);
   const layout = useEditorLayout(ed, completion);
 

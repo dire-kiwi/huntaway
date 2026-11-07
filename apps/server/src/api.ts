@@ -28,6 +28,7 @@ import * as runs from "./agent/runs.ts";
 import * as analytics from "./analytics.ts";
 import * as disk from "./disk.ts";
 import * as docs from "./api/docs.ts";
+import * as pens from "./api/pens.ts";
 import * as attachments from "./attachments.ts";
 import * as git_view from "./git/git_view.ts";
 import * as checkpoints from "./git/checkpoints.ts";
@@ -121,6 +122,9 @@ function host_routes(r: Router) {
   r.route("/profiles/{id}/token-stats", { GET: analytics.tokens });
   r.route("/profiles/{id}/disk-usage", { GET: disk.get });
   r.route("/profiles/{id}/docs", { GET: docs.list });
+  r.route("/profiles/{id}/pens", { GET: pens.list, POST: pens.create });
+  r.route("/profiles/{id}/pens-thread", { GET: pens.thread });
+  r.route("/pens/{id}", { PATCH: pens.update, DELETE: pens.remove });
   r.route("/profiles/{id}/docs/{slug}", { GET: docs.get, DELETE: docs.remove });
   r.route("/profiles/{id}/docs/{slug}/versions/{n}", { GET: docs.version });
   r.route("/profiles/{id}/docs/{slug}/publish", { POST: docs.publish });

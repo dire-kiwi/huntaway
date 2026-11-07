@@ -10,6 +10,7 @@ import {
   hasTelegram,
   hostSupports,
   isAssistant,
+  isPensThread,
   isScratch,
   LABELS_API,
   START_FROM_API,
@@ -48,7 +49,10 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   // A scratch task has no repository either.
   const scratch = isScratch(task);
   // Nor does the profile's assistant, which lasts: it isn't moved between columns, reviewed or merged.
+  // The pens thread (API 127) lasts too.
+  const pensThread = isPensThread(task);
   const assistant = isAssistant(task);
+  const lasting = assistant || pensThread;
   const host = useStore((s) => s.hosts.find((h) => h.id === task.host_id));
   const asana = usesAsana(useStore((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)));
   const [wtBusy, setWtBusy] = useState(false);
@@ -74,14 +78,14 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
 
   return (
     <aside className={className}>
-      {!assistant && <StatusSection task={task} host={host} confirmDone={confirmDone} />}
+      {!lasting && <StatusSection task={task} host={host} confirmDone={confirmDone} />}
 
       <TitleSection task={task} />
 
       <DescriptionSection task={task} />
 
       {/* With Asana turned off for the profile, only to show (and unlink) the links it has. */}
-      {hostSupports(host, LINKS_API) && task.kind === "task" && ((asana && !assistant) || !!task.external_links?.length) && (
+      {hostSupports(host, LINKS_API) && task.kind === "task" && ((asana && !lasting) || !!task.external_links?.length) && (
         <Section title="Asana">
           <LinkedTasks task={task} canLink={asana} />
         </Section>
@@ -106,6 +110,15 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
                 <span className="font-mono text-[11px] break-all">{task.work_dir}</span>
               </Row>
             )}
+          </div>
+        </Section>
+      )}
+
+      {pensThread && (
+        <Section title="Pens thread">
+          <div className="text-[12.5px] text-muted">
+            This profile's pens thread: one lasting conversation that arranges the pens, the tabs over the profile's board. Tell it what you're working on and
+            it sets them up; it doesn't change the tasks themselves unless you ask.
           </div>
         </Section>
       )}
@@ -145,13 +158,13 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
-      {hostSupports(host, 24) && task.kind === "task" && !groupTask && !scratch && !assistant && (
+      {hostSupports(host, 24) && task.kind === "task" && !groupTask && !scratch && !lasting && (
         <Section title="Depends on">
           <Dependencies task={task} project={project} />
         </Section>
       )}
 
-      {hostSupports(host, 8) && !assistant && (
+      {hostSupports(host, 8) && !lasting && (
         <Section title="Preview" right={showsPreview(task) && <PreviewDot url={task.preview_url!} label className="text-[11.5px] text-faint" />}>
           <TextInput
             value={task.preview_url ?? null}
@@ -171,7 +184,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
-      {hostSupports(host, 26) && task.kind === "task" && !groupTask && !docsOnly && !scratch && !assistant && (
+      {hostSupports(host, 26) && task.kind === "task" && !groupTask && !docsOnly && !scratch && !lasting && (
         <Section title="Pull request" right={task.pr_url && <PrIcon url={task.pr_url} label className="text-[11.5px] text-faint" />}>
           <TextInput
             value={task.pr_url ?? null}
@@ -186,9 +199,9 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
-      {hostSupports(host, 17) && task.kind === "task" && !groupTask && !docsOnly && !scratch && !assistant && <SubprojectSection task={task} />}
+      {hostSupports(host, 17) && task.kind === "task" && !groupTask && !docsOnly && !scratch && !lasting && <SubprojectSection task={task} />}
 
-      {!groupTask && !docsOnly && !scratch && !assistant && (
+      {!groupTask && !docsOnly && !scratch && !lasting && (
         <Section title="Worktree">
           {!task.use_worktree && task.worktree_state === "none" ? (
             <div className="space-y-2">

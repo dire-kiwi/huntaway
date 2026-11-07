@@ -530,8 +530,8 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   } else if (task.remerge) {
     // It stepped out of the merge queue to make changes, and now rejoins it.
     [status, reason] = ["ready_for_merge", null];
-  } else if (db.is_assistant(task)) {
-    // The assistant never goes to review: it waits for the user's next message.
+  } else if (db.is_assistant(task) || db.is_pens_thread(task)) {
+    // The assistant (and the pens thread) never goes to review: it waits for the user's next message.
     [status, reason] = ["todo", null];
   } else if (db.is_routine(task)) {
     // A routine's run is done once it's reported (see automations/routines.ts).

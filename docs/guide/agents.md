@@ -55,7 +55,9 @@ threads it spawns): their parent does. The tools:
 `list_projects`, `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `send_to_task`,
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
-_Waiting_). Review threads
+_Waiting_), and the pen tools (API 127, see _Pens_ in [Using the board](board.md)): `list_pens`,
+`create_pen`, `update_pen` and `delete_pen`, with `pen` on `create_task`, `update_task` and
+`list_tasks`. Review threads
 also get `submit_review`. `create_task` takes `subproject` (add the task to one; agents in a
 subproject add to theirs by default) and `is_subproject` (or `type: "subproject"`, API 51), and
 `list_tasks` takes `subproject`. `create_task` and `update_task` take `start_from` (API 96, see
