@@ -44,6 +44,7 @@ import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout";
 import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowTabs } from "./Workflows";
 import { ReviewThreadView } from "./view/ReviewThreadView";
 import { BrowserPane, canBrowse, useBrowserShare } from "./Browser";
+import { DesktopButton, DesktopPane, useDesktopOn } from "./Desktop";
 import { TabContent } from "./view/TabContent";
 import { TitleEditor } from "./view/Title";
 
@@ -152,6 +153,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const [browser, setBrowser] = useState(false);
   const [browserMounted, setBrowserMounted] = useState(false);
   const [share, splitter] = useBrowserShare();
+  // The desktop view (HA-273), in the browser's place, on a host whose agents may use its desktop.
+  const [desktop, setDesktop] = useState(false);
+  const desktopOn = useDesktopOn(host);
   useEffect(() => {
     setTab(openingTab(useStore.getState().tasks[taskId]));
     setMounted([]);
@@ -159,6 +163,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   useEffect(() => {
     setBrowser(false);
     setBrowserMounted(false);
+    setDesktop(false);
   }, [taskId]);
   // A thread off every list the board loads (a routine's run of the assistant, API 110) is fetched by itself, from the
   // hosts that have them, when it's opened by its link.
@@ -262,6 +267,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     if (!browser && mode === "panel") setPanelExpanded(true);
     setBrowser(!browser);
     setBrowserMounted(true);
+    setDesktop(false);
+  };
+  const toggleDesktop = () => {
+    if (!desktop && mode === "panel") setPanelExpanded(true);
+    setDesktop(!desktop);
+    setBrowser(false);
   };
   const showTool = (t: TerminalTool) => {
     openTool({ hostId: task.host_id, taskId: task.id, toolId: t.id });
@@ -387,6 +398,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           <Globe size={14} />
         </IconButton>
       )}
+      {desktopOn && <DesktopButton open={desktop} onClick={toggleDesktop} />}
       {!narrow && run}
     </>
   );
@@ -477,7 +489,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
       </header>
       <div className="flex min-h-0 flex-1">
         {/* Too narrow for both: the browser takes the main area's place. */}
-        <main className={clsx("min-w-0 flex-1", browser && !wide && "hidden")}>
+        <main className={clsx("min-w-0 flex-1", (browser || desktop) && !wide && "hidden")}>
           {mounted.includes("terminal") && (
             <div className={clsx("h-full", tab !== "terminal" && "hidden")}>
               <Suspense fallback={null}>
@@ -504,8 +516,16 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             </div>
           </>
         )}
-        {/* A document, and the changes' panels, get the room; so does the browser. */}
-        {wide && !browser && !isTerminalTab(tab) && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && (
+        {desktop && (
+          <>
+            {wide && splitter}
+            <div className={clsx("min-w-0", wide ? "shrink-0" : "flex-1")} style={wide ? { width: `${share * 100}%` } : undefined}>
+              <DesktopPane key={`${task.host_id}:${task.id}`} task={task} onClose={() => setDesktop(false)} />
+            </div>
+          </>
+        )}
+        {/* A document, and the changes' panels, get the room; so do the browser and the desktop. */}
+        {wide && !browser && !desktop && !isTerminalTab(tab) && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { BookOpen, Bot, ChevronRight, FileText, Globe, LayoutGrid, ListChecks, Loader2, Pencil, Search, Terminal, Wrench, X } from "lucide-react";
+import { BookOpen, Bot, ChevronRight, FileText, Globe, LayoutGrid, ListChecks, Loader2, Monitor, Pencil, Search, Terminal, Wrench, X } from "lucide-react";
 import { memo, useContext, useEffect, useState, type ReactNode } from "react";
 import { publishedDocPath } from "../../../docs";
 import { navigate } from "../../../router";
@@ -60,7 +60,54 @@ export function toolMeta(name: string, input: Any, cwd?: string | null): { icon:
     const what = input?.title ?? input?.slug;
     return { icon: <BookOpen size={s} />, label: "Docs", summary: `${name.slice("mcp__docs__".length)}${what ? `  “${what}”` : ""}` };
   }
+  // The run's desktop server (HA-273).
+  if (name.startsWith("mcp__desktop__")) {
+    const tool = name.slice("mcp__desktop__".length);
+    return { icon: <Monitor size={s} />, label: DESKTOP_LABELS[tool] ?? "Desktop", summary: desktopSummary(tool, input) };
+  }
   return { icon: <Wrench size={s} />, label: name.replace(/^mcp__/, "").replace(/__/g, " · "), summary: "" };
+}
+
+const DESKTOP_LABELS: Record<string, string> = {
+  health: "Checked the desktop",
+  apps: "Listed apps",
+  windows: "Listed windows",
+  read: "Read a window",
+  screen: "Looked",
+  zoom: "Zoomed in",
+  verify: "Verified",
+  op_status: "Looked up",
+  act: "Acted",
+  launch: "Launched",
+  clipboard: "Clipboard",
+};
+
+const clip = (t: string, n = 40) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+
+/** What a desktop call did, in a few words (the server's journal says it the same way, see mcp/desktop_mcp.ts). */
+function desktopSummary(tool: string, input: Any): string {
+  const where = input?.pid != null ? `pid ${input.pid}${input.window_id != null ? `, window ${input.window_id}` : ""}` : "";
+  if (tool === "act") {
+    const steps: Any[] = Array.isArray(input?.steps) ? input.steps : [];
+    const say = (st: Any) => {
+      const a = st?.args ?? {};
+      const t = String(st?.tool ?? "?");
+      if ((t === "type_text" || t === "type") && typeof a.text === "string") return `type “${clip(a.text)}”`;
+      if (t === "set_value" && a.value != null) return `set “${clip(String(a.value))}”`;
+      if ((t === "press_key" || t === "press") && a.key) return `press ${a.key}`;
+      if (t === "hotkey" && Array.isArray(a.keys)) return `press ${a.keys.join("+")}`;
+      return t.replace(/_/g, " ");
+    };
+    const listed = steps.slice(0, 4).map(say).join(", ");
+    return steps.length > 4 ? `${listed}, … (${steps.length} steps)` : listed;
+  }
+  if (tool === "launch") return String(input?.name ?? input?.launch_path ?? input?.bundle_id ?? "");
+  if (tool === "clipboard") return typeof input?.text === "string" ? `copy “${clip(input.text)}”` : "read";
+  if (tool === "read") return `${input?.query ? `“${input.query}” in ` : ""}${where}`;
+  if (tool === "screen") return where || "the whole desktop";
+  if (tool === "op_status") return String(input?.op_id ?? "");
+  if (tool === "windows") return input?.app ? String(input.app) : where;
+  return where;
 }
 
 /** A link to the document a `publish_document` call published, on this board's Docs page (HA-281). */

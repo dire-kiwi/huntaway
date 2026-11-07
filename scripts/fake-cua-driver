@@ -1,0 +1,100 @@
+#!/usr/bin/env node
+// A stand-in for Cua Driver's `cua-driver mcp` (see apps/server/src/desktop.ts), for tests and test servers: point
+// IA_CUA_DRIVER at it. It speaks MCP over stdio with a few of the driver's tools, answers them with canned results (one
+// app, one window, a small image), and logs each call (`{tool, args}`, a JSON line) to $FAKE_CUA_LOG if that's set.
+// FAKE_CUA_FAIL=<tool> makes that tool's calls fail.
+import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+
+if (process.argv[2] !== "mcp") {
+  console.error("fake-cua-driver: only `mcp` is faked");
+  process.exit(2);
+}
+
+const session = { session: { type: "string" } };
+const TOOLS = {
+  check_permissions: {},
+  list_apps: {},
+  list_windows: { pid: { type: "integer" }, app: { type: "string" }, on_screen_only: { type: "boolean" } },
+  get_window_state: {
+    ...session,
+    pid: { type: "integer" },
+    window_id: { type: "integer" },
+    include_accessibility_tree: { type: "boolean" },
+    include_screenshot: { type: "boolean" },
+    display_only: { type: "boolean" },
+    max_image_dimension: { type: "integer" },
+    query: { type: "string" },
+    since: { type: "string" },
+  },
+  get_desktop_state: { ...session },
+  zoom: { ...session, pid: { type: "integer" } },
+  verify_state: { ...session, pid: { type: "integer" }, expect: { type: "array" } },
+  run_steps: { ...session, steps: { type: "array" }, observe: {} },
+  launch_app: { name: { type: "string" } },
+  clipboard_read: { ...session, include_text: { type: "boolean" } },
+  clipboard_write: { ...session, text: { type: "string" } },
+};
+
+// A 160×100 PNG, a different colour on each call so a viewer can tell frames apart.
+let frame = 0;
+function png() {
+  const shades = ["iVBORw0KGgoAAAANSUhEUgAAAKAAAABkCAIAAACO1KzYAAAAsUlEQVR42u3RAQkAAAgEsY9jJtMZ1Roig0twS/XocbEAsAALsAALsAALMGABFmABFmABFmDAAizAAizAAizAAgxYgAVYgAVYgAUYsAALsAALsAALMGABFmABFmABFmABBizAAizAAizAAgxYgAVYgAVYgAUYsAuABViABViABViAAQuwAAuwAAuwAAMWYAEWYAEWYAEWYMACLMACLMACLMCABViABViABViAAQuwAOteCwoU0Ru5sIrVAAAAAElFTkSuQmCC", "iVBORw0KGgoAAAANSUhEUgAAAKAAAABkCAIAAACO1KzYAAAAsUlEQVR42u3RAQkAAAgEsY9jJtMZ1Roig0twy3TpcbEAsAALsAALsAALMGABFmABFmABFmDAAizAAizAAizAAgxYgAVYgAVYgAUYsAALsAALsAALMGABFmABFmABFmABBizAAizAAizAAgxYgAVYgAVYgAUYsAuABViABViABViAAQuwAAuwAAuwAAMWYAEWYAEWYAEWYMACLMACLMACLMCABViABViABViAAQuwAOteC6V60RvvEKziAAAAAElFTkSuQmCC"];
+  return shades[frame++ % shades.length];
+}
+
+let clipboard = "";
+
+function answer(tool, args) {
+  if (process.env.FAKE_CUA_FAIL === tool) return { content: [{ type: "text", text: `${tool} failed (FAKE_CUA_FAIL)` }], isError: true };
+  const text = (t, structured) => ({ content: [{ type: "text", text: t }], ...(structured ? { structuredContent: structured } : {}) });
+  switch (tool) {
+    case "check_permissions":
+      return text("accessibility: granted\nscreen_recording: granted");
+    case "list_apps":
+      return text("Fake Notes (pid 4242) running", { apps: [{ name: "Fake Notes", pid: 4242, running: true }] });
+    case "list_windows":
+      return text("[4242/7] Fake Notes — untitled", { windows: [{ pid: 4242, window_id: 7, app: "Fake Notes", title: "untitled", z_index: 1 }] });
+    case "get_window_state": {
+      const out = { content: [], structuredContent: { snapshot_id: "s00000001", screenshot_width: 160, screenshot_height: 100 } };
+      if (args.include_accessibility_tree !== false) out.content.push({ type: "text", text: "snapshot s00000001\n[0] window \"untitled\"\n  [1] text \"body\"\n  [2] button \"Save\"" });
+      if (args.include_screenshot) out.content.push({ type: "image", data: png(), mimeType: "image/png" });
+      return out;
+    }
+    case "get_desktop_state":
+      return { content: [{ type: "text", text: "desktop" }, { type: "image", data: png(), mimeType: "image/png" }], structuredContent: { screenshot_width: 160, screenshot_height: 100 } };
+    case "zoom":
+      return { content: [{ type: "image", data: png(), mimeType: "image/png" }] };
+    case "verify_state":
+      return text("satisfied", { result: "satisfied" });
+    case "run_steps":
+      return text(`ran ${args.steps?.length ?? 0} steps\n~ [1] text "body" value="hi"`, { steps: (args.steps ?? []).map(() => ({ ok: true })), failed_step: null });
+    case "launch_app":
+      return text(`launched ${args.name}`, { pid: 5151, windows: [{ window_id: 9 }] });
+    case "clipboard_read":
+      // As Cua's: the text only when it's asked for.
+      return args.include_text ? text(clipboard, { supported: true, text: clipboard }) : text("text/plain", { supported: true, types: ["text/plain"] });
+    case "clipboard_write":
+      clipboard = args.text;
+      return text("ok");
+  }
+  return { content: [{ type: "text", text: `Unknown tool: ${tool}` }], isError: true };
+}
+
+const send = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
+for await (const line of createInterface({ input: process.stdin })) {
+  if (!line.trim()) continue;
+  const msg = JSON.parse(line);
+  if (msg.id === undefined) continue;
+  if (msg.method === "initialize") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "cua-driver", version: "0.0.0-fake" } } });
+  } else if (msg.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { tools: Object.entries(TOOLS).map(([name, properties]) => ({ name, inputSchema: { type: "object", properties } })) } });
+  } else if (msg.method === "tools/call") {
+    const { name, arguments: args = {} } = msg.params;
+    if (process.env.FAKE_CUA_LOG) appendFileSync(process.env.FAKE_CUA_LOG, `${JSON.stringify({ tool: name, args })}\n`);
+    send({ jsonrpc: "2.0", id: msg.id, result: answer(name, args) });
+  } else {
+    send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `method not found: ${msg.method}` } });
+  }
+}

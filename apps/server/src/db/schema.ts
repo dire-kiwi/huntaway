@@ -6,6 +6,7 @@ import { all, run, value, type Conn } from "../db.ts";
 import * as stats from "../review/stats.ts";
 import * as devices from "../devices.ts";
 import * as docs from "./docs.ts";
+import * as desktop from "./desktop.ts";
 import * as docs_site from "./docs_site.ts";
 import * as pens from "./pens.ts";
 import { path_str } from "../util.ts";
@@ -870,6 +871,10 @@ export function open(path: string): Conn {
     batch(`${pens.PENS_SCHEMA} CREATE UNIQUE INDEX IF NOT EXISTS tasks_one_pens_thread ON tasks(profile_id) WHERE task_type='pens';
            CREATE INDEX IF NOT EXISTS tasks_pen ON tasks(pen_id) WHERE pen_id IS NOT NULL; PRAGMA user_version=106; COMMIT;`);
   }
+  if (version < 107) {
+    // Computer use (HA-273): the desktop's journal, what agents did on the host's desktop (see db/desktop.ts).
+    batch(`BEGIN; ${desktop.DESKTOP_SCHEMA} PRAGMA user_version=107; COMMIT;`);
+  }
   return conn;
 }
 
@@ -915,7 +920,7 @@ CREATE INDEX IF NOT EXISTS approval_log_request ON approval_log(request_id);
 `;
 
 /** The latest database version (`PRAGMA user_version`). */
-export const VERSION = 106;
+export const VERSION = 107;
 
 /**
  * Until version 73 a run's `cost_usd` was its session's total as Claude Code last said it, and the task was charged what

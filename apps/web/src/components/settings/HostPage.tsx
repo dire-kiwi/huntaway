@@ -1,10 +1,11 @@
 import clsx from "clsx";
 import { ChevronLeft, Copy, Download, Loader2, Plus, RotateCw, Server, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, canRunAgents, hostSupports, type Profile, type ServerStatus } from "../../api";
+import { api, canRunAgents, DESKTOP_API, hostSupports, type Profile, type ServerStatus } from "../../api";
 import { navigate } from "../../router";
 import { profileConfigLabel, useStore } from "../../store";
 import { HostClaudeConfigs } from "./ClaudeConfigs";
+import { HostDesktop } from "./HostDesktop";
 import { AgentDefaultsRow, CopyLoginModal, HostVersion, ProfileForm, TerminalToolsRow } from "./Hosts";
 import { DatabaseLine, installName, PHASES, Releases, RestartModal, ServerPanel, ShellNotice, stagedRelease } from "./Server";
 import { Button, IconButton, MenuButton, Modal, timeAgo, useConfirm } from "../ui";
@@ -73,6 +74,7 @@ export function HostPage({ hostId }: { hostId: string }) {
               )}
               {host.local ? <ServerPanel /> : <RemoteServer hostId={host.id} />}
               <HostService hostId={host.id} />
+              {agents && hostSupports(host, DESKTOP_API) && <HostDesktop hostId={host.id} />}
             </>
           )}
 

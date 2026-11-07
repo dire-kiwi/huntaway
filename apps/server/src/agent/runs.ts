@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import * as db from "../db.ts";
 import * as runner from "./runner.ts";
 import * as mcp_http from "../mcp/http.ts";
+import * as desktop_mcp from "../mcp/desktop_mcp.ts";
 import * as docs_mcp from "../mcp/docs_mcp.ts";
 import * as tokens from "./tokens.ts";
 import type { Spec } from "./codex.ts";
@@ -71,6 +72,8 @@ export interface Launch {
   mcp_servers: Record<string, any>;
   /** The project turned our docs server off (see runner/access.ts's `uses_docs_server`): its `mcp.json` has none. */
   no_docs_server?: boolean;
+  /** It gets our desktop server (computer use is on for the host, see runner/access.ts's `uses_desktop_server`). */
+  desktop_server?: boolean;
   /** The GitHub account the gh server acts as (see gh_mcp::Account), if not gh's active one. */
   github_account: string | null;
   /** Run Codex instead of Claude Code: `args` are ignored, and the adapter gets this as `codex.json` (see agent/codex.ts). */
@@ -241,10 +244,14 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   // that gives a new Codex session them as dynamic tools: the adapter gives it the board's server only if Codex won't
   // take them (agent/codex/adapter.ts's start_thread).
   const in_process = !!l.tools_on_output || (!!l.board_tools_dynamic && !l.codex?.board_tools);
-  await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }));
+  await writeFile(
+    join(dir, mcp_http.SETTINGS_FILE),
+    mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process, desktop: !!l.desktop_server }),
+  );
   const servers: Record<string, any> = mcp_http.servers(state, l.run_id);
   if (in_process) delete servers[runner.MCP_SERVER_NAME];
   if (l.no_docs_server) delete servers[docs_mcp.SERVER_NAME];
+  if (!l.desktop_server) delete servers[desktop_mcp.SERVER_NAME];
   for (const [name, server] of Object.entries(l.mcp_servers ?? {})) {
     if (name !== runner.MCP_SERVER_NAME) servers[name] = server;
   }

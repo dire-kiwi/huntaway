@@ -120,6 +120,43 @@ them on the profile's Docs page (see [board.md](board.md)), with links built fro
 can turn the server off (its runs then have no `docs` server at all, nor the note about it), or
 replace it with its own named `docs`.
 
+**Computer use.** On a host where it's turned on, runs also get the `desktop` MCP server (HA-273):
+the agent sees and uses the host's own desktop (native apps' windows) through
+[Cua Driver](https://github.com/trycua/cua) (MIT). It's off by default. On the host's page
+(Settings → Hosts → the host), _Computer use_ has **Install Cua Driver**, which downloads the
+release Huntaway pins (`desktop.ts`'s `VERSION`; Cua marks every driver release a prerelease) from
+GitHub, checks its size and SHA-256, and unpacks it into `<data dir>/cua-driver/<version>/`;
+**Check**, which starts the driver and shows what it may do; and the switch that lets the host's
+agents use it, from their next run. `IA_CUA_DRIVER` runs another build instead, and a `cua-driver`
+on PATH is used when none is installed.
+
+- The server runs one `cua-driver mcp` for the host (on Linux it owns the driver's runtime), started
+  when an agent first needs it and stopped after 10 minutes without a call. It needs the graphical
+  session: a host started as a service picks up `WAYLAND_DISPLAY`, `DISPLAY` and the session bus
+  from `systemctl --user show-environment` (or a `wayland-N` socket), and sets
+  `CUA_DRIVER_RS_ENABLE_WAYLAND=1` on Wayland.
+- Agents don't get Cua's own MCP server but ours, shaped after `agentcast`
+  ([pingdotgg/t3code#28050](https://github.com/pingdotgg/t3code/pull/28050)): `health`, `apps`,
+  `windows`, `read` (a window's accessibility tree, `query` and `since` to keep it small), `screen`,
+  `zoom`, `verify` and `op_status` only look and need no approval; `act` (a batch of steps, Cua's
+  `run_steps`, which reports what changed), `launch` and `clipboard` ask first, unless the run is in
+  Bypass. A reviewer and a run in plan mode only get the ones that look. Their arguments are Cua's,
+  and each task's calls are Cua's session `huntaway-<key>`.
+- Nothing but `health` and `op_status` runs while the screen is locked (logind's `LockedHint`, or a
+  screen locker running), and only one task drives the desktop at a time: another's actions are
+  refused until two minutes after its last. Actions are journaled (`desktop_ops`): one the agent
+  names with `op_id` runs at most once, so after a lost answer it asks `op_status` instead of acting
+  again.
+- The task panel's monitor button (shown when the host has computer use on) opens a view beside the
+  thread: the window the agent last read or acted on, live while the driver runs (a capture that
+  leaves the agent's snapshot alone), and what it did there. `GET /api/desktop/frame?task_id=` and
+  `GET /api/tasks/{id}/desktop` (API 128) are what it reads; paired devices can't.
+- Agents share the host's one keyboard, pointer and focus with whoever is at it, so they're told to
+  keep to the background and leave the desktop as they found it. On Hyprland, Cua's background input
+  needs its experimental plugin; without it the driver refuses background input, and an agent can
+  only act in the foreground, which it has to ask for. A project can turn the server off, like any
+  other.
+
 **GitHub accounts.** gh can be signed in to several accounts on a host (`gh auth login` once for
 each), and each profile can pick which one its agents act as there (_GitHub account_ in Settings →
 Profiles → Edit, per host); a project can pick its own in its settings, overriding the profile's.

@@ -16,6 +16,7 @@ import * as task_tmp from "../task_tmp.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as relocate from "../../git/relocate.ts";
 import * as checkpoints from "../../git/checkpoints.ts";
+import * as desktop_mcp from "../../mcp/desktop_mcp.ts";
 import * as docs_mcp from "../../mcp/docs_mcp.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as review from "../../review.ts";
@@ -34,6 +35,9 @@ import {
   hook_settings,
   ignored_dirs,
   review_filesystem,
+  desktop_allowed,
+  desktop_disallowed,
+  uses_desktop_server,
   uses_docs_server,
   uses_gh_server,
 } from "./access.ts";
@@ -234,11 +238,13 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
     const profiles = db.list_profiles(state.db());
     const docs_tools = uses_docs_server(tools);
+    const desktop_tools = uses_desktop_server(state, tools);
     const to: Told = {
       codex: true,
       plan: permission_mode === "plan",
       gh_tools,
       docs_tools,
+      desktop_host: desktop_tools ? state.host_name : null,
       github_account: account,
       profiles,
       profile,
@@ -250,6 +256,9 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     // Reviewers read and report (see the Claude arguments below).
     const disabled_mcp_tools: Record<string, string[]> = {};
     if (task.kind === "review" && !own_gh) disabled_mcp_tools[gh_mcp.SERVER_NAME] = [...gh_mcp.WRITES];
+    // The desktop's read-only tools need no approval (see codex/adapter.ts); a reviewer and plan mode only look.
+    const desktop_off = desktop_disallowed(task.kind === "review", permission_mode === "plan");
+    if (desktop_tools && desktop_off.length) disabled_mcp_tools[desktop_mcp.SERVER_NAME] = desktop_off;
     // In their read-only sandbox, reviewers can still build and run the tests to check what they find, as long as it
     // doesn't change the work.
     const git_dir = await git_common_dir(cwd);
@@ -313,6 +322,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
       review: task.kind === "review",
       mcp_servers: tools.mcp_servers,
       no_docs_server: !docs_tools,
+      desktop_server: desktop_tools,
       github_account: account,
       codex: spec,
       board_tools_dynamic: dynamic,
@@ -338,11 +348,13 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
   const profiles = db.list_profiles(state.db());
   const docs_tools = uses_docs_server(tools);
+  const desktop_tools = uses_desktop_server(state, tools);
   const to: Told = {
     codex: false,
     plan: permission_mode === "plan",
     gh_tools,
     docs_tools,
+    desktop_host: desktop_tools ? state.host_name : null,
     github_account: account,
     profiles,
     profile,
@@ -376,11 +388,15 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   args.push(...board_tools_allowed(permission_mode, task.kind === "review"));
   // As are our docs server's, which only touch the profile's documents.
   if (docs_tools) args.push(`mcp__${docs_mcp.SERVER_NAME}`);
+  // The desktop's read-only tools; its actions ask (see access.ts's desktop_allowed).
+  if (desktop_tools) args.push(...desktop_allowed());
   const own_gh = Object.hasOwn(tools.mcp_servers, gh_mcp.SERVER_NAME);
   const gh_tool = (t: string) => `mcp__${gh_mcp.SERVER_NAME}__${t}`;
   if (!own_gh) args.push(...gh_allowed(task).map(gh_tool));
   args.push(...tools.allowed);
   const disallowed = [...tools.disallowed, ...(rules ? approval_rules.claude_disallowed(rules) : [])];
+  if (desktop_tools)
+    disallowed.push(...desktop_disallowed(task.kind === "review", permission_mode === "plan").map((t) => `mcp__${desktop_mcp.SERVER_NAME}__${t}`));
   if (task.kind === "review") {
     // Reviewers read and report; they don't change the work.
     args.push(...review.ALLOWED_TOOLS);
@@ -414,6 +430,7 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     review: task.kind === "review",
     mcp_servers: tools.mcp_servers,
     no_docs_server: !docs_tools,
+    desktop_server: desktop_tools,
     github_account: account,
     codex: null,
     asks_on_output: !!asks,

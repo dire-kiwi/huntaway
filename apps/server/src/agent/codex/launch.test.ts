@@ -196,3 +196,51 @@ test("a_project_that_turns_the_docs_server_off_gets_no_docs_server", async () =>
   // A project that doesn't has it.
   assert.ok((await launched(state, codex_task(state, "scratch", null, true))).servers.docs);
 });
+
+test("a_host_with_computer_use_gives_its_runs_the_desktop_server_whose_actions_ask", async () => {
+  // HA-273: only once the host's page turned it on and there's a driver; the read-only tools need no approval, and a
+  // run in plan mode doesn't get the ones that act.
+  const state = testing.state();
+  const fake = join(import.meta.dirname, "../../../../../scripts/fake-cua-driver");
+  const before = process.env.IA_CUA_DRIVER;
+  process.env.IA_CUA_DRIVER = fake;
+  try {
+    const off = await launched(state, codex_task(state));
+    assert.equal(off.servers.desktop, undefined);
+    db.set_setting(state.db(), "desktop_tools", "true");
+    const on = await launched(state, codex_task(state));
+    assert.ok(on.servers.desktop?.url.endsWith(`/api/mcp/${on.run_id}/desktop`));
+    assert.ok(!on.spec.approved_mcp_servers.includes("desktop"));
+    assert.equal(on.spec.disabled_mcp_tools.desktop, undefined);
+    assert.ok(on.spec.developer_instructions.includes("`desktop.act`"), on.spec.developer_instructions);
+    const plan = codex_task(state);
+    state.update_task(plan, [["permission_mode", "plan"]]);
+    assert.deepEqual((await launched(state, plan)).spec.disabled_mcp_tools.desktop, ["act", "launch", "clipboard"]);
+
+    const claude = codex_task(state);
+    db.run(state.db(), "UPDATE tasks SET claude_config_id=NULL WHERE id=?1", claude);
+    send(state, claude, "go");
+    const deadline = Date.now() + 5000;
+    let dir = "";
+    while (!dir || !existsSync(join(dir, "pid"))) {
+      assert.ok(Date.now() < deadline, "the run didn't start");
+      await sleep(10);
+      const run_id = state.runs.get(claude)?.run_id;
+      dir = run_id ? runs.run_dir(state, run_id) : "";
+    }
+    const args: string[] = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")).args;
+    const after = args.slice(args.indexOf("--allowedTools") + 1);
+    const allowed = after.slice(
+      0,
+      after.findIndex((a) => a.startsWith("--")),
+    );
+    assert.ok(allowed.includes("mcp__desktop__read") && allowed.includes("mcp__desktop__screen"), args.join(" "));
+    assert.ok(!allowed.some((a) => a === "mcp__desktop" || a === "mcp__desktop__act"), args.join(" "));
+    assert.ok(JSON.parse(readFileSync(join(dir, "mcp.json"), "utf8")).mcpServers.desktop);
+    assert.ok(readFileSync(join(dir, "system-prompt.md"), "utf8").includes("mcp__desktop__act"));
+    stop(state, claude);
+  } finally {
+    if (before === undefined) delete process.env.IA_CUA_DRIVER;
+    else process.env.IA_CUA_DRIVER = before;
+  }
+});

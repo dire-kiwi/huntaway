@@ -188,7 +188,8 @@ start() {
   {
     declare -p bin serve
     # IA_TELEGRAM_API too: a test server restarted without it would reach the real Telegram with its bots' tokens.
-    for v in IA_CLAUDE_BIN IA_CODEX_BIN IA_TELEGRAM_API $(compgen -e IA_FAKE_CLAUDE_ || true); do
+    # And computer use's (apps/server/src/desktop.ts): IA_CUA_DRIVER=scripts/fake-cua-driver stands in for Cua Driver.
+    for v in IA_CLAUDE_BIN IA_CODEX_BIN IA_TELEGRAM_API IA_CUA_DRIVER IA_CUA_DRIVER_RELEASE IA_DESKTOP_LOCKED $(compgen -e IA_FAKE_CLAUDE_ || true) $(compgen -e FAKE_CUA_ || true); do
       [[ -n ${!v+x} ]] && printf 'export %s=%q\n' "$v" "${!v}"
     done
     # The new database file (huntaway-2.db, see apps/server/src/db/file.ts) stays as the start had it, on or off.

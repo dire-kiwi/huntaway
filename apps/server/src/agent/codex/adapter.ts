@@ -7,6 +7,7 @@ import { REVIEW_PROFILE, thread_params, uses_profile, Spec_from_json, type Spec 
 import { BOARD_TOOLS, own_thread } from "./output.ts";
 import { Channel, Responder, Rpc } from "./rpc.ts";
 import * as runner from "../runner.ts";
+import * as desktop_mcp from "../../mcp/desktop_mcp.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as wait from "../../mcp/wait.ts";
 import * as approval_rules from "../approval_rules.ts";
@@ -72,6 +73,11 @@ export function mcp_server_config(name: string, c: any, approved: boolean, disab
     // Every wait goes to the reviewer, which sees its arguments: a wait's command runs as
     // the agent's own commands would (see mcp/tools.rs).
     out.tools = { wait: { approval_mode: "prompt" } };
+  }
+  if (name === desktop_mcp.SERVER_NAME) {
+    // Its read-only tools need no approval; its actions ask (see runner/access.ts's desktop_allowed).
+    out.tool_timeout_sec = 300;
+    out.tools = Object.fromEntries(desktop_mcp.READS.map((t) => [t, { approval_mode: "approve" }]));
   }
   if (disabled.length) out.disabled_tools = disabled;
   return out;

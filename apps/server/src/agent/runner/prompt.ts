@@ -16,7 +16,7 @@ import * as summary from "../../review/summary.ts";
 import * as workflows from "../../integrations/workflows.ts";
 import { MCP_SERVER_NAME } from "../runner.ts";
 import * as pens from "../pens.ts";
-import { docs_note, gh_note, github_account, uses_docs_server, uses_gh_server } from "./access.ts";
+import { desktop_note, docs_note, gh_note, github_account, uses_desktop_server, uses_docs_server, uses_gh_server } from "./access.ts";
 
 /** What else decides what a run is told (see `instructions`). */
 export interface Told {
@@ -28,6 +28,8 @@ export interface Told {
   gh_tools: boolean;
   /** It has our docs server (see uses_docs_server). */
   docs_tools: boolean;
+  /** It has our desktop server (see uses_desktop_server): the host's name, whose desktop it is. */
+  desktop_host?: string | null;
   github_account: string | null;
   /** The host's profiles, and the run's own. */
   profiles: Profile[];
@@ -60,6 +62,7 @@ export function instructions(s: string, task: Task, to: Told): string {
     s += gh_note(to.github_account);
   }
   if (to.docs_tools && task.kind !== "review") s += docs_note(to.codex);
+  if (to.desktop_host) s += desktop_note(to.codex, to.desktop_host);
   if (to.tmp != null) {
     s +=
       `\n\nYour temp folder is ${to.tmp} (\`$TMPDIR\` in your shell${task.kind === "review" ? ", shared with the task's agent" : ""}). ` +
@@ -164,7 +167,8 @@ export async function preview(state: Shared, project: Project, o: PreviewOptions
   const base = system_prompt(task, project, null, [], docs, github, gh_tools);
   const tmp = path_str(task_tmp.dir(state, task));
   const docs_tools = uses_docs_server(tools);
-  const to: Told = { codex, plan: permission_mode === "plan", gh_tools, docs_tools, github_account: account, profiles, profile, tmp, memory: "" };
+  const desktop_host = uses_desktop_server(state, tools) ? state.host_name : null;
+  const to: Told = { codex, plan: permission_mode === "plan", gh_tools, docs_tools, desktop_host, github_account: account, profiles, profile, tmp, memory: "" };
   return [instructions(base, task, to), codex, permission_mode];
 }
 
