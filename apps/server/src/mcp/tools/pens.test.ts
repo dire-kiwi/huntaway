@@ -1,6 +1,7 @@
 // Pens (HA-285): the pen tools, `pen` on the task tools and the API, and each profile's pens thread.
 import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import * as db from "../../db.ts";
 import type { Shared } from "../../state.ts";
 import * as api from "../../api.ts";
@@ -209,4 +210,23 @@ test("older_hosts_arent_asked_about_pens", () => {
   assert.match(too_old("box", PENS_API - 1, "update_task", { task_id: "X-1", pen: "Today" })!, /without pens/);
   assert.equal(too_old("box", PENS_API - 1, "update_task", { task_id: "X-1", title: "x" }), null);
   assert.equal(too_old("box", PENS_API, "create_pen", { name: "x" }), null);
+});
+
+// A database at version 104 (hosted docs, HA-282, which took that number first) gets pens' table and column.
+test("a_database_from_before_pens_gets_them", () => {
+  const path = join(testing.temp_dir(), "db.sqlite");
+  let c = db.open(path);
+  c.exec("DROP INDEX tasks_pen; DROP INDEX tasks_one_pens_thread; ALTER TABLE tasks DROP COLUMN pen_id; DROP TABLE pens; PRAGMA user_version=104;");
+  c.close();
+  c = db.open(path);
+  assert.equal(Number(db.value(c, "PRAGMA user_version")), db.VERSION);
+  assert.equal(db.VERSION, 105);
+  const p = db.insert_profile(c, "p", [], null);
+  const pen = db.insert_pen(c, p.id, "Today");
+  assert.deepEqual(
+    db.list_pens(c, p.id).map((x) => x.id),
+    [pen.id],
+  );
+  assert.equal(db.value(c, "SELECT COUNT(*) FROM tasks WHERE pen_id IS NOT NULL"), 0);
+  c.close();
 });

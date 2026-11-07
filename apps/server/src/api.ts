@@ -127,6 +127,10 @@ function host_routes(r: Router) {
   r.route("/pens/{id}", { PATCH: pens.update, DELETE: pens.remove });
   r.route("/profiles/{id}/docs/{slug}", { GET: docs.get, DELETE: docs.remove });
   r.route("/profiles/{id}/docs/{slug}/versions/{n}", { GET: docs.version });
+  r.route("/profiles/{id}/docs/{slug}/publish", { POST: docs.publish });
+  r.route("/profiles/{id}/hosted_docs", { GET: docs.hosted, DELETE: docs.hosted_disconnect });
+  r.route("/profiles/{id}/hosted_docs/device", { POST: docs.hosted_device, DELETE: docs.hosted_device_cancel });
+  r.route("/profiles/{id}/hosted_docs/token", { POST: docs.hosted_token });
   r.route("/profiles/{id}/asana/tasks", { GET: profiles.asana_tasks });
   r.route("/projects/{id}", { GET: projects.get_project, PATCH: projects.update_project, DELETE: projects.delete_project });
   r.route("/projects/{id}/tasks", { GET: tasks.list_project_tasks, POST: new_task.create_task });

@@ -31,6 +31,7 @@ import { now, path_str, sleep } from "../../util.ts";
 import { ToolError, msg, type Ctx } from "../tools.ts";
 import {
   MARKS_API,
+  PENS_API,
   TASK_FIELDS_API,
   TASK_FIELD_DEFAULT_LIMIT,
   TASK_FIELD_MAX_LIMIT,
@@ -414,6 +415,37 @@ async function link_fake_host(s: Shared, name: string, api_version: number, answ
   const conn = hub.link_http(s, name, `http://127.0.0.1:${(srv.address() as any).port}`, api_version);
   servers.push(() => conn.kind.type === "http" && conn.kind.agent.destroy());
 }
+
+// HA-285: a host from before pens would ignore list_tasks's `pen` and send back all of its tasks, which would be merged in
+// as the pen's: it isn't asked.
+test("a_pens_tasks_arent_asked_of_linked_hosts_from_before_pens", async () => {
+  const s = state();
+  const p = db.insert_profile(s.db(), "personal", [], null);
+  project(s, p, "web", "WEB");
+  const me = ctx(p);
+  await call(s, me, "create_task", { title: "Ours", project_id: "WEB", pen: "Today" });
+  await call(s, me, "create_task", { title: "Not in it", project_id: "WEB" });
+  const asked: string[] = [];
+  for (const [name, api_version] of [
+    ["old", PENS_API - 1],
+    ["new", PENS_API],
+  ] as const) {
+    await link_fake_host(s, name, api_version, (tool, body) => {
+      asked.push(`${name}:${tool}`);
+      // The old host returns everything it has, as one that doesn't know `pen` would; the new one its pen's.
+      if (tool === "list_tasks")
+        return name === "old" ? [{ id: "old-1", title: "Everything on old" }] : [{ id: "new-1", title: "Today on new", pen: body.args.pen }];
+      throw new Error(`unexpected ${tool}`);
+    });
+  }
+  const list = await dispatch(s, me, "list_tasks", { project_id: "all", pen: "Today" });
+  assert.deepEqual(list.map((t: any) => t.title).sort(), ["Ours", "Today on new"]);
+  assert.deepEqual(asked, ["new:list_tasks"]);
+  // Without a pen, both are asked as before.
+  asked.length = 0;
+  await dispatch(s, me, "list_tasks", { project_id: "all" });
+  assert.deepEqual(asked.sort(), ["new:list_tasks", "old:list_tasks"]);
+});
 
 test("reads_task_fields_on_new_and_legacy_linked_hosts", async () => {
   const s = state();

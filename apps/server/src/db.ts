@@ -90,6 +90,7 @@ export function tx<T>(c: Conn, f: () => T, immediate = false): T {
 }
 
 export * from "./db/docs.ts";
+export * from "./db/docs_site.ts";
 export * from "./db/links.ts";
 export * from "./db/messages.ts";
 export * from "./db/pens.ts";

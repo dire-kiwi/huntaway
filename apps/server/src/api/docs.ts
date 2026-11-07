@@ -1,19 +1,32 @@
 // Docs (HA-280, API 124): a profile's documents for the board to show, which its agents publish through the `docs` MCP
 // server (mcp/docs_mcp.ts). They're this host's own, so a hub reaches them through `/h/{host}/…` like the rest.
 //
-// - `GET /profiles/{id}/docs`: its documents, most recently updated first.
+// - `GET /profiles/{id}/docs`: its documents, most recently updated first, each with the task that published its latest
+//   version (`task`, HA-281).
 // - `GET /profiles/{id}/docs/{slug}`: one, with its versions (newest first) and its latest version's pages.
 // - `GET /profiles/{id}/docs/{slug}/versions/{n}` (`n` a number or `latest`): the version's pages, rendered (`html`,
 //   `toc`), and its menu (`nav`). Relative links between pages point under `base_url`: the board's page for the
 //   document (or for that version, for a number), unless `?base_url=` gives another, from `/` and ending in `/`.
 //   `?path=` gives only that page (or that folder's index).
 // - `DELETE /profiles/{id}/docs/{slug}`.
+//
+// Hosted docs (HA-282, API 125; see integrations/docs_site.ts): documents and their details have `published`, where
+// the document went on the profile's docs site (null if it hasn't been published there).
+// - `GET /profiles/{id}/hosted_docs`: the profile's connection to its docs site (whether it's connected and as whom,
+//   and the device sign-in under way, if any), without its tokens.
+// - `POST /profiles/{id}/hosted_docs/device` (`{site_url}`): start a device sign-in; `DELETE` stops it.
+// - `POST /profiles/{id}/hosted_docs/token` (`{site_url, token}`): connect with a personal access token.
+// - `DELETE /profiles/{id}/hosted_docs`: disconnect.
+// - `POST /profiles/{id}/docs/{slug}/publish` (`{version?, slug?}`): publish a version (by default the latest) to the
+//   site; `slug`, the remote one, only the first time (by default the local one). `docs_site` events tell the board
+//   the connection changed.
 import * as db from "../db.ts";
 import { ApiError, type Req } from "../http.ts";
 import type { AppState } from "../state.ts";
 import { err_str } from "../util.ts";
 import * as runner from "../agent/runner.ts";
 import * as docs_mcp from "../mcp/docs_mcp.ts";
+import * as docs_site from "../integrations/docs_site.ts";
 
 function profile(s: AppState, r: Req): db.Profile {
   const p = db.get_profile(s.db(), r.params.id);
@@ -35,7 +48,10 @@ function shown<T extends { id: string }>(row: T): Omit<T, "id"> {
 }
 
 export async function list(s: AppState, r: Req) {
-  return db.list_docs(s.db(), profile(s, r).id).map(shown);
+  return db.list_docs(s.db(), profile(s, r).id).map((d) => {
+    const latest = db.doc_version(s.db(), d.id, null);
+    return { ...shown(d), task: latest ? publisher(s, latest) : null, published: docs_site.published(s, d.profile_id, d.id) };
+  });
 }
 
 /** The task that published a version, if it's still there: its title and key, for the board to link. */
@@ -54,6 +70,7 @@ export async function get(s: AppState, r: Req) {
   const versions = db.doc_versions(s.db(), d.id);
   return {
     ...shown(d),
+    published: docs_site.published(s, d.profile_id, d.id),
     versions: versions.map((v) => ({ ...shown(v), task: publisher(s, v) })),
     pages: versions.length ? db.doc_pages(s.db(), versions[0].id) : [],
   };
@@ -111,4 +128,33 @@ export async function remove(s: AppState, r: Req) {
   if (!db.delete_doc(s.db(), p.id, r.params.slug)) throw ApiError.not_found("document");
   s.emit({ type: "docs", profile_id: p.id, slug: r.params.slug, deleted: true });
   return {};
+}
+
+export async function hosted(s: AppState, r: Req) {
+  return docs_site.status(s, profile(s, r).id);
+}
+
+export async function hosted_device(s: AppState, r: Req) {
+  return docs_site.start_device(s, profile(s, r).id, docs_site.site_url(r.body?.site_url));
+}
+
+export async function hosted_device_cancel(s: AppState, r: Req) {
+  const p = profile(s, r);
+  docs_site.cancel_device(s, p.id);
+  return docs_site.status(s, p.id);
+}
+
+export async function hosted_token(s: AppState, r: Req) {
+  return docs_site.connect_token(s, profile(s, r).id, docs_site.site_url(r.body?.site_url), r.body?.token);
+}
+
+export async function hosted_disconnect(s: AppState, r: Req) {
+  return docs_site.disconnect(s, profile(s, r).id);
+}
+
+export async function publish(s: AppState, r: Req) {
+  const p = profile(s, r);
+  const n = r.body?.version;
+  if (n !== undefined && n !== null && !(Number.isInteger(n) && n > 0)) throw ApiError.bad("version is a version's number");
+  return docs_site.publish(s, p.id, r.params.slug, n ?? null, r.body?.slug);
 }

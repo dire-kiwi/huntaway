@@ -213,7 +213,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // its workspace, with no repository.
   const assistant = isAssistant(task);
   const routine = isRoutine(task);
-  // The profile's pens thread (API 125): a conversation in no repository, like the assistant.
+  // The profile's pens thread (API 126): a conversation in no repository, like the assistant.
   const pensThread = isPensThread(task);
   // One in no project is on its profile's board (a scratch task can be in a project since API 51).
   const profileScratch = scratch && !task.project_id;

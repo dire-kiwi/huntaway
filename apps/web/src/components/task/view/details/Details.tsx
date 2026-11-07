@@ -49,7 +49,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   // A scratch task has no repository either.
   const scratch = isScratch(task);
   // Nor does the profile's assistant, which lasts: it isn't moved between columns, reviewed or merged.
-  // The pens thread (API 125) lasts too.
+  // The pens thread (API 126) lasts too.
   const pensThread = isPensThread(task);
   const assistant = isAssistant(task);
   const lasting = assistant || pensThread;

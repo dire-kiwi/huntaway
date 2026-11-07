@@ -1,4 +1,4 @@
-// Pens (HA-285, API 125): a profile's named sets of tasks, which its board shows as tabs. Each host keeps its own, and a
+// Pens (HA-285, API 126): a profile's named sets of tasks, which its board shows as tabs. Each host keeps its own, and a
 // profile's board spans hosts, so its tabs are the pens merged by name: a tab is every host's pen of that name, and a
 // task is in it if it's in its host's one. Hiding, renaming, moving or deleting a tab does it to each of them.
 import { api, hasPens, type Pen, type Task } from "./api";
