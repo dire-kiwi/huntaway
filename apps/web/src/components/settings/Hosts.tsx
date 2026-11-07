@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Copy, KeyRound, Loader2, Plus, Server, Trash2 } from "lucide-react";
+import { Copy, KeyRound, Loader2, Plus, Radar, RefreshCw, Server, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   agentInfo,
@@ -22,6 +22,7 @@ import {
   THREAD_SOURCE_API,
   type ClaudeConfig,
   type Compat,
+  type DiscoveredHost,
   type GithubAccount,
   type Host,
   type HostSettings,
@@ -50,7 +51,8 @@ const MODE_LABEL: Record<Host["mode"], string> = {
 
 export function HostsPanel() {
   const hosts = useStore((s) => s.hosts);
-  const [adding, setAdding] = useState(false);
+  // Opening Add host for a host found nearby fills in its URL.
+  const [adding, setAdding] = useState<false | { url?: string }>(false);
   const [joining, setJoining] = useState(false);
   return (
     <section>
@@ -60,7 +62,7 @@ export function HostsPanel() {
           <Button size="sm" variant="ghost" onClick={() => setJoining(true)}>
             <KeyRound size={13} /> Connect from elsewhere
           </Button>
-          <Button size="sm" onClick={() => setAdding(true)}>
+          <Button size="sm" onClick={() => setAdding({})}>
             <Plus size={13} /> Add host
           </Button>
         </div>
@@ -74,10 +76,72 @@ export function HostsPanel() {
           <HostRow key={h.id} host={h} />
         ))}
       </div>
+      <NearbyHosts onLink={(url) => setAdding({ url })} />
       <ScratchHostRow />
-      {adding && <AddHostModal onClose={() => setAdding(false)} />}
+      {adding && <AddHostModal url={adding.url} onClose={() => setAdding(false)} />}
       {joining && <JoinModal onClose={() => setJoining(false)} />}
     </section>
+  );
+}
+
+/** Hosts found on the LAN and Tailscale (API 128) that aren't on this board yet, each offered for linking by URL. */
+function NearbyHosts({ onLink }: { onLink: (url: string) => void }) {
+  const hosts = useStore((s) => s.hosts);
+  const [found, setFound] = useState<{ hosts: DiscoveredHost[]; tailscale: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const search = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setFound(await api.discoverHosts());
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    void search();
+  }, []);
+  // Those linked since the search are left out too, by id or URL.
+  const unlinked = (found?.hosts ?? []).filter((d) => !d.linked && !hosts.some((h) => (d.host_id && h.id === d.host_id) || h.url === d.url));
+  const where = found?.tailscale ? "on this network or Tailscale" : "on this network";
+  return (
+    <div className="mt-3 rounded-xl border border-line px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Radar size={14} className="shrink-0 text-muted" />
+        <div className="flex-1 text-[12.5px] font-medium">Nearby hosts</div>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void search()} title="Search again">
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {busy ? "Searching…" : "Search again"}
+        </Button>
+      </div>
+      {err ? (
+        <div className="mt-1 text-xs text-red-400">Couldn't search: {err}</div>
+      ) : found && unlinked.length === 0 ? (
+        <div className="mt-1 text-[11.5px] text-faint">
+          No other hosts found {where}. A host answers when it listens beyond localhost (not <code>--host 127.0.0.1</code>) and runs API 128 or later; on
+          Tailscale, one on port 7878 is found whatever its version.
+        </div>
+      ) : (
+        <div className="mt-2 space-y-1.5">
+          {unlinked.map((d) => (
+            <div key={d.url} className="flex items-center gap-3 rounded-lg bg-panel px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-[12.5px] font-medium">{d.name}</div>
+                <div className="truncate text-[11.5px] text-faint">
+                  {d.via === "tailscale" ? "Tailscale" : "LAN"} · {d.url}
+                  {d.version ? ` · v${d.version}` : ""}
+                </div>
+              </div>
+              <Button size="sm" onClick={() => onLink(d.url)}>
+                Link
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -324,8 +388,8 @@ function HostRow({ host }: { host: Host }) {
   );
 }
 
-function AddHostModal({ onClose }: { onClose: () => void }) {
-  const [how, setHow] = useState<"ssh" | "url">("ssh");
+function AddHostModal({ url, onClose }: { url?: string; onClose: () => void }) {
+  const [how, setHow] = useState<"ssh" | "url">(url ? "url" : "ssh");
   return (
     <Modal title="Add a host" onClose={onClose} width="max-w-2xl">
       <div className="mb-4 flex gap-1 rounded-lg border border-line bg-panel p-0.5 text-[12.5px]">
@@ -344,7 +408,7 @@ function AddHostModal({ onClose }: { onClose: () => void }) {
           </button>
         ))}
       </div>
-      {how === "ssh" ? <AddSshHost onClose={onClose} /> : <AddUrlHost onClose={onClose} />}
+      {how === "ssh" ? <AddSshHost onClose={onClose} /> : <AddUrlHost initialUrl={url} onClose={onClose} />}
     </Modal>
   );
 }
@@ -429,8 +493,8 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AddUrlHost({ onClose }: { onClose: () => void }) {
-  const [url, setUrl] = useState("http://");
+function AddUrlHost({ initialUrl, onClose }: { initialUrl?: string; onClose: () => void }) {
+  const [url, setUrl] = useState(initialUrl ?? "http://");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -454,7 +518,7 @@ function AddUrlHost({ onClose }: { onClose: () => void }) {
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://buildbox:7878" className="font-mono text-[12px]" />
       </Field>
       <Field label="Token">
-        <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono text-[12px]" />
+        <Input autoFocus={!!initialUrl} type="password" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono text-[12px]" />
       </Field>
       <ModalFooter className="space-y-4">
         {err && <div className="text-xs text-red-400">{err}</div>}

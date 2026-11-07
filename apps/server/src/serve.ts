@@ -3,7 +3,7 @@ import * as backup from "./backup.ts";
 import * as crash from "./crash.ts";
 import * as lag from "./lag.ts";
 import * as memory from "./memory.ts";
-import { VERSION } from "./hosts/proto.ts";
+import { API_VERSION, VERSION } from "./hosts/proto.ts";
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync, closeSync, createReadStream } from "node:fs";
 import type { Duplex } from "node:stream";
@@ -29,6 +29,7 @@ import * as mcp_http from "./mcp/http.ts";
 import * as terminal from "./hosts/terminal.ts";
 import * as hub from "./hosts/hub.ts";
 import * as broker from "./hosts/broker.ts";
+import * as discovery from "./hosts/discovery.ts";
 import * as broker_proto from "./hosts/broker/proto.ts";
 import * as attachments from "./attachments.ts";
 import * as automations from "./integrations/automations.ts";
@@ -91,6 +92,8 @@ export interface ServeArgs {
   open_token: boolean;
   /** Copy the older builds' database into `huntaway-2.db` again (see db/file.ts), for this start only. */
   recopy_db: boolean;
+  /** Answer other hosts' discovery queries on the LAN and Tailscale (hosts/discovery.ts); `--no-discovery` stops it. */
+  discovery: boolean;
   profiles: Array<[string, string] | null>;
 }
 
@@ -127,6 +130,7 @@ export function parse_serve_args(argv: string[]): ServeArgs {
     demo: truthy(env("IA_DEMO")),
     open_token: truthy(env("IA_OPEN_TOKEN")),
     recopy_db: truthy(env("IA_RECOPY_DB")),
+    discovery: env("IA_DISCOVERY") === undefined || truthy(env("IA_DISCOVERY")),
     profiles: [],
   };
   let hubs: string[] | null = null;
@@ -195,6 +199,9 @@ export function parse_serve_args(argv: string[]): ServeArgs {
         break;
       case "--recopy-db":
         a.recopy_db = true;
+        break;
+      case "--no-discovery":
+        a.discovery = false;
         break;
       case "--profile":
         (profiles ??= []).push(...next().split(",").map(parse_profile));
@@ -648,6 +655,22 @@ export async function serve(args: ServeArgs) {
       }
       broker.dial_with_origin(state, broker_url, t, name ?? broker_proto.slug(state.host_name), load_or_create_token(data_dir, "broker_key"), origin_port);
     }
+  }
+  // A host only this machine can reach has nothing to tell the network.
+  if (args.discovery && !loopback_only) {
+    // One IPv4 address it listens on only (the advertisement is IPv4), rather than all of them.
+    const address = /^\d+\.\d+\.\d+\.\d+$/.test(args.host) && args.host !== "0.0.0.0" ? args.host : undefined;
+    background(
+      "advertising this host",
+      discovery.respond(() => ({
+        host_id: state.host_id,
+        host_name: state.host_name,
+        port,
+        ...(address ? { address } : {}),
+        version: VERSION,
+        api_version: API_VERSION,
+      })),
+    );
   }
   log.info(`host ${state.host_name} (${state.host_id})`);
   log.info(`data dir: ${data_dir}`);
