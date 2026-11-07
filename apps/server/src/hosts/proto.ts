@@ -59,8 +59,12 @@ export const PROTOCOL = 1;
  * API 124: Docs (HA-280): each profile's documents, which agents publish through the run's `docs` MCP server
  * (mcp/docs_mcp.ts): `GET /profiles/{id}/docs`, `GET`/`DELETE /profiles/{id}/docs/{slug}` and
  * `GET /profiles/{id}/docs/{slug}/versions/{n}` (see api/docs.ts), and `docs` events when one is published or deleted.
+ *
+ * API 125: hosted docs (HA-282): a profile connects to a docs site (`/profiles/{id}/hosted_docs`, its `device` sign-in
+ * and `token`) and publishes its documents there (`POST /profiles/{id}/docs/{slug}/publish`); documents have
+ * `published`, and `docs_site` events say a profile's connection changed (see api/docs.ts).
  */
-export const API_VERSION = 124;
+export const API_VERSION = 125;
 
 /** Oldest API version a client (a hub's UI) may be built against and still work with this host. */
 export const API_COMPAT = 1;

@@ -27,6 +27,19 @@ Local documents collect no answers yet, so their form fields (`<Approval />`, in
 A task's thread links each document it published to its page here. Docs is there for a profile with
 a connected host that has it (API 124), and lists the documents of every host the profile is on.
 
+Documents can be published to a hosted docs site (HA-282, API 125): [dire-kiwi/docs](https://github.com/dire-kiwi/docs),
+https://docs.nest.dire.nz by default, where they can be read and shared. **Connect to hosted docs** at the top of
+Docs connects the profile: **Sign in** shows a code and a link to the site, where you sign in, check the code and
+choose **Allow** (the OAuth device flow; the host waits for it), or paste a personal access token from the site's
+**Access** page. The host keeps the sign-in and renews it; the board only sees whether it's connected and as whom.
+**Disconnect** forgets it on the host (revoke it under **Access** to end it on the site too). A document's
+**Publish** publishes the version shown, with all its pages, its title and its version's message. The first time
+it asks for the slug on the site (the local one by default); after that each publish adds a new version of the same
+document there. The document then shows the version published there, with a link, or that it has local changes
+since. The site's errors (a slug another user has, a sign-in that has expired or been revoked) show in the dialog.
+To try it against a local site, run `DOCS_DEV_LOGIN=1 cargo run` in a checkout of dire-kiwi/docs (after building
+its `frontend`, see its README), and connect to `http://localhost:3000`.
+
 Add a project with the **+** by the _Projects_ heading. Its _Folder_ tab picks a folder on the
 host (a repository, or a new folder that's created for it). Its _GitHub_ tab (API 55) clones a
 repository instead: it lists the ones gh can reach on the host as the profile's GitHub account (see
