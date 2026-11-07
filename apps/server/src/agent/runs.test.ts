@@ -477,6 +477,11 @@ test("a_run_that_calls_the_board_on_its_output_has_no_board_server_in_its_mcp_co
     await started({ mcp_servers: { docs: { type: "stdio", command: "mine" } } });
     const last = db.value<string>(state.db(), "SELECT id FROM runs ORDER BY rowid DESC LIMIT 1")!;
     assert.deepEqual(JSON.parse(readFileSync(join(run_dir(state, last), "mcp.json"), "utf8")).mcpServers.docs, { type: "stdio", command: "mine" });
+    // A project that turns our docs server off gets none (HA-286), and one of its own by that name still replaces it.
+    assert.deepEqual((await started({ no_docs_server: true })).servers, ["gh", "huntaway", "own"]);
+    await started({ no_docs_server: true, mcp_servers: { docs: { type: "stdio", command: "mine" } } });
+    const own = db.value<string>(state.db(), "SELECT id FROM runs ORDER BY rowid DESC LIMIT 1")!;
+    assert.deepEqual(JSON.parse(readFileSync(join(run_dir(state, own), "mcp.json"), "utf8")).mcpServers.docs, { type: "stdio", command: "mine" });
   } finally {
     if (before === undefined) delete process.env.IA_SHIM_BIN;
     else process.env.IA_SHIM_BIN = before;

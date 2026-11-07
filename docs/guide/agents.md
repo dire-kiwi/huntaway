@@ -115,7 +115,8 @@ in Codex's config), and agents are told to publish write-ups there and give the 
 returns: `<board>/docs/<profile id>/d/<slug>/` (the host's _Public URL_, or its own address), with
 `-/v/<n>/` for a version. The board reads them at `/api/profiles/{id}/docs` (API 124), and shows
 them on the profile's Docs page (see [board.md](board.md)), with links built from its own address. A project
-can turn the server off, or replace it with its own named `docs`.
+can turn the server off (its runs then have no `docs` server at all, nor the note about it), or
+replace it with its own named `docs`.
 
 **GitHub accounts.** gh can be signed in to several accounts on a host (`gh auth login` once for
 each), and each profile can pick which one its agents act as there (_GitHub account_ in Settings →

@@ -174,7 +174,12 @@ test("publishing_checks_the_pages_as_the_hosted_server_does", async () => {
     'page "a" is listed twice',
   );
   assert.match(await err({ pages: [{ path: "index", content: "<Callout>never closed", format: "mdx" }] }), /^page "index" is not valid mdx: /);
-  assert.match(await err({ pages: [{ path: "index" }] }), /missing field `content`/);
+  // Badly shaped pages fail as the hosted server's arguments do (HA-286), without serde_json's position.
+  assert.equal(await err({ pages: [{ path: "index" }] }), "invalid arguments: missing field `content`");
+  assert.equal(await err({ pages: ["index"] }), 'invalid arguments: invalid type: string "index", expected struct PageInput');
+  assert.equal(await err({ pages: "index" }), 'invalid arguments: invalid type: string "index", expected a sequence');
+  assert.equal(await err({ pages: null }), "invalid arguments: invalid type: null, expected a sequence");
+  assert.equal(await err({ pages: { path: "index", content: "x" } }), "invalid arguments: invalid type: a map, expected a sequence");
   assert.equal(await err({ pages: [{ path: "a", content: "x" }], title: 5 }), "invalid arguments: invalid type: integer `5`, expected a string");
   // Nothing was made.
   assert.deepEqual((await tool(s, r, "list_documents")).v.documents, []);

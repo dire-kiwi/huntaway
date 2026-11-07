@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import * as db from "../db.ts";
 import * as runner from "./runner.ts";
 import * as mcp_http from "../mcp/http.ts";
+import * as docs_mcp from "../mcp/docs_mcp.ts";
 import * as tokens from "./tokens.ts";
 import type { Spec } from "./codex.ts";
 import * as codex from "./codex.ts";
@@ -68,6 +69,8 @@ export interface Launch {
   review: boolean;
   /** The project's own MCP servers (see agent/agent_tools.rs). */
   mcp_servers: Record<string, any>;
+  /** The project turned our docs server off (see runner/access.ts's `uses_docs_server`): its `mcp.json` has none. */
+  no_docs_server?: boolean;
   /** The GitHub account the gh server acts as (see gh_mcp::Account), if not gh's active one. */
   github_account: string | null;
   /** Run Codex instead of Claude Code: `args` are ignored, and the adapter gets this as `codex.json` (see agent/codex.ts). */
@@ -241,6 +244,7 @@ export async function start(state: Shared, l: Launch): Promise<void> {
   await writeFile(join(dir, mcp_http.SETTINGS_FILE), mcp_http.settings_json({ cwd: l.cwd, github_account: l.github_account, review: l.review, in_process }));
   const servers: Record<string, any> = mcp_http.servers(state, l.run_id);
   if (in_process) delete servers[runner.MCP_SERVER_NAME];
+  if (l.no_docs_server) delete servers[docs_mcp.SERVER_NAME];
   for (const [name, server] of Object.entries(l.mcp_servers ?? {})) {
     if (name !== runner.MCP_SERVER_NAME) servers[name] = server;
   }
