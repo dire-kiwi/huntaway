@@ -1526,3 +1526,49 @@ test("rounds of review and fixes through In progress end once they're used up", 
     runs.TEST_CAN_RUN.set(false);
   }
 });
+
+// Review of HA-276: done_when: finish held tasks to finish_work that they weren't told about: a scratch task (which
+// doesn't get In progress's prompt), and the workflow's own fix messages; and a merge run was told not to push.
+test("finish_work is asked of the runs that are told about it, and a merge pushes its own work", async () => {
+  runs.TEST_CAN_RUN.set(true);
+  try {
+    const s = testing.state();
+    const [project, task] = setup(s);
+    make(s, project, {
+      nodes: [
+        { id: "work", kind: "column", status: "in_progress", done_when: "finish" },
+        { id: "pr", kind: "open_pr" },
+        { id: "start", kind: "trigger", on: "manual" },
+        { id: "fix", kind: "send_to_task", message: "Fix the thing again.", max_rounds: 2 },
+      ],
+      edges: [
+        { from: "work", port: "done", to: "pr" },
+        { from: "start", port: "out", to: "fix" },
+      ],
+    });
+    // A scratch task isn't told to call finish_work, so it isn't held to it: the workflow takes it on (whose pull
+    // request fails here, with no GitHub remote).
+    const scratch = db.update_task(s.db(), task.id, [["task_type", "scratch"]])!;
+    agent_finishes(s, scratch);
+    let t = await left_in_progress(s, task.id);
+    assert.ok((t.attention_reason ?? "").startsWith('The workflow "Review" failed at Open a pull request'), t.attention_reason ?? "");
+    // A code task's fix message ends saying how to finish, as its start prompt did.
+    db.update_task(s.db(), task.id, [
+      ["task_type", null],
+      ["session_id", "sess"],
+      ["status", "in_review"],
+    ]);
+    const w = db.all(s.db(), "SELECT id FROM workflows")[0].id as string;
+    await start(s, w, task.id, true);
+    const sent = last_user_text(s, task.id);
+    assert.ok(sent.startsWith("Fix the thing again.\n\nWhen the work you were asked for here is complete, call `finish_work`"), sent);
+    assert.ok(sent.includes("The board then pushes your branch and opens its pull request"), sent);
+    // The board opens the pull request after In progress, so the agent isn't told to; but not when it merges.
+    t = db.get_task(s.db(), task.id)!;
+    assert.ok(board_opens_pr(s, { ...t, merging: false, remerge: false }));
+    assert.ok(!board_opens_pr(s, { ...t, merging: true }));
+    assert.ok(!board_opens_pr(s, { ...t, remerge: true }));
+  } finally {
+    runs.TEST_CAN_RUN.set(false);
+  }
+});

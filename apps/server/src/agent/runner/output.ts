@@ -545,7 +545,7 @@ export function finish(state: Shared, run_id: string, outcome: Outcome) {
   // rather than going to "In review". One that waits for the agent to say so needs attention without that (but not
   // for a plan, which isn't the work yet).
   let finish_due = is_task && status === "in_review" && !task.merging ? workflows.on_finish_due(state, task) : null;
-  if (finish_due && !plan_check && finish_due.node.done_when === "finish" && !run.finished) {
+  if (finish_due && !plan_check && workflows.asks_finish(task, finish_due) && !run.finished) {
     [status, reason] = ["needs_attention", workflows.unfinished(finish_due)];
     finish_due = null;
   }
@@ -613,6 +613,9 @@ function settle_plan(state: Shared, task: Task, run: Run, finish_due: workflows.
       task,
       run,
       (t) => {
+        // It did more than the plan (or it would wait for the user): the work, which its column may want it to say is done.
+        if (finish_due && t.status === task.status && workflows.asks_finish(t, finish_due) && !run.finished)
+          return workflows.flag_unfinished(state, t, finish_due);
         if (finish_due && t.status === task.status) return workflows.on_finished(state, t, finish_due);
         if (t.status === "in_review") review.on_in_review(state, t);
         workflows.on_status(state, t);

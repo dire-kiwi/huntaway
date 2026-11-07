@@ -94,8 +94,9 @@ A column of the board: In progress, In review, Ready for merge, Needs attention,
   project's start prompt (blank: the project's). A line into In progress for a task that has started gives its agent
   the issues the run found, or, if its prompt is wired, the prompt. `done` comes when the agent's turn ends without a
   question for you, or with **Done when: the agent says so**, only once it calls the board's `finish_work` tool in its
-  turn (a turn that ends without it moves the task to Needs attention). The agent's work after a message you send it
-  counts too.
+  turn (a turn that ends without it moves the task to Needs attention, whether it did the work or revised a plan task's
+  plan as it went). Only code tasks, which get In progress's prompt, are asked for it; the fixes and messages the
+  workflow sends them end saying so too. The agent's work after a message you send it counts as well.
 - **Ready for merge**: the prompt is how the agent merges, in place of the project's merge instructions. `done` comes
   once the task is merged.
 - **Any other column with a prompt**: the prompt is sent to the task's agent when the task enters the column, and
@@ -108,7 +109,8 @@ A column of the board: In progress, In review, Ready for merge, Needs attention,
   with a summary of what you did. The board then pushes your branch and opens its pull request (so don't open one
   yourself) and moves the task to In review." The editor shows it under _Added to the prompt_. Wire `what happens next`
   somewhere (into a compose template, say) and it goes only there. While an _Open a PR_ step follows In progress's
-  `done`, the agent's instructions also stop telling it to push and open a pull request itself.
+  `done`, the agent's instructions also stop telling it to push and open a pull request itself (not while it merges,
+  when it pushes what the merge needs).
 
 ### Start
 

@@ -205,6 +205,51 @@ export function unfinished(due: Due): string {
   return `The agent ended its turn without saying its work in ${status_label(due.node.status)} is done (with finish_work)`;
 }
 
+/**
+ * Whether a task gets In progress's prompt, with what to do when it's done: as the project's start prompt, only its code
+ * tasks do (not a scratch task, nor one that makes only documents).
+ */
+function takes_start_prompt(task: Task): boolean {
+  return task.task_type == null && !documents.documents_only(task);
+}
+
+/**
+ * Whether the task's agent was asked to say its work for `due` is done with `finish_work`, so a run that ends without
+ * it needs attention: a column waiting for it whose prompt (with that note) the agent gets.
+ */
+export function asks_finish(task: Task, due: Due): boolean {
+  return due.node.done_when === "finish" && (due.node.status !== "in_progress" || takes_start_prompt(task));
+}
+
+/** The task's agent's run ended without the `finish_work` its column `due` waits for: it needs attention, saying so. */
+export function flag_unfinished(s: Shared, task: Task, due: Due): void {
+  background(
+    "flagging a task",
+    (async () => {
+      const t = db.get_task(s.db(), task.id);
+      if (!t || t.status !== "in_progress" || t.running || s.is_running(task.id)) return;
+      await api.update_task_inner(s, task.id, { status: "needs_attention" });
+      attention(s, task.id, unfinished(due));
+    })().catch((e) => s.add_event(task.id, "warn", "Couldn't move the task on", msg(e))),
+  );
+}
+
+/**
+ * What a message the workflow sends the task's agent to work again (fixes, say) ends with, when the project's In
+ * progress node waits for `finish_work`: how to say it's done, and what the board does then, as its start prompt said.
+ */
+function finish_note(s: Shared, task: Task): string {
+  const found = work_column(s, task, "in_progress");
+  if (!found || found[1].done_when !== "finish" || !takes_start_prompt(task)) return "";
+  return done_note(found[0].graph, found[1]);
+}
+
+/** `text`, with `finish_note` after it unless it says so already. */
+function with_finish(s: Shared, task: Task, text: string): string {
+  const note = finish_note(s, task);
+  return note && !text.includes(note) ? `${text}\n\n${note}` : text;
+}
+
 /** The task's agent's work for `due` is done (and the task was left in its column for it): its run goes on from there. */
 export function on_finished(s: Shared, task: Task, due: Due): void {
   const failed = (e: unknown) => {
@@ -437,7 +482,7 @@ function column_text(s: Shared, task: Task, w: Workflow, n: ColumnNode, run: Run
  * the project's start prompt), and what happens when it's done. Only for its code tasks, as the project's own is.
  */
 export function start_instructions(s: Shared, task: Task, project: Project | null | undefined): string | null {
-  if (!project || task.task_type != null || documents.documents_only(task)) return null;
+  if (!project || !takes_start_prompt(task)) return null;
   const found = work_column(s, task, "in_progress");
   if (!found) return null;
   const [w, n] = found;
@@ -455,6 +500,9 @@ export function merge_instructions(s: Shared, task: Task): string | null {
 
 /** Whether the project's workflow opens the task's pull request once its agent's work in In progress is done. */
 export function board_opens_pr(s: Shared, task: Task): boolean {
+  // Not while it merges (or steps out of the merge queue to make changes): the board pushes after In progress, and the
+  // agent's merge (resolving conflicts, committing what's left) is its own to push.
+  if (task.merging || task.remerge) return false;
   const found = work_column(s, task, "in_progress");
   return found != null && opens_pr(found[0].graph, found[1].id);
 }
@@ -1090,6 +1138,7 @@ function send(s: Shared, run: Run, node: Node, message: string, max_rounds: numb
     if (!issues.length) return Done_failed("there are no issues to send (and the step has no message of its own)");
     text = prompt.fixes(workflow, issues);
   }
+  text = with_finish(s, task, text);
   const used = run.rounds[node.id] ?? 0;
   if (used >= max_rounds) {
     const has_next = run.graph.edges.some((e) => e.from === node.id && e.port === "exhausted");
@@ -1196,7 +1245,7 @@ async function enter_column(s: Shared, run: Run, node: Node): Promise<Done | nul
       : w && wired
         ? column_text(s, task, w, node, run, "") || null
         : issues.length
-          ? prompt.fixes(w?.name ?? "", issues)
+          ? with_finish(s, task, prompt.fixes(w?.name ?? "", issues))
           : w && node.prompt.trim()
             ? column_text(s, task, w, node, run, "")
             : null;
