@@ -10,6 +10,7 @@
     "test": "vp test"
   },
   "dependencies": {
+    "@dire-kiwi/docs-render": "https://github.com/dire-kiwi/docs/releases/download/render-v0.1.0/dire-kiwi-docs-render-0.1.0.tgz",
     "ws": "^8.18.0"
   },
   "devDependencies": {

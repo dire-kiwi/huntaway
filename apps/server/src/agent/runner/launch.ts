@@ -16,6 +16,7 @@ import * as task_tmp from "../task_tmp.ts";
 import * as worktree from "../../git/worktree.ts";
 import * as relocate from "../../git/relocate.ts";
 import * as checkpoints from "../../git/checkpoints.ts";
+import * as docs_mcp from "../../mcp/docs_mcp.ts";
 import * as gh_mcp from "../../mcp/gh_mcp.ts";
 import * as review from "../../review.ts";
 import * as attachments from "../../attachments.ts";
@@ -33,6 +34,7 @@ import {
   hook_settings,
   ignored_dirs,
   review_filesystem,
+  uses_docs_server,
   uses_gh_server,
 } from "./access.ts";
 import { as_told } from "./merge.ts";
@@ -231,7 +233,18 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
     const gh_tools = uses_gh_server(tools);
     const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
     const profiles = db.list_profiles(state.db());
-    const to: Told = { codex: true, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
+    const docs_tools = uses_docs_server(tools);
+    const to: Told = {
+      codex: true,
+      plan: permission_mode === "plan",
+      gh_tools,
+      docs_tools,
+      github_account: account,
+      profiles,
+      profile,
+      tmp,
+      memory: told_memory,
+    };
     let instr = instructions(base, task, to);
     const own_gh = Object.hasOwn(tools.mcp_servers, gh_mcp.SERVER_NAME);
     // Reviewers read and report (see the Claude arguments below).
@@ -276,7 +289,11 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
       writable_roots,
       filesystem,
       skills_dir: tools.skills_dir != null ? `${tools.skills_dir}/.claude/skills` : null,
-      approved_mcp_servers: Object.keys(tools.mcp_servers).filter((n) => tools.allowed.includes(agent_tools.tool_prefix(n))),
+      // The project's servers it allows, and our docs server, whose tools only touch the profile's documents.
+      approved_mcp_servers: [
+        ...Object.keys(tools.mcp_servers).filter((n) => tools.allowed.includes(agent_tools.tool_prefix(n))),
+        ...(docs_tools ? [docs_mcp.SERVER_NAME] : []),
+      ],
       disabled_mcp_tools,
       // Codex's reviewer reviews the board's waits on its MCP server; a dynamic tool's call is the board's to ask about.
       review_waits: approvals_reviewer === "auto_review" && !dynamic,
@@ -319,7 +336,18 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   const gh_tools = uses_gh_server(tools);
   const base = system_prompt(told, project, parent, group, docs, github, gh_tools);
   const profiles = db.list_profiles(state.db());
-  const to: Told = { codex: false, plan: permission_mode === "plan", gh_tools, github_account: account, profiles, profile, tmp, memory: told_memory };
+  const docs_tools = uses_docs_server(tools);
+  const to: Told = {
+    codex: false,
+    plan: permission_mode === "plan",
+    gh_tools,
+    docs_tools,
+    github_account: account,
+    profiles,
+    profile,
+    tmp,
+    memory: told_memory,
+  };
   // In a file rather than an argument: the assistant's memory and a project's documents can make it longer than the most
   // an argument may be (128 KiB on Linux).
   const prompt_file = join(runs.run_dir(state, run.id), "system-prompt.md");
@@ -345,6 +373,8 @@ export async function launch(state: Shared, run: Run, text: string, cancelled: (
   // Our board tools never need approval, nor do some of the gh server's (see gh_allowed).
   args.push("--allowedTools");
   args.push(...board_tools_allowed(permission_mode, task.kind === "review"));
+  // As are our docs server's, which only touch the profile's documents.
+  if (docs_tools) args.push(`mcp__${docs_mcp.SERVER_NAME}`);
   const own_gh = Object.hasOwn(tools.mcp_servers, gh_mcp.SERVER_NAME);
   const gh_tool = (t: string) => `mcp__${gh_mcp.SERVER_NAME}__${t}`;
   if (!own_gh) args.push(...gh_allowed(task).map(gh_tool));
