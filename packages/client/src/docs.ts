@@ -16,6 +16,8 @@ export type DocSummary = {
   latest_version: number;
   /** How many pages its latest version has. */
   page_count: number;
+  /** The task that published its latest version, if it's still there (HA-281: missing from hosts before it). */
+  task?: DocPublisher | null;
 };
 
 /** The task that published a version, if it's still there. */

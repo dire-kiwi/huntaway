@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { Bell, BellRing, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
+import { Bell, BellRing, BookOpen, Bot, ChartColumn, ChevronRight, EyeOff, Folder, Pin, Plus, Settings, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { activeProfile, loadActiveProfile, saveActiveProfile } from "../../activeProfile";
 import { api, hostCompat, hostSupports, isAssistant, isAssistants, readyToCheck, taskKey, type Project, type Status, type Task } from "../../api";
 import { unavailableNote, useAssistantHome } from "../../assistant";
+import { docsHomes, docsProfileName } from "../../docs";
 import {
   groupKey,
   groupNames,
@@ -255,7 +256,7 @@ function AssistantEntry({ route, profile }: { route: Route; profile: string }) {
   const hostName = useStore((s) => s.hosts.find((h) => h.id === home?.hostId)?.name ?? "its host");
   if (!home) return null;
   return (
-    <nav className="pb-3" aria-label="Assistant">
+    <nav aria-label="Assistant">
       <NavItem
         active={route.name === "assistant" && route.profile === profile}
         onClick={() => navigate({ name: "assistant", profile })}
@@ -274,6 +275,25 @@ function AssistantEntry({ route, profile }: { route: Route; profile: string }) {
         }
       >
         Assistant
+      </NavItem>
+    </nav>
+  );
+}
+
+/** The active profile's documents (HA-281), under its assistant. Not there for a profile with no connected host that has Docs. */
+function DocsEntry({ route, profile }: { route: Route; profile: string }) {
+  const available = useStore((s) => docsHomes(s.profiles, s.hosts, profile).homes.length > 0);
+  const active = useStore((s) => route.name === "docs" && docsProfileName(s.profiles, route.profile) === profile);
+  if (!available) return null;
+  return (
+    <nav aria-label="Docs">
+      <NavItem
+        active={active}
+        onClick={() => navigate({ name: "docs", profile })}
+        title={`${profile}'s documents: the reports, plans and write-ups its agents publish`}
+        icon={<BookOpen size={15} />}
+      >
+        Docs
       </NavItem>
     </nav>
   );
@@ -385,6 +405,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
           : [];
   const active = activeProfile(names, savedProfile, (current) => {
     if (route.name === "profile" || route.name === "assistant") return route.profile;
+    if (route.name === "docs") return docsProfileName(profiles, route.profile);
     const listed = openProjects.some((p) => profileOf(p) === current || isPinned(p));
     if (route.name === "group") {
       // A profile lists a group for its projects in it, and for its group tasks in it (which can
@@ -623,7 +644,12 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean }) {
       </nav>
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
-        {active && <AssistantEntry route={route} profile={active} />}
+        {active && (
+          <div className="space-y-0.5 pb-3 empty:hidden">
+            <AssistantEntry route={route} profile={active} />
+            <DocsEntry route={route} profile={active} />
+          </div>
+        )}
         <MarkedTasks route={route} />
         {favoriteList.length > 0 && (
           <div className="pb-3">

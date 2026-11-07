@@ -111,7 +111,8 @@ export function docs_note(codex: boolean): string {
   return (
     `\n\nTo give the user a report, plan, research or other write-up to read, publish it as a document with the ` +
     `\`${n}\` MCP server (${tool}; it's kept on this board, under your profile, with every version) and give them the ` +
-    `URL it returns, rather than leaving it only in a message or a file.`
+    `URL it returns, rather than leaving it only in a message or a file. Its form fields (\`<Approval />\`, inputs) ` +
+    `collect no answers here: ask in the thread for a decision or input.`
   );
 }
 

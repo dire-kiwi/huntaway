@@ -227,6 +227,8 @@ test("its_tools_are_the_hosted_ones_but_feedback_and_sharing", async () => {
   const init = await docs_mcp.handle(s, { jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-06-18" } }, r);
   assert.equal(init.result.protocolVersion, "2025-06-18");
   assert.match(init.result.instructions, /publish_document/);
+  // Local documents keep no answers (HA-281).
+  assert.match(init.result.instructions, /read-only here and collect no answers/);
   const list = await docs_mcp.handle(s, { jsonrpc: "2.0", id: 1, method: "tools/list" }, r);
   const names = list.result.tools.map((t: any) => t.name);
   assert.deepEqual(names.sort(), ["get_document", "list_components", "list_documents", "publish_document", "read_page"]);
@@ -290,8 +292,8 @@ test("the_board_lists_renders_and_deletes_a_profiles_documents", async () => {
 
   const [, list] = await call(s, "GET", p);
   assert.deepEqual(
-    list.map((d: any) => [d.slug, d.title, d.latest_version, d.page_count]),
-    [["plan", "The plan", 2, 3]],
+    list.map((d: any) => [d.slug, d.title, d.latest_version, d.page_count, d.task?.title]),
+    [["plan", "The plan", 2, 3, "p's task"]],
   );
   const [, doc] = await call(s, "GET", `${p}/plan`);
   assert.deepEqual(
