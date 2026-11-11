@@ -1,7 +1,8 @@
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
-import { NotFound } from "../errors.ts"
+import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { TaskId } from "../ids.ts"
+import { Task } from "../task.ts"
 import { Auth, RequiredScope } from "../session.ts"
 import { ItemPage, ThreadMessage } from "../thread/Snapshot.ts"
 
@@ -24,4 +25,20 @@ export class ThreadRpcs extends RpcGroup.make(
     success: ItemPage,
     error: NotFound,
   }).annotate(RequiredScope, "read"),
+  /**
+   * Answer a question an agent asked with `request_user_input`, from its card (the old `POST
+   * /tasks/{id}/questions/{message_id}` `{choices, text}`): the options picked, by label, and what the user typed. The
+   * answer is sent to the agent as the user's message; the task as it is after. Not found for no such card; a conflict
+   * once it has been answered or the conversation moved on; invalid for an answer that doesn't fit the question.
+   */
+  Rpc.make("threads.answerQuestion", {
+    payload: {
+      task_id: TaskId,
+      request_id: Schema.String,
+      choices: Schema.optional(Schema.Array(Schema.String)),
+      text: Schema.optional(Schema.NullOr(Schema.String)),
+    },
+    success: Task,
+    error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
+  }).annotate(RequiredScope, "operate"),
 ).middleware(Auth) {}

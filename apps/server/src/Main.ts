@@ -1,5 +1,5 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
-import { Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
@@ -46,9 +46,11 @@ import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { McpCallRepo } from "./mcp/McpCallRepo.ts"
-import { McpHooks } from "./mcp/McpHooks.ts"
+import { askRuleWith, cancelledWith, McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
+import { Wait } from "./mcp/Wait.ts"
+import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
@@ -65,7 +67,10 @@ import { RunFollower } from "./runs/RunFollower.ts"
 import type { RunOutput } from "./runs/RunOutput.ts"
 import { RunInput } from "./runs/RunInput.ts"
 import { RunRepo } from "./runs/RunRepo.ts"
+import { Compaction } from "./runs/Compaction.ts"
+import { RunEnds } from "./runs/RunEnds.ts"
 import { Runs } from "./runs/Runs.ts"
+import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
@@ -134,7 +139,7 @@ const ProfilesLive = Profiles.ensureFromConfig.pipe(
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
 const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
-  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer)),
   Layer.provideMerge(ProjectsLive),
 )
 const ThreadsLive = Threads.pruner.pipe(
@@ -162,11 +167,11 @@ export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
  * The runs area: the commands (`Runs`) and what a launch is made of, the follower with the Claude line handler, what
  * the server writes to a run's input, and the registry the areas below answer agents' requests through.
  */
-const RunsArea = Layer.mergeAll(Runs.layer).pipe(
+const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
   Layer.provideMerge(ClaudeOutput),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
 )
@@ -188,15 +193,37 @@ const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.register
   Layer.provideMerge(PermissionRepo.layer),
 )
 
+/**
+ * What a board call needs of the areas built after `ToolCalls`' (`McpHooks`): `Wait`'s `callMade` (any call but `wait`
+ * ends the run's wait), `Permissions`' `askRule` (an approval rule's ask is the user's), and both `cancelled` (a call
+ * the agent gave up on has its wait end and its prompt expire). Tests that need neither build `mcpLayer(Wait.hooks)`.
+ */
+export const BoardHooks = Layer.effect(
+  McpHooks,
+  Effect.gen(function* () {
+    const waits = yield* Wait
+    const permissions = yield* Permissions
+    const expire = cancelledWith(permissions)
+    return McpHooks.of({
+      callMade: waits.callMade,
+      askRule: askRuleWith(permissions),
+      cancelled: (run, call) => Effect.andThen(waits.cancelled(run, call), expire(run, call)),
+    })
+  }),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
-    Layer.provideMerge(Dependencies.layer),
-    // `Permissions`' hooks; `Wait` (3.5) joins its own to them.
-    Layer.provideMerge(mcpLayer(McpHooks.layerPermissions)),
+    // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
+    Layer.provideMerge(mcpLayer(BoardHooks)),
+    // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
+    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
     Layer.provideMerge(PermissionsLive),
+    // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
+    Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.scanner.pipe(Layer.provideMerge(DevServers.layer))),
     Layer.provideMerge(RunsArea),
@@ -204,7 +231,14 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   )
 
 /** Every area's services. */
-export const AreasLive = areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })
+/**
+ * The runs area's loops: tasks whose usage limit reset carry on (every 30 s), idle sessions are compacted (every
+ * minute). Not in `areasLayer`, so a test board's clock moves without them; tests run a pass themselves.
+ */
+export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction)
+
+/** Every area's services, and their loops. */
+export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })))
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(

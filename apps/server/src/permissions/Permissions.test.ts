@@ -11,6 +11,7 @@ import type { Decision as RuleDecision } from "@huntaway/shared"
 import { fakeAgent, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
+import { AgentRequests } from "../runs/AgentRequests.ts"
 import type { RunDir } from "../runs/RunDir.ts"
 import { RunOutput } from "../runs/RunOutput.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
@@ -38,6 +39,7 @@ type Env =
   | RunRepo
   | RunOutput
   | RunDir
+  | AgentRequests
   | TaskRepo
   | Threads
   | ThreadStore
@@ -698,6 +700,26 @@ describe("Permissions: can_use_tool on the run's output", () => {
     ),
   )
 
+  it.effect("a run's end expires what it asked (AgentRequests' ended): its own, or its thread's when no later run started", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* runningTask()
+        yield* output(agent, [canUseTool("r1", "Bash", { command: "ls" })])
+        const first = yield* waitingOn(agent, "r1")
+        // A later run of the thread asks too; the first run's end lets only its own prompt go.
+        const later = yield* fakeAgent({ task })
+        yield* output(later, [canUseTool("r2", "AskUserQuestion", twoQuestions)])
+        const second = yield* waitingOn(later, "r2")
+        const requests = yield* AgentRequests
+        yield* requests.ended(agent.run, false)
+        assert.deepStrictEqual([(yield* row(first)).status, (yield* row(second)).status], ["expired", "pending"])
+        yield* requests.ended(later.run, true)
+        assert.strictEqual((yield* row(second)).status, "expired")
+        assert.deepStrictEqual(yield* responses(agent), [])
+      }),
+    ),
+  )
+
   it.effect("after a restart an open prompt is found again and answered", () =>
     run(
       Effect.gen(function* () {
@@ -717,7 +739,7 @@ describe("Permissions: can_use_tool on the run's output", () => {
           run_id: agent.run.id,
           control_id: "r1",
         })}`.pipe(Effect.orDie)
-        yield* permissions.recover
+        yield* permissions.resume(agent.run)
         yield* answeredOn(agent, "r1")
         assert.deepStrictEqual(yield* responses(agent), [
           { subtype: "success", request_id: "r1", response: { behavior: "allow", updatedInput: { command: "ls" } } },
@@ -728,7 +750,7 @@ describe("Permissions: can_use_tool on the run's output", () => {
         yield* output(other.agent, [canUseTool("r2", "Bash", {})])
         const stale = yield* waitingOn(other.agent, "r2")
         yield* sql`UPDATE runs SET status = 'exited' WHERE id = ${other.agent.run.id}`.pipe(Effect.orDie)
-        yield* permissions.recover
+        yield* permissions.expireOrphans
         assert.strictEqual((yield* row(stale)).status, "expired")
       }),
     ),

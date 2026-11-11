@@ -296,6 +296,29 @@ describe("Runs.send", () => {
     ),
   )
 
+  it.effect("a message to a task waiting for its usage limit's reset joins the queue, and it carries on once the limit resets", () =>
+    run(
+      Effect.gen(function* () {
+        const id = yield* newTask({ status: "in_progress" })
+        const sql = yield* SqlClient.SqlClient
+        // The test clock starts at 1970: an hour later is ahead of it.
+        yield* sql`UPDATE tasks SET waiting = 1, limit_reset_at = '1970-01-01T01:00:00.000Z' WHERE id = ${id}`.pipe(Effect.orDie)
+        const t = yield* send(id, "Carry on")
+        assert.deepStrictEqual([t.waiting, t.running, t.queued_message, t.limit_reset_at], [true, false, "Carry on", "1970-01-01T01:00:00.000Z"])
+        assert.isFalse(yield* (yield* Runs).isRunning(id))
+        // A minute after the reset, the next pass starts it with what was queued.
+        yield* TestClock.adjust("62 minutes")
+        yield* (yield* Runs).startUnblocked(null)
+        const after = yield* task(id)
+        assert.deepStrictEqual([after.waiting, after.running, after.queued_message, after.limit_reset_at], [false, true, null, null])
+        assert.include(
+          (yield* items(id)).flatMap((i) => (i.type === "notice" ? [i.text] : [])),
+          "Its usage limit has reset, so its agent is carrying on",
+        )
+      }),
+    ),
+  )
+
   it.effect("a message to a task whose dependencies aren't merged waits for them, queued", () =>
     run(
       Effect.gen(function* () {
@@ -392,6 +415,9 @@ describe("starting a run", () => {
         yield* runs.launched(id)
         const spec = yield* dir.spec(started.value.id)
         assert.isTrue(spec !== null && spec.args.includes("--input-format") && spec.args.at(-2) === "--mcp-config")
+        // Its temp folder (its TMPDIR) is one it may read and write.
+        const tmp = spec?.args.findLast((a, i) => spec.args[i - 1] === "--add-dir")
+        assert.isTrue(tmp !== undefined && tmp.includes("task-tmp"), tmp)
         assert.isTrue(yield* dir.inputClosed(started.value.id))
         assert.isTrue(yield* dir.marker(started.value.id, "reap"))
         // The first prompt of a task is its header, the start instructions and the message, after the initialize line.

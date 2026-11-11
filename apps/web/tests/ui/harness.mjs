@@ -27,12 +27,14 @@ export class RpcError extends Error {
 let requestId = 0
 
 /**
- * Start a test server (agents off unless `--fake-claude` is given: never a real `claude`; no open token, so a browser
- * without the token sees the token screen). Returns { url, token, dataDir, rpc, stop }.
+ * Start a test server (agents off, no open token, so a browser without the token sees the token screen). Returns { url, token, dataDir, rpc, stop }.
  */
 export function startServer(...args) {
-  const agents = args.includes("--fake-claude") || args.includes("--no-agents") ? [] : ["--no-agents"]
-  const out = execFileSync(script, ["start", ...agents, ...args], {
+  // Never a real claude: test-server.sh runs agents with the real binary by default, and moving a fresh task to In
+  // progress sends the message that starts its agent. A check that needs agents to run (a Start button, a run) asks for
+  // the fake one with `--fake-claude`.
+  if (!args.includes("--fake-claude") && !args.includes("--no-agents")) args = [...args, "--no-agents"]
+  const out = execFileSync(script, ["start", ...args], {
     encoding: "utf8",
     env: { ...process.env, HUNTAWAY_TEST_OPEN_TOKEN: "0" },
   })
@@ -104,6 +106,20 @@ export async function seedBoard(server, tasks = []) {
   const made = []
   for (const t of tasks) made.push(await makeTask(server, project, t))
   return { profile, project, tasks: made }
+}
+
+/**
+ * A board whose agents can run, for a server started with `--fake-claude`: an agent config on a folder of the server's
+ * own (the fake agent reads nothing from it), a profile "Default" on it, and a project "Demo" (key DEM). Returns
+ * { config, profile, project }.
+ */
+export async function seedAgentBoard(server) {
+  const dir = join(server.dataDir, "claude-config")
+  mkdirSync(dir, { recursive: true })
+  const config = await server.rpc("configs.create", { config: { name: "test", config_dir: dir } })
+  const profile = await server.rpc("profiles.create", { profile: { name: "Default", claude_config_ids: [config.id] } })
+  const project = await makeProject(server, profile, "Demo", "DEM")
+  return { config, profile, project }
 }
 
 /** The tasks of the old demo board's Demo project that the board's checks use, by column. */
@@ -186,6 +202,54 @@ export async function eventually(check, ms = 5000) {
     }
   }
 }
+
+export { replies, sampleThread, seedThread } from "./threads.mjs"
+
+/** An RPC's answer, as `routeRpc`'s handler gives it: a success with `value`, or a failure with the tagged `error`. */
+export const success = (value) => ({ _tag: "Success", value })
+export const failure = (error) => ({ _tag: "Failure", cause: [{ _tag: "Fail", error }] })
+
+/**
+ * Sits between the page and its server on the RPC websocket (`/api/rpc`), where the old checks routed `/api/...`
+ * requests with `page.route`. Every request the page makes is recorded (`{ tag, payload }`, oldest first, in the array
+ * it returns) and given to `handle`, which returns undefined to let it through, an answer (`success(…)`,
+ * `failure(…)`) to give instead of the server's, or a promise of either: a request held until the test lets it go.
+ * Call it before the page opens.
+ */
+export async function routeRpc(page, handle = () => undefined) {
+  const calls = []
+  await page.routeWebSocket(/\/api\/rpc$/, (ws) => {
+    const server = ws.connectToServer()
+    ws.onMessage((message) => {
+      for (const line of String(message).split("\n").filter(Boolean)) {
+        const request = JSON.parse(line)
+        if (request._tag !== "Request") {
+          server.send(`${line}\n`)
+          continue
+        }
+        calls.push({ tag: request.tag, payload: request.payload })
+        void Promise.resolve(handle(request)).then((exit) => {
+          if (exit === undefined) server.send(`${line}\n`)
+          else ws.send(`${JSON.stringify({ _tag: "Exit", requestId: request.id, exit })}\n`)
+        })
+      }
+    })
+  })
+  return calls
+}
+
+/** A gate for `routeRpc`: `hold()` is a promise the handler returns, which `release()` lets through. */
+export function gate() {
+  const waiting = []
+  return {
+    held: () => waiting.length,
+    hold: () => new Promise((resolve) => waiting.push(resolve)),
+    release: (answer) => waiting.shift()?.(answer),
+  }
+}
+
+/** A task's thread's scrolled area. */
+export const threadScroller = (page) => page.locator("[data-thread] [data-autoscroll]").first()
 
 /** A kanban column (or list section) by its label, and the titles of its cards top to bottom. */
 export const column = (page, label) => page.locator("section", { has: page.locator(`span:text-is("${label}")`) })

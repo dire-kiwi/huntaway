@@ -9,6 +9,7 @@ import { PenRepo } from "../../tasks/PenRepo.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { Tasks } from "../../tasks/Tasks.ts"
 import { ProjectRepo } from "../../projects/ProjectRepo.ts"
+import { Runs } from "../../runs/Runs.ts"
 import { makeReach } from "../resolve.ts"
 import { ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
 import type { McpCaller } from "../tool.ts"
@@ -214,6 +215,13 @@ export const UpdateTask = Tool.make("update_task", {
   success: Json,
 })
 
+export const SendToTask = Tool.make("send_to_task", {
+  description:
+    "Send a message to a task's agent, starting or resuming it. If that agent is currently running, the message goes to it straight away and it reads it after its current step (or, if it can't take messages while it works, it's queued and delivered when its run ends).",
+  parameters: Schema.Struct({ task_id: TaskRefArg, profile: Schema.optionalKey(ProfileArg), message: Schema.String }),
+  success: Json,
+})
+
 // ---- handlers -----------------------------------------------------------------------------------------------------
 
 /** What an agent is told when it asked for a task to start on a host where agents can't. */
@@ -251,6 +259,7 @@ export const taskTools = Effect.gen(function* () {
   const repo = yield* TaskRepo
   const pens = yield* PenRepo
   const projects = yield* ProjectRepo
+  const runs = yield* Runs
 
   /** The pen whose own thread the caller is: where its new tasks go, and whose tasks it lists, by default. */
   const ownPen = Effect.fnUntraced(function* (caller: McpCaller, profile: string | null) {
@@ -397,10 +406,18 @@ export const taskTools = Effect.gen(function* () {
       let t = yield* tasks.create(input, agent(caller))
       if (Object.keys(marks).length > 0) t = yield* tasks.update(t.id, marks, agent(caller))
       t = yield* intoPen(caller, t, penName === null ? null : penName.success, params.pen, profile)
+      // Its agent starts (or it's queued for what it depends on). Refused, the task is made all the same and the agent
+      // told why it didn't start, rather than given an error it might make the task again for.
+      let note: string | null = null
+      if (start) {
+        const sent = yield* Effect.result(runs.send(t.id, { text: "", source: "agent" }))
+        if (Result.isSuccess(sent)) t = sent.success
+        else if (sent.failure._tag === "SendRefused")
+          note = sent.failure.reason === "no_agents" ? NOT_STARTED : `The task was made, but not started: ${sent.failure.detail}`
+        else return yield* sent.failure
+      }
       const v = yield* json.summarize(t)
-      // Starting its agent comes with `Runs` (2.5): until then this board can't run agents, and the agent is told so
-      // rather than given an error it might make the task again for.
-      if (start) v["note"] = NOT_STARTED
+      if (note !== null) v["note"] = note
       return v
     }).pipe(told),
   )
@@ -429,7 +446,28 @@ export const taskTools = Effect.gen(function* () {
       const into = yield* mergeTarget(caller, params.merges_into, profile)
       if (into !== undefined) patch.merges_into = into
       // Not out of In progress while its todo list isn't complete: `Tasks` holds an agent to that.
-      const t = yield* tasks.update(found.id, patch, agent(caller))
+      let t = yield* tasks.update(found.id, patch, agent(caller))
+      // Moved into In progress from To do or the backlog before it has run, its agent starts, as when the user drags it
+      // there (one waiting for what it depends on stays queued). One that has run (parked back in To do, say) isn't:
+      // its session would be resumed with an empty prompt.
+      const starts =
+        params.status === "in_progress" &&
+        (found.status === "todo" || found.status === "backlog") &&
+        t.kind === "task" &&
+        t.session_id === null &&
+        t.status === "in_progress" &&
+        !t.waiting &&
+        t.id !== caller.task.id &&
+        !(yield* runs.isRunning(t.id))
+      if (starts) {
+        // On a host that can't run agents, it's left in In progress, as before.
+        t = yield* runs.send(t.id, { text: "", source: "agent" }).pipe(
+          Effect.catchIf(
+            (e) => e._tag === "SendRefused" && e.reason === "no_agents",
+            () => Effect.succeed(t),
+          ),
+        )
+      }
       const v = yield* json.summarize(t)
       // Closed without being merged, the tasks merging into it wait for the user to say where they go.
       const held = t.status === "done" && !isMerged(t) && t.project_id !== null ? reaching(yield* repo.projectTasks(t.project_id), t.id) : []
@@ -443,5 +481,13 @@ export const taskTools = Effect.gen(function* () {
     }).pipe(told),
   )
 
-  return { listTasks, getTask, getTaskField, createTask, updateTask }
+  const sendToTask = boardTool(SendToTask, (params, caller) =>
+    Effect.gen(function* () {
+      const found = yield* reach.task(caller, params.task_id, given(params.profile))
+      if (found.id === caller.task.id) return yield* ToolError.other("cannot send a message to your own task")
+      return yield* json.summarize(yield* runs.send(found.id, { text: params.message, source: "agent" }))
+    }).pipe(told),
+  )
+
+  return { listTasks, getTask, getTaskField, createTask, updateTask, sendToTask }
 })

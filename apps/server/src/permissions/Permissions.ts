@@ -155,11 +155,18 @@ export interface PermissionsShape {
   readonly expireFor: (scope: ExpireScope) => Effect.Effect<void>
   /** Denies the routine runs' prompts nobody answered by `at` (the sweeper's pass); how many. */
   readonly sweep: (at: Timestamp) => Effect.Effect<number>
+  /** For Recovery, before runs are re-attached: expires the prompts whose run had already exited (or is gone). */
+  readonly expireOrphans: Effect.Effect<void>
   /**
-   * For Recovery: expires the prompts whose run has exited (or is gone), and takes up again, in the background, the
-   * `can_use_tool` prompts of runs that have not, answering each on its run's input once decided.
+   * A run re-attached after a restart (`AgentRequests`' `resume`): its `can_use_tool` prompts whose answer isn't on its
+   * input are waited on again in the background, and answered there once decided.
    */
-  readonly recover: Effect.Effect<void>
+  readonly resume: (run: Run) => Effect.Effect<void>
+  /**
+   * `run` ended (`AgentRequests`' `ended`): what it asked and nobody answered expires: the thread's prompts when no later
+   * run has started (`idle`), else the run's own.
+   */
+  readonly ended: (run: Run, idle: boolean) => Effect.Effect<void>
   /** A `can_use_tool` control request on `run`'s output: asked, and answered on its input. Safe to read again. */
   readonly onControl: (run: Run, request: ControlRequest) => Effect.Effect<void>
   /** The agent no longer wants control request `requestId` answered: its prompt expires, and it isn't answered. */
@@ -792,23 +799,25 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         yield* expireFor({ _tag: "Call", call })
       })
 
-      const recover = Effect.gen(function* () {
+      const expireOrphans = Effect.gen(function* () {
         for (const row of yield* repo.orphans) yield* expireOne(row, EXPIRED, "ended", false)
-        for (const row of yield* repo.unanswered) {
-          if (row.run_id === null || row.control_id === null) continue
-          const run = yield* runRepo.get(row.run_id)
-          if (Option.isNone(run)) continue
-          yield* Effect.logInfo(`run=${row.run_id} waiting again on permission prompt ${row.control_id}`)
-          const input = parsed(row.input)
+      }).pipe(Effect.withSpan("Permissions.expireOrphans"), Effect.annotateLogs({ module: "permissions" }))
+
+      const resume = Effect.fn("Permissions.resume")(function* (run: Run) {
+        for (const row of yield* repo.unanswered(run.id)) {
+          if (row.control_id === null) continue
+          yield* Effect.logInfo(`run=${run.id} waiting again on permission prompt ${row.control_id}`)
           // The thread's request names the call it is for.
           const stored = yield* store.request(row.task_id, row.id)
           const toolUse = stored?.request.metadata?.["tool_use_id"]
-          yield* FiberSet.run(
-            background,
-            answerControl(run.value, row.control_id, { tool_name: row.tool_name, input, tool_use_id: typeof toolUse === "string" ? toolUse : null }),
-          )
+          const use: ToolUse = { tool_name: row.tool_name, input: parsed(row.input), tool_use_id: typeof toolUse === "string" ? toolUse : null }
+          yield* FiberSet.run(background, answerControl(run, row.control_id, use))
         }
-      }).pipe(Effect.withSpan("Permissions.recover"), Effect.annotateLogs({ module: "permissions" }))
+      })
+
+      const ended = Effect.fn("Permissions.ended")(function* (run: Run, idle: boolean) {
+        yield* expireFor(idle ? { _tag: "Task", task: run.task_id } : { _tag: "Run", run: run.id })
+      })
 
       return Permissions.of({
         ask,
@@ -835,7 +844,9 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         applyMode,
         expireFor,
         sweep,
-        recover,
+        expireOrphans,
+        resume,
+        ended,
         onControl,
         onCancel,
         settled: (call) =>
@@ -869,12 +880,20 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
     }),
   )
 
-  /** Claude's `can_use_tool` control requests come here from the runs area (`AgentRequests`), and their cancellations. */
+  /**
+   * Claude's `can_use_tool` control requests come here from the runs area (`AgentRequests`), with their cancellations,
+   * a re-attached run's open prompts (`resume`) and a run's end (`ended`).
+   */
   static readonly registered = Layer.effectDiscard(
     Effect.gen(function* () {
       const permissions = yield* Permissions
       const requests = yield* AgentRequests
-      yield* requests.register("can_use_tool", { handle: permissions.onControl, cancel: permissions.onCancel })
+      yield* requests.register("can_use_tool", {
+        handle: permissions.onControl,
+        cancel: permissions.onCancel,
+        resume: permissions.resume,
+        ended: permissions.ended,
+      })
     }),
   )
 }

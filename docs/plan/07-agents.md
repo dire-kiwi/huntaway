@@ -269,7 +269,7 @@ As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
 - **`Runs`** (`runs/Runs.ts`): `send(task, Outgoing) → Task` (fails `TaskNotFound | SendRefused`), `sendQueued(task)`
   (for 2.6: what is queued, `take: "Only"`), `stop(task) → { stopped }`, `abort(task)`, `dropQueued(task) → Task` (as
   it was), `isRunning(task)`, `newSession(task)` (`/new`), `compact(task, why)` (the board's own compaction, with a
-  notice), `launched(task)` (waits for a launch: tests) and `reattach` (a no-op until 2.6). `Outgoing` is `{ text,
+  notice), `launched(task)` (waits for a launch: tests), `reattach`, `startWaiting(task)` and `startUnblocked(project)` (2.6, below). `Outgoing` is `{ text,
   source: user | agent | routine | automation | board, auto?, review_round?, automation_run_id?, review? }`.
   `SendRefused.reason` is `archived`, `merge_queued`, `no_agents`, `already_running`, `no_conversation`,
   `nothing_queued` or `agent_running`; `rpc/tasks.ts` maps them to `Conflict`, `Unavailable` and `Invalid`.
@@ -364,6 +364,43 @@ As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
 
 Review, summary and workflow-step threads' runs hand their outcome to `Reviews`, `Summaries` and `WorkflowEngine`
 instead of step 4.
+
+As built in 2.6 (HE-4):
+
+- **`decideFinish(facts) → { notices, columns, sendQueued, nudge }`** (`runs/finish.ts`, pure) is the old `finish`
+  table, first match wins, with `outcomeOf(run, exit, errorTail)` (the old `on_exit`) and the todo-list hold
+  (`unfinished`, `todoReason`, `nudged`). The facts later areas give are there and false until they come: `mergeHeld`
+  and the merge rows (M4), `mergesToDone` (6.6), `planOnly` (a plan-only run needs the turns' checkpoints, M4: until
+  then a plan task goes to In review), the workflow column that takes a task on (6.6, not in the facts yet). A compaction
+  only stops running (with "Compacting stopped" / "Compacting failed"); a review thread's run only stops running (its
+  outcome is `Reviews`' later).
+- **`runs/RunEnds.ended(RunExited)`**, which the reactor calls: (1) under the task's lock, in one transaction: the
+  outcome, `RunRepo.end` (a run already ended is left alone, so an exit read twice does nothing), the run's steers queued
+  again ahead of what was queued since (`takeSteers` + `queueAhead`), whether a later run exists, the decision and its
+  notices; (2) `Tokens.runEnded`, `DevServers.notifyRunEnded`, `AgentRequests.ended(run, idle)` (the handlers let the
+  run's prompts go: 3.3), the preview ended; (3) with no later run, `Runs.sendQueued` unless out of usage (a run started,
+  or the task waiting for dependencies, ends it there; a refusal is said: "Couldn't send the queued message: …"); (4)
+  under the lock again, the column, written only if no later run has started meanwhile, then `TaskChanged`; (5) the
+  nudge, a board message (`auto`) that starts a run, or Needs attention if it can't be sent. The column is written with
+  `TaskRepo.write` and `deriveColumns` under the lock rather than `Tasks.change` (which takes the lock itself), with the
+  `TaskChanged` offered here.
+- **`Runs.reattach`** (Recovery, before `startUnblocked(null)`): each folder marked `orphan` or `reap` carries on
+  (`Shim.resumeMarked`); each run that had not exited is adopted: a newer format, or one never started (no `out.jsonl`
+  nor `exit`), is reaped and offered as `RunExited` with the old error texts; otherwise it goes `running`, its open
+  requests are taken up again (`AgentRequests.resume`, before its output is read again), it is followed from its offset,
+  `steerable` is set right, and `RunInput.rearm` re-arms its stop grace and, between turns, writes unwritten steers and
+  closes the input or arms `STEER_GRACE`. Tasks marked running with no live run send what is queued, else need
+  attention ("Interrupted by server restart"). Plan columns left unsettled by a restart (the old `settle_plans`) wait
+  for checkpoints (M4).
+- **`Runs.startUnblocked(project)`** (the reactor on a status, dependency or deletion change, and Recovery) starts the
+  tasks `Dependencies.ready` finds with `Runs.startWaiting` (the old `start_waiting`: what is queued, else the task's
+  start, else a note to carry on; an archived project's task goes back to waiting; a failure needs attention).
+  `Dependencies.reconcile` stays as it was for tests of `ready`. `Dependencies.layer` moved into `TasksLive`.
+- **Whole-server tests** (`tests/e2e/restart.test.ts`): the server stopped under a running fake agent, and the next on
+  the same data folder adopts the run and ends it in In review; a power cut, the database put back to a copy taken while
+  the agent worked, and the run's output applied again from the offset the copy has, with nothing doubled. Because a
+  line's thread items and the offset after it are one transaction, a power cut loses both or neither. The e2e harness
+  kills the agents a data folder's runs started when the test ends (`e2eDataDir`).
 
 ## Threads<a id="threads"></a>
 
@@ -511,9 +548,9 @@ export class ToolCalls extends Context.Service<ToolCalls, {
   profile, then an unknown tool, the reviewer gate, plan mode (the thread's mode at the call: its own, its project's,
   the host's default), the wait, the rules. A never rule is logged `blocked` and refused here; an ask rule goes to
   `McpHooks.askRule`.
-- **`McpHooks`** stands in for what is not built: `callMade` (ends the run's wait, `Wait` 3.5), `askRule` (the user's
-  answer, `Permissions`) and `cancelled` (a call the agent gave up on: its prompt expires, its wait ends).
-  `McpHooks.layerNone` ends nothing and refuses an ask, with the reason, until those pieces replace it.
+- **`McpHooks`** is what a call needs of the areas built after it: `callMade` (ends the run's wait, `Wait` 3.5),
+  `askRule` (the user's answer, `Permissions` 3.3) and `cancelled` (a call the agent gave up on: its prompt expires, its
+  wait ends). `McpHooks.layerNone` ends nothing and refuses an ask; `Main.ts`'s `BoardHooks` is the live one.
 - **The control transport's interface is `runs/McpControl.ts`**, implemented by `mcp/transport/control.ts`
   (`McpControlLive`): `handle(run, { request_id, server_name, message })` for an `mcp_message`, `cancel(run, requestId)`
   for a `control_cancel_request`, `manifest(review)` (the board server's handshake results), `initializeLine(run,
@@ -533,7 +570,7 @@ export class ToolCalls extends Context.Service<ToolCalls, {
 
 - **`mcp/tools/<area>.ts`** declare and handle the board's tools: `questions.ts` (`request_user_input`, `finish_work`),
   `projects.ts` (`list_projects`, `get_project`), `tasks.ts` (`list_tasks`, `get_task`, `get_task_field`,
-  `create_task`, `update_task`; `send_to_task` with `Runs`), `pens.ts` (`list_pens`). `taskJson.ts` is the task as the
+  `create_task`, `update_task`, `send_to_task`), `pens.ts` (`list_pens`). `taskJson.ts` is the task as the
   tools give it (`summary`, `summarize`, `details`, `overview`, `field`), `reminders.ts` the old `reminder_time`,
   `common.ts` the shared arguments and `boardTool` (the registration, which drops arguments given as null, as the old
   tools read null as "not given"; `get_task_field` keeps them and refuses a null offset). **`board.ts`** registers
@@ -551,9 +588,13 @@ export class ToolCalls extends Context.Service<ToolCalls, {
 - **Subprojects are gone**: `subproject` is kept in the schemas (names are copied), `"none"` and `"all"` list every
   task, and any task named is "not a subproject". Left out of a task's JSON: `subproject`, `is_subproject`,
   `workflows` (M6); of `get_project`'s: `summarizer`, `profile_summarizer`, `subproject_pull_requests` (legacy).
-- **Starting agents waits for `Runs` (2.5)**: until it is merged, `create_task` with `start` (said or by default) makes
-  the task and adds the note that this host can't run agents, `update_task` moves a task into In progress without
-  starting it, and `send_to_task` is not registered.
+- **Starting agents** goes through `Runs.send(task, { text: "", source: "agent" })` (a never-run task's start message):
+  `create_task` with `start` (said, or by default for todo and in_progress), and `update_task` moving a todo or backlog
+  task that has never run (no session, not queued for dependencies, not running, not the caller's own) to in_progress.
+  `send_to_task` is `Runs.send(task, { text, source: "agent" })`. Refused, `create_task` still returns the task it made,
+  with a note: the old one for `no_agents`, "The task was made, but not started: <why>" for another refusal (new: the
+  old server threw, after making the task, which an agent could retry into a duplicate); `update_task` on a host that
+  can't run agents leaves the task in In progress, as before.
 
 ### `wait`
 
@@ -562,6 +603,45 @@ tasks, a subagent finishing, a command's exit, pull request news, a message for 
 move of the task. It subscribes to `Events` **before** it reads state. The stored wait (`tasks.agent_wait`) is what
 a resumed call picks up after a restart: same deadline and watched set, the command started again, the pull request
 read again. The nine end conditions and the "told" bookkeeping for PR news are inventory 03, sections 2.8 and 2.9.
+
+As built in 3.5 (HE-4):
+
+- **`mcp/Wait.ts`**: `wait(caller, { reason, seconds, tasks, command }) → { ended, wait, output }` (fails with
+  `ToolError`: a period too long for what it watches, a command that couldn't start), `workDir(task)` (the worktree,
+  the project's repository, else the profile's scratch folder: where the command runs), `callMade(caller)` and
+  `cancelled(run, call)` (`McpHooks`' parts, `Wait.hooks`). A wait's fiber subscribes to `Events`, then reads the
+  stored wait (a call retried with the same id carries on with it) or stores a new one, and loops: `check` (the run
+  stopped, ended or gone → `stopped`; the stored wait gone → `resumed`; `moved_to` → `task_moved`; a queued message or a
+  steer of this run → `message`; `subagent_finished` → the subagent; `pull_request.news` → its news; the watched tasks
+  → `tasks_changed`), then races a `task`/`task_deleted` event of its own task or a watched one, a 5 s tick (a stop
+  writes no event), the deadline and the command's exit. It clears the stored wait when it ends **unless it was
+  interrupted** (the server stopping): the retried call picks it up. A second wait of the same run replaces the first
+  in the `FiberMap`; the first returns `resumed`. The pure rules (periods, `ended`'s names, the notes word for word,
+  the watched tasks' check) are `mcp/wait/ended.ts`.
+- **The command** (`mcp/wait/command.ts`) runs through `ChildProcessSpawner`: `bash -c LAUNCH issue-agent-wait
+  <command>`, detached (its own group), `killSignal: SIGKILL`, stdin a pipe the server holds (the watchdog), in
+  `workDir` with the agent's environment and the task's `TMPDIR`. **Decided**: its output comes through one pipe (LAUNCH
+  begins `exec … 2>&1`, so stdout and stderr keep their order) rather than an unlinked temp file, kept to its last 4000
+  bytes as it is read; at its exit the group is killed and the pipe read to its end. gh as the task's account in its
+  environment is 4.4's.
+- **A message for the run needs no new signal**: `Runs.send` publishes the task after it queues or steers a message,
+  and the wait reads `TaskRepo.queued`/`steers(task, run)`. **What the run's output says** is `runs/RunWaits.ts`
+  (`line(run, line)`, called in the Claude line handler's transaction: the agent's own thread calling another tool, or
+  a turn's `result`, clears the run's wait; a subagent's terminal `task_notification`/`task_updated` of an Agent or
+  Task call is recorded as `subagent_finished`, the first only), and `over(task, run)`, which the end of a run (2.6)
+  calls. Each writes `agent_wait` and publishes the task, which wakes the wait.
+- **The command's approval** is `mcp/wait/CommandApproval.ts`, asked when the agent's reviewer didn't review the call
+  (`approvesOwnWaits` of the run's `spec.json`) or an approval rule asks about or refuses Bash; `Permissions` supplies
+  the live layer (a `Bash` prompt of the call, Don't ask refusing); `layerNone` refuses until then. Codex's
+  `review_waits` is M5's.
+- **The tools** (`mcp/tools/wait.ts`) are in `BoardTools`' list: `wait` (`seconds`' bounds are shown in its JSON
+  Schema, not enforced: the period clamps, as before) and `background_wait`, which checks the id against the task's
+  `background_work` of this run and writes the run's `background-waited` (`RunDir.backgroundWaited`,
+  `setBackgroundWaited`); 2.8's `BackgroundWork` reads that file when it shows the task's background work again.
+- **Pull requests (4.5)**: a wait given `pull_request` is refused for now. The seams: the read before the wait starts
+  (into the stored wait's `pull_request`), the watcher racing in `waitOut` that records news on the stored wait (which
+  `check` already ends on), `delivered` after the call returns, the note (`PR_NOTE` stands in) and the last read in the
+  result.
 
 ## Permissions, questions, approvals
 
@@ -594,9 +674,55 @@ question `q`, metadata the card and the `call_id` that asked), opened with `Thre
 (`ThreadReaders.asked`); the tool sets the run's `attention`. The request is the card's one record: open is pending, an
 `answer` resolution is answered (`answers.q` the picks and the text), a `cancel` is replied, replaced or expired
 (`SETTLED` has each one's message; `settle(task, how)` does it). `card` (the checks of what the agent asks) and
-`replyText` (the user's message an answer sends) are plain functions. `answer(task, requestId, …)` and the
-`threads.answerQuestion` RPC send that message through `Runs.send`, and come with it; whoever sends a user's message
-(`tasks.send`) calls `settle(task, "replied")`.
+`replyText` (the user's message an answer sends) and `checkAnswer` are plain functions. `answer(task, requestId,
+{ choices, text })` (the `threads.answerQuestion` RPC, the old `POST /tasks/{id}/questions/{message_id}`) checks the card
+is open and the conversation hasn't moved on (`ThreadReaders.movedOn` past the card's write), resolves it (the
+compare-and-set), sends `replyText` with `Runs.send(task, { source: "user" })` (on a failure the card is opened again),
+then settles the thread's other open questions as replied. It fails with `QuestionNotFound`, `QuestionClosed`
+(`answered`, `moved_on`), `AnswerInvalid`, `SendRefused` or `TaskNotFound`; the handler maps them to `NotFound`,
+`Conflict` (`not_pending`, `moved_on`), `Invalid` and `rpc/tasks.ts`'s `sendRefused`. `tasks.send` settles the open
+questions as replied after a user's message that isn't blank. The merge gate's card (`merge_approval`, M4) is not
+special-cased yet: M4 routes its answer to the gate.
+
+As built in 3.3 (HE-4), `permissions/Permissions.ts` (+ `PermissionRepo.ts`, the plain `prompts.ts`):
+
+- **The interface**: `ask(asker, { tool_name, input, tool_use_id }) → Decision` (Claude Code's `can_use_tool` answer:
+  `{ behavior: "allow", updatedInput, updatedPermissions? }` or `{ behavior: "deny", message }`), in the old order;
+  `askRule(asker, name, input, rule)` (a board tool an ask rule matched: Don't ask denies, else the user);
+  `approve(asker, kind, tool, input) → Result<input approved, why not>` and `asked(call)` for 3.4's approvals;
+  `answer(id, PermissionAnswer, by) → "allowed" | "denied"` (fails `PromptNotFound | PromptNotPending | PromptMovedOn |
+  Invalid | SendRefused | TaskNotFound`); `pending(filter)`, `approvals`, `applyMode(task)`, `expireFor(scope)` (`Task`,
+  `Run`, `Call`, `Project`, `DeletionsOf`, `Automation`, `Workflow`), `sweep(at)`; `expireOrphans` (Recovery, before runs
+  are re-attached), `resume(run)` and `ended(run, idle)` (registered as `AgentRequests`' `resume` and `ended`, which 2.6's
+  re-attach and run end call); `onControl`/`onCancel` (the `can_use_tool` handler); `asking(call)` and `settled(call)`
+  for tests. An `asker` is `{ run, call_id, control_id? }`.
+- **The row is the one source of truth.** `permission_requests` gained `run_id`, `control_id` (a `can_use_tool` prompt's
+  control request) and `answered` (its answer is on the run's input). Raising a prompt is one transaction: the row, the
+  thread's request (opened with `Threads.writeFromAgent`, not `openRequest`, so its metadata carries the write number
+  as `message_id`, which the web orders it by), the action log's entry for a rule, the `approval` event, and the task's
+  attention. Settling it is one conditional update of the row (the first answer wins) with the request **written again
+  from the row** (one `request.opened` carrying the resolution and the card's state: `status`, `note`, `answers` as
+  shown, `feedback`, `mode`, `late`), not `Threads.resolveRequest`, since a late answer settles a request that is already
+  resolved. A prompt is raised only from a run that is still its task's latest live run.
+- **Waiting** is a `Deferred` per waiter, registered before the row is read and woken after a commit; a waiter reads
+  the row again. A call delivered again finds its row by (call id, tool) and waits on it, or gets its answer at once.
+- **Claude**: `Permissions.registered` registers `can_use_tool` with `AgentRequests` (with `resume` and `ended`). A
+  request is `stdio:<run>:<request id>`, asked once however often it is read (in memory while asked; `answered` after),
+  linked to its call with `requestForPrompt` over the thread's stored items (`stateFromItems`), answered with
+  `AgentRequests.respond` (`{ subtype: "success", request_id, response: decision }`). A `control_cancel_request` expires
+  its prompt and leaves it unanswered. Not recorded in `mcp_calls` (that is `mcp/`, below `permissions/`): a decision
+  without a row (a rule, the list, the mode) may be written twice if its line is read twice, which Claude Code ignores.
+- **Board tools**: `McpHooks.layerPermissions` (and `askRuleWith`, `cancelledWith`); `Main.ts`'s `BoardHooks` joins
+  them with `Wait.hooks` (Wait's `callMade`, Permissions' `askRule`, both `cancelled`). A wait's command is asked as a
+  `Bash` prompt of the call through `CommandApproval.layerPermissions`.
+- **Decided**: the sweeper is `Permissions.sweeper` (at once, then every 15 s, on `Schedule`); the reactor applies the
+  mode to what is pending when a task's `permission_mode` changes, and expires a deleted task's prompts and requests to
+  delete it. Writes to the thread's own documents folder are allowed for a task with labels or a scratch, document,
+  assistant, pen or pens thread (the folder `DataDir.documents(task)`, symlinks resolved); the assistant's workspace is
+  6.7's. Left out: Codex's questions and `agent: "codex"` (M5), the action log's `push` and Telegram answerers (only
+  `user`, and `push` for a paired device's session), `expireFor` callers for projects, automations and workflows (their
+  areas). `permissions.answer` takes the old body (`decision`, `message`, `answers`, `mode`, `feedback`, `automation`);
+  the thread's `respond` command (`threads.command`) is not served.
 
 ## Prompts
 
@@ -667,3 +793,20 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   `TitleScript`, window prompts fail) and `layerTest`'s `claudeBin` names no program. Codex titles, Codex rate limits
   and the window's Codex case are M5; stack titles are 4.8. A failed usage request's error shows the status number
   only (the old one added its text).
+- **Wired into the run (HE-4, after 2.6)**: the line handler makes the calls above after the line's commit (the
+  context request before `turnEnded` closes the input; `CompactMetadata` keeps `duration_ms`); the launch gives the task's
+  temp folder as `TMPDIR`, an `--add-dir` and `Prompts.system`'s `tmp` (`RunTold.tmp`); `Runs.send`'s gate is
+  `usageGate` (`waitForLimit` keeps the message queued with `waiting` and `limit_reset_at`); `Runs.limitResets` (a layer
+  in `RunsArea`) runs `startUnblocked(null)` every 30 s, and `Dependencies.ready(project, nowMs)` includes the tasks whose
+  reset is due; `/new` clears the meter; a user's prompt refreshes the title; the end of a run (`RunEnds`) calls `Tokens`
+  and `DevServers`. RPCs: `host.usage { refresh? }`, `tasks.stopServer { id, port }`, `tasks.context { id }`. Not wired:
+  `tasks.waitForLimit` (the "Carry on then" button; no contract yet) and `Titles.generateLater` on task creation (in
+  `tasks.create`'s handler, another piece's).
+- **`Compaction`** (`runs/Compaction.ts`): `compactIdle`, one pass, compacts (`Runs.compact`, the board's own, with
+  its notice) each Claude session whose latest run, a prompt run, ended 50 to 60 minutes ago (`RunRepo.idleSessions`,
+  the old `idle_sessions`); the loop runs it at start and every minute. It and `Runs.limitResets` are `RunLoops` in
+  `Main.ts`, part of `AreasLive` but not of `areasLayer`, so a test board's clock moves without them (tests run a pass).
+- **Not built yet: `BackgroundWork`** (Claude's `background_tasks_changed`, the `background*` run files,
+  `Task.background_work`, the idle-vs-working rule, `BACKGROUND_GRACE`/`FOLLOW_UP_GRACE` at the hooks in
+  `RunInput.turnEnded`, `tasks.stopBackground`, the lost-background note in `Prompts.start`, the method 3.5's
+  `background_wait` needs).

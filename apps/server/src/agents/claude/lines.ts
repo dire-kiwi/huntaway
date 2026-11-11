@@ -29,7 +29,7 @@ export const InitLine = Schema.Struct({
 })
 export type InitLine = typeof InitLine.Type
 
-export const CompactMetadata = Schema.Struct({ trigger: text, pre_tokens: count, post_tokens: count })
+export const CompactMetadata = Schema.Struct({ trigger: text, pre_tokens: count, post_tokens: count, duration_ms: count })
 export type CompactMetadata = typeof CompactMetadata.Type
 
 /** `system`/`compact_boundary`: the conversation (a subagent's, with its parent) was compacted. */

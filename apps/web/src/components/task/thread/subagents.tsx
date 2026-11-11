@@ -75,7 +75,8 @@ export function SubagentRow({ call, sub }: { call: Call; sub: Subagent }) {
   const handle = useSubagentFocus((s) => s.handle)
   // A request to reveal a subagent, as it comes: this row opens if it's the one or one that started it (adjusted while
   // drawing), and the one scrolls to itself and says it's done.
-  const [seen, setSeen] = useState(focus)
+  // Null at first: a row that mounts while a reveal is pending (as the rows around it open) acts on it too.
+  const [seen, setSeen] = useState<typeof focus>(null)
   if (focus !== seen) {
     setSeen(focus)
     if (focus && (focus.id === sub.id || (source && lineage(source.data.subagents, focus.id).includes(sub.id)))) setOpen(true)

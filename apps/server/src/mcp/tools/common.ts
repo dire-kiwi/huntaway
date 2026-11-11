@@ -73,6 +73,7 @@ export type ServiceError =
   | { readonly _tag: "NotFound"; readonly what: string; readonly id: string }
   | { readonly _tag: "Invalid"; readonly reason: string }
   | { readonly _tag: "Conflict"; readonly detail: string }
+  | { readonly _tag: "SendRefused"; readonly detail: string }
 
 const NOT_FOUND = { TaskNotFound: "task", ProjectNotFound: "project", ProfileNotFound: "profile", PenNotFound: "pen" } as const
 
@@ -84,7 +85,7 @@ export const toolErrorOf = (e: ServiceError): ToolError => {
   if (e._tag === "ToolError") return e
   if (e._tag === "NotFound") return ToolError.notFound(`${e.what} ${e.id}`)
   if (e._tag === "Invalid") return ToolError.other(e.reason)
-  if (e._tag === "Conflict") return ToolError.other(e.detail)
+  if (e._tag === "Conflict" || e._tag === "SendRefused") return ToolError.other(e.detail)
   return ToolError.notFound(`${NOT_FOUND[e._tag]} ${e.id}`)
 }
 

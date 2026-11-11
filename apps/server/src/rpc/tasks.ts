@@ -2,6 +2,9 @@ import { Effect } from "effect"
 import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
 import type { ConflictReason } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
+import { ContextMeter } from "../agents/ContextMeter.ts"
+import { DevServers } from "../runs/DevServers.ts"
+import { Questions } from "../permissions/Questions.ts"
 import { Runs } from "../runs/Runs.ts"
 import type { SendRefused } from "../runs/Runs.ts"
 import { TaskRefs } from "../tasks/TaskRefs.ts"
@@ -31,6 +34,7 @@ const conflicts: { readonly [R in SendRefused["reason"]]: ConflictReason | null 
   no_conversation: null,
   no_agents: null,
 }
+/** Why a message wasn't sent, as the contract has it. */
 export const sendRefused = (e: SendRefused) => {
   const conflict = conflicts[e.reason]
   if (conflict !== null) return Effect.fail(new Conflict({ reason: conflict, detail: e.detail }))
@@ -43,6 +47,9 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const tasks = yield* Tasks
     const refs = yield* TaskRefs
     const runs = yield* Runs
+    const questions = yield* Questions
+    const devServers = yield* DevServers
+    const meter = yield* ContextMeter
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
@@ -58,13 +65,19 @@ export const TaskHandlers = TaskRpcs.toLayer(
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
       "tasks.send": ({ id, text }) =>
-        runs.send(id, { text, source: "user" }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused })),
+        runs.send(id, { text, source: "user" }).pipe(
+          // The user's reply answers the questions the agent asked (`Questions`).
+          Effect.tap(() => (text.trim() === "" ? Effect.void : questions.settle(id, "replied"))),
+          Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused }),
+        ),
       "tasks.stop": ({ id }) =>
         Effect.gen(function* () {
           yield* tasks.get(id)
           return yield* runs.stop(id)
         }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.dropQueued": ({ id }) => runs.dropQueued(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.stopServer": ({ id, port }) => devServers.stop(id, port).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.context": ({ id }) => meter.get(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
     })
   }),
 )

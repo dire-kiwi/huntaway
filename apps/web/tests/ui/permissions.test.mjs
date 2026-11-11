@@ -8,9 +8,9 @@ import { eventually, makeTask, seedBoard, startServer, withBrowser } from "./har
 // answer was. The old checks answered from a thread fed by the page (`routeThread`) and caught what the cards sent;
 // these answer a live agent and read its reply.
 //
-// Not ported: the board's own request_user_input card (its answer is the user's message, `Questions.answer`, not built
-// yet), keys in a task dialog over the page (the dialog comes with the task modal), late answers and "moved on" (the
-// server's tests have them: a run's end, which expires its prompts, is plan task 2.6's).
+// The board's own request_user_input card is asked with "fake-board-call request_user_input <JSON>" and answered as the
+// user's message. Not ported: keys in a task dialog over the page (the dialog comes with the task modal), several
+// answers and answered cards of the board's question, late answers and "moved on" (the server's tests have them).
 
 let server, board
 beforeAll(async () => {
@@ -62,6 +62,32 @@ test("a permission is denied, questions are dismissed, a plan is sent back with 
     assert.match(said, /permission ExitPlanMode: deny: The user wants you to keep planning rather than start on this plan\. Their feedback:$/)
     // The feedback is the reply's next paragraph (Markdown).
     await ui.run(["wait text=Add tests too)"])
+  })
+})
+
+test("a request_user_input question is answered with a key, as the user's message", async () => {
+  const ask = {
+    question: "Which colour should the button be?",
+    options: [
+      { label: "Red", description: "Bold" },
+      { label: "Green", description: "Calm" },
+    ],
+  }
+  const task = await asking("Board question", `fake-board-call request_user_input ${JSON.stringify(ask)}`)
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait The agent asks", "wait Calm"])
+    // Typed in the composer, a number is just a number.
+    const composer = page.locator("textarea").last()
+    await composer.click()
+    await ui.run(["type 2"])
+    assert.equal(await composer.inputValue(), "2")
+    await composer.fill("")
+    // Elsewhere, it picks that option and sends it.
+    await ui.run(["click css=[aria-label='Question from the agent'] >> text=Which colour should the button be?", "press 2"])
+    await ui.run(["wait css=[aria-label='Question from the agent'] >> text=answered", "wait text=Fake reply to: > Which colour should the button be?"])
+    assert.equal(await page.getByRole("radio", { name: "Green" }).getAttribute("aria-checked"), "true")
+    assert.equal(await page.getByRole("radio", { name: "Green" }).isDisabled(), true)
   })
 })
 

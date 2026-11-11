@@ -1,5 +1,6 @@
-import { PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
-import type { PermissionMode } from "@huntaway/contracts"
+import { useAtomSet } from "@effect/atom-react"
+import { mutations, PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
+import { TaskId, type PermissionMode } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Check, ChevronRight, Map as MapIcon, MessageCircleQuestion, Send, ShieldAlert, Trash2, X } from "lucide-react"
 import { memo, useEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from "react"
@@ -14,8 +15,8 @@ import type { Any } from "./threadModel"
 // answered from them (plan task 3.3) with the host's `permissions.answer`: Claude's questions (picked with a click or
 // keys 1–9, or typed), a plan (approved into a mode, or sent back with feedback), and the board's own approvals (a
 // project's change, a task's deletion, an automation or a workflow: approved or denied; their detailed views come with
-// `Approvals`, 3.4). A question asked with the board's request_user_input is drawn but not answered here yet: its answer
-// is the user's message (`Questions.answer`, which isn't built).
+// `Approvals`, 3.4); and a question asked with the board's request_user_input, whose answer is the user's message
+// (`threads.answerQuestion`).
 
 /** An option of a question, with what it would look like (`preview`) if the agent gave that. */
 interface AskedOption {
@@ -431,16 +432,58 @@ export const AskCard = memo(function AskCard({
 
 // ---------- request_user_input ----------
 
-/** A question the board asked (request_user_input, or whether to merge), with its answer once given. */
-export function BoardQuestionCard({ data, movedOn }: { id: number; data: Any; hostId: string; taskId: string; movedOn: boolean }) {
-  const options: Array<{ label: string; description?: string }> = (Array.isArray(data.options) ? data.options : [])
-    .map((o: Any) => (typeof o === "string" ? { label: o } : { label: str(o?.label), description: str(o?.description) || undefined }))
-    .filter((o: { label: string }) => o.label)
+/**
+ * A question an agent asked with the board's request_user_input. With options, picking one answers it (or, when it
+ * takes several, ticking them and Send), and keys 1–9 pick them; a free-text answer goes with Send or Enter. Answering
+ * sends the answer as the user's message (`threads.answerQuestion`). Without options, the reply is typed in the thread.
+ * Once a message has been sent to the agent after it (`movedOn`), it isn't answered any more.
+ */
+export const BoardQuestionCard = memo(function BoardQuestionCard({
+  id,
+  data,
+  hostId,
+  taskId,
+  movedOn,
+}: {
+  id: number
+  data: Any
+  hostId: string
+  taskId: string
+  movedOn: boolean
+}) {
+  const options: AskedOption[] = (Array.isArray(data.options) ? data.options : [])
+    .map((o: Any) =>
+      typeof o === "string"
+        ? { label: o, description: undefined, preview: undefined }
+        : { label: str(o?.label), description: str(o?.description) || undefined, preview: undefined },
+    )
+    .filter((o: AskedOption) => o.label)
+  const multi = !!data.multi_select
+  const other = data.allow_other !== false
   const pending = data.status === "pending" && !movedOn
+  const [picked, setPicked] = useState<string[]>([])
+  const [text, setText] = useState("")
+  const { busy, error, run } = useAsyncAction()
+  const ref = useRef<HTMLDivElement>(null)
+  const answerQuestion = useAtomSet(mutations.threads.answerQuestion, { mode: "promise" })
+  const answer = (choices: string[], typed: string) =>
+    void run(() => answerQuestion({ host: hostId, payload: { task_id: TaskId.make(taskId), request_id: `legacy:${id}`, choices, text: typed.trim() || null } }))
+  const pick = (label: string) => {
+    if (busy) return
+    if (!multi) answer([label], "")
+    else setPicked((p) => (p.includes(label) ? p.filter((x) => x !== label) : [...p, label]))
+  }
+  useDigitKeys(id, pending && options.length > 0 && !busy, ref, (n) => {
+    const o = options[n - 1]
+    if (o) pick(o.label)
+  })
   const answered: { choices?: string[]; text?: string | null } = data.answer ?? {}
+  const shown = pending ? picked : (answered.choices ?? [])
+  const canSend = multi ? picked.length > 0 || !!text.trim() : !!text.trim()
+  // The board's own question, whether to merge: answering it is the decision, not a message to the agent (M4).
   const merge = data.merge_approval === true
   return (
-    <Frame pending={pending} label={merge ? "Merge approval" : "Question from the agent"}>
+    <Frame pending={pending} cardRef={ref} label={merge ? "Merge approval" : "Question from the agent"}>
       <div className="mb-1.5 flex items-center gap-2 text-[12px] text-faint">
         <MessageCircleQuestion size={14} className={pending ? "text-st-attention" : "text-faint"} />
         {merge ? "Merge approval" : pending ? "The agent asks" : "The agent asked"}
@@ -451,28 +494,68 @@ export function BoardQuestionCard({ data, movedOn }: { id: number; data: Any; ho
             <Outcome tone="good">answered</Outcome>
           ))}
         {data.status === "replied" && <Outcome tone="plain">{merge ? "not answered" : "answered in the thread"}</Outcome>}
-        {data.status === "replaced" && <Outcome tone="plain">not answered</Outcome>}
+        {(data.status === "replaced" || data.status === "expired") && <Outcome tone="plain">not answered</Outcome>}
         {data.status === "pending" && movedOn && <Outcome tone="plain">not answered</Outcome>}
       </div>
       <div className={clsx("text-[13.5px] font-semibold whitespace-pre-wrap", pending ? "text-fg" : "text-muted")}>{data.question}</div>
       {options.length > 0 && (
-        <div className="mt-2 grid gap-1.5" role={data.multi_select ? "group" : "radiogroup"} aria-label={data.question}>
-          {options.map((o) => (
+        <div className="mt-2 grid gap-1.5" role={multi ? "group" : "radiogroup"} aria-label={data.question}>
+          {options.map((o, i) => (
             <Choice
               key={o.label}
-              option={{ label: o.label, description: o.description, preview: undefined }}
-              n={0}
-              multi={data.multi_select === true}
-              keys={false}
-              picked={(answered.choices ?? []).includes(o.label)}
+              option={o}
+              n={i + 1}
+              multi={multi}
+              picked={shown.includes(o.label)}
+              keys={pending}
+              disabled={busy}
+              onPick={pending ? () => pick(o.label) : undefined}
             />
           ))}
         </div>
       )}
-      {!pending && answered.text && <div className="mt-2 text-[13px] whitespace-pre-wrap text-muted">{answered.text}</div>}
+      {pending && options.length > 0 && other && (
+        <div className="mt-1.5 flex gap-2">
+          <OtherField
+            label="Your own answer"
+            value={text}
+            onChange={setText}
+            disabled={busy}
+            placeholder={multi ? "Something else (optional)" : "Or write your own answer"}
+            onEnter={() => canSend && answer(picked, text)}
+          />
+          {!multi && (
+            <Button size="md" disabled={busy || !text.trim()} onClick={() => answer([], text)} title="Send your answer">
+              <Send size={13} /> Send
+            </Button>
+          )}
+        </div>
+      )}
+      {pending && multi && (
+        <div className="mt-2.5">
+          <Button size="sm" variant="primary" disabled={busy || !canSend} onClick={() => answer(picked, text)}>
+            <Send size={13} /> Send answer
+          </Button>
+        </div>
+      )}
+      {!pending && answered.text && (
+        <div className="mt-2 rounded-md border-l-2 border-line-strong bg-white/[0.03] px-3 py-1.5 text-[13px] whitespace-pre-wrap text-muted">
+          {answered.text}
+        </div>
+      )}
+      {pending && (
+        <div className="mt-2 text-[11.5px] text-faint">
+          {merge
+            ? "Pick one (keys 1–2). To ask the agent about the merge first, reply below: you're asked again once it answers."
+            : options.length > 0
+              ? "Pick an answer (keys 1–9), or reply below in your own words."
+              : "Reply below to answer it."}
+        </div>
+      )}
+      {error && <div className="mt-1.5 text-xs text-red-400">{error}</div>}
     </Frame>
   )
-}
+})
 
 // ---------- ExitPlanMode ----------
 

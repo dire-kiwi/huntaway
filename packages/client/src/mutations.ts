@@ -35,4 +35,6 @@ export const mutations = {
   host: { updateSettings: mutation("host.updateSettings") },
   // A prompt's answer: the request and the thread's card change with the events that follow.
   permissions: { answer: mutation("permissions.answer") },
+  // A board question's answer, sent to the agent as the user's message.
+  threads: { answerQuestion: mutation("threads.answerQuestion") },
 } as const

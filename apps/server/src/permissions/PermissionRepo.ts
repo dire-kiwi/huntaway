@@ -76,8 +76,8 @@ export interface PermissionRepoShape {
   readonly due: (at: Timestamp) => Effect.Effect<ReadonlyArray<PromptRow>>
   /** Pending prompts whose run has exited or is gone (or that have none): Recovery expires them. */
   readonly orphans: Effect.Effect<ReadonlyArray<PromptRow>>
-  /** `can_use_tool` prompts of runs that have not exited whose answer is not on the input yet: Recovery takes them up. */
-  readonly unanswered: Effect.Effect<ReadonlyArray<PromptRow>>
+  /** Run `run`'s `can_use_tool` prompts whose answer is not on its input yet: a re-attached run takes them up again. */
+  readonly unanswered: (run: RunId) => Effect.Effect<ReadonlyArray<PromptRow>>
   /** The board's own approvals (not tool prompts) still pending, oldest first. */
   readonly approvals: Effect.Effect<ReadonlyArray<PromptRow>>
   /** What a board approval call `call` asked the user, if it asked (its input as saved). */
@@ -166,11 +166,7 @@ export class PermissionRepo extends Context.Service<PermissionRepo, PermissionRe
         pendingIn,
         due: (at) => select(`${PENDING} AND expires_at IS NOT NULL AND expires_at <= ?`, [at], BY_AGE),
         orphans: select(`${PENDING} AND (run_id IS NULL OR NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = run_id AND r.status != 'exited'))`, [], BY_AGE),
-        unanswered: select(
-          `control_id IS NOT NULL AND answered = 0 AND EXISTS (SELECT 1 FROM runs r WHERE r.id = run_id AND r.status != 'exited')`,
-          [],
-          BY_AGE,
-        ),
+        unanswered: (run) => select("run_id = ? AND control_id IS NOT NULL AND answered = 0", [run], BY_AGE),
         approvals: select(`kind != 'tool' AND ${PENDING}`, [], BY_AGE),
         asked: (call) => one("call_id = ? AND kind IN ('project','delete_task','automation')", [call]),
       })

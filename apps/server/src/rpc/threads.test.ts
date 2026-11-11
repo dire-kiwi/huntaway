@@ -79,4 +79,20 @@ describe("ThreadRpcs", () => {
       }),
     ),
   )
+
+  // Answering a card itself is `Questions`' (permissions/Questions.test.ts); here, its errors as the contract has them.
+  it.effect("answerQuestion: no such card, or no such task, is not found", () =>
+    run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const client = yield* RpcTest.makeClient(ThreadRpcs)
+        yield* sql`INSERT INTO profiles (id, name, created_at) VALUES ('p', 'p', ${AT})`.pipe(Effect.orDie)
+        const task = (yield* (yield* Tasks).create({ profile_id: ProfileId.make("p") }, Actor.user).pipe(Effect.orDie)).id
+        const missing = yield* Effect.flip(client["threads.answerQuestion"]({ task_id: task, request_id: "legacy:1", choices: ["A"] }))
+        assert.deepStrictEqual(missing._tag === "NotFound" ? [missing.what, missing.id] : missing._tag, ["question", "legacy:1"])
+        const gone = yield* Effect.flip(client["threads.answerQuestion"]({ task_id: TaskId.make("gone"), request_id: "legacy:1", text: "x" }))
+        assert.deepStrictEqual(gone._tag === "NotFound" ? [gone.what, gone.id] : gone._tag, ["task", "gone"])
+      }),
+    ),
+  )
 })
