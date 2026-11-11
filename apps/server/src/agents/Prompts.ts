@@ -21,6 +21,7 @@ import { PenRepo } from "../tasks/PenRepo.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
+import { WorkflowFacts } from "./WorkflowFacts.ts"
 import type { PromptContext, PromptProject, PromptTask } from "./prompts/context.ts"
 import { mentionKeys, mentionsNote } from "./prompts/mentions.ts"
 import type { MentionTask } from "./prompts/mentions.ts"
@@ -121,6 +122,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
       const remote = yield* GithubRemote
       const config = yield* ServerConfig
       const agentTools = yield* AgentTools
+      // 6.6: the project's workflow's In progress text and whether it opens the pull request.
+      const workflowFacts = yield* WorkflowFacts
 
       const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
 
@@ -202,6 +205,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           // The board serves gh (4.4) and docs (6.3), unless the project has its own server of that name or turns it off (6.4).
           ghTools: usesServer(tools, GH_SERVER, true),
           docsTools: usesServer(tools, DOCS_SERVER, true),
+          // 6.6: an `open_pr` step follows In progress's done, so the agent isn't told to push and open one itself.
+          boardPr: yield* workflowFacts.boardOpensPr(task),
         }
         return context
       })
@@ -252,7 +257,14 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         const task = yield* tasks.get(id)
         const kind = threadKindOf(task)
         const project = yield* projectOf(task.project_id)
-        const c = { ...OFF, task, project, docs: documentsOf(dataDir.documents(task.id), task) }
+        // 6.6: the project's workflow's In progress text, in place of its start prompt.
+        const c = {
+          ...OFF,
+          task,
+          project,
+          docs: documentsOf(dataDir.documents(task.id), task),
+          workflowStart: yield* workflowFacts.startInstructions(task, project),
+        }
         const board = task.kind === "task" ? yield* mentionBoard(mentionsScanned(c, text)) : { profiles: [], projects: [], tasks: [] }
         // The background work its last run stopped is plan task 2.8's (`BackgroundWork`); the routines' reports 6.5's.
         return runPrompt(kind, c, { text, lost, mentions: (scanned) => mentionsNote(task, scanned, board) })

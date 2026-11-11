@@ -20,6 +20,8 @@ import { Runs } from "../runs/Runs.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 // 6.1
 import { Terminals } from "../terminal/Terminals.ts"
+import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
+import { Workflows } from "../workflows/Workflows.ts"
 
 export interface ReactorShape {
   /** Waits until every change offered so far has been handled. Tests wait on this instead of sleeping. */
@@ -55,6 +57,9 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       // 6.1
       const terminals = yield* Terminals
       const routines = yield* Routines
+      // 6.6
+      const engine = yield* WorkflowEngine
+      const workflows = yield* Workflows
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -78,16 +83,32 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         // outcome (a round of fixes, the task left for the user, or summaries).
         if (change._tag === "ReviewFinished") {
           yield* reviews.finished(change.thread, change.run, change.outcome, change.attention)
+          // 6.6: a workflow's agent step's thread: its step's output, and the run goes on.
+          yield* engine.stepEnded(change.thread, change.run, change.outcome, change.attention)
+          return
+        }
+        // 6.6: the workflow column that held the task goes on from there, or its workflow moves the merged task to Done.
+        if (change._tag === "WorkflowWorkDone") {
+          yield* engine.workDone(change)
+          return
+        }
+        // 6.6: a workflow run ended: a task it held in its column moves on.
+        if (change._tag === "WorkflowRunSettled") {
+          yield* engine.release(change.run, change.why)
           return
         }
         // 4.6: the agent is changing the work under review: its review and summaries in progress stop.
         if (change._tag === "PromptStarted") {
           yield* reviews.supersede(change.task)
+          // 6.6: so do its workflows' runs, but those waiting for its work at a column.
+          yield* engine.supersede(change.task)
           return
         }
         // 4.5: a project's preview template changed: its tasks' previews follow it.
         if (change._tag === "ProjectChanged") {
           yield* pullRequests.followPreviews(change.before, change.after)
+          // 6.6: a project that starts using workflows has its Review tab's reviews moved into one.
+          if (change.after.use_workflows && !change.before.use_workflows) yield* workflows.moveReviewSettings(change.after)
           return
         }
         const task = change.after ?? change.before
@@ -133,6 +154,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           // 4.6: a task that entered In review (or whose run ended there) is reviewed, if a review is due.
           const ended = change.before?.running === true && !change.after.running
           if (change.after.kind === "task" && change.after.status === "in_review" && (moved || ended)) yield* reviews.reconcile(change.after.id)
+          // 6.6: the task entered a column: runs waiting at the one it left stop, and its new column's workflows start.
+          if (moved) yield* engine.onStatus(change)
           // An unpinned title catches up with what was said since.
           if (change.before?.title_pinned === true && !change.after.title_pinned) yield* titles.refreshLater(change.after.id)
         }

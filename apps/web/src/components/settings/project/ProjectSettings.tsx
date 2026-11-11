@@ -10,7 +10,8 @@ import { rpc } from "../../../state/rpc"
 import { ArchiveProjectModal } from "../ArchivedProjects"
 import { ProjectAgentTools } from "../AgentTools"
 import { ProjectAutomations } from "../Automations"
-import { Button, ConfirmModal, errorText, MenuButton, NotYet } from "../../ui"
+import { ProjectWorkflows } from "../Workflows"
+import { Button, ConfirmModal, errorText, MenuButton } from "../../ui"
 import { toJson } from "../../ui/json"
 import { AgentsTab } from "./AgentsTab"
 import { GeneralTab } from "./GeneralTab"
@@ -20,17 +21,12 @@ import { ProjectStatusScripts } from "./StatusScriptsTab"
 import { WorktreesTab } from "./WorktreesTab"
 
 // Step 1 (docs/plan/09-frontend.md). Every host has every tab, so the old API gates are gone. The tabs that are other
-// areas' are marked slots until they come: Workflows (Workflows' ProjectWorkflows, 6.6).
+// areas' are theirs: Skills and MCP (6.4), Automations (6.5), Workflows (6.6).
 
 /** A project's fields as the form edits them. */
 export type ProjectForm = { -readonly [K in keyof Project]: Project[K] }
 /** Changes one field of the form. */
 export type SetField = <K extends keyof Project>(k: K, v: Project[K]) => void
-
-/** The project's workflows (6.6's `ProjectWorkflows`). */
-function ProjectWorkflows(_props: { project: Project }) {
-  return <NotYet what="Workflows" />
-}
 
 type ProjectTab = "general" | "agents" | "worktrees" | "review" | "prompts" | "scripts" | "tools" | "automations" | "workflows"
 

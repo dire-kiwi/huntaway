@@ -370,6 +370,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `terminal_tools` with `host.updateSettings`; the settings come with the board, so there is nothing to load. It is
   mounted by the host page (6.12); it was checked by mounting it there for a moment.
 - **Checks**: `tests/ui/terminal.test.mjs` (the old checks, the status and ticket held with `routeRpc`, and a real tmux).
+
 ### Step 1 as done for 6.11 (HE-7)
 
 - **Add project** is back in the sidebar (`layout/Sidebar.tsx`, "+"), opening `settings/NewProjectModal.tsx`: a folder
@@ -399,6 +400,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   both loading. Dropped: asanaLinks' "moves between hosts before and after Asana links" (a second host, M7, and hosts
   before API 57). `scripts/test-server.sh` gives the server `$HUNTAWAY_ASANA_URL` (a test's fake Asana), else an
   address with nothing on it, so a test server never reaches Asana.
+
 ### As built in 6.4 (HE-7): web
 
 - **Came over.** `settings/agentTools/GlobalAgentToolsPanel.tsx` (Settings → Skills and MCP, in place of its
@@ -418,6 +420,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   mount), and `messageBox.test.mjs`'s two dropped cases back (`/` and `$`). Not ported: `forkedSkills.test.mjs`, which
   checks a forked Skill's subagent in the thread through the Agents list (not on this server) with the old translator's
   messages, nothing of agent tools.
+
 ### Step 1 as done for `settings/` (6.12, HE-7)
 
 - **What came over.** The Settings shell's conditions (Agent configs and Skills and MCP only with a host that runs
@@ -483,6 +486,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   on there, Remove). Not ported: hostUpdate's "the events socket reconnects at once when the network comes back"
   (HA-38): the client's session retries on its own schedule and does not listen for `online`, which is
   `packages/client`'s to decide. The old checks' `fastClock` is gone: the polls they sped up (1.5 s) fit in a step.
+
 ### As built in 6.8 (HE-7): notifications and push
 
 - **`state/notify.ts`**: which changes notify (`taskEvent`, `stillApplies`, `notificationText`, `attentionCount`), the
@@ -499,6 +503,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   pushes) and `tests/ui/notifications.test.mjs` (moves by `tasks.update` in place of the old fed websocket; a stopped run
   through the fake agent). The harness's `withBrowser` takes `fullBrowser` again (the full Chromium: notifications,
   service workers). Not ported: answering a prompt from its notification (deferred), a hub's linked hosts (M7).
+
 ### Step 1 as done for a task's documents (6.2, HE-7)
 
 - **What came over.** The old `task/Document.tsx` (its view only: the labels' names and badges were `documentInfo.tsx`
@@ -521,6 +526,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   event the same way. Skipped, with its reason in the file: "a touch held on the board doesn't let a plan open a link",
   as on Chromium 155 the board's activation after the held touch didn't run out while the plan kept taking the focus.
   `markdownImages.test.mjs` is about a task's description (Markdown), not its documents, and isn't ported here.
+
 ### Step 1 as done for `docs/` (6.3, HE-7)
 
 - **What came over.** The old `components/docs/` whole (`DocsPage.tsx`, `DocComments.tsx`, `HostedDocs.tsx`,
@@ -545,6 +551,27 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `tests/unit/docs.test.ts`, every old case. Not ported here: `documentCsp.test.mjs` (plans and artifacts, 6.2's) and
   `markdownImages.test.mjs` (images in a task's Markdown). The old check's count of the page's HTTP requests for a
   version is gone with HTTP.
+
+### Step 1 as done for workflows (6.6, HE-7)
+
+- **Files.** `settings/Workflows.tsx` (`ProjectWorkflows`: the list, its switch, the editor, "Use workflows") and
+  `settings/workflows/*` (the canvas editor, its inspectors, presets, text, geometry and hooks), `settings/TemplateField.tsx`
+  and `templateCompletion.ts` (as 6.12 copies them), `task/Workflows.tsx` (the `wf:` tabs, `WorkflowTabView`,
+  `WorkflowsList`, `useWorkflowRuns`, `workflowRunning`), `task/thread/workflowChange.tsx` (the approval card's detail,
+  reading the approval's graph with the contract's `WorkflowGraph`). The lists come from `workflowsAtom` and
+  `workflowRunsAtom` (`packages/client/src/board/workflows.ts`), read again on `workflows_changed` and
+  `workflow_runs_changed` as a task's turns are; changes are `mutations.workflows.*`, and nothing reloads after one.
+- **Gone.** `legacyGraph`, `set_status` and a start on a status, every API-version check (`COLUMN_WORKFLOWS_API`,
+  `AB_TEST_API`, `REVIEWS_IN_WORKFLOWS_API`). A node's field set to undefined is removed, never sent as null
+  (`patchNode`). A send step still shows only its `exhausted` port in the editor, as before.
+- **Where it mounts.** The project settings' Workflows tab (`/p/<id>/settings/workflows`): until 6.12 brings
+  `project/ProjectSettings.tsx` over, its placeholder renders `ProjectWorkflows` for that tab. `settings/AgentStepTools.tsx`
+  is a stub (the step's own skills and turned-off MCP servers, no project list to pick from) that 6.4 replaces;
+  `task/Reviewers.tsx` has only `ReviewerRow`, as 6.12's. The column preview says "The board's default start/merge
+  prompt." for a blank prompt until `host.defaultPrompts` (6.12) gives the text.
+- **Checks.** `tests/ui/workflows.test.mjs`, `workflowPresets.test.mjs`, `workflowWires.test.mjs` (the old ones on the
+  new harness, through `workflows.*`). Not ported: `graphPicks.test.mjs` (subprojects), the `/settings/review` and
+  `/guide/workflows` assertions (6.12's pages), the agent-tools picks of the skills case (6.4).
 
 ### Step 2: by hand, a feature folder at a time
 

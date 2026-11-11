@@ -13,6 +13,7 @@ import { DevServers } from "../runs/DevServers.ts"
 import { Questions } from "../permissions/Questions.ts"
 import { Push } from "../push/Push.ts"
 import { Reviews } from "../review/Reviews.ts"
+import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
 import { Summaries } from "../review/Summaries.ts"
 import type { ReviewRefused } from "../review/model.ts"
 import { Runs } from "../runs/Runs.ts"
@@ -79,6 +80,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const stackTitles = yield* StackTitles
     const targets = yield* MergeTargets
     const reviews = yield* Reviews
+    const workflowEngine = yield* WorkflowEngine
     const summaries = yield* Summaries
     /** The task after a review or summary started, or as it is when there was nothing to start. */
     const orTask = (id: TaskId) => (t: Task | null) => (t !== null ? Effect.succeed(t) : tasks.get(id))
@@ -116,7 +118,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
       "tasks.stop": ({ id }) =>
         Effect.gen(function* () {
           yield* tasks.get(id)
-          return yield* reviews.stopTask(id)
+          // 6.6: the agent, its review and summaries (`Reviews.stopTask`), and its workflow runs.
+          return yield* workflowEngine.stopTask(id)
         }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.review": ({ id }) => reviews.start(id, true).pipe(Effect.flatMap(orTask(id)), Effect.catchTags(reviewErrors)),
       "tasks.extendReview": ({ id }) => reviews.extend(id).pipe(Effect.catchTags(reviewErrors)),

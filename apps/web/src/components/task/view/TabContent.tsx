@@ -9,6 +9,8 @@ import { DocumentView } from "../Document"
 import { ChangeSummaryView, ReviewSummary } from "../Review"
 // 6.7
 import { ActionLog } from "../ActionLog"
+// 6.6
+import { isWorkflowTab, WorkflowTabView } from "../Workflows"
 import type { Mode, Tab } from "./layout"
 
 // What empty threads show. The same elements every time, so the (memoized) thread doesn't redraw for them.
@@ -46,11 +48,6 @@ const BriefView = preloadable(() => import("../Brief").then((m) => m.BriefView))
 const Routines = preloadable(() => import("../Routines").then((m) => m.Routines))
 export function preloadTabs() {
   for (const c of [ChangesView, MemoryView, BriefView, Routines]) c.preload()
-}
-
-/** What a tab of a later milestone shows on this server until its view comes over. */
-function NotYet({ what }: { what: string }) {
-  return <div className="p-8 text-[13px] text-muted">{what} not yet on this server.</div>
 }
 
 /**
@@ -111,8 +108,8 @@ export function TabContent({
 
 /**
  * What a tab other than the thread or a document shows above the composer: the Changes tab (changes/Changes.tsx), the
- * review and the summary (task/Review.tsx), the assistant's memory, brief, routines and action log (6.7). A workflow's
- * tabs come with workflows (6.6).
+ * review and the summary (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
+ * brief, routines and action log (6.7).
  */
 function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, onShowThread: () => void): ReactNode {
   return shown === "memory" ? (
@@ -131,8 +128,12 @@ function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, onShowThread: () 
     <div className="h-full overflow-y-auto p-4">
       <ChangeSummaryView task={task} />
     </div>
-  ) : shown.startsWith("wf:") ? (
-    <NotYet what="Workflows are" />
+  ) : isWorkflowTab(shown) ? (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-3xl px-5 py-5">
+        <WorkflowTabView task={task} label={shown.slice(3)} />
+      </div>
+    </div>
   ) : shown === "actions" ? (
     <ActionLog task={task} />
   ) : shown === "brief" ? (

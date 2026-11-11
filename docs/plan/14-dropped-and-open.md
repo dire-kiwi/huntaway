@@ -25,6 +25,7 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | `IA_PUSH_SUBJECT` (6.8): the VAPID `sub` a board names to push services                          | Naming someone other than the project's page                    | — (the subject is the project's GitHub page; a `ServerConfig` flag if wanted) |
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
 | Moving an assistant workspace's own `.git` beside it (HA-160), on its first open (6.7)          | Workspaces from before HA-160                                   | The old server moved each one it opened; one never opened since keeps its `.git` in the workspace, which the board leaves alone (its history starts again beside it) |
+| The one-time startup move of the Review tab's reviews into a workflow for projects that used workflows before HA-277 (`move_all_review_settings`, setting `workflows_reviews_moved`) (6.6) | Boards from before HA-277 | Ran on the old board before its import |
 
 What is **not** dropped, although it carries an old name: `ia-shim`, branches `ia/…`, `refs/huntaway/…`, the script
 variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names `ia-…`, and the item id prefix

@@ -34,6 +34,7 @@ import { ConfigArchiveRpcs } from "./configArchives.ts"
 import { FanoutRpcs } from "./fanout.ts"
 import { GithubRepoRpcs } from "./githubRepos.ts"
 import { ToolRpcs } from "./tools.ts"
+import { WorkflowRpcs } from "./workflows.ts"
 
 /** Every group a host serves about itself (docs/plan/05-protocol.md, The contract package). */
 export const HostRpcs = HostRpcGroup.merge(
@@ -70,6 +71,8 @@ export const HostRpcs = HostRpcGroup.merge(
   DocRpcs,
   // 6.7
   AssistantRpcs,
+  // 6.6
+  WorkflowRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

@@ -1,6 +1,8 @@
 import { Cause, Context, Effect, Exit, Layer, Option } from "effect"
 import type { Task, TaskId, Timestamp } from "@huntaway/contracts"
 import { Tokens } from "../agents/Tokens.ts"
+import { WorkflowFacts } from "../agents/WorkflowFacts.ts"
+import type { FinishDue } from "../agents/WorkflowFacts.ts"
 import { Checkpoints } from "../git/Checkpoints.ts"
 import { PullRequests } from "../github/PullRequests.ts"
 import { Changes } from "../platform/Changes.ts"
@@ -44,6 +46,8 @@ interface Ended {
   /** A run of the task has started since: the task's state is that run's. */
   readonly later: boolean
   readonly queued: string | null
+  /** 6.6: the workflow column whose work the run did, which takes the task on (`WorkflowFacts.finishDue`). */
+  readonly due: FinishDue | null
 }
 
 export interface RunEndsShape {
@@ -74,6 +78,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const turnHooks = yield* TurnHooks
       const checkpoints = yield* Checkpoints
       const pullRequests = yield* PullRequests
+      const workflowFacts = yield* WorkflowFacts
 
       const board: Actor = { _tag: "Board" }
 
@@ -105,6 +110,9 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
             )
             const later = yield* repo.laterThan(run)
             const profile = Option.getOrNull(yield* profiles.get(task.profile_id))
+            // 6.6: what the project's workflows make of the run's end: the column that takes the task on, and its merge.
+            const due = task.kind === "task" && !task.merging ? yield* workflowFacts.finishDue(task) : null
+            const mergesToDone = task.kind === "task" && task.merging ? (yield* workflowFacts.mergeFinish(task)) !== null : false
             const config = task.claude_config_id === null ? null : Option.getOrNull(yield* configs.get(task.claude_config_id))
             const decision = decideFinish({
               outcome: outcomeOf(run, change.exit, change.errorTail),
@@ -115,7 +123,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
               configName: config?.name ?? "Its config",
               // 4.7: what it merges into (or lands after) was closed or deleted while it ran.
               mergeHeld: task.kind === "task" && task.project_id !== null ? heldReasonOf(yield* tasks.projectTasks(task.project_id), task) : null,
-              mergesToDone: false,
+              mergesToDone,
+              finishDue: due === null ? null : { status: due.status, asksFinish: due.asksFinish },
               planOnly,
               nudged: nudged(yield* readers.lastUserMessage(task.id)),
               endOfMergeQueue: yield* tasks.endPosition(task.project_id, "ready_for_merge"),
@@ -126,7 +135,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
               .map((q) => q.text)
               .filter((t) => t.trim() !== "")
               .join("\n\n")
-            const ended: Ended = { run, decision, later, queued: queued === "" ? null : queued }
+            const ended: Ended = { run, decision, later, queued: queued === "" ? null : queued, due }
             return ended
           }),
         )
@@ -144,10 +153,13 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         )
 
       /** Ask the agent to finish its todo list; one that can't be asked (its project archived, say) needs attention. */
-      const nudge = Effect.fnUntraced(function* (task: TaskId, items: NonNullable<FinishDecision["nudge"]>) {
+      const nudge = Effect.fnUntraced(function* (task: TaskId, items: NonNullable<FinishDecision["nudge"]>, due: FinishDue | null) {
         const notice = nudgeNotice(items)
         yield* threads.notice(task, notice.level, notice.text, notice.detail).pipe(Effect.ignore)
-        const sent = yield* Effect.exit(runs.send(task, { text: todoNudge(items), source: "board", auto: true }))
+        // 6.6: `finish_work` is the run's that called it, so the run this message starts is told again how to say it's done.
+        const row = yield* tasks.get(task)
+        const text = row === null ? todoNudge(items) : yield* workflowFacts.withDueFinish(row, due, todoNudge(items))
+        const sent = yield* Effect.exit(runs.send(task, { text, source: "board", auto: true }))
         if (Exit.isSuccess(sent)) return
         yield* Effect.logWarning(`task=${task} asking its agent to finish its todo list failed`)
         const done = yield* locks.withLock(["task", task])(
@@ -216,7 +228,17 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         const done = yield* locks.withLock(["task", run.task_id])(writeColumn(run, decision.columns))
         if (done === null) return
         yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: board })
-        if (decision.nudge !== null) yield* nudge(run.task_id, decision.nudge)
+        if (decision.nudge !== null) yield* nudge(run.task_id, decision.nudge, first.due)
+        // 6.6: the workflow column that held the task goes on from there, or its workflow moves the merged task to Done.
+        if ((decision.workDone && first.due !== null) || decision.mergeFinished) {
+          const due = decision.workDone ? first.due : null
+          yield* changes.offer({
+            _tag: "WorkflowWorkDone",
+            task: run.task_id,
+            due: due === null ? null : { workflow_id: due.workflow_id, node: due.node, run_id: due.run_id },
+            mergeFinished: decision.mergeFinished,
+          })
+        }
       })
 
       return RunEnds.of({ ended })

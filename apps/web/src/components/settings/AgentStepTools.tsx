@@ -38,8 +38,8 @@ export function AgentStepTools({
 }: {
   project: Project
   configId: string | null
-  skills: string[]
-  disabled: string[]
+  skills: ReadonlyArray<string>
+  disabled: ReadonlyArray<string>
   onChange: (patch: { skills?: string[]; disabled_mcp_servers?: string[] }) => void
 }) {
   const rpc = useRpc()

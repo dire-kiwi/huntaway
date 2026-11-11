@@ -1,5 +1,6 @@
 import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, Result } from "effect"
 import type { ProjectId, Task } from "@huntaway/contracts"
+import { WorkflowFacts } from "../agents/WorkflowFacts.ts"
 import { Git } from "../git/Git.ts"
 import { expandHome } from "../git/paths.ts"
 import { startRef, TaskBase } from "../git/TaskBase.ts"
@@ -79,6 +80,7 @@ export class Merges extends Context.Service<Merges, MergesShape>()("huntaway-ser
       const projects = yield* ProjectRepo
       const tasks = yield* Tasks
       const runs = yield* Runs
+      const workflowFacts = yield* WorkflowFacts
       const threads = yield* Threads
       const gate = yield* MergeGate
       const base = yield* TaskBase
@@ -109,7 +111,9 @@ export class Merges extends Context.Service<Merges, MergesShape>()("huntaway-ser
       /** Ask the agent of `task`, whose turn has come, to merge it (the old `request_merge`). */
       const requestMerge = Effect.fnUntraced(function* (rows: ReadonlyArray<Task>, task: Task) {
         const project = task.project_id === null ? null : Option.getOrNull(yield* projects.get(task.project_id))
-        const text = mergeRequestText(rows, { task, project, base: yield* base.taskBase(task, project) })
+        // 6.6: the project's workflow's Ready for merge prompt, and its move to Done once the agent says it's merged.
+        const workflow = { instructions: yield* workflowFacts.mergeInstructions(task), finish: yield* workflowFacts.mergeFinish(task) }
+        const text = mergeRequestText(rows, { task, project, base: yield* base.taskBase(task, project), workflow })
         let failed: string
         if (Result.isFailure(text)) failed = text.failure
         else {

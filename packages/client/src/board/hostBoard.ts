@@ -10,6 +10,7 @@ import type {
   Profile,
   Project,
   ProfileId,
+  ProjectId,
   Task,
   TaskId,
   Usage,
@@ -76,6 +77,10 @@ export interface HostBoard {
    * `log <profile>`), which the assistant's rules and action log read them again on.
    */
   readonly approvalRules: ReadonlyMap<string, number>
+  /** 6.6: by project, the number of the latest `workflows_changed` about it, which its workflows are read again on. */
+  readonly workflows: ReadonlyMap<ProjectId, number>
+  /** 6.6: by task, the number of the latest `workflow_runs_changed` about it, which its workflow runs are read again on. */
+  readonly workflowRuns: ReadonlyMap<TaskId, number>
 }
 
 const noSettings: HostSettings = {
@@ -108,6 +113,8 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   automations: new Map(),
   docs: new Map(),
   approvalRules: new Map(),
+  workflows: new Map(),
+  workflowRuns: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -282,6 +289,11 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
     case "docs_site":
       return { ...next, docs: new Map(board.docs).set(docsKey("site", message.profile_id), message.seq) }
     // 6.7
+    // 6.6
+    case "workflows_changed":
+      return { ...next, workflows: new Map(board.workflows).set(message.project_id, message.seq) }
+    case "workflow_runs_changed":
+      return { ...next, workflowRuns: new Map(board.workflowRuns).set(message.task_id, message.seq) }
     case "approval_rules":
       return { ...next, approvalRules: new Map(board.approvalRules).set(`rules ${message.profile_id}`, message.seq) }
     case "approval_log":

@@ -47,6 +47,7 @@ import {
   // 6.1
   TerminalRpcs,
   ThreadRpcs,
+  WorkflowRpcs,
 } from "@huntaway/contracts"
 // 6.4: skills and MCP servers.
 import { AgentTools } from "./agents/AgentTools.ts"
@@ -278,6 +279,13 @@ import { TerminalRoute } from "./http/terminal.ts"
 import { TerminalHandlers } from "./rpc/terminal.ts"
 import { Pty } from "./terminal/Pty.ts"
 import { Terminals } from "./terminal/Terminals.ts"
+// 6.6
+import { WorkflowFacts } from "./agents/WorkflowFacts.ts"
+import { WorkflowHandlers } from "./rpc/workflows.ts"
+import { WorkflowEngine } from "./workflows/WorkflowEngine.ts"
+import { Workflows } from "./workflows/Workflows.ts"
+import { WorkflowApprovals } from "./workflows/WorkflowApprovals.ts"
+import { WorkflowStore } from "./workflows/WorkflowStore.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -375,6 +383,8 @@ const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1,
     Layer.provideMerge(
       Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, StackTitleRepo.layer, models.titles, models.window),
     ),
+    // 6.6: what the prompts, a run's end and the merge queue read of a task's workflows (the workflows area registers it).
+    Layer.provideMerge(WorkflowFacts.layer),
     // A Codex config's titles are asked of Codex, as its models are (5.3).
     Layer.provideMerge(models.codex),
     Layer.provideMerge(GithubLive),
@@ -546,6 +556,13 @@ const AssistantLive = AssistantHooks.pipe(
   Layer.provideMerge(Memory.layer),
 )
 
+/** 6.6: workflows: changing them, and the engine (registered with the agents area's `WorkflowFacts`) over its store. */
+const WorkflowsLive = WorkflowApprovals.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Workflows.layer, WorkflowEngine.registered)),
+  Layer.provideMerge(WorkflowEngine.layer),
+  Layer.provideMerge(WorkflowStore.layer),
+)
+
 /** 6.3: the docs area: published documents, their images, and publishing them to a hosted docs site. */
 const DocsLive = Docs.layer.pipe(
   Layer.provideMerge(HostedDocs.layer),
@@ -575,6 +592,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(HostLinksLive),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.6: workflows: changing them, and the engine (registered with the agents area's `WorkflowFacts`) over its store.
+    Layer.provideMerge(WorkflowsLive),
     // 6.7: the assistant, over documents (its brief) and automations (its routines).
     Layer.provideMerge(AssistantLive),
     // 6.3: documents, which the docs server's tools call.
@@ -649,6 +668,8 @@ export const Served = PublicRpcs.merge(
   AutomationRpcs,
   // 6.7
   AssistantRpcs,
+  // 6.6
+  WorkflowRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -691,6 +712,8 @@ export const HandlersLive = Layer.mergeAll(
   AutomationHandlers,
   // 6.7
   AssistantHandlers,
+  // 6.6
+  WorkflowHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
 import { DocumentLabel } from "@huntaway/contracts"
 import type { ProjectId, StartFrom, Task } from "@huntaway/contracts"
+import { WorkflowEngine } from "../../workflows/WorkflowEngine.ts"
 import { toJson } from "../../platform/columns.ts"
 import { DataDir } from "../../platform/DataDir.ts"
 import { isMerged } from "../../tasks/checks.ts"
@@ -189,6 +190,7 @@ export const makeTaskJson = (reach: Reach) =>
     const pens = yield* PenRepo
     const readers = yield* ThreadReaders
     const dataDir = yield* DataDir
+    const engine = yield* WorkflowEngine
 
     const projectTasks = (project: ProjectId | null) => (project === null ? Effect.succeed([]) : repo.projectTasks(project))
 
@@ -313,6 +315,19 @@ export const makeTaskJson = (reach: Reach) =>
         .filter((c) => c.created_by === t.id && c.kind === "task" && readable.has(c.profile_id))
         .toSorted((a, b) => a.created_at.localeCompare(b.created_at))
       if (created.length > 0) out["created_tasks"] = yield* Effect.forEach(created, summary, { concurrency: 1 })
+      // 6.6: what its workflows' latest runs did: each agent step's state and output.
+      const workflows = (yield* engine.latestRuns(t.id)).map((r) => ({
+        workflow: r.workflow_name,
+        state: r.state,
+        started_at: r.created_at,
+        steps: r.graph.nodes
+          .filter((n) => n.kind === "agent")
+          .map((n) => {
+            const nr = r.nodes[n.id] ?? { state: "pending" }
+            return { name: n.kind === "agent" ? n.name : n.id, state: nr.state, port: nr.port ?? null, text: nr.text ?? null, issues: nr.issues ?? [] }
+          }),
+      }))
+      if (workflows.length > 0) out["workflows"] = workflows
       return out
     })
 
