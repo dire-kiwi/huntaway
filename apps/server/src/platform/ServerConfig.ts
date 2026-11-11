@@ -51,7 +51,58 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_SKIP_DB_BACKUP")),
     Flag.withDefault(false),
   ),
+  shimBin: Flag.String("shim-bin").pipe(
+    Flag.withDescription("The ia-shim binary agents run under (default: the checkout's target/{release,debug}, else beside bin/huntaway)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_SHIM_BIN")),
+    Flag.optional,
+  ),
+  claudeBin: Flag.String("claude-bin").pipe(
+    Flag.withDescription("The Claude Code program agents' runs start (default claude, on PATH)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_CLAUDE_BIN")),
+    Flag.optional,
+  ),
+  noAgents: Flag.Boolean("no-agents").pipe(
+    Flag.withDescription("Run no agent at all (test servers)"),
+    Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_AGENTS")),
+    Flag.withDefault(false),
+  ),
 }
+
+/**
+ * The variables `huntaway serve` takes its settings from, which a service manager or the desktop app may have given
+ * this server. Agents' runs, and what the server starts for agents and projects, do not get them (HA-185, HA-262): a
+ * server an agent starts itself (`huntaway serve` in a checkout) would otherwise use this one's data folder, port,
+ * hubs, tokens and release updates. The old `SERVE_ENV`, under the new names, with the ones this server adds.
+ */
+export const SERVE_ENV = [
+  "HUNTAWAY_HOST",
+  "HUNTAWAY_PORT",
+  "HUNTAWAY_DATA_DIR",
+  "HUNTAWAY_UI_DIR",
+  "HUNTAWAY_SOURCE_DIR",
+  "HUNTAWAY_UPDATE_FROM",
+  "HUNTAWAY_RELEASE_UPDATES",
+  "HUNTAWAY_RELEASE_API",
+  "HUNTAWAY_NAME",
+  "HUNTAWAY_HUB",
+  "HUNTAWAY_HUB_TOKEN",
+  "HUNTAWAY_TOKEN",
+  "HUNTAWAY_DEMO",
+  "HUNTAWAY_OPEN_TOKEN",
+  "HUNTAWAY_PROFILES",
+  "HUNTAWAY_DESKTOP_VERSION",
+  "HUNTAWAY_DESKTOP_SHELL",
+  "HUNTAWAY_DESKTOP_INSTALL",
+  "HUNTAWAY_BUNDLED_SERVER",
+  "HUNTAWAY_TELEMETRY_URL",
+  "HUNTAWAY_SKIP_DB_BACKUP",
+  "HUNTAWAY_NO_AGENTS",
+  // The task an agent works on, which a server started by another board's agent (a test server) has.
+  "HUNTAWAY_TASK_ID",
+] as const
+
+/** Over the server's own environment (`extendEnv`), what removes `SERVE_ENV` from a child's. */
+const AGENT_ENV: Readonly<Record<string, undefined>> = Object.fromEntries(SERVE_ENV.map((name) => [name, undefined]))
 
 /** What the CLI parsed from `serveFlags`. */
 export interface ServeArgs {
@@ -65,6 +116,10 @@ export interface ServeArgs {
   readonly openToken: boolean
   readonly profiles: ReadonlyArray<string>
   readonly skipDbBackup: boolean
+  // Optional so that a command that serves nothing (`token`) need not give them.
+  readonly shimBin?: Option.Option<string>
+  readonly claudeBin?: Option.Option<string>
+  readonly noAgents?: boolean
 }
 
 export interface ServerConfigShape {
@@ -87,6 +142,23 @@ export interface ServerConfigShape {
   readonly commit: string | null
   /** The machine's home folder, for defaults and `~` in paths. */
   readonly home: string
+  /** `--shim-bin`/`HUNTAWAY_SHIM_BIN`: the ia-shim to run agents under; null to look for one (`runs/Shim`). */
+  readonly shimBin: string | null
+  /** `--claude-bin`/`HUNTAWAY_CLAUDE_BIN`: the Claude Code program (default `claude`). */
+  readonly claudeBin: string
+  /** `--no-agents`/`HUNTAWAY_NO_AGENTS`: this host runs no agent at all (test servers). `Runs` checks it. */
+  readonly noAgents: boolean
+  /** The launcher this server was started by (`HUNTAWAY_EXE`, which bin/huntaway sets), if any. */
+  readonly exe: string | null
+  /**
+   * The environment of an agent's run and of what the server starts for agents and projects, over the server's own
+   * (`extendEnv: true`): `SERVE_ENV` removed.
+   */
+  readonly agentEnv: Readonly<Record<string, string | undefined>>
+  /** The system's temp folder (`TMPDIR`, else `/tmp`), where the tasks' temp folders' root goes (`tasks/TaskTmp`). */
+  readonly tmpDir: string
+  /** The root of the tasks' temp folders when it is not the usual one in `tmpDir`: tests put it in their data folder. */
+  readonly taskTmpRoot: string | null
 }
 
 /** The version of this build. A release sets it when it packages the server. */
@@ -102,6 +174,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const home = yield* Config.String("HOME").pipe(Config.withDefault("/"))
         const dataHome = yield* Config.String("XDG_DATA_HOME").pipe(Config.withDefault(`${home}/.local/share`))
         const commit = yield* Config.String("HUNTAWAY_COMMIT").pipe(Config.option)
+        const exe = yield* Config.String("HUNTAWAY_EXE").pipe(Config.option)
+        const tmpDir = yield* Config.String("TMPDIR").pipe(Config.withDefault("/tmp"))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -121,11 +195,18 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           version: VERSION,
           commit: Option.getOrNull(commit),
           home,
+          shimBin: args.shimBin === undefined ? null : Option.getOrNull(Option.map(args.shimBin, expand)),
+          claudeBin: args.claudeBin === undefined ? "claude" : Option.getOrElse(Option.map(args.claudeBin, expand), () => "claude"),
+          noAgents: args.noAgents ?? false,
+          exe: Option.getOrNull(exe),
+          agentEnv: AGENT_ENV,
+          tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
+          taskTmpRoot: null,
         })
       }),
     )
 
-  /** For tests: everything given. */
+  /** For tests: everything given. The tasks' temp folders are in the data folder (`task-tmp`), which goes with the test. */
   static readonly layerTest = (config: Partial<ServerConfigShape> & { readonly dataDir: string }) =>
     Layer.succeed(
       ServerConfig,
@@ -142,6 +223,14 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         version: VERSION,
         commit: null,
         home: config.dataDir,
+        // No agent starts unless a test gives a shim (and a fake `claude`); never the real Claude Code.
+        shimBin: "/nonexistent/ia-shim",
+        claudeBin: `${config.dataDir}/no-claude-in-tests`,
+        noAgents: false,
+        exe: null,
+        agentEnv: AGENT_ENV,
+        tmpDir: config.dataDir,
+        taskTmpRoot: `${config.dataDir}/task-tmp`,
         ...config,
       }),
     )

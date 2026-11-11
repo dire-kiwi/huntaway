@@ -16,13 +16,13 @@ calls the engine) are where its hardest rules hid.
 platform      ServerConfig · DataDir · Identity · Db · Migrations · Backup · Events · Changes · KeyedLock · Proc
               Secrets · Telemetry · Lag
 settings      HostSettings
-profiles      Profiles · AgentConfigs · Usage · UsageWindow
+profiles      Profiles · AgentConfigs · Usage
 projects      Projects · Relocation
-tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp
+tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp · Leftovers
 threads       ThreadStore · Threads · ThreadReaders
 git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts
 github        Gh · PullRequests · PrWatch · GithubRepos · GhStacks
-agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · Titles
+agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · SideCalls · Titles · UsageWindow
 runs          RunRepo · RunDir · Shim · RunFollower · Runs · BackgroundWork · DevServers · Compaction
 permissions   Permissions · Questions · Approvals
 review        Reviews · Summaries · ReviewStats · Fanout
@@ -108,7 +108,7 @@ tail and publishes it. A subscriber that cannot keep up is cut off with `resync`
 | `Profiles`      | Profiles and what hangs off them: config lists, reviewers, summarizers, GitHub account, access for other profiles' agents, tint            |
 | `AgentConfigs`  | Config folders and their agent; proxy settings; listing Codex models; exporting and importing a login as an archive                        |
 | `Usage`         | Plan limits per config (Anthropic's usage endpoint, Codex's rate limits, a proxy's accounts), "out until", tasks waiting for a reset. In memory, with the durable part on the task |
-| `UsageWindow`   | Restarting a 5-hour window with a throwaway prompt                                                                                         |
+| `UsageWindow`   | Restarting a 5-hour window with a throwaway prompt. In `agents/` (2.8): it runs `claude` and records a side call, as `Titles` does         |
 
 ### Projects — [inventory 07](inventory/07-server-root-api.md), [04](inventory/04-git-review.md)
 
@@ -160,7 +160,10 @@ read out of a thread).
 | `StatusScripts` | The project's script on a column move: its environment, one at a time per task, five-minute limit, output into the thread                   |
 
 `git/shell.ts` (the reader of shell commands behind "did the agent change code" and the gh hook) moves to
-`packages/shared`, because the hook loads it.
+`packages/shared`, because the hook loads it. As built in 3.6: `packages/shared/src/shell.ts` has the command reader
+(`runsProgram`, `commandChangesCode`, `tokenize`, `substitutions`); the old `changes_code` (which tool calls count, an
+edit only if it succeeded, a Bash command unless it was denied) is the git area's, over `commandChangesCode`, with its
+two tool-call test cases.
 
 ### GitHub — [inventory 03](inventory/03-mcp.md) (2.9, 2.10), [04](inventory/04-git-review.md), [06](inventory/06-integrations.md)
 
@@ -243,6 +246,15 @@ every matching call. They must start in tens of milliseconds and fail closed (ex
   `effect`.
 - Their logic is the old one, kept with its tests: rule matching (strongest decision wins), the shell reader, `gh`
   argument refusal.
+
+As built in 3.6: `hooks/approval-hook.ts` and `gh-hook.ts` are the entries; each installs its fail-closed handlers and
+only then imports its logic (`hooks/approval.ts`, `hooks/gh.ts`), so a hook that cannot load exits 2. The matcher and
+the hook's answer are `packages/shared/src/approvalRules.ts` (the web client decides by the same `decide`). `gh-hook`
+now refuses a call whose input is not JSON (exit 2); the old one let it through. The launcher sets
+`NODE_COMPILE_CACHE` (in the temp folder) for the hooks: from a checkout, Node otherwise loads its TypeScript stripper
+on every call. Measured on the reference machine through `bin/huntaway`: about 57–60 ms with an empty cache (the first
+call), 25–33 ms after; `tests/e2e/hooks.test.ts` holds the median under 60 ms. A release runs the precompiled `.js`
+and strips nothing.
 
 ## Startup
 

@@ -4,8 +4,10 @@ import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import type { Since } from "../platform/Events.ts"
 import { Identity } from "../platform/Identity.ts"
+import { Permissions } from "../permissions/Permissions.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import { Profiles } from "../profiles/Profiles.ts"
+import { Usage } from "../profiles/Usage.ts"
 import { Projects } from "../projects/Projects.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { PenRepo } from "../tasks/PenRepo.ts"
@@ -35,6 +37,8 @@ export class Board extends Context.Service<Board, BoardShape>()("huntaway-server
       const settings = yield* HostSettings
       const tasks = yield* TaskRepo
       const pens = yield* PenRepo
+      const usage = yield* Usage
+      const permissions = yield* Permissions
 
       const snapshot = Effect.fn("Board.snapshot")(function* (seq: number) {
         return yield* db.tx(
@@ -55,9 +59,9 @@ export class Board extends Context.Service<Board, BoardShape>()("huntaway-server
               archived_projects: archived,
               tasks: yield* tasks.all,
               pens: yield* pens.all,
-              // Usage joins with M2.
               settings: yield* settings.get,
-              usage: [],
+              usage: yield* usage.snapshot,
+              approvals: yield* permissions.approvals,
             }
             return snap
           }),

@@ -1,7 +1,7 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Console, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { Command, Flag } from "effect/cli"
-import { SecureRandom } from "effect/crypto"
+import { Mac, SecureRandom } from "effect/crypto"
 import { HttpServer } from "effect/http"
 import { rpcCommand } from "./cli/rpc.ts"
 import { serverLayer } from "./Main.ts"
@@ -46,6 +46,7 @@ const tokenCommand = Command.make(
     }).pipe(
       Effect.provide(
         Layer.provideMerge(Identity.layer, DataDir.layer).pipe(
+          Layer.provide(Mac.layerWebCrypto),
           Layer.provide(SecureRandom.layerWebCrypto),
           Layer.provideMerge(
             ServerConfig.layerFrom({

@@ -98,10 +98,17 @@ read or reasoned, not run.
 - Upgrade headers reaching RPC middleware on every request of a socket; the signed session; piping two sockets.
 - `Rpc.annotate` as the carrier of an RPC's scope, read by the middleware (the method exists; the pattern was not
   run).
-- Effect's `Tool.getJsonSchema` output against what Claude Code and Codex accept for each of the 70 tools.
-- The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows.
+- Effect's `Tool.getJsonSchema` output against what Claude Code and Codex accept for each of the 70 tools. Partly checked in
+  M3 (HE-4): the board server's 22 tools served so far are accepted by a real Claude Code once every input schema is an
+  object with `"type": "object"` (a struct of no fields came out as `{ not: { type: "null" } }`, and Claude Code then
+  dropped the whole list; `mcp/tool.ts` now fixes the shape). Codex, and the `gh`, `docs` and `desktop` servers, are not.
+- The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows. Measured at M2 (HE-4) on
+  synthetic data of that size, not a real board: 5.5 MB in 154 ms (the old client's 15 loads: 5.7 MB, 65 ms);
+  [10-testing.md](10-testing.md#measurements).
 - Memory, start-up time and event-loop delay of a whole server on Effect. HA-408 measured a bare import: 104 ms and
-  100 MB for all of `effect`.
+  100 MB for all of `effect`. Measured at M2 (HE-4) against the old server on the same synthetic data: within the limits
+  of [10-testing.md](10-testing.md#measurements) (memory 1.13–1.33×, ready in ~0.55 s, event-loop p99 better), after
+  the follower was brought within 1.5×; not yet on a scrubbed copy of a live board (that needs the importer, M9).
 - `tsrs` compiling the whole server for a release; the size of a release package.
 - ~~Three names in the lint configuration~~: checked in M0 (HE-3): `import/no-cycle` (with the `import` plugin listed),
   `no-restricted-imports` with `{ patterns: [{ group, message }] }`, and `react/rules-of-hooks`/`react/exhaustive-deps`.

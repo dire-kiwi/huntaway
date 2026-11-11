@@ -32,10 +32,22 @@ export const NullableJsonColumn = <S extends Schema.Codec<unknown, unknown>>(sch
   return Schema.catchDecoding<typeof read>(() => Effect.succeedSome(null))(read)
 }
 
-const jsonText = Schema.fromJsonString(Schema.Unknown)
+const encodeJsonText = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown))
 
-/** A value as the JSON text a column stores. */
-export const toJson = (value: unknown): Effect.Effect<string> => Schema.encodeEffect(jsonText)(value).pipe(Effect.orDie)
+/** A value as the JSON text a column stores (encoded synchronously: it is on the follower's path, twice a line). */
+export const toJson = (value: unknown): Effect.Effect<string> => Effect.suspend(() => Effect.orDie(Effect.fromResult(encodeJsonText(value))))
+
+/**
+ * A reader of a statement's rows, decoded with `Result` by a decoder made once, when the reader is (at module level),
+ * not on each call: `SqlSchema.findAll` called inline builds its decoder every time, which the follower's hot path
+ * paid on each line.
+ */
+export const rowsOf = <S extends Schema.ConstraintDecoder<unknown>>(Result: S) => {
+  // Synchronous: a row schema needs no service, and running the parser as an Effect costs more than the decoding.
+  const decode = Schema.decodeUnknownResult(Schema.Array(Result))
+  return <E>(statement: Effect.Effect<ReadonlyArray<unknown>, E>): Effect.Effect<ReadonlyArray<S["Type"]>> =>
+    Effect.orDie(Effect.flatMap(statement, (rows) => Effect.fromResult(decode(rows))))
+}
 
 /** Now, as rows store it: RFC 3339 UTC with milliseconds. */
 export const nowTimestamp: Effect.Effect<Timestamp> = Effect.map(DateTime.now, (now) => Timestamp.make(DateTime.formatIso(now)))

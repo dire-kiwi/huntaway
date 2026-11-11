@@ -19,10 +19,22 @@ const mutation = <M extends keyof Methods>(method: M): Mutation<M> =>
  * show at once, are `optimisticMove`.
  */
 export const mutations = {
-  tasks: { create: mutation("tasks.create"), update: mutation("tasks.update"), delete: mutation("tasks.delete") },
+  tasks: {
+    create: mutation("tasks.create"),
+    update: mutation("tasks.update"),
+    delete: mutation("tasks.delete"),
+    // A composer's sends and unqueues are `sendMessage` and `unqueueMessage` (thread/send.ts), which keep its draft.
+    send: mutation("tasks.send"),
+    stop: mutation("tasks.stop"),
+    dropQueued: mutation("tasks.dropQueued"),
+  },
   projects: { create: mutation("projects.create"), update: mutation("projects.update"), delete: mutation("projects.delete") },
   profiles: { create: mutation("profiles.create"), update: mutation("profiles.update"), delete: mutation("profiles.delete") },
   configs: { create: mutation("configs.create"), update: mutation("configs.update"), delete: mutation("configs.delete") },
   pens: { create: mutation("pens.create"), update: mutation("pens.update"), delete: mutation("pens.delete") },
   host: { updateSettings: mutation("host.updateSettings") },
+  // A prompt's answer: the request and the thread's card change with the events that follow.
+  permissions: { answer: mutation("permissions.answer") },
+  // A board question's answer, sent to the agent as the user's message.
+  threads: { answerQuestion: mutation("threads.answerQuestion") },
 } as const

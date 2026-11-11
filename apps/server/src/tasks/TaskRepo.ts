@@ -1,4 +1,4 @@
-import { Bit, JsonColumn } from "../platform/columns.ts"
+import { Bit, JsonColumn, rowsOf } from "../platform/columns.ts"
 import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect"
 import { SqlClient, SqlSchema } from "effect/sql"
 import type { SqlError } from "effect/sql"
@@ -44,9 +44,9 @@ import type { NewRow, NumberFamily, TaskColumns } from "./decide.ts"
 
 // ---- columns ----------------------------------------------------------------------------------------------------
 
-const JsonText = Schema.fromJsonString(Schema.Unknown)
+const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
 /** A value as JSON text. */
-const encodeJson = (value: unknown) => Schema.encodeEffect(JsonText)(value).pipe(Effect.orDie)
+const encodeJson = (value: unknown) => encodeJsonText(value).pipe(Effect.orDie)
 
 /** `restack`: `due` or `conflict`; anything else reads as null. */
 const Restack = Schema.NullOr(Schema.String).pipe(
@@ -62,6 +62,20 @@ const Restack = Schema.NullOr(Schema.String).pipe(
 const Text = Schema.NullOr(Schema.String)
 const Time = Schema.NullOr(Timestamp)
 
+/**
+ * Who sent a message for a task's agent (docs/plan/04-database.md, The queue and steers): the user, another agent
+ * (`send_to_task`), a routine (the assistant's), a project automation, or the board itself at the user's asking.
+ */
+export const MessageSource = Schema.Literals(["user", "agent", "routine", "automation", "board"])
+export type MessageSource = typeof MessageSource.Type
+
+/**
+ * Whether a message counts as another agent's rather than the user's (the old `from_agent`): another agent's, a
+ * routine's, and an automation's with text (one with none only starts the task it made).
+ */
+export const fromAgent = (source: string, text: string): boolean =>
+  source === "agent" || source === "routine" || (source === "automation" && text.trim() !== "")
+
 /** A message waiting for the task's next run (`task_queue`). */
 const QueueRow = Schema.Struct({ text: Schema.String, source: Schema.String, automation_run_id: Text })
 /** A message steered into a live run (`task_steers`). */
@@ -73,6 +87,26 @@ const SteerRow = Schema.Struct({
   automation_run_id: Text,
   written: Schema.Int,
 })
+
+/** A queued message as its row has it. */
+export interface QueuedRow {
+  readonly text: string
+  readonly source: MessageSource
+  readonly automation_run_id: string | null
+}
+
+/** A steered message as its row has it. */
+export interface SteerRowOf {
+  readonly id: string
+  readonly run_id: RunId
+  readonly text: string
+  readonly source: MessageSource
+  readonly automation_run_id: string | null
+  readonly written: boolean
+}
+
+const QueueRows = Schema.Struct({ text: Schema.String, source: MessageSource, automation_run_id: Text })
+const SteerRows = Schema.Struct({ id: Schema.String, run_id: RunId, text: Schema.String, source: MessageSource, automation_run_id: Text, written: Bit })
 
 /** A row of `tasks`, with its project's key and its queue and steer rows (`SELECT_TASK`). */
 export const TaskRow = Schema.Struct({
@@ -166,7 +200,7 @@ export const toTask = (row: TaskRow): Task => {
     const steer: { -readonly [K in keyof Steer]: Steer[K] } = {
       id: s.id,
       text: s.text,
-      from_agent: s.source === "agent",
+      from_agent: fromAgent(s.source, s.text),
       run_id: s.run_id,
       written: s.written !== 0,
     }
@@ -207,11 +241,6 @@ const taskRows = <Req extends Schema.Constraint>(Request: Req, execute: (r: Req[
 }
 const first = <A>(effect: Effect.Effect<ReadonlyArray<A>>) => Effect.map(effect, (found) => found[0] ?? null)
 const bit = (b: boolean | undefined) => (b === true ? 1 : 0)
-/** The rows a statement returns, decoded with `Result`. */
-const decoded = <S extends Schema.Constraint>(Result: S, statement: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) =>
-  SqlSchema.findAll({ Request: Schema.Void, Result, execute: () => statement })(undefined).pipe(Effect.orDie)
-/** The `n` of a statement's first row. */
-const count = (statement: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) => Effect.map(decoded(Count, statement), (found) => found[0]?.n ?? 0)
 
 // ---- the other rows a task's rules read -------------------------------------------------------------------------
 
@@ -263,6 +292,8 @@ const familyTypes: { readonly [F in Exclude<NumberFamily, "project" | "group">]:
 
 export interface TaskRepoShape {
   readonly get: (id: string) => Effect.Effect<Task | null>
+  /** Whether the task is there, without reading it. */
+  readonly exists: (id: string) => Effect.Effect<boolean>
   readonly getMany: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<Task>>
   /**
    * Every task a client keeps, in one read (the board's snapshot): what the old client's `loadAll` loaded. Every
@@ -297,7 +328,49 @@ export interface TaskRepoShape {
   readonly configs: (profile: ProfileId, project: ProjectRef | null) => Effect.Effect<ReadonlyArray<AgentConfigId>>
   /** How many of a profile's projects that aren't archived are in a group. */
   readonly groupProjects: (profile: ProfileId, group: string) => Effect.Effect<number>
+
+  // The queue and steers (docs/plan/04-database.md): the rows the task's `queued_message` and `steering` are read from.
+  /** The messages queued for the task's next run, in order. */
+  readonly queued: (task: TaskId) => Effect.Effect<ReadonlyArray<QueuedRow>>
+  /** Queue a message after the others. */
+  readonly enqueue: (task: TaskId, row: QueuedRow, now: Timestamp) => Effect.Effect<void>
+  /** Take every queued message: they are deleted and returned, in order. */
+  readonly takeQueued: (task: TaskId) => Effect.Effect<ReadonlyArray<QueuedRow>>
+  /** Queue `rows` ahead of whatever is queued now. */
+  readonly queueAhead: (task: TaskId, rows: ReadonlyArray<QueuedRow>, now: Timestamp) => Effect.Effect<void>
+  /** The messages steered into a run of the task (all runs' if none is named), in the order they were sent. */
+  readonly steers: (task: TaskId, run?: RunId) => Effect.Effect<ReadonlyArray<SteerRowOf>>
+  /** A message steered into run `row.run_id`, not written to its input yet. */
+  readonly addSteer: (task: TaskId, row: Omit<SteerRowOf, "written">, now: Timestamp) => Effect.Effect<void>
+  /** The steer was written to its run's input. */
+  readonly steerWritten: (id: string) => Effect.Effect<void>
+  /** Takes the steer away (its agent took it in): returned, or null when there was none by that id for the task. */
+  readonly takeSteer: (task: TaskId, id: string) => Effect.Effect<SteerRowOf | null>
+  /** Takes away the steers of `run` (every run's if none is named), returning them in order. */
+  readonly takeSteers: (task: TaskId, run?: RunId) => Effect.Effect<ReadonlyArray<SteerRowOf>>
+  /** The background work its last runs' ends stopped that its agent hasn't been told of (`lost_background`). */
+  readonly lostBackground: (task: TaskId) => Effect.Effect<ReadonlyArray<LostBackground>>
+  /** Set it (the latest ten), or clear it with an empty list. */
+  readonly setLostBackground: (task: TaskId, lost: ReadonlyArray<LostBackground>) => Effect.Effect<void>
 }
+
+/** A piece of background work a run's end stopped: what it was, and a line about it. */
+export interface LostBackground {
+  readonly kind: string
+  readonly label: string
+}
+const LostRows = JsonColumn(Schema.Array(Schema.Struct({ kind: Schema.String, label: Schema.String })), [])
+
+// Each row schema's reader, its decoder made once.
+const projectRows = rowsOf(ProjectRow)
+const profileRows = rowsOf(ProfileRow)
+const idRows = rowsOf(Id)
+const queueRows = rowsOf(QueueRows)
+const steerRows = rowsOf(SteerRows)
+const lostRows = rowsOf(Schema.Struct({ lost: LostRows }))
+const countRows = rowsOf(Count)
+/** The `n` of a statement's first row. */
+const count = (statement: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) => Effect.map(countRows(statement), (found) => found[0]?.n ?? 0)
 
 /** The repository of tasks. */
 export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaway-server/tasks/TaskRepo") {
@@ -406,24 +479,81 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
       const selectProjects = sql.literal(
         "SELECT id, profile_id, name, key, former_keys, archived_at, base_branch, use_worktrees, is_git, pr_preview_url, claude_config_ids FROM projects",
       )
-      const project = (id: ProjectId) => first(Effect.map(decoded(ProjectRow, sql`${selectProjects} WHERE id = ${id}`), (found) => found.map(toProject)))
-      const projects = Effect.map(decoded(ProjectRow, sql`${selectProjects} ORDER BY created_at`), (found) => found.map(toProject))
-      const profile = (id: ProfileId) => first(decoded(ProfileRow, sql`SELECT id, name, claude_config_ids FROM profiles WHERE id = ${id}`))
-      const profiles = decoded(ProfileRow, sql`SELECT id, name, claude_config_ids FROM profiles ORDER BY created_at`)
+      const project = (id: ProjectId) => first(Effect.map(projectRows(sql`${selectProjects} WHERE id = ${id}`), (found) => found.map(toProject)))
+      const projects = Effect.map(projectRows(sql`${selectProjects} ORDER BY created_at`), (found) => found.map(toProject))
+      const profile = (id: ProfileId) => first(profileRows(sql`SELECT id, name, claude_config_ids FROM profiles WHERE id = ${id}`))
+      const profiles = profileRows(sql`SELECT id, name, claude_config_ids FROM profiles ORDER BY created_at`)
 
       const configs = Effect.fnUntraced(function* (profileId: ProfileId, of: ProjectRef | null) {
         const own = of?.claude_config_ids ?? []
         const ids = own.length > 0 ? own : ((yield* profile(profileId))?.claude_config_ids ?? [])
         if (ids.length === 0) return []
-        const existing = new Set((yield* decoded(Id, sql`SELECT id FROM agent_configs WHERE ${sql.in("id", ids)}`)).map((r) => r.id))
+        const existing = new Set((yield* idRows(sql`SELECT id FROM agent_configs WHERE ${sql.in("id", ids)}`)).map((r) => r.id))
         return ids.filter((id) => existing.has(id))
       })
 
       const groupProjects = (profileId: ProfileId, group: string) =>
         count(sql`SELECT COUNT(*) AS n FROM projects WHERE profile_id = ${profileId} AND group_name = ${group} AND archived_at IS NULL`)
 
+      const queued = (task: TaskId) => queueRows(sql`SELECT text, source, automation_run_id FROM task_queue WHERE task_id = ${task} ORDER BY seq`)
+      const enqueue = (task: TaskId, row: QueuedRow, now: Timestamp) =>
+        sql`INSERT INTO task_queue (task_id, text, source, automation_run_id, created_at)
+          VALUES (${task}, ${row.text}, ${row.source}, ${row.automation_run_id}, ${now})`.pipe(Effect.asVoid, Effect.orDie)
+      const takeQueued = (task: TaskId) =>
+        Effect.gen(function* () {
+          const rows = yield* queued(task)
+          if (rows.length > 0) yield* sql`DELETE FROM task_queue WHERE task_id = ${task}`.pipe(Effect.orDie)
+          return rows
+        })
+      // Ahead: what is queued now goes back behind them, so that the order is by seq.
+      const queueAhead = (task: TaskId, rows: ReadonlyArray<QueuedRow>, now: Timestamp) =>
+        Effect.gen(function* () {
+          if (rows.length === 0) return
+          const later = yield* takeQueued(task)
+          for (const row of [...rows, ...later]) yield* enqueue(task, row, now)
+        })
+      const steers = (task: TaskId, run?: RunId) =>
+        steerRows(sql`SELECT id, run_id, text, source, automation_run_id, written FROM task_steers
+            WHERE task_id = ${task} AND (${run ?? null} IS NULL OR run_id = ${run ?? null}) ORDER BY seq`)
+      const addSteer = (task: TaskId, row: Omit<SteerRowOf, "written">, now: Timestamp) =>
+        sql`INSERT INTO task_steers (id, seq, task_id, run_id, text, source, automation_run_id, written, created_at)
+          VALUES (${row.id}, (SELECT COALESCE(MAX(seq), 0) + 1 FROM task_steers WHERE task_id = ${task}), ${task}, ${row.run_id}, ${row.text},
+            ${row.source}, ${row.automation_run_id}, 0, ${now})`.pipe(Effect.asVoid, Effect.orDie)
+      const takeSteer = (task: TaskId, id: string) =>
+        Effect.gen(function* () {
+          const found = (yield* steers(task)).find((s) => s.id === id) ?? null
+          if (found !== null) yield* sql`DELETE FROM task_steers WHERE id = ${id}`.pipe(Effect.orDie)
+          return found
+        })
+      const takeSteers = (task: TaskId, run?: RunId) =>
+        Effect.gen(function* () {
+          const rows = yield* steers(task, run)
+          for (const row of rows) yield* sql`DELETE FROM task_steers WHERE id = ${row.id}`.pipe(Effect.orDie)
+          return rows
+        })
+
+      const lostBackground = (task: TaskId) =>
+        Effect.map(lostRows(sql`SELECT lost_background AS lost FROM tasks WHERE id = ${task}`), (rows) => rows[0]?.lost ?? [])
+      const setLostBackground = (task: TaskId, lost: ReadonlyArray<LostBackground>) =>
+        Effect.gen(function* () {
+          const text = lost.length === 0 ? null : yield* encodeJson(lost.slice(-10))
+          yield* sql`UPDATE tasks SET lost_background = ${text} WHERE id = ${task}`.pipe(Effect.orDie)
+        })
+
       return TaskRepo.of({
+        lostBackground,
+        setLostBackground,
+        queued,
+        enqueue,
+        takeQueued,
+        queueAhead,
+        steers,
+        addSteer,
+        steerWritten: (id) => sql`UPDATE task_steers SET written = 1 WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
+        takeSteer,
+        takeSteers,
         get: (id) => first(byId(id)),
+        exists: (id) => Effect.map(count(sql`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ${id}) AS n`), (n) => n === 1),
         getMany: (ids) => (ids.length === 0 ? Effect.succeed([]) : byIds(ids)),
         all: everything(undefined),
         list,

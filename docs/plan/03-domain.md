@@ -206,7 +206,7 @@ Each keeps its old fields. What changes:
 | `Host`, `HostInfo`, `HostSettings`, `ServerStatus`, `ReleaseStatus` | `server.ts` | `api_version`/`api_compat` replaced by `protocol` and `version`; `capabilities` stays. `HostInfo` gains `read_only` (a [rehearsal](11-migration.md#rehearsal)). `HostSettings` without `thread_items` |
 | `Usage`, `UsageLimit`   | `usage.ts`                                 | Same                                                                                             |
 | `PendingPermission`, `Approval` | `permissions.ts`, `approvals.ts`   | `kind` is `tool \| project \| delete_task \| automation \| workflow`, each with its own input    |
-| `ApprovalRules`, `ApprovalAction` | `approval_rules.ts`              | Same                                                                                             |
+| `ApprovalRules`, `ApprovalAction` | `approval_rules.ts`              | Same, in `approval.ts` (3.6): the view is `ApprovalRulesView`, the stored rules `ApprovalRuleSet`, a save `ApprovalRulesUpdate` |
 | `GitStatus`, `DiffResult`, `Turn`, `Checkpoint` | `git.ts` and handler-local types | Declared for the first time: the old handlers returned untyped JSON                      |
 | `SyncEntry`, `SettingsSync` | `settings_sync.ts`                     | Same                                                                                             |
 
@@ -243,6 +243,32 @@ Changes:
 - **Permission modes keep both spellings**: Claude Code's on tasks and projects (`acceptEdits`), snake_case in the
   thread protocol (`accept_edits`). One pair of converters in the contracts package replaces the copies.
 
+As built (HE-4, 2.1), in `thread/Thread.ts`, `Item.ts`, `Request.ts`, `Event.ts`, `Command.ts`, `Snapshot.ts`,
+`reducer.ts`, `window.ts`:
+
+- **Names that would clash** with the board's: the request's `Resolution` is `RequestResolution` (the task has a
+  `Resolution`), the protocol's mode is `ThreadPermissionMode` (converters `toThreadPermissionMode`,
+  `fromThreadPermissionMode`), item and request `metadata` is `ThreadMetadata`. A tool call's `todos` are the task's
+  `Todo`, the same shape. The protocol's `Usage` went with the fields that held it.
+- **Also left out, as never produced**: `Thread.status: "error"`, `Thread.usage/error/metadata`, `send`'s
+  `attachments` and `client_id`, and `rewind`'s `turn_id` (it takes the user message's `item_id`). Without `turn_id` a
+  request is anchored by its tool call only; one with none is in every window and in no page, as before.
+- **Fields the old protocol omits when unset are `Schema.optionalKey`** (exact: absent, never `undefined`). The types
+  are `typeof X.Type` aliases, not interfaces, so the reducer can spread them (`no-misused-spread` takes an interface
+  over a schema's type for a class).
+- **The reply being written is a `preview`, not a `delta`.** `threads.watch` streams it as
+  `ThreadPreview { type: "preview", thread_id, seq, item_id, offset, text }`, and the snapshot carries what has
+  streamed so far (`ThreadSnapshot.preview: { item_id, text } | null`). `previewAfter(preview, message)` folds it as
+  the old web did: text at its offset, overlap skipped; a new reply for another `item_id`; none once an item is added
+  to the main conversation. `Delta` stays in `ThreadEvent` (the reducer applies one to an item the thread has, and the
+  recorded sessions have them), but the board does not produce one.
+- **`threads.watch` streams `ThreadMessage`** = `ThreadSnapshot | ThreadEvent | ThreadPreview | UnknownEvent`, in that
+  order, so an event of a newer type, or of a known type whose item this build cannot read, decodes as an
+  `UnknownEvent`. The reducer takes `ThreadEvent | UnknownEvent` and counts what is not a whole `ThreadEvent`.
+- **The recorded sessions are checked in `packages/testing/test/threadFixtures.test.ts`** (contracts has no Node
+  types to read files with): each of the 695 expected events of a declared type decodes as `ThreadEvent` losing only
+  the fields above, and every scenario folds. agent-threads' spec examples are beside them in `fixtures/threads/examples/`.
+
 ## Events
 
 `BoardEvent` is what a host's board stream carries: the old `HostEvent` union
@@ -255,7 +281,7 @@ export const BoardEvent = Schema.Union([
   TaskChanged, // { type: "task", seq, task }
   TaskDeleted, // { type: "task_deleted", seq, id, project_id }
   ProjectChanged, ProjectDeleted, ProfilesChanged, SettingsChanged, PensChanged, UsageChanged,
-  ApprovalChanged, // new: { type: "approval", seq, approval | removed }, replaces reading `message` events
+  ApprovalChanged, // new: { type: "approval", seq, request_id, approval: Approval | null (no longer waiting) }, replaces reading `message` events
   ApprovalRulesChanged, ApprovalLogChanged, CheckpointsChanged, AutomationsChanged, WorkflowsChanged,
   WorkflowRunsChanged, DocsChanged, DocCommentsChanged, DocsSiteChanged, AssistantReplied,
   ReleaseChecked, ReleaseDownload, Restart, RestartLog
@@ -264,7 +290,9 @@ export const BoardEvent = Schema.Union([
 
 Where the old event said "read them again" (`profiles_changed`, `settings_changed`, `pens`), the new one carries
 what to read (all profiles and configs, the settings, the profile's pens), so a client never loads lists beside the
-stream (HE-3).
+stream (HE-3). So do `approval_rules { profile_id, rules }` (the view `approvalRules.get` gives) and
+`approval_log { profile_id, task_id, action }` (the entry as written or settled) (3.6). The board snapshot carries
+neither: Settings reads them per profile with `approvalRules.get` and `log`.
 
 Gone: `message`, `message_updated`, `delta`, `delta_reset` (legacy), `thread_event` and `thread_resync` (a thread
 is its own subscription, [05-protocol.md](05-protocol.md#a-thread)), `telegram`, `tick` (the RPC client pings).

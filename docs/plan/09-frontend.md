@@ -122,10 +122,10 @@ still unique per host only; `taskAtom({ host_id, id })` is the exact lookup, and
 ### Threads
 
 `threadAtom({ host_id, task_id })` is a window folded from `threads.watch` with the contract's reducer. It is kept
-alive while something shows it and for ten seconds after, as now. `olderItems` pages back with `threads.page`. The
-text streamed for the reply being written is its own atom (`threadPreviewAtom`), flushed once per animation frame,
-so a token does not re-run anything that reads the thread. `itemModel.ts` keeps turning items into rows with stable
-identity.
+alive while something shows it and for ten seconds after, as now. `olderPage` pages back with `threads.page`. The
+text streamed for the reply being written is its own atom (`threadPreviewAtom`), taken once per animation frame by
+the web app, so a token does not re-run anything that reads the thread. `itemModel.ts` keeps turning items into rows
+with stable identity. As built: see "Step 1 as done for task/" below.
 
 All of the old hold, gap, catch-up, resync and load-generation logic is gone: the server sends a consistent window
 and then what follows ([05-protocol.md](05-protocol.md#a-thread)).
@@ -207,6 +207,60 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - Not yet: component checks under `tests/browser` (the fake is there, with unit tests), and a catch-all member for
   board events of a kind a client does not know (`BoardMessage` has none; the client's reducer ignores unknown kinds,
   but decoding fails first).
+
+### Step 1 as done for `task/` and `task/thread/` (M2, HE-4)
+
+- **The client** (`packages/client/src/thread/`): `threadAtom({ host_id, task_id })` is a `ThreadView`
+  (`{ snap, loading, failed, unknown }`) folded from `threads.watch` (a window of `WINDOW_ITEMS` = 300) with
+  `applyEvent`; a dropped subscription subscribes again with `since` its window's `seq`. It stays subscribed ten seconds
+  after the last reader (`Atom.setIdleTTL`). `olderPage(ref)` loads `PAGE_ITEMS` = 200 before the window's start with
+  `threads.page` and `withPage`, keeping the window's own copies of what both have, so an event for an item of a loaded
+  page changes it. `threadPreviewAtom(ref)` is the reply being written (`previewAfter`), apart from the thread; the web
+  app takes it once per animation frame (`usePreviewText`), since the client has no DOM. `sendMessage(ref)` and
+  `unqueueMessage(ref)` are kept for the page's life and take the composer's draft atom: a send outlives its composer,
+  and only what it sent (`draftAfterSend`) comes off the draft; an unqueue puts the queued text back in front
+  (`draftWithQueued`). `sendingAtom(ref)` counts sends in flight. `mutations.tasks.send`, `stop` and `dropQueued` are
+  the plain calls.
+- **The web app**: the draft is `composerDraftAtom(composerDraftKey(task))` in `state/drafts.ts`, under the old
+  `ia.composer.draft.<host>:<task>` key, kept for the page's life with `composerUnsavedAtom` for the "couldn't save"
+  warning; the composer edits it directly, so a send's change shows in whichever composer is open. The old
+  `src/itemModel.ts`, `threadModel.ts`, `subagents.ts` (`thread/subagentView.ts`, on `smallStore`) and `taskRefs.ts`
+  moved into `components/task/thread/`, under the components' lint override; `thread/threadView.ts` holds the hooks
+  (`useThreadView`, `useThreadModel`, `useLoadOlder`, `useReloadThread`, `usePreviewText`). The thread's rows read an
+  agent's tool input and the board's metadata loosely through one `type Any = any` (the one listed suppression) until
+  step 2. Every host keeps threads as items, so the old notices for an old host or a thread not on items are gone; a
+  thread that cannot be watched (its task gone) says so with "Try again".
+- **Cut with a note, by milestone**: the background banner's Stop buttons (2.5); turns, checkpoints, rewind marks
+  and the rewind dialog (4.3); line comments sent with a message (4.2); the skills menu (6.4, inert); Changes, review,
+  summary and the review's dot (M4); workflows' tabs and list (6.6); the terminal and its tools, the browser pane and
+  the desktop view (M6); documents and plan tabs, document links (M6: links are plain external links); the assistant's
+  memory, brief, routines and action log, and finding a routine's thread on other hosts (M6); Asana links (6.11);
+  approval rules in Details (3.6, 6.12); worktree set-up and tear-down (4.1); "Stacked on" and "Landing after" in
+  Details (4.8); fix-checks buttons (4.5, 4.6); the context breakdown's lists and "carry on" (2.8); Codex config models
+  (M5); a review thread's own view (M4). The Agents pill (`layout/AgentsPill`) is still HE-3's cut. Subprojects are a
+  legacy branch, deleted.
+- **Smaller changes the lint asked for**: the thread notes its top row as it is scrolled and after each change (not
+  while it draws) to keep the place when older items come in; its source of rows is filled by an effect; tool groups'
+  stable keys are kept per thread for the page's life. A host's tagged errors have no message, so `errorText` reads
+  their fields (`Unavailable: what: reason`, `Conflict: detail`…). `components/task/attachments.ts` is
+  `attachmentFiles.ts` (two names differing only in case).
+- **Checks**: `tests/ui/threads.mjs` writes a thread's items into a test server's database before the page opens it
+  (`seedThread`), since only runs write threads and this server has none yet; the checks that need a run are written
+  against `--fake-claude` and skipped until Runs (2.5) is in. With 2.7 they run (`threadUpdates`, `threadLive`'s
+  streaming, `detailsStatusStart`, `uiState`'s Stop): a fresh task moved into In progress starts its agent only where
+  `host.info` says `agents: true`, which the server now reports unless it runs with `--no-agents`; the fake agent
+  streams a reply only for a prompt with `fake-subagent`, and keeps a turn going until a stop interrupts it only for
+  one with `fake-until-interrupted` (its sleep before a reply doesn't heed a stop).
+- **Answering what agents ask (3.3)**: the permission card (`items.tsx`: Allow, Always allow, Deny), Claude's questions
+  (`AskCard`: picks by click or keys 1–9, typed answers, Dismiss, answers by message after the run ended), the plan
+  (`PlanCard`: Approve into a mode, Keep planning with feedback) and the board's own approvals (`ApprovalCard`: Approve or
+  Deny; their detailed views are 3.4's) answer with `mutations.permissions.answer` through `thread/promptAnswers.ts`
+  (`usePromptAnswers(host)`); the board's request_user_input card answers with `mutations.threads.answerQuestion`. The
+  old `Questions.tsx` cards live in `thread/requestCards.tsx` (no `Questions.tsx`, `Approvals.tsx` or `planAnswers.ts`:
+  plan documents' answers are M6's). A board question's state comes from its request's resolution (`itemModel.ts`), as
+  its metadata keeps only the card. The snapshot's `approvals` and `approval` events fold into `HostBoard.approvals`.
+  Checks: `tests/ui/permissions.test.mjs`, on a test server with `--fake-claude`; the harness starts every other server
+  with `--no-agents`.
 
 ### Step 2: by hand, a feature folder at a time
 

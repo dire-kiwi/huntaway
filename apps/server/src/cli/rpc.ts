@@ -114,7 +114,9 @@ const call = Effect.fn("rpc.call")(
     if (Stream.isStream(result)) {
       // A subscription: one line of JSON per message, until the server ends it or the command is stopped. Its messages
       // are wire types, whose encoded form is the decoded one (docs/effect.md, Schemas).
-      return yield* result.pipe(
+      // Any subscription's: the streams of the different methods are one type here.
+      const messages: Stream.Stream<unknown, unknown> = result
+      return yield* messages.pipe(
         Stream.mapEffect((value) => Schema.encodeEffect(MessageJson)(value).pipe(Effect.flatMap(Console.log)), { concurrency: 1 }),
         Stream.runDrain,
         Effect.catch(failed),

@@ -1,6 +1,8 @@
 import { NodeServices } from "@effect/platform-node"
 import { Effect, FileSystem, Layer } from "effect"
-import { AreasLive, platformLayer } from "huntaway-server/src/Main.ts"
+import { TitleModel } from "huntaway-server/src/agents/TitleModel.ts"
+import { WindowPrompt } from "huntaway-server/src/agents/WindowPrompt.ts"
+import { areasLayer, platformLayer } from "huntaway-server/src/Main.ts"
 import { Db } from "huntaway-server/src/platform/Db.ts"
 import { ServerConfig } from "huntaway-server/src/platform/ServerConfig.ts"
 import type { ServerConfigShape } from "huntaway-server/src/platform/ServerConfig.ts"
@@ -21,6 +23,8 @@ export const TestPlatform = (overrides: Partial<ServerConfigShape> = {}) =>
 
 /**
  * The whole server's services (docs/plan/10-testing.md, `packages/testing`): every area on an in-memory database and
- * a scoped temp data folder. Replace a service by providing its layer over this one.
+ * a scoped temp data folder. Replace a service by providing its layer over this one. No model is ever asked: titles
+ * come from `TitleScript` (`TitleModel.layerScripted`, which the board provides) and window restarts fail.
  */
-export const TestBoard = (overrides: Partial<ServerConfigShape> = {}) => AreasLive.pipe(Layer.provideMerge(TestPlatform(overrides)))
+export const TestBoard = (overrides: Partial<ServerConfigShape> = {}) =>
+  areasLayer({ titles: TitleModel.layerScripted, window: WindowPrompt.layerNone }).pipe(Layer.provideMerge(TestPlatform(overrides)))

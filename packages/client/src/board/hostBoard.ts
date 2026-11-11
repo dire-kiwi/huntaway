@@ -53,7 +53,7 @@ export interface HostBoard {
   readonly settings: HostSettings
   /** By agent config id. */
   readonly usage: ReadonlyMap<string, HostUsage>
-  /** Empty until approvals are on the stream. */
+  /** The board's own approvals waiting for the user, oldest first. */
   readonly approvals: ReadonlyArray<HostApproval>
   readonly restart: RestartState | null
 }
@@ -160,7 +160,17 @@ function fromSnapshot(board: HostBoard, message: BoardSnapshot): HostBoard {
     pens: reuse(h, board.pens, message.pens),
     settings: keep(board.settings, message.settings),
     usage: sameMap(board.usage, usage) ? board.usage : usage,
+    approvals: reuseApprovals(h, board.approvals, message.approvals),
   }
+}
+
+/** Approvals as received, tagged, with the unchanged ones of `prev` kept as they were. */
+function reuseApprovals(h: HostId, prev: ReadonlyArray<HostApproval>, next: ReadonlyArray<Approval>): ReadonlyArray<HostApproval> {
+  const before = new Map(prev.map((a) => [a.request_id, a]))
+  return keepArray(
+    prev,
+    next.map((a) => keep(before.get(a.request_id), tag(h, a))),
+  )
 }
 
 /** A numbered event, applied unless the board has it already. */
@@ -205,6 +215,20 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       if (board.usage.get(usage.config_id) === usage) return next
       return { ...next, usage: new Map(board.usage).set(usage.config_id, usage) }
     }
+    case "approval": {
+      // Asked (in its place, or at the end), or no longer waiting.
+      const others = board.approvals.filter((a) => a.request_id !== message.request_id)
+      if (message.approval === null) return others.length === board.approvals.length ? next : { ...next, approvals: others }
+      const at = board.approvals.findIndex((a) => a.request_id === message.request_id)
+      const approval = keep(board.approvals[at], tag(h, message.approval))
+      if (board.approvals[at] === approval) return next
+      const approvals = at < 0 ? [...board.approvals, approval] : board.approvals.map((a, i) => (i === at ? approval : a))
+      return { ...next, approvals }
+    }
+    case "approval_rules":
+    case "approval_log":
+      // A profile's approval rules and action log are read where Settings shows them, not kept in the board.
+      return next
     default:
       // A kind this version does not know (a newer host's): its number is taken, as nothing in it applies.
       return next

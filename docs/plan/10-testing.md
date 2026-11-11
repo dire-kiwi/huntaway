@@ -53,7 +53,7 @@ Rules:
 | `board`                | Builders: `profile()`, `project({ git: true })`, `task()`, `taskWithWork()`, `review()`, `stack()`                  |
 | `git`                  | A repository in a temp folder with commits, branches and a bare remote; `squashMerge`                              |
 | `fakeAgent`            | A scripted agent for service tests: feed lines to a run's `out.jsonl`, read what was written to its input, end it. Replaces `runner/testing.ts` |
-| `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`) and knobs. What it must do is inventory 01, section 10 |
+| `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`; and `fake-until-interrupted`, new: a turn that goes on until a stop interrupts it) and knobs. What it must do is inventory 01, section 10 |
 | `fakeGh`, `fakeGithub` | `gh` answers and a GraphQL pull request that tests change over time                                                |
 | `twoHosts`             | Two `TestBoard`s linked in memory, and the same over real sockets for the whole-server tier                        |
 | `fixtures/threads/`    | The recorded sessions                                                                                              |
@@ -95,3 +95,43 @@ Taken at the end of M2 and again before the switch, on a scrubbed copy of a live
 Schema decoding is the cost Effect adds on the hot path. If the follower misses its limit, its line schemas are
 decoded with precompiled decoders and the per-line span is dropped (`Effect.fnUntraced`), before anything else is
 tried.
+
+As measured at M2 (HE-4), the follower: 10,000 Claude `assistant` text lines (`flood-claude`) through the real
+ia-shim and the server's follower, from the first line written to the last item stored, on a test server seeded with
+2,848 tasks and left 20 s to settle; the old server measured the same way on the same day. The first M2 run had new
+9,216 ms against old 875 ms (10.5×) on a busier machine; the table is one day's machine, medians of 3 to 7 runs.
+"CPU / line" is the server's user and system time from the task's creation to the last item, over 10,000.
+
+| Server                                                                                      | 10,000 lines | CPU / line | SQL / line |
+| ------------------------------------------------------------------------------------------- | ------------ | ---------- | ---------- |
+| Before (HE-4 at 2b43633)                                                                    | 5,880 ms     | 0.64 ms    | 23.0       |
+| Precompiled row decoders, no per-line span                                                  | 5,450 ms     |            | 23.0       |
+| No task read per write, background synced on real turn starts only, no `startTurn` per line | ~2,000 ms¹   |            | 13.0       |
+| `agent_at` with the offset, one statement for a thread's numbers, tracer off                | 1,670 ms     | 0.20 ms    | 10.0       |
+| Up to 64 lines to a transaction, synchronous row decoding (now)                             | 770 ms       | 0.098 ms   | 6.1        |
+| Old server                                                                                  | 653 ms       | 0.072 ms   | 20         |
+
+¹ With the SQL statements counted, which slows it a little. The old server's statements are the first M2 run's count.
+
+1.18× the old server's time (limit 1.5×). Less the wait for the follower's first poll (up to `FOLLOW_POLL`, 200 ms,
+whichever server), 736 ms against 622 ms. The profile of what is left: the Effect runtime about a third, node:sqlite
+a fifth, schema decoding and encoding a tenth, GC 7%; the follower's design is in
+[07-agents.md](07-agents.md#the-follower-after-the-m2-measurement-he-4).
+
+The other M2 measurements (HE-4), on an i9-13900K (32 threads, 62 GiB, Linux, Node 26.13) shared with a live board, both
+servers on the same synthetic data made through their own APIs (3 projects, 2,848 tasks; no scrubbed live copy until the
+importer, M9), the old one at `f2298f0c` through its own `test-server.sh`, the same fake agent for both, medians:
+
+| What                                                   | New                 | Old                 | New/old | Limit   |
+| ------------------------------------------------------ | ------------------- | ------------------- | ------- | ------- |
+| RSS at idle: empty board / 2,908 tasks                 | 150 / 150 MB        | 113 / 132 MB        | 1.33× / 1.13× | ≤ 1.5× |
+| RSS with ten runs live / 10 s after they ended         | 162 / 163 MB        | 131 / 133 MB        | 1.23×   | ≤ 1.5×  |
+| Start to `HUNTAWAY_READY`: fresh / 2,908 tasks         | 526 / 556 ms        | 315 / 341 ms        | 1.7×    | < 2 s   |
+| `/api/health` p99 while 10,000 lines arrive at once    | 1.3 ms              | 935 ms              |         | ≤ old   |
+| `/api/health` p99, ~485 assistant lines/s              | 1.3 ms              | 10.1 ms             | 0.13×   | ≤ old   |
+| Board's first message (snapshot; old: its 15 loads)    | 154 ms, 5.5 MB      | 65 ms, 5.7 MB       | 2.4×    | recorded |
+| `approval-hook`, cold / warm compile cache             | 56 / 30 ms          | 50 / 25 ms          |         | < 60 ms |
+| `pnpm check` / `pnpm test`                             | 4.2 s / 7.0 s       |                     |         | recorded |
+
+The probe is `scripts/event-loop-probe.mjs`. The memory and event-loop figures were taken before the follower's changes
+above, which lower the CPU per line; they were not taken again.

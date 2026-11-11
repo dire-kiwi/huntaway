@@ -1,0 +1,352 @@
+import { clsx } from "clsx"
+import { Hourglass, Loader2 } from "lucide-react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { backgroundIdle, type HostTask as Task } from "@huntaway/client"
+import { useSubagentView, type Subagent } from "./thread/subagentView"
+import type { Item, ThreadModel } from "./thread/threadModel"
+import { itemModel } from "./thread/itemModel"
+import { usePreviewText, useLoadOlder, useReloadThread, useThreadView } from "./thread/threadView"
+import { RunningDot, WaitReason, waitTitle } from "../ui"
+import { InMainThread, ThreadCtx, ThreadSource } from "./thread/context"
+import { SubagentBar, SubagentRows, SubagentThread } from "./thread/subagents"
+import { ItemList, TurnsCtx } from "./thread/ItemList"
+import { Composer } from "./thread/Composer"
+import { BackgroundBanner } from "./thread/Background"
+
+type ThreadProps = {
+  task: Task
+  cwd?: string | null | undefined
+  placeholder?: string | undefined
+  empty?: ReactNode
+}
+
+/**
+ * Memoized, so the task view redrawing leaves a long thread be: pass an `empty` that stays the same. It's drawn from
+ * the thread's items, as @huntaway/client's `threadAtom` follows them (thread/threadView.ts). Every host on this server
+ * keeps its threads as items, so the old notices for a host too old or a thread not kept as items are gone; a thread
+ * that can't be shown (its task gone from its host, its host out of reach) says why in their place.
+ */
+export const Thread = memo(function Thread(props: ThreadProps) {
+  const { task } = props
+  const view = useItemsView(task)
+  return <ThreadView {...props} model={view.model} paging={view.paging} notice={view.notice} />
+})
+
+/** How the thread's earlier part loads. */
+interface Paging {
+  /** What's shown has loaded. */
+  loaded: boolean
+  /** There's more before it, and it's loading. */
+  more: boolean
+  loading: boolean
+  /** Changes when an earlier page comes in above what's on screen. */
+  oldest: number | undefined
+  loadOlder: () => Promise<void>
+  /** Whether a subagent's own thread starts before what's loaded. */
+  before: (sub: Subagent) => boolean
+  /** How to subscribe to it again, when it couldn't be shown. */
+  retry: () => void
+}
+
+type View = { model: ThreadModel; paging: Paging }
+
+/** The thread's items: its window, followed live and paged back (@huntaway/client's threadAtom), drawn as itemModel.ts makes it. */
+function useItemsView(task: Task): View & { notice: string | undefined } {
+  const thread = useThreadView(task)
+  const loadOlder = useLoadOlder(task)
+  const retry = useReloadThread(task)
+  const snap = thread.snap
+  const start = snap?.start ?? 0
+  const context = snap?.context
+  const items = snap?.items
+  const paging = useMemo<Paging>(
+    () => ({
+      loaded: !!items,
+      more: start > 0,
+      loading: thread.loading,
+      oldest: start,
+      loadOlder,
+      // Its call is one of the window's context items, from before its start: its own items can be too.
+      before: (sub) => !!context && (items ?? []).slice(0, context.length).some((i) => i.id === sub.id),
+      retry,
+    }),
+    [items, start, context, thread.loading, loadOlder, retry],
+  )
+  return { model: itemModel(task.id, snap ?? NO_SNAPSHOT, task.running), paging, notice: thread.failed ?? undefined }
+}
+
+const NO_SNAPSHOT = { items: [], requests: [] }
+
+/**
+ * The thread, drawn from `model`, or `notice` in its place. `data-thread` says which (`items` once it's loaded, or
+ * `notice`), for tests.
+ */
+function ThreadView({
+  task,
+  cwd,
+  placeholder,
+  empty,
+  model,
+  paging,
+  notice,
+}: ThreadProps & { model: ThreadModel; paging: Paging; notice: string | undefined }) {
+  const [olderFailed, setOlderFailed] = useState(false)
+  const scroller = useRef<HTMLDivElement>(null)
+  const root = useRef<HTMLDivElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  const pinned = useRef(true)
+  // Streamed text grows in its own component, so a token doesn't redraw the whole thread.
+  const follow = useCallback(() => {
+    const el = scroller.current
+    if (el && pinned.current) el.scrollTop = el.scrollHeight
+  }, [])
+
+  // The turns with checkpoints, for rewinding to before one of the user's messages, and the rewind dialog: turns,
+  // checkpoints and rewinding are not on this server yet (4.3), so there are none and no rewind marks.
+  const items = useStableGroupKeys(model.items, task.id)
+  const data = useMemo(
+    () => ({ ...model, running: task.running, cwd, hostId: task.host_id, taskId: task.id, follow }),
+    [model, task.running, cwd, task.host_id, task.id, follow],
+  )
+  // The rows read the new model once it's shown, and redraw if what they pick from it changed.
+  const [threadSource] = useState(() => new ThreadSource())
+  useLayoutEffect(() => threadSource.update(data), [threadSource, data])
+  // A subagent's own thread, shown in place of the main one (kept mounted, so it comes back as it was).
+  const viewId = useSubagentView((s) => s.open[task.id])
+  const show = useSubagentView((s) => s.show)
+  const viewed = viewId ? model.subagents.get(viewId) : undefined
+  const viewKey = viewed?.id ?? null
+  // Another subagent (or the main conversation) tries a page that failed again.
+  const [failedIn, setFailedIn] = useState(viewKey)
+  if (failedIn !== viewKey) {
+    setFailedIn(viewKey)
+    setOlderFailed(false)
+  }
+  const mainScroll = useRef<number | null>(null)
+  const shownView = useRef(viewKey)
+  const oldest = paging.oldest
+  const shownOldest = useRef(oldest)
+  // Older messages come in above what's on screen, and the main conversation changes while a subagent's thread is
+  // shown: what's at the top of the main conversation's screen is noted as it's scrolled and after each change (so it
+  // is what was there before the next one), to put it back where it was.
+  const anchor = useRef<{ el: Element; top: number } | null>(null)
+  const noteTop = useCallback(() => {
+    if (shownView.current === null) anchor.current = topItem(scroller.current, list.current)
+  }, [])
+
+  // After every change: scrolled to the end if it was there, or kept where it was.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    const moved = anchor.current
+    const back = shownView.current !== null && viewKey === null
+    const paged = shownOldest.current !== oldest
+    shownOldest.current = oldest
+    if (!el) return
+    const restore = () => {
+      if (moved?.el.isConnected) el.scrollTop += moved.el.getBoundingClientRect().top - moved.top
+    }
+    if (shownView.current !== viewKey) {
+      shownView.current = viewKey
+      // A subagent's thread opens at its latest, like the main one; the main one comes back where it was left.
+      if (viewKey || mainScroll.current == null) el.scrollTop = el.scrollHeight
+      else el.scrollTop = mainScroll.current
+      if (back) restore()
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    } else if (pinned.current) el.scrollTop = el.scrollHeight
+    else if (viewKey === null && paged) restore()
+    noteTop()
+  })
+
+  const fetchOlder = () => {
+    paging.loadOlder().catch(() => setOlderFailed(true))
+  }
+  const loadOlder = () => {
+    setOlderFailed(false)
+    fetchOlder()
+  }
+  // Scrolled near the top of what's loaded (or it doesn't fill the screen): the page before it.
+  const nearTop = () => {
+    const el = scroller.current
+    if (el && shownView.current === null && paging.more && !paging.loading && !olderFailed && el.scrollTop < 800) fetchOlder()
+  }
+  // After every change too: a page that doesn't fill the screen loads the one before it.
+  useEffect(nearTop)
+  // A subagent's thread, from the Agents list, that started before the loaded part: load back to it.
+  const viewedBefore = !!viewed && paging.before(viewed)
+  useEffect(() => {
+    if (viewedBefore && paging.more && !paging.loading && !olderFailed) paging.loadOlder().catch(() => setOlderFailed(true))
+  }, [viewedBefore, paging, olderFailed])
+
+  // Escape goes back from a subagent's thread (before the task panel takes it to close).
+  useEffect(() => {
+    if (!viewed) return undefined
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest("input, textarea, select, [contenteditable]") || document.querySelector("[data-modal]")) return
+      // With a task open in a dialog over the page (TaskModal), only the thread in it.
+      const modal = document.querySelector("[data-task-modal]")
+      if (modal && !modal.contains(root.current)) return
+      e.preventDefault()
+      show(task.id, viewed.parent)
+    }
+    // On the document, so it comes before the task panel's handler on the window.
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [viewed, show, task.id])
+
+  return (
+    <ThreadCtx.Provider value={threadSource}>
+      <div ref={root} className="flex h-full min-h-0 flex-col" data-thread={notice ? "notice" : paging.loaded ? "items" : undefined}>
+        {viewed && <SubagentBar sub={viewed} />}
+        <div
+          ref={scroller}
+          data-autoscroll=""
+          onScroll={(e) => {
+            const el = e.currentTarget
+            pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+            if (shownView.current === null) mainScroll.current = el.scrollTop
+            noteTop()
+            nearTop()
+          }}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          {notice && <div className="mx-auto w-full max-w-3xl px-5 pt-6 text-[12.5px] text-muted narrow:px-3 narrow:pt-4">{notice}</div>}
+          {/* The main conversation's; a subagent's thread only loads back to its start. */}
+          {notice && (
+            <div className="flex justify-center pt-5 text-[12px] text-faint">
+              <button onClick={paging.retry} className="hover:text-muted">
+                Couldn't load the thread. Try again
+              </button>
+            </div>
+          )}
+          {paging.more && (!viewed || paging.loading || viewedBefore) && (
+            <div className="flex justify-center pt-5 text-[12px] text-faint">
+              {paging.loading ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 size={12} className="animate-spin" /> Loading earlier messages…
+                </span>
+              ) : (
+                <button onClick={loadOlder} className="hover:text-muted">
+                  {olderFailed ? "Couldn't load earlier messages. Try again" : "Load earlier messages"}
+                </button>
+              )}
+            </div>
+          )}
+          {viewed && (
+            <div key={viewed.id} className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4">
+              <InMainThread.Provider value={false}>
+                <SubagentRows>
+                  <SubagentThread sub={viewed} />
+                </SubagentRows>
+              </InMainThread.Provider>
+            </div>
+          )}
+          <div ref={list} className={clsx("mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4", viewed && "hidden")}>
+            {paging.loaded && items.length === 0 && !task.running && !paging.more && empty}
+            <TurnsCtx.Provider value={null}>
+              <SubagentRows>
+                <ItemList items={items} running={task.running} hostId={task.host_id} cwd={cwd} />
+              </SubagentRows>
+            </TurnsCtx.Provider>
+            <StreamingText task={task} onGrow={follow} />
+            {task.running && !backgroundIdle(task) && (
+              <div className="flex items-center gap-2 text-[12.5px] text-muted">
+                {task.agent_wait ? (
+                  <>
+                    <Hourglass size={12} className="shrink-0" />{" "}
+                    {task.agent_wait.pull_request ? (
+                      <WaitReason wait={{ ...task.agent_wait, reason: `Waiting${task.agent_wait.reason ? `: ${task.agent_wait.reason}` : ""}` }} />
+                    ) : (
+                      <span title={waitTitle(task.agent_wait)}>Waiting{task.agent_wait.reason ? `: ${task.agent_wait.reason}` : "…"}</span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <RunningDot /> Working…
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        {/* What the agent left going (a dev server), and the servers its processes listen on. */}
+        <BackgroundBanner task={task} />
+        {/* A fresh draft per task: its attachments are on this task's host. */}
+        <Composer key={task.id} task={task} placeholder={placeholder} />
+      </div>
+    </ThreadCtx.Provider>
+  )
+}
+
+/**
+ * The first of the thread's items on screen in `scroller`, and where it is: in a group of tool calls,
+ * the call, as older calls can join the group above it.
+ */
+function topItem(scroller: HTMLElement | null, list: HTMLElement | null): { el: Element; top: number } | null {
+  if (!scroller || !list) return null
+  const top = scroller.getBoundingClientRect().top
+  const first = (els: Iterable<Element>) => {
+    for (const el of els) {
+      const r = el.getBoundingClientRect()
+      if (r.bottom > top) return { el, top: r.top }
+    }
+    return null
+  }
+  const item = first(list.children)
+  return (item && first(item.el.querySelectorAll("[data-tool-row]"))) ?? item
+}
+
+/**
+ * The thread's items, with each group of tool calls keeping the key it was first shown with. A group
+ * is keyed by its first call, which changes when an older page adds calls before it: it would be
+ * drawn again from scratch, losing what was expanded in it.
+ */
+function useStableGroupKeys(items: Item[], taskId: string): Item[] {
+  return useMemo(() => {
+    const { byCall, copies } = groupKeysOf(taskId)
+    const out = items.map((it) => {
+      if (it.type !== "tools") return it
+      const key = it.calls.map((c) => byCall.get(c.id)).find((k) => k != null) ?? it.key
+      for (const c of it.calls) byCall.set(c.id, key)
+      if (key === it.key) return it
+      // The same copy for the same item, so its row doesn't redraw.
+      let copy = copies.get(it)
+      if (copy?.key !== key) copies.set(it, (copy = { ...it, key }))
+      return copy
+    })
+    return out.some((it, i) => it !== items[i]) ? out : items
+  }, [items, taskId])
+}
+
+/** Each thread's group keys, by its calls, and the copies of its groups made with them: kept for the page's life. */
+const groupKeys = new Map<string, { byCall: Map<string, string>; copies: WeakMap<Item, Item> }>()
+
+function groupKeysOf(taskId: string): { byCall: Map<string, string>; copies: WeakMap<Item, Item> } {
+  let keys = groupKeys.get(taskId)
+  if (!keys) groupKeys.set(taskId, (keys = { byCall: new Map(), copies: new WeakMap() }))
+  return keys
+}
+
+/**
+ * The agent's reply as it streams in (not yet saved as a message), as plain text: drawing it as markdown
+ * again for each token would take longer the longer it got. The saved message is markdown. A paragraph
+ * each, so a token changes (and lays out again) only the last one. `onGrow` keeps the thread scrolled to it.
+ */
+function StreamingText({ task, onGrow }: { task: Task; onGrow: () => void }) {
+  const delta = usePreviewText(task)
+  useLayoutEffect(onGrow, [delta, onGrow])
+  if (!delta) return null
+  return (
+    <div className="prose-chat break-words whitespace-pre-wrap">
+      {numbered(delta.split(/\n{2,}/)).map(([n, p]) => (
+        <p key={n}>{p}</p>
+      ))}
+    </div>
+  )
+}
+
+/** Each paragraph with its place, which keys it: the text only grows at its end, so a paragraph keeps its place. */
+function numbered<T>(list: ReadonlyArray<T>): ReadonlyArray<readonly [number, T]> {
+  return list.map((x, i) => [i, x] as const)
+}

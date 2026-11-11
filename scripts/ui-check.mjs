@@ -28,7 +28,7 @@
 //   assert <js>                fails unless the result is truthy
 //   sleep <ms>
 //   size <w>x<h>
-//   shot <file> [--crop <target>] [--full]
+//   shot <file> [--crop <target>] [--full]   (once animations have run to their end)
 //
 // It prints page errors and console errors as they happen, and exits non-zero on a failed step (after
 // saving a screenshot of the page to <tmp>/ui-check-<pid>-failed.png) or on any error that wasn't allowed.
@@ -305,8 +305,10 @@ export async function open({
         if (!m) throw new Error("usage: shot <file> [--crop <target>] [--full]")
         const [, file, crop] = m
         fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true })
-        if (crop) await (await find(crop)).screenshot({ path: file })
-        else await page.screenshot({ path: file, fullPage })
+        // Animations run to their end first: a shot right after `goto` caught the task panel part way through its
+        // slide-in (180ms), cut off at the window's right edge as if it were too wide.
+        if (crop) await (await find(crop)).screenshot({ path: file, animations: "disabled" })
+        else await page.screenshot({ path: file, fullPage, animations: "disabled" })
         log(`  saved ${path.resolve(file)}`)
         break
       }
