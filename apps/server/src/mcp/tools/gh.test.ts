@@ -65,7 +65,7 @@ describe("the gh server", () => {
       Effect.gen(function* () {
         const servers = yield* McpServers
         const tools = yield* servers.tools("gh", false)
-        const listed = Schema.decodeUnknownSync(Listed)(tools)
+        const listed = yield* Schema.decodeUnknownEffect(Listed)(tools).pipe(Effect.orDie)
         assert.deepStrictEqual(listed.map((t) => t.name).toSorted(), [...GH_READ_ONLY, ...GH_WRITES].toSorted())
         for (const t of listed) {
           assert.strictEqual(t.annotations.readOnlyHint, GH_READ_ONLY.includes(t.name), t.name)
