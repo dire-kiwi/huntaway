@@ -6,6 +6,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
 import { AttachmentRpcs, BoardRpcs, ConfigRpcs, HostRpcGroup, PenRpcs, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
+import { Prompts } from "./agents/Prompts.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -78,11 +79,12 @@ const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner).pipe(
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer)),
   Layer.provideMerge(ProjectsLive),
 )
+const AgentsLive = Prompts.layer.pipe(Layer.provideMerge(TasksLive))
 // The demo board is seeded once every area is built, before Recovery runs.
 const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
   Layer.provideMerge(DemoLive),
   Layer.provideMerge(Dependencies.layer),
-  Layer.provideMerge(TasksLive),
+  Layer.provideMerge(AgentsLive),
 )
 
 /** Every area's services. */

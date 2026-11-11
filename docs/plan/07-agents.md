@@ -355,6 +355,27 @@ Inventory 02, section 3.6 lists the pieces and when each is included. `Prompts.s
 table over `ThreadKind` in place of the old 350-line function with a branch per kind. Wording changes are separate
 tasks from the port, so that a behaviour change can be traced to one or the other.
 
+As built in HE-4 (2.5):
+
+- `prompts/` holds each piece as a constant or a plain function of the values it interpolates, including the ones
+  later tasks send (review, fixes, summary, merge, merge approval, restack, titles, stack title, workflow step, todo
+  nudge, late plan answers, question replies, the assistant's memory); each file names the plan task that uses it.
+  Left with their areas, as they are built from those areas' own state: the pull request watcher's wake message (4.5),
+  the routines' reports and the brief's message (6.5, 6.7), the approval hook's reasons (3.6), board tools'
+  descriptions and results (3.x).
+- The builders are pure functions in `agents/prompts/` over a plain `PromptContext`: `systemPrompt(kind, ctx)` (with
+  `basePrompt` and `instructions`), `taskStartPrompt`, `runPrompt` (the launch's composition: `/plan`, the first
+  prompt, the lost background work's note, the mentions note), `mentionsNote`. `Prompts` (`agents/Prompts.ts`) gathers
+  the context: `system(task, run)`, `start(task, text)`, `preview(project, options)`.
+- The context's fields for later areas hold the old value with the feature off until their task fills them: the gh
+  server and GitHub remote (4.4), the workflow's PR and start text (6.6), the docs server (6.3), the desktop (6.10),
+  the temp folder (2.8), the assistant's memory (6.7), the lost background work (2.8). The preview names the
+  worktree as setup would, but its base branch only when the project names one (git reads the checked-out one, 4.1).
+- The legacy subproject paragraphs are gone with subprojects. A document task of a group is keyed `G` in its prompts,
+  as the old `key_prefix` did (`keyLetter` in the contracts gives it `T`).
+- The goldens in `agents/prompts/fixtures/systemPrompts.ts` are what the old builder gave for each case of
+  `system.test.ts`, recorded by running it.
+
 ## Titles, usage, tokens, context
 
 `Titles` (a small model call writes a title from the description and reconsiders it after each prompt unless
