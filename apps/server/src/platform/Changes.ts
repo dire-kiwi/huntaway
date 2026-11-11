@@ -47,6 +47,23 @@ export type Change =
       /** The last 4000 bytes of its `err.log`, for a failure's reason. */
       readonly errorTail: string
     }
+  | {
+      /**
+       * 4.6: a review or summary thread's run ended (`runs/RunEnds`, once its end is recorded), with how it ended and what
+       * its agent asked the user, if anything: the reactor hands it to `Reviews.finished`.
+       */
+      readonly _tag: "ReviewFinished"
+      readonly thread: TaskId
+      readonly run: RunId
+      readonly outcome: { readonly _tag: "Ok" } | { readonly _tag: "Cancelled" } | { readonly _tag: "Failed"; readonly reason: string }
+      readonly attention: string | null
+    }
+  | {
+      /** 4.6: a prompt run of a task was registered (`runs/Runs`): its review and summaries in progress are out of date. */
+      readonly _tag: "PromptStarted"
+      readonly task: TaskId
+      readonly run: RunId
+    }
 
 export interface ChangesShape {
   /** After a commit: hand a change to the reactor. Never waits. */

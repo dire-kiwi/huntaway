@@ -57,6 +57,28 @@ export class TaskRpcs extends RpcGroup.make(
     RequiredScope,
     "operate",
   ),
+  /**
+   * 4.6: review the task's work now (the old `POST /tasks/{id}/review`), even if the project doesn't review by itself or
+   * this commit was reviewed; it starts a fresh cycle of fixes. A task in In progress or Needs attention moves to In
+   * review. `Conflict` says why it can't ("Can't review: …").
+   */
+  Rpc.make("tasks.review", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
+  /**
+   * 4.6: give a task whose review still found issues after its rounds of fixes as many more (at least one): its agent is
+   * sent the issues again (the old `POST /tasks/{id}/review/extend`).
+   */
+  Rpc.make("tasks.extendReview", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
+  /** 4.6: summarise the task's changes now, whatever its review and column (the old `POST /tasks/{id}/summary`). */
+  Rpc.make("tasks.summarize", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
   /** How full the task's agent's context is: the summary on the task and the latest breakdown (the old `GET /tasks/{id}/context`). */
   Rpc.make("tasks.context", {
     payload: { id: TaskId },
