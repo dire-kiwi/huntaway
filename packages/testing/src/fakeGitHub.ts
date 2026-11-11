@@ -54,6 +54,8 @@ export const FakeComment = Schema.Struct({
   ...remarkFields,
 })
 
+export type FakeComment = typeof FakeComment.Type
+
 export const FakeReview = Schema.Struct({
   author: Schema.String,
   /** APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING. */

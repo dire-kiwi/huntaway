@@ -42,6 +42,12 @@ export class FixChecksRefused extends Schema.TaggedError<FixChecksRefused, { rea
   detail: Schema.String,
 }) {}
 
+/**
+ * For tests: runs once a wake's logs are fetched, before the watcher checks the news still wakes the agent (HA-53: the
+ * task may leave review, or its failures be sent by hand, while the logs come).
+ */
+export const AfterLogs = Context.Reference<Effect.Effect<void>>("huntaway-server/review/InReview/AfterLogs", { defaultValue: () => Effect.void })
+
 /** How often the pull request of a task in review is read, from when the board first sees the task there. */
 export const REVIEW_POLL = "120 seconds"
 /** How often the board looks for tasks in review whose pull request is due a read. */
@@ -171,6 +177,7 @@ export class InReview extends Context.Service<InReview, InReviewShape>()("huntaw
               pr.checks.filter((c) => c.state === "Failed"),
             )
           : []
+        yield* yield* AfterLogs
         // Fetching them takes a while: the news waits for the next read if the task moved on meanwhile.
         if (!(yield* stillWakes(task.id, key, wake.call))) return done
         const sent = yield* Effect.result(runs.send(task.id, { text: wakeMessage(wake.news, logs), source: "board", auto: true }))
