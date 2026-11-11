@@ -33,6 +33,13 @@ const isToolUse = Schema.is(ToolUseBlock)
 export const isActivity = (line: ClaudeLine): boolean =>
   line.type === "assistant" && (line.parent_tool_use_id ?? null) === null && line.message.content.some((block) => isToolUse(block) && !isWaitTool(block.name))
 
+/** What a subagent's end says of it: a Claude task line's fields, or a Codex child thread's Agent call. */
+interface SubagentNews {
+  readonly tool_use_id?: string | null | undefined
+  readonly task_id?: string | null | undefined
+  readonly summary?: string | null | undefined
+}
+
 /** A subagent's end, as the wait records it: how it ended. */
 export type SubagentEnd = "completed" | "failed" | "stopped"
 
@@ -56,6 +63,8 @@ export interface RunWaitsShape {
   readonly line: (run: Run, line: ClaudeLine) => Effect.Effect<void>
   /** Run `run` of `task` carried on with other work, or its turn or the run ended: its wait is over (a later run's isn't). */
   readonly over: (task: TaskId, run: RunId) => Effect.Effect<void>
+  /** A Codex subagent (its Agent call `toolUseId`) ended (5.2): recorded on the run's wait, the first only, as a Claude one's line is. */
+  readonly subagentEnded: (run: Run, toolUseId: string, status: SubagentEnd, summary: string | null) => Effect.Effect<void>
 }
 
 export class RunWaits extends Context.Service<RunWaits, RunWaitsShape>()("huntaway-server/runs/RunWaits") {
@@ -84,7 +93,7 @@ export class RunWaits extends Context.Service<RunWaits, RunWaitsShape>()("huntaw
       })
 
       /** One read and one write with nothing in between: another call can end the wait or start a new one meanwhile. */
-      const subagentFinished = Effect.fnUntraced(function* (run: Run, line: TaskLine, status: SubagentEnd) {
+      const subagentFinished = Effect.fnUntraced(function* (run: Run, line: SubagentNews, status: SubagentEnd) {
         yield* tx(
           Effect.gen(function* () {
             const now = yield* tasks.get(run.task_id)
@@ -111,7 +120,12 @@ export class RunWaits extends Context.Service<RunWaits, RunWaitsShape>()("huntaw
         }
       })
 
-      return RunWaits.of({ line: onLine, over })
+      return RunWaits.of({
+        line: onLine,
+        over,
+        subagentEnded: (run, toolUseId, status, summary) =>
+          subagentFinished(run, { tool_use_id: toolUseId, task_id: null, summary }, status).pipe(Effect.withSpan("RunWaits.subagentEnded")),
+      })
     }),
   )
 }

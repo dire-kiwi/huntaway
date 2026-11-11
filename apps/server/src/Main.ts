@@ -65,6 +65,7 @@ import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { DevServers } from "./runs/DevServers.ts"
 import { AgentRequests } from "./runs/AgentRequests.ts"
 import { ClaudeOutput } from "./runs/claude/output.ts"
+import { CodexOutput } from "./runs/codex/output.ts"
 import { LaunchFacts } from "./runs/LaunchFacts.ts"
 import { RunDir } from "./runs/RunDir.ts"
 import { RunFollower } from "./runs/RunFollower.ts"
@@ -179,7 +180,8 @@ export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
 const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
-  Layer.provideMerge(ClaudeOutput),
+  // The line handler: Codex runs' lines to the Codex handler (5.2), the others to Claude's.
+  Layer.provideMerge(CodexOutput.pipe(Layer.provide(ClaudeOutput))),
   Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
