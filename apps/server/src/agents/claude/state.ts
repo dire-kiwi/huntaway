@@ -2,46 +2,15 @@ import type { Item, NewEvent, RequestResolution, SubagentState, ThreadMetadata, 
 import { HashMap, Option, Schema } from "effect"
 import type { ToolResultBlock } from "./lines.ts"
 import { sameJson, str } from "./tools.ts"
+import { ItemMeta } from "../../threads/model.ts"
 
 // The Claude translator's state (docs/plan/07-agents.md, The two drivers): what it knows of a thread to place what the
 // agent says next. It is immutable: `translate` returns a new state and leaves the one it was given as it was, so a caller
 // whose write of the events failed keeps the state from before the line. Its maps are persistent (`HashMap`), so a step
 // copies only what it changes. `Draft` is one step's working copy, with the events, metas, effects and warnings it makes.
 
-/**
- * What the board knows about an item that the item doesn't say, kept beside it (`thread_items.meta`, inventory 08,
- * section 3.3), for the readers and to rebuild this state. The translator writes the tool call, turn result and
- * assistant message fields; the user message ones are the board's (`Threads.userMessage`).
- */
-export const ItemMeta = Schema.Struct({
-  /** user_message: the board sent it for itself (the start of a task, review issues to fix, a merge). */
-  auto: Schema.optionalKey(Schema.Boolean),
-  /** user_message: other agents sent all of it (`send_to_task`). */
-  from_agent: Schema.optionalKey(Schema.Boolean),
-  /** user_message: of one sent along with other agents' messages, the user's own part. */
-  user_text: Schema.optionalKey(Schema.String),
-  /** user_message: the board's start of the task. */
-  start: Schema.optionalKey(Schema.Boolean),
-  /** user_message: an automation's routine run sent it. */
-  routine: Schema.optionalKey(Schema.Boolean),
-  /** user_message: the review round whose issues it asks the agent to fix. */
-  review_round: Schema.optionalKey(Schema.Finite),
-  /** tool_call: the agent's id for the call, where the item's isn't it (a second call with one id). */
-  call_id: Schema.optionalKey(Schema.String),
-  /** tool_call: the agent's session it was made in; calls with one id are told apart by it. */
-  session: Schema.optionalKey(Schema.String),
-  /** tool_call: Claude's id for the subagent it started (its task_started's `task_id`). */
-  subagent_task: Schema.optionalKey(Schema.String),
-  /** tool_call: the background tasks it started that other items show (a Bash command's run). */
-  shown_tasks: Schema.optionalKey(Schema.Array(Schema.String)),
-  /** turn_result: the text its result gave (what the turn ended by saying, or its error). */
-  result_text: Schema.optionalKey(Schema.String),
-  /** turn_result: it ended a compaction's run. */
-  compact: Schema.optionalKey(Schema.Boolean),
-  /** assistant_message: a result's text that no message of its turn said (its turn_result's `result_text` has it). */
-  from_result: Schema.optionalKey(Schema.Boolean),
-})
-export type ItemMeta = typeof ItemMeta.Type
+/** What the board knows of an item that the item does not say: the thread store's (inventory 08 §3.3). */
+export { ItemMeta }
 
 /** A tool call so far. */
 export interface Call {

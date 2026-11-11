@@ -192,6 +192,12 @@ item ids of the form `legacy:<n>[:<block>]`, the `write_no` of the items and req
 not depend on clocks, which is what "has the conversation moved on since this prompt" needs. The importer seeds the
 counter from the old sequence's high-water mark and keeps every existing id.
 
+As built (HE-4, 2.2): an agent's output that needs `<n>` for its ids (a Claude message's blocks, `legacy:<n>:<block>`;
+a turn's result, `legacy:<n>`) takes one the same way, through `Threads.writeFromAgent`, so its items have a
+`write_no` too; items an agent's output makes with its own ids (tool calls, Codex items) through
+`Threads.appendFromAgent` have none. The first number is 1; a rolled-back write's number is not used up. An item added
+again keeps the `write_no` of the write that first made it.
+
 ### Thread tables
 
 ```sql

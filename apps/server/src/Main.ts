@@ -16,6 +16,7 @@ import {
   ProjectRpcs,
   PublicRpcs,
   TaskRpcs,
+  ThreadRpcs,
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
@@ -56,6 +57,7 @@ import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
+import { ThreadHandlers } from "./rpc/threads.ts"
 import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
 import { HostSettings } from "./settings/HostSettings.ts"
@@ -67,6 +69,9 @@ import { Pens } from "./tasks/Pens.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
 import { TaskRepo } from "./tasks/TaskRepo.ts"
 import { Tasks } from "./tasks/Tasks.ts"
+import { ThreadReaders } from "./threads/ThreadReaders.ts"
+import { Threads } from "./threads/Threads.ts"
+import { ThreadStore } from "./threads/ThreadStore.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -98,7 +103,12 @@ const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner).pipe(
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer)),
   Layer.provideMerge(ProjectsLive),
 )
-const AgentsLive = Layer.mergeAll(ApprovalRules.layer, Prompts.layer).pipe(Layer.provideMerge(ApprovalRulesRepo.layer), Layer.provideMerge(TasksLive))
+const ThreadsLive = Threads.pruner.pipe(
+  Layer.provideMerge(Layer.mergeAll(Threads.layer, ThreadReaders.layer)),
+  Layer.provideMerge(ThreadStore.layer),
+  Layer.provideMerge(TasksLive),
+)
+const AgentsLive = Layer.mergeAll(ApprovalRules.layer, Prompts.layer).pipe(Layer.provideMerge(ApprovalRulesRepo.layer), Layer.provideMerge(ThreadsLive))
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
 export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
   RunFollower.layer.pipe(Layer.provideMerge(output), Layer.provideMerge(Shim.layer), Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)))
@@ -114,7 +124,18 @@ const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).p
 export const AreasLive = LifecycleLive
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
-export const Served = PublicRpcs.merge(HostRpcGroup, ProfileRpcs, ConfigRpcs, ProjectRpcs, TaskRpcs, BoardRpcs, PenRpcs, AttachmentRpcs, ApprovalRulesRpcs)
+export const Served = PublicRpcs.merge(
+  HostRpcGroup,
+  ProfileRpcs,
+  ConfigRpcs,
+  ProjectRpcs,
+  TaskRpcs,
+  BoardRpcs,
+  PenRpcs,
+  AttachmentRpcs,
+  ApprovalRulesRpcs,
+  ThreadRpcs,
+)
 
 /** Their handlers. One line per area. */
 export const HandlersLive = Layer.mergeAll(
@@ -128,6 +149,7 @@ export const HandlersLive = Layer.mergeAll(
   PenHandlers,
   AttachmentHandlers,
   ApprovalRulesHandlers,
+  ThreadHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
