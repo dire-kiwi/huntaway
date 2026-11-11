@@ -19,6 +19,7 @@ import {
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+import { Prompts } from "./agents/Prompts.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -97,7 +98,7 @@ const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner).pipe(
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer)),
   Layer.provideMerge(ProjectsLive),
 )
-const AgentsLive = ApprovalRules.layer.pipe(Layer.provideMerge(ApprovalRulesRepo.layer), Layer.provideMerge(TasksLive))
+const AgentsLive = Layer.mergeAll(ApprovalRules.layer, Prompts.layer).pipe(Layer.provideMerge(ApprovalRulesRepo.layer), Layer.provideMerge(TasksLive))
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
 export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
   RunFollower.layer.pipe(Layer.provideMerge(output), Layer.provideMerge(Shim.layer), Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)))

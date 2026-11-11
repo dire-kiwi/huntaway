@@ -72,6 +72,8 @@ export interface ProjectRepoShape {
   readonly update: (id: ProjectId, columns: ProjectColumns) => Effect.Effect<void>
   /** How many of its tasks have an agent running. */
   readonly running: (id: ProjectId) => Effect.Effect<number>
+  /** The number its next task gets (for the system prompt's preview, which takes none). */
+  readonly nextNumber: (id: ProjectId) => Effect.Effect<number>
   /** Delete the project and its tasks, review threads first, then the row. */
   readonly delete: (id: ProjectId) => Effect.Effect<void>
 }
@@ -121,6 +123,11 @@ export class ProjectRepo extends Context.Service<ProjectRepo, ProjectRepoShape>(
         running: (id) =>
           sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM tasks WHERE project_id = ${id} AND running = 1`.pipe(
             Effect.map((rows) => rows[0]?.n ?? 0),
+            Effect.orDie,
+          ),
+        nextNumber: (id) =>
+          sql<{ readonly n: number }>`SELECT next_number AS n FROM projects WHERE id = ${id}`.pipe(
+            Effect.map((rows) => rows[0]?.n ?? 1),
             Effect.orDie,
           ),
         delete: remove,
