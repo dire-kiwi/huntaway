@@ -48,11 +48,15 @@ if [ -z "${MALLOC_MMAP_THRESHOLD_+x}" ]; then
   export MALLOC_MMAP_THRESHOLD_ HUNTAWAY_MALLOC_MMAP
 fi
 # The hooks an agent CLI runs for a tool call (docs/plan/06-server.md, Hook commands): each is an entry file of its own
-# that imports nothing from effect, so it starts in tens of milliseconds, without loading bin.ts.
+# that imports nothing from effect, so it starts in tens of milliseconds, without loading bin.ts. Node keeps what it
+# compiled for them (TypeScript with its types stripped, and V8's code) in its compile cache in the temp folder, so the
+# next call's hook doesn't load the TypeScript stripper again: from a checkout, about 20 ms of node rather than 45.
 case "$1" in
   approval-hook | gh-hook | gh-run)
     hook=$1
     shift
+    NODE_COMPILE_CACHE=${NODE_COMPILE_CACHE:-${TMPDIR:-/tmp}/node-compile-cache}
+    export NODE_COMPILE_CACHE
     exec "$node" $flags "$src/hooks/$hook.$ext" "$@"
     ;;
   "" | serve) ;;
