@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { AgentConfigId, Conflict, Invalid } from "@huntaway/contracts"
 import type { Reviewer } from "@huntaway/contracts"
 import { expandTilde } from "../settings/Folders.ts"
+import { asciiLower } from "@huntaway/shared"
 
 // The checks the old `api/profiles.ts` made of a profile's (and a project's) fields, as plain functions: what is stored
 // for what was given, or why it is refused. A blank text is the default (null) throughout.
@@ -14,8 +15,7 @@ export const blank = (v: string | null | undefined): string | null => {
   return t === "" ? null : t
 }
 
-/** Lower case for ASCII letters only, as the old `ascii_lower`. */
-export const asciiLower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase())
+export { asciiLower }
 
 /** The most reviewers (or summarizers) a project or profile can have (the old `review.MAX_REVIEWERS`). */
 export const MAX_REVIEWERS = 6
