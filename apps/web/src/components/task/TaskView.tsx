@@ -40,13 +40,15 @@ import { ReviewThreadView } from "./view/ReviewThreadView"
 import { useOpenTools } from "./terminalTools"
 // 6.10: the desktop view.
 import { DesktopButton, DesktopPane, useDesktopOn } from "./Desktop"
+// 6.7: a routine's thread, which the board's snapshot leaves out.
+import { useSoughtTask } from "./view/useSoughtTask"
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
 // left out here, each with a note: the browser pane (M6; the desktop view, 6.10, has a fixed half of the width until the
 // browser's splitter comes),
-// workflows' tabs (6.6), the assistant's brief, memory, routines and
-// action log (M6), finding a routine's thread on other hosts (M6), and the Agents pill (layout/AgentsPill, with the
-// assistant's and the layout's later pieces). Subprojects are a legacy branch, deleted.
+// workflows' tabs (6.6), and the Agents pill (layout/AgentsPill, with the layout's later pieces). Subprojects are a
+// legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
+// are 6.7's.
 
 const isLabel = (t: Tab): t is DocumentType => LABELS.some((l) => l === t)
 
@@ -156,7 +158,9 @@ export function TaskModal({ taskId }: { taskId: string }) {
 }
 
 export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mode }) {
-  const task = useBoard((s) => s.tasks[taskId])
+  const boardTask = useBoard((s) => s.tasks[taskId])
+  const sought = useSoughtTask(taskId, !!boardTask)
+  const task = boardTask ?? sought.task
   const loaded = useBoard((s) => s.loaded)
   const project = useProject(task?.project_id)
   const host = useHost(task?.host_id)
@@ -181,7 +185,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const [shownFor, setShownFor] = useState({ taskId, found })
   if (shownFor.taskId !== taskId || shownFor.found !== found) {
     setShownFor({ taskId, found })
-    setTab(openingTab(board.get().tasks[taskId]))
+    setTab(openingTab(board.get().tasks[taskId] ?? sought.task))
     setMounted([])
     if (shownFor.taskId !== taskId) setMarkErr(null)
   } else if (isTerminalTab(tab) && !mounted.includes(tab)) setMounted([...mounted, tab])
@@ -211,7 +215,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             <PanelButtons mode={mode} />
           </div>
         )}
-        <div className="p-8 text-muted">{loaded ? "Task not found." : "Loading task…"}</div>
+        <div className="p-8 text-muted">{loaded && !sought.seeking ? "Task not found." : "Loading task…"}</div>
       </div>
     )
   // A reviewer's, summarizer's or workflow step's thread has a view of its own, beside the review it's working on.
@@ -231,6 +235,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task)
   const docsOnly = documentsOnly(task)
   const tabs: Tab[] = [...labels, ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])]
+  // 6.7: the assistant's morning brief, its memory files and routines.
+  if (assistant) tabs.push("brief", "memory", "routines")
   // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (6.6).
   // Unless one of the board's is still running, from before it switched.
   const boardReviews = !project?.use_workflows || task.review?.state === "running"
@@ -239,6 +245,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   // Once there's a summary, or a review that passed to summarise: the tabs fit a phone's width until then.
   const summaries = reviews && (task.summaries.length > 0 || task.review?.state === "passed")
   if (summaries) tabs.push("summary")
+  // 6.7: the assistant's action log: what its approval rules asked about or blocked.
+  if (assistant) tabs.push("actions")
   tabs.push("terminal")
   if (!wide) tabs.push("details")
   // Until the render above drops it, a details tab while wide shows the thread beside the column.
@@ -466,8 +474,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             <DesktopPane key={`${task.host_id}:${task.id}`} task={task} onClose={() => setDesktop(false)} />
           </div>
         )}
-        {/* A document, the changes' panels and the terminals get the room; so does the desktop. */}
-        {wide && !desktop && !docShown && shown !== "changes" && !isTerminalTab(tab) && (
+        {/* A document, the changes' panels and the terminals get the room; so do the desktop, the memory and the brief. */}
+        {wide && !desktop && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && !isTerminalTab(tab) && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>

@@ -1,4 +1,5 @@
-import type { Host, Profile, Task } from "@huntaway/contracts"
+import type { ApprovalRule, Host, Profile, RuleDecision, Task } from "@huntaway/contracts"
+import { decide } from "@huntaway/shared"
 
 /** A profile's assistant thread: off the board, keyed `A-<n>`. */
 export const isAssistant = (t: Pick<Task, "kind" | "task_type">): boolean => t.kind === "task" && t.task_type === "assistant"
@@ -47,3 +48,9 @@ export function assistantHome(
   const home = homes.find(({ host }) => host.local) ?? homes[0]
   return home && { hostId: home.profile.host_id, profileId: home.profile.id }
 }
+
+/** 6.7: an approval rule's decisions, weakest first. */
+export const RULE_DECISIONS: ReadonlyArray<RuleDecision> = ["allow", "ask", "never"]
+
+/** 6.7: which of `rules` decides `tool`, as the host decides it (none for questions and plans, which no rule holds for). */
+export const ruleFor = (rules: ReadonlyArray<ApprovalRule>, tool: string): ApprovalRule | undefined => decide({ rules, expiry_minutes: 0 }, tool) ?? undefined

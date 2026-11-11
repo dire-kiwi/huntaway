@@ -11,6 +11,8 @@ import { ReloadButton } from "../settings/Server"
 import { UsagePanel } from "../settings/Usage"
 // 6.3
 import { DocsEntry } from "./sidebar/DocsEntry"
+// 6.7
+import { AssistantEntry } from "./sidebar/AssistantEntry"
 import { ContextMenu, IconButton } from "../ui"
 import { GroupNameModal } from "./sidebar/GroupNameModal"
 import { HostProjects } from "./sidebar/HostProjects"
@@ -81,10 +83,10 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
       <ProfileNav route={route} names={names} active={active} byProfile={stats.byProfile} setMenu={setMenu} />
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
-        {/* The profile's assistant (sidebar/ProfileEntries) is not yet on this server. */}
-        {/* 6.3: the profile's documents. */}
+        {/* 6.7: the profile's assistant; 6.3: its documents. */}
         {active && (
           <div className="space-y-0.5 pb-3 empty:hidden">
+            <AssistantEntry route={route} profile={active} />
             <DocsEntry route={route} profile={active} />
           </div>
         )}
