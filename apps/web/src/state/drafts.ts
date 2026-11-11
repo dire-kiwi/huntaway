@@ -96,3 +96,71 @@ export const composerDraftAtom = Atom.family((key: string) =>
     },
   ).pipe(Atom.keepAlive),
 )
+
+const Side = Schema.Literals(["old", "new"])
+
+/** The lines a comment on a diff is on (changes/lineComments.ts says what each field is). */
+const CommentLines = {
+  where: Schema.String,
+  source: Schema.String,
+  path: Schema.String,
+  side: Side,
+  start: Schema.Finite,
+  end: Schema.Finite,
+  at: Schema.Struct({ side: Side, line: Schema.Finite }),
+  lines: Schema.Array(Schema.String),
+}
+
+export const LineComment = Schema.Struct({ ...CommentLines, id: Schema.String, note: Schema.String })
+export type LineComment = typeof LineComment.Type
+export const CommentDraft = Schema.Struct({ ...CommentLines, id: Schema.String, of: Schema.optional(Schema.String), note: Schema.String })
+export type CommentDraft = typeof CommentDraft.Type
+
+/** A task's comments on its diff for its agent, and the ones still being written. */
+export const LineReview = Schema.Struct({ comments: Schema.Array(LineComment), drafts: Schema.Array(CommentDraft) })
+export type LineReview = typeof LineReview.Type
+
+const EMPTY_REVIEW: LineReview = { comments: [], drafts: [] }
+const LineReviewJson = Schema.fromJsonString(LineReview)
+const decodeReview = Schema.decodeUnknownOption(LineReviewJson)
+const encodeReview = Schema.encodeOption(LineReviewJson)
+
+/** The key a task's line comments are kept under (`ia.review.<host>:<task>`), as the old Changes tab kept them. */
+export const lineReviewKey = (hostId: string, taskId: string): string => `ia.review.${hostId}:${taskId}`
+
+/** Whether the browser could not keep a task's line comments: they are only kept until the page closes. */
+export const lineReviewUnsavedAtom = Atom.family((_key: string) => Atom.make(false).pipe(Atom.keepAlive))
+
+/**
+ * A task's line comments (the Changes tab's, HA-10) and the ones being written, under `lineReviewKey`, so another tab or
+ * task, or a reload, does not lose them; kept for the page's life, so ones the browser could not keep are still here.
+ * Another tab's changes are read again as the browser says the key changed. An empty review is not stored.
+ */
+export const lineReviewAtom = Atom.family((key: string) =>
+  Atom.writable(
+    () => {
+      let raw: string | null = null
+      try {
+        raw = window.localStorage.getItem(key)
+      } catch {
+        return EMPTY_REVIEW
+      }
+      return Option.getOrElse(decodeReview(raw), () => EMPTY_REVIEW)
+    },
+    (ctx, value: LineReview) => {
+      let kept = true
+      try {
+        if (value.comments.length === 0 && value.drafts.length === 0) window.localStorage.removeItem(key)
+        else
+          window.localStorage.setItem(
+            key,
+            Option.getOrElse(encodeReview(value), () => ""),
+          )
+      } catch {
+        kept = false
+      }
+      ctx.set(lineReviewUnsavedAtom(key), !kept)
+      ctx.setSelf(value)
+    },
+  ).pipe(Atom.keepAlive),
+)

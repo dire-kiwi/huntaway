@@ -1,5 +1,6 @@
 import { isAssistant, isPenThread, isPensThread, ownWorkDir, type DocumentType, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
-import type { ReactNode } from "react"
+import { Suspense, useEffect, type ReactNode } from "react"
+import { preloadable } from "../../ui/preloadable"
 import { Thread } from "../Thread"
 import { Composer } from "../thread/Composer"
 import { WithHeldChoice } from "../../board/MergesInto"
@@ -33,6 +34,13 @@ const PEN_EMPTY = (
   </div>
 )
 
+// The tabs kept in chunks of their own (4.2: Changes; Memory, Brief, Routines and the review's patch come with their
+// milestones), loaded once the task view is open so the first open of the tab doesn't wait for them.
+const ChangesView = preloadable(() => import("../../changes/Changes").then((m) => m.ChangesView))
+export function preloadTabs() {
+  ChangesView.preload()
+}
+
 /** What a tab of a later milestone shows on this server until its view comes over. */
 function NotYet({ what }: { what: string }) {
   return <div className="p-8 text-[13px] text-muted">{what} not yet on this server.</div>
@@ -59,8 +67,7 @@ export function TabContent({
   docShown: DocumentType | undefined
   onShowThread: () => void
 }) {
-  // The old view preloaded the tabs kept in chunks of their own (Changes, Memory, Brief, Routines, the review's patch):
-  // they come with their milestones.
+  useEffect(preloadTabs, [])
   const placeholder = isAssistant(task)
     ? "Message your assistant…"
     : isPensThread(task)
@@ -96,15 +103,17 @@ export function TabContent({
 }
 
 /**
- * What a tab other than the thread or a document shows above the composer. Changes, the review and the summary come
- * with M4 (changes/Changes.tsx, task/Review.tsx); a workflow's tabs with workflows (6.6); the assistant's memory, brief,
- * routines and action log with the assistant (M6).
+ * What a tab other than the thread or a document shows above the composer. The review and the summary come with M4
+ * (task/Review.tsx); a workflow's tabs with workflows (6.6); the assistant's memory, brief, routines and action log with
+ * the assistant (M6).
  */
 function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab): ReactNode {
   return shown === "memory" ? (
     <NotYet what="The assistant's memory is" />
   ) : tab === "changes" ? (
-    <NotYet what="Changes are" />
+    <Suspense fallback={null}>
+      <ChangesView task={task} />
+    </Suspense>
   ) : shown === "review" ? (
     <NotYet what="Reviews are" />
   ) : shown === "summary" ? (

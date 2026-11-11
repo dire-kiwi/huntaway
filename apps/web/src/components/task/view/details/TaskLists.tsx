@@ -13,7 +13,7 @@ import { TaskTypeBadge } from "../../documentInfo"
 import { Section } from "./Section"
 
 /** The tasks made from the same prompt (IA-227), with what each runs with. Comparing them (changes/Compare) comes with
- *  the Changes tab (4.2). */
+ *  fan-out (6.11): it reads and picks through the fan-out methods (`tasks.fanout`), which 4.2 left for it. */
 export function FanoutSection({ task }: { task: Task }) {
   const tasks = useFanout(task)
   const configs = useConfigsOf(tasks)
