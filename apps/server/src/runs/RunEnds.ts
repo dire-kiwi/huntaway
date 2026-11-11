@@ -22,6 +22,7 @@ import type { FinishDecision } from "./finish.ts"
 import type { Run } from "./Run.ts"
 import { RunRepo } from "./RunRepo.ts"
 import { Runs } from "./Runs.ts"
+import { RunWaits } from "./RunWaits.ts"
 
 // What the reactor does with `RunExited` (docs/plan/07-agents.md, When a run ends; inventory 01, section 9): under the
 // task's lock, the run's outcome, the run recorded as exited, the steers it never took in queued again ahead of what
@@ -63,6 +64,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const tokens = yield* Tokens
       const devServers = yield* DevServers
       const requests = yield* AgentRequests
+      const waits = yield* RunWaits
 
       const board: Actor = { _tag: "Board" }
 
@@ -155,8 +157,9 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         const first = yield* locks.withLock(["task", change.task])(recordEnd(change))
         if (first === null) return
         const { run, decision, later } = first
-        // What the run had going goes with it: its tokens are counted, its servers looked for a while longer, its
-        // prompts expire (`AgentRequests`' handlers), the reply being written ends.
+        // What the run had going goes with it: its wait is over (the old `wait.ended`), its tokens are counted, its
+        // servers looked for a while longer, its prompts expire (`AgentRequests`' handlers), the reply being written ends.
+        yield* waits.over(run.task_id, run.id)
         yield* tokens.runEnded(run.task_id)
         yield* devServers.notifyRunEnded(run.task_id)
         yield* requests.ended(run, !later)

@@ -5,6 +5,7 @@ import { penTools } from "./pens.ts"
 import { projectTools } from "./projects.ts"
 import { questionTools } from "./questions.ts"
 import { taskTools } from "./tasks.ts"
+import { waitTools } from "./wait.ts"
 
 // The board's own server, `huntaway` (docs/plan/07-agents.md, Board tools): every area's tools, registered in the
 // order the old server listed them (mcp.ts `board_tools`), which is the order runs are shown them. An area that adds
@@ -58,6 +59,7 @@ export const BoardTools = McpServers.register(
   Effect.gen(function* () {
     const all: ReadonlyArray<RegisteredTool> = [
       ...Object.values(yield* questionTools),
+      ...Object.values(yield* waitTools),
       ...Object.values(yield* projectTools),
       ...Object.values(yield* taskTools),
       ...Object.values(yield* penTools),

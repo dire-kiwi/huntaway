@@ -604,6 +604,45 @@ move of the task. It subscribes to `Events` **before** it reads state. The store
 a resumed call picks up after a restart: same deadline and watched set, the command started again, the pull request
 read again. The nine end conditions and the "told" bookkeeping for PR news are inventory 03, sections 2.8 and 2.9.
 
+As built in 3.5 (HE-4):
+
+- **`mcp/Wait.ts`**: `wait(caller, { reason, seconds, tasks, command }) → { ended, wait, output }` (fails with
+  `ToolError`: a period too long for what it watches, a command that couldn't start), `workDir(task)` (the worktree,
+  the project's repository, else the profile's scratch folder: where the command runs), `callMade(caller)` and
+  `cancelled(run, call)` (`McpHooks`' parts, `Wait.hooks`). A wait's fiber subscribes to `Events`, then reads the
+  stored wait (a call retried with the same id carries on with it) or stores a new one, and loops: `check` (the run
+  stopped, ended or gone → `stopped`; the stored wait gone → `resumed`; `moved_to` → `task_moved`; a queued message or a
+  steer of this run → `message`; `subagent_finished` → the subagent; `pull_request.news` → its news; the watched tasks
+  → `tasks_changed`), then races a `task`/`task_deleted` event of its own task or a watched one, a 5 s tick (a stop
+  writes no event), the deadline and the command's exit. It clears the stored wait when it ends **unless it was
+  interrupted** (the server stopping): the retried call picks it up. A second wait of the same run replaces the first
+  in the `FiberMap`; the first returns `resumed`. The pure rules (periods, `ended`'s names, the notes word for word,
+  the watched tasks' check) are `mcp/wait/ended.ts`.
+- **The command** (`mcp/wait/command.ts`) runs through `ChildProcessSpawner`: `bash -c LAUNCH issue-agent-wait
+  <command>`, detached (its own group), `killSignal: SIGKILL`, stdin a pipe the server holds (the watchdog), in
+  `workDir` with the agent's environment and the task's `TMPDIR`. **Decided**: its output comes through one pipe (LAUNCH
+  begins `exec … 2>&1`, so stdout and stderr keep their order) rather than an unlinked temp file, kept to its last 4000
+  bytes as it is read; at its exit the group is killed and the pipe read to its end. gh as the task's account in its
+  environment is 4.4's.
+- **A message for the run needs no new signal**: `Runs.send` publishes the task after it queues or steers a message,
+  and the wait reads `TaskRepo.queued`/`steers(task, run)`. **What the run's output says** is `runs/RunWaits.ts`
+  (`line(run, line)`, called in the Claude line handler's transaction: the agent's own thread calling another tool, or
+  a turn's `result`, clears the run's wait; a subagent's terminal `task_notification`/`task_updated` of an Agent or
+  Task call is recorded as `subagent_finished`, the first only), and `over(task, run)`, which the end of a run (2.6)
+  calls. Each writes `agent_wait` and publishes the task, which wakes the wait.
+- **The command's approval** is `mcp/wait/CommandApproval.ts`, asked when the agent's reviewer didn't review the call
+  (`approvesOwnWaits` of the run's `spec.json`) or an approval rule asks about or refuses Bash; `Permissions` supplies
+  the live layer (a `Bash` prompt of the call, Don't ask refusing); `layerNone` refuses until then. Codex's
+  `review_waits` is M5's.
+- **The tools** (`mcp/tools/wait.ts`) are in `BoardTools`' list: `wait` (`seconds`' bounds are shown in its JSON
+  Schema, not enforced: the period clamps, as before) and `background_wait`, which checks the id against the task's
+  `background_work` of this run and writes the run's `background-waited` (`RunDir.backgroundWaited`,
+  `setBackgroundWaited`); 2.8's `BackgroundWork` reads that file when it shows the task's background work again.
+- **Pull requests (4.5)**: a wait given `pull_request` is refused for now. The seams: the read before the wait starts
+  (into the stored wait's `pull_request`), the watcher racing in `waitOut` that records news on the stored wait (which
+  `check` already ends on), `delivered` after the call returns, the note (`PR_NOTE` stands in) and the last read in the
+  result.
+
 ## Permissions, questions, approvals
 
 ```ts

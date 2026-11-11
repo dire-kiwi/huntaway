@@ -5,9 +5,11 @@ import type { Run } from "../runs/Run.ts"
 import { ToolError } from "./tool.ts"
 import type { McpCaller } from "./tool.ts"
 
-// What a board call needs of services that are not built yet (docs/plan/07-agents.md, Dispatch): the run's wait
-// (`Wait`, 3.5) and the user's answer to an approval rule that asks (`Permissions`). `ToolCalls` calls these at its
-// gates and when the agent gives up on a call; `layerNone` stands in until those pieces replace it in `Main.ts`.
+// What a board call needs of the services built over `ToolCalls`' area (docs/plan/07-agents.md, Dispatch): the run's
+// wait (`Wait`: `callMade`, and its part of `cancelled`) and the user's answer to an approval rule that asks
+// (`Permissions`: `askRule`, and its part of `cancelled`). `ToolCalls` calls these at its gates and when the agent gives
+// up on a call. `Wait.hooks` is `Wait`'s with `refuseAsk` until `Permissions`' is combined with it in `Main.ts`;
+// `layerNone` is for tests that want neither.
 
 export interface McpHooksShape {
   /** Any board call but `wait` means the run is working again: it ends the run's current wait. */
@@ -21,6 +23,10 @@ export interface McpHooksShape {
   readonly cancelled: (run: Run, call: CallId) => Effect.Effect<void>
 }
 
+/** An ask rule's call refused (closed rather than open), with the reason, while the board can't ask the user. */
+export const refuseAsk: McpHooksShape["askRule"] = (_caller, name, _input, rule) =>
+  Effect.fail(ToolError.other(`The user's approval rules ask about ${name} (ask: ${rule.tool}), and this board can't ask the user yet, so it wasn't run.`))
+
 export class McpHooks extends Context.Service<McpHooks, McpHooksShape>()("huntaway-server/mcp/McpHooks") {
   /**
    * No wait to end and no one to ask: a call an ask rule matches is refused (closed rather than open), with the
@@ -30,10 +36,7 @@ export class McpHooks extends Context.Service<McpHooks, McpHooksShape>()("huntaw
     McpHooks,
     McpHooks.of({
       callMade: () => Effect.void,
-      askRule: (_caller, name, _input, rule) =>
-        Effect.fail(
-          ToolError.other(`The user's approval rules ask about ${name} (ask: ${rule.tool}), and this board can't ask the user yet, so it wasn't run.`),
-        ),
+      askRule: refuseAsk,
       cancelled: () => Effect.void,
     }),
   )
