@@ -59,6 +59,19 @@ export const ApprovalChanged = Schema.Struct({ type: Schema.Literal("approval"),
 /** A task's checkpoints changed (a turn's was taken, or it was rewound): its turns are read again (`checkpoints.turns`). */
 export const CheckpointsChanged = Schema.Struct({ type: Schema.Literal("checkpoints"), task_id: TaskId, ...seq })
 
+/** 6.3: a profile's document was published, moved, relabelled or (`deleted`) deleted: it is read again. */
+export const DocsChanged = Schema.Struct({
+  type: Schema.Literal("docs"),
+  profile_id: ProfileId,
+  slug: Schema.String,
+  deleted: Schema.optional(Schema.Boolean),
+  ...seq,
+})
+/** 6.3: a document's comments changed (added, edited, deleted or sent): they are read again. */
+export const DocCommentsChanged = Schema.Struct({ type: Schema.Literal("doc_comments"), profile_id: ProfileId, slug: Schema.String, ...seq })
+/** 6.3: a profile's connection to its docs site changed (a sign-in started, stopped, connected or was forgotten). */
+export const DocsSiteChanged = Schema.Struct({ type: Schema.Literal("docs_site"), profile_id: ProfileId, ...seq })
+
 export const BoardEvent = Schema.Union([
   Hello,
   Resync,
@@ -74,6 +87,10 @@ export const BoardEvent = Schema.Union([
   ApprovalLogChanged,
   ApprovalChanged,
   CheckpointsChanged,
+  // 6.3: documents.
+  DocsChanged,
+  DocCommentsChanged,
+  DocsSiteChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

@@ -61,6 +61,11 @@ export interface HostBoard {
    * which what shows its turns reads them again on.
    */
   readonly checkpoints: ReadonlyMap<TaskId, number>
+  /**
+   * 6.3: the number of the latest event about a profile's documents (`docs <profile>`), a document's comments
+   * (`comments <profile> <slug>`) and a profile's docs site (`site <profile>`), which the Docs page reads them again on.
+   */
+  readonly docs: ReadonlyMap<string, number>
 }
 
 const noSettings: HostSettings = {
@@ -90,6 +95,7 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   approvals: [],
   restart: null,
   checkpoints: new Map(),
+  docs: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -179,6 +185,9 @@ function reuseApprovals(h: HostId, prev: ReadonlyArray<HostApproval>, next: Read
   )
 }
 
+/** 6.3: the key of `HostBoard.docs` for a profile's documents, a document's comments, or a profile's docs site. */
+export const docsKey = (kind: "docs" | "comments" | "site", profile: string, slug = ""): string => `${kind} ${profile} ${slug}`
+
 /** A numbered event, applied unless the board has it already. */
 function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly type: "hello" | "resync" }>): HostBoard {
   const h = board.host_id
@@ -233,6 +242,13 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
     }
     case "checkpoints":
       return { ...next, checkpoints: new Map(board.checkpoints).set(message.task_id, message.seq) }
+    // 6.3
+    case "docs":
+      return { ...next, docs: new Map(board.docs).set(docsKey("docs", message.profile_id), message.seq) }
+    case "doc_comments":
+      return { ...next, docs: new Map(board.docs).set(docsKey("comments", message.profile_id, message.slug), message.seq) }
+    case "docs_site":
+      return { ...next, docs: new Map(board.docs).set(docsKey("site", message.profile_id), message.seq) }
     case "approval_rules":
     case "approval_log":
       // A profile's approval rules and action log are read where Settings shows them, not kept in the board.

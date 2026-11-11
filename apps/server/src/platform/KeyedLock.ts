@@ -8,6 +8,8 @@ import { Context, Effect, Layer, Ref, Semaphore } from "effect"
  * `["merges", project]` (4.7) is a project's merge lanes: one look at its queue at a time, so two can't both give a lane's
  * slot away; it comes after the project's and before any task's (a merge is asked for under it). `["restack", repo]`
  * (4.8) runs a repository's restacks one at a time, in the order asked; it comes before the level's worktree lock.
+ * `["docs", …]` (6.3) is a profile's renewal of its docs site's sign-in (`site:<profile>`) and a document's publishes to
+ * it (`publish:<doc>`); neither is held with another lock.
  */
 export type LockKey =
   | readonly ["project", string]
@@ -19,6 +21,8 @@ export type LockKey =
   | readonly ["task", string]
   | readonly ["run", string]
   | readonly ["workspace", string]
+  // 6.3
+  | readonly ["docs", string]
 
 export interface KeyedLockShape {
   /** One holder per key at a time, waiters in order, released on any exit. */

@@ -188,6 +188,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           github: yield* githubOf(task, project),
           // The board serves gh (4.4); a project that has its own `gh` server or turns it off is 6.4's (`AgentTools`).
           ghTools: true,
+          // 6.3: the board serves docs; a project that has its own `docs` server or turns it off is 6.4's (`AgentTools`).
+          docsTools: true,
         }
         return context
       })

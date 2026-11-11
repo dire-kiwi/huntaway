@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { Mac, SecureRandom } from "effect/crypto"
+import { Digest, Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
@@ -11,6 +11,7 @@ import {
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
+  DocRpcs,
   GitRpcs,
   HostRpcGroup,
   PenRpcs,
@@ -38,6 +39,15 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+// 6.3: documents.
+import { DocImages } from "./docs/DocImages.ts"
+import { DocRepo } from "./docs/DocRepo.ts"
+import { Docs } from "./docs/Docs.ts"
+import { DocsRender } from "./docs/DocsRender.ts"
+import { DocsSiteRepo } from "./docs/DocsSiteRepo.ts"
+import { HostedDocs } from "./docs/HostedDocs.ts"
+import { DocsTools } from "./mcp/tools/docs.ts"
+import { DocHandlers } from "./rpc/docs.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
@@ -164,6 +174,8 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Identity.layer),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
+    // 6.3: documents' images are named by their sha256.
+    Layer.provideMerge(Digest.layerWebCrypto),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
 
@@ -262,7 +274,7 @@ const RunsArea = Runs.layer.pipe(
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   Layer.mergeAll(McpControlRegistered, McpCodexRegistered).pipe(
-    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools)),
+    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools, DocsTools)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
@@ -298,6 +310,12 @@ export const BoardHooks = Layer.effect(
   }),
 )
 
+/** 6.3: the docs area: published documents, their images, and publishing them to a hosted docs site. */
+const DocsLive = Docs.layer.pipe(
+  Layer.provideMerge(HostedDocs.layer),
+  Layer.provideMerge(Layer.mergeAll(DocRepo.layer, DocsSiteRepo.layer, DocImages.layer, DocsRender.layer)),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
@@ -307,6 +325,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.3: documents, which the docs server's tools call.
+    Layer.provideMerge(DocsLive),
     // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
     Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
     // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
@@ -362,6 +382,8 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.3
+  DocRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +402,8 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.3
+  DocHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

@@ -18,6 +18,8 @@ catalog:
   vite: npm:@voidzero-dev/vite-plus-core@1.5.0
   playwright: 1.64.1
   playwright-core: 1.64.1
+  # 6.3: documents' images to AVIF (apps/server/src/docs/DocImages.ts).
+  sharp: 0.35.5
 
 # Vite+ (`vp`) bundles the Vite and Vitest every package gets.
 overrides:

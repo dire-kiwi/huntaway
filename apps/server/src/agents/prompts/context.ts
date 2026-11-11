@@ -60,7 +60,7 @@ export interface PromptContext {
   readonly boardPr: boolean
   /** The workflow's In progress text, in place of the start prompt. null until plan task 6.6. */
   readonly workflowStart: string | null
-  /** It has the board's docs server. false until plan task 6.3 (`Docs`). */
+  /** It has the board's docs server (6.3). */
   readonly docsTools: boolean
   /** It has the desktop server: the host's name, whose desktop it is. null until plan task 6.10 (computer use). */
   readonly desktopHost: string | null
