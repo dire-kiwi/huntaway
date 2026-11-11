@@ -152,9 +152,38 @@ jobs:
       - name: pnpm test:e2e
         run: pnpm test:e2e
 
+  # The browser checks in apps/web/tests/ui (`pnpm test:ui`, which builds the UI first) against test servers of this
+  # checkout, in Playwright's Chromium (the runners have no /usr/bin/chromium).
+  ui:
+    needs: tree
+    if: needs.tree.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: *setup-vp
+        with: *setup-vp-with
+
+      - name: Chromium
+        working-directory: apps/web
+        run: pnpm exec playwright-core install --with-deps chromium
+
+      - name: pnpm test:ui
+        run: pnpm test:ui
+
+      # What the page showed when a step failed (scripts/ui-check.mjs saves it).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: ui-check-failures
+          path: /tmp/ui-check-*-failed.png
+          if-no-files-found: ignore
+          retention-days: 7
+
   # Records that this run's tree passed, for `tree` in later runs: it runs only when every job above succeeded.
   green:
-    needs: [tree, rust, check, test, e2e]
+    needs: [tree, rust, check, test, e2e, ui]
     if: needs.tree.outputs.skip != 'true' && needs.tree.outputs.tree != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
