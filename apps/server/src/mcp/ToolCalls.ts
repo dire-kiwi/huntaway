@@ -20,7 +20,7 @@ import { McpHooks } from "./McpHooks.ts"
 import { McpServers } from "./McpServers.ts"
 import type { RegisteredTool } from "./McpServers.ts"
 import { annotation, ApprovalKind, BOARD_SERVER, checkArgs, ForPlanning, ForReviewers, Rerunnable, ToolError, ToolResult } from "./tool.ts"
-import type { McpCaller, ServerName } from "./tool.ts"
+import type { LocalCaller, ServerName } from "./tool.ts"
 
 // Running the board's tool calls (docs/plan/07-agents.md, Dispatch; docs/plan/inventory/03-mcp.md 2.3 and 2.4): at
 // most once per call id, whoever delivers a call and however often. A call is recorded `executing` in `mcp_calls`
@@ -135,7 +135,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
       })
 
       /** The user's approval rules for the board's own tools (assistant threads), which the board holds as it runs them. */
-      const checkRules = (caller: McpCaller, tool: string, args: unknown) =>
+      const checkRules = (caller: LocalCaller, tool: string, args: unknown) =>
         Effect.flatMap(rules.decideBoardTool(caller.task, tool), (found): Effect.Effect<void, ToolError> => {
           // The tools that ask the user themselves aren't asked about twice; never still refuses them.
           if (found === null || found.rule.decision === "allow" || (found.rule.decision === "ask" && ASKS_ITSELF.includes(tool))) return Effect.void
@@ -164,7 +164,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
         if (Option.isNone(profile)) return yield* ToolError.other("unknown profile")
         // A tool the server doesn't have, once the run is known to be one that may call.
         if (registered === undefined) return yield* ToolError.other(`unknown tool ${tool}`)
-        const caller: McpCaller = { call_id: input.call_id, server, run: run.value, task, profile: profile.value, mode: yield* modeOf(task) }
+        const caller: LocalCaller = { call_id: input.call_id, server, run: run.value, task, profile: profile.value, mode: yield* modeOf(task) }
         if (server === BOARD_SERVER) {
           // Whatever the run's tool list offers, a reviewer only reads.
           if (task.kind === "review" && !annotation(registered.tool, ForReviewers)) {

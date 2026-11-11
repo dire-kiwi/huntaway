@@ -5,7 +5,7 @@ import { Permissions } from "../permissions/Permissions.ts"
 import type { PermissionsShape } from "../permissions/Permissions.ts"
 import type { Run } from "../runs/Run.ts"
 import { ToolError } from "./tool.ts"
-import type { McpCaller } from "./tool.ts"
+import type { LocalCaller } from "./tool.ts"
 
 // What a board call needs of the services built over `ToolCalls`' area (docs/plan/07-agents.md, Dispatch): the run's
 // wait (`Wait`: `callMade`, and its part of `cancelled`) and the user's answer to an approval rule that asks
@@ -15,12 +15,12 @@ import type { McpCaller } from "./tool.ts"
 
 export interface McpHooksShape {
   /** Any board call but `wait` means the run is working again: it ends the run's current wait. */
-  readonly callMade: (caller: McpCaller) => Effect.Effect<void>
+  readonly callMade: (caller: LocalCaller) => Effect.Effect<void>
   /**
    * An approval rule asks about the call (`name` is the tool as the rule matched it, `mcp__huntaway__<tool>`): the
    * user, or the thread's mode, decides. Fails with what the agent is told when it is denied.
    */
-  readonly askRule: (caller: McpCaller, name: string, input: unknown, rule: Rule) => Effect.Effect<void, ToolError>
+  readonly askRule: (caller: LocalCaller, name: string, input: unknown, rule: Rule) => Effect.Effect<void, ToolError>
   /** The agent gave up on call `call` of `run`: the prompt it raised expires and its wait ends (it is not answered). */
   readonly cancelled: (run: Run, call: CallId) => Effect.Effect<void>
 }

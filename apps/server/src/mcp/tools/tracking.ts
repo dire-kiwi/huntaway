@@ -10,8 +10,8 @@ import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { Tasks } from "../../tasks/Tasks.ts"
 import { makeReach } from "../resolve.ts"
 import { ForPlanning, Rerunnable, ToolError } from "../tool.ts"
-import type { McpCaller } from "../tool.ts"
-import { boardTool, Json, told } from "./common.ts"
+import type { LocalCaller } from "../tool.ts"
+import { Json, threadTool, told } from "./common.ts"
 import type { JsonObject } from "./common.ts"
 
 // The assistant's tracked work tools (docs/plan/inventory/03-mcp.md 2.5; the old mcp/schemas/tracked.ts and
@@ -80,7 +80,7 @@ export const trackingTools = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom
 
   /** The assistant whose list the caller's calls change. */
-  const ownerOf = Effect.fnUntraced(function* (caller: McpCaller) {
+  const ownerOf = Effect.fnUntraced(function* (caller: LocalCaller) {
     const t = caller.task
     const parent = t.parent_id === null ? null : yield* repo.get(t.parent_id)
     const id = owner(t, parent)
@@ -91,7 +91,7 @@ export const trackingTools = Effect.gen(function* () {
   const listOf = (id: TaskId) => Effect.map(repo.get(id), (t) => t?.tracked ?? [])
 
   /** A tracked item's task as it is now, if the caller can still read it (on a board it can use: linked hosts are M7's). */
-  const linkedTask = Effect.fnUntraced(function* (caller: McpCaller, id: TaskId) {
+  const linkedTask = Effect.fnUntraced(function* (caller: LocalCaller, id: TaskId) {
     const t = yield* repo.get(id)
     if (t === null || !(yield* reach.boards(caller)).some((b) => b.id === t.profile_id)) return null
     const linked: Linked = { key: t.key, title: t.title, status: t.status, resolution: t.resolution, merged: isMerged(t), pr_url: t.pr_url }
@@ -102,7 +102,7 @@ export const trackingTools = Effect.gen(function* () {
    * Tracked items as the tools give them: with what they show as their status (done once the task they follow is), and
    * that task's state (null if it can't be read now).
    */
-  const trackedJson = (caller: McpCaller, items: ReadonlyArray<TrackedItem>) =>
+  const trackedJson = (caller: LocalCaller, items: ReadonlyArray<TrackedItem>) =>
     Effect.forEach(
       items,
       Effect.fnUntraced(function* (i) {
@@ -119,7 +119,7 @@ export const trackingTools = Effect.gen(function* () {
 
   /** Changes the owner's list with `f` in one read and write; what `f` gave, or why it refused. */
   const changeList = <A>(
-    caller: McpCaller,
+    caller: LocalCaller,
     id: TaskId,
     f: (list: ReadonlyArray<TrackedItem>) => Result.Result<{ readonly list: ReadonlyArray<TrackedItem>; readonly out: A }, string>,
   ) =>
@@ -140,7 +140,7 @@ export const trackingTools = Effect.gen(function* () {
       return outcome.success
     })
 
-  const trackWork = boardTool(TrackWork, (params, caller) =>
+  const trackWork = threadTool(TrackWork, (params, caller) =>
     Effect.gen(function* () {
       const assistant = yield* ownerOf(caller)
       const ref = params.task === undefined ? null : params.task.trim()
@@ -159,7 +159,7 @@ export const trackingTools = Effect.gen(function* () {
     }).pipe(told),
   )
 
-  const untrackWork = boardTool(UntrackWork, (params, caller) =>
+  const untrackWork = threadTool(UntrackWork, (params, caller) =>
     Effect.gen(function* () {
       const assistant = yield* ownerOf(caller)
       const ids = [...(params.ids ?? [])]
@@ -173,7 +173,7 @@ export const trackingTools = Effect.gen(function* () {
     }).pipe(told),
   )
 
-  const listTrackedWork = boardTool(ListTrackedWork, (_params, caller) =>
+  const listTrackedWork = threadTool(ListTrackedWork, (_params, caller) =>
     Effect.gen(function* () {
       const assistant = yield* ownerOf(caller)
       return { items: yield* trackedJson(caller, yield* listOf(assistant)) }

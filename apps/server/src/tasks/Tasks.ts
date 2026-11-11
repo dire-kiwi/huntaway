@@ -172,7 +172,7 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
         const task = yield* db.tx(
           Effect.gen(function* () {
             const row = yield* Effect.fromResult(decideCreate(input, yield* createFacts(input), at))
-            const createdBy = by._tag === "Agent" ? { created_by: by.task_id } : {}
+            const createdBy = by._tag === "Agent" && by.task_id !== null ? { created_by: by.task_id } : {}
             yield* repo.insert(id, { ...row, columns: { ...row.columns, ...createdBy } }, at)
             // Just inserted, in this transaction.
             const created = yield* load(id).pipe(Effect.orDie)

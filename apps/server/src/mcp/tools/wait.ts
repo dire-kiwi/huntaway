@@ -10,11 +10,11 @@ import { RunDir } from "../../runs/RunDir.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { makeReach } from "../resolve.ts"
 import { ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
-import type { McpCaller } from "../tool.ts"
+import type { LocalCaller } from "../tool.ts"
 import { Wait } from "../Wait.ts"
 import { CommandApproval } from "../wait/CommandApproval.ts"
 import { COMMAND_MAX_SECS, COMMAND_STOPPED, DEFAULT_SECS, endedName, MAX_SECS, note, PR_NOTE, resuming, UNWATCHED_MAX_SECS } from "../wait/ended.ts"
-import { boardTool, Json } from "./common.ts"
+import { Json, threadTool } from "./common.ts"
 import type { JsonObject } from "./common.ts"
 import { makeTaskJson } from "./taskJson.ts"
 
@@ -138,20 +138,20 @@ export const waitTools = Effect.gen(function* () {
   const background = yield* BackgroundWork
 
   /** Whether the agent's own reviewer has reviewed its wait calls (Claude in auto mode; Codex's is M5's). */
-  const reviewsOwnWaits = Effect.fnUntraced(function* (caller: McpCaller) {
+  const reviewsOwnWaits = Effect.fnUntraced(function* (caller: LocalCaller) {
     const spec = yield* dirs.spec(caller.run.id)
     return spec !== null && approvesOwnWaits(spec.args)
   })
 
   /** Whether the user's approval rules ask about or refuse Bash in the caller's thread now: a wait's command is a command. */
-  const ruledBash = Effect.fnUntraced(function* (caller: McpCaller) {
+  const ruledBash = Effect.fnUntraced(function* (caller: LocalCaller) {
     const rule = yield* rules.decide(caller.task, "Bash", caller.mode)
     return rule !== null && rule.decision !== "allow"
   })
 
   /** The tasks to watch, as they are now, and from how the agent last saw them (HA-389). */
   const watchedTasks = Effect.fnUntraced(function* (
-    caller: McpCaller,
+    caller: LocalCaller,
     refs: ReadonlyArray<string>,
     lastSeen: Readonly<Record<string, Status | { readonly status?: Status; readonly review?: ReviewState | null }>>,
   ) {
@@ -186,7 +186,7 @@ export const waitTools = Effect.gen(function* () {
     return list
   })
 
-  const wait = boardTool(WaitTool, (params, caller) =>
+  const wait = threadTool(WaitTool, (params, caller) =>
     Effect.gen(function* () {
       const task = (yield* repo.get(caller.task.id)) ?? caller.task
       const resumed = resuming(task, caller.call_id) !== null
@@ -247,7 +247,7 @@ export const waitTools = Effect.gen(function* () {
     }),
   )
 
-  const backgroundWait = boardTool(BackgroundWait, (params, caller) =>
+  const backgroundWait = threadTool(BackgroundWait, (params, caller) =>
     Effect.gen(function* () {
       const id = params.task_id.trim()
       const waiting = params.waiting !== false
