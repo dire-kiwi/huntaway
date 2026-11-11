@@ -1,6 +1,6 @@
 # 9. Frontend
 
-The web app, the shared client, the desktop shell and the phone app. The React components are kept: their markup,
+The web app, the shared client and the desktop shell. The React components are kept: their markup,
 styles and look. What they read from and call into is replaced. Facts and counts here are from
 [inventory 10](inventory/10-web-client.md) and [11](inventory/11-mobile-tooling.md).
 
@@ -25,8 +25,9 @@ How much each component needs depends on what it touches:
 
 ## `packages/client`
 
-Shared by the web and mobile apps. No DOM, Node or React Native APIs: each app gives it a websocket constructor and a
-key-value store as layers.
+Everything the web app knows about servers. It uses no DOM, Node or React Native APIs: the app gives it a websocket
+constructor and a key-value store as layers. That costs nothing now and is what would let a phone app share it
+later.
 
 ```
 packages/client/src/
@@ -231,20 +232,13 @@ server came up; AppImage and pacman installs are done by the shell; `app/state.j
 `Releases` service and keeps its format; the preload exposes the same six members on `window.huntawayDesktop`, to
 the main frame only, with origin checks.
 
-## The phone app: `apps/mobile`
+## The phone app
 
-Expo 58, React Native 0.88, expo-router. Its screens and components are kept. Its state modules (`boards.ts`,
-`live.ts`, `load.ts`, `inbox.ts`, `boardData.ts`, `tasks.ts`, `thread.ts`, `session.tsx`) are replaced by
-`packages/client`, with three platform layers of its own: a key-value store on `expo-secure-store`, the global
-`WebSocket`, and the notification handlers. One client per paired board, each with its device token.
-
-- Push keeps its security shape (inventory 11): Allow and Deny from the lock screen work without the keychain, with
-  a one-time token posted to `/api/push-answer`; a tap is handled once across the listener, the background task and
-  a relaunch.
-- **Effect on React Native is the one unproven platform in this plan.** T3 Code ships an Expo 58 app on Effect 4,
-  which is good evidence. M0 proves it here: a screen that subscribes to `board.watch` on a device and in Jest, with
-  `effect` and `@effect/*` added to Jest's `transformIgnorePatterns`.
-- The phone is where the size of the board snapshot is measured ([05-protocol.md](05-protocol.md#the-board)).
+Not part of this plan. The old Expo app speaks the old API and keeps working against machines that have not
+switched; it cannot reach one that has. When it is taken up again, its screens are kept and its state modules are
+replaced by `packages/client` with a key-value store on `expo-secure-store`, and three server pieces come with it:
+device pairing, Expo push, and answering a prompt from the lock screen. Effect on React Native would be the first
+thing to prove (T3 Code ships an Expo 58 app on Effect 4, which is good evidence).
 
 ## Tests
 

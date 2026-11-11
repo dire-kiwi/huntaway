@@ -50,7 +50,6 @@ that host's session.
 | `Discovery`       | Finding hosts: mDNS for `_huntaway._tcp.local`, Tailscale peers, hosts that linked hosts know                                            |
 | `Ssh`             | The hub's key, the forced command, the port forward                                                                                      |
 | `SettingsSync`    | Settings shared between hosts, with version vectors                                                                                      |
-| `Devices`         | Pairing codes, device tokens, revocation                                                                                                 |
 
 ### A link is a control connection
 
@@ -94,7 +93,7 @@ const Hello = Schema.Struct({ host_id: HostId, name: Schema.String, protocol: Sc
    for a socket, and pipes the two until either closes.
 3. When the hub opens (or asks the host to open) that socket, the upgrade request carries
    `x-huntaway-link: <hub's host id>` and `x-huntaway-session: <payload>.<mac>`, where the payload is the client's
-   session (kind, scopes, device id, an expiry) and the mac is `HMAC-SHA256(link token, payload)`.
+   session (kind, scopes, an expiry) and the mac is `HMAC-SHA256(link token, payload)`.
 4. The host's `Auth` middleware sees those headers on every RPC request of that socket, verifies the mac with that
    link's token, and gives the handlers a `Session` with the asserted scopes, never more than a board user's and
    never `link`. A relayed client cannot forge the header: it never holds the link's token, and a header it sends
@@ -125,7 +124,7 @@ Push notifications and settings sync on a hub need other hosts' events. `LinkCon
 subscription per connected link for the server's own use and offers the merged stream to those two services. The
 UI does not use it.
 
-### Discovery, SSH, settings sync, devices
+### Discovery, SSH, settings sync
 
 Ported as they are, on Effect's primitives:
 
@@ -136,10 +135,10 @@ Ported as they are, on Effect's primitives:
   with the server.
 - `SettingsSync`: the merge is a pure function (idempotent, commutative, associative) taken with its property
   tests; the exchange loop is a debounced fiber on the hub. Subtle and already right: port it, do not redesign it.
-- `Devices`: codes last five minutes and die on first use; tokens are stored hashed; revoking closes the device's
-  streams. A device's session has the scopes `read` and `operate` ([05-protocol.md](05-protocol.md#sessions-and-scopes)),
-  checked by the host that serves each call, which closes the old gap where a linked host could not tell a phone
-  from the board.
+
+Paired devices (codes, device tokens, revocation) wait for the phone app. The session and scope design already has
+their place: a device's session carries `read` and `operate`, checked by the host that serves each call, which
+closes the old gap where a linked host could not tell a phone from the board.
 
 ## Versions across a fleet
 

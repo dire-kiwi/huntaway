@@ -32,8 +32,8 @@ automations   Automations · Scheduler · Webhooks · Routines
 docs          TaskDocuments · Docs · DocImages · HostedDocs
 assistant     Assistant · Memory · Tracked · Brief
 mcp           BoardTools · ToolCalls · Wait · GhTools · DocsTools · DesktopTools · McpEndpoint
-push          Push · PushAnswers
-hosts         Devices · Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
+push          Push
+hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
 terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
 update        Supervisor · Updater · Releases · Service
@@ -204,9 +204,9 @@ an MCP server.
 
 ### Push — [inventory 06](inventory/06-integrations.md) (2.4)
 
-`Push` subscribes to `Events` and decides, per event and per device, what notifies (the seven rules), sends by Web
-Push (VAPID, RFC 8291) or Expo, and keeps receipts. `PushAnswers`: one-time tokens for Allow and Deny on a lock
-screen. With Telegram gone, `AssistantReplied` is emitted by `Assistant` itself.
+`Push` subscribes to `Events` and decides, per event and per subscription, what notifies (the seven rules), and
+sends by Web Push (VAPID, RFC 8291). With Telegram gone, `AssistantReplied` is emitted by `Assistant` itself. Expo
+push and answering from a lock screen wait for the phone app.
 
 ### Terminal<a id="terminal"></a> — [inventory 05](inventory/05-hosts-update.md) (2.5)
 

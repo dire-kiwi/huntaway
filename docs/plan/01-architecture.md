@@ -6,7 +6,7 @@ fill in each part.
 ## What runs
 
 ```
- browser / desktop app / phone                       another machine
+ browser / desktop app                               another machine
 ┌────────────────────────────┐                     ┌──────────────────────┐
 │ React components (kept)    │                     │ huntaway serve       │
 │ atoms  (packages/client)   │                     │ (a host; same code)  │
@@ -41,7 +41,7 @@ fill in each part.
   reached directly; other hosts are reached through the hub, which relays the socket without reading it
   ([08-hosts.md](08-hosts.md)).
 - **Everything a client can do is in one contract package** (`packages/contracts`): schemas for the domain, the RPC
-  groups, the few plain HTTP endpoints and the event unions. The server implements it; the web and mobile apps get
+  groups, the few plain HTTP endpoints and the event unions. The server implements it; the web and desktop apps get
   typed calls, queries and mutations from it. Nothing else is shared between server and clients.
 
 ## Layers of the server

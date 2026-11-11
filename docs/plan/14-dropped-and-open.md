@@ -25,8 +25,16 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
 
 What is **not** dropped, although it carries an old name: `ia-shim`, branches `ia/…`, `refs/huntaway/…`, the script
-variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names `ia-…`, the data folder's path, and
-the item id prefix `legacy:`. Each is in something that outlives a server or lives outside this repository.
+variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names `ia-…`, and the item id prefix
+`legacy:`. Each is in something that outlives a server or lives outside this repository.
+
+## Deferred
+
+**The phone app**, and what exists only for it: device pairing and device tokens, Expo push, answering a prompt from
+the lock screen (`/api/push-answer`), the Jest set-up. The old app keeps working against machines that have not
+switched and cannot reach one that has. Sessions and scopes are designed with a device's place in them, and
+`packages/client` is kept free of browser APIs, so the app can be built on this later
+([09-frontend.md](09-frontend.md#the-phone-app)).
 
 ## Decisions taken in this plan
 
@@ -41,24 +49,28 @@ Each could have gone another way. They are listed so that a different answer is 
 | Transactions and per-entity locks                                                          | `PreventSchedulerYield`, as HA-408 proposed for a port in place | That setting was a way to keep unconverted code safe beside converted code. A rewrite can state atomicity instead of inheriting it |
 | Our own MCP dispatcher over `effect/ai` tool definitions                                   | Effect's `McpServer` transports                          | The control-request transport, at-most-once across restarts and resumable answers are ours to keep         |
 | Our own named-migration runner                                                             | Effect's `Migrator`                                      | It skips a migration merged later with a lower id                                                          |
-| The same data folder, a new database file                                                  | A new folder, or converting in place                     | Worktrees, sessions and terminals keep working; the old file is the way back                               |
+| A data folder of its own (`~/.local/share/huntaway-effect`, port 7879); the importer copies in and makes stored paths absolute | Running on the old folder with a new database file | Decided on review. The new server can be built and tried beside the live board with no way to touch it; the old folder is never written. The cost: the old folder stays on disk for its worktrees and work folders |
 | Components move in two steps, the first mechanical                                         | Rewriting each component once                            | The whole UI runs on the new server early, and the hand work can go on after the switch                    |
 | Wire field names stay, `claude_config_id` included                                         | Renaming while porting                                   | Every rename is a diff in a kept component. One mechanical rename can follow the port                      |
 | Server variables become `HUNTAWAY_*`                                                       | Keeping `IA_*`                                           | A new repository with new scripts is the cheap moment. Deploy scripts outside this repository change once  |
 | Lint: every enabled rule an error, warnings fail                                           | Recommended presets at their default levels              | Asked for; and the old repository's warning backlog shows where the other road goes                        |
 
+## Settled on review
+
+- **Subprojects' rows** are kept as ordinary tasks.
+- **The phone app** is left out for now ([Deferred](#deferred)).
+- **A new data folder**, not the old one ([11-migration.md](11-migration.md#a-data-folder-of-its-own)).
+
 ## Open questions
 
-1. **Subprojects' rows.** The plan keeps their tasks as ordinary tasks. If "drop" meant delete the rows, the
-   importer needs one flag and this needs saying.
-2. **Telegram.** Dropped because it is not in use. If it is to come back it is a self-contained area after M6.
-3. **The phone app's timing.** It is last (8.4) and gated on 0.4. Until it ships, a phone keeps talking to hosts
-   that have not switched. If phones matter sooner, 8.4 can follow 2.7.
-4. **Renaming `claude_config` to `agent_config` on the wire.** Proposed as one mechanical task after M9. Say if it
+1. **Telegram.** Dropped because it is not in use. If it is to come back it is a self-contained area after M6.
+2. **Renaming `claude_config` to `agent_config` on the wire.** Proposed as one mechanical task after M9. Say if it
    should be done during the port instead, while the components are being edited anyway.
-5. **Tokens between hosts.** A link still stores the other host's full board token, and dial-in hosts share one hub
+3. **Tokens between hosts.** A link still stores the other host's full board token, and dial-in hosts share one hub
    token. The plan ports that. Per-link credentials would be a design of their own.
-6. **Who writes prompts.** The plan copies every prompt word for word. Prompt changes wait until after the switch.
+4. **Who writes prompts.** The plan copies every prompt word for word. Prompt changes wait until after the switch.
+5. **Moving worktrees out of the old folder.** After the switch they stay where they are. A command to move a
+   project's worktrees into the new folder is possible and is not planned.
 
 ## Risks
 
@@ -72,7 +84,6 @@ Each could have gone another way. They are listed so that a different answer is 
 | Slower than the old server on the hot path (schema decoding per output line)             | Measured at M2 with limits; precompiled decoders and untraced functions held in reserve                           |
 | Strict lint slows agents down or pushes them to suppress                                 | Suppressions are counted by a structural test and need a written reason; a rule that is wrong here is turned off in the config, in the open |
 | The import loses or bends data                                                           | Every row passes the schema it will be read with; `--check`; nightly runs on a scrubbed copy; the old file untouched |
-| Effect on React Native                                                                   | Proved in 0.4 before anything depends on it, with a fallback                                                      |
 | The relay's signed session, and socket piping under load                                 | Tested first in M7 (7.0)                                                                                         |
 | Atomicity bugs that the old single-threaded style could not have                          | Every state change is one transaction; work across a wait holds the entity's lock; decisions are pure and tested as tables |
 
@@ -82,10 +93,8 @@ Checked for this plan, on 11 November 2026: the versions, the RPC, SQL, atom and
 [the spike](spike/README.md), and the lint configuration in [spike/lint](spike/lint/README.md). Everything below was
 read or reasoned, not run.
 
-- Effect in the phone app (Hermes, Metro, Jest).
 - The per-host family of atom runtimes: the spike type-checked one host with `AtomRpc.Service`.
 - Upgrade headers reaching RPC middleware on every request of a socket; the signed session; piping two sockets.
-- Ending a device's streams from middleware on revocation.
 - `Rpc.annotate` as the carrier of an RPC's scope, read by the middleware (the method exists; the pattern was not
   run).
 - Effect's `Tool.getJsonSchema` output against what Claude Code and Codex accept for each of the 70 tools.
@@ -96,6 +105,8 @@ read or reasoned, not run.
 - Three names in the lint configuration: `import/no-cycle`, the `react/*` rules and the options of
   `eslint/no-restricted-imports` under Vite+ 1.5.0.
 - The `STRICT` tables against every value the importer will write.
+- That every thread resumes its agent session after an import, with stored paths made absolute (reasoned from how
+  the old server pins a session to its folder; M9 tests it on a copy).
 - The task count and sizes: an estimate from line counts.
 - The inventory itself: eleven notes written by agents reading the old source, without running it. One note's
   section on the docs server is second-hand (it says so). Where a note and the old source disagree, the source is

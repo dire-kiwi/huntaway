@@ -15,16 +15,17 @@ specification of behaviour and not of structure.
   scripts. It replaces 183 REST routes, the unsequenced event socket and the three formats hosts spoke to each
   other. Subscriptions start with a snapshot and resume by sequence number.
 - **Frontend**: the 298 component files are kept. The store, the event feed and the hand-written client are replaced
-  by atoms (`@effect/atom-react`) in `packages/client`, shared with the phone app. Components move in two steps:
+  by atoms (`@effect/atom-react`) in `packages/client`. Components move in two steps:
   a mechanical one that gets the whole UI running, then a feature at a time.
 - **Rules of the server**: every change is _decide (pure), commit (one transaction), publish, reconcile_. Work that
   spans a wait holds its task's lock. What must survive a restart is in the database or the run's folder. These
   replace the old server's reliance on nothing running between two awaits.
 - **Quality from the first commit**: `@effect/tsgo`'s strict preset and the Effect-native rules, every rule an
   error, warnings failing the check. Run in a spike: 13 errors from a 24-line file.
-- **Data**: the same data folder, a new database file. A one-off importer converts the old database; the old file is
-  never written and is the way back. Subprojects, Telegram and every compatibility layer are left behind.
-- **Work**: about 70 tasks in ten milestones. After M4 a task can go from To do to Done on the new server, and this
+- **Data**: a data folder and port of its own, so the new server runs beside the live board until the switch. A
+  one-off importer then converts the old database and copies what it needs; the old folder is never written and is
+  the way back. Subprojects, Telegram and every compatibility layer are left behind. The phone app is left for later.
+- **Work**: about 65 tasks in ten milestones. After M4 a task can go from To do to Done on the new server, and this
   repository's own work can move onto it.
 
 ## The pages
@@ -39,7 +40,7 @@ specification of behaviour and not of structure.
 | [06-server.md](06-server.md)                       | Every service by area, the dependency order, the reactor, hooks, startup, the CLI                    |
 | [07-agents.md](07-agents.md)                       | Runs and the run folder, the two drivers, how a run ends, threads, board tools, permissions, prompts |
 | [08-hosts.md](08-hosts.md)                         | Links, the relay, tools across hosts, discovery, settings sync                                       |
-| [09-frontend.md](09-frontend.md)                   | `packages/client`, the web app's state, moving the components, the desktop shell, the phone app      |
+| [09-frontend.md](09-frontend.md)                   | `packages/client`, the web app's state, moving the components, the desktop shell                     |
 | [10-testing.md](10-testing.md)                     | How parity is checked, the test tiers, `packages/testing`, the tools agents use, measurements        |
 | [11-migration.md](11-migration.md)                 | The importer table by table, the switch on one machine and on several, going back                    |
 | [12-conventions.md](12-conventions.md)             | How code is written here: Effect 4 names, services, errors, schemas, concurrency, linting, structural tests |
@@ -63,15 +64,14 @@ An implementer reads 12 first, then the page for their area, then the inventory 
   lines across the server, web app, phone app, client and tooling. One board's database was opened read-only for its
   schema, row counts and the names of its settings keys.
 
-[14-dropped-and-open.md](14-dropped-and-open.md) lists what was not verified. The three that matter most: Effect in
-the phone app, the relay's signed session, and the cost of the whole server on Effect, each with a task that checks
-it before anything is built on it.
+[14-dropped-and-open.md](14-dropped-and-open.md) lists what was not verified. The two that matter most are the
+relay's signed session and the cost of the whole server on Effect, each with a task that checks it before anything
+is built on it.
 
-## Three things to decide
+## Settled on review
 
-The plan works as written. These are the places where a different answer changes it most; the full list is in
-[14-dropped-and-open.md](14-dropped-and-open.md#open-questions).
+- Subprojects' rows are kept as ordinary tasks.
+- The phone app is left out for now.
+- The new server gets a data folder of its own.
 
-1. **Subprojects' rows** are kept as ordinary tasks. Say if they should be deleted instead.
-2. **Telegram** is dropped.
-3. **The phone app** is ported last. Until then a phone cannot reach a machine that has switched.
+What is still open is in [14-dropped-and-open.md](14-dropped-and-open.md#open-questions).

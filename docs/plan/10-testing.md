@@ -30,7 +30,6 @@ not depend on the transport:
 | Structure       | `apps/server/tests/structure/`                | reads the sources                                | The rules in [12-conventions.md](12-conventions.md#structural-tests)     |
 | Component       | `apps/web/tests/browser/`                     | Vitest browser mode                              | Components on a fake host ([09-frontend.md](09-frontend.md#tests))       |
 | Whole app       | `apps/web/tests/ui/`                          | Playwright, a test server per file               | The built UI and a real server with agents off or faked                 |
-| Mobile          | `apps/mobile/tests/`                          | Jest                                             | Screens on a fake client                                                |
 | Shim            | `rust/shim/tests/`                            | `cargo test`                                     | As now                                                                  |
 
 Rules:
@@ -88,7 +87,7 @@ server on the same data:
 | Time to ready                                               | Start to `HUNTAWAY_READY`                   | Under 2 s on the reference machine      |
 | Event-loop delay under a busy agent                         | `event-loop-probe.mjs`                      | p99 no worse than the old server        |
 | One line of agent output, read to stored                    | A run of 10,000 lines through the follower  | Within 1.5× the old server              |
-| The board snapshot                                          | Bytes and time for `board.watch`'s first message | Recorded; a filter is added if a phone needs it |
+| The board snapshot                                          | Bytes and time for `board.watch`'s first message | Recorded; a filter is added if it is slow to open |
 | A hook's start                                              | `approval-hook` wall time                   | Under 60 ms                             |
 | `pnpm check`, `pnpm test`                                   | Wall time                                   | Recorded per milestone                  |
 

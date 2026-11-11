@@ -134,7 +134,7 @@ rely on that anywhere. Instead:
 ## Frontend
 
 - **Components do not call the server.** They read atoms (`useAtomValue`) and trigger mutations (`useAtomSet`).
-  Atoms, queries and mutations are in `packages/client` and are the same for the web and mobile apps.
+  Atoms, queries and mutations are in `packages/client`.
 - **Server state arrives by subscription and is folded into atoms.** A component never refetches because it thinks
   something changed. Optimistic changes use `Atom.optimistic`, not a copy in component state.
 - **Local UI state stays in React** (`useState`) when one component owns it. State that outlives the component or
@@ -225,7 +225,7 @@ export default defineConfig({
       // Plain TypeScript by design: no Effect, so the Effect-native rules do not apply.
       { files: ["packages/shared/**", "apps/server/src/hooks/**"], rules: { /* effect-native rules off */ } },
       // The kept React components: view code, moved over one feature at a time (09-frontend.md).
-      { files: ["apps/web/src/components/**", "apps/mobile/src/app/**"], plugins: ["react"], rules: {
+      { files: ["apps/web/src/components/**"], plugins: ["react"], rules: {
           "react/rules-of-hooks": "error",
           "react/exhaustive-deps": "error"
           /* async-function, global-date and global-timers off: event handlers and DOM timers */

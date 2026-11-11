@@ -6,8 +6,9 @@ and because the old database has to be imported into it ([11-migration.md](11-mi
 
 ## The file
 
-- `<data dir>/board.db`, beside the old `huntaway-2.db`, which the new server never opens for writing. An existing
-  install keeps its data folder, so worktrees, run folders, attachments and agent sessions stay where they are.
+- `<data dir>/board.db`. The new server has a data folder of its own (`~/.local/share/huntaway-effect`), so it never
+  shares a folder with the old one, and the old `huntaway-2.db` is only ever read, once, by the importer
+  ([11-migration.md](11-migration.md#a-data-folder-of-its-own)).
 - Opened by `SqliteClient.layer({ filename, busyTimeout: "5 seconds" })` from `@effect/sql-sqlite-node` (Node's
   `node:sqlite`, one connection, WAL on by default). On open: `PRAGMA foreign_keys = ON`, `synchronous = NORMAL`,
   `journal_size_limit = 33554432`.
@@ -225,5 +226,6 @@ for 24 hours, as now.
 - A run's output, input and markers: its folder under `runs/` ([07-agents.md](07-agents.md#the-run-folder)).
 - Uploaded files (`attachments/`), task documents' work folders (`documents/`), skills synced for runs, cloned skill
   sources, the hub's SSH key, downloaded releases (`app/`), the three identity files (`host_id`, `auth_token`,
-  `hub_token`). The data folder's layout is unchanged ([inventory](inventory/07-server-root-api.md), section 3).
+  `hub_token`). The layout inside the data folder is the old one ([inventory](inventory/07-server-root-api.md),
+  section 3), so the same code paths and habits apply.
 - Usage per config, link connections, pairing codes, release check results: memory, rebuilt at startup.

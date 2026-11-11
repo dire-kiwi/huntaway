@@ -7,12 +7,11 @@ list of plain HTTP paths covers what RPC is wrong for.
 
 | Who                          | Speaks                                              | To                                         |
 | ---------------------------- | --------------------------------------------------- | ------------------------------------------ |
-| Web, desktop and mobile apps | Effect RPC over a websocket, one per host            | `GET /api/rpc` (their own board), `GET /api/relay/<ticket>` (another host, through the hub) |
+| The web and desktop apps     | Effect RPC over a websocket, one per host            | `GET /api/rpc` (their own board), `GET /api/relay/<ticket>` (another host, through the hub) |
 | Scripts, the CLI, `curl`     | The same RPC group over HTTP POST, one NDJSON line   | `POST /api/rpc`                             |
 | A hub and its hosts          | The same RPC, plus the `link.*` group                | [08-hosts.md](08-hosts.md)                  |
 | Agents                       | MCP (JSON-RPC): on the run's files, or over HTTP     | `/api/mcp/<run id>/<server>` ([07-agents.md](07-agents.md#board-tools)) |
 | GitHub and other senders     | Webhooks                                             | `POST /api/hooks/<id>/<token>`              |
-| A phone's lock screen        | One answer to one prompt                             | `POST /api/push-answer`                     |
 | Browsers                     | The built UI                                         | everything not under `/api`                 |
 
 Everything keeps the `/api` prefix. Webhook URLs registered with GitHub and others carry it, and reverse proxies in
@@ -37,7 +36,7 @@ packages/contracts/src/
 ```
 
 `HostRpcs` is every group a host serves about itself. `HubRpcs` is what a server adds as the board a client opened:
-the directory of hosts, linking, pairing, push subscriptions, discovery. `LinkRpcs` is for hosts talking to each
+the directory of hosts, linking, push subscriptions, discovery. `LinkRpcs` is for hosts talking to each
 other. `PublicRpcs` needs no session. A client of its own board gets `HostRpcs + HubRpcs + PublicRpcs`; a client of
 another host, through the relay, gets `HostRpcs`.
 
@@ -61,22 +60,20 @@ export class Auth extends RpcMiddleware.Service<Auth, { provides: Session }>()("
 
 - **Every RPC states the scope it needs**, as an annotation on its definition. The `Auth` middleware resolves the
   session and fails with `Forbidden` when the scope is missing. A structural test fails on an RPC without one.
-- **Who gets what.** The board token: every scope but `link`. A paired device: `read` and `operate`, plus its own
-  push subscriptions and unpairing itself. A link: `link`, and, when it relays for a client, that client's scopes and
-  no more.
+- **Who gets what.** The board token: every scope but `link`. A link: `link`, and, when it relays for a client, that
+  client's scopes and no more. A paired device (`read` and `operate` only) is the third kind of session; it is in
+  the contract so that scopes are designed for it, and is implemented with the phone app, later.
 - **What each scope covers.** `read`: lists, gets, subscriptions, thread pages. `operate`: create and change tasks,
   send messages, answer prompts and questions, stop runs, start reviews, attachments. `git`: the Changes tab's writes,
   worktree setup and teardown, rewind. `terminal`: terminals and the desktop viewer. `settings`: profiles, projects,
-  agent configs, automations, workflows, agent tools, approval rules, docs. `admin`: linking hosts, pairing, restart
+  agent configs, automations, workflows, agent tools, approval rules, docs. `admin`: linking hosts, restart
   and update, config archives, telemetry, the service, the folder browser.
 - **How a session is proved.** The client's `Auth` middleware puts `authorization: Bearer <token>` on every RPC
   request (in the request, not the URL). A relayed socket instead carries, in the headers of its upgrade request,
   the link's id and a session the hub asserts, signed with the link's token ([08-hosts.md](08-hosts.md#relay)). The
   RPC server gives upgrade headers to the middleware with each request (seen in `RpcServer.ts`); a relayed client
   cannot forge the signature because it never holds the link's token.
-- **Revocation.** Unpairing a device ends its streams: the middleware races each handler with that device's
-  revocation.
-- **Tokens** are compared in constant time. Device tokens are stored as SHA-256. The per-run MCP secret stays
+- **Tokens** are compared in constant time. The per-run MCP secret stays
   `HMAC-SHA256(board token, "mcp:" + run id)`.
 - **`--open-token`** (previews and test servers) keeps its meaning: `PublicRpcs` then has `openToken`, guarded on a
   loopback-only server by a loopback `Host` header.
@@ -93,7 +90,7 @@ column are that table's.
 
 | Group          | Methods                                                                                                                                                         | Scope                | Old routes |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ---------- |
-| `public`       | `health`, `pair`, `openToken`                                                                                                                                    | none                 | 1, 5       |
+| `public`       | `health`, `openToken`                                                                                                                                            | none                 | 1          |
 | `board`        | `watch` (stream), `previewStatus`                                                                                                                                | read                 | 23, 14     |
 | `host`         | `info`, `settings`, `updateSettings`, `usage`, `defaultPrompts`, `listDirs`                                                                                      | read; settings; admin | 24–27, 33 |
 | `profiles`     | `list`, `create`, `update`, `delete`, `githubAccounts`, `githubRepos`, `asanaTasks`                                                                              | read; settings       | 57–60, 91  |
@@ -119,9 +116,10 @@ column are that table's.
 | `settingsSync` | `get`, `merge`, `resolve`                                                                                                                                        | settings; link       | 28–30      |
 | `tools`        | `call`                                                                                                                                                           | link                 | 34         |
 | `hub.hosts`    | `watch` (stream), `list`, `add`, `addSsh`, `sshKey`, `join`, `discover`, `update`, `remove`, `copyConfig`, `pushUpdate`, `openRelay` (gives a ticket)           | read; admin          | 6–13, 22   |
-| `hub.devices`  | `list`, `newCode`, `rename`, `revoke`                                                                                                                            | read; admin          | 19–21      |
 | `hub.push`     | `info`, `subscribe`, `update`, `unsubscribe`, `test`                                                                                                             | read; operate        | 15–18      |
 | `link`         | `hello`, `attach` (stream), `reply`, `upcalls` (stream), `upcallResult`, `events` (stream)                                                                       | link                 | 2, 50      |
+
+Waiting for the phone app: device pairing (5, 19–21) and answering a prompt from a notification (4).
 
 Not carried: the legacy `messages` routes (142's GET), `profiles/{id}/scratch` (70), `profiles/{id}/claude-config`
 (65), `admin/threads*` (48–49), `admin/database/recopy` (46), and Telegram (83–85).
@@ -165,15 +163,16 @@ Rpc.make("board.watch", {
   host, read in one transaction, so it is exactly the state at `seq`. Then every event after `seq`.
 - **With a `since` from this boot that the server's buffer still covers**, the events after it and nothing else.
   The `Events` service keeps the last few thousand events in memory for this.
-- A subscriber that falls too far behind (a slow phone) gets `resync` and the stream ends; the client subscribes
+- A subscriber that falls too far behind gets `resync` and the stream ends; the client subscribes
   again without `since`.
 
 So a client never loads lists beside the stream, and the old rules for it (connect before loading, number the loads,
 events beat stale loads, a deleted task stays deleted) have nothing left to guard. The old client made one request
 per project and kind on every reconnect.
 
-The snapshot holds every task of the host, as the store does today. If that proves too large for phones, the
-payload gains a filter (`profile_id`, "not archived"); the mobile app is where to measure it.
+The snapshot holds every task of the host, as the store does today. Its size is measured at M2
+([10-testing.md](10-testing.md#measurements)); if it proves too large, the payload gains a filter (`profile_id`,
+"not archived").
 
 ### A thread
 
@@ -210,7 +209,6 @@ Rpc.make("threads.watch", {
 | `GET /api/link` (websocket)                | A host dialling in: its control connection                                                | the hub token                |
 | `GET /api/link/stream/<id>` (websocket)    | A host answering the hub's request for one more socket                                    | the hub token and the id     |
 | `POST /api/hooks/<id>/<token>`             | An automation's webhook. Same path as now, so registered URLs keep working                | the token in the path        |
-| `POST /api/push-answer`                    | Allow or deny from a notification                                                         | the one-time token in the body |
 | `POST /api/mcp/<run id>/<server>`, `GET` with `Last-Event-ID` | MCP for a run                                                          | the run's secret             |
 | `POST /api/otlp/<run id>/v1/logs` (and `metrics`, `traces`) | Telemetry from an agent CLI                                              | the run's secret             |
 | `GET /*`                                   | The built UI, with the single-page fallback and the cache headers it has now              | none                         |
@@ -225,8 +223,8 @@ cannot put a header on a websocket, and a long-lived token must not sit in a URL
 
 ## Versions
 
-Hosts are updated one at a time through the hub, and the phone app and the desktop shell ship on their own
-schedules, so two ends of a connection can differ. The old server managed that with a frozen API number, a
+Hosts are updated one at a time through the hub, and the desktop shell ships on its own schedule, so two ends of a
+connection can differ. The old server managed that with a frozen API number, a
 compatibility number and about forty numeric gates in the clients. The new rules:
 
 - **`PROTOCOL`** is one integer, checked in `public.health` and `link.hello`. It changes only when RPC framing or

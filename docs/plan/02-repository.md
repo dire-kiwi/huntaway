@@ -39,10 +39,9 @@ apps/
   desktop/                the Electron shell (package huntaway-desktop), from apps/web/electron
     src/main/             main process: start or attach to the server, windows, shell updates (TypeScript, Effect)
     src/preload/          the bridge the page sees
-  mobile/                 the phone app (Expo, React Native): its screens carried over, its state from packages/client
 packages/
   contracts/              @huntaway/contracts: schemas, errors, RPC groups, HTTP endpoints, events, the thread protocol
-  client/                 @huntaway/client: host sessions, atoms, queries and mutations, for web and mobile
+  client/                 @huntaway/client: host sessions, atoms, queries and mutations, for the web app
   shared/                 @huntaway/shared: plain functions with no effect import, used by hooks, server and clients
   testing/                @huntaway/testing: fake agent CLIs, fake gh and GitHub, git and board fixtures, test layers
 rust/
@@ -77,13 +76,12 @@ Exact versions go in the pnpm catalog. These are the ones checked by the spike.
 | `effect`                        | 4.1.4    | everything         | Core, `Schema`, `effect/rpc`, `effect/http`, `effect/sql`, `effect/process`, `effect/socket`, `effect/cli`, `effect/ai` (tool schemas), `effect/reactivity` |
 | `@effect/platform-node`         | 4.1.3    | server, desktop    | `NodeRuntime`, `NodeHttpServer`, `NodeServices` (file system, path, child processes), `NodeSocket`, `NodeWS` |
 | `@effect/sql-sqlite-node`       | 4.1.3    | server             | The SQLite client on Node's built-in `node:sqlite`. No native module                  |
-| `@effect/atom-react`            | 4.1.3    | client, web, mobile | Hooks over atoms (`useAtomValue`, `useAtomSet`, `RegistryProvider`)                   |
+| `@effect/atom-react`            | 4.1.3    | client, web        | Hooks over atoms (`useAtomValue`, `useAtomSet`, `RegistryProvider`)                   |
 | `@effect/platform-browser`      | 4.1.3    | web                | `BrowserKeyValueStore` (localStorage behind `Atom.kvs`), `BrowserSocket`, workers     |
 | `sharp`                         | ^0.35    | server             | Document images to AVIF, as now                                                       |
 | `@dire-kiwi/docs-render`        | 0.2.0    | server, web        | Rendering documents, as now                                                           |
 | `react`, `react-dom`            | ^19.3    | web                | As now                                                                                |
 | the web app's other dependencies | as now  | web                | `@xterm/*`, `shiki`, `mermaid`, `react-markdown`, `remark-gfm`, `lucide-react`, `clsx`, `qrcode-generator`, Tailwind 4 |
-| `expo` 58, `react-native` 0.88  | as now   | mobile             | As now                                                                                |
 | `electron`                      | ^45      | desktop            | As now                                                                                |
 
 Leaving: `zustand` (atoms replace the store) and the server's direct dependency on `ws` (it comes with
@@ -99,7 +97,6 @@ Leaving: `zustand` (atoms replace the store) and the server's direct dependency 
 | `tsrs`               | 0.22.0-ts7.1.0-beta    | Compiling the server to JavaScript for a release package, as now                            |
 | `playwright`         | 1.64.1                 | `tests/ui` and Vitest's browser mode                                                        |
 | `electron-builder`   | ^26                    | Desktop packages                                                                            |
-| `jest`, `jest-expo`  | as now                 | The mobile app's tests. Every ES-module-only package it loads has to be named in `transformIgnorePatterns`: `effect` and `@effect/*` join that list |
 
 Rust: `ia-shim` keeps its one dependency (`libc`), edition 2024, Rust 1.89+.
 
@@ -145,7 +142,6 @@ Node types, which is how the type check keeps them portable.
 | `pnpm test`         | `vp test`: server, packages, the web app's unit tests and component checks                       |
 | `pnpm test:e2e`     | The server's whole-process tests against a fake agent                                            |
 | `pnpm test:ui`      | Builds the UI and drives test servers in Chromium                                                |
-| `pnpm test:mobile`  | Jest                                                                                             |
 | `pnpm dev`          | The UI with hot reload against a server (`HUNTAWAY_SERVER`, default the test server last started) |
 | `pnpm build`        | The UI, which the server serves                                                                  |
 | `pnpm desktop`      | The Electron shell from the checkout                                                             |
@@ -159,7 +155,7 @@ configuration, which was run in [the spike](spike/lint/README.md). Markdown unde
 
 `.github/workflows/test.yml`, with the same shape as the old one because the same things make it fast: a `tree` job
 that skips the rest when exactly these files have already passed, then `check`, `server`, `packages`, `web`,
-`mobile`, `ui (1/3 to 3/3)`, `e2e` and `rust` in parallel, then `green` to record the pass. Self-hosted runners for
+`ui (1/3 to 3/3)`, `e2e` and `rust` in parallel, then `green` to record the pass. Self-hosted runners for
 the owner's branches. Release and preview workflows are in [13-milestones.md](13-milestones.md) (M9).
 
 ## Names that stay, and names that change
@@ -174,7 +170,12 @@ Some names are baked into things that outlive a server or live outside this repo
 - `HUNTAWAY_TASK_ID` in an agent's environment.
 - The board's MCP server name `huntaway`, and tool names as they are (agents' prompts, approval rules and old
   threads name them).
-- The data folder an existing install already has (`~/.local/share/issue-agent` on machines from before the rename).
+
+The data folder is new: `~/.local/share/huntaway-effect`, with a default port of 7879, so the new server runs beside
+the old board on one machine until the switch ([11-migration.md](11-migration.md#a-data-folder-of-its-own)).
+
+The phone app is not part of this plan ([14-dropped-and-open.md](14-dropped-and-open.md#deferred)). `packages/client`
+stays free of DOM, Node and React Native APIs so that one can be built on it later.
 
 Everything else takes the product's name: the server's own environment variables become `HUNTAWAY_*` (`IA_PORT` is
 `HUNTAWAY_PORT`), the test scripts' variables too, and the `issue-agent` command, `issue_agent` MCP server name and

@@ -34,10 +34,6 @@ Sequential. Nothing else starts before 0.3.
 | 0.1  | The workspace: pnpm, Vite+, `tsconfig.base.json`, the strict lint config (run it on a file that breaks it, as the spike did), Oxfmt, CI (`tree`, `check`, `rust`, `green`), `CLAUDE.md`, `docs/effect.md`. `rust/shim` with its tests, and `apps/server/bin/huntaway`, copied from the old repository | —     | 02, 12, spike/lint  |
 | 0.2  | `packages/shared` and `packages/contracts` (ids, time, errors, session and scopes, `PublicRpcs`, `host.info`). The platform: `ServerConfig`, `DataDir`, `Identity`, `Db`, `Migrations` and the initial schema, `Backup`, `Events`, `Changes`, `KeyedLock`, `Proc`, `Secrets`, logging. The HTTP edge and its rules; RPC over websocket and HTTP with `Auth`; `serve`, `token`, `--version`; ready line; shutdown | 0.1   | 02–06               |
 | 0.3  | `packages/testing`: `TestBoard`, `board` builders, `git`. `scripts/test-server.sh`, `huntaway rpc`. The structural tests. The whole-server tier with one test: start through the launcher, call `public.health`, stop | 0.2   | 10, 12              |
-| 0.4  | Proof on a phone: an Expo screen in `apps/mobile` that subscribes to a stream from a test server, on a device and under Jest                       | 0.2   | 09                  |
-
-**Gate:** if 0.4 fails, the phone app keeps a thin non-Effect client generated from the contracts, and
-[09-frontend.md](09-frontend.md) is revised before M8.
 
 ## M1: a board without agents
 
@@ -117,7 +113,7 @@ Independent of each other unless said; all need M3, and the ones touching git ne
 | 6.5  | `Automations`, `Scheduler`, `Webhooks`, `Routines` and their tools                                 | 3.4        | 06 §2.3                  |
 | 6.6  | `workflows/graph.ts` with the old cases, `WorkflowEngine`, its tools, the reactor's workflow steps | 4.7        | 06 §2.1–2.2              |
 | 6.7  | `Assistant`, `Memory`, `Tracked`, `Brief`                                                          | 6.5        | 02 §2.12                 |
-| 6.8  | `Push`, `PushAnswers`                                                                              | 3.3        | 06 §2.4                  |
+| 6.8  | `Push` (web push)                                                                                  | 3.3        | 06 §2.4                  |
 | 6.9  | `Telemetry` with the OTLP receiver, `Analytics`, `Disk`, `Lag`                                     | 2.8        | 07                       |
 | 6.10 | Computer use: `CuaDriver`, `DesktopClaims`, the `desktop` server                                   | 3.1        | 05 §2.8, 03 §2.12        |
 | 6.11 | `GithubRepos` (clone, create), `Relocation`, Asana, `Fanout`, config archives                      | 4.4        | 06 §2.5, 04 §2.18, §2.20 |
@@ -128,27 +124,25 @@ Independent of each other unless said; all need M3, and the ones touching git ne
 | Task | Does                                                                                               | Needs      | Read; inventory          |
 | ---- | -------------------------------------------------------------------------------------------------- | ---------- | ------------------------ |
 | 7.0  | Two checks, as tests: upgrade headers reach RPC middleware and the signed session cannot be forged; two piped sockets keep back-pressure | 0.3 | 08 _To check early_ |
-| 7.1  | `Devices`: pairing, tokens, scopes, revocation                                                     | 0.3        | 05; inv 05 §2.1          |
 | 7.2  | `Links`, `LinkConnections` for dialled links, `hub.hosts.*`, `Relay`; relayed sessions in the client; the Hosts settings | 7.0, 1.5 | 08; inv 05 §2.2 |
 | 7.3  | Dial-in links (`link.attach`) and SSH links, with the trust rules                                  | 7.2        | 08; inv 05 §9            |
 | 7.4  | Board tools across hosts; `Uplink`; the assistant on its own host                                  | 7.3, 6.7   | inv 03 §2.3, 05          |
 | 7.5  | `Discovery`, `SettingsSync`, copying a config between hosts                                        | 7.2        | inv 05 §2.4, §2.7        |
 
-## M8: updates, packages, desktop, phone
+## M8: updates, packages, desktop
 
 | Task | Does                                                                                               | Needs      | Inventory                |
 | ---- | -------------------------------------------------------------------------------------------------- | ---------- | ------------------------ |
 | 8.1  | `Supervisor`, `Updater` (rebuild from a checkout, follow a deployment, a hub's push), `admin.*`    | 7.2        | 05 §2.6                  |
 | 8.2  | `scripts/package-server.sh`, `Releases` (check, stage, try, settle, roll back), `Service`, the install scripts | 8.1 | 05 §2.6, 11          |
 | 8.3  | `apps/desktop`                                                                                     | 8.2        | 10 §9                    |
-| 8.4  | `apps/mobile` on `packages/client`, with push                                                      | 0.4, 7.1, 6.8 | 11 §2.1               |
 | 8.5  | The release workflow; pull request previews                                                        | 8.2        | 11                       |
 
 ## M9: the switch
 
 | Task | Does                                                                                               | Needs      | Read |
 | ---- | -------------------------------------------------------------------------------------------------- | ---------- | ---- |
-| 9.1  | `import-legacy` and `--check`, with tests per table family and a nightly run on a scrubbed copy    | M6         | 11   |
+| 9.1  | `import-legacy` and `--check` (database, paths made absolute, files copied), with tests per table family and a nightly run on a scrubbed copy | M6         | 11   |
 | 9.2  | The parity run: all of `tests/ui` against the new server; the measurements; a week of this repository's own work on a board running it | 9.1, M7, M8 | 10 |
 | 9.3  | The guide (`docs/guide/`) brought into line; the switch on each host                               | 9.2        | 11   |
 
@@ -167,7 +161,7 @@ M0 ─► M1 ─► M2 ─► M3 ─┬─► M4 ─┬─► M6 (twelve in para
                  2.7 ─────────────────► M10 (ongoing)
 ```
 
-About 70 tasks. The old server is 85,000 lines without tests and the port should come out smaller: the compatibility
+About 65 tasks. The old server is 85,000 lines without tests and the port should come out smaller: the compatibility
 code, the serde emulation, the legacy thread path and the three host protocols are a fair share of it.
 
 ## Working on a board while building its replacement
