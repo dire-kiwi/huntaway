@@ -63,15 +63,17 @@ Your task has a temp folder, `$TMPDIR`, deleted once the task is done. Put env f
   - `scripts/test-server.sh restart` restarts it on the same port and data; `scripts/test-server.sh stop` stops it by
     PID and removes its data folder. Stop the servers you start.
 - `huntaway rpc <method> [json]` (`apps/server/bin/huntaway rpc …`) calls a test server's RPC over HTTP and prints the
-  result as JSON. It finds the server from `$HUNTAWAY_TEST_ENV` (or `--env <file>`, or `.huntaway-test-env`), exits 1
-  with the tagged error on a failure, and refuses anything but a test server on 127.0.0.1.
+  result as JSON. It finds the server from `--env <file or data dir>`, else `$HUNTAWAY_TEST_ENV`, else
+  `.huntaway-test-env`, exits 1 with the tagged error on a failure (2 for an unknown method or a payload that does not
+  decode), and refuses anything but a test server on 127.0.0.1. `huntaway rpc --list` names the methods.
 - UI against a test server: `HUNTAWAY_SERVER=$HUNTAWAY_TEST_URL pnpm dev`.
 
 ## Checking UI changes
 
 A type check and a build don't show layout or behaviour, so look at UI changes in a browser before you finish and click
 through what you changed. Run the test server with a fresh `pnpm build` (it serves `apps/web/dist`), then drive it with
-`scripts/ui-check.mjs` (Playwright from `apps/web/node_modules`, and `/usr/bin/chromium` or `$CHROMIUM`):
+`scripts/ui-check.mjs` (Playwright from `apps/web/node_modules` or the workspace's, and `/usr/bin/chromium` or
+`$CHROMIUM`):
 
 ```sh
 scripts/test-server.sh --demo > $TMPDIR/server-env

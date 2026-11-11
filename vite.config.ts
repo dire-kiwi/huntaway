@@ -149,6 +149,11 @@ export default defineConfig({
         // Node's HTTP server has no Effect counterpart to create it with: the composition root names it.
         rules: { "effecttsgo/strict-effect-provide": "off", "effecttsgo/process-env": "off", "effecttsgo/node-builtin-import": "off" },
       },
+      // Tests may use the test fixtures.
+      { files: ["**/*.test.ts", "**/*.test.tsx", "**/tests/**"], rules: { "no-restricted-imports": "off" } },
+      // The tools agents and tests drive the board with (ui-check.mjs and the like): plain Node scripts with a promise
+      // API that test harnesses import, so the Effect-native rules do not apply; a step loop awaits in order by design.
+      { files: ["scripts/**"], rules: { ...off(effectNative), "no-await-in-loop": "off" } },
       // The workspace's own configuration files: plain Node.
       {
         files: ["vite.config.ts", "**/vite.config.ts", "**/vitest.config.ts"],

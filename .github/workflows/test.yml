@@ -137,9 +137,24 @@ jobs:
       - name: pnpm test
         run: pnpm test
 
+  # `pnpm test:e2e`: the whole-server tier (apps/server/tests/e2e), real server processes started through the launcher.
+  e2e:
+    needs: tree
+    if: needs.tree.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: *setup-vp
+        with: *setup-vp-with
+
+      - name: pnpm test:e2e
+        run: pnpm test:e2e
+
   # Records that this run's tree passed, for `tree` in later runs: it runs only when every job above succeeded.
   green:
-    needs: [tree, rust, check, test]
+    needs: [tree, rust, check, test, e2e]
     if: needs.tree.outputs.skip != 'true' && needs.tree.outputs.tree != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
