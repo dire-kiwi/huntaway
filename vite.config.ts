@@ -124,6 +124,8 @@ export default defineConfig({
         rules: {
           "react/rules-of-hooks": "error",
           "react/exhaustive-deps": "error",
+          // Off: the components use React's automatic JSX runtime (`"jsx": "react-jsx"`), which needs no React in scope.
+          "react/react-in-jsx-scope": "off",
           // Event handlers and DOM timers.
           "effecttsgo/async-function": "off",
           "effecttsgo/global-date": "off",
@@ -153,7 +155,7 @@ export default defineConfig({
       { files: ["**/*.test.ts", "**/*.test.tsx", "**/tests/**"], rules: { "no-restricted-imports": "off" } },
       // The tools agents and tests drive the board with (ui-check.mjs and the like): plain Node scripts with a promise
       // API that test harnesses import, so the Effect-native rules do not apply; a step loop awaits in order by design.
-      { files: ["scripts/**"], rules: { ...off(effectNative), "no-await-in-loop": "off" } },
+      { files: ["scripts/**", "apps/web/tests/ui/**"], rules: { ...off(effectNative), "no-await-in-loop": "off" } },
       // The workspace's own configuration files: plain Node.
       {
         files: ["vite.config.ts", "**/vite.config.ts", "**/vitest.config.ts"],
@@ -162,6 +164,6 @@ export default defineConfig({
     ],
   },
   test: {
-    projects: ["apps/server", "packages/*"],
+    projects: ["apps/server", "apps/web", "packages/*"],
   },
 })
