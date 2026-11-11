@@ -10,6 +10,9 @@ import type { DataDir } from "../platform/DataDir.ts"
 import { Events } from "../platform/Events.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
+import { RunDir } from "../runs/RunDir.ts"
+import { RunRepo } from "../runs/RunRepo.ts"
+import { Runs } from "../runs/Runs.ts"
 import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
@@ -25,7 +28,7 @@ import { removableByHand, uncommitted } from "./worktree/remove.ts"
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null"
 process.env["GIT_CONFIG_NOSYSTEM"] = "1"
 
-type Env = Worktrees | TaskBase | Tasks | Projects | Profiles | Threads | Events | Git | DataDir | TaskDeletion | SqlClient.SqlClient
+type Env = Runs | RunRepo | RunDir | Worktrees | TaskBase | Tasks | Projects | Profiles | Threads | Events | Git | DataDir | TaskDeletion | SqlClient.SqlClient
 const run = <A, E>(effect: Effect.Effect<A, E, Env | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope>) =>
   effect.pipe(Effect.scoped, Effect.provide(TestBoard()))
 
@@ -521,6 +524,64 @@ describe("Worktrees", () => {
           ["error", "the server stopped while the worktree was being set up"],
         )
         assert.deepStrictEqual([(yield* getTask(gone.id)).worktree_state, (yield* getTask(gone.id)).worktree_path], ["none", null])
+      }),
+    ),
+  )
+})
+
+describe("a run's launch", () => {
+  /** Send `text` to the task and wait for its launch to end (this test board has no ia-shim: it writes the run's folder, then gives up). */
+  const launch = (id: TaskId, text: string) =>
+    Effect.gen(function* () {
+      const runs = yield* Runs
+      yield* runs.send(id, { text, source: "user" }).pipe(Effect.orDie)
+      yield* runs.launched(id)
+      const latest = yield* (yield* RunRepo).latest(id)
+      return Option.isSome(latest) ? yield* (yield* RunDir).spec(latest.value.id) : null
+    })
+
+  it.live("sets the task's worktree up first, and its agent works there", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* repoOnMaster()
+        const project = yield* projectOn(repo)
+        const task = yield* newTask(project, "Fix it")
+        assert.isTrue(task.use_worktree)
+        const spec = yield* launch(task.id, "hello")
+        const t = yield* getTask(task.id)
+        assert.deepStrictEqual([t.worktree_state, t.branch], ["ready", "ia/x-1-fix-it"])
+        assert.strictEqual(spec?.cwd, t.worktree_path)
+        assert.include(yield* notices(task.id), "Setting up worktree…")
+      }),
+    ),
+  )
+
+  it.live("a setup that fails fails the launch", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* repoOnMaster()
+        const project = yield* projectOn(repo)
+        const task = yield* newTask(project, "Fix it")
+        yield* write(`${project.worktrees_root}/1-fix-it/precious`, "mine")
+        assert.strictEqual(yield* launch(task.id, "hello"), null, "the agent wasn't started")
+        assert.strictEqual((yield* getTask(task.id)).worktree_state, "error")
+        assert.include(yield* notices(task.id), "Worktree setup failed")
+      }),
+    ),
+  )
+
+  it.live("a review thread works in its task's worktree, and doesn't start before that's set up", () =>
+    run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const repo = yield* repoOnMaster()
+        const project = yield* projectOn(repo)
+        const task = yield* newTask(project, "Fix it")
+        const reviewer = yield* newTask(project, "Review", { use_worktree: false })
+        yield* sql`UPDATE tasks SET kind = 'review', parent_id = ${task.id} WHERE id = ${reviewer.id}`.pipe(Effect.orDie)
+        assert.strictEqual(yield* launch(reviewer.id, "review it"), null, "the task's worktree isn't set up")
+        const set = yield* setUp(task.id)
+        assert.strictEqual((yield* launch(reviewer.id, "review it"))?.cwd, set.worktree_path)
       }),
     ),
   )
