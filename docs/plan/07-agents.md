@@ -803,6 +803,92 @@ As built in 3.4 (HE-4), `permissions/Approvals.ts`:
   `ProjectCreationDetail` and `TaskDeletionDetail`; the approval card shows them while it waits (or once opened) and a
   line otherwise. The browser check is `apps/web/tests/ui/boardApprovals.test.mjs` (the old suite had none).
 
+## Codex<a id="codex"></a>
+
+### As built in 5.1–5.3 (HE-5)
+
+- **The pure parts are `agents/codex/`**: `spec.ts` (`CodexSpec`, `codex.json`, read back leniently with `specFromJson`
+  as serde did, unreadable `approval_rules` making it no spec; `policy(mode, review)`, `threadParams`, `REVIEW_PROFILE`,
+  `isClaudeModel`), `servers.ts` (`mcpServerConfig`; the approval rules as per-server config, `codexServer`, and
+  `codexPolicy`, which returns why a never rule on Codex's own tools refuses the run rather than throwing), `items.ts`
+  (an item as a tool call: `toolUse`, `toolOutput`, `displayCommand`, `fileChanges`, `subagentId`, `ownThread`),
+  `requests.ts` (`classify(request)`: a `Prompt` for `Permissions`, a `Tool` call of the board's, or an `Answer` given at
+  once; `promptAnswer`, `toolAnswer`, `codexResponse`, `requestId` (`codex:<id>`), `boardTools(manifest)`), `lines.ts`
+  (a schema per line, by `method`: `decodeLine → Result<CodexLine, LineProblem>`, `CodexLine` a `Notification` of the
+  adapter's kept list, a `Request`, `Resolved`, `Model`, `BoardTools` or `Echo`), `translate.ts` (below), `launch.ts`
+  (`codexLaunch(input) → { spec, codex, boardTools }`, failing `LaunchRefused`), `queries.ts` (`parseModels`,
+  `parseSkills`, `titleModel`, `rateLimits`, `planType`), and `rpc.ts`, the app-server client (`appServer(options)`, a
+  scoped process: `request`, `notify`, `initialize`, `next`, `respond`, `respondError`, `exitStatus`, `exited`; killed
+  with SIGKILL when its scope closes).
+- **`codex-run` (5.1)** is `apps/server/src/codex-run.ts`, an entry point of its own (the launcher execs it as it does the
+  hooks, without `bin.ts`), over `agents/codex/adapter/` (`runAdapter`, the old adapter line for line: the handshake,
+  `skills/extraRoots/set`, `thread/start` with the board's tools as dynamic tools or `thread/resume`, `thread/revert`, the
+  turn loop with steers, interrupts and echoes, a compaction's `thread/compact/start`, the requests on the output and
+  their answers from the input, declined without a board, child threads closed as it ends). It reads stdin as a stream
+  and writes each output line with one `writeSync`, so nothing is lost on exit. It finds `codex` in
+  `HUNTAWAY_CODEX_BIN`, which the launch sets from `ServerConfig.codexBin` (`--codex-bin`/`HUNTAWAY_CODEX_BIN`, default
+  `codex`).
+- **The launch** is `LaunchFacts.launch(run, text)`, which `Runs` calls: Claude's (`claude`) unless the thread's config
+  is Codex's. The Codex half gathers the old launch's Codex facts: the model (the task's, else the first of its
+  project's, profile's and host's that isn't Claude's), the effort as the model takes it (`codexEffort` over
+  `CodexQueries.models`, unchanged when they can't be listed), the git directory and package caches as writable roots, a
+  reviewer's read-only sandbox (`git ls-files`/`check-ignore` for the ignored folders it may write), the rules, whether
+  the session has the board's tools as dynamic tools (`RunRepo.sessionBoardTools`), and a rewind's `before_turn` when
+  the rewind is for the task's session (4.3 clears it). `codexLaunch` runs `<launcher> codex-run <dir>/codex.json`,
+  feeds the prompt as the first stream-json user message (no `awaited`: the adapter echoes only steered messages), and
+  sets `CODEX_HOME`, `TMPDIR`, `HUNTAWAY_TASK_ID` and `HUNTAWAY_CODEX_BIN`. `RunDir.prepare` writes `codex.json` (before
+  `spec.json`); `RunDir.codexSpec` and `isCodex` read it. The run records its effort and `board_tools`. A server not
+  started by its launcher (`HUNTAWAY_EXE` unset) refuses Codex runs.
+- **The line handler** is `runs/codex/output.ts`. `CodexOutput` is the follower's `RunOutput` for both agents: a run whose
+  folder has `codex.json` (looked at once per run) goes to the Codex handler, the others to `ClaudeOutput`, which it is
+  built over (`Main.ts`). A request goes to `AgentRequests.handleCodex`, a resolution to `AgentRequests.cancel` as request
+  `codex:<id>`, `huntaway/model` only moves the offset (tokens read `out.jsonl`); a notification is translated and
+  written with what it tells the run and the offset in one transaction, as a Claude line is (one line to a transaction:
+  no chunks), and a turn's end closes the input even when recording it failed. After the commit: the reply being written,
+  `Usage.setLimits` from `account/rateLimits/updated`, `ContextMeter.onCodexUsage`/`onCompacted`/`recordTurn`, a
+  subagent's end on the wait (`RunWaits.subagentEnded`), and a usage-limit refusal (`Usage.codexRefused`, the task's
+  `limit_reset_at`). `// 4.3: Checkpoints.afterTurn` marks where a turn's checkpoint goes.
+- **The translator** (`translate.ts`) is the old driver's `map` and the thread half of `handle` and `finish_turn`, pure:
+  `translate(state, line, ctx) → { state, events, metas, effects, warnings }`, with `observe` and `stateFromItems`. Its
+  state is the thread's tool calls with their places and the ids of its other items (what the old `View` read), so a line
+  read again adds nothing. A turn's end is a `turn_result` (`legacy:<writeNo>`, only `turn/completed` and
+  `thread/compacted` take a write number) as Claude's result would make it for the old Codex result line; Codex's
+  `/compact` reporting its end twice makes one. Its effects: `SessionStarted`, `TurnStarted` (the turn id, `agent_at`),
+  `TurnEnded`, `PreviewReset`/`PreviewText`, `Working` (the run's wait ends), `SubagentEnded`, `Notice` (the board's
+  warnings, written with `Threads.notice`), `RateLimits`, `TokenUsage`, `Compacted`, `ToolDone`, `Echoed`,
+  `BoardToolsRefused`. The 20 recorded Codex sessions pass unchanged (`agents/codex/fixtures.test.ts`).
+- **Requests**: `AgentRequests` gained `registerCodex(kind, handler)` (`prompt`, `tool`), `handleCodex` and
+  `respondCodex` (a `codex_response` line). `Permissions.onCodex` (registered by `Permissions.registered`) asks a Codex
+  approval or question as `stdio:<run>:codex:<id>` through the same `answerControl` as `can_use_tool`, answering with
+  `promptAnswer`; the request it opens keeps what answering needs (`metadata.codex`), so `Permissions.resume` answers it
+  as Codex takes it after a restart. Codex's questions are question requests (`requestForPrompt` takes
+  `request_user_input`, ids from the questions, no forced answer of one's own). The dynamic-tools transport is
+  `mcp/transport/codex.ts` (`McpCodexRegistered`): `ToolCalls.call` with `answer: { request_id, rpc_id, codex: true }`,
+  answered with `codex_response` and recorded with `codex`, so `ToolCalls.resume` takes it up again.
+- **`Wait`**: a Codex run's waits are its reviewer's to approve when `codex.json` says `review_waits`.
+- **Queries (5.3)** are the service `agents/CodexQueries` (`models`, cached 10 minutes per config folder; `skills`, a
+  minute; `rateLimits`; `title`; `configModels`), live in `agents/codex/CodexQueriesLive.ts` on short-lived app-servers
+  (20 s, 60 s for a title), `CodexQueries.layerTest` in tests (models from `CodexModelsScript`, nothing else). It is
+  `ModelCalls.codex` in `Main.ts`. `TitleModel` asks it for a Codex config's titles; `Usage` reads a Codex config's plan
+  and limits through it (`Usage.provideCodex`, registered by `CodexQueries.registered`, since `profiles/` is above
+  `agents/`). `configs.models { id } → AgentModel[]` (new: `NotFound`, `Unavailable`) lists a config's models (none for
+  a Claude config); the web's model pickers (the thread's, the new task's) read them through the client's
+  `configModelsAtom`. `host.info`'s `agent_clis` lists `codex` when its program is there.
+- **Decided**: the board's namespace's description is cut to the whole sentences of the board's instructions that fit
+  1024 characters (`fitted`): codex-cli 0.167 refused `thread/start` with the whole text (found by the run on the real
+  Codex, below). Codex runs use the stream-json input Claude's do (`RunInput` unchanged): a user message, an `interrupt`
+  control request, and the `codex_response` answers.
+- **Left out**: a Codex run's skills in the composer (`CodexQueries.skills` is there; the composer's skills are
+  `AgentTools`, 6.4); telemetry's `config_overrides` (6.9); `documents.follow` on a tool's end (6.2); refusing to start a
+  Codex run on a host without the CLI (the run fails at its start, with the adapter's error); the old `codex_run_effort`
+  fallback when models can't be listed is the effort as given.
+- **Tests**: the 20 sessions; the old driver, adapter, launch, requests and `tests.test.ts` cases (`agents/codex/*.test.ts`,
+  `runs/codex/output.test.ts`); the queries against `fake-codex` (`packages/testing/bin/fake-codex.ts`, its markers
+  and knobs at its top); and `tests/e2e/codex.test.ts`, a whole server running a task with Codex as its agent
+  (fake-codex under `codex-run` under ia-shim: an approval, a board tool as a dynamic tool, the reply, In review). One
+  run on the real `codex` (codex-cli 0.167.1, `gpt-6-luna`, low effort, the default mode) on a test server called
+  `list_projects` as a dynamic tool, replied, and ended in In review.
+
 ## Prompts
 
 Every piece of text the board gives an agent is in `apps/server/src/prompts/`, one file per piece, **copied from the
