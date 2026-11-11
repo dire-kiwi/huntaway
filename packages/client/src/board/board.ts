@@ -2,7 +2,7 @@ import { Option } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
 import type { Host, HostId, HostSettings } from "@huntaway/contracts"
 import type { SessionView } from "../session/HostSession.ts"
-import { hostSessionAtom, localHostIdAtom, tokenPendingAtom } from "../session/sessions.ts"
+import { hostSessionAtom, hubHostListAtom, localHostIdAtom, tokenPendingAtom } from "../session/sessions.ts"
 import {
   sameJson,
   type HostAgentConfig,
@@ -28,7 +28,7 @@ export interface Board {
   readonly connected: boolean
   /** The page's own host's first snapshot has arrived. */
   readonly loaded: boolean
-  /** M1: just the page's own host. */
+  /** The page's own host first, then every host the hub links (offline ones too, with their last board). */
   readonly hosts: ReadonlyArray<Host>
   readonly localHostId: HostId | null
   /** Tagged with their host; merged by name in the UI, as before. */
@@ -76,14 +76,45 @@ const byName = (a: string, b: string): number => a.localeCompare(b, undefined, {
 export const sortProjects = <P extends HostProject>(projects: ReadonlyArray<P>): Array<P> =>
   projects.toSorted((a, b) => byName(a.name, b.name) || a.name.localeCompare(b.name) || `${a.host_id}:${a.id}`.localeCompare(`${b.host_id}:${b.id}`))
 
-/** What one host contributes: its session and, once its first snapshot has come, its board. */
+/**
+ * What one host contributes: its session, once its first snapshot has come its board, and for a linked host the hub's
+ * entry for it (`hub.hosts.watch`).
+ */
 export interface HostPart {
   readonly host_id: HostId
   readonly session: SessionView
   readonly board: HostBoard | undefined
+  readonly entry?: Host | undefined
 }
 
-const hostOf = (id: HostId, view: SessionView, local: boolean): Host => ({
+/**
+ * A host as the board shows it. A linked host is the hub's entry (its link's name, mode, URL, uplink and live state),
+ * connected while its own session is live; the page's own host is what its session says of itself.
+ */
+const hostOf = ({ host_id: id, session: view, entry }: HostPart, local: boolean): Host =>
+  entry && !local ? linkedHost(entry, view.state._tag === "live") : ownHost(id, view, local)
+
+const linkedHost = (entry: Host, live: boolean): Host => ({
+  id: entry.id,
+  name: entry.name,
+  local: false,
+  connected: live,
+  mode: entry.mode,
+  agents: entry.agents,
+  url: entry.url,
+  version: entry.version,
+  protocol: entry.protocol,
+  capabilities: entry.capabilities,
+  commit: entry.commit,
+  updates_from: entry.updates_from,
+  last_seen: entry.last_seen,
+  last_message_at: entry.last_message_at,
+  uplink: entry.uplink,
+  ...(entry.status !== undefined && { status: entry.status }),
+  ...(entry.status_reason !== undefined && { status_reason: entry.status_reason }),
+})
+
+const ownHost = (id: HostId, view: SessionView, local: boolean): Host => ({
   id,
   name: view.info?.host_name ?? id,
   local,
@@ -119,7 +150,7 @@ export function mergeBoards(prev: Board, parts: ReadonlyArray<HostPart>, localHo
   const local = parts.find((p) => p.host_id === localHostId)
   const boards = parts.flatMap((p) => (p.board ? [p.board] : []))
   const hosts = parts.map((p) => {
-    const host = hostOf(p.host_id, p.session, p.host_id === localHostId)
+    const host = hostOf(p, p.host_id === localHostId)
     const before = prev.hosts.find((h) => h.id === host.id)
     return before && sameJson(before, host) ? before : host
   })
@@ -169,24 +200,38 @@ export function mergeBoards(prev: Board, parts: ReadonlyArray<HostPart>, localHo
   }
 }
 
-/** The hosts on the board: M1 has the page's own; M7 adds the hub's linked hosts. */
+/**
+ * The hosts on the board: the page's own, then every host the hub links, offline ones too (they keep showing their last
+ * board, marked by their session's state).
+ */
 export const boardHostIdsAtom: Atom.Atom<ReadonlyArray<HostId>> = Atom.make((get) => {
   if (get(tokenPendingAtom)) return []
   const local = get(localHostIdAtom)
-  return local ? [local] : []
+  if (!local) return []
+  return [local, ...get(hubHostListAtom).flatMap((h) => (h.local || h.id === local ? [] : [h.id]))]
 })
 
-/** The merged board as the hosts' streams have it, without optimistic changes. */
+/**
+ * The merged board as the hosts' streams have it, without optimistic changes. A linked host that needs an update is
+ * listed but not subscribed to.
+ */
 export const serverBoardAtom: Atom.Atom<Board> = Atom.make((get) => {
-  const parts = get(boardHostIdsAtom).map((host): HostPart => ({
-    host_id: host,
-    session: get(hostSessionAtom(host)),
-    board: Option.getOrUndefined(AsyncResult.value(get(hostBoardAtom(host)))),
-  }))
+  const local = get(localHostIdAtom)
+  const listed = get(hubHostListAtom)
+  const parts = get(boardHostIdsAtom).map((host): HostPart => {
+    const session = get(hostSessionAtom(host))
+    const outdated = host !== local && session.state._tag === "needs_update"
+    return {
+      host_id: host,
+      session,
+      entry: listed.find((h) => h.id === host),
+      board: outdated ? undefined : Option.getOrUndefined(AsyncResult.value(get(hostBoardAtom(host)))),
+    }
+  })
   return mergeBoards(
     Option.getOrElse(get.self<Board>(), () => emptyBoard),
     parts,
-    get(localHostIdAtom),
+    local,
   )
 }).pipe(Atom.keepAlive)
 

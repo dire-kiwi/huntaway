@@ -6,6 +6,7 @@ import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
 import { Sidebar } from "./components/layout/Sidebar"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
+import { Settings } from "./components/settings/Settings"
 import { TokenScreen } from "./components/settings/TokenScreen"
 import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
 import { MenuButton } from "./components/ui"
@@ -30,7 +31,6 @@ const LATER: Partial<Record<Route["name"], string>> = {
   assistant: "The assistant",
   docs: "Documents",
   projectSettings: "Project settings",
-  settings: "Settings",
   analytics: "Analytics",
   guide: "The guide",
   host: "Hosts",
@@ -90,7 +90,20 @@ export function App() {
   if (authed === false) return <TokenScreen />
   if (authed === null) return null
   // The old board's onboarding (settings/Onboarding) comes with settings/; until then a board with no profile says so.
-  if (profiles.length === 0) return loaded ? <NotYet what="This board has no profiles yet">{" Add one with the settings, once they're here."}</NotYet> : null
+  // A board with none of its own can still link hosts that have some.
+  if (profiles.length === 0) {
+    if (!loaded) return null
+    if (route.name === "settings") return <Settings tab={route.tab} />
+    return (
+      <NotYet what="This board has no profiles yet">
+        {" Add one with the settings, once they're here, or link a host that has some in "}
+        <button type="button" className="text-accent hover:underline" onClick={() => navigate({ name: "settings", tab: "hosts" })}>
+          Settings → Hosts
+        </button>
+        .
+      </NotYet>
+    )
+  }
 
   const later = LATER[route.name]
   return (
@@ -119,6 +132,7 @@ export function App() {
           {route.name === "board" && <Board projectId={route.projectId} />}
           {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
           {route.name === "task" && <TaskView taskId={route.taskId} />}
+          {route.name === "settings" && <Settings tab={route.tab} />}
           {later !== undefined && (
             <>
               <div className="flex h-12 items-center border-b border-line px-3">

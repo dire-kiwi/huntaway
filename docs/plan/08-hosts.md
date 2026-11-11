@@ -101,6 +101,12 @@ const Hello = Schema.Struct({ host_id: HostId, name: Schema.String, protocol: Sc
 5. The client's own `Auth` middleware still puts its hub token on each request. The host ignores it: a relayed
    socket's session comes from the signed header only.
 
+As built (7.2, `packages/client/src/session/relay.ts`): the socket's URL is an effect that asks for a ticket, so every
+connection, the RPC client's reconnects included, takes a new one. It asks only once the hub's directory
+(`hub.hosts.watch`) says the host is connected: a host that is away or forgotten costs the hub no requests, and one that
+comes back is dialled as soon as the hub says so. A ticket refused is a socket open error, which the RPC client retries
+as it does a host that is down.
+
 A terminal is relayed the same way: `terminal.open` on the host's session returns a ticket for the host, and the
 client reaches `/api/terminal/<ticket>` through a relay ticket whose path is that terminal.
 
