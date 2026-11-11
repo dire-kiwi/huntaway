@@ -37,8 +37,10 @@ apps/
       ui/                 whole-app checks against a test server (Playwright)
       unit/
   desktop/                the Electron shell (package huntaway-desktop), from apps/web/electron
+    src/boot/             the frame: the package's entry, which a release can't replace (plain TypeScript, no effect)
     src/main/             main process: start or attach to the server, windows, shell updates (TypeScript, Effect)
     src/preload/          the bridge the page sees
+    src/shared/           the decisions boot and main share, as plain functions
 packages/
   contracts/              @huntaway/contracts: schemas, errors, RPC groups, HTTP endpoints, events, the thread protocol
   client/                 @huntaway/client: host sessions, atoms, queries and mutations, for the web app

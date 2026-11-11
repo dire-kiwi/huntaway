@@ -67,7 +67,15 @@ const shellLayer = Servers.layer.pipe(
 )
 
 early.pipe(
-  Effect.flatMap((goOn) => (goOn ? shell.pipe(Effect.provide(shellLayer)) : Effect.void)),
+  Effect.flatMap((goOn) =>
+    goOn
+      ? shell.pipe(
+          Effect.provide(shellLayer),
+          // Stopped from outside (SIGTERM, Ctrl-C): the server started here has been stopped with the layers; the app goes too.
+          Effect.ensuring(Effect.sync(() => app.quit())),
+        )
+      : Effect.void,
+  ),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,
 )

@@ -41,10 +41,13 @@ const config: Configuration = {
   files: ["dist/**", "package.json", "!node_modules/**"],
   extraResources: [{ from: server, to: ".", filter: ["**/*"] }],
   artifactName: "huntaway-${version}-${os}-${arch}.${ext}",
-  ...(version === undefined || version === "" ? {} : { extraMetadata: { version } }),
+  // desktopName is Electron's app_id / WM_CLASS on Linux: the .desktop file is named after it, so that desktops match the
+  // app's windows to it. $VERSION, when given, is the version the app reports.
+  extraMetadata: { desktopName: "huntaway-desktop.desktop", ...(version === undefined || version === "" ? {} : { version }) },
   linux: {
     target: ["AppImage", "pacman"],
     executableName: "huntaway-desktop",
+    syncDesktopName: true,
     category: "Development",
     icon: "build/icon.png",
     synopsis: "Kanban board for Claude Code and Codex agents",

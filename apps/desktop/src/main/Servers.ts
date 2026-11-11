@@ -5,8 +5,7 @@ import type { ChildProcessSpawner } from "effect/process"
 import { chooseServer, parseVersion, releaseEnv, serverExe, serverFiles } from "../shared/versions.ts"
 import { markVersionBad, readAppState } from "./appState.ts"
 import { Desktop } from "./Desktop.ts"
-import { NoServer, StartFailed, startWithFallback } from "./fallback.ts"
-import type { BackupFailure } from "./fallback.ts"
+import { BackupFailure, NoServer, StartFailed, startWithFallback } from "./fallback.ts"
 import { healthy } from "./health.ts"
 import { installKindOf, serverPath } from "./install.ts"
 import { spawnServer } from "./ServerProcess.ts"
@@ -28,7 +27,7 @@ export interface Target {
 export class ServerUnavailable extends Schema.TaggedError<ServerUnavailable, { readonly brand: unique symbol }>()("ServerUnavailable", {
   message: Schema.String,
   title: Schema.NullOr(Schema.String),
-  backup: Schema.NullOr(Schema.Struct({ reason: Schema.String, why: Schema.String, dir: Schema.String })),
+  backup: Schema.NullOr(BackupFailure),
 }) {}
 
 /** What the windows hear: a server is there now (windows on the error page load the board), or none, and why. */
@@ -375,7 +374,9 @@ export class Servers extends Context.Service<
           const current = yield* Ref.get(server)
           if (Option.isNone(current)) return false
           // Wait for it to exit, so that a relaunch (after an update) starts a new server rather than finding this one going down.
-          if (!(yield* Ref.getAndSet(stopping, true))) yield* current.value.stop.pipe(Effect.andThen(then), Effect.forkIn(layerScope))
+          if (!(yield* Ref.getAndSet(stopping, true))) {
+            yield* current.value.stop.pipe(Effect.andThen(Ref.set(server, Option.none())), Effect.andThen(then), Effect.forkIn(layerScope))
+          }
           return true
         })
 
@@ -384,6 +385,7 @@ export class Servers extends Context.Service<
           yield* Ref.set(stopping, true)
           const current = yield* Ref.get(server)
           if (Option.isSome(current)) yield* current.value.stop
+          yield* Ref.set(server, Option.none())
         }),
       )
 

@@ -306,6 +306,56 @@ server came up; AppImage and pacman installs are done by the shell; `app/state.j
 `Releases` service and keeps its format; the preload exposes the same six members on `window.huntawayDesktop`, to
 the main frame only, with origin checks.
 
+As built (8.3):
+
+```
+apps/desktop/
+  src/boot/      boot.ts (the frame, the package's `main`), shells.ts (which release's shell to load, shell-state.json, the crash marker)
+  src/shared/    versions.ts (every decision as a plain function: chooseServer, chooseShell, markBad, shellChange, installKind,
+                 updateKind, packageName, releaseEnv), paths.ts (the data folder, the shell's folder, the default port)
+  src/main/      main.ts (the entry: NodeRuntime.runMain), Desktop (what it knows: desktop.json, environment, Electron),
+                 Servers (find, attach or start; the blame rule; restarts; stop on quit), ServerProcess (the launcher's
+                 process, its ready line and output), fallback.ts (startWithFallback), health.ts, appState.ts, install.ts,
+                 stamp.ts, shellUpdate.ts (the AppImage and pacman update), Windows.ts (windows, navigation, browser
+                 pane, IPC, menu, relaunch), urls.ts, errorPage.ts
+  src/preload/   preload.ts (its own tsconfig, with the DOM)
+  scripts/       dist.ts (electron-builder), stamp.ts (the release manifest's `shell` and `electron/shell.json`)
+```
+
+- **The frame stays a separate file.** `vp pack` makes three CommonJS bundles with their dependencies inside
+  (`dist/boot.cjs`, `dist/main.cjs`, `dist/preload.cjs`; one build each, so no chunk is shared), and the packaged app
+  carries no `node_modules`. boot.cjs is plain TypeScript with no effect import, so that its stamp (sha256 over
+  `boot.cjs`, its contents and the Electron version, as before) changes only when the frame does. It still loads
+  `main.cjs` from a release's `electron/` (with `shell.json {electron, boot: 1}`) and gives it the same
+  `globalThis.huntawayBoot`. A release's tarball carries `dist/main.cjs`, `dist/preload.cjs` and the `shell.json` that
+  `pnpm --filter huntaway-desktop run stamp --shell-json` prints; `stamp` without it prints the manifest's
+  `{shell, electron}`.
+- **Its own names, beside the old app.** desktop.json and the windows' storage (Electron's userData) are in
+  `<appData>/huntaway-effect/` (`HUNTAWAY_DESKTOP_DIR` overrides it), not the old app's `huntaway/` and `Huntaway/`: the
+  old desktop.json points at the old board, and the single-instance lock is per userData folder, so the two apps would
+  otherwise open each other's windows. The default port is 7879 and the data folder the new server's. The variables are
+  `HUNTAWAY_*`: `HUNTAWAY_PORT`, `HUNTAWAY_DATA_DIR`, `HUNTAWAY_SERVER_BIN`, `HUNTAWAY_DEV_URL`,
+  `HUNTAWAY_PACKAGED_RESOURCES`, `HUNTAWAY_RELEASE_UPDATES`, `HUNTAWAY_RELEASE_API`, `HUNTAWAY_LAUNCHER`, and to the
+  server `HUNTAWAY_DESKTOP_VERSION`, `HUNTAWAY_DESKTOP_SHELL`, `HUNTAWAY_DESKTOP_INSTALL`, `HUNTAWAY_BUNDLED_SERVER`,
+  `HUNTAWAY_SKIP_DB_BACKUP[_ONCE]`. Dropped with the former name (14, "The `issue-agent` command…"): the `issue-agent`
+  and "Issue Agent" folder fallbacks; and with the Rust port's leftovers (14, "the backup rules for Rust releases"): the
+  `server/target` fallback and `server_version` for Rust releases.
+- **The server it starts** is the launcher (a release's `huntaway`, the bundled one, or the checkout's
+  `apps/server/bin/huntaway` once `apps/server/node_modules` is installed), run as a child that is not in a process
+  group of its own, so that stopping it is SIGTERM to the launcher alone (SIGKILL after 10 seconds). Its PATH is the
+  login shell's for a packaged app; the old shell changed its own `process.env.PATH` instead.
+- **What the shell reads of the server**: `HUNTAWAY_READY {"port","token"}`, and `HUNTAWAY_BACKUP_FAILED {reason, why,
+  dir}` for the error page's "Start without a backup". The server does not print the second yet (its `Backup` fails
+  the start with a `StartupError`); until it does, a failed backup shows as a server that exited.
+- **The package update** asks the board for the release status with `admin.status` over `POST /api/rpc` (a one-method
+  group with the contracts' `Auth`), where the old shell called `GET /api/admin/server`. It reads only
+  `release.latest.version` and `release.shell.outdated`. It hashes the download after writing it (Effect's `Digest`
+  has no streaming hash), still before the rename.
+- **Tests**: the old `desktop-versions`, `desktop-boot` and `desktop-shell-update` cases, and `Servers.test.ts`, which
+  runs stand-in launchers (shell scripts) on a free port: the ready line, an installed version that exits and is
+  blamed once the next is up, a failed backup, attaching to a server already there, remote mode, and windows sharing
+  one start.
+
 ## The phone app
 
 Not part of this plan. The old Expo app speaks the old API and keeps working against machines that have not
