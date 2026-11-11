@@ -133,7 +133,8 @@ const follow = (run: Run) =>
 
 - Each line's effects and the new offset are **not** one transaction (a line can start a process). So a line may be
   applied twice after a crash, and every handler is written for that: ids come from the agent, an agent request
-  "read again finds the same call", a thread item added twice replaces itself.
+  "read again finds the same call", a thread item added twice replaces itself. (As built in 2.5, what a line writes to
+  the database, its thread items included, *is* committed with the offset after it; what it does outside comes after.)
 - The follower is the only writer of a run's progress columns (`between_turns`, `saw_result`, `session_id`…), so
   they need no lock.
 - The timers that decide when to close a run's input (steer grace, background grace, follow-up grace, stop grace)
@@ -236,6 +237,95 @@ As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
 - **`fake-claude`** (`packages/testing/bin/fake-claude`) with stream-json input now waits for more after its result,
   as Claude Code does: each further user message is echoed and answered by a turn, and it exits when its input ends.
   The old one exited after its first result, which let a server that never closes the input pass.
+
+### As built in 2.4 and 2.5 (HE-4): the Claude launch, `Runs`, the line handler
+
+- **The launch is `agents/claude/launch.ts`** (`claudeLaunch(input) → LaunchSpec`), pure given `ClaudeLaunchInput`:
+  the run and its folder, its kind, the task (`id`, `kind`, `merging`, `session_id`), cwd, `claude`, the launcher (for
+  the gh and approval-rules hooks; none without it), the config folder and proxy env, model, effort, permission mode,
+  the thread's rules (`forMode` applied inside), the project's tools (`RunTools`, `noRunTools` until `AgentTools`), which
+  of the board's HTTP servers this server serves (`ServedServers`), the GitHub account, the extra folders, the prompt
+  text and its id, the system prompt, and `mcp: { url, secret, manifest }`. It returns the argument list in the old
+  order (with `--mcp-config` last), the env pairs (`CLAUDE_CONFIG_DIR` among them), the two prompt lines (`initialize`,
+  then the user message) or a compaction's plain prompt, `mcp.json`'s servers and `mcp-run.json`. `userInput`,
+  `interruptLine`, `controlResponse` and `initializeLine` are the lines the server writes. It is checked against 13
+  launches recorded from the old server (`agents/claude/fixtures/launchSpecs.ts`: the old launch run under Node with a
+  stand-in ia-shim, ids and folders replaced by placeholders). `agents/claude/access.ts` is the old `access.ts`'s pure
+  rules (board, gh, desktop, docs and reviewers' tools, `approvesOwnWaits`, `githubAccount`, `codexEffort`,
+  `reviewFilesystem`, `cacheDirsIn`); its git and Codex-model parts are M5's. **Decided**: gh's read-only tools stay in
+  `--allowedTools` whether or not the board serves gh (as before), and `mcp.json` names only the HTTP servers the board
+  serves (`AgentRequests.served`: none yet), so no run is pointed at a server that is not there. The internal URL is
+  `http://127.0.0.1:<--port>`; with `--port 0` it is not known when the launch runs (only a compaction's `mcp.json`
+  uses the board's HTTP server).
+- **`runs/LaunchFacts`** gathers the input (the old `launch`'s preparing half): the task's config (adopting the first
+  available for a thread with none and no conversation), the config folder its conversation is kept in
+  (`task_config_dir`), its proxy, cwd (the parent's ready worktree for a review thread, else the task's worktree, else its
+  project's repository, else `<data dir>/profiles/<id>/scratch`), a labelled task's documents folder, a group task's
+  repositories, mode, model and effort as before, the prompt (`Prompts.start`, or the text for a compaction) and system
+  prompt (`Prompts.system`), the run's secret (`Identity.runSecret`) and manifest. It records the run's `config_dir` and
+  `effort`. Left with their areas: worktrees, checkpoints and rewinds (M4), the temp folder and lost background work
+  (2.8), the project's tools (`AgentTools`), attachments' folders, telemetry's env, the assistant's workspace and
+  memory (6.7), Codex (M5).
+- **`Runs`** (`runs/Runs.ts`): `send(task, Outgoing) → Task` (fails `TaskNotFound | SendRefused`), `sendQueued(task)`
+  (for 2.6: what is queued, `take: "Only"`), `stop(task) → { stopped }`, `abort(task)`, `dropQueued(task) → Task` (as
+  it was), `isRunning(task)`, `newSession(task)` (`/new`), `compact(task, why)` (the board's own compaction, with a
+  notice), `launched(task)` (waits for a launch: tests) and `reattach` (a no-op until 2.6). `Outgoing` is `{ text,
+  source: user | agent | routine | automation | board, auto?, review_round?, automation_run_id?, review? }`.
+  `SendRefused.reason` is `archived`, `merge_queued`, `no_agents`, `already_running`, `no_conversation`,
+  `nothing_queued` or `agent_running`; `rpc/tasks.ts` maps them to `Conflict`, `Unavailable` and `Invalid`.
+  `tasks.delete` aborts the task's run first. The decision is `decideSend` (`runs/queue.ts`, pure, the old
+  `send_message`'s order); merges' "active merge of the lane" is none until M4, and usage holds are left to `Usage`.
+  `/plan` gives a task the plan label in the transaction that steers, queues, waits or registers the message. A `/plan`
+  is steered only into a run that may write the documents folder (it started with labels), as before; that set is kept
+  in memory and lost on a restart.
+- **Registering** is one transaction: the run `preparing`, the queue taken (`No`, `Ahead`, `Only`), the user message
+  (or a task's start message: `auto`, `start`) with its metas, the run's `write_no`, and the task's columns (`running`,
+  `steerable`, `run_started_at` unless it was running, and unless a compaction `attention_reason`, `waiting`,
+  `limit_reset_at` and the working status), written through `TaskRepo` and `deriveColumns` (the task's lock is held, so
+  not `Tasks.change`), then `TaskChanged` offered. The **launch** is a fiber in a `FiberMap` keyed by task: the facts,
+  `RunDir.prepare`, the check that the row is not stopped (after `spec.json`), `Shim.spawn` uninterruptibly, the phase
+  `running`, the steers written, `RunFollower.follow`. A stop while it prepares removes the fiber from the map.
+- **What `Runs` offers when a launch ends without starting its agent** (failed, or interrupted by a stop, or stopped
+  before anything started): `Shim.reap(run)` (input closed, and an agent the shim starts within 60 s stopped, marked
+  `reap`), then `RunExited { run, task, exit: { code: null, signal: null, error: <why> }, errorTail: "" }`. The run's row
+  is left as it is (`preparing`, `stop: requested` after a stop), so 2.6's outcome rule (stopped → cancelled; else failed
+  with the error) works it out as for any exit, and 2.6 ends the row and writes the column.
+- **The queue and steers are rows** (`TaskRepo.queued`, `enqueue`, `takeQueued`, `queueAhead`, `steers`, `addSteer`,
+  `steerWritten`, `takeSteer`, `takeSteers`); `combine` (`runs/queue.ts`) is the old `Queued::then` over them. A
+  message is another agent's (`from_agent`) when its source is `agent`, `routine`, or `automation` with text.
+- **`runs/RunInput`** writes to a run's input and closes it: `writeSteers(task)` (in order, stopping at the first that
+  can't be written; the text through `Prompts.steer`, which rewrites `/plan` and adds the mentions note),
+  `steered(run, id)` (database only: the steer row goes, the user message is written `steered`, `between_turns` off,
+  `stop` interrupted → none, a user's steer clears `attention` and `finished`, the next turn's `write_no`),
+  `turnStarted`, `turnEnded(run)` (closes the input with nothing waiting, else `STEER_GRACE` 30 s),
+  `interrupt(run, stopId)` (the `interrupt` line and `STOP_GRACE` 10 s), `closeAndKill`, and `rearm(run)` for 2.6.
+  **The timers** are fibers in `RunInput`'s two `FiberMap`s keyed by run id (stop, steer), each reading the run's row
+  when it fires, so they are re-armed from the row (`rearm`); `settled(run, timer)` waits for one (tests).
+  `BACKGROUND_GRACE` and `FOLLOW_UP_GRACE` are 2.8's, at the hooks marked in `turnEnded`.
+- **The line handler is `runs/claude/output.ts` (`ClaudeOutput`, the `RunOutput` layer)**. `RunOutput.handle(run,
+  line, end)` now takes the offset after the line and saves it in the line's transaction; the follower stays generic
+  (it saves the offset after a line whose handling failed, and after each chunk). Per line: `decodeLine` (a problem is
+  logged and skipped); the translator's state, kept per thread with the thread's `seq` it has seen (rebuilt with
+  `stateFromItems` from `Threads.stored` when a run is followed afresh, and brought up to date with what others wrote,
+  from the thread's log, before each line); then one transaction: the HA-404/405 foreign result skipped, the cost
+  (`RunRepo.addCost`), `translate` inside `Threads.writeFromAgent` for the lines that make items (the others take no
+  write number), the effects (session id on the task and run, turn started, the turn's end recorded with the task's
+  cost and session and the never-answered session dropped, steers taken in, `agent_at`), Claude Code's refusal of the
+  board's tools as a notice, and the offset. After the commit: the `awaited` file, the preview (`Threads.preview` /
+  `endPreview`), the agent's requests to `AgentRequests`, and `RunInput.turnEnded` — also when the transaction failed,
+  for a result. Rate limits, compactions' statistics, background tasks and task notifications are hooks for 2.8 and
+  `Usage`.
+- **`runs/AgentRequests`** is the registry the areas below `runs/` answer agents through: `register(kind:
+  "can_use_tool" | "mcp_message", { handle(run, request), cancel(run, requestId) })` (an area's layer registers when it is
+  built; registering again replaces), `provideServers({ manifest(review), served })`, and for the line handler and the
+  launch `handle(run, request)` (in the background; a kind nobody registered, or one the board doesn't handle, is
+  answered at once with `{ subtype: "error", request_id, error: "the board doesn't handle \"<kind>\" requests" }`),
+  `cancel(run, requestId)` (every handler hears it), `respond(run, response)` (a `control_response` on the input),
+  `manifest(review)` and `served`. Until something registers: no tools, no HTTP servers. 3.1's `McpControlRegistered`
+  registers `mcp_message` and the manifest; `Permissions` (3.3) registers `can_use_tool`.
+- **Shared edits**: `ServerConfig.layerTest` gives no ia-shim by default (`/nonexistent/ia-shim`), so no test starts an
+  agent unless it gives a shim and a fake `claude`; `Prompts.steer`; `RunDir.readOutput` gives each line's end
+  (`ends`); `RunRepo.startTurn`, `sessionStartedBy`; `Shim.reap`, `watchReap`.
 
 ### When a run ends<a id="when-a-run-ends"></a>
 
@@ -425,10 +515,12 @@ export class ToolCalls extends Context.Service<ToolCalls, {
   answer, `Permissions`) and `cancelled` (a call the agent gave up on: its prompt expires, its wait ends).
   `McpHooks.layerNone` ends nothing and refuses an ask, with the reason, until those pieces replace it.
 - **The control transport's interface is `runs/McpControl.ts`**, implemented by `mcp/transport/control.ts`
-  (`McpControlLive`): the MCP area is below the runs area, and a run's line handler (`RunOutput`) and its launch must
-  reach it. `handle(run, { request_id, server_name, message })` for an `mcp_message`, `cancel(run, requestId)` for a
-  `control_cancel_request`, `initializeLine(run, review)` for the first line of a Claude run's input, and
-  `isInitializeResponse(requestId)`. A board call on the output is `stdio:<run>:<request id>` with
+  (`McpControlLive`): `handle(run, { request_id, server_name, message })` for an `mcp_message`, `cancel(run, requestId)`
+  for a `control_cancel_request`, `manifest(review)` (the board server's handshake results), `initializeLine(run,
+  review)` (built with the launch's `initializeLine`, `agents/claude/launch.ts`) and `isInitializeResponse(requestId)`.
+  The runs area does not depend on it (a board tool needs `Runs`, which would be a cycle of layers): `McpControlRegistered`
+  (a layer in `mcpLayer`) registers it with `runs/AgentRequests` for `mcp_message` requests and their cancellations, and
+  as the provider of the manifest the launch puts in the `initialize` line (2.5, below). A board call on the output is `stdio:<run>:<request id>` with
   `{ request_id, rpc_id, arguments }` recorded, so `ToolCalls.resume` (Recovery) takes it up again and answers it on
   the input; the answer is written before the row is marked done.
 - **The run's secret is `Identity.runSecret(run)`** (and `isRunSecret`, constant time), on `effect/crypto`'s `Mac`: the

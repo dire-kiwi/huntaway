@@ -9,8 +9,9 @@ import { RunRepo } from "./RunRepo.ts"
 import { Shim } from "./Shim.ts"
 
 // Following a run (docs/plan/07-agents.md, Following; inventory 01, section 5): read its output from the saved offset,
-// hand each line to `RunOutput`, save the offset after each chunk, and once it has exited and everything is read, tell
-// the reactor (`RunExited`). One fiber per live run, in a `FiberMap` keyed by run id. Interrupting one never signals
+// hand each line to `RunOutput` with the offset after it (the handler saves it with what the line says; the follower
+// saves it after a line whose handling failed, and after the chunk), and once it has exited and everything is read,
+// tell the reactor (`RunExited`). One fiber per live run, in a `FiberMap` keyed by run id. Interrupting one never signals
 // the agent: agents outlive the server, and stopping one is `Runs.stop`'s.
 
 /** How long the follower waits when there is nothing new. */

@@ -18,7 +18,7 @@ import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import type { WriteNo } from "../threads/model.ts"
 import { LaunchFacts } from "./LaunchFacts.ts"
-import { combine, decideSend, isCompact, newCommand, rowOf } from "./queue.ts"
+import { combine, decideSend, newCommand, rowOf } from "./queue.ts"
 import type { Outgoing, Refusal, Take } from "./queue.ts"
 import type { Run, RunKind } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
@@ -506,5 +506,4 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
   )
 }
 
-export { isCompact }
 export type { Outgoing }
