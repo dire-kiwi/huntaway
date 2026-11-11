@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { AgentConfigId, ProfileId, ProjectId, TaskId } from "./ids.ts"
-import { PermissionMode, Status } from "./task.ts"
+import { Agent, DocumentLabel, PermissionMode, Status } from "./task.ts"
 import { Timestamp } from "./time.ts"
 
 // A project (huntaway's apps/server/src/wire/projects.ts), without `subproject_pull_requests` (subprojects are gone) and
@@ -163,3 +163,25 @@ export const ProjectPatch = Schema.Struct({
   link_folders: Schema.optional(Schema.NullOr(Schema.String)),
 })
 export interface ProjectPatch extends Schema.Schema.Type<typeof ProjectPatch> {}
+
+/** The instructions a project without its own uses, by field (`host.defaultPrompts`, the old `GET /default-prompts`). */
+export const DefaultPrompts = Schema.Struct({ start_prompt: Schema.String, review_prompt: Schema.String, merge_prompt: Schema.String })
+export interface DefaultPrompts extends Schema.Schema.Type<typeof DefaultPrompts> {}
+
+/** The options of a new thread that change what its agent is told (`projects.systemPrompt`); unset ones are a new task's. */
+export const SystemPromptOptions = Schema.Struct({
+  /** A task (the default) or a scratch task. */
+  type: Schema.optional(Schema.Literals(["task", "scratch"])),
+  labels: Schema.optional(Schema.Array(DocumentLabel)),
+  /** For a task: whether it has its own worktree (by default, as the project's new tasks do). */
+  worktree: Schema.optional(Schema.Boolean),
+  /** By default, what a new task in the project runs on. */
+  runtime: Schema.optional(Agent),
+  /** By default, the project's, else the host's. */
+  permission_mode: Schema.optional(PermissionMode),
+})
+export interface SystemPromptOptions extends Schema.Schema.Type<typeof SystemPromptOptions> {}
+
+/** What the agent of a new thread in a project is told on top of its agent's own system prompt, what it runs on, and its mode. */
+export const SystemPromptPreview = Schema.Struct({ text: Schema.String, runtime: Agent, permission_mode: PermissionMode })
+export interface SystemPromptPreview extends Schema.Schema.Type<typeof SystemPromptPreview> {}

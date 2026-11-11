@@ -7,6 +7,8 @@ import { navigate } from "../../state/route"
 import { profileNames } from "../boardHelpers"
 import { ArchiveProjectModal } from "../settings/ArchivedProjects"
 import { NewProjectModal } from "../settings/NewProjectModal"
+import { ReloadButton } from "../settings/Server"
+import { UsagePanel } from "../settings/Usage"
 import { ContextMenu, IconButton } from "../ui"
 import { GroupNameModal } from "./sidebar/GroupNameModal"
 import { HostProjects } from "./sidebar/HostProjects"
@@ -139,8 +141,10 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
         </div>
       </div>
 
-      {/* The usage panel (settings/Usage) and the reload and update buttons (settings/Server) are not yet on this server. */}
+      <UsagePanel profile={active} />
+      {/* The update button (settings/Server's UpdateButton) comes with the update area (admin.*, HE-6). */}
       <div className="border-t border-line p-2">
+        <ReloadButton />
         <NavItem active={route.name === "settings"} onClick={() => navigate({ name: "settings" })} icon={<Settings size={15} />}>
           Settings
         </NavItem>

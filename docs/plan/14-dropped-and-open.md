@@ -36,6 +36,9 @@ switched and cannot reach one that has. Sessions and scopes are designed with a 
 `packages/client` is kept free of browser APIs, so the app can be built on this later
 ([09-frontend.md](09-frontend.md#the-phone-app)).
 
+With it, Settings → Network access's paired phones (the old `settings/Devices.tsx`): the panel keeps the board's URL
+and token (6.12).
+
 ## Decisions taken in this plan
 
 Each could have gone another way. They are listed so that a different answer is one message away.

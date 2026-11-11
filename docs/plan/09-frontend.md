@@ -391,6 +391,50 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   mount), and `messageBox.test.mjs`'s two dropped cases back (`/` and `$`). Not ported: `forkedSkills.test.mjs`, which
   checks a forked Skill's subagent in the thread through the Agents list (not on this server) with the old translator's
   messages, nothing of agent tools.
+### Step 1 as done for `settings/` (6.12, HE-7)
+
+- **What came over.** The Settings shell's conditions (Agent configs and Skills and MCP only with a host that runs
+  agents, Assistant with a profile, Archived projects with a profile), `ClaudeConfigs` (with `ConfigPicker`,
+  `ConfigSelect`, `ConfigUsageNote`, `AgentBadge`), `Usage` (the sidebar's usage panel, asking each host's `host.usage`
+  every 5 minutes; what comes back arrives as `usage` events), `hosts/ProfilesPanel`, `ProfileForm`, `profileFields`,
+  `AgentDefaults`, `TintField`, `Shortcuts`, `Guide` with `src/guide.ts` and `docs/guide/` (the old repository's pages,
+  copied byte for byte and bundled as the old app did, so no server route; their links out of the guide still go to the
+  old repository until 9.3 brings them into line), `Onboarding` (in place of App's note), `DirPicker`, `TemplateField`
+  with `src/templateCompletion.ts` (it reads a `TemplateGraph`, which 6.6's `WorkflowGraph` is), the `ArchivedProjects`
+  panel (the board's `archived`, so nothing is fetched), `repoSource`, `versions`, `uiVersion`, the `HostPage`, the
+  `ServerPanel` and `NetworkPanel`, and `project/*` (`ProjectSettings` and its General, Agents, Worktrees, Review,
+  Prompts and Status scripts tabs). `task/Reviewers.tsx`, which the profile form and the Review tab use, came with them.
+  `components/ui/usageConfigs.ts` has the rest of the old `usageConfigs.ts` (`usageConfigs`, `usageAlert`, `WARN_AT`,
+  `resetsPhrase`); `boardHelpers.ts` has `profileConfigLabel`.
+- **A new build.** `state/uiBuild.ts` reads the page the server serves at `/` through `effect/http`'s fetch client in an
+  atom runtime (`servedUiBuildAtom`); `useNewUiBuild` refreshes it on focus, on a reconnect and every 5 minutes, and the
+  sidebar's `ReloadButton` offers the reload.
+- **Decided where the old code had a host-version branch.** Every host has every setting: the API gates are gone, a
+  profile's and a project's summarizers are always a list, a profile always has configs (with none on the host yet, the
+  folder the profile form names is made its first config, named after the profile, as the old server did), and the
+  Agent defaults row reads the board's `hostSettings` rather than fetching (its "Keep threads as items" switch is gone
+  with threads on messages). The Prompts tab's preview has no Subproject type. Reviewers' and summarizers' optional
+  `name`, `prompt` and `skills` are left out when unset (`withField`), as the wire has them.
+- **Marked slots, for the areas that bring them.** Agent tools (6.4): the Skills and MCP project tab, and the skills a
+  reviewer or summarizer picks from (names are typed until then). Automations (6.5) and Workflows (6.6): their project
+  tabs, and the Review tab's note on which workflows take reviews over (it says what using workflows means until then).
+  6.11: gh's accounts in `GithubAccountSelect` (`profiles.githubAccounts`, a stub that lists none), `CopyLoginModal`,
+  config archives, and connecting Asana (`AsanaAccount`). The host page's Settings sync, version, Server and Remove for a
+  linked host, and the service (`admin.*`, `hub.hosts.*`: M7 and M8, board task HE-6), Terminal tools (6.1), Telemetry
+  (6.9) and Desktop (6.10) are `Slot`s; Settings → Server shows what `host.info` says, and its restart, update, release,
+  shell and service parts and the sidebar's `UpdateButton` are HE-6's.
+- **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the
+  two-file database scheme, moving threads onto items). `Devices.tsx` and the paired phones under Network access, with
+  device pairing (14, Deferred).
+- **Checks.** `tests/ui/projectSettings`, `proxyConfig` (on `--fake-claude`: Agent configs need a host that runs
+  agents), `reviewerOptions`, `summarizers`, `systemPromptPreview`, `guide`, `settingsPanels` (the old `confirmErrors`'
+  refused profile delete through `routeRpc`, a shortcut's key, onboarding) and the unarchive half of `archiveProjects`.
+  Changed from the old checks: a tab of another area is waited for by its heading; `reviewerOptions` types its skills;
+  `summarizers` no longer reads the single `summarizer`; `guide` opens the workflows page by its address (the old check
+  followed the Workflows tab's link, 6.6's); the shortcut moved is the search field's (Triage isn't on this server).
+  Not ported: `databaseFile` (dropped), `worktreeSetup` (the board's setup thread, not a settings panel), `devices`
+  (deferred), and the settings checks of other areas (`hostRelease`, `hostUpdate`, `release-update`, `nearbyHosts`,
+  `telemetry`, `skillSources`, `agentTools`, `automations`, `workflows*`, `githubClone`, `githubCreate`).
 
 ### Step 2: by hand, a feature folder at a time
 

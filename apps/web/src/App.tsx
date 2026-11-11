@@ -10,6 +10,7 @@ import { DocsPage } from "./components/docs/DocsPage"
 import { Analytics } from "./components/settings/Analytics"
 import { Guide } from "./components/settings/Guide"
 import { HostPage } from "./components/settings/HostPage"
+import { Onboarding } from "./components/settings/Onboarding"
 import { ProjectSettings } from "./components/settings/project/ProjectSettings"
 import { Settings } from "./components/settings/Settings"
 import { TokenScreen } from "./components/settings/TokenScreen"
@@ -17,7 +18,6 @@ import { AssistantPage } from "./components/task/AssistantPage"
 import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
 // 6.1
 import { startToolKeepalive } from "./components/task/terminalTools"
-import { NotYet } from "./components/ui"
 import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
@@ -83,8 +83,7 @@ export function App() {
 
   if (authed === false) return <TokenScreen />
   if (authed === null) return null
-  // The old board's onboarding (settings/Onboarding) comes with settings/; until then a board with no profile says so.
-  if (profiles.length === 0) return loaded ? <NotYet what="This board has no profiles yet">{" Add one with the settings, once they're here."}</NotYet> : null
+  if (profiles.length === 0) return loaded ? <Onboarding /> : null
 
   return (
     <div className="relative flex h-full">

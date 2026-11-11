@@ -142,3 +142,9 @@ export function useHost(id: string | null | undefined): State["hosts"][number] |
 
 /** A group task: in no project, it plans the work of its group's projects. */
 export { isGroupTask } from "@huntaway/client"
+
+/** The names of a profile's configs, for a list of profiles (6.12). */
+export function profileConfigLabel(s: Pick<State, "claudeConfigs">, p: Pick<Profile, "host_id" | "claude_config_ids">): string {
+  const names = p.claude_config_ids.map((id) => s.claudeConfigs.find((c) => c.host_id === p.host_id && c.id === id)?.name).filter((n) => n !== undefined)
+  return names.length ? names.join(", ") : "Claude's default config"
+}

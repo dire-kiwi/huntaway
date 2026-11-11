@@ -51,7 +51,7 @@ export const pinnedProjectsAtom = stored("ia.pinnedProjects", Keys, [])
 export const favoriteProjectsAtom = stored("ia.favoriteProjects", Keys, [])
 
 /** Whether the sidebar's usage panel is open (`ia.usageOpen`). */
-export const usageOpenAtom = storedBare("ia.usageOpen", Flag, "0")
+export const usageOpenAtom = storedBare("ia.usageOpen", Flag, "1")
 
 /** A profile's open pen tab (`ia.pen.<profile>`), and its collapsed lanes (`ia.pen.collapsed.<profile>`). */
 export const penTabAtom = Atom.family((profile: string) => storedBare(`ia.pen.${profile}`, Schema.String, null))

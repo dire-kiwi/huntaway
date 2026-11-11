@@ -168,6 +168,10 @@ and moving worktrees and sessions with it.
   (`use_worktrees: null` doesn't decode); the setup hold uses named pipes, not a polling script. The recorder's hourly
   timing isn't tested (its pass is). The 4.1 note "Not here: relocation's hold on the project's folder during a setup"
   above is done by this.
+As built in 6.12 (HE-7), for the project settings' Prompts tab: `projects.systemPrompt` (`{ id, options }`, the old
+`GET /projects/{id}/system-prompt`'s query as `SystemPromptOptions`; `NotFound`) is `Prompts.preview`, already built in
+2.5; `host.defaultPrompts` gives `PROJECT_PROMPT_DEFAULTS` (`prompts/projectDefaults.ts`) as `DefaultPrompts`, the texts
+themselves, with no service to ask. Both read scope; `rpc/projects.test.ts` calls them in process.
 
 ### Tasks — [inventory 07](inventory/07-server-root-api.md) (7.7–7.9), [09](inventory/09-data-model.md)
 
