@@ -1,5 +1,5 @@
 import { useState, type DragEvent } from "react"
-import { isArchived, type HostTask as Task } from "@huntaway/client"
+import { canRunAgents, isArchived, type HostTask as Task } from "@huntaway/client"
 import type { Resolution, Status } from "@huntaway/contracts"
 import type { TaskUpdateOptions } from "../ConfirmTodos"
 import { inTab, moveToPen, type PenTab } from "../pens"
@@ -12,6 +12,7 @@ import type { DropTarget } from "./model"
 import type { BoardStacks } from "./useBoardStacks"
 import { moveTask } from "../../boardHelpers"
 import { board } from "../../../state/board"
+import { rpc } from "../../../state/rpc"
 
 /**
  * Dragging tasks over the board and dropping them: where one would go, the handlers of the columns and of the pens'
@@ -133,13 +134,15 @@ export function useBoardDrops({
     })
     setDropErr(null)
     try {
-      // Shown at once, and put back if the host refuses (moveTask). Moving a fresh task into In progress also sent the
-      // empty message that starts its agent (the old client's `moveTask`): not yet on this server, which has no
-      // `tasks.send` until M2.
+      // Shown at once, and put back if the host refuses (moveTask).
       await Promise.all([
         moveTask(task, { status, position, ...anyway, ...(unarchive && done_at && { done_at }) }),
         ...moved.map((m) => moveTask(m.before, { position: m.position })),
       ])
+      // Moving a fresh task into In progress starts its agent, with the empty message (the old client's `moveTask`).
+      const host = board.get().hosts.find((h) => h.id === task.host_id)
+      const starts = status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host)
+      if (starts) await rpc(task.host_id, "tasks.send", { id: task.id, text: "" })
     } catch (e) {
       setDropErr(errorText(e))
     }

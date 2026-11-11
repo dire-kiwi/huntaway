@@ -9,7 +9,8 @@ import { info, snapshot } from "./fixtures.ts"
 // events, the way the server does (replay after `since` from the same boot, else a snapshot), and lets a test drop the
 // connection, bring it back, or turn the token down. Other methods answer from `on`.
 
-type Handler = (payload: unknown) => Effect.Effect<unknown, { readonly _tag: string }>
+/** An answer: an effect, or a stream for a streaming method (`threads.watch`). */
+type Handler = (payload: unknown) => Effect.Effect<unknown, { readonly _tag: string }> | Stream.Stream<unknown, unknown>
 
 export interface FakeHost {
   readonly id: HostId
