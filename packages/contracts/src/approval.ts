@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { AgentConfigId, ProfileId, ProjectId, RequestId, TaskId } from "./ids.ts"
-import { Status } from "./task.ts"
+import { PermissionMode, Status } from "./task.ts"
 import { Timestamp } from "./time.ts"
 
 // What an agent waits for the user to approve, whatever its thread's permission mode (huntaway's
@@ -241,3 +241,46 @@ export const ApprovalAction = Schema.Struct({
   decided_at: Schema.NullOr(Timestamp),
 })
 export interface ApprovalAction extends Schema.Schema.Type<typeof ApprovalAction> {}
+
+// Prompts waiting for the user (the old `GET /permissions` and `POST /permissions/{id}`, huntaway's wire/permissions.ts):
+// a tool call its thread's mode or an approval rule asks about, a question, a plan, or one of the board's own approvals.
+
+/** A prompt waiting for an answer, as `permissions.pending` lists it. `input` is what the agent asked with. */
+export const PendingPermission = Schema.Struct({
+  id: RequestId,
+  task_id: TaskId,
+  tool_name: Schema.String,
+  input: Schema.Unknown,
+  created_at: Timestamp,
+  /** A routine run's prompt is denied at this time if nobody answers it. */
+  expires_at: Schema.NullOr(Timestamp),
+  /** The approval rule that asked it, if one did. */
+  rule: Schema.NullOr(Schema.String),
+})
+export interface PendingPermission extends Schema.Schema.Type<typeof PendingPermission> {}
+
+/** allow, allow this tool in the thread from now on too, or deny. */
+export const PermissionDecision = Schema.Literals(["allow", "allow_always", "deny"])
+export type PermissionDecision = typeof PermissionDecision.Type
+
+/** The user's answer to a prompt (the old `POST /permissions/{id}` body). */
+export const PermissionAnswer = Schema.Struct({
+  decision: PermissionDecision,
+  /** deny: what the agent is told. */
+  message: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** A question, allowed: each question's answers, in order (a chosen option's label or what the user typed). */
+  answers: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Array(Schema.String)))),
+  /** A plan, approved: the mode the thread carries on in (not `plan`). */
+  mode: Schema.optionalKey(Schema.NullOr(PermissionMode)),
+  /** A plan, denied: what the user wants changed. */
+  feedback: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** An automation that creates tasks, approved: the model and effort its tasks run with (left out: as the agent asked). */
+  automation: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ model: Schema.optionalKey(Schema.NullOr(Schema.String)), effort: Schema.optionalKey(Schema.NullOr(Schema.String)) })),
+  ),
+})
+export interface PermissionAnswer extends Schema.Schema.Type<typeof PermissionAnswer> {}
+
+/** What a prompt came to once answered. */
+export const PermissionAnswered = Schema.Struct({ status: Schema.Literals(["allowed", "denied"]) })
+export interface PermissionAnswered extends Schema.Schema.Type<typeof PermissionAnswered> {}

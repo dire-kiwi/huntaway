@@ -548,9 +548,9 @@ export class ToolCalls extends Context.Service<ToolCalls, {
   profile, then an unknown tool, the reviewer gate, plan mode (the thread's mode at the call: its own, its project's,
   the host's default), the wait, the rules. A never rule is logged `blocked` and refused here; an ask rule goes to
   `McpHooks.askRule`.
-- **`McpHooks`** stands in for what is not built: `callMade` (ends the run's wait, `Wait` 3.5), `askRule` (the user's
-  answer, `Permissions`) and `cancelled` (a call the agent gave up on: its prompt expires, its wait ends).
-  `McpHooks.layerNone` ends nothing and refuses an ask, with the reason, until those pieces replace it.
+- **`McpHooks`** is what a call needs of the areas built after it: `callMade` (ends the run's wait, `Wait` 3.5),
+  `askRule` (the user's answer, `Permissions` 3.3) and `cancelled` (a call the agent gave up on: its prompt expires, its
+  wait ends). `McpHooks.layerNone` ends nothing and refuses an ask; `Main.ts`'s `BoardHooks` is the live one.
 - **The control transport's interface is `runs/McpControl.ts`**, implemented by `mcp/transport/control.ts`
   (`McpControlLive`): `handle(run, { request_id, server_name, message })` for an `mcp_message`, `cancel(run, requestId)`
   for a `control_cancel_request`, `manifest(review)` (the board server's handshake results), `initializeLine(run,
@@ -683,6 +683,46 @@ then settles the thread's other open questions as replied. It fails with `Questi
 `Conflict` (`not_pending`, `moved_on`), `Invalid` and `rpc/tasks.ts`'s `sendRefused`. `tasks.send` settles the open
 questions as replied after a user's message that isn't blank. The merge gate's card (`merge_approval`, M4) is not
 special-cased yet: M4 routes its answer to the gate.
+
+As built in 3.3 (HE-4), `permissions/Permissions.ts` (+ `PermissionRepo.ts`, the plain `prompts.ts`):
+
+- **The interface**: `ask(asker, { tool_name, input, tool_use_id }) → Decision` (Claude Code's `can_use_tool` answer:
+  `{ behavior: "allow", updatedInput, updatedPermissions? }` or `{ behavior: "deny", message }`), in the old order;
+  `askRule(asker, name, input, rule)` (a board tool an ask rule matched: Don't ask denies, else the user);
+  `approve(asker, kind, tool, input) → Result<input approved, why not>` and `asked(call)` for 3.4's approvals;
+  `answer(id, PermissionAnswer, by) → "allowed" | "denied"` (fails `PromptNotFound | PromptNotPending | PromptMovedOn |
+  Invalid | SendRefused | TaskNotFound`); `pending(filter)`, `approvals`, `applyMode(task)`, `expireFor(scope)` (`Task`,
+  `Run`, `Call`, `Project`, `DeletionsOf`, `Automation`, `Workflow`), `sweep(at)`; `expireOrphans` (Recovery, before runs
+  are re-attached), `resume(run)` and `ended(run, idle)` (registered as `AgentRequests`' `resume` and `ended`, which 2.6's
+  re-attach and run end call); `onControl`/`onCancel` (the `can_use_tool` handler); `asking(call)` and `settled(call)`
+  for tests. An `asker` is `{ run, call_id, control_id? }`.
+- **The row is the one source of truth.** `permission_requests` gained `run_id`, `control_id` (a `can_use_tool` prompt's
+  control request) and `answered` (its answer is on the run's input). Raising a prompt is one transaction: the row, the
+  thread's request (opened with `Threads.writeFromAgent`, not `openRequest`, so its metadata carries the write number
+  as `message_id`, which the web orders it by), the action log's entry for a rule, the `approval` event, and the task's
+  attention. Settling it is one conditional update of the row (the first answer wins) with the request **written again
+  from the row** (one `request.opened` carrying the resolution and the card's state: `status`, `note`, `answers` as
+  shown, `feedback`, `mode`, `late`), not `Threads.resolveRequest`, since a late answer settles a request that is already
+  resolved. A prompt is raised only from a run that is still its task's latest live run.
+- **Waiting** is a `Deferred` per waiter, registered before the row is read and woken after a commit; a waiter reads
+  the row again. A call delivered again finds its row by (call id, tool) and waits on it, or gets its answer at once.
+- **Claude**: `Permissions.registered` registers `can_use_tool` with `AgentRequests` (with `resume` and `ended`). A
+  request is `stdio:<run>:<request id>`, asked once however often it is read (in memory while asked; `answered` after),
+  linked to its call with `requestForPrompt` over the thread's stored items (`stateFromItems`), answered with
+  `AgentRequests.respond` (`{ subtype: "success", request_id, response: decision }`). A `control_cancel_request` expires
+  its prompt and leaves it unanswered. Not recorded in `mcp_calls` (that is `mcp/`, below `permissions/`): a decision
+  without a row (a rule, the list, the mode) may be written twice if its line is read twice, which Claude Code ignores.
+- **Board tools**: `McpHooks.layerPermissions` (and `askRuleWith`, `cancelledWith`); `Main.ts`'s `BoardHooks` joins
+  them with `Wait.hooks` (Wait's `callMade`, Permissions' `askRule`, both `cancelled`). A wait's command is asked as a
+  `Bash` prompt of the call through `CommandApproval.layerPermissions`.
+- **Decided**: the sweeper is `Permissions.sweeper` (at once, then every 15 s, on `Schedule`); the reactor applies the
+  mode to what is pending when a task's `permission_mode` changes, and expires a deleted task's prompts and requests to
+  delete it. Writes to the thread's own documents folder are allowed for a task with labels or a scratch, document,
+  assistant, pen or pens thread (the folder `DataDir.documents(task)`, symlinks resolved); the assistant's workspace is
+  6.7's. Left out: Codex's questions and `agent: "codex"` (M5), the action log's `push` and Telegram answerers (only
+  `user`, and `push` for a paired device's session), `expireFor` callers for projects, automations and workflows (their
+  areas). `permissions.answer` takes the old body (`decision`, `message`, `answers`, `mode`, `feedback`, `automation`);
+  the thread's `respond` command (`threads.command`) is not served.
 
 ## Prompts
 

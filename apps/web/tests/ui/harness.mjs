@@ -27,8 +27,7 @@ export class RpcError extends Error {
 let requestId = 0
 
 /**
- * Start a test server (agents off, no open token, so a browser without the token sees the token screen). Returns
- * { url, token, dataDir, rpc, stop }.
+ * Start a test server (agents off, no open token, so a browser without the token sees the token screen). Returns { url, token, dataDir, rpc, stop }.
  */
 export function startServer(...args) {
   // Never a real claude: test-server.sh runs agents with the real binary by default, and moving a fresh task to In

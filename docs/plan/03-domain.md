@@ -281,7 +281,7 @@ export const BoardEvent = Schema.Union([
   TaskChanged, // { type: "task", seq, task }
   TaskDeleted, // { type: "task_deleted", seq, id, project_id }
   ProjectChanged, ProjectDeleted, ProfilesChanged, SettingsChanged, PensChanged, UsageChanged,
-  ApprovalChanged, // new: { type: "approval", seq, approval | removed }, replaces reading `message` events
+  ApprovalChanged, // new: { type: "approval", seq, request_id, approval: Approval | null (no longer waiting) }, replaces reading `message` events
   ApprovalRulesChanged, ApprovalLogChanged, CheckpointsChanged, AutomationsChanged, WorkflowsChanged,
   WorkflowRunsChanged, DocsChanged, DocCommentsChanged, DocsSiteChanged, AssistantReplied,
   ReleaseChecked, ReleaseDownload, Restart, RestartLog
