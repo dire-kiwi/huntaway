@@ -26,6 +26,7 @@ import {
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
 // 6.5: automations, the scheduler, webhooks and routines.
+import { AutomationApprovals } from "./automations/AutomationApprovals.ts"
 import { AutomationRepo } from "./automations/AutomationRepo.ts"
 import { Automations } from "./automations/Automations.ts"
 import { RoutineHost } from "./automations/RoutineHost.ts"
@@ -293,7 +294,7 @@ const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.register
  * 6.5: a project's automations and a profile's routines, taking webhook deliveries, and the scheduler (whose loop is
  * `AutomationLoops`). What routines need of the assistant is `RoutineHost`, which the assistant area (6.7) registers with.
  */
-const AutomationsLive = Layer.mergeAll(Scheduler.layer, Webhooks.layer).pipe(
+const AutomationsLive = Layer.mergeAll(Scheduler.layer, Webhooks.layer, AutomationApprovals.layer).pipe(
   Layer.provideMerge(Automations.layer),
   Layer.provideMerge(Routines.layer),
   Layer.provideMerge(Layer.mergeAll(AutomationRepo.layer, RoutineHost.layer)),
