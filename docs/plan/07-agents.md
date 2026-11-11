@@ -724,6 +724,48 @@ As built in 3.3 (HE-4), `permissions/Permissions.ts` (+ `PermissionRepo.ts`, the
   areas). `permissions.answer` takes the old body (`decision`, `message`, `answers`, `mode`, `feedback`, `automation`);
   the thread's `respond` command (`threads.command`) is not served.
 
+As built in 3.4 (HE-4), `permissions/Approvals.ts`:
+
+- **The interface**: `createProject(asker, request)`, `updateProject(asker, request)`, `deleteTask(asker, request)`, each
+  given its request as an Effect (`CreationRequest { board, name, repo_path, reason }`, `ChangeRequest { project, patch,
+  reason }`, `DeletionRequest { task, deleteBranch, reason }`) that is only run when the call hasn't asked before: a call
+  that asked (`Permissions.asked(call)`) carries on with the input it saved, whatever changed since, as the old tools
+  did (the old code checked `asked()` before resolving anything). Each fails with `NotApproved { message }` (the old
+  "The user didn't approve <what>, so nothing was <done>: <why>"), `Invalid` (the checks), and the services' errors; the
+  tools map them with `told`. Asked through `Permissions.approve` (kinds `project` and `delete_task`; the card is the
+  approval's input); approved, it applies the input **as stored** (`apply` and `project.id`, `delete.id`, `apply` of a
+  creation, read back with a schema), through `Projects.create`/`update` and `Runs.abort` + `Tasks.delete` (the agent as
+  the actor).
+- **What would change** is `Projects.preview(id, patch)` (new): `update`'s checks and write, rolled back with its event
+  (the old `db.preview_project_update`); the changed fields are those given whose stored value differs (`sameJson`), in
+  the old API's field order, and only they are in `apply`. A risky one (`APPROVAL_FIELDS`) asks; otherwise `apply` is
+  made at once. A new `repo_path` is refused by `Projects` before anything is asked (relocating is M4's), and
+  `move_repo` without one is "move_repo needs a new repo_path to move the folder to".
+- **`create_project`**'s checks are the old `project_creation`'s (absolute or `~/`, symlinks resolved as far as the
+  path exists, `..` refused in the missing part, not a file), with the key derived, `git` (`git rev-parse --git-dir`)
+  and the host's default mode shown. **`delete_task`** refuses the caller's own task and the assistant, shows the task
+  (with its branch and whether it runs), and if the task went meanwhile (its deletion approval expires with it) answers
+  `{ deleted: false, key, note }`. Subprojects are gone: `tasks_with_it` and `tasks_deleted_with_it` are left out.
+- **A deleted project's approvals expire** (the old `expire_for_project`): `Approvals.projectsDeleted` watches `Events`
+  for `project_deleted` (`Projects` offers no `Change` for a project) and calls `Permissions.expireFor({ Project })`.
+  Both layers are in `PermissionsLive`.
+- **Fixed in `Permissions`**: a waiter registers inside what unregisters it, so a call interrupted as it registers (the
+  server stopping) leaves no waiter for its retried delivery to find (`asking` found the stale one; the restart cases
+  in mcp/tools/approvals.test.ts fail without it).
+- **The tools**: `update_project` and `create_project` (`mcp/tools/projects.ts`, `ApprovalKind` `project`),
+  `delete_task` (`tasks.ts`, `delete_task`), `create_pen`, `update_pen`, `delete_pen` (`pens.ts`, over `Pens`; a pen's
+  own thread can't delete its pen), and the tracked work tools `track_work`, `untrack_work` (rerunnable),
+  `list_tracked_work` (rerunnable, for planning) in `mcp/tools/tracking.ts`, with the list's rules where the old ones
+  were (`agent/assistant/tracked.ts` → `assistant/tracked.ts`: `owner`, `track`, `untrack`, `effectiveStatus`; each
+  change one `Tasks.change` of the assistant's `tracked`). The board's `Tracked` service (the user's removal) is 6.7's.
+  `update_project` keeps an explicit null `reviewers`/`summarizer`/`summarizers` (back to the profile's; `summarizer`
+  is a list of one), and checks `status_scripts`' keys ("unknown status … in status_scripts"). Still missing of the old
+  33: the automation tools (6.5), the workflow tools (6.6), `submit_review` (4.6). Calls from another host, which have
+  no thread to ask in, are M7's.
+- **Web** (step 1): `apps/web/src/components/task/thread/approvalDetails.tsx` has the old `ProjectChangeDetail`,
+  `ProjectCreationDetail` and `TaskDeletionDetail`; the approval card shows them while it waits (or once opened) and a
+  line otherwise. The browser check is `apps/web/tests/ui/boardApprovals.test.mjs` (the old suite had none).
+
 ## Prompts
 
 Every piece of text the board gives an agent is in `apps/server/src/prompts/`, one file per piece, **copied from the
