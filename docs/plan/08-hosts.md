@@ -124,6 +124,44 @@ cap).
   `link.upcalls` and takes answers by `link.upcallResult`. Either way the hub runs them under the old conditions
   and at most once per call id.
 
+As built (7.4):
+
+- **The contract** (`packages/contracts/src/rpc/tools.ts`, in `HostRpcs`): `tools.call({ profile, tool, args, call_id,
+  up })` (scope `link`) answers a `ToolOutcome`: `Ok { value }`, `Err { message, not_found }` (the message final, as the
+  agent is told it) or `Off { why }` (an up-call not taken). `link.upcalls` takes the hub's `LinkHello` as its payload
+  (registering is one call, as `link.attach`) and streams `UpCall { id, profile, tool, args, call_id }`;
+  `link.upcallResult({ id, outcome })`. The old `task_fields` is gone with the hosts that lacked it (14).
+- **The seam**: `ToolCalls` is in `mcp`, above `hosts`, so it asks `mcp/OtherHosts` (`links`, `hubs`: each `{ id, name,
+  call }`) and `hosts/Uplink.ts`'s `Uplink.otherHosts` implements it over `LinkConnections.connected` (links speaking this
+  host's protocol, `tools.call` with `up: false`), `Hubs.connected` (`tools.call` with `up: true`) and the hubs holding
+  `link.upcalls` open (`Uplink.offer`/`answer`), each hub once, by name, leaving out one this host links itself. So that
+  `ToolCalls` can be built over it, `Main.ts` builds the links' connections (`HostLinksLive`: `LinkConnections`, `Hubs`,
+  `Uplink`) before the MCP area and the rest of the hosts area after it. Calls to another host time out after 300 s; a
+  call up that lost its link or its answer "may or may not have taken effect"; a link that can't be reached is that
+  host's reason, not "not found" (as the old `call_tool`'s errors were).
+- **The dispatch** is `mcp/acrossHosts.ts` (the old `dispatch`), run by `ToolCalls` for every board tool but the thread's
+  own (`THREAD_TOOLS`), and by the tracked work tools for a task on another host. What is not found anywhere is
+  `not found: …` again, as the old tools said it (3.2 had dropped the prefix).
+- **Who calls** (`hosts/HostTools.ts`, the `tools.call` handler and the hub's side of `link.upcalls`): a call down
+  (`up: false`) must come on a hub's own connection (a sealed session, `via_link` set): a host that dialled in holds only
+  the hub token every such host shares. A call up must come on the connection a dial-in host attached on:
+  `LinkConnections.attach` records the RPC connection (`Rpc.ServerClient`) it came on, and `dialInOver(client)` gives
+  the host registered on it while it is the registered one, so another holder of the hub token can't speak for a host it
+  isn't. Then the old `run_up_call` checks, in order (the link's `uplink`; the way the call came against the link's mode;
+  a profile of the caller's name whose `assistant_host` is that host), then `ToolCalls.upCall` (`mcp_calls` id
+  `up:<host>:<call id>`, run `up:<host>`): the gates for another host's agent (thread tools refused; the arguments; this
+  host's profile of that name, or none that lets it in: not found), then the dispatch with `from` that host, never back
+  down to it and never up. `HostTools.served` holds `link.upcalls` open on each dialled connection (anew when it
+  reconnects), takes each call as `dialled` and answers it.
+- **A caller from another host** has no run or thread here: `McpCaller.run` and `.task` are null, `profile.id` null
+  when this host has no profile of its name. Thread tools are registered with `threadTool` (given a `LocalCaller`) and
+  refuse it; `Approvals` takes a null asker and refuses what needs asking with the old text ("… needs the user's
+  approval, which only an agent on the task's own host can ask for; …"); the actor of its changes is an `Agent` with no
+  task.
+- Left out: the assistant on its own host (needs `Assistant`, 6.7); the old checks of hosts on older builds (14).
+  Tested: `hosts/HostTools.test.ts` (two boards, the old uplink tests), `mcp/acrossHosts.test.ts` (scripted hosts),
+  `hosts/Uplink.test.ts`, and `tests/e2e/hosts-tools.test.ts` (whole servers, both ways of linking).
+
 ### Events for things that watch every host
 
 Push notifications and settings sync on a hub need other hosts' events. `LinkConnections` keeps one `board.watch`
