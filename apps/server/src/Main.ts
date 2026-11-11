@@ -33,11 +33,14 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { Hubs } from "./hosts/Hubs.ts"
 import { LinkConnections } from "./hosts/LinkConnections.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
 import { Links } from "./hosts/Links.ts"
 import { Relay } from "./hosts/Relay.ts"
 import { SessionSeal } from "./hosts/SessionSeal.ts"
+import { Ssh } from "./hosts/Ssh.ts"
+import { LinkStreamRoute } from "./http/linkStream.ts"
 import { RelayRoute } from "./http/relay.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
@@ -201,9 +204,9 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   )
 
 /** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay. */
-const HostsLive = Layer.mergeAll(Links.layer, Relay.layer).pipe(
+const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, Hubs.layer).pipe(
   Layer.provideMerge(LinkConnections.layer),
-  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer)),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer)),
 )
 
 /**
@@ -307,14 +310,25 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, RelayRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
+export const RoutesLive = Layer.mergeAll(
+  RpcLive,
+  HealthRoute,
+  RelayRoute,
+  LinkStreamRoute,
+  McpHttpRoute,
+  ApiNotFound,
+  StaticUi,
+  HttpRouter.cors({ maxAge: 86400 }),
+  BodyLimit,
+)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a
  * server that is still starting (the old server bound first and held requests at a gate instead).
  */
 export const serverLayer = (config: ServerConfig["Service"]) =>
-  HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }).pipe(
+  // Once it listens, this host dials the hubs it is a host of (step 6: links dial).
+  Layer.merge(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Hubs.dialIn).pipe(
     Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
     Layer.provideMerge(AreasLive),
     Layer.provideMerge(PlatformLive),

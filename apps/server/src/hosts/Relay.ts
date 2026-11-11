@@ -1,4 +1,5 @@
 import { Clock, Context, Duration, Effect, Layer, Option, Ref } from "effect"
+import type { Scope } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Hex } from "effect/encoding"
 import { Conflict, Invalid, LinkId, NotFound } from "@huntaway/contracts"
@@ -32,7 +33,8 @@ interface Ticket {
 /** A relay a client may now open: the socket to the host, and when its session ends. */
 export interface Opened {
   readonly host: LinkId
-  readonly end: Effect.Effect<Pipeable>
+  /** For the scope of the relay. */
+  readonly end: Effect.Effect<Pipeable, HostOffline, Scope.Scope>
   readonly expires: number
 }
 

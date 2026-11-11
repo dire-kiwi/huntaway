@@ -114,6 +114,7 @@ export const SERVE_ENV = [
   "HUNTAWAY_SKIP_DB_BACKUP",
   "HUNTAWAY_NO_AGENTS",
   "HUNTAWAY_NO_DISCOVERY",
+  "HUNTAWAY_SSH_BIN",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -185,6 +186,8 @@ export interface ServerConfigShape {
   readonly hubToken: Redacted.Redacted | null
   /** `--no-discovery`: no mDNS responder or browser (test servers, which must never find or answer a real board). */
   readonly noDiscovery: boolean
+  /** `HUNTAWAY_SSH_BIN`: the ssh program SSH links run (default `ssh`; tests give a fake). */
+  readonly sshBin: string
 }
 
 /** The version of this build. A release sets it when it packages the server. */
@@ -202,6 +205,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const commit = yield* Config.String("HUNTAWAY_COMMIT").pipe(Config.option)
         const exe = yield* Config.String("HUNTAWAY_EXE").pipe(Config.option)
         const tmpDir = yield* Config.String("TMPDIR").pipe(Config.withDefault("/tmp"))
+        const sshBin = yield* Config.String("HUNTAWAY_SSH_BIN").pipe(Config.option)
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -238,6 +242,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           }),
           hubToken: Option.getOrNull(args.hubToken ?? Option.none()),
           noDiscovery: args.noDiscovery ?? false,
+          sshBin: Option.getOrElse(sshBin, () => "ssh"),
         })
       }),
     )
@@ -270,6 +275,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         hubs: [],
         hubToken: null,
         noDiscovery: true,
+        sshBin: "ssh",
         ...config,
       }),
     )

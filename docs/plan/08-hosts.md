@@ -140,6 +140,33 @@ Paired devices (codes, device tokens, revocation) wait for the phone app. The se
 their place: a device's session carries `read` and `operate`, checked by the host that serves each call, which
 closes the old gap where a linked host could not tell a phone from the board.
 
+### As built (7.2, 7.3, HE-6)
+
+- **Services** (`apps/server/src/hosts/`): `LinkRepo` (the `links` table), `Links` (the directory: this host and every
+  link with its live state; link by URL and token, which asks the host's `host.info` first; over SSH; rename, `uplink`,
+  forget (profiles whose assistant ran there have it here again); `join`), `LinkConnections` (one connection per link,
+  whichever way it came), `Relay` (tickets), `Ssh`, `Hubs` (this host as a host of other hubs: `--hub`), `SessionSeal`,
+  `pipe.ts`. Routes: `/api/relay/<ticket>`, `/api/link/stream/<id>`.
+- **Dial-in goes to `/api/rpc`, not `/api/link`.** The hub token there gives a session of `link` and nothing else, which
+  is what a separate path would have guarded. `link.attach` takes the host's hello as its payload, so registering is one
+  call; the hub refuses it under an id already connected (either way), under a profile's assistant host that it dials
+  (even while that link is down), and under its own id. A dialled connection that comes up replaces a dial-in standing
+  in for it; a host that becomes an assistant host has its stand-in dropped (`profiles_changed`).
+- **The hub's client for a dial-in host** runs over a socket that asks the host for a new stream on each (re)connect
+  (`OpenStream { id, path, session }` on the attach stream, answered on `/api/link/stream/<id>` with the hub token), so
+  the hub talks to every host with the same RPC client. The host pipes each such stream to its own `/api/rpc` over
+  loopback, sealing the session itself (above), once its server listens (`Hubs.dialIn`, built after the listener).
+- **Sessions' lives**: a hub's own session on a host lasts 7 days (a connection that outlives it is dialled again), a
+  relayed client's 12 hours (the hub closes the pipe then; the client dials again with a new ticket), a ticket 1 minute.
+- **SSH**: the forced command is `huntaway ssh-host [--port N] [--data-dir D]` (default port 7879), which prints
+  `{ info, port, started: false, token }`; `--name`/`--no-start` are gone (14). `HUNTAWAY_SSH_BIN` (read in
+  `ServerConfig`) names the ssh program; whole-server tests give `packages/testing/bin/fake-ssh`, which runs `ssh-host`
+  for the command and forwards the port for `-L`, so no `authorized_keys` or sshd is touched.
+- `profiles.assistant_host` and the `scratch_host` setting are checked against the `links` table (until M7 they took no
+  linked host).
+- `hub.hosts.watch` streams the whole list on every change (a link's state, its heard time on each ping, the links
+  themselves). `Host` gained `status` and `status_reason`, optional.
+
 ## Versions across a fleet
 
 A hub updates its hosts one at a time through the link, so for a while they differ. `link.hello` carries

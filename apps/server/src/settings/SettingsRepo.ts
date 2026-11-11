@@ -13,6 +13,8 @@ export interface SettingsRepoShape {
    * (docs/plan/inventory/09-data-model.md, section 3d).
    */
   readonly set: (key: string, value: string | null) => Effect.Effect<void>
+  /** Whether `id` is a linked host (a `links` row): what a setting naming one must be. */
+  readonly linkExists: (id: string) => Effect.Effect<boolean>
 }
 
 /** The `settings` table: one text value per key. */
@@ -36,6 +38,11 @@ export class SettingsRepo extends Context.Service<SettingsRepo, SettingsRepoShap
           Effect.map((row) => (row._tag === "Some" ? row.value.value : null)),
           Effect.orDie,
         )
+      const linkExists = (id: string) =>
+        sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM links WHERE id = ${id}`.pipe(
+          Effect.map((rows) => (rows[0]?.n ?? 0) > 0),
+          Effect.orDie,
+        )
       const set = (key: string, value: string | null) => {
         const text = value?.trim() ?? ""
         return (
@@ -44,7 +51,7 @@ export class SettingsRepo extends Context.Service<SettingsRepo, SettingsRepoShap
             : sql`INSERT INTO settings (key, value) VALUES (${key}, ${text}) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
         ).pipe(Effect.asVoid, Effect.orDie)
       }
-      return SettingsRepo.of({ all, get, set })
+      return SettingsRepo.of({ all, get, set, linkExists })
     }),
   )
 }

@@ -79,7 +79,10 @@ export const startServer = (args: ReadonlyArray<string> = [], env: Readonly<Reco
     const dataDir = folder ?? (yield* e2eDataDir)
     const bin = yield* path.fromFileUrl(launcher)
     const process = yield* spawner.spawn(
-      ChildProcess.make(bin, ["serve", "--port", "0", "--host", "127.0.0.1", "--data-dir", dataDir, ...args], { env, extendEnv: true }),
+      ChildProcess.make(bin, ["serve", ...(args.includes("--port") ? [] : ["--port", "0"]), "--host", "127.0.0.1", "--data-dir", dataDir, ...args], {
+        env,
+        extendEnv: true,
+      }),
     )
     // Its stdout carries the ready line; its log (stderr) is kept to show if it never gets there. Both are read to
     // their end, so neither pipe fills.

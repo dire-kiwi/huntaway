@@ -53,6 +53,8 @@ export interface LinkRepoShape {
   readonly setUplink: (id: LinkId, uplink: boolean) => Effect.Effect<void>
   readonly setToken: (id: LinkId, token: string) => Effect.Effect<void>
   readonly setLastSeen: (id: LinkId, at: Timestamp) => Effect.Effect<void>
+  /** The links some profile's assistant runs on (`profiles.assistant_host`). */
+  readonly assistantHosts: Effect.Effect<ReadonlySet<LinkId>>
   /** Deletes a link, and the profiles' assistant host where it was this one; how many profiles had it. */
   readonly delete: (id: LinkId) => Effect.Effect<number>
 }
@@ -92,6 +94,10 @@ export class LinkRepo extends Context.Service<LinkRepo, LinkRepoShape>()("huntaw
         setUplink: (id, uplink) => sql`UPDATE links SET uplink = ${uplink ? 1 : 0} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
         setToken: (id, token) => sql`UPDATE links SET token = ${token} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
         setLastSeen: (id, at) => sql`UPDATE links SET last_seen = ${at} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie),
+        assistantHosts: sql<{ readonly id: string }>`SELECT DISTINCT assistant_host AS id FROM profiles WHERE assistant_host IS NOT NULL`.pipe(
+          Effect.map((rows) => new Set(rows.map((r) => LinkId.make(r.id)))),
+          Effect.orDie,
+        ),
         delete: (id) =>
           Effect.gen(function* () {
             yield* sql`DELETE FROM links WHERE id = ${id}`

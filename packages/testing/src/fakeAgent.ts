@@ -133,6 +133,9 @@ export const REPO_ROOT = decodeURIComponent(new URL("../../../", import.meta.url
 /** The fake `claude` (bin/fake-claude): the program for whole-server tests and test servers. */
 export const FAKE_CLAUDE = `${REPO_ROOT}packages/testing/bin/fake-claude`
 
+/** The fake `ssh` (bin/fake-ssh): SSH links in whole-server tests, to this machine without an sshd or a key added anywhere. */
+export const FAKE_SSH = `${REPO_ROOT}packages/testing/bin/fake-ssh`
+
 /**
  * The checkout's ia-shim, built with cargo first (`cargo build -p ia-shim`, quick when it is up to date); null without
  * cargo, for tests that need a real shim to skip. Synchronous, for `describe.skipIf` and `beforeAll`.

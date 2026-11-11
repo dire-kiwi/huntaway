@@ -10,8 +10,11 @@ import { Auth, RequiredScope } from "../session.ts"
 export class LinkRpcs extends RpcGroup.make(
   /** Both directions: who are you, what do you speak. Part of the stable core. */
   Rpc.make("link.hello", { payload: LinkHello, success: LinkHello, error: LinkRefused }).annotate(RequiredScope, "link"),
-  /** A host that dialled in keeps this open; the hub asks for sockets through it. */
-  Rpc.make("link.attach", { success: OpenStream, error: LinkRefused, stream: true }).annotate(RequiredScope, "link"),
+  /**
+   * A host that dialled in (with the hub token) keeps this open, saying who it is; the hub asks for sockets through it.
+   * Refused under an id already connected, or one the hub dials as a profile's assistant host.
+   */
+  Rpc.make("link.attach", { payload: LinkHello, success: OpenStream, error: LinkRefused, stream: true }).annotate(RequiredScope, "link"),
   /** Board tool calls from this host's agents, for the hub that dialled it and said hello (7.4). */
   Rpc.make("link.upcalls", { success: Schema.Unknown, stream: true }).annotate(RequiredScope, "link"),
 ).middleware(Auth) {}

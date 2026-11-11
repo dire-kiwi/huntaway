@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Option, Redacted, Stream } from "effect"
 import { Headers, HttpClient } from "effect/http"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
 import { Auth, HostId, HostRpcGroup, Invalid, LinkId, LinkRefused, NotFound } from "@huntaway/contracts"
+import type { Unavailable } from "@huntaway/contracts"
 import type { Host, HostInfo, JoinInfo, LinkHello } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
 import { nowTimestamp } from "../platform/columns.ts"
@@ -12,6 +13,7 @@ import { helloOf, LinkConnections } from "./LinkConnections.ts"
 import type { LinkView } from "./LinkConnections.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 import type { LinkRow } from "./LinkRepo.ts"
+import { checkTarget, Ssh } from "./Ssh.ts"
 
 // The hub's directory of hosts and the links it keeps (docs/plan/08-hosts.md; inventory 05 §2.2): this host and every
 // linked one with its live state, linking by URL and token, renaming, the uplink switch, forgetting, and what a host
@@ -19,6 +21,8 @@ import type { LinkRow } from "./LinkRepo.ts"
 
 /** How long the hub waits for a host it is asked to link to say who it is. */
 const PROBE_TIMEOUT = "10 seconds"
+
+const validPort = (port: number) => Number.isInteger(port) && port > 0 && port <= 65535
 
 /** This host as the directory shows it. */
 const localEntry = (info: HostInfo): Host => ({
@@ -76,6 +80,14 @@ export class Links extends Context.Service<
     readonly update: (id: LinkId, change: { readonly name?: string | undefined; readonly uplink?: boolean | undefined }) => Effect.Effect<void, NotFound>
     /** Forgets a link; profiles whose assistant ran there have it here again. Its data stays on that host. */
     readonly remove: (id: LinkId) => Effect.Effect<void>
+    /** Links a host over SSH: its forced command says who it is and gives its token. */
+    readonly addSsh: (
+      target: string,
+      sshPort: number,
+      remotePort: number,
+    ) => Effect.Effect<{ readonly id: HostId; readonly name: string; readonly started: boolean | null }, Invalid | Unavailable>
+    /** The hub's SSH public key, for the target's `authorized_keys`. */
+    readonly sshKey: Effect.Effect<string, Unavailable>
     /** What a host needs to dial in to this hub, which the browser reaches at `url`. */
     readonly join: (url: string) => Effect.Effect<JoinInfo>
     /** Answers a peer's `link.hello` with this host's. */
@@ -92,6 +104,7 @@ export class Links extends Context.Service<
       const identity = yield* Identity
       const configs = yield* AgentConfigs
       const http = yield* HttpClient.HttpClient
+      const ssh = yield* Ssh
 
       const list = Effect.gen(function* () {
         const views = yield* connections.views
@@ -165,6 +178,21 @@ export class Links extends Context.Service<
         yield* connections.touch
       })
 
+      const addSsh = Effect.fn("Links.addSsh")(function* (given: string, sshPort: number, remotePort: number) {
+        const target = checkTarget(given)
+        if (typeof target !== "string") return yield* target
+        if (!validPort(sshPort) || !validPort(remotePort)) return yield* new Invalid({ field: "ssh_port", reason: "ports are 1 to 65535" })
+        const t = { target, ssh_port: sshPort, remote_port: remotePort }
+        const details = yield* ssh.details(t, true)
+        if (details.info.host_id === identity.hostId) return yield* new Invalid({ field: "target", reason: "that's this host" })
+        const id = LinkId.make(details.info.host_id)
+        yield* repo.upsert({ id, name: details.info.host_name, mode: "ssh", url: null, token: details.token, ssh: t, now: yield* nowTimestamp })
+        const row = yield* repo.get(id)
+        if (row !== null) yield* connections.start(row)
+        yield* connections.touch
+        return { id: details.info.host_id, name: details.info.host_name, started: details.started }
+      })
+
       const join = (url: string) =>
         Effect.succeed({
           hub_token: Redacted.value(identity.hubToken),
@@ -184,6 +212,8 @@ export class Links extends Context.Service<
           Stream.mapEffect(connections.changes, () => list, { concurrency: 1 }),
         ),
         add,
+        addSsh,
+        sshKey: ssh.publicKey,
         update,
         remove,
         join,
