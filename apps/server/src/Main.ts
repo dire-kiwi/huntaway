@@ -31,6 +31,7 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { Git } from "./git/Git.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -149,6 +150,8 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(ThreadStore.layer),
   Layer.provideMerge(TasksLive),
 )
+/** The git area: running git; worktrees, a task's base, the Changes tab and checkpoints join this line (M4). */
+const GitLive = Git.layer.pipe(Layer.provideMerge(ThreadsLive))
 /** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
 export interface ModelCalls<T, E1, R1, E2, R2> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
@@ -160,7 +163,7 @@ const agentsLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =
   UsageWindow.loop.pipe(
     Layer.provideMerge(Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer)),
     Layer.provideMerge(Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window)),
-    Layer.provideMerge(ThreadsLive),
+    Layer.provideMerge(GitLive),
   )
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
 export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
