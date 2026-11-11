@@ -260,7 +260,8 @@ export const ToolGroup = memo(function ToolGroup({ calls, running, cwd }: { call
   const source = useContext(ThreadCtx)
   const focus = usePendingFocus()
   // A request to reveal a subagent among the hidden calls opens them (once, as it comes; adjusted while drawing).
-  const [seen, setSeen] = useState(focus)
+  // Null at first: a row that mounts while a reveal is pending (as the rows around it open) acts on it too.
+  const [seen, setSeen] = useState<typeof focus>(null)
   if (focus !== seen) {
     setSeen(focus)
     if (focus && hidden > 0 && source) {
