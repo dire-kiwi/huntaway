@@ -8,7 +8,7 @@ import { rpc } from "../../../state/rpc"
 import { defaultCloneDir } from "../repoSource"
 import { ConfigPicker } from "../ClaudeConfigs"
 import { DEFAULT_REVIEWER, ReviewerList, SummarizerList, useReviewerExtras } from "../../task/Reviewers"
-import { Button, Field, Input, ModalFooter, NotYet, Toggle, useAsyncAction } from "../../ui"
+import { Button, Field, Input, ModalFooter, Toggle, useAsyncAction } from "../../ui"
 import { TintField } from "./TintField"
 import { AccessPicker, AssistantHostSelect, GithubAccountSelect, HostSelect, ThreadConfigSelect } from "./profileFields"
 
@@ -22,7 +22,7 @@ export const usesAsana = (p: Pick<Profile, "asana_enabled"> | undefined): boolea
 
 /** Connecting a profile's Asana account with a personal access token: 6.11's `AsanaAccount`, not on this server yet. */
 function AsanaAccount(_props: { hostId: string; profile: Profile }) {
-  return <NotYet what="Connecting an Asana account" />
+  return <div className="text-[12px] text-faint">Connecting an Asana account is not yet on this server.</div>
 }
 
 export function ProfileForm({

@@ -9,9 +9,9 @@ beforeAll(async () => {
 })
 afterAll(() => server?.stop())
 
-// IA-121: an archived project goes off the board (sidebar and its profile's board, after a reload too). Unarchiving it
-// in Settings → Archived projects, the old check's second half, comes with settings/.
-test("archives a project from the sidebar", async () => {
+// IA-121: an archived project goes off the board (sidebar and its profile's board, after a reload too), and comes back,
+// tasks and all, from Settings → Archived projects.
+test("archives a project from the sidebar and unarchives it in Settings", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     const row = "css=aside >> role=button[name=/^DEM Demo/]"
@@ -29,5 +29,15 @@ test("archives a project from the sidebar", async () => {
       listed.some((p) => p.id === board.project.id),
       false,
     )
+
+    await ui.run([
+      "click Unarchive it in Settings",
+      "wait Archived projects",
+      "click role=button[name='Unarchive']",
+      "wait No archived projects",
+      `wait ${row}`,
+    ])
+    // Its tasks are loaded again without a reload.
+    await ui.run(["click css=nav[aria-label=Profiles] >> text=Default", `wait ${task}`])
   })
 })
