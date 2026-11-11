@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Queue, Stream, SubscriptionRef } from "effect"
-import type { Task, TaskId } from "@huntaway/contracts"
+import type { RunId, Task, TaskId } from "@huntaway/contracts"
 
 /** Who asked for a change (docs/plan/06-server.md, Tasks): decides what may be set, and is recorded as its cause. */
 export type Actor =
@@ -14,18 +14,35 @@ export const Actor = {
   board: { _tag: "Board" } as Actor,
 }
 
+/** How a run's process ended: its folder's `exit` file (`runs/RunDir`'s `RunExit`). */
+export interface RunExitStatus {
+  readonly code: number | null
+  readonly signal: number | null
+  readonly error?: string | undefined
+}
+
 /**
  * What a service tells the reactor after its commit (docs/plan/06-server.md, How an area reaches upward). M1 has task
  * changes; runs, reviews, pull requests and workflows add theirs.
  */
-export type Change = {
-  readonly _tag: "TaskChanged"
-  /** null for a new task. */
-  readonly before: Task | null
-  /** null for a deleted task. */
-  readonly after: Task | null
-  readonly cause: Actor
-}
+export type Change =
+  | {
+      readonly _tag: "TaskChanged"
+      /** null for a new task. */
+      readonly before: Task | null
+      /** null for a deleted task. */
+      readonly after: Task | null
+      readonly cause: Actor
+    }
+  | {
+      /** A run's agent exited and its follower has applied all its output (`runs/RunFollower`). */
+      readonly _tag: "RunExited"
+      readonly run: RunId
+      readonly task: TaskId
+      readonly exit: RunExitStatus
+      /** The last 4000 bytes of its `err.log`, for a failure's reason. */
+      readonly errorTail: string
+    }
 
 export interface ChangesShape {
   /** After a commit: hand a change to the reactor. Never waits. */

@@ -22,6 +22,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const dependencies = yield* Dependencies
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
+        // A run's end is decided in M2's next steps (docs/plan/07-agents.md, When a run ends).
+        if (change._tag !== "TaskChanged") return
         const task = change.after ?? change.before
         if (task === null) return
         const moved = change.before?.status !== change.after?.status

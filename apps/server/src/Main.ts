@@ -21,6 +21,11 @@ import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
+import { RunDir } from "./runs/RunDir.ts"
+import { RunFollower } from "./runs/RunFollower.ts"
+import { RunOutput } from "./runs/RunOutput.ts"
+import { RunRepo } from "./runs/RunRepo.ts"
+import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
 import { ProfileRepo } from "./profiles/ProfileRepo.ts"
@@ -78,11 +83,15 @@ const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner).pipe(
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer)),
   Layer.provideMerge(ProjectsLive),
 )
+/** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
+export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
+  RunFollower.layer.pipe(Layer.provideMerge(output), Layer.provideMerge(Shim.layer), Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)))
+const RunsLive = runsLayer(RunOutput.layerLog).pipe(Layer.provideMerge(TasksLive))
 // The demo board is seeded once every area is built, before Recovery runs.
 const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
   Layer.provideMerge(DemoLive),
   Layer.provideMerge(Dependencies.layer),
-  Layer.provideMerge(TasksLive),
+  Layer.provideMerge(RunsLive),
 )
 
 /** Every area's services. */

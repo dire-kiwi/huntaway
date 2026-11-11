@@ -155,7 +155,8 @@ export default defineConfig({
       { files: ["**/*.test.ts", "**/*.test.tsx", "**/tests/**"], rules: { "no-restricted-imports": "off" } },
       // The tools agents and tests drive the board with (ui-check.mjs and the like): plain Node scripts with a promise
       // API that test harnesses import, so the Effect-native rules do not apply; a step loop awaits in order by design.
-      { files: ["scripts/**", "apps/web/tests/ui/**"], rules: { ...off(effectNative), "no-await-in-loop": "off" } },
+      // So are the programs packages/testing/bin has in place of outside ones (fake-claude stands in for Claude Code).
+      { files: ["scripts/**", "apps/web/tests/ui/**", "packages/testing/bin/**"], rules: { ...off(effectNative), "no-await-in-loop": "off" } },
       // The workspace's own configuration files: plain Node.
       {
         files: ["vite.config.ts", "**/vite.config.ts", "**/vitest.config.ts"],

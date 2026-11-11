@@ -11,8 +11,9 @@
 #   --seed         add an agent config "test" on $HUNTAWAY_TEST_CLAUDE_CONFIG (default ~/.claude-personal), a "test"
 #                  profile on it with default model $HUNTAWAY_TEST_MODEL (default haiku), and a project "Test" (key
 #                  TES) on a fresh git repo in <data-dir>/repo, through `huntaway rpc`
-#   --fake-claude  run agents with the fake claude: not available until agents come (M2), so it exits 1
-#   --no-agents    no agent runs at all: accepted, and a no-op until agents come (M2), as no agent runs yet
+#   --fake-claude  run agents with packages/testing/bin/fake-claude (prints a reply and a result, no model; its
+#                  HUNTAWAY_FAKE_CLAUDE_* knobs are kept for `restart`, and it logs to <data-dir>/fake-claude.log)
+#   --no-agents    no agent runs at all (`serve --no-agents`)
 #
 # `start` prints shell assignments (HUNTAWAY_TEST_URL, HUNTAWAY_TEST_TOKEN, HUNTAWAY_TEST_PID, HUNTAWAY_TEST_DATA_DIR,
 # HUNTAWAY_TEST_ENV, and with --seed HUNTAWAY_TEST_PROFILE, HUNTAWAY_TEST_PROJECT, HUNTAWAY_TEST_REPO), so
@@ -22,8 +23,9 @@
 # `restart` restarts the server with the same binary path (so a change is picked up), args and environment.
 # `stop` stops the server by its PID, then removes the data dir.
 # Without a data dir, `restart` and `stop` use $HUNTAWAY_TEST_DATA_DIR, then .huntaway-test-env's.
-# Runs the server, apps/server/bin/huntaway (needs `pnpm install` at the top of the checkout). The server runs no agent
-# before M2, so it needs no ia-shim, and this doesn't build one (the old script ran `cargo build -p ia-shim`).
+# Runs the server, apps/server/bin/huntaway (needs `pnpm install` at the top of the checkout), with an ia-shim:
+# $HUNTAWAY_SHIM_BIN (given as --shim-bin), else the checkout's, which `start` builds (`cargo build -p ia-shim`) when
+# there's none or rust/shim changed since, unless no agent runs (--no-agents).
 # HUNTAWAY_TEST_BIN runs another build instead, such as a release package's huntaway.
 # The board hands its token to any browser that asks (--open-token) unless HUNTAWAY_TEST_OPEN_TOKEN=0.
 set -euo pipefail
@@ -70,7 +72,7 @@ launch() {
   # every HUNTAWAY_* variable but Node's. Its temp folder goes with the data dir.
   local unset=() v
   for v in $(compgen -e HUNTAWAY_ || true); do
-    [[ $v == HUNTAWAY_NODE ]] || unset+=(-u "$v")
+    [[ $v == HUNTAWAY_NODE || $v == HUNTAWAY_FAKE_CLAUDE_* ]] || unset+=(-u "$v")
   done
   mkdir -p "$dir/tmp"
   TMPDIR="$dir/tmp" env "${unset[@]}" \
@@ -152,20 +154,37 @@ seed() {
   } > "$dir/seed.env"
 }
 
+# Builds ia-shim (debug) where the checkout has none, or its sources (rust/shim, Cargo.lock) changed since the one the
+# server would run: the newer of target/release's and target/debug's (apps/server/src/runs/Shim.ts). Unchanged, nothing
+# runs (not even cargo); without cargo, it's left to the check after it.
+build_shim() {
+  command -v cargo > /dev/null || return 0
+  local release=$root/target/release/ia-shim debug=$root/target/debug/ia-shim built=""
+  [[ -x $release ]] && built=$release
+  [[ -x $debug && (-z $built || $debug -nt $built) ]] && built=$debug
+  [[ -n $built && -z $(find "$root/rust/shim" "$root/Cargo.toml" "$root/Cargo.lock" -newer "$built" -print -quit 2>/dev/null) ]] && return 0
+  echo "building ia-shim (cargo build -p ia-shim)" >&2
+  # Several starting at once (the browser checks) wait for each other's build: cargo locks the target dir.
+  (cd "$root" && cargo build -q -p ia-shim >&2) || { echo "cargo build -p ia-shim failed in $root" >&2; exit 1; }
+  # Up to date now, even where cargo found nothing to build and left the binary older than those files (HA-392).
+  touch "$debug"
+}
+
 start() {
-  local bin=${HUNTAWAY_TEST_BIN:-} do_seed="" serve=()
+  local bin=${HUNTAWAY_TEST_BIN:-} do_seed="" agents=1 fake="" serve=()
   for a in "$@"; do
     case $a in
       --seed) do_seed=1 ;;
-      --fake-claude)
-        echo "--fake-claude: the fake claude comes with agents (M2); start without it, or with --no-agents" >&2
-        exit 1
-        ;;
-      # Agents come in M2; until then no agent runs, with or without it.
-      --no-agents) ;;
+      --fake-claude) fake=1 ;;
+      --no-agents) agents="" ;;
       *) serve+=("$a") ;;
     esac
   done
+  if [[ -z $agents ]]; then
+    serve+=(--no-agents)
+  elif [[ -n $fake ]]; then
+    serve+=(--claude-bin "$root/packages/testing/bin/fake-claude")
+  fi
   # --open-token: a board that hands out its token never shows system notifications, so a test server opened in the
   # user's browser doesn't pop up on their desktop. HUNTAWAY_TEST_OPEN_TOKEN=0 starts a normal board instead.
   if [[ ${HUNTAWAY_TEST_OPEN_TOKEN:-1} != 0 && " ${serve[*]} " != *" --open-token "* ]]; then serve+=(--open-token); fi
@@ -173,14 +192,30 @@ start() {
     bin="$root/apps/server/bin/huntaway"
     [[ -d $root/apps/server/node_modules/effect ]] ||
       { echo "apps/server has no node_modules; run pnpm install in $root first" >&2; exit 1; }
+    # Where the server looks for ia-shim (apps/server/src/runs/Shim.ts), save beside a release's huntaway.
+    if [[ -n $agents ]]; then
+      if [[ -n ${HUNTAWAY_SHIM_BIN:-} ]]; then
+        serve+=(--shim-bin "$HUNTAWAY_SHIM_BIN")
+      else
+        build_shim
+        [[ -x $root/target/release/ia-shim || -x $root/target/debug/ia-shim ]] ||
+          { echo "no ia-shim build in $root/target; run cargo build -p ia-shim in $root first (or start with --no-agents)" >&2; exit 1; }
+      fi
+    fi
   fi
   [[ -n $bin && -x $bin ]] || { echo "HUNTAWAY_TEST_BIN=$bin isn't an executable" >&2; exit 1; }
 
   local dir
   dir="$(mktemp -d -t huntaway-test-XXXXXX)"
   touch "$dir/$marker"
-  # What `restart` needs to start the same server again.
-  declare -p bin serve > "$dir/launch"
+  [[ -n $fake ]] && export HUNTAWAY_FAKE_CLAUDE_LOG="$dir/fake-claude.log"
+  # What `restart` needs to start the same server again, the fake claude's knobs too.
+  {
+    declare -p bin serve
+    for v in $(compgen -e HUNTAWAY_FAKE_CLAUDE_ || true); do
+      printf 'export %s=%q\n' "$v" "${!v}"
+    done
+  } > "$dir/launch"
 
   local pid port token
   if ! launch "$dir" 0; then
