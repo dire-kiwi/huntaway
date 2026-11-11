@@ -9,6 +9,7 @@ import { Restack } from "../git/Restack.ts"
 import { GhStacks } from "../github/GhStacks.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { Runs } from "../runs/Runs.ts"
+import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
 
 /**
  * Startup step 5 (docs/plan/06-server.md, Startup): call every reconciler once, which is how the server recovers from
@@ -41,6 +42,8 @@ export const RecoveryLive = Layer.effectDiscard(
     yield* runs.startUnblocked(null)
     // 4.6: reviews and summaries left running whose threads have no run going end as their runs did.
     yield* reviews.reconcileAll
+    // 6.6: workflow runs a restart interrupted go on (their steps that were running on the board itself failed).
+    yield* (yield* WorkflowEngine).resume
     // 4.8: the restacks that were due when the server stopped, and the stack levels to link on GitHub (both in the background).
     yield* (yield* Restack).resume
     yield* (yield* GhStacks).linkAll

@@ -132,7 +132,7 @@ export const Workflow = Schema.Struct({
   created_at: Timestamp,
   updated_at: Timestamp,
 })
-export interface Workflow extends Schema.Schema.Type<typeof Workflow> {}
+export type Workflow = typeof Workflow.Type
 
 /** What `workflows.create` takes: on by default. */
 export const NewWorkflow = Schema.Struct({ project_id: ProjectId, name: Schema.String, graph: WorkflowGraph, enabled: Schema.optional(Schema.Boolean) })
@@ -170,7 +170,7 @@ export const WorkflowNodeRun = Schema.Struct({
   started_at: Schema.optionalKey(Timestamp),
   finished_at: Schema.optionalKey(Timestamp),
 })
-export interface WorkflowNodeRun extends Schema.Schema.Type<typeof WorkflowNodeRun> {}
+export type WorkflowNodeRun = typeof WorkflowNodeRun.Type
 
 /** What started a run: the task entering a column, its agent's work there done, its merge, or a run by hand. */
 export const WorkflowRunSource = Schema.Literals(["status", "finished", "merged", "manual"])
@@ -255,8 +255,8 @@ export const workflowDataInputs = (n: WorkflowNode): ReadonlyArray<string> => {
     case "trigger":
     case "condition":
     case "split":
-    case "task":
     case "text":
+    case "task":
     case "project_prompt":
     default:
       return []

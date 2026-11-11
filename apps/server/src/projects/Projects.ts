@@ -288,7 +288,10 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
             const before = yield* getProject(id)
             const after = yield* write(id, patch, true)
             // What its tasks take from its settings follows them, by the reactor (4.5: previews of pull requests).
-            if (after.pr_preview_url !== before.pr_preview_url) yield* changes.offer({ _tag: "ProjectChanged", before, after })
+            // 6.6: and one that starts using workflows has its Review tab's reviews moved into one.
+            if (after.pr_preview_url !== before.pr_preview_url || (after.use_workflows && !before.use_workflows)) {
+              yield* changes.offer({ _tag: "ProjectChanged", before, after })
+            }
             return after
           }),
         )
