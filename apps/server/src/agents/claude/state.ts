@@ -1,5 +1,5 @@
 import type { Item, NewEvent, RequestResolution, SubagentState, ThreadMetadata, ThreadRequest, Timestamp, ToolKind, ToolStatus } from "@huntaway/contracts"
-import { HashMap, Option, Schema } from "effect"
+import { HashMap, Option } from "effect"
 import type { ToolResultBlock } from "./lines.ts"
 import { sameJson, str } from "./tools.ts"
 import { ItemMeta } from "../../threads/model.ts"
