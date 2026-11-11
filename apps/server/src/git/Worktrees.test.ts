@@ -6,7 +6,7 @@ import { SqlClient } from "effect/sql"
 import { git, tempDir, TestBoard } from "@huntaway/testing"
 import type { NewTask, Project, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
-import { DataDir } from "../platform/DataDir.ts"
+import type { DataDir } from "../platform/DataDir.ts"
 import { Events } from "../platform/Events.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
@@ -14,7 +14,7 @@ import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Git } from "./Git.ts"
-import { TaskBase } from "./TaskBase.ts"
+import type { TaskBase } from "./TaskBase.ts"
 import { folderName, Worktrees } from "./Worktrees.ts"
 import type { Removal } from "./Worktrees.ts"
 import { removableByHand, uncommitted } from "./worktree/remove.ts"
@@ -66,16 +66,13 @@ const newTask = (project: Project, title: string, more: Partial<NewTask> = {}) =
   Effect.flatMap(Tasks, (tasks) => tasks.create({ project_id: project.id, title, ...more }, Actor.user)).pipe(Effect.orDie)
 const setUp = (id: TaskId) => Effect.flatMap(Worktrees, (w) => w.setup(id))
 const getTask = (id: TaskId) => Effect.flatMap(Tasks, (tasks) => tasks.get(id)).pipe(Effect.orDie)
-const setColumns = (id: TaskId, columns: Partial<Task>) =>
-  Effect.flatMap(Tasks, (tasks) => tasks.change(id, () => columns, Actor.board)).pipe(Effect.orDie)
+const setColumns = (id: TaskId, columns: Partial<Task>) => Effect.flatMap(Tasks, (tasks) => tasks.change(id, () => columns, Actor.board)).pipe(Effect.orDie)
 const done = (id: TaskId) => setColumns(id, { status: "done" })
 const failure = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.map(Effect.flip(effect), (e) => ("reason" in e && typeof e.reason === "string" ? e.reason : e._tag))
 /** The texts of the task's thread notices. */
 const notices = (id: TaskId) =>
-  Effect.map(Effect.flatMap(Threads, (t) => t.stored(id)).pipe(Effect.orDie), (s) =>
-    s.entries.flatMap((e) => (e.item.type === "notice" ? [e.item.text] : [])),
-  )
+  Effect.map(Effect.flatMap(Threads, (t) => t.stored(id)).pipe(Effect.orDie), (s) => s.entries.flatMap((e) => (e.item.type === "notice" ? [e.item.text] : [])))
 
 /** A repository (on master, ignoring target/) with a task whose worktree has a commit. */
 const taskWithWork = Effect.gen(function* () {
@@ -434,7 +431,10 @@ describe("Worktrees", () => {
         assert.deepStrictEqual(yield* w.removeIfMerged(task.id, true), kept("an agent is working in it"))
         assert.isTrue(yield* exists(wt))
         // Nor is it set up or torn down by hand meanwhile.
-        assert.strictEqual(yield* Effect.map(Effect.flip(w.teardown(task.id, { idle: true, force: true, deleteBranch: false })), (e) => e._tag), "AgentInWorktree")
+        assert.strictEqual(
+          yield* Effect.map(Effect.flip(w.teardown(task.id, { idle: true, force: true, deleteBranch: false })), (e) => e._tag),
+          "AgentInWorktree",
+        )
         yield* sql`UPDATE tasks SET running = 0 WHERE id = ${reviewer.id}`.pipe(Effect.orDie)
         assert.deepStrictEqual(yield* w.removeIfMerged(task.id, true), removed("master"))
       }),

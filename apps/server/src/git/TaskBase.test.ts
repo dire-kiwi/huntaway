@@ -116,12 +116,14 @@ const stackingRepo = Effect.gen(function* () {
   return { root, repo, other, project: yield* projectOn(repo) }
 })
 
+/** `OWNER/REPO` from a remote URL on github.com. */
+const githubRepo = (url: string) => {
+  const r = remoteRepo(url)
+  return r !== null && isGithubCom(r[0]) ? r[1] : null
+}
+
 describe("remotes", () => {
   it("reads GitHub remotes", () => {
-    const githubRepo = (url: string) => {
-      const r = remoteRepo(url)
-      return r !== null && isGithubCom(r[0]) ? r[1] : null
-    }
     for (const url of [
       "git@github.com:o/r.git",
       "github.com:o/r",
@@ -253,7 +255,7 @@ describe("a task's diff", () => {
   // HA-90: the same, with the folder going after the diff checked for it, while git runs in it.
   it.live("of a worktree removed while git reads it, is its branch's", () => {
     const moved = { from: "", to: "" }
-    const onDiffRead = Effect.suspend(() => (moved.from === "" ? Effect.void : sh("mv", [moved.from, moved.to])))
+    const onDiffRead = Effect.suspend(() => (moved.from === "" ? Effect.void : sh("mv", [moved.from, moved.to]))).pipe(Effect.provide(NodeServices.layer))
     return run(
       Effect.gen(function* () {
         const { task, wt, branch } = yield* taskWithWork
@@ -667,7 +669,11 @@ describe("where a branch starts", () => {
 
 /** A fake GitHub whose pull requests are `prs` by number in `repo`, recording what it was asked. */
 const fakeGitHub = (asked: Ref.Ref<ReadonlyArray<string>>, prs: Readonly<Record<string, PullRequestView>>, repo: string): GitHubAccessShape => ({
-  fetchEnv: (_cwd, account) => Effect.as(Ref.update(asked, (all) => [...all, `fetch as ${account}`]), {}),
+  fetchEnv: (_cwd, account) =>
+    Effect.as(
+      Ref.update(asked, (all) => [...all, `fetch as ${account}`]),
+      {},
+    ),
   pullRequest: (_cwd, _account, ref, inRepo) =>
     Effect.gen(function* () {
       yield* Ref.update(asked, (all) => [...all, `pr view ${ref} --repo ${inRepo}`])
@@ -739,7 +745,8 @@ describe("a task started from a pull request", () => {
       const prs = yield* Ref.make<Record<string, PullRequestView>>({})
       const github: GitHubAccessShape = {
         fetchEnv: () => Effect.succeed({}),
-        pullRequest: (cwd, account, ref, repo) => Effect.flatMap(Ref.get(prs), (all) => fakeGitHub(asked, all, "o/upstream").pullRequest(cwd, account, ref, repo)),
+        pullRequest: (cwd, account, ref, repo) =>
+          Effect.flatMap(Ref.get(prs), (all) => fakeGitHub(asked, all, "o/upstream").pullRequest(cwd, account, ref, repo)),
       }
       yield* run(
         Effect.gen(function* () {
@@ -889,11 +896,14 @@ describe("accounts", () => {
       // No network: the fetch is pointed at a folder that isn't there.
       const github: GitHubAccessShape = {
         fetchEnv: (_cwd, account) =>
-          Effect.as(Ref.update(asked, (all) => [...all, `${account}`]), {
-            GIT_CONFIG_COUNT: "1",
-            GIT_CONFIG_KEY_0: "url./nonexistent/.insteadOf",
-            GIT_CONFIG_VALUE_0: "https://github.com/",
-          }),
+          Effect.as(
+            Ref.update(asked, (all) => [...all, `${account}`]),
+            {
+              GIT_CONFIG_COUNT: "1",
+              GIT_CONFIG_KEY_0: "url./nonexistent/.insteadOf",
+              GIT_CONFIG_VALUE_0: "https://github.com/",
+            },
+          ),
         pullRequest: () => Effect.succeed(null),
       }
       yield* run(
