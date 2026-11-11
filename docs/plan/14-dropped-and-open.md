@@ -136,6 +136,18 @@ read or reasoned, not run.
   (with its push), the repositories' listing and search, and `gh auth status --json=hosts` were run against the fake gh
   only (the arguments and answers are the old code's, which ran against GitHub); Asana's `users/me`, typeahead and task
   reads against the fake Asana only. A config archive moved between two real hosts waits for 7.5's copy.
+- M6's outside services (HE-7) against fakes only: web push (a fake push service that decrypts, not FCM, Mozilla or
+  Apple; headless Chromium's push manager is a stand-in), ClickHouse and the agents' OTLP export, a hosted docs site,
+  Google's sign-in, a webhook sender, the Cua Driver (the fake driver; no real screen, lock or download). No real Claude
+  Code or Codex run was given the `docs` or `desktop` servers' tools, a project's own skills and MCP servers, an
+  assistant's workspace or a workflow's agent step: the launch specs and prompts are tested, not a real agent using them.
+- HA-274's check that a touch held on the board doesn't let a plan open a link (`tests/ui/documentCsp.test.mjs`) is
+  skipped (6.2, HE-7): on headless Chromium 155 the board's activation after a touch sent over the DevTools protocol
+  outlasts its 5 s while the plan's frame keeps the focus, so the frame's request opens after `ACTIVATION_MS`. The
+  logic is the old `htmlFrame.ts`'s, unchanged; whether a real touch on a real Chromium behaves the same is not known.
+- A test server started without its fakes reads the real home folder, as the old one did: gh without `--fake-gh` is the
+  real gh (6.11's check read a real account's repository list once), the composer's `/` menu lists `~/.claude/skills`
+  for a task with no config (6.4), and the assistant's Google card looks at `~/.google_workspace_mcp` (6.7). Only reads.
 - The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows. Measured at M2 (HE-4) on
   synthetic data of that size, not a real board: 5.5 MB in 154 ms (the old client's 15 loads: 5.7 MB, 65 ms);
   [10-testing.md](10-testing.md#measurements).

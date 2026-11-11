@@ -128,6 +128,13 @@ Independent of each other unless said; all need M3, and the ones touching git ne
 | 6.11 | `GithubRepos` (clone, create), `Relocation`, Asana, `Fanout`, config archives                      | 4.4        | 06 §2.5, 04 §2.18, §2.20 |
 | 6.12 | Step 1 for `settings/` (95 files, in three pull requests by subfolder)                             | the areas it shows | 10 §2.7          |
 
+As done in HE-7 (one pull request): every area above is on the server and reachable from the UI; each has an "As built
+in 6.x" section in [06-server.md](06-server.md) and, for its web part, in [09-frontend.md](09-frontend.md). 6.12 came as
+one pull request with the rest, its settings parts that waited for M7 and M8 (Server's updates, the host page) done
+after HE-6 merged. No component in `apps/web/src` shows "not yet on this server" for an M6 area any more; the ones left
+are earlier milestones' cuts (the board's setup thread, a pen's thread, Triage, attachments in New task, the background
+banner's Stop).
+
 ## M7: hosts
 
 | Task | Does                                                                                               | Needs      | Read; inventory          |
