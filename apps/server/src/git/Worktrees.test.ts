@@ -529,17 +529,17 @@ describe("Worktrees", () => {
   )
 })
 
-describe("a run's launch", () => {
-  /** Send `text` to the task and wait for its launch to end (this test board has no ia-shim: it writes the run's folder, then gives up). */
-  const launch = (id: TaskId, text: string) =>
-    Effect.gen(function* () {
-      const runs = yield* Runs
-      yield* runs.send(id, { text, source: "user" }).pipe(Effect.orDie)
-      yield* runs.launched(id)
-      const latest = yield* (yield* RunRepo).latest(id)
-      return Option.isSome(latest) ? yield* (yield* RunDir).spec(latest.value.id) : null
-    })
+/** Send `text` to the task and wait for its launch to end (this test board has no ia-shim: it writes the run's folder, then gives up). */
+const launch = (id: TaskId, text: string) =>
+  Effect.gen(function* () {
+    const runs = yield* Runs
+    yield* runs.send(id, { text, source: "user" }).pipe(Effect.orDie)
+    yield* runs.launched(id)
+    const latest = yield* (yield* RunRepo).latest(id)
+    return Option.isSome(latest) ? yield* (yield* RunDir).spec(latest.value.id) : null
+  })
 
+describe("a run's launch", () => {
   it.live("sets the task's worktree up first, and its agent works there", () =>
     run(
       Effect.gen(function* () {
