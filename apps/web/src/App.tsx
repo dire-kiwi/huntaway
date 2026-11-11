@@ -15,6 +15,8 @@ import { Settings } from "./components/settings/Settings"
 import { TokenScreen } from "./components/settings/TokenScreen"
 import { AssistantPage } from "./components/task/AssistantPage"
 import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
+// 6.1
+import { startToolKeepalive } from "./components/task/terminalTools"
 import { NotYet } from "./components/ui"
 import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
@@ -31,6 +33,10 @@ export function App() {
   const routeTask = useBoard((s) => (route.name === "task" ? s.tasks[route.taskId] : undefined))
   const narrow = useNarrow()
   const drawerOpen = useDrawer((d) => d.open)
+  // 6.1: the terminal tools this board has open are kept while the app is open.
+  useEffect(() => {
+    if (authed) startToolKeepalive()
+  }, [authed])
 
   // Home is the board of the profile picked last (or the first one), which has every one of its tasks.
   const homeProfile = activeProfile(profileNames(profiles), loadActiveProfile())

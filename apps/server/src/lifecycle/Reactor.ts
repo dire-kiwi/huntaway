@@ -17,6 +17,8 @@ import { Reviews } from "../review/Reviews.ts"
 import { RunEnds } from "../runs/RunEnds.ts"
 import { Runs } from "../runs/Runs.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
+// 6.1
+import { Terminals } from "../terminal/Terminals.ts"
 
 export interface ReactorShape {
   /** Waits until every change offered so far has been handled. Tests wait on this instead of sleeping. */
@@ -49,6 +51,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const mergeTargets = yield* MergeTargets
       const restack = yield* Restack
       const ghStacks = yield* GhStacks
+      // 6.1
+      const terminals = yield* Terminals
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -105,6 +109,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         // prompts is told they expired, and requests to delete it expire (it is deleted anyway).
         if (change.after === null) {
           yield* taskTmp.deleted(task.id)
+          // 6.1: its terminals end with it.
+          yield* terminals.killAll(task.id)
           yield* permissions.expireFor({ _tag: "Task", task: task.id })
           yield* permissions.expireFor({ _tag: "DeletionsOf", task: task.id })
         } else {
@@ -112,6 +118,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           if (change.before !== null && change.before.permission_mode !== change.after.permission_mode) yield* permissions.applyMode(change.after.id)
           // Done: the tasks stacked on it keep where they took its branch up to, which may well be deleted now (4.1).
           if (moved && change.after.status === "done") yield* taskBase.keepStarts(change.after.id)
+          // 6.1: Done, its terminals end.
+          if (moved && change.after.status === "done") yield* terminals.killAll(change.after.id)
           // 4.8: a pull request set (or changed): linked into a stack on GitHub with the one below, in the background.
           if (change.after.pr_url !== null && change.before?.pr_url !== change.after.pr_url) yield* ghStacks.link(change.after.id)
           // The project's status scripts for the move, in the background, one task's in order (4.1).

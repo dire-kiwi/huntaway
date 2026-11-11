@@ -661,6 +661,36 @@ tool sessions, the reaper. `Pty`: the pseudo-terminal that attaches to a session
 server uses an inline Python helper. Keep that helper in M6 and replace it with a 60-line Rust binary beside the
 shim (`ia-pty`) if Python proves a burden on a release host. Flow control by acknowledgements (384 KiB) is kept.
 
+#### As built in 6.1 (HE-7): `Terminals`, `Pty`
+
+- **The tmux server is the data folder's own, by its socket's path**: every tmux command is `tmux -S <data
+  dir>/tmux.sock …` (`terminal/tmux.ts`), never `-L` and never without one, so it is never the default server, the live
+  board's (the old server's `-L ia-<host>`) or another test server's, and `TMUX` in the server's environment can't send a
+  command to the tmux it runs in. A test records every tmux the service and the pty run and checks each. A data folder
+  whose path is too long for a socket (over 103 bytes) has no terminals and says why. Session names stay `ia-<task>` and
+  `ia-<task>~<tool>`. `scripts/test-server.sh stop` ends the tmux server of the data folder it removes.
+- **`Terminals`** (`terminal/Terminals.ts`): `status`, `open` (a ticket), `serve`, `kill`, `killAll`, `keepalive`, `reap`,
+  and the reaper (`Terminals.reaper`, every 30 s, in `AreasLive` beside the other loops). A session is made where the
+  task's agent works with its config's environment (`LaunchFacts.workEnv`, added: the worktree while it is there, else
+  the repository or the profile's scratch folder; `CLAUDE_CONFIG_DIR` or `CODEX_HOME` and the proxy), `TMPDIR` the task's
+  temp folder until it is done, tmux's environment the agents' (`SERVE_ENV` removed) without `TMUX`. Leases and tickets
+  are `Ref`s of the service. The reaper also ends the sessions of tasks that are gone (deleted with a project or a
+  profile, or while the server was down), which the old server left.
+- **The socket** is `GET /api/terminal/<ticket>?cols=&rows=` (`http/terminal.ts`), as 05-protocol.md has it, not the old
+  `/tasks/<id>/terminal/ws` with the board token: `terminal.open` (scope `terminal`) gives a ticket for the task and tool,
+  single use, for a minute. A bad ticket is a 403, a task that's gone a 404, no tmux a 503, before the upgrade. The relay
+  (`terminal/attach.ts`, tested on the test clock with a socket and a pty in memory) is the old one: `ready`, output as
+  binary frames until 384 KiB is unacknowledged, `ping` every 15 s, a board that answered one and then went silent for a
+  minute closed (1001). There is no websocket-level ping: `Socket` has none, and the old one only fed proxies.
+- **RPCs**: `terminal.status`, `open`, `kill`, `keepalive` (`packages/contracts/src/rpc/terminal.ts`, with
+  `TerminalStatus` and the control frames' schemas). The status always has `cwd`, `reason` and `tool` (null for none).
+- **Who ends a task's terminals**: the reactor on Done and on deletion (`TaskDeletion`'s note), and a worktree's
+  teardown before its script (`Worktrees.beforeTeardown`, added to the git area for areas below it to register with:
+  `Terminals.registered`). A project or profile deleted with its tasks is left to the reaper.
+- **Left out**: the assistant's workspace and a documents-only task's folder as a terminal's place (they come with their
+  areas: the terminal opens where `LaunchFacts` puts their agent until then); a relayed terminal on another host (M7,
+  `hub.hosts.openRelay`). The pty is still the Python helper (`terminal/Pty.ts`); `ia-pty` was not needed.
+
 ### Desktop, update, analytics — [inventory 05](inventory/05-hosts-update.md), [07](inventory/07-server-root-api.md)
 
 `CuaDriver` and `DesktopClaims` (computer use: one driver process, one task at a time, an operation journal).
