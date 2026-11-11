@@ -1,11 +1,12 @@
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import { Atom } from "effect/reactivity"
+import type { ComposerDraft } from "@huntaway/client"
 import { ExternalLink } from "@huntaway/contracts"
 import { stored, storedBare } from "./storage"
 
 // User work that must not be lost, and the new task dialog's remembered choices (inventory 10, section 3.3), under the
-// old keys. The new task dialog (layout/newTask) is the M1 component that keeps a draft; the composer's, line
-// comments' and plan answers' drafts come with their components (M2 on).
+// old keys. The new task dialog (layout/newTask) and the task's composer keep drafts here; line comments' and plan
+// answers' drafts come with their components (M4, M6).
 
 /** A file attached to a draft: enough to fetch it again. */
 const AttachmentRef = Schema.Struct({ id: Schema.String, name: Schema.String, path: Schema.String })
@@ -41,3 +42,57 @@ export const startAgentAtom = Atom.family((project: string) => storedBare(`ia.st
 export const newTaskModelAtom = Atom.family((project: string) => storedBare(`ia.newTask.model.${project}`, Schema.String, null))
 export const newTaskEffortAtom = Atom.family((project: string) => storedBare(`ia.newTask.effort.${project}`, Schema.String, null))
 export const newTaskConfigAtom = Atom.family((project: string) => storedBare(`ia.newTask.claudeConfig.${project}`, Schema.String, null))
+
+const ComposerDraftJson = Schema.fromJsonString(Schema.Struct({ text: Schema.String, files: Schema.optional(Schema.Array(AttachmentRef)) }))
+const decodeComposerDraft = Schema.decodeUnknownOption(ComposerDraftJson)
+const encodeComposerDraft = Schema.encodeOption(ComposerDraftJson)
+
+/** The key a task's composer draft is kept under (`ia.composer.draft.<host>:<task>`), as the old composer kept it. */
+export const composerDraftKey = (task: { readonly host_id: string; readonly id: string }): string => `ia.composer.draft.${task.host_id}:${task.id}`
+
+/**
+ * Whether the browser could not keep a composer's draft (its storage full or turned off): the composer warns that it is
+ * only kept until the page closes.
+ */
+export const composerUnsavedAtom = Atom.family((_key: string) => Atom.make(false).pipe(Atom.keepAlive))
+
+function loadComposerDraft(key: string): ComposerDraft | null {
+  let raw: string | null = null
+  try {
+    raw = window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+  return Option.match(decodeComposerDraft(raw), { onNone: () => null, onSome: (d) => ({ text: d.text, files: d.files ?? [] }) })
+}
+
+/** Keeps a composer's draft in the browser's storage (none removes it): false when the browser could not. */
+function saveComposerDraft(key: string, draft: ComposerDraft | null): boolean {
+  try {
+    if (draft === null) window.localStorage.removeItem(key)
+    else
+      window.localStorage.setItem(
+        key,
+        Option.getOrElse(encodeComposerDraft({ text: draft.text, files: draft.files }), () => ""),
+      )
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * What has been written to a task's agent and not sent (under `composerDraftKey`), so another tab or task, or a reload,
+ * does not lose it. Kept for the page's life, so a draft the browser could not keep is still here when its composer
+ * opens again; a send takes what it sent off it (`sendMessage` in @huntaway/client). An empty one is not stored.
+ */
+export const composerDraftAtom = Atom.family((key: string) =>
+  Atom.writable(
+    () => loadComposerDraft(key),
+    (ctx, value: ComposerDraft | null) => {
+      const empty = value === null || (value.text.trim() === "" && value.files.length === 0)
+      ctx.set(composerUnsavedAtom(key), !saveComposerDraft(key, empty ? null : value))
+      ctx.setSelf(value)
+    },
+  ).pipe(Atom.keepAlive),
+)

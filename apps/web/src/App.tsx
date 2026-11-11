@@ -1,6 +1,5 @@
 import { isAssistant, isGroupTask, isRoutine } from "@huntaway/client"
 import { clsx } from "clsx"
-import { X } from "lucide-react"
 import { useEffect, type ReactNode } from "react"
 import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
@@ -8,11 +7,12 @@ import { profileNames, useProfileName } from "./components/boardHelpers"
 import { Sidebar } from "./components/layout/Sidebar"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
 import { TokenScreen } from "./components/settings/TokenScreen"
-import { IconButton, MenuButton } from "./components/ui"
+import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
+import { MenuButton } from "./components/ui"
 import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl, type Route } from "./router"
 import { useBoard } from "./state/board"
-import { closeTask, navigate, usePanel, useRoute, useTaskModal } from "./state/route"
+import { navigate, usePanel, useRoute, useTaskModal } from "./state/route"
 
 /** What a page or panel of a later milestone shows on this server until its components come over. */
 function NotYet({ what, children }: { what: string; children?: ReactNode }) {
@@ -118,12 +118,7 @@ export function App() {
           {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
           {route.name === "board" && <Board projectId={route.projectId} />}
           {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
-          {route.name === "task" && (
-            <div className="flex h-12 items-center border-b border-line px-3">
-              <MenuButton />
-            </div>
-          )}
-          {route.name === "task" && <NotYet what="The task view" />}
+          {route.name === "task" && <TaskView taskId={route.taskId} />}
           {later !== undefined && (
             <>
               <div className="flex h-12 items-center border-b border-line px-3">
@@ -133,31 +128,10 @@ export function App() {
             </>
           )}
         </div>
-        {panel && hasPanel(route) && <TaskPanelNotYet taskId={panel.taskId} />}
+        {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
-      {modal !== null && <TaskPanelNotYet taskId={modal} />}
+      {modal !== null && <TaskModal key={modal} taskId={modal} />}
       <UnhandledErrors />
     </div>
-  )
-}
-
-/** The task panel (task/TaskView's TaskPanel) comes with the task view (M2): until then it names the task and closes. */
-function TaskPanelNotYet({ taskId }: { taskId: string }) {
-  const task = useBoard((s) => s.tasks[taskId])
-  return (
-    <aside
-      data-task-modal
-      aria-label="Task"
-      className="absolute inset-y-0 right-0 z-30 flex w-[min(520px,100%)] flex-col border-l border-line bg-panel shadow-2xl shadow-black/40"
-    >
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
-        <span className="font-mono text-[11.5px] text-faint">{task?.key}</span>
-        <h2 className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{task?.title ?? "Task"}</h2>
-        <IconButton title="Close" aria-label="Close" onClick={() => closeTask()}>
-          <X size={16} />
-        </IconButton>
-      </div>
-      <NotYet what="The task view" />
-    </aside>
   )
 }
