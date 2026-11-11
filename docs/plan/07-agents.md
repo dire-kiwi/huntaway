@@ -614,6 +614,21 @@ reviewer and plan gates were the board's only already) and list `readOnlyHint` (
 `mcp-run.json`). `McpControlRegistered` now tells the launch gh is served, so Claude runs get gh in `mcp.json` and the
 gh hook. 3.1's test of an ended run gives gh's call arguments it takes, since an unknown argument is refused first.
 
+### As built in 6.3 (HE-7): the `docs` server
+
+The `docs` server's 9 tools are `mcp/tools/docs.ts` (`DocsTools`, `McpServers.register("docs", …)`): the hosted
+server's definitions from the renderer (`toolDefinitions()` but `share_document`), as `Tool.dynamic` over their JSON
+Schema, with `labels`, `images`, `label`, `set_document_labels` and `list_labels` added as the old server added them
+(0.2.0 lacks them); `readOnlyHint` from the definitions (those also `Rerunnable`). Each handler reads its arguments as
+the hosted server's serde structs do, so an agent gets the hosted server's messages (``invalid arguments: missing field
+`slug` ``); the dispatcher's argument check refuses only arguments a tool doesn't have (its `required` is left to the
+tools: a folder may be ""), and `set_document_labels` takes `slug` too. A result is its JSON as text and as
+`structuredContent`; a failure is its message as a tool error without "Error: ". `initialize` gives
+`DOCS_INSTRUCTIONS` (word for word, `McpServers.ts`); `resources/list` and `prompts/list` answer empty. The renderer
+loads when the tools are registered (at startup), not on the first call. `McpControlRegistered` says docs is served, so
+Claude runs get it in `mcp.json` and `--allowedTools`, Codex runs in `approved_mcp_servers`, and `Prompts` gives the
+docs note (`docsTools`).
+
 ### As built in 3.2 (HE-4)
 
 - **`mcp/tools/<area>.ts`** declare and handle the board's tools: `questions.ts` (`request_user_input`, `finish_work`),
