@@ -357,7 +357,7 @@ describe("automation tools", () => {
       yield* grant(p, ["work"])
       const theirs = yield* agentOf(work)
       const id = String(made["id"])
-      assert.strictEqual(err(yield* call(theirs, "run_automation", { automation_id: id })), `automation ${id}`)
+      assert.strictEqual(err(yield* call(theirs, "run_automation", { automation_id: id })), `not found: automation ${id}`)
       assert.include(err(yield* call(theirs, "list_automations", { routines: true, profile: "personal" })), "its own profile")
     }).pipe(Effect.provide(TestMcp())),
   )

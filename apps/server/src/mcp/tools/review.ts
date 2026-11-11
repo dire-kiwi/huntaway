@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { Reviews } from "../../review/Reviews.ts"
 import { ForPlanning, ForReviewers, Rerunnable, ReviewersOnly, ToolError } from "../tool.ts"
-import { boardTool } from "./common.ts"
+import { threadTool } from "./common.ts"
 
 // What a reviewer reports (docs/plan/inventory/03-mcp.md; the old mcp.ts `submit_review_tool` and mcp/tools/dispatch.ts):
 // `submit_review`, offered to review threads only. Its verdict is recorded on the reviewer's part of the review and acted
@@ -42,7 +42,7 @@ const asList = (v: unknown): unknown => (typeof v === "string" ? (v.trim() === "
 /** The reviewers' tool's handler. */
 export const reviewTools = Effect.gen(function* () {
   const reviews = yield* Reviews
-  const submitReview = boardTool(
+  const submitReview = threadTool(
     SubmitReview,
     (params, caller) =>
       reviews.submit(caller.task, caller.run.id, params).pipe(Effect.catchTag("ReviewRefused", (e) => Effect.fail(ToolError.other(e.reason)))),

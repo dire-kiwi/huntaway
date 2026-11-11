@@ -21,7 +21,7 @@ import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { McpHooks, refuseAsk } from "./McpHooks.ts"
 import { ToolError } from "./tool.ts"
-import type { McpCaller } from "./tool.ts"
+import type { LocalCaller } from "./tool.ts"
 import { startCommand } from "./wait/command.ts"
 import type { RunningCommand } from "./wait/command.ts"
 import { period, resuming, tasksChanged, TICK } from "./wait/ended.ts"
@@ -77,11 +77,11 @@ export interface WaitShape {
    * meanwhile. A call whose wait is stored (retried after a restart) carries on with it. Fails with why the wait didn't
    * start (a period too long for what it watches, a command that couldn't be started).
    */
-  readonly wait: (caller: McpCaller, request: WaitRequest) => Effect.Effect<WaitOutcome, ToolError>
+  readonly wait: (caller: LocalCaller, request: WaitRequest) => Effect.Effect<WaitOutcome, ToolError>
   /** Where the task's agent works, and a wait's command runs: its worktree, its project's repository, or its profile's scratch folder. */
   readonly workDir: (task: Task) => Effect.Effect<string>
   /** Any board call but `wait` (`McpHooks.callMade`): the run carried on with other work, so its wait ends. */
-  readonly callMade: (caller: McpCaller) => Effect.Effect<void>
+  readonly callMade: (caller: LocalCaller) => Effect.Effect<void>
   /** The agent gave up on call `call` of `run` (`McpHooks.cancelled`): its wait ends, unanswered. */
   readonly cancelled: (run: Run, call: CallId) => Effect.Effect<void>
 }
@@ -222,7 +222,7 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
       })
 
       /** A wait from start to end, in its fiber. */
-      const waiting = (caller: McpCaller, request: WaitRequest, shown: Ref.Ref<AgentWait>) =>
+      const waiting = (caller: LocalCaller, request: WaitRequest, shown: Ref.Ref<AgentWait>) =>
         Effect.gen(function* () {
           // Subscribed before anything is read, so no change can slip in between.
           const watching = yield* events.watch(undefined)
@@ -280,7 +280,7 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
           return outcome
         }).pipe(Effect.scoped)
 
-      const wait = Effect.fn("Wait.wait")(function* (caller: McpCaller, request: WaitRequest) {
+      const wait = Effect.fn("Wait.wait")(function* (caller: LocalCaller, request: WaitRequest) {
         const now = yield* nowTimestamp
         const shown = yield* Ref.make<AgentWait>({ reason: null, since: now, until: now, tasks: request.tasks, call_id: caller.call_id, run_id: caller.run.id })
         const fiber = yield* FiberMap.run(fibers, caller.run.id, waiting(caller, request, shown))

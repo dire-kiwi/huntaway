@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { DocumentLabel, Effort, FilterOp, Weekday } from "@huntaway/contracts"
 import type { ActionInput, TriggerInput } from "@huntaway/contracts"
@@ -10,9 +10,10 @@ import { Automations } from "../../automations/Automations.ts"
 import { MIN_INTERVAL_MINUTES } from "../../automations/model.ts"
 import { isAssistants } from "../../tasks/checks.ts"
 import { makeReach } from "../resolve.ts"
-import { ApprovalKind, ForPlanning, Rerunnable, ToolError } from "../tool.ts"
-import type { McpCaller } from "../tool.ts"
-import { asker, boardTool, given, Json, PROJECT_ONE, ProfileArg, told } from "./common.ts"
+import { ApprovalKind, ForPlanning, ownThread, Rerunnable, ToolError } from "../tool.ts"
+import type { LocalCaller } from "../tool.ts"
+import { ProfileRepo } from "../../profiles/ProfileRepo.ts"
+import { boardTool, given, Json, PROJECT_ONE, ProfileArg, told } from "./common.ts"
 import type { ServiceError } from "./common.ts"
 
 // The automation tools (docs/plan/inventory/03-mcp.md 2.5, 2.6; inventory 06 7; the old mcp/schemas/automations.ts,
@@ -232,7 +233,7 @@ const triggerOf = (t: TriggerParams): Effect.Effect<TriggerInput, ToolError> => 
 }
 
 /** Whether a call is about the caller's routines: it says so, its action wakes the assistant, or it's the assistant's and names no project. */
-const wantsRoutines = (caller: McpCaller, p: { readonly routines?: boolean; readonly project_id?: string; readonly action?: ActionParams }) =>
+const wantsRoutines = (caller: LocalCaller, p: { readonly routines?: boolean; readonly project_id?: string; readonly action?: ActionParams }) =>
   p.routines === true || p.action?.kind === "message_assistant" || ((p.project_id === undefined || p.project_id === "") && isAssistants(caller.task))
 
 const guardsOf = (p: {
@@ -262,16 +263,36 @@ const toldAll = <A, R>(
 
 const sameText = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
+/**
+ * A board tool for an agent on this host: automations and routines are asked about in the caller's own thread, and a
+ * routine is its own profile's (an agent on another host is refused, as thread tools are: M7's).
+ */
+const localBoardTool = <Config extends (Parameters<typeof boardTool>[0] extends infer T ? (T extends Tool.Tool<string, infer C, unknown> ? C : never) : never)>(
+  tool: Tool.Tool<string, Config, unknown>,
+  handle: (
+    params: Tool.Parameters<Tool.Tool<string, Config, unknown>>,
+    caller: LocalCaller,
+  ) => Effect.Effect<Tool.Success<Tool.Tool<string, Config, unknown>>, ToolError>,
+  options?: Parameters<typeof boardTool>[2],
+) => boardTool(tool, (params, caller) => Effect.flatMap(ownThread(caller, tool.name), (local) => handle(params, local)), options)
+
 /** The automation tools' handlers, in the order runs are shown them. */
 export const automationTools = Effect.gen(function* () {
   const reach = yield* makeReach
   const automations = yield* Automations
   const repo = yield* AutomationRepo
   const approvals = yield* AutomationApprovals
+  const profileRepo = yield* ProfileRepo
+
+  /** The caller's profile: its thread's. */
+  const ownProfile = (caller: LocalCaller) =>
+    Effect.flatMap(profileRepo.get(caller.task.profile_id), (p) =>
+      Option.isNone(p) ? ToolError.notFound(`profile ${caller.profile.name}`) : Effect.succeed(p.value),
+    )
 
   /** The caller's own profile, whose routines it can see and change: other profiles' agents can't reach them. */
-  const ownRoutines = Effect.fnUntraced(function* (caller: McpCaller, profile: string | null) {
-    const own = caller.profile
+  const ownRoutines = Effect.fnUntraced(function* (caller: LocalCaller, profile: string | null) {
+    const own = yield* ownProfile(caller)
     if (profile !== null && !sameText(profile, own.name) && profile !== own.id) {
       return yield* ToolError.other(`an agent can only use its own profile's routines (${own.name})`)
     }
@@ -279,7 +300,7 @@ export const automationTools = Effect.gen(function* () {
   })
 
   /** The action an agent gives: a message's task named by key, and only one of the project's. */
-  const actionOf = Effect.fnUntraced(function* (caller: McpCaller, owner: CreationRequest["owner"], a: ActionParams, profile: string | null) {
+  const actionOf = Effect.fnUntraced(function* (caller: LocalCaller, owner: CreationRequest["owner"], a: ActionParams, profile: string | null) {
     switch (a.kind) {
       case "create_task": {
         if (a.title === undefined) return yield* missing("action", "title")
@@ -322,7 +343,7 @@ export const automationTools = Effect.gen(function* () {
 
   /** The owner a call names: the caller's routines, or a project on a board it can use. */
   const ownerOf = Effect.fnUntraced(function* (
-    caller: McpCaller,
+    caller: LocalCaller,
     p: { readonly routines?: boolean; readonly project_id?: string; readonly profile?: string; readonly action?: ActionParams },
   ) {
     if (wantsRoutines(caller, p)) {
@@ -335,10 +356,10 @@ export const automationTools = Effect.gen(function* () {
   })
 
   /** The owner of an automation the caller can reach: its own profile's routine, or one in a project on a board it can use. */
-  const ownerOfStored = Effect.fnUntraced(function* (caller: McpCaller, a: StoredAutomation, ref: string) {
+  const ownerOfStored = Effect.fnUntraced(function* (caller: LocalCaller, a: StoredAutomation, ref: string) {
     if (a.project_id === null) {
-      if (a.profile_id !== caller.profile.id) return yield* ToolError.notFound(`automation ${ref}`)
-      const own: CreationRequest["owner"] = { _tag: "Profile", profile: caller.profile }
+      if (a.profile_id !== caller.task.profile_id) return yield* ToolError.notFound(`automation ${ref}`)
+      const own: CreationRequest["owner"] = { _tag: "Profile", profile: yield* ownProfile(caller) }
       return own
     }
     const found = yield* reach.project(caller, a.project_id, null).pipe(Effect.option)
@@ -349,7 +370,7 @@ export const automationTools = Effect.gen(function* () {
 
   /** The automation a call names: by id, or by name among the caller's routines or a project's automations. */
   const resolve = Effect.fnUntraced(function* (
-    caller: McpCaller,
+    caller: LocalCaller,
     p: { readonly automation_id: string; readonly routines?: boolean; readonly project_id?: string; readonly profile?: string },
   ) {
     const ref = p.automation_id.trim()
@@ -373,7 +394,7 @@ export const automationTools = Effect.gen(function* () {
     return { automation: first, owner }
   })
 
-  const listAutomations = boardTool(ListAutomations, (params, caller) =>
+  const listAutomations = localBoardTool(ListAutomations, (params, caller) =>
     Effect.gen(function* () {
       const owner = yield* ownerOf(caller, params)
       if (owner._tag === "Profile") {
@@ -394,12 +415,12 @@ export const automationTools = Effect.gen(function* () {
     }),
   )
 
-  const createAutomation = boardTool(
+  const createAutomation = localBoardTool(
     CreateAutomation,
     (params, caller) =>
       toldAll(
         approvals.create(
-          asker(caller),
+          { run: caller.run, call_id: caller.call_id },
           Effect.gen(function* () {
             const owner = yield* ownerOf(caller, params)
             const request: CreationRequest = {
@@ -419,12 +440,12 @@ export const automationTools = Effect.gen(function* () {
     { keepNulls: true, prepare: keepGuardNulls },
   )
 
-  const updateAutomation = boardTool(
+  const updateAutomation = localBoardTool(
     UpdateAutomation,
     (params, caller) =>
       toldAll(
         approvals.update(
-          asker(caller),
+          { run: caller.run, call_id: caller.call_id },
           Effect.gen(function* () {
             const { automation, owner } = yield* resolve(caller, params)
             return {
@@ -446,16 +467,16 @@ export const automationTools = Effect.gen(function* () {
     { keepNulls: true, prepare: keepGuardNulls },
   )
 
-  const deleteAutomation = boardTool(DeleteAutomation, (params, caller) =>
+  const deleteAutomation = localBoardTool(DeleteAutomation, (params, caller) =>
     toldAll(
       approvals.delete(
-        asker(caller),
+        { run: caller.run, call_id: caller.call_id },
         Effect.map(resolve(caller, params), ({ automation, owner }) => ({ automation, owner, reason: given(params.reason) })),
       ),
     ),
   )
 
-  const runAutomation = boardTool(RunAutomation, (params, caller) =>
+  const runAutomation = localBoardTool(RunAutomation, (params, caller) =>
     toldAll(
       Effect.gen(function* () {
         const { automation } = yield* resolve(caller, params)

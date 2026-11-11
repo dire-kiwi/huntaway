@@ -3,8 +3,8 @@ import { Tool } from "effect/ai"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { askedProtocol, METHOD_NOT_FOUND, rpcError, rpcResult } from "./jsonrpc.ts"
 import type { RpcResponse } from "./jsonrpc.ts"
-import { annotation, BOARD_SERVER, ForReviewers, listed, ReviewersOnly, ToolError, toolArguments } from "./tool.ts"
-import type { ListedTool, McpCaller, ServerName, ToolArguments, ToolHandler } from "./tool.ts"
+import { annotation, BOARD_SERVER, ForReviewers, listed, ownThread, ReviewersOnly, ToolError, toolArguments } from "./tool.ts"
+import type { ListedTool, LocalCaller, McpCaller, ServerName, ToolArguments, ToolHandler } from "./tool.ts"
 
 // The board's MCP servers (docs/plan/07-agents.md, Board tools): which tools each has, with their handlers, and the
 // part of the protocol that calls nothing (`initialize`, `ping`, `tools/list`). Areas register their tools' handlers
@@ -116,6 +116,18 @@ export const toolHandler = <Config extends HandledConfig>(
       ),
   }
 }
+
+/**
+ * `toolHandler` for a tool of a server only this host's runs are given (the desktop's, 6.10): its caller is an agent on
+ * this host, with its run and thread; any other is refused as a thread tool is (M7's callers from other hosts).
+ */
+export const localToolHandler = <Config extends HandledConfig>(
+  tool: Tool.Tool<string, Config, unknown>,
+  handle: (
+    params: Tool.Parameters<Tool.Tool<string, Config, unknown>>,
+    caller: LocalCaller,
+  ) => Effect.Effect<Tool.Success<Tool.Tool<string, Config, unknown>>, ToolError>,
+): RegisteredTool => toolHandler(tool, (params, caller) => Effect.flatMap(ownThread(caller, tool.name), (local) => handle(params, local)))
 
 /**
  * A tool as a server lists it. The board's servers but its own say whether each only reads (`readOnlyHint`): Codex

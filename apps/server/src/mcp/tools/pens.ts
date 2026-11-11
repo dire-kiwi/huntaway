@@ -173,10 +173,10 @@ export const penTools = Effect.gen(function* () {
     Effect.gen(function* () {
       const p = yield* resolvePen(caller, params.pen, given(params.profile))
       // It would delete the thread asking.
-      if (p.thread_id === caller.task.id) {
+      if (caller.task !== null && p.thread_id === caller.task.id) {
         return yield* ToolError.other("a pen's own thread can't delete its pen: the user can, from the board or the pens thread")
       }
-      const left = yield* service.delete(p.id, { _tag: "Agent", task_id: caller.task.id })
+      const left = yield* service.delete(p.id, { _tag: "Agent", task_id: caller.task?.id ?? null })
       const out: JsonObject = { deleted: p.name, tasks_left_in_no_pen: left.length }
       return out
     }).pipe(told),

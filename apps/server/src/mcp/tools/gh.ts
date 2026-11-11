@@ -8,8 +8,8 @@ import { RunDir } from "../../runs/RunDir.ts"
 import { McpServers } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
 import { Rerunnable, ToolError } from "../tool.ts"
-import type { McpCaller } from "../tool.ts"
-import { boardTool } from "./common.ts"
+import type { LocalCaller } from "../tool.ts"
+import { threadTool } from "./common.ts"
 
 // The board's `gh` server (docs/plan/inventory/03-mcp.md 2.10; huntaway's mcp/gh_mcp.ts `tools`): GitHub through the
 // gh CLI, run outside the agent's sandbox as the run's GitHub account (`Gh`). Names, arguments and descriptions are the
@@ -179,7 +179,7 @@ export const ghTools = Effect.gen(function* () {
   const gate = yield* MergeGate
 
   /** Where the caller's calls run and as whom (the run's `mcp-run.json`), and the board's say on its merges. */
-  const runOf = Effect.fnUntraced(function* (caller: McpCaller) {
+  const runOf = Effect.fnUntraced(function* (caller: LocalCaller) {
     const settings = yield* dirs.mcpRun(caller.run.id)
     const name = settings?.github_account ?? null
     const account = name === null ? null : parseAccount(name)
@@ -188,7 +188,7 @@ export const ghTools = Effect.gen(function* () {
     return run
   })
 
-  const handle = (tool: Tool.Any) => (params: Readonly<Record<string, unknown>>, caller: McpCaller) =>
+  const handle = (tool: Tool.Any) => (params: Readonly<Record<string, unknown>>, caller: LocalCaller) =>
     runOf(caller).pipe(
       Effect.flatMap((run) => gh.run(tool.name, params, run)),
       Effect.map(content),
@@ -196,23 +196,23 @@ export const ghTools = Effect.gen(function* () {
     )
 
   const all: ReadonlyArray<RegisteredTool> = [
-    boardTool(PrCreate, handle(PrCreate)),
-    boardTool(PrView, handle(PrView)),
-    boardTool(PrList, handle(PrList)),
-    boardTool(PrChecks, handle(PrChecks)),
-    boardTool(PrDiff, handle(PrDiff)),
-    boardTool(PrComment, handle(PrComment)),
-    boardTool(PrEdit, handle(PrEdit)),
-    boardTool(PrMerge, handle(PrMerge)),
-    boardTool(IssueView, handle(IssueView)),
-    boardTool(IssueList, handle(IssueList)),
-    boardTool(IssueCreate, handle(IssueCreate)),
-    boardTool(IssueComment, handle(IssueComment)),
-    boardTool(RunList, handle(RunList)),
-    boardTool(RunView, handle(RunView)),
-    boardTool(Api, handle(Api)),
-    boardTool(GhCommand, handle(GhCommand)),
-    boardTool(GitPush, handle(GitPush)),
+    threadTool(PrCreate, handle(PrCreate)),
+    threadTool(PrView, handle(PrView)),
+    threadTool(PrList, handle(PrList)),
+    threadTool(PrChecks, handle(PrChecks)),
+    threadTool(PrDiff, handle(PrDiff)),
+    threadTool(PrComment, handle(PrComment)),
+    threadTool(PrEdit, handle(PrEdit)),
+    threadTool(PrMerge, handle(PrMerge)),
+    threadTool(IssueView, handle(IssueView)),
+    threadTool(IssueList, handle(IssueList)),
+    threadTool(IssueCreate, handle(IssueCreate)),
+    threadTool(IssueComment, handle(IssueComment)),
+    threadTool(RunList, handle(RunList)),
+    threadTool(RunView, handle(RunView)),
+    threadTool(Api, handle(Api)),
+    threadTool(GhCommand, handle(GhCommand)),
+    threadTool(GitPush, handle(GitPush)),
   ]
   return all
 })

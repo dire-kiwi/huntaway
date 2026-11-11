@@ -1,13 +1,14 @@
 import { Context } from "effect"
 import { describe, expect, it } from "vite-plus/test"
-import { Auth, HostRpcs, PublicRpcs, RequiredScope } from "@huntaway/contracts"
+import { Auth, HostRpcs as HostOnlyRpcs, HubRpcs, LinkRpcs, PublicRpcs, RequiredScope } from "@huntaway/contracts"
 import { Served } from "../../src/Main.ts"
 import { child, isTest, listFiles, nameOf, parse, parseFailure, walk } from "./sources.ts"
 
 // docs/effect.md, Structural tests, rule 8: every RPC in the contract states the scope it needs, and every RPC the
 // server serves has a handler. The layer would fail to build without one; this names it. `HostRpcs` RPCs carry a
 // `RequiredScope` and go through `Auth`; `PublicRpcs` is the one group without a session. A handler is a key of the
-// handlers' object in a file under apps/server/src/rpc/ (`"tasks.create": …`). The RPCs of `HostRpcs` that
+// handlers' object in a file under apps/server/src/rpc/ (`"tasks.create": …`). `HubRpcs` and `LinkRpcs` (M7) are held as
+// `HostRpcs` is. The RPCs of `HostRpcs` that
 // `Served` (apps/server/src/Main.ts) does not serve yet are listed as todos, not failures, while M1 lands them.
 // Board MCP tools (a schema and a handler each) come with M3, and their check with them.
 
@@ -31,6 +32,9 @@ const failing = (checks: ReadonlyArray<readonly [fails: boolean, message: string
 
 /** `Rpc.middlewares` is typed by the group's middleware, `never` for a group with none. */
 const behindAuth = (middlewares: ReadonlySet<unknown>) => middlewares.has(Auth)
+
+/** Every group behind `Auth`: a host's own, the hub's (`hub.*`) and hosts' to each other (`link.*`). */
+const HostRpcs = HostOnlyRpcs.merge(HubRpcs, LinkRpcs)
 
 const hostTags = new Set(HostRpcs.requests.keys())
 const publicTags = new Set(PublicRpcs.requests.keys())
@@ -69,7 +73,7 @@ describe("RPCs", () => {
         .concat(
           servedTags.flatMap((tag) =>
             failing([
-              [!hostTags.has(tag) && !publicTags.has(tag), `${tag}: served but in neither HostRpcs nor PublicRpcs`],
+              [!hostTags.has(tag) && !publicTags.has(tag), `${tag}: served but in neither HostRpcs, HubRpcs, LinkRpcs nor PublicRpcs`],
               [!keys.has(tag), `${tag}: served with no handler key "${tag}" under apps/server/src/rpc/`],
             ]),
           ),

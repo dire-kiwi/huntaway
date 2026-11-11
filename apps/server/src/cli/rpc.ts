@@ -2,14 +2,14 @@ import { Config, Console, Effect, FileSystem, Layer, Option, Path, Runtime, Sche
 import { Argument, Command, Flag } from "effect/cli"
 import { FetchHttpClient, Headers } from "effect/http"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
-import { Auth, Forbidden, HostRpcs, PublicRpcs, Unauthorized } from "@huntaway/contracts"
+import { Auth, Forbidden, HostRpcs, HubRpcs, PublicRpcs, Unauthorized } from "@huntaway/contracts"
 
 // `huntaway rpc <method> [json]` (docs/plan/05-protocol.md, The CLI as a client): one call to a test server over
 // `POST /api/rpc` with the typed client, for scripts and agents trying a change. It takes the place of the old
 // `scripts/ia-api get|post|…`, and like it touches nothing but a test server on this machine.
 
 /** Every method `huntaway rpc` can call: what a client of its own board can. */
-export const CliRpcs = PublicRpcs.merge(HostRpcs)
+export const CliRpcs = PublicRpcs.merge(HostRpcs, HubRpcs)
 
 /** What the typed client needs to reach a server at `url` (`http://host:port`) over HTTP, with its board token. */
 export const httpRpcClientLayer = (url: string, token: string) =>

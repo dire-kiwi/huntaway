@@ -133,6 +133,8 @@ export const REPO_ROOT = decodeURIComponent(new URL("../../../", import.meta.url
 /** The fake `claude` (bin/fake-claude): the program for whole-server tests and test servers. */
 export const FAKE_CLAUDE = `${REPO_ROOT}packages/testing/bin/fake-claude`
 
+/** The fake `ssh` (bin/fake-ssh): SSH links in whole-server tests, to this machine without an sshd or a key added anywhere. */
+export const FAKE_SSH = `${REPO_ROOT}packages/testing/bin/fake-ssh`
 /** The fake `codex app-server` (bin/fake-codex): `HUNTAWAY_CODEX_BIN` for whole-server tests and test servers. */
 export const FAKE_CODEX = `${REPO_ROOT}packages/testing/bin/fake-codex`
 

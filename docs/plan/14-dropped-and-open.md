@@ -11,7 +11,7 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | **Telegram**: the bot, its polling, linking, the `telegram` event and settings                   | Not in use                                                      | Settings not imported                                     |
 | The `messages` table, the legacy thread routes, the `message`, `message_updated`, `delta`, `delta_reset` events | Threads before they were items                  | Checked by the importer: it refuses a board with a thread still on messages, and carries a stray row ([11-migration.md](11-migration.md#threads-not-yet-items)) |
 | Moving threads onto items: `thread_source`, flip, batch rebuild, `threads-rebuild`, `threads-import`, the converter version | A migration that is finished on the board measured, and must be finished on each host before its import | Columns dropped once the importer has seen every task on items |
-| `API_VERSION`, `API_COMPAT`, the forty numeric gates in the clients, `too_old` in board tools, the probes for old hosts | Linking to hosts on older builds          | —                                                         |
+| `API_VERSION`, `API_COMPAT`, the forty numeric gates in the clients, `too_old` and `task_fields` in board tools, the probes for old hosts | Linking to hosts on older builds          | —                                                         |
 | The HTTP proxy `/api/h/<host>/…`, the tunnel frames, the event socket's call frames              | Three host protocols                                            | —                                                         |
 | The two-file database scheme, `db_origin`, recopy, the backup rules for Rust releases            | Rolling back to older builds on one data folder                 | The old file is left as the way back                      |
 | Numbered migrations 1 to 130 and the defensive `has_column` style                                | History                                                         | —                                                         |
@@ -19,7 +19,7 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | Legacy shapes: `kind: "scratch"`, document names as `task_type`, workflow nodes `set_status` and `trigger` on a status | Old rows                                  | Converted                                                 |
 | Run folder formats 1 to 4; reading sessions "from before runs kept their folder"                 | Runs from older builds                                          | No run is live at the switch                              |
 | The `issue-agent` command, the `issue_agent` MCP server name, the `IA_*` server variables        | The former name                                                 | Old threads still show their old tool names               |
-| `--broker*` flags, `ssh-host --name/--no-start`, `/profiles/{id}/scratch`, `/profiles/{id}/claude-config` | Removed features kept as no-ops                        | —                                                         |
+| `--broker*` flags, `ssh-host --name/--no-start`, `/profiles/{id}/scratch`, `/profiles/{id}/claude-config` (and with it `profile` in `hub.hosts.copyConfig`) | Removed features kept as no-ops                        | —                                                         |
 | The serde emulation: `_from_json` readers that reproduce Rust's error texts, sorted-key JSON, `hidden()` fields, 422 texts | The Rust port                         | —                                                         |
 | The test seams: `IN_TEST`, `when`/`reached`, `*_BIN` variables read by the code, shortened constants | Tests without layers or a test clock                       | —                                                         |
 | `IA_PUSH_SUBJECT` (6.8): the VAPID `sub` a board names to push services                          | Naming someone other than the project's page                    | — (the subject is the project's GitHub page; a `ServerConfig` flag if wanted) |
@@ -93,7 +93,7 @@ Each could have gone another way. They are listed so that a different answer is 
 | Strict lint slows agents down or pushes them to suppress                                 | Suppressions are counted by a structural test and need a written reason; a rule that is wrong here is turned off in the config, in the open |
 | The import loses or bends data                                                           | Every row passes the schema it will be read with; `--check`; no table is dropped on the strength of one board's row count; nightly runs on a scrubbed copy; the old file untouched |
 | A server on imported data acts on the live board (same host id, links, repositories)     | Two kinds of import only. The switch needs the old server stopped, and `ImportGuard` refuses to start beside it afterwards. A rehearsal has its own identity, no credentials, and a server that is read-only at four separate places, with a test ([11-migration.md](11-migration.md#rehearsal)) |
-| The relay's signed session, and socket piping under load                                 | Tested first in M7 (7.0)                                                                                         |
+| The relay's signed session, and socket piping under load                                 | Tested first in M7 (7.0): both hold, the pipe with a drain-waiting write                                         |
 | Atomicity bugs that the old single-threaded style could not have                          | Every state change is one transaction; work across a wait holds the entity's lock; decisions are pure and tested as tables |
 
 ## Not verified
@@ -103,7 +103,9 @@ Checked for this plan, on 11 November 2026: the versions, the RPC, SQL, atom and
 read or reasoned, not run.
 
 - The per-host family of atom runtimes: the spike type-checked one host with `AtomRpc.Service`.
-- Upgrade headers reaching RPC middleware on every request of a socket; the signed session; piping two sockets.
+- ~~Upgrade headers reaching RPC middleware on every request of a socket; the signed session; piping two sockets.~~
+  Checked in 7.0 (HE-6, [08-hosts.md](08-hosts.md#to-check-early)): the headers and the seal hold; piping needs a write
+  that waits for the connection to drain, which Effect's websocket `Writer` does not do.
 - `Rpc.annotate` as the carrier of an RPC's scope, read by the middleware (the method exists; the pattern was not
   run).
 - Effect's `Tool.getJsonSchema` output against what Claude Code and Codex accept for each of the 70 tools. Partly checked in
@@ -133,7 +135,15 @@ read or reasoned, not run.
   100 MB for all of `effect`. Measured at M2 (HE-4) against the old server on the same synthetic data: within the limits
   of [10-testing.md](10-testing.md#measurements) (memory 1.13–1.33×, ready in ~0.55 s, event-loop p99 better), after
   the follower was brought within 1.5×; not yet on a scrubbed copy of a live board (that needs the importer, M9).
-- `tsrs` compiling the whole server for a release; the size of a release package.
+- ~~`tsrs` compiling the whole server for a release; the size of a release package~~: checked in M8 (HE-6), with
+  TypeScript 7's own `tsc` instead of `tsrs` (it emits, and the workspace has it): the whole server and the two
+  workspace packages it runs compile in under a second with the type check, and the package starts, migrates a new
+  board, answers `/api/health` and runs its hooks in 23–36 ms. 173 MB unpacked (Node 144 MB, `server/` 25 MB), a 53 MB
+  tarball, built in 8 s: [02-repository.md](02-repository.md#releases). As of that check the packaged server served
+  its `ui/` only when given `--ui-dir` (it looked for `web/dist` beside `server/`), and reported the constant version
+  and no commit (it did not read `build.json` yet): `scripts/release-check.sh` fails until both are fixed (with
+  `HUNTAWAY_UI_DIR` and the commit check set aside, the rest passed). The macOS
+  build, the desktop packages and the release workflow itself have not run (nothing is published from a branch).
 - ~~Three names in the lint configuration~~: checked in M0 (HE-3): `import/no-cycle` (with the `import` plugin listed),
   `no-restricted-imports` with `{ patterns: [{ group, message }] }`, and `react/rules-of-hooks`/`react/exhaustive-deps`.
   The old line said: `import/no-cycle`, the `react/*` rules and the options of
@@ -145,6 +155,10 @@ read or reasoned, not run.
 - Whether any host has threads still on messages. Only one board's database was looked at; the importer checks each.
 - That every thread resumes its agent session after an import, with stored paths made absolute (reasoned from how
   the old server pins a session to its folder; M9 tests it on a copy).
+- Discovery on a real network (7.5, HE-6): the responder and browser were run on loopback with sockets of their own
+  and on a fake socket, never on UDP 5353 or the multicast group of a machine with a live board; multicast out of each
+  LAN interface, renewal against `igmp_max_memberships`, and `tailscale status --json` against a real Tailscale were
+  not run.
 - The task count and sizes: an estimate from line counts.
 - The inventory itself: eleven notes written by agents reading the old source, without running it. One note's
   section on the docs server is second-hand (it says so). Where a note and the old source disagree, the source is

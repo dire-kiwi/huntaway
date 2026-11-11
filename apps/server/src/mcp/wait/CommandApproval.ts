@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import { Permissions } from "../../permissions/Permissions.ts"
-import type { McpCaller } from "../tool.ts"
+import type { LocalCaller } from "../tool.ts"
 
 // The approval of a wait's command (docs/plan/inventory/03-mcp.md 2.8; huntaway's mcp/tools/dispatch.ts `wait_tool`):
 // the command runs as the agent's own Bash calls would, so it is asked about as one, a `Bash` permission prompt of the
@@ -21,7 +21,7 @@ export type CommandAnswer = { readonly allowed: true } | { readonly allowed: fal
 
 export interface CommandApprovalShape {
   /** Ask about running `input` for the wait call of `caller`, as a `Bash` permission prompt of the call. */
-  readonly ask: (caller: McpCaller, input: CommandInput) => Effect.Effect<CommandAnswer>
+  readonly ask: (caller: LocalCaller, input: CommandInput) => Effect.Effect<CommandAnswer>
 }
 
 export class CommandApproval extends Context.Service<CommandApproval, CommandApprovalShape>()("huntaway-server/mcp/wait/CommandApproval") {

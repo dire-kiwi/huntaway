@@ -20,6 +20,9 @@ catalog:
   playwright-core: 1.64.1
   # 6.3: documents' images to AVIF (apps/server/src/docs/DocImages.ts).
   sharp: 0.35.5
+  # The desktop shell (apps/desktop): Electron and its packager, as the old app had them or newer.
+  electron: 45.3.0
+  electron-builder: 26.18.0
 
 # Vite+ (`vp`) bundles the Vite and Vitest every package gets.
 overrides:
@@ -30,5 +33,7 @@ peerDependencyRules:
     - vite
 
 allowBuilds:
+  # Its install script downloads the Electron binary the desktop shell runs on (apps/desktop).
+  electron: true
   "@parcel/watcher": false
   electron-winstaller: false

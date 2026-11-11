@@ -9,7 +9,8 @@ import type { GivenImage } from "../../docs/imageRules.ts"
 import { McpServers } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
 import { Rerunnable, toolArguments } from "../tool.ts"
-import type { McpCaller } from "../tool.ts"
+import { ownThread } from "../tool.ts"
+import type { LocalCaller } from "../tool.ts"
 
 // The board's `docs` server (docs/plan/inventory/03-mcp.md 2.11; huntaway's mcp/docs_mcp.ts): agents publish documents
 // (reports, plans, write-ups) to their profile's documents on this host (`Docs`), exactly as they would to the hosted
@@ -193,11 +194,11 @@ const prettyJson = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown, { s
 const pretty = (v: unknown): string => Result.getOrElse(prettyJson(v), () => String(v))
 
 /** The caller as the docs area knows it. */
-const as = (caller: McpCaller) => ({ profile: caller.profile.id, task: caller.task, run: caller.run.id })
+const as = (caller: LocalCaller) => ({ profile: caller.task.profile_id, task: caller.task, run: caller.run.id })
 const read = <A>(r: Read<A>) => Effect.fromResult(r)
 
 /** What a tool does with its caller and arguments. */
-type Handle = (caller: McpCaller, a: ReturnType<typeof reader>) => Effect.Effect<unknown, DocsRefused | string>
+type Handle = (caller: LocalCaller, a: ReturnType<typeof reader>) => Effect.Effect<unknown, DocsRefused | string>
 
 /** The docs server's tools with their handlers, each a `Docs` call as the caller's run. */
 export const docsTools = Effect.gen(function* () {
@@ -263,7 +264,8 @@ export const docsTools = Effect.gen(function* () {
         // folder may be "", the top level); `set_document_labels` takes the document as `slug` too.
         args: { names: d.name === "set_document_labels" ? [...args.names, "slug"].toSorted() : args.names, required: [] },
         run: (given, caller) =>
-          handle(caller, reader(given)).pipe(
+          // The docs server is only given to this host's runs (M7's callers from other hosts are refused).
+          Effect.flatMap(ownThread(caller, d.name), (local) => handle(local, reader(given))).pipe(
             Effect.map(answer),
             Effect.catch((e) => Effect.succeed(failed(typeof e === "string" ? e : e.message))),
           ),

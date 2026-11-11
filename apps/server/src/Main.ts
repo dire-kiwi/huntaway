@@ -3,6 +3,8 @@ import { Effect, Layer } from "effect"
 import { Mac, SecureRandom } from "effect/crypto"
 // 6.8: Web Push's cryptography; 6.10: the SHA-256 of a Cua Driver download; 6.5: a signed webhook delivery's.
 import { Aead, Digest, Kdf, KeyAgreement, Signature } from "effect/crypto"
+import { createSocket } from "node:dgram"
+import { networkInterfaces } from "node:os"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
@@ -27,6 +29,11 @@ import {
   DesktopRpcs,
   GitRpcs,
   HostRpcGroup,
+  HubHostRpcs,
+  LinkRpcs,
+  AdminRpcs,
+  SettingsSyncRpcs,
+  ToolRpcs,
   PenRpcs,
   PermissionRpcs,
   ProfileRpcs,
@@ -69,6 +76,24 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { CopyConfig } from "./hosts/CopyConfig.ts"
+import { Discovery } from "./hosts/Discovery.ts"
+import { Tailscale } from "./hosts/discovery/Tailscale.ts"
+import { Udp } from "./hosts/discovery/Udp.ts"
+import { HostTools } from "./hosts/HostTools.ts"
+import { Hubs } from "./hosts/Hubs.ts"
+import { LinkConnections } from "./hosts/LinkConnections.ts"
+import { LinkRepo } from "./hosts/LinkRepo.ts"
+import { Links } from "./hosts/Links.ts"
+import { Relay } from "./hosts/Relay.ts"
+import { SessionSeal } from "./hosts/SessionSeal.ts"
+import { SettingsSync } from "./hosts/SettingsSync.ts"
+import { SettingsSyncExchange } from "./hosts/SettingsSyncExchange.ts"
+import { SettingsSyncRepo } from "./hosts/SettingsSyncRepo.ts"
+import { Ssh } from "./hosts/Ssh.ts"
+import { Uplink } from "./hosts/Uplink.ts"
+import { LinkStreamRoute } from "./http/linkStream.ts"
+import { RelayRoute } from "./http/relay.ts"
 // 6.3: documents.
 import { DocImages } from "./docs/DocImages.ts"
 import { DocRepo } from "./docs/DocRepo.ts"
@@ -191,6 +216,18 @@ import { GithubRepoHandlers } from "./rpc/githubRepos.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
+import { HubHostHandlers } from "./rpc/hub.ts"
+import { LinkHandlers } from "./rpc/link.ts"
+import { SettingsSyncHandlers } from "./rpc/settingsSync.ts"
+import { AdminHandlers } from "./rpc/admin.ts"
+import { Releases } from "./update/Releases.ts"
+import { Restarts } from "./update/Restarts.ts"
+import { Service } from "./update/Service.ts"
+import { Supervisor } from "./update/Supervisor.ts"
+import { Systemd } from "./update/Systemd.ts"
+import { HostUpdates } from "./update/HostUpdates.ts"
+import { Updater } from "./update/Updater.ts"
+import { ToolHandlers } from "./rpc/tools.ts"
 import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 // 6.10: computer use.
 import { DesktopHandlers } from "./rpc/desktop.ts"
@@ -244,6 +281,8 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),
+    // Before the identity and the database: hand over to a newer release this host updated to (8.2).
+    Layer.provideMerge(Releases.execInstalled.pipe(Layer.provideMerge(Supervisor.layer))),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
     // 6.8: Web Push's cryptography; 6.10, 6.5 and 6.3: SHA-256 (a Cua Driver download, a signed webhook delivery, a
@@ -359,6 +398,36 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   )
 
 /**
+ * Node's UDP sockets and network interfaces, for mDNS: Effect's `DatagramSocket` can't pick the interface each datagram
+ * goes out of, nor list them (`hosts/discovery/Udp.ts`). Named here, as Node's HTTP server is.
+ */
+const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
+
+/**
+ * The hosts area's connections (docs/plan/08-hosts.md), built before the board's MCP area, which asks them for the other
+ * hosts a board tool call can go to (`OtherHosts`, 7.4): the links' connections, the hubs this host dialled in to, and
+ * the hubs that take its agents' calls up.
+ */
+const HostLinksLive = Uplink.otherHosts.pipe(
+  Layer.provideMerge(Layer.mergeAll(Uplink.layer, LinkConnections.layer, Hubs.layer)),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer)),
+)
+
+/** The rest of the hosts area, over the board's MCP area: the directory, the relay, tools called from other hosts, settings sync, discovery. */
+const HostsLive = Layer.mergeAll(
+  Links.layer,
+  Relay.layer,
+  HostTools.served,
+  SettingsSyncExchange.layer,
+  SettingsSync.observer,
+  Discovery.layer,
+  CopyConfig.layer,
+).pipe(
+  Layer.provideMerge(Layer.mergeAll(HostTools.layer, SettingsSync.layer)),
+  Layer.provideMerge(Layer.mergeAll(SettingsSyncRepo.layer, UdpLive, Tailscale.layer)),
+)
+
+/**
  * The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered), questions, and the
  * board's changes that always ask (with a deleted project's approvals expiring).
  */
@@ -443,6 +512,19 @@ const runAreasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R
     Layer.provideMerge(agentsLayer(models)),
   )
 
+/**
+ * The update area: the restart job, rebuilds and a hub's push (`Updater`), release updates, the systemd service. The
+ * launcher (`Supervisor`) is the platform's, for the hand-over at startup. Outside the process: `Systemd`, git through
+ * `Proc`, GitHub through the HTTP client.
+ */
+const UpdateLive = Updater.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Releases.layer, Service.layer)),
+  Layer.provideMerge(Layer.mergeAll(Restarts.layer, Systemd.layer)),
+)
+
+/** 6.8: push, watching the board's events for what devices want. */
+const PushLive = Push.watcher.pipe(Layer.provideMerge(Push.layer), Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)))
+
 /** 6.3: the docs area: published documents, their images, and publishing them to a hosted docs site. */
 const DocsLive = Docs.layer.pipe(
   Layer.provideMerge(HostedDocs.layer),
@@ -454,23 +536,28 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // A hub's Update of a linked host: over the hosts' connections and the updater.
+    Layer.provideMerge(HostUpdates.layer),
+    // Hosts: links, the relay, tools across hosts (M7).
+    Layer.provideMerge(HostsLive),
+    // Restarts, updates, releases and the service (8.1, 8.2): Recovery settles a release that has come up.
+    Layer.provideMerge(UpdateLive),
     // 6.1: terminals (a tmux session per task and per terminal tool), ended with a worktree's teardown.
     Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
     // 6.10: computer use, over the MCP area it registers its server with.
     Layer.provideMerge(DesktopLive),
     // 6.8: push, watching the board's events for what devices want.
-    Layer.provideMerge(Push.watcher),
-    Layer.provideMerge(Push.layer),
-    Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)),
+    Layer.provideMerge(PushLive),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
+    // The links' connections, which the board's calls go to other hosts through.
+    Layer.provideMerge(HostLinksLive),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
     // 6.3: documents, which the docs server's tools call.
     Layer.provideMerge(DocsLive),
     // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
-    Layer.provideMerge(TaskDocuments.registered),
-    Layer.provideMerge(TaskDocuments.layer.pipe(Layer.provideMerge(TaskDocumentRepo.layer))),
+    Layer.provideMerge(TaskDocuments.registered.pipe(Layer.provideMerge(TaskDocuments.layer), Layer.provideMerge(TaskDocumentRepo.layer))),
     // M2 to M5's areas.
     Layer.provideMerge(runAreasLayer(models)),
   )
@@ -503,6 +590,11 @@ export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, Automat
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(
   HostRpcGroup,
+  HubHostRpcs,
+  LinkRpcs,
+  SettingsSyncRpcs,
+  AdminRpcs,
+  ToolRpcs,
   ProfileRpcs,
   ConfigRpcs,
   ProjectRpcs,
@@ -538,6 +630,11 @@ export const Served = PublicRpcs.merge(
 export const HandlersLive = Layer.mergeAll(
   PublicHandlers,
   HostHandlers,
+  HubHostHandlers,
+  LinkHandlers,
+  SettingsSyncHandlers,
+  AdminHandlers,
+  ToolHandlers,
   ProfileHandlers,
   ConfigHandlers,
   ProjectHandlers,
@@ -579,6 +676,8 @@ export const RpcLive = Layer.mergeAll(
 export const RoutesLive = Layer.mergeAll(
   RpcLive,
   HealthRoute,
+  RelayRoute,
+  LinkStreamRoute,
   McpHttpRoute,
   TerminalRoute /* 6.1 */,
   // 6.5: automations' webhooks.
@@ -594,7 +693,8 @@ export const RoutesLive = Layer.mergeAll(
  * server that is still starting (the old server bound first and held requests at a gate instead).
  */
 export const serverLayer = (config: ServerConfig["Service"]) =>
-  HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }).pipe(
+  // Once it listens, this host dials the hubs it is a host of and discovery answers on the port it got (step 6).
+  Layer.mergeAll(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Hubs.dialIn, Discovery.responder).pipe(
     Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
     Layer.provideMerge(AreasLive),
     Layer.provideMerge(PlatformLive),

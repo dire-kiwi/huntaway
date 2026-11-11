@@ -1,0 +1,179 @@
+# Builds the server for hosts and the desktop app, for Linux and macOS, when a GitHub release is published, and attaches
+# them to that release. The shape is the old repository's (dire-kiwi/huntaway, .github/workflows/release.yml), less
+# the phone app (docs/plan/14-dropped-and-open.md). How a release is made and checked: docs/plan/02-repository.md,
+# Releases.
+#
+# - The server tarball, huntaway-server-<v>-<os>-<arch>.tar.gz with its .sha256, is scripts/package-server.sh's: the
+#   server compiled to .js with its production dependencies, its own Node, ia-shim and the UI, and the desktop shell
+#   (electron/) an installed app loads once it has updated to it. scripts/release-check.sh starts it before it ships.
+#   Hosts and the desktop app take it by the sha256 digest GitHub lists for each asset.
+# - The desktop packages are apps/desktop's (`pnpm --filter huntaway-desktop run dist`), written to
+#   apps/desktop/release/: an AppImage and an Arch package on Linux, a dmg and a zip on macOS.
+# - huntaway-<v>-release.json (from the Linux job) says which desktop shell the release needs: an installed app whose
+#   shell has another stamp needs the new package, else it updates through the server tarball.
+#
+# The release's tag is the version (v1.2.3 → 1.2.3), so it must be semver with an optional leading v. Running it by
+# hand (Actions → Release → Run workflow) builds an existing release's tag again and replaces its files. Pull requests
+# don't run it: scripts/package-server.sh and scripts/release-check.sh can be run in a checkout to try a change to the
+# packaging. Only the attach job can write to the repository; nothing needs a secret.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the release to build and attach the files to
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: x64
+          - runner: macos-latest
+            os: mac
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # Vite+ (the version in pnpm-workspace.yaml's catalog), Node 24 and pnpm. The install comes after the version is
+      # set. The Node it sets up is the one the server tarball and the desktop app carry.
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: 24
+          cache: true
+          run-install: false
+
+      # fpm writes the Arch package's .MTREE with bsdtar.
+      - name: bsdtar
+        if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+
+      # The version: VERSION (which scripts/package-server.sh writes into build.json, what `huntaway --version` and
+      # /api/health report), and the desktop app's package.json (what electron-builder names the packages after).
+      - name: Version
+        run: |
+          version="${TAG#v}"
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::the tag $TAG isn't a semver version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "HUNTAWAY_BUILD_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            p.version = process.argv[2]; fs.writeFileSync(process.argv[1], JSON.stringify(p, null, 2) + "\n")' apps/desktop/package.json "$version"
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # The server the desktop app carries in its resources, release-server/ (see the script): the TypeScript server
+      # compiled to .js, the Node this job runs on (the binary Vite+'s node shim runs, not the shim, HA-270), ia-shim
+      # and the UI.
+      - name: Package the server
+        run: scripts/package-server.sh release-server "$(command -v node)"
+
+      # It answers --version with the release's version (what a host installing it checks), starts on a free port and
+      # serves its board and UI, and its approval hook answers.
+      - name: Check the packaged server
+        run: scripts/release-check.sh release-server "$VERSION"
+
+      # Linux: an AppImage and an Arch package. macOS: a dmg and a zip, ad-hoc signed (there's no Developer ID).
+      - name: Package the desktop app
+        run: pnpm --filter huntaway-desktop run dist
+
+      # The server the packaged app starts from its resources.
+      - name: Check the desktop app's server
+        working-directory: apps/desktop
+        run: |
+          if [ "${{ matrix.os }}" = mac ]; then res=$(echo release/mac*/*.app/Contents/Resources); else res=release/linux-unpacked/resources; fi
+          ls "$res"
+          [ "$("$res/huntaway" --version)" = "huntaway $VERSION" ]
+          [ -f "$res/server/src/bin.js" ] && [ -x "$res/ia-shim" ] && [ -x "$res/node/bin/node" ] && [ -f "$res/ui/index.html" ]
+
+      # The server on its own, for hosts, with the desktop shell of this release in electron/ (apps/desktop/dist, built
+      # by the step before), which an installed app loads once it has updated to it.
+      - name: Package the server tarball
+        env:
+          HUNTAWAY_SHELL_DIR: apps/desktop/dist
+        run: |
+          scripts/package-server.sh "release/huntaway-server-$VERSION-${{ matrix.os }}-${{ matrix.arch }}" "$(command -v node)"
+          ls -l release
+
+      # What an installed app reads to update itself: the version, and the shell stamp of the desktop app (apps/desktop's
+      # `stamp` script prints it: its boot code and Electron), which says whether the update needs a new package or
+      # only changes the server, the UI and the rest of the shell (which it loads from the server tarball).
+      - name: Release manifest
+        if: matrix.os == 'linux'
+        run: |
+          shell=$(cd apps/desktop && pnpm --silent run stamp)
+          [ -n "$shell" ] || { echo "::error::apps/desktop's stamp script printed no stamp"; exit 1; }
+          node -e 'const fs = require("node:fs");
+            const electron = JSON.parse(fs.readFileSync("apps/desktop/node_modules/electron/package.json", "utf8")).version;
+            const manifest = { version: process.env.VERSION, shell: process.argv[1], electron };
+            fs.writeFileSync(`release/huntaway-${process.env.VERSION}-release.json`, JSON.stringify(manifest, null, 2) + "\n")' "$shell"
+          cat "release/huntaway-$VERSION-release.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: huntaway-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.pacman
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            release/*.tar.gz
+            release/*.sha256
+            release/*.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # The builds' files, attached to the release (those that built, if one failed). On its own so that only this job,
+  # which runs nothing from the repository, has write access.
+  attach:
+    if: ${{ !cancelled() }}
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: huntaway-*
+          path: release
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(release/*.{AppImage,pacman,dmg,zip,tar.gz,sha256,json})
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no files to attach"; exit 1; }
+          ls -l "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"

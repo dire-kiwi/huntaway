@@ -1,9 +1,9 @@
 import { type Cause, Effect, Latch, Layer, Predicate, Queue, Stream, SubscriptionRef } from "effect"
 import { RpcClientError } from "effect/rpc"
 import { Socket } from "effect/socket"
-import { type BoardEvent, type BoardMessage, type BoardSnapshot, type Health, HostId, PROTOCOL, Unauthorized } from "@huntaway/contracts"
+import { type BoardEvent, type BoardMessage, type BoardSnapshot, type Health, type Host, HostId, PROTOCOL, Unauthorized } from "@huntaway/contracts"
 import { connecting, HostClient, HostSession } from "../src/index.ts"
-import { info, snapshot } from "./fixtures.ts"
+import { hostEntry, info, snapshot } from "./fixtures.ts"
 
 // An in-memory host for the client's tests: a flat client that answers `board.watch` from a snapshot and a log of
 // events, the way the server does (replay after `since` from the same boot, else a snapshot), and lets a test drop the
@@ -35,6 +35,8 @@ export interface FakeHost {
   reconnect: Effect.Effect<void>
   /** Turns the token down: the open subscription fails with `Unauthorized`. */
   refuse: Effect.Effect<void>
+  /** As a hub: the hosts `hub.hosts.watch` gives, now and on every change (at first, itself alone). */
+  readonly hosts: SubscriptionRef.SubscriptionRef<ReadonlyArray<Host>>
 }
 
 /** `message` with its number. */
@@ -57,6 +59,7 @@ export const fakeHost = (id: string): Effect.Effect<FakeHost> =>
   Effect.gen(function* () {
     const connected = yield* Latch.make(true)
     const view = yield* SubscriptionRef.make(connecting)
+    const hosts = yield* SubscriptionRef.make<ReadonlyArray<Host>>([hostEntry(id, { name: `${id}'s machine`, local: true, mode: "local", url: null })])
     const log: Array<BoardMessage & { readonly seq: number }> = []
     const handlers = new Map<string, Handler>()
     let builds = 0
@@ -123,9 +126,11 @@ export const fakeHost = (id: string): Effect.Effect<FakeHost> =>
       drop: Effect.suspend(() => Effect.andThen(connected.close, open ? Queue.fail(open, dropped) : Effect.void)),
       reconnect: Effect.asVoid(connected.open),
       refuse: Effect.suspend(() => (open ? Effect.asVoid(Queue.fail(open, new Unauthorized())) : Effect.void)),
+      hosts,
     }
     const health: Health = { ok: true, host_id: fake.id, version: "0.0.0-test", protocol: PROTOCOL, capabilities: [], commit: null }
     fake.on("public.health", () => Effect.succeed(health))
     fake.on("host.info", () => Effect.succeed(info(id)))
+    fake.on("hub.hosts.watch", () => SubscriptionRef.changes(hosts))
     return fake
   })

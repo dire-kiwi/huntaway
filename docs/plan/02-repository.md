@@ -37,8 +37,10 @@ apps/
       ui/                 whole-app checks against a test server (Playwright)
       unit/
   desktop/                the Electron shell (package huntaway-desktop), from apps/web/electron
+    src/boot/             the frame: the package's entry, which a release can't replace (plain TypeScript, no effect)
     src/main/             main process: start or attach to the server, windows, shell updates (TypeScript, Effect)
     src/preload/          the bridge the page sees
+    src/shared/           the decisions boot and main share, as plain functions
 packages/
   contracts/              @huntaway/contracts: schemas, errors, RPC groups, HTTP endpoints, events, the thread protocol
   client/                 @huntaway/client: host sessions, atoms, queries and mutations, for the web app
@@ -94,7 +96,7 @@ Leaving: `zustand` (atoms replace the store) and the server's direct dependency 
 | `vite-plus`          | 1.5.0                  | `vp check` (Oxfmt, Oxlint, the type check on TypeScript 7), `vp test` (Vitest 5.1), `vp build` |
 | `@effect/vitest`     | 4.1.3                  | `it.effect`, `layer(...)`, the test clock                                                   |
 | `@effect/tsgo`       | 0.67.7                 | Effect's lint rules inside `vp check` (the `effecttsgo` Oxlint plugin and its `strict` preset) and the editor's language service. Its list of supported Oxlint and tsgolint versions includes Vite+ 1.5.0's |
-| `tsrs`               | 0.22.0-ts7.1.0-beta    | Compiling the server to JavaScript for a release package, as now                            |
+| `typescript`         | 7.0.2                  | Its `tsc` compiles the server to JavaScript for a release package ([Releases](#releases)); `tsrs` is not needed |
 | `playwright`         | 1.64.1                 | `tests/ui` and Vitest's browser mode                                                        |
 | `electron-builder`   | ^26                    | Desktop packages                                                                            |
 
@@ -146,6 +148,7 @@ Node types, which is how the type check keeps them portable.
 | `pnpm build`        | The UI, which the server serves                                                                  |
 | `pnpm desktop`      | The Electron shell from the checkout                                                             |
 | `cargo test`        | The shim's tests                                                                                 |
+| `pnpm test:scripts` | The install scripts' tests, on fakes in a temp folder (`scripts/install*-test.sh`)               |
 
 Formatting stays Oxfmt at 160 columns. Linting is Oxlint with type-aware rules plus `@effect/tsgo`'s strict preset,
 with every rule at error and warnings failing the check: [12-conventions.md](12-conventions.md#linting) has the
@@ -156,7 +159,60 @@ configuration, which was run in [the spike](spike/lint/README.md). Markdown unde
 `.github/workflows/test.yml`, with the same shape as the old one because the same things make it fast: a `tree` job
 that skips the rest when exactly these files have already passed, then `check`, `server`, `packages`, `web`,
 `ui (1/3 to 3/3)`, `e2e` and `rust` in parallel, then `green` to record the pass. Self-hosted runners for
-the owner's branches. Release and preview workflows are in [13-milestones.md](13-milestones.md) (M9).
+the owner's branches. `.github/workflows/release.yml` builds a release ([Releases](#releases)).
+
+## Releases<a id="releases"></a>
+
+As the old repository makes them (task 8.5), less the phone app. Publishing a GitHub release whose tag is its version
+(`v1.2.3`, semver) runs `release.yml`; running it by hand with a tag builds that release again and replaces its files.
+For Linux x64 and macOS arm64 it:
+
+1. `scripts/package-server.sh release-server`: the server for the desktop app's resources and for hosts, a folder
+   that runs on its own. `huntaway` (the launcher), `build.json` (`{ "version", "commit" }`, what the server reports),
+   `ia-shim` (`cargo build --release`), `ui/` (`pnpm build`), `node/bin/node` (the Node the job runs on, copied as
+   the old script did, never a version manager's shim), and `server/`: `src/` and `migrations/` compiled to `.js`
+   without tests, `package.json`, and the production `node_modules` from `pnpm deploy --prod` (hoisted, copied so
+   that nothing is a symbolic or hard link). `@huntaway/shared` and `@huntaway/contracts` ship TypeScript, which Node
+   will not strip under `node_modules`, so they are compiled too and their `exports` point at the `.js`. What Node
+   never loads is left out: `.ts`/`.d.ts` files and source maps under `node_modules`, `@types`.
+   The compiler is TypeScript 7's own `tsc` (the workspace's `typescript`), with `rewriteRelativeImportExtensions`;
+   it type-checks the server as it compiles it, so a type error fails the package. Beside the folder go
+   `huntaway-server-<v>-<os>-<arch>.tar.gz`, one top folder of that name, and its `.sha256`; the script checks the
+   tarball as installing a release does (one top folder, no absolute or `..` entries, only files and folders,
+   `huntaway`, `ia-shim` and `ui/index.html` in it) and that `huntaway --version` says `huntaway <v>`.
+2. `scripts/release-check.sh release-server <v>`: the package starts on 127.0.0.1 on a free port with a fresh data
+   folder and no agents, `/api/health` reports the version and `build.json`'s commit, `/` serves the UI, and the
+   approval hook answers through the packaged launcher; then it is stopped by its PID.
+3. `pnpm --filter huntaway-desktop run dist`: the desktop packages, into `apps/desktop/release/`, whose resources'
+   server is checked as the old workflow did.
+4. The server tarball for hosts: `scripts/package-server.sh` again into `release/`, with `HUNTAWAY_SHELL_DIR` set
+   to the built desktop shell, which adds `electron/` (its `*.cjs` and `shell.json` `{ electron, boot: 1 }`).
+5. On Linux, `huntaway-<v>-release.json` `{ version, shell, electron }`, `shell` printed by apps/desktop's `stamp`
+   script.
+
+The `attach` job, the only one with `contents: write`, uploads every file to the release; GitHub's own sha256 digest
+of each asset is what `Releases` and `scripts/install-release-host.sh` check. Nothing needs a secret.
+
+To try a change to the packaging before a release ships it, run the first two steps in a checkout (`VERSION=x.y.z`
+to stamp another version), and `pnpm test:scripts` for the install scripts. Measured on the reference machine (HE-6,
+Node 26.8.1, ia-shim already built): the package took 8 s (the type-checking compile under 1 s); 173 MB unpacked,
+of which `node/` 144 MB and `server/` 25 MB (`effect` most of it); the tarball 53 MB. The approval hook through the
+packaged launcher: 36 ms with an empty compile cache, 23–30 ms after (from a checkout: 61, then 24–29).
+
+**Installing.** `scripts/install-release-host.sh` installs a host from a release's tarball (checked against GitHub's
+digest, unpacked into `~/.local/share/huntaway-effect-server/<v>/`, `current` pointed at it) and prints the
+`install-service`, `serve` and SSH forced-command lines with `HUNTAWAY_RELEASE_UPDATES` set, on
+`~/.local/share/huntaway-effect` and port 7879 unless told otherwise; it installs no service itself.
+`scripts/install.sh` installs the desktop app from source into `~/.local/share/huntaway-effect-app`, with a launcher
+`huntaway-effect-desktop` and a `huntaway-effect.desktop` entry ("Huntaway Effect.app" on macOS), so that it sits
+beside the old app until the switch. Their tests run them on fakes (`curl`, `systemctl`, `loginctl` on PATH, a HOME
+of their own) and never touch the machine.
+
+**Pull request previews** are not in this repository, as they were not in the old one: the old previews were
+deployed from a private repository (huntaway-deploy) that holds the hosts and domains, and are paused there. A
+preview is a release package (or a checkout) started with `serve --demo --open-token`, so any browser that opens it
+is signed in ([05-protocol.md](05-protocol.md)); bringing them back is a change in that repository, which builds from
+`scripts/package-server.sh`.
 
 ## Names that stay, and names that change
 

@@ -115,5 +115,9 @@ export const Host = Schema.Struct({
   last_message_at: Schema.NullOr(Timestamp),
   /** Its agents may use this board's tools, up the link. */
   uplink: Schema.Boolean,
+  /** The link's live state (M7); absent from a host's own entry. */
+  status: Schema.optional(Schema.Literals(["connecting", "connected", "offline", "needs_update", "refused"])),
+  /** Why it is `offline` or `refused`, to show beside it. */
+  status_reason: Schema.optional(Schema.NullOr(Schema.String)),
 })
 export interface Host extends Schema.Schema.Type<typeof Host> {}

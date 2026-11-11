@@ -83,7 +83,11 @@ export function App() {
 
   if (authed === false) return <TokenScreen />
   if (authed === null) return null
-  if (profiles.length === 0) return loaded ? <Onboarding /> : null
+  // A board with none of its own can still link hosts that have some (Settings → Hosts, M7).
+  if (profiles.length === 0) {
+    if (!loaded) return null
+    return route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />
+  }
 
   return (
     <div className="relative flex h-full">

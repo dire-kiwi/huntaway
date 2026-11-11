@@ -6,7 +6,7 @@
 // methods the web app does, over `POST /api/rpc` (newline-delimited JSON, as `huntaway rpc` does). The old checks ran on
 // the demo board (`--demo`); these make the board they need with `seedBoard`, so they say what they start from.
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -65,7 +65,11 @@ export function startServer(...args) {
   }
   // Its error, if it fails, is in the exception's message.
   const stop = () => execFileSync(script, ["stop", vars.HUNTAWAY_TEST_DATA_DIR], { stdio: ["ignore", "ignore", "pipe"] })
-  return { url, token, dataDir: vars.HUNTAWAY_TEST_DATA_DIR, rpc, stop }
+  /** Ends the server's process (by its PID) and keeps its data, as a machine going away does; `restart` brings it back. */
+  const kill = () => process.kill(Number(readFileSync(join(vars.HUNTAWAY_TEST_DATA_DIR, "server.pid"), "utf8").trim()))
+  /** Starts it again on the same port and data (test-server.sh restart). */
+  const restart = () => execFileSync(script, ["restart", vars.HUNTAWAY_TEST_DATA_DIR], { stdio: ["ignore", "ignore", "pipe"] })
+  return { url, token, dataDir: vars.HUNTAWAY_TEST_DATA_DIR, rpc, stop, kill, restart }
 }
 
 /** A git repository at `dir` with a commit, so a project on it can have worktrees (else its board says it isn't ready). */

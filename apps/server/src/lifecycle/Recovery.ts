@@ -46,6 +46,7 @@ export const RecoveryLive = Layer.effectDiscard(
     yield* (yield* GhStacks).linkAll
     yield* toolCalls.resume
     yield* tokens.countPending(null)
+    // A release is settled by `serve` once the server listens, not here (Releases.settle).
     // 4.8: a minute on, the open stacks whose titles weren't written from what their levels say now (in the background).
     yield* (yield* StackTitles).resume
   }).pipe(Effect.withSpan("Recovery"), Effect.annotateLogs({ module: "recovery" })),

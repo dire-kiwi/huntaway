@@ -1,6 +1,6 @@
 import { Context, Effect, FileSystem, Layer, Option, Redacted, Result, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { Invalid, ProfileId } from "@huntaway/contracts"
+import { Invalid, LinkId, ProfileId } from "@huntaway/contracts"
 import type { AgentConfigId, AsanaTask, Conflict, NewProfile, Profile, ProfilePatch } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
@@ -28,6 +28,7 @@ import {
   reviewersValue,
 } from "./checks.ts"
 import { removeUnusedDir } from "./dataFolders.ts"
+import { SettingsRepo } from "../settings/SettingsRepo.ts"
 import { ProfileRepo } from "./ProfileRepo.ts"
 import type { ProfileColumns } from "./ProfileRepo.ts"
 
@@ -65,6 +66,7 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
     Effect.gen(function* () {
       const repo = yield* ProfileRepo
       const configRepo = yield* AgentConfigRepo
+      const settingsRepo = yield* SettingsRepo
       const configs = yield* AgentConfigs
       const db = yield* Db
       const events = yield* Events
@@ -80,11 +82,13 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
       const configIds = Effect.map(configRepo.list, (list) => new Set<string>(list.map((c) => c.id)))
       /** Its folder for scratch tasks, made when it is (the old `profile_scratch_dir`). */
       const makeScratch = (id: ProfileId) => fs.makeDirectory(`${dataDir.profileDir(id)}/scratch`, { recursive: true }).pipe(Effect.ignore)
-      // The linked host its assistant runs on: there are no linked hosts before M7, so only this host (null) is taken.
+      // The linked host its assistant runs on (a `links` row), or this host (null).
       const checkAssistantHost = (v: string | null | undefined) => {
         const id = blank(v)
         if (id === null || id === identity.hostId) return Effect.succeed(null)
-        return Effect.fail(new Invalid({ field: "assistant_host", reason: "assistant_host must be a linked host, and this host has none" }))
+        return Effect.flatMap(settingsRepo.linkExists(id), (linked) =>
+          linked ? Effect.succeed(LinkId.make(id)) : Effect.fail(new Invalid({ field: "assistant_host", reason: "assistant_host must be a linked host" })),
+        )
       }
       const newId = Effect.map(random.uuidV4(), (id) => ProfileId.make(id)).pipe(Effect.orDie)
 

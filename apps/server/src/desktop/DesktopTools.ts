@@ -4,9 +4,9 @@ import { threadKindOf } from "@huntaway/contracts"
 import type { Task } from "@huntaway/contracts"
 import { keyPrefix } from "../agents/prompts/context.ts"
 import { truncate } from "../git/paths.ts"
-import { McpServers, toolHandler } from "../mcp/McpServers.ts"
+import { localToolHandler, McpServers } from "../mcp/McpServers.ts"
 import type { RegisteredTool } from "../mcp/McpServers.ts"
-import type { McpCaller } from "../mcp/tool.ts"
+import type { LocalCaller } from "../mcp/tool.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { Identity } from "../platform/Identity.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
@@ -50,7 +50,7 @@ const pick = (a: Readonly<Record<string, unknown>>, keys: ReadonlyArray<string>)
 class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbol }>()("Refused", { text: Schema.String }) {}
 
 /** Why the caller may not act on the desktop now: a reviewer only looks, and so does a thread in plan mode. */
-const refused = (caller: McpCaller, tool: string): string | null => {
+const refused = (caller: LocalCaller, tool: string): string | null => {
   if (caller.task.kind === "review") return `${tool} isn't available to reviewers: they can only look at the desktop.`
   if (caller.mode === "plan") {
     return `${tool} isn't available in plan mode: until the user approves your plan (present it with ExitPlanMode), you can only look at the desktop.`
@@ -86,19 +86,19 @@ export const desktopTools = Effect.gen(function* () {
   })
 
   /** The session a task's calls are kept under. */
-  const sessionOf = (caller: McpCaller) => Effect.map(keyOf(caller.task), (key) => `huntaway-${key}`)
+  const sessionOf = (caller: LocalCaller) => Effect.map(keyOf(caller.task), (key) => `huntaway-${key}`)
 
   /** Call the driver's `tool`, with the task's session if the tool takes one: its result as it is. */
-  const driveRaw = Effect.fnUntraced(function* (caller: McpCaller, tool: string, args: Readonly<Record<string, unknown>>) {
+  const driveRaw = Effect.fnUntraced(function* (caller: LocalCaller, tool: string, args: Readonly<Record<string, unknown>>) {
     yield* driver.start
     const withSession = (yield* driver.has(tool, "session")) ? { ...args, session: yield* sessionOf(caller) } : args
     return yield* driver.call(tool, withSession)
   })
 
-  const drive = (caller: McpCaller, tool: string, args: Readonly<Record<string, unknown>>) => Effect.map(driveRaw(caller, tool, args), forAgent)
+  const drive = (caller: LocalCaller, tool: string, args: Readonly<Record<string, unknown>>) => Effect.map(driveRaw(caller, tool, args), forAgent)
 
   /** The viewer shows the window the agent last looked at or acted on. */
-  const noteTarget = (caller: McpCaller, a: { readonly pid?: number | undefined; readonly window_id?: number | undefined }) =>
+  const noteTarget = (caller: LocalCaller, a: { readonly pid?: number | undefined; readonly window_id?: number | undefined }) =>
     a.pid === undefined ? Effect.void : claims.setTarget(caller.task.id, a.pid, a.window_id ?? null)
 
   /** Refuse on a locked screen. */
@@ -113,7 +113,7 @@ export const desktopTools = Effect.gen(function* () {
   )
 
   /** Refuse when another task is driving the desktop; else this task holds it. */
-  const checkClaim = (caller: McpCaller) =>
+  const checkClaim = (caller: LocalCaller) =>
     Effect.flatMap(claims.claim(caller.task.id), (h) =>
       h === null
         ? Effect.void
@@ -140,7 +140,7 @@ export const desktopTools = Effect.gen(function* () {
 
   /** An action: refused off, for reviewers and in plan mode; then claimed, journaled, and run once per op_id. */
   const writing = (
-    caller: McpCaller,
+    caller: LocalCaller,
     name: "act" | "launch" | "clipboard",
     a: Readonly<Record<string, unknown>> & { readonly op_id?: string | undefined },
     prepare: Effect.Effect<{ readonly tool: string; readonly args: Readonly<Record<string, unknown>>; readonly summary: string }, Refused | DriverError>,
@@ -188,7 +188,7 @@ export const desktopTools = Effect.gen(function* () {
     )
 
   /** A launched app's window is the one the viewer shows. */
-  const noteLaunched = (caller: McpCaller, result: CuaResult) => {
+  const noteLaunched = (caller: LocalCaller, result: CuaResult) => {
     const sc = result.structuredContent
     const fields = typeof sc === "object" && sc !== null && !Array.isArray(sc) ? new Map(Object.entries(sc)) : new Map<string, unknown>()
     const pid = intOrNull(fields.get("pid"))
@@ -198,7 +198,7 @@ export const desktopTools = Effect.gen(function* () {
     return pid === null ? Effect.void : claims.setTarget(caller.task.id, pid, windowId)
   }
 
-  const health = (caller: McpCaller) =>
+  const health = (caller: LocalCaller) =>
     Effect.gen(function* () {
       const found = yield* driver.find
       const on = yield* desktop.enabled
@@ -230,7 +230,7 @@ export const desktopTools = Effect.gen(function* () {
       return text(pretty(out))
     })
 
-  const opStatus = (caller: McpCaller, opId: string) =>
+  const opStatus = (caller: LocalCaller, opId: string) =>
     Effect.gen(function* () {
       const op = yield* opRepo.find(caller.task.id, opId)
       if (op === null) return text(`No op ${quoted(opId)} in this task: it never started, so it didn't run.`)
@@ -240,10 +240,10 @@ export const desktopTools = Effect.gen(function* () {
     })
 
   const all: ReadonlyArray<RegisteredTool> = [
-    toolHandler(Health, (_, caller) => health(caller)),
-    toolHandler(Apps, (_, caller) => reading(drive(caller, "list_apps", {}))),
-    toolHandler(Windows, (a, caller) => reading(drive(caller, "list_windows", pick(a, ["pid", "app", "on_screen_only"])))),
-    toolHandler(Read, (a, caller) =>
+    localToolHandler(Health, (_, caller) => health(caller)),
+    localToolHandler(Apps, (_, caller) => reading(drive(caller, "list_apps", {}))),
+    localToolHandler(Windows, (a, caller) => reading(drive(caller, "list_windows", pick(a, ["pid", "app", "on_screen_only"])))),
+    localToolHandler(Read, (a, caller) =>
       reading(
         Effect.andThen(
           noteTarget(caller, a),
@@ -254,7 +254,7 @@ export const desktopTools = Effect.gen(function* () {
         ),
       ),
     ),
-    toolHandler(Screen, (a, caller) =>
+    localToolHandler(Screen, (a, caller) =>
       reading(
         Effect.gen(function* () {
           if (a.pid === undefined) return yield* drive(caller, "get_desktop_state", {})
@@ -267,14 +267,14 @@ export const desktopTools = Effect.gen(function* () {
         }),
       ),
     ),
-    toolHandler(Zoom, (a, caller) =>
+    localToolHandler(Zoom, (a, caller) =>
       reading(Effect.andThen(noteTarget(caller, a), drive(caller, "zoom", pick(a, ["pid", "window_id", "x1", "y1", "x2", "y2"])))),
     ),
-    toolHandler(Verify, (a, caller) =>
+    localToolHandler(Verify, (a, caller) =>
       reading(Effect.andThen(noteTarget(caller, a), drive(caller, "verify_state", pick(a, ["pid", "window_id", "expect", "include_screenshot"])))),
     ),
-    toolHandler(OpStatus, (a, caller) => opStatus(caller, a.op_id)),
-    toolHandler(Act, (a, caller) =>
+    localToolHandler(OpStatus, (a, caller) => opStatus(caller, a.op_id)),
+    localToolHandler(Act, (a, caller) =>
       writing(
         caller,
         "act",
@@ -288,7 +288,7 @@ export const desktopTools = Effect.gen(function* () {
         }),
       ),
     ),
-    toolHandler(Launch, (a, caller) =>
+    localToolHandler(Launch, (a, caller) =>
       writing(
         caller,
         "launch",
@@ -300,7 +300,7 @@ export const desktopTools = Effect.gen(function* () {
         }),
       ),
     ),
-    toolHandler(Clipboard, (a, caller) =>
+    localToolHandler(Clipboard, (a, caller) =>
       writing(
         caller,
         "clipboard",

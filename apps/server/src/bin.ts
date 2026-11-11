@@ -3,13 +3,17 @@ import { Console, Context, Effect, Layer, Option, Redacted, Schema } from "effec
 import { Command, Flag } from "effect/cli"
 import { Mac, SecureRandom } from "effect/crypto"
 import { HttpServer } from "effect/http"
+import { installServiceCommand } from "./cli/installService.ts"
 import { rpcCommand } from "./cli/rpc.ts"
+import { sshHostCommand } from "./cli/sshHost.ts"
+import { Releases } from "./update/Releases.ts"
+import { Supervisor } from "./update/Supervisor.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
 import { Listening } from "./platform/Listening.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
-import { ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
+import { releaseBuild, ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
 import type { ServeArgs } from "./platform/ServerConfig.ts"
 
 // The entry point (docs/plan/06-server.md, The CLI): `huntaway [serve] [flags]`, `huntaway token [--hub]`,
@@ -28,12 +32,18 @@ const serve = (args: ServeArgs) =>
     const context = yield* Layer.build(serverLayer(config))
     const server = Context.get(context, HttpServer.HttpServer)
     const identity = Context.get(context, Identity)
+    // Only now, listening with the hubs dialled and discovery answering, has a release come up: it becomes current (the
+    // old server settled after listen, dial-out and discovery). One that fails before this stays `trying`, and the next
+    // start marks it bad and goes back (Releases.execInstalled).
+    yield* Context.get(context, Releases).settle
     const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
     // What runs are told to reach the server on: the port the listener got (`--port 0` asks for a free one).
     yield* Context.get(context, Listening).bound(port)
     yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
     const line = yield* Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) })
     yield* Console.log(`HUNTAWAY_READY ${line}`)
+    // From now on the launcher starts the server again if it crashes (step 6).
+    yield* Context.get(context, Supervisor).started
     return yield* Effect.never
   }).pipe(Effect.scoped, Effect.provide(ServerConfig.layerFrom(args)))
 
@@ -72,13 +82,13 @@ const tokenCommand = Command.make(
 
 const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
   Command.withDescription("Huntaway: a kanban board for orchestrating Claude Code and Codex agents"),
-  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand]),
+  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand, sshHostCommand, installServiceCommand]),
 )
 
 const program =
   process.argv[2] === "--version"
-    ? // The release smoke test depends on this exact form.
-      Console.log(`huntaway ${VERSION}`)
+    ? // The release smoke test depends on this exact form. A release's version is its build.json's (beside its launcher).
+      releaseBuild(process.env["HUNTAWAY_EXE"] ?? null).pipe(Effect.flatMap((build) => Console.log(`huntaway ${build?.version ?? VERSION}`)))
     : Command.run(huntaway, { version: VERSION })
 
 program.pipe(
