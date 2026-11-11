@@ -20,6 +20,7 @@ import {
   PublicRpcs,
   TaskRpcs,
   ThreadRpcs,
+  WorkflowRpcs,
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
@@ -148,6 +149,13 @@ import { Tasks } from "./tasks/Tasks.ts"
 import { ThreadReaders } from "./threads/ThreadReaders.ts"
 import { Threads } from "./threads/Threads.ts"
 import { ThreadStore } from "./threads/ThreadStore.ts"
+// 6.6
+import { WorkflowFacts } from "./agents/WorkflowFacts.ts"
+import { WorkflowHandlers } from "./rpc/workflows.ts"
+import { WorkflowEngine } from "./workflows/WorkflowEngine.ts"
+import { Workflows } from "./workflows/Workflows.ts"
+import { WorkflowApprovals } from "./workflows/WorkflowApprovals.ts"
+import { WorkflowStore } from "./workflows/WorkflowStore.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -234,6 +242,8 @@ const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1,
     Layer.provideMerge(
       Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, StackTitleRepo.layer, models.titles, models.window),
     ),
+    // 6.6: what the prompts, a run's end and the merge queue read of a task's workflows (the workflows area registers it).
+    Layer.provideMerge(WorkflowFacts.layer),
     // A Codex config's titles are asked of Codex, as its models are (5.3).
     Layer.provideMerge(models.codex),
     Layer.provideMerge(GithubLive),
@@ -307,6 +317,11 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.6: workflows: changing them, and the engine (registered with the agents area's `WorkflowFacts`) over its store.
+    Layer.provideMerge(WorkflowApprovals.layer),
+    Layer.provideMerge(Layer.mergeAll(Workflows.layer, WorkflowEngine.registered)),
+    Layer.provideMerge(WorkflowEngine.layer),
+    Layer.provideMerge(WorkflowStore.layer),
     // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
     Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
     // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
@@ -362,6 +377,8 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.6
+  WorkflowRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +397,8 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.6
+  WorkflowHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

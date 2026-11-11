@@ -28,6 +28,7 @@ const facts = (over: Partial<FinishFacts> = {}): FinishFacts => ({
   configName: "Work",
   mergeHeld: null,
   mergesToDone: false,
+  finishDue: null,
   planOnly: false,
   nudged: false,
   endOfMergeQueue: 9,
@@ -146,7 +147,14 @@ describe("decideFinish", () => {
 
   it("a compaction never moves the card, and says when it stopped or failed", () => {
     const compact = { kind: "compact", attention: null, finished: false } as const
-    assert.deepStrictEqual(decideFinish(facts({ run: compact })), { notices: [], columns: { running: false }, sendQueued: true, nudge: null })
+    assert.deepStrictEqual(decideFinish(facts({ run: compact })), {
+      notices: [],
+      columns: { running: false },
+      sendQueued: true,
+      nudge: null,
+      workDone: false,
+      mergeFinished: false,
+    })
     assert.deepStrictEqual(decideFinish(facts({ run: compact, outcome: Outcome.failed("x") })).notices, [
       { level: "error", text: "Compacting failed", detail: "x" },
     ])

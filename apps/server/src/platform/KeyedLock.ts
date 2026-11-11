@@ -19,6 +19,9 @@ export type LockKey =
   | readonly ["task", string]
   | readonly ["run", string]
   | readonly ["workspace", string]
+  // 6.6: one workflow start per task at a time (before the task's lock), and a workflow run's state (one row) changed by one at a time.
+  | readonly ["workflows", string]
+  | readonly ["workflowRun", string]
 
 export interface KeyedLockShape {
   /** One holder per key at a time, waiters in order, released on any exit. */

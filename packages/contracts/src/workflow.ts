@@ -132,7 +132,7 @@ export const Workflow = Schema.Struct({
   created_at: Timestamp,
   updated_at: Timestamp,
 })
-export interface Workflow extends Schema.Schema.Type<typeof Workflow> {}
+export type Workflow = typeof Workflow.Type
 
 /** What `workflows.create` takes: on by default. */
 export const NewWorkflow = Schema.Struct({ project_id: ProjectId, name: Schema.String, graph: WorkflowGraph, enabled: Schema.optional(Schema.Boolean) })
@@ -170,7 +170,7 @@ export const WorkflowNodeRun = Schema.Struct({
   started_at: Schema.optionalKey(Timestamp),
   finished_at: Schema.optionalKey(Timestamp),
 })
-export interface WorkflowNodeRun extends Schema.Schema.Type<typeof WorkflowNodeRun> {}
+export type WorkflowNodeRun = typeof WorkflowNodeRun.Type
 
 /** What started a run: the task entering a column, its agent's work there done, its merge, or a run by hand. */
 export const WorkflowRunSource = Schema.Literals(["status", "finished", "merged", "manual"])
@@ -252,6 +252,12 @@ export const workflowDataInputs = (n: WorkflowNode): ReadonlyArray<string> => {
       return Array.from({ length: Math.min(Math.max(n.count, 1), MAX_JOIN) }, (_, i) => `in${i + 1}`)
     case "switch":
       return ["yes", "no"]
+    case "trigger":
+    case "condition":
+    case "split":
+    case "text":
+    case "task":
+    case "project_prompt":
     default:
       return []
   }
@@ -276,6 +282,9 @@ export const workflowDataOutputs = (n: WorkflowNode): ReadonlyArray<string> => {
     case "join":
     case "switch":
       return ["text"]
+    case "trigger":
+    case "condition":
+    case "send_to_task":
     default:
       return []
   }
@@ -298,6 +307,12 @@ export const workflowPorts = (n: WorkflowNode): ReadonlyArray<string> => {
       return ["opened", "exists", "failed"]
     case "split":
       return WORKFLOW_PATHS.slice(0, Math.min(Math.max(n.weights.length, 0), WORKFLOW_PATHS.length))
+    case "text":
+    case "task":
+    case "project_prompt":
+    case "compose":
+    case "join":
+    case "switch":
     default:
       return []
   }

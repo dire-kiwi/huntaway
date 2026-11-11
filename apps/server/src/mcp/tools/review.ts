@@ -1,12 +1,13 @@
 import { Effect, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { Reviews } from "../../review/Reviews.ts"
+import { WorkflowEngine } from "../../workflows/WorkflowEngine.ts"
 import { ForPlanning, ForReviewers, Rerunnable, ReviewersOnly, ToolError } from "../tool.ts"
 import { boardTool } from "./common.ts"
 
 // What a reviewer reports (docs/plan/inventory/03-mcp.md; the old mcp.ts `submit_review_tool` and mcp/tools/dispatch.ts):
 // `submit_review`, offered to review threads only. Its verdict is recorded on the reviewer's part of the review and acted
-// on when the reviewer's run ends (`Reviews.finished`). A workflow step's verdict is the workflow engine's (6.6).
+// on when the reviewer's run ends (`Reviews.finished`). A workflow step's verdict is the workflow engine's (6.6, `WorkflowEngine.submit`).
 
 export const SubmitReview = Tool.make("submit_review", {
   description: "Report the outcome of your review. Call it once, when the review is complete. Serious issues are sent to the task's agent to fix.",
@@ -42,10 +43,14 @@ const asList = (v: unknown): unknown => (typeof v === "string" ? (v.trim() === "
 /** The reviewers' tool's handler. */
 export const reviewTools = Effect.gen(function* () {
   const reviews = yield* Reviews
+  const engine = yield* WorkflowEngine
   const submitReview = boardTool(
     SubmitReview,
     (params, caller) =>
-      reviews.submit(caller.task, caller.run.id, params).pipe(Effect.catchTag("ReviewRefused", (e) => Effect.fail(ToolError.other(e.reason)))),
+      // 6.6: a workflow's verdict step's, recorded on its step.
+      caller.task.kind === "review" && caller.task.task_type === "workflow"
+        ? engine.submit(caller.task, caller.run.id, params).pipe(Effect.catchTag("WorkflowRefused", (e) => Effect.fail(ToolError.other(e.reason))))
+        : reviews.submit(caller.task, caller.run.id, params).pipe(Effect.catchTag("ReviewRefused", (e) => Effect.fail(ToolError.other(e.reason)))),
     {
       prepare: (args) => ({
         ...args,
