@@ -1,26 +1,26 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { ProfileId } from "@huntaway/contracts"
+import { ProjectId } from "@huntaway/contracts"
 import { Db } from "./Db.ts"
 import { Events } from "./Events.ts"
 
 const TestLive = Events.layer.pipe(Layer.provideMerge(Db.layerMemory), Layer.provideMerge(SecureRandom.layerWebCrypto))
-const pens = (id: string) => ({ type: "pens" as const, profile_id: ProfileId.make(id) })
+const gone = (id: string) => ({ type: "project_deleted" as const, id: ProjectId.make(id) })
 
 describe("Events", () => {
   it.effect("numbers events and delivers them to a subscriber", () =>
     Effect.gen(function* () {
       const events = yield* Events
       const watch = yield* events.watch(undefined)
-      yield* events.emit(pens("a"))
-      yield* events.emit({ type: "settings_changed" })
+      yield* events.emit(gone("a"))
+      yield* events.emit(gone("b"))
       const seen = yield* watch.live.pipe(Stream.take(2), Stream.runCollect)
       assert.deepStrictEqual(
         seen.map((e) => [e.type, e.seq]),
         [
-          ["pens", 1],
-          ["settings_changed", 2],
+          ["project_deleted", 1],
+          ["project_deleted", 2],
         ],
       )
     }).pipe(Effect.scoped, Effect.provide(TestLive)),
@@ -33,16 +33,16 @@ describe("Events", () => {
       const watch = yield* events.watch(undefined)
       yield* db.tx(
         Effect.gen(function* () {
-          yield* events.emit(pens("in-tx"))
+          yield* events.emit(gone("in-tx"))
           assert.strictEqual(yield* events.seq, 0, "not published before the commit")
         }),
       )
       assert.strictEqual(yield* events.seq, 1)
-      yield* db.tx(Effect.andThen(events.emit(pens("rolled-back")), Effect.fail("no"))).pipe(Effect.ignore)
-      yield* events.emit(pens("after"))
+      yield* db.tx(Effect.andThen(events.emit(gone("rolled-back")), Effect.fail("no"))).pipe(Effect.ignore)
+      yield* events.emit(gone("after"))
       const seen = yield* watch.live.pipe(Stream.take(2), Stream.runCollect)
       assert.deepStrictEqual(
-        seen.map((e) => (e.type === "pens" ? e.profile_id : e.type)),
+        seen.map((e) => (e.type === "project_deleted" ? e.id : e.type)),
         ["in-tx", "after"],
       )
     }).pipe(Effect.scoped, Effect.provide(TestLive)),
@@ -51,9 +51,9 @@ describe("Events", () => {
   it.effect("replays from a `since` of this boot, and asks for a snapshot otherwise", () =>
     Effect.gen(function* () {
       const events = yield* Events
-      yield* events.emit(pens("1"))
-      yield* events.emit(pens("2"))
-      yield* events.emit(pens("3"))
+      yield* events.emit(gone("1"))
+      yield* events.emit(gone("2"))
+      yield* events.emit(gone("3"))
       const resumed = yield* events.watch({ boot: events.boot, seq: 1 })
       assert.deepStrictEqual(
         resumed.replay?.map((e) => e.seq),
