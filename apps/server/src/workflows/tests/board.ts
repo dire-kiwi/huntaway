@@ -163,10 +163,9 @@ export const settle = Effect.gen(function* () {
 
 /** The workflow's runs on the task, newest first. */
 export const runsOf = (w: Pick<Workflow, "id">, t: TaskId = TASK) =>
-  Effect.map(
-    Effect.flatMap(WorkflowStore.asEffect(), (s) => s.runsOfTask(t)),
-    (all) => all.filter((r) => r.workflow_id === w.id),
-  )
+  Effect.gen(function* () {
+    return (yield* (yield* WorkflowStore).runsOfTask(t)).filter((r) => r.workflow_id === w.id)
+  })
 
 /** The workflow's latest run on the task. */
 export const latest = (w: Pick<Workflow, "id">, t: TaskId = TASK) =>
@@ -270,4 +269,17 @@ export const ends = (agent: FakeAgent, text: string | null = null, ok = true) =>
   })
 
 /** The engine, for a test. */
-export const engine = WorkflowEngine.asEffect()
+export const engine = WorkflowEngine
+
+/** A run of the task's agent ends, its work done (with `finish_work` if `finished`), the task in In progress before. */
+export const agentFinishes = (options: { readonly finished?: boolean; readonly todos?: ReadonlyArray<unknown> } = {}) =>
+  Effect.gen(function* () {
+    yield* setTask(TASK, { status: "in_progress", running: true, ...(options.todos !== undefined ? { todos: options.todos } : {}) })
+    const agent = yield* fakeAgent({ task: TASK, kind: "prompt" })
+    if (options.finished === true) {
+      const sql = yield* SqlClient.SqlClient
+      yield* sql`UPDATE runs SET finished = 1 WHERE id = ${agent.run.id}`.pipe(Effect.orDie)
+    }
+    yield* ends(agent)
+    return agent
+  })
