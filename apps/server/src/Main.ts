@@ -54,6 +54,7 @@ import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
+import { Approvals } from "./permissions/Approvals.ts"
 import { PermissionRepo } from "./permissions/PermissionRepo.ts"
 import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
@@ -189,8 +190,11 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
-/** The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered) and questions. */
-const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer).pipe(
+/**
+ * The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered), questions, and the
+ * board's changes that always ask (with a deleted project's approvals expiring).
+ */
+const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer, Approvals.layer, Approvals.projectsDeleted).pipe(
   Layer.provideMerge(Permissions.layer),
   Layer.provideMerge(PermissionRepo.layer),
 )

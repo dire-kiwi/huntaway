@@ -3,7 +3,7 @@ import type { Tool } from "effect/ai"
 import { toolHandler } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
 import { ToolError } from "../tool.ts"
-import type { ToolHandler } from "../tool.ts"
+import type { McpCaller, ToolHandler } from "../tool.ts"
 
 // What the board's tools share (docs/plan/07-agents.md, Board tools): the arguments every area's tools take, copied
 // from the old mcp.ts `board_tools`, the way a tool's handler is registered, and the services' errors as the agent is
@@ -74,6 +74,7 @@ export type ServiceError =
   | { readonly _tag: "Invalid"; readonly reason: string }
   | { readonly _tag: "Conflict"; readonly detail: string }
   | { readonly _tag: "SendRefused"; readonly detail: string }
+  | { readonly _tag: "NotApproved"; readonly message: string }
 
 const NOT_FOUND = { TaskNotFound: "task", ProjectNotFound: "project", ProfileNotFound: "profile", PenNotFound: "pen" } as const
 
@@ -86,8 +87,12 @@ export const toolErrorOf = (e: ServiceError): ToolError => {
   if (e._tag === "NotFound") return ToolError.notFound(`${e.what} ${e.id}`)
   if (e._tag === "Invalid") return ToolError.other(e.reason)
   if (e._tag === "Conflict" || e._tag === "SendRefused") return ToolError.other(e.detail)
+  if (e._tag === "NotApproved") return ToolError.other(e.message)
   return ToolError.notFound(`${NOT_FOUND[e._tag]} ${e.id}`)
 }
 
 /** `self` with a board service's errors as the agent is told them. */
 export const told = <A, E extends ServiceError, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, ToolError, R> => Effect.mapError(self, toolErrorOf)
+
+/** The call asking the user (`Approvals`, `Permissions.approve`). */
+export const asker = (caller: McpCaller) => ({ run: caller.run, call_id: caller.call_id })

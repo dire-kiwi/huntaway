@@ -2,11 +2,12 @@ import { useAtomSet } from "@effect/atom-react"
 import { mutations, PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
 import { TaskId, type PermissionMode } from "@huntaway/contracts"
 import { clsx } from "clsx"
-import { Check, ChevronRight, Map as MapIcon, MessageCircleQuestion, Send, ShieldAlert, Trash2, X } from "lucide-react"
+import { Check, ChevronRight, FolderPlus, Map as MapIcon, MessageCircleQuestion, Send, ShieldAlert, Trash2, X } from "lucide-react"
 import { memo, useEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from "react"
 import { useBoard } from "../../../state/board"
 import { useProject } from "../../boardHelpers"
 import { Button, Textarea, useAsyncAction } from "../../ui"
+import { ProjectChangeDetail, ProjectCreationDetail, TaskDeletionDetail } from "./approvalDetails"
 import { Markdown } from "./Markdown"
 import { usePromptAnswers } from "./promptAnswers"
 import type { Any } from "./threadModel"
@@ -14,8 +15,8 @@ import type { Any } from "./threadModel"
 // What the thread's requests carry, drawn as the old cards drew them (task/Questions.tsx and task/Approvals.tsx), and
 // answered from them (plan task 3.3) with the host's `permissions.answer`: Claude's questions (picked with a click or
 // keys 1–9, or typed), a plan (approved into a mode, or sent back with feedback), and the board's own approvals (a
-// project's change, a task's deletion, an automation or a workflow: approved or denied; their detailed views come with
-// `Approvals`, 3.4); and a question asked with the board's request_user_input, whose answer is the user's message
+// project's change, a task's deletion, an automation or a workflow: approved or denied; a project's and a deletion's
+// detailed views are approvalDetails.tsx, 3.4); and a question asked with the board's request_user_input, whose answer is the user's message
 // (`threads.answerQuestion`).
 
 /** An option of a question, with what it would look like (`preview`) if the agent gave that. */
@@ -734,13 +735,34 @@ function Answer({ status, deletion }: { status: string; deletion?: boolean | und
   )
 }
 
-/** One of the board's own approvals in its thread: what it asks, Approve and Deny while it waits, and its answer once given. */
-function ApprovalCard({ data, hostId, title, deletion }: { data: Any; hostId: string; title: ReactNode; deletion?: boolean }) {
+/**
+ * One of the board's own approvals in its thread: what it asks (`detail`, while it waits or once opened; else `summary`,
+ * which opens it), Approve and Deny while it waits, and its answer once given.
+ */
+function ApprovalCard({
+  data,
+  hostId,
+  title,
+  deletion,
+  icon,
+  detail,
+  summary,
+}: {
+  data: Any
+  hostId: string
+  title: ReactNode
+  deletion?: boolean
+  icon?: typeof ShieldAlert
+  detail?: ReactNode
+  summary?: string
+}) {
   const pending = data.status === "pending"
+  const [open, setOpen] = useState(false)
   const respond = usePromptAnswers(hostId)
   const { busy, error, run } = useAsyncAction()
   const decide = (decision: "allow" | "deny") => void run(() => respond(data.request_id, { decision }))
-  const Icon = deletion ? Trash2 : ShieldAlert
+  const Icon = icon ?? (deletion ? Trash2 : ShieldAlert)
+  const shortly = summary ?? data.input?.reason
   return (
     <div
       className={clsx(
@@ -753,7 +775,16 @@ function ApprovalCard({ data, hostId, title, deletion }: { data: Any; hostId: st
         <span className={clsx("min-w-0 truncate", pending ? "text-fg" : "text-muted")}>{title}</span>
         {!pending && <Answer status={data.status} deletion={deletion} />}
       </div>
-      {data.input?.reason && <div className="truncate text-[12px] text-faint">{data.input.reason}</div>}
+      {detail !== undefined && (pending || open)
+        ? detail
+        : shortly &&
+          (detail === undefined ? (
+            <div className="truncate text-[12px] text-faint">{shortly}</div>
+          ) : (
+            <button className="block max-w-full truncate text-left text-[12px] text-faint hover:text-muted" onClick={() => setOpen(true)}>
+              {shortly}
+            </button>
+          ))}
       {pending && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button size="sm" variant={deletion ? "danger" : "primary"} disabled={busy} onClick={() => decide("allow")}>
@@ -772,7 +803,6 @@ function ApprovalCard({ data, hostId, title, deletion }: { data: Any; hostId: st
 const taskName = (t: Any): string => (t ? `${t.key ?? ""}${t.key && t.title ? " " : ""}${t.title ?? ""}` : "")
 
 export function TaskDeletionCard({ data, hostId }: { data: Any; hostId: string }) {
-  const others = data.input?.tasks_with_it?.length ?? 0
   return (
     <ApprovalCard
       data={data}
@@ -781,30 +811,43 @@ export function TaskDeletionCard({ data, hostId }: { data: Any; hostId: string }
       title={
         <>
           Delete the task <span className="font-medium">{taskName(data.input?.delete)}</span>
-          {others > 0 && ` and its ${others} task${others === 1 ? "" : "s"}`}
         </>
       }
+      detail={<TaskDeletionDetail deletion={data.input} />}
     />
   )
 }
 
 export function ProjectChangeCard({ data, hostId }: { data: Any; hostId: string }) {
   const name = data.input?.project?.name
+  if (data.tool_name === "create_project") {
+    return (
+      <ApprovalCard
+        data={data}
+        hostId={hostId}
+        icon={FolderPlus}
+        title={
+          <>
+            Add the project <span className="font-medium">{name}</span>
+          </>
+        }
+        detail={<ProjectCreationDetail creation={data.input} />}
+        summary={data.input?.repo_path}
+      />
+    )
+  }
+  const changes: Any[] = Array.isArray(data.input?.changes) ? data.input.changes : []
   return (
     <ApprovalCard
       data={data}
       hostId={hostId}
       title={
-        data.tool_name === "create_project" ? (
-          <>
-            Add the project <span className="font-medium">{name}</span>
-          </>
-        ) : (
-          <>
-            Change the project <span className="font-medium">{name}</span>
-          </>
-        )
+        <>
+          Change the project <span className="font-medium">{name}</span>
+        </>
       }
+      detail={<ProjectChangeDetail change={data.input} />}
+      summary={changes.map((c) => c.field).join(", ")}
     />
   )
 }

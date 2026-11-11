@@ -9,18 +9,19 @@ import { PenRepo } from "../../tasks/PenRepo.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { Tasks } from "../../tasks/Tasks.ts"
 import { ProjectRepo } from "../../projects/ProjectRepo.ts"
+import { Approvals } from "../../permissions/Approvals.ts"
 import { Runs } from "../../runs/Runs.ts"
 import { makeReach } from "../resolve.ts"
-import { ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
+import { ApprovalKind, ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
 import type { McpCaller } from "../tool.ts"
-import { boardTool, given, Json, ProfileArg, TaskRefArg, told } from "./common.ts"
+import { asker, boardTool, given, Json, ProfileArg, TaskRefArg, told } from "./common.ts"
 import { BAD_REMIND_AT, reminderTime } from "./reminders.ts"
 import { field, makeTaskJson, overview, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./taskJson.ts"
 
 // The board's task tools (docs/plan/inventory/03-mcp.md 2.5; the old mcp/schemas/tasks.ts and mcp/tools/local.ts):
-// `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task` and `send_to_task`. Each handler finds what
-// the agent names with `resolve.ts` and calls `Tasks` with the agent as the actor. `delete_task` asks the user first
-// and is 3.4's.
+// `list_tasks`, `get_task`, `get_task_field`, `create_task`, `update_task`, `delete_task` and `send_to_task`. Each
+// handler finds what the agent names with `resolve.ts` and calls `Tasks` with the agent as the actor; `delete_task` asks
+// the user first, through `Approvals`.
 
 // ---- definitions --------------------------------------------------------------------------------------------------
 
@@ -222,6 +223,23 @@ export const SendToTask = Tool.make("send_to_task", {
   success: Json,
 })
 
+export const DeleteTask = Tool.make("delete_task", {
+  description:
+    "Delete a task: stop its agent, delete its thread and remove its worktree, discarding uncommitted changes (a subproject's tasks go with it). " +
+    "It asks the user to confirm first (say why in reason): the call waits for their answer, and if they don't confirm, nothing is deleted. " +
+    "Only when the user asks for it, or a task you created is no longer wanted; you can't delete your own task or the subproject you're in. " +
+    "To close a task while keeping it, set it to done (with a resolution) with update_task instead.",
+  parameters: Schema.Struct({
+    task_id: TaskRefArg,
+    profile: Schema.optionalKey(ProfileArg),
+    delete_branch: Schema.optionalKey(
+      Schema.Boolean.annotate({ description: "Also delete the task's git branch (and its tasks' branches, for a subproject); kept by default" }),
+    ),
+    reason: Schema.optionalKey(Schema.String.annotate({ description: "Why it should be deleted, shown to the user when they're asked to confirm" })),
+  }),
+  success: Json,
+}).annotate(ApprovalKind, "delete_task")
+
 // ---- handlers -----------------------------------------------------------------------------------------------------
 
 /** What an agent is told when it asked for a task to start on a host where agents can't. */
@@ -260,6 +278,7 @@ export const taskTools = Effect.gen(function* () {
   const pens = yield* PenRepo
   const projects = yield* ProjectRepo
   const runs = yield* Runs
+  const approvals = yield* Approvals
 
   /** The pen whose own thread the caller is: where its new tasks go, and whose tasks it lists, by default. */
   const ownPen = Effect.fnUntraced(function* (caller: McpCaller, profile: string | null) {
@@ -489,5 +508,19 @@ export const taskTools = Effect.gen(function* () {
     }).pipe(told),
   )
 
-  return { listTasks, getTask, getTaskField, createTask, updateTask, sendToTask }
+  const deleteTask = boardTool(DeleteTask, (params, caller) =>
+    // Read only when the call hasn't asked before: a retried call carries on with the deletion it asked about.
+    approvals
+      .deleteTask(
+        asker(caller),
+        Effect.map(reach.task(caller, params.task_id, given(params.profile)), (task) => ({
+          task,
+          deleteBranch: params.delete_branch === true,
+          reason: given(params.reason),
+        })),
+      )
+      .pipe(told),
+  )
+
+  return { listTasks, getTask, getTaskField, createTask, updateTask, deleteTask, sendToTask }
 })

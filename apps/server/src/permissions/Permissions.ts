@@ -344,8 +344,10 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           while (true) {
             // Register before reading, so a decision can't slip in between.
             const woken = yield* Deferred.make<void>()
-            yield* register(id, task, call, woken)
+            // Registering is inside what unregisters: a waiter interrupted as it registers (the server stopping) is
+            // not left behind for a later delivery of its call to find.
             const settled = yield* Effect.gen(function* () {
+              yield* register(id, task, call, woken)
               const row = yield* repo.get(id)
               // Gone with its thread.
               if (Option.isNone(row)) return { done: EXPIRED }

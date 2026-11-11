@@ -56,8 +56,8 @@ describe("wait", () => {
     Effect.gen(function* () {
       const tools = yield* (yield* McpServers).tools("huntaway", false)
       assert.deepStrictEqual(
-        tools.slice(0, 4).map((t) => t.name),
-        ["request_user_input", "finish_work", "wait", "background_wait"],
+        tools.slice(0, 7).map((t) => t.name),
+        ["request_user_input", "finish_work", "track_work", "untrack_work", "list_tracked_work", "wait", "background_wait"],
       )
       const wait = tools.find((t) => t.name === "wait")
       assert.deepStrictEqual(Object.keys(Object(at(wait?.inputSchema, "properties"))), [

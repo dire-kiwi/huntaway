@@ -493,6 +493,9 @@ describe("task tools", () => {
       assert.deepStrictEqual(board, [
         "request_user_input",
         "finish_work",
+        "track_work",
+        "untrack_work",
+        "list_tracked_work",
         "background_wait",
         "list_projects",
         "list_tasks",
@@ -500,9 +503,15 @@ describe("task tools", () => {
         "get_task_field",
         "create_task",
         "update_task",
+        "delete_task",
         "list_pens",
+        "create_pen",
+        "update_pen",
+        "delete_pen",
         "send_to_task",
         "get_project",
+        "update_project",
+        "create_project",
       ])
       const reviewers = (yield* servers.tools("huntaway", true))
         .map((t) => t.name)
