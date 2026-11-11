@@ -10,7 +10,8 @@ import { failure, makeProfile, routeRpc, startServer, success, withBrowser } fro
 
 let server, profile, folders
 beforeAll(async () => {
-  server = startServer()
+  // The fake gh, so nothing here reaches GitHub even if the server runs gh.
+  server = startServer("--fake-gh")
   profile = await makeProfile(server, "Default")
   folders = realpathSync(mkdtempSync(join(tmpdir(), "ia-create-")))
 })
@@ -32,7 +33,8 @@ test("creates a GitHub repository, private or public, when adding a folder", asy
     await routeRpc(page, async (request) => {
       if (request.tag !== "projects.createOnGithub") return undefined
       const body = request.payload.project
-      requests.push(body)
+      // What was given (a field left out goes as null).
+      requests.push(Object.fromEntries(Object.entries(body).filter(([, v]) => v !== null)))
       if (fail) return failure({ _tag: "External", service: "GitHub", reason: "Name already exists on this account" })
       const project = await server.rpc("projects.create", { project: { profile_id: profile.id, name: body.name, repo_path: body.repo_path } })
       return success({ project, github: { full_name: pushError ? "acme/pushy" : "me/x", pushed: !pushError, push_error: pushError } })

@@ -6,15 +6,28 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { gate, makeProfile, routeRpc, startServer, success, withBrowser } from "./harness.mjs"
+import { gate, gitRepo, makeProfile, routeRpc, startServer, success, withBrowser } from "./harness.mjs"
 
 // The old tests/ui/githubClone.test.mjs. The old check answered `GET /github-repos` with `page.route`; this one answers
 // `profiles.githubRepos` on the RPC websocket (`routeRpc`), and holds `projects.clone` there for the "closed while it
-// clones" case. As before, every repository it adds is a clone that's in the folder already, so no gh runs.
+// clones" case. As before, every repository the first two add is a clone that's in the folder already. Added: one listed
+// and cloned through the fake gh (`--fake-gh`, seeded with a repository whose `source` is a folder here).
 
-let server, profile, clones
+let server, profile, clones, sources
 beforeAll(async () => {
-  server = startServer()
+  // The fake gh, so nothing here reaches GitHub: me, with me/fresh to clone from a folder here.
+  sources = realpathSync(mkdtempSync(join(tmpdir(), "ia-sources-")))
+  const fresh = gitRepo(join(sources, "fresh"))
+  const seed = join(sources, "github.json")
+  writeFileSync(
+    seed,
+    JSON.stringify({
+      accounts: [{ host: "github.com", login: "me", token: "tok-me", active: true }],
+      repos: { "me/fresh": { source: fresh, description: "Cloned for real", pushed_at: "2026-10-02T00:00:00Z" } },
+    }),
+  )
+  process.env["HUNTAWAY_FAKE_GH_SEED"] = seed
+  server = startServer("--fake-gh")
   profile = await makeProfile(server, "Default")
   // The profile clones into a scratch folder, where o/r is cloned already, so adding it needs no gh.
   clones = realpathSync(mkdtempSync(join(tmpdir(), "ia-clones-")))
@@ -30,7 +43,7 @@ beforeAll(async () => {
 })
 afterAll(() => {
   server?.stop()
-  if (clones) rmSync(clones, { recursive: true, force: true })
+  for (const dir of [clones, sources]) if (dir) rmSync(dir, { recursive: true, force: true })
 })
 
 const repo = (full_name, extra = {}) => ({
@@ -107,35 +120,66 @@ test("adds a project from GitHub into the profile's clone folder", async () => {
 /** A terminal's colour codes. */
 const COLOURS = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g")
 
+// gh lists what the account can clone (the fake's me/fresh), and the one picked is cloned with gh into the clone folder.
+test("lists and clones a repository through gh", async () => {
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([
+      "goto /",
+      "click [title='Add project']",
+      "click role=radio[name=/GitHub/]",
+      "wait Cloned for real",
+      "click [data-repo='me/fresh']",
+      "click role=button[name='Clone and add project']",
+      "gone [data-modal]",
+    ])
+    const added = (await projects()).find((p) => p.name === "fresh")
+    assert.equal(added?.repo_path, `${clones}/fresh`)
+    assert.equal(execFileSync("git", ["-C", added.repo_path, "remote", "get-url", "origin"], { encoding: "utf8" }).trim(), "https://github.com/me/fresh.git")
+    await ui.run([`assert location.pathname === '/p/${added.id}'`])
+  })
+})
+
 const appDir = fileURLToPath(new URL("../..", import.meta.url))
 
-/** The UI's Vite dev server, on `server`'s API: its React runs in StrictMode, which mounts components twice. */
-async function startDevServer(server) {
+/** The UI's Vite dev server, on `api`'s API (a test server's): its React runs in StrictMode, which mounts components twice. */
+async function startDevServer(api) {
   const port = await new Promise((resolve) => {
     const probe = createServer().listen(0, "127.0.0.1", () => {
-      const { port } = probe.address()
-      probe.close(() => resolve(port))
+      const free = probe.address().port
+      probe.close(() => resolve(free))
     })
   })
   // Vite+'s (`vp dev`): the web app's `vite` is Vite+'s core, which has no command of its own.
   const vite = spawn(join(appDir, "node_modules/.bin/vp"), ["dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: appDir,
-    env: { ...process.env, HUNTAWAY_SERVER: server.url },
+    env: { ...process.env, HUNTAWAY_SERVER: api.url },
     stdio: ["ignore", "pipe", "pipe"],
   })
   let log = ""
   await new Promise((resolve, reject) => {
     // Killed if it doesn't start, or the test's process would wait for it forever.
-    const timer = setTimeout(() => (vite.kill(), reject(new Error(`vite didn't start:\n${log}`))), 30000)
+    const timer = setTimeout(() => {
+      vite.kill()
+      reject(new Error(`vite didn't start:\n${log}`))
+    }, 30000)
     const read = (d) => {
       log += d
       // With $CI set (as on GitHub's runners) Vite's colours are on, and it prints the port in bold.
-      if (log.replace(COLOURS, "").includes(`127.0.0.1:${port}`)) (clearTimeout(timer), resolve())
+      if (log.replace(COLOURS, "").includes(`127.0.0.1:${port}`)) {
+        clearTimeout(timer)
+        resolve()
+      }
     }
     vite.stdout.on("data", read)
     vite.stderr.on("data", read)
-    vite.on("exit", (code) => (clearTimeout(timer), reject(new Error(`vite exited with ${code}:\n${log}`))))
-    vite.on("error", (e) => (clearTimeout(timer), reject(e)))
+    vite.on("exit", (code) => {
+      clearTimeout(timer)
+      reject(new Error(`vite exited with ${code}:\n${log}`))
+    })
+    vite.on("error", (e) => {
+      clearTimeout(timer)
+      reject(e)
+    })
   })
   return { url: `http://127.0.0.1:${port}`, stop: () => vite.kill() }
 }

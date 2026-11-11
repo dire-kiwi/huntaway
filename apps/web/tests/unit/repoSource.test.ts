@@ -49,7 +49,7 @@ test("reads OWNER/REPO from what's typed or a pasted github.com URL", () => {
     ["https://github.com/o/r.git", "o/r"],
     ["git@github.com:o/r.git", "o/r"],
     ["ssh://git@ssh.github.com:443/o/r.git", "o/r"],
-  ]) {
+  ] as const) {
     assert.equal(repoFromInput(input), want, input)
   }
   for (const input of ["", "dkcode", "o/", "/r", "o/r/x", "-o/r", "o/..", "o/r x", "https://gitlab.com/o/r", "https://github.com/o"]) {

@@ -5,7 +5,9 @@ import { failure, gate, gitRepo, routeRpc, startServer, success, withBrowser } f
 
 // The old tests/ui/fanoutConfigs.test.mjs, both cases. The old checks answered `GET /claude-configs/<id>/models` with
 // `page.route`; these answer `configs.models` on the RPC websocket (`routeRpc`), and see that nothing was created while
-// the models were held from the calls the page made (the old check slept 300ms and read the tasks).
+// the models were held from the calls the page made (the old check slept 300ms and read the tasks). The client asks for a
+// set of configs' models together and shows them once all are in, so Personal's can't come in first here: what's left
+// of the first case is that the picked config's model is the one made.
 //
 // Review of IA-227: with two Codex configs that both have a model, `!model` is the picked config's whatever order their
 // models come in, so a prompt doesn't run with another login because its models answered first.
@@ -30,7 +32,7 @@ beforeAll(async () => {
 })
 afterAll(() => server?.stop())
 
-const MODELS = [{ id: "gpt-5.5", name: "GPT-5.5", is_default: true, efforts: ["low", "medium", "high"], default_effort: "medium" }]
+const MODELS = [{ id: "gpt-5.5", name: "GPT-5.5", description: null, is_default: true, efforts: ["low", "medium", "high"], default_effort: "medium" }]
 const tasksIn = async (description) =>
   (await server.rpc("tasks.list", { filter: { _tag: "ByProject", project_id: project.id } })).filter((t) => t.description === description)
 const modelsOf = (r, c) => r.tag === "configs.models" && r.payload.id === c.id
@@ -43,7 +45,8 @@ test("a model two configs have is the picked one's even when another's models co
       `goto /p/${project.id}`,
       "click New task",
       "type Before loading !gpt-5.5 !opus",
-      "wait Loading Work's models, to see whether it has !gpt-5.5 too",
+      // The client asks for a set of configs' models together (packages/client's configModelsAtom), so both are loading.
+      "wait text=/Loading .*Work.*'s models/",
       "press Control+Enter",
       "wait It's created once they're in",
     ])

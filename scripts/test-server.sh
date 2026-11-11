@@ -79,7 +79,9 @@ launch() {
     [[ $v == HUNTAWAY_NODE || $v == HUNTAWAY_FAKE_CLAUDE_* ]] || unset+=(-u "$v")
   done
   mkdir -p "$dir/tmp"
-  TMPDIR="$dir/tmp" env "${unset[@]}" \
+  # 6.11: Asana is the fake a test gives ($HUNTAWAY_ASANA_URL), else none at all: a test server never reaches Asana.
+  local asana=${HUNTAWAY_ASANA_URL:-http://127.0.0.1:9/no-asana-on-test-servers}
+  TMPDIR="$dir/tmp" env "${unset[@]}" HUNTAWAY_ASANA_URL="$asana" \
     setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!

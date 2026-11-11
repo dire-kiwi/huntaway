@@ -39,7 +39,7 @@ function config(name, agent) {
   return server.rpc("configs.create", { config: { name, config_dir: `${server.dataDir}/${name}`, ...(agent ? { agent } : {}) } })
 }
 
-const MODELS = [{ id: "gpt-5.5", name: "GPT-5.5", is_default: true, efforts: ["low", "medium", "high", "xhigh"], default_effort: null }]
+const MODELS = [{ id: "gpt-5.5", name: "GPT-5.5", description: null, is_default: true, efforts: ["low", "medium", "high", "xhigh"], default_effort: null }]
 const tasksIn = async (description, p = project) =>
   (await server.rpc("tasks.list", { filter: { _tag: "ByProject", project_id: p.id } })).filter((t) => t.description === description)
 const isModels = (r, c = codex) => r.tag === "configs.models" && r.payload.id === c.id
@@ -192,8 +192,8 @@ test("an effort is checked against the model a default-model harness inherits", 
   await server.rpc("profiles.update", { id: profile.id, patch: { default_model: "gpt-5.4-mini" } })
   try {
     const models = [
-      { id: "gpt-5.5", name: "GPT-5.5", is_default: true, efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium" },
-      { id: "gpt-5.4-mini", name: "GPT-5.4 mini", is_default: false, efforts: ["low", "medium", "high"], default_effort: "medium" },
+      { id: "gpt-5.5", name: "GPT-5.5", description: null, is_default: true, efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium" },
+      { id: "gpt-5.4-mini", name: "GPT-5.4 mini", description: null, is_default: false, efforts: ["low", "medium", "high"], default_effort: "medium" },
     ]
     await withBrowser(server, {}, async (ui) => {
       await routeRpc(ui.page, (r) => (isModels(r) ? success(models) : undefined))
@@ -263,7 +263,8 @@ test("an alias waits for an earlier Codex config that may offer a different late
         `goto /p/${project.id}`,
         "click New task",
         "type Alias ordering /scratch !sol",
-        "wait Loading Earlier's models",
+        // The client asks for a set of configs' models together, so Codex's wait with Earlier's.
+        "wait text=/Loading .*Earlier.*'s models/",
         "press Control+Enter",
         "wait It's created once they're in",
       ])

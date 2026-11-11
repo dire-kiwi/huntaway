@@ -26,7 +26,9 @@ const TASKS = [
 
 // A fake Asana API for the test server ($HUNTAWAY_ASANA_URL), taking only TOKEN.
 const asana = createServer((req, res) => {
-  const send = (status, body) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body))
+  const send = (status, body) => {
+    res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body))
+  }
   if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { errors: [{ message: "Not Authorized" }] })
   const url = new URL(req.url, "http://x")
   if (url.pathname === "/users/me") return send(200, { data: { gid: "9", name: "Ivy", email: "ivy@example.com", workspaces: [{ gid: "100" }] } })
