@@ -28,7 +28,7 @@ test("the Hosts page lists this host and offers to link one, by URL and token or
   await withBrowser(hub, {}, async (ui) => {
     const { page } = ui
     const own = await hub.rpc("host.info")
-    await ui.run(["goto /settings", `wait ${hostRow(own.host_id)}`, "wait this host", `wait v${own.version}`, "wait Couldn't search"])
+    await ui.run(["goto /settings", `wait ${hostRow(own.host_id)}`, "wait this host", `wait v${own.version}`, "wait No other hosts found"])
     assert.equal(await page.locator("[data-host]").count(), 1)
     // A wrong token is turned down, with why, and the dialog stays.
     await ui.run([
