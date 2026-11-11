@@ -686,10 +686,16 @@ As built in 3.5 (HE-4):
   Schema, not enforced: the period clamps, as before) and `background_wait`, which checks the id against the task's
   `background_work` of this run and writes the run's `background-waited` (`RunDir.backgroundWaited`,
   `setBackgroundWaited`); 2.8's `BackgroundWork` reads that file when it shows the task's background work again.
-- **Pull requests (4.5)**: a wait given `pull_request` is refused for now. The seams: the read before the wait starts
-  (into the stored wait's `pull_request`), the watcher racing in `waitOut` that records news on the stored wait (which
-  `check` already ends on), `delivered` after the call returns, the note (`PR_NOTE` stands in) and the last read in the
-  result.
+- **Pull requests (as built in 4.5, HE-5)**: the tool asks `PrWatch.request` (the target in the task's repository,
+  `pull_request_events` added to the three every wait has, the account's host) and passes it in `WaitRequest.pullRequest`;
+  `pull_request` takes a number too (`7`, `7.0`), as agents send one. A new wait reads the pull request before it is
+  stored (`PrWatch.poll` for its call: one that can't be read fails the call, "The wait didn't start: …", with the SSH
+  alias hint off github.com), and keeps the news found in the stored wait's `pull_request`. `waitOut` forks
+  `PrWatch.watch` in the wait's scope, which reads every `PrPoll` (straight away for a wait carried on after a
+  restart) and records news on the stored wait in one transaction, publishing the task, which `check` already ends on.
+  After the call, news that reaches the agent (not `Stopped` or `Resumed`) is `delivered`: told. The note is
+  `prompts/pullRequests.ts`' (`prNote`, through `github/prWatch/pr.ts` `note`, which decodes the stored news); the
+  result's `pull_request` is the news, or else `PrWatch.last` (the last read with `read_at`).
 
 ## Permissions, questions, approvals
 

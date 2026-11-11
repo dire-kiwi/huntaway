@@ -110,6 +110,10 @@ read or reasoned, not run.
   (the old `gh_sends_the_token_to_the_accounts_host_only`), a push or fetch over HTTPS to GitHub with the account's
   token, a stacked merge with GitHub's merge-async, and a real Claude Code (or Codex) taking the gh server's tool list and
   JSON Schemas over HTTP. `ssh -G` was run with a test config only.
+- Pull requests against the real GitHub (4.5, HE-5): `PrWatch`'s GraphQL query, the merged watcher's aliased one, `gh
+  run view --job N --log-failed` and `gh pr view` were run against the fake GitHub only, which answers them from its own
+  model of a pull request (the shapes are the old code's, which ran against GitHub). Not run: a real Claude Code agent
+  waiting on a pull request, a wake with a real agent, a preview on another host than the board's.
 - The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows. Measured at M2 (HE-4) on
   synthetic data of that size, not a real board: 5.5 MB in 154 ms (the old client's 15 loads: 5.7 MB, 65 ms);
   [10-testing.md](10-testing.md#measurements).

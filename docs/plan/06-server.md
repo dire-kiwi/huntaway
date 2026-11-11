@@ -330,6 +330,58 @@ As built in 4.4 (HE-5):
   environment, its config folder's modes). Its `graphql` answers a pull request by `owner`/`name`/`number`; 4.5 shapes it
   to `PrWatch`'s query.
 
+As built in 4.5 (HE-5):
+
+- **Pure parts** are `github/prWatch/`: `target.ts` (the five forms a wait names a pull request by, `targetKey` the
+  `pr_watches.pr` key, `previewFor`), `pr.ts` (`QUERY`, `THREADS`, `CHECKS`; the answer read leniently through
+  `Schema.is` over plain JSON, as the old reader was, into `Pr`; `checksOf` with the HA-393 "jobs still to start" check;
+  `compare`, the news as a `News` schema so a stored wait's is decoded, `note`), `seen.ts` (the row: `Seen`, `Pending`,
+  `WatchRow`), `failed.ts` (`boardChecks`, `logTail`, `toldFailures`), `inReview.ts` (`wakeEvents`, `idle`,
+  `decideWake`, `woke`), `merged.ts` (the aliased many-pull-request query and its answer). The texts the agent reads
+  (the wait's note, the wake, Fix broken checks, the untrusted-data tags and `defang`) are `prompts/pullRequests.ts`.
+- **`github/PrWatchRepo.ts`**: `pr_watches` and `pr_states` rows, and the two watchers' task queries.
+- **`github/PrWatch.ts`** (`PrWatch`): `request` (a wait's `pull_request` and `pull_request_events`, the account's host
+  checked), `readerFor`/`readerOf` (the target and the task's account, `TaskBase.account`), `read` (the GraphQL query
+  through `Gh.gh` as the account, 60 s, review threads paged up to ten), `poll` (one read, news kept pending for the
+  call in one transaction with what isn't news), `watch` (a wait's reads every `PrPoll`, 60 s, a `Context.Reference`
+  tests shorten; backoff ×2ⁿ to ×10; five failures record `unreadable`), `delivered`, `last`, `told`, `recordChecks`
+  (`pr_checks`, only when changed and only for the task's own pull request, in one transaction), `failedLogs` (`gh run
+  view --job N --log-failed -R repo`, five at most), `toldFailures`, `graphql`. gh's private config is made per call by
+  `Gh.gh` (the old kept one per watcher): nothing of the token stays on disk after a read.
+- **`github/PullRequests.ts`** (`PullRequests`): `find`/`findLater` (the old `find_pr`: `gh pr view <branch> --json url
+  [--repo R]` where the branch is pushed, as the task's account, kept unless set meanwhile through `Tasks.change`, so
+  its preview follows), `unmerged` (`TaskBase.hasWorkToMerge` and the pull request's state, five seconds), `approval`
+  (the old `pr_approval_required` and `pr_approved` as `PrApproval`, with `approvedByReviews`), `previewStatus`
+  (`HttpClient`, 5 s), `followPreviews`.
+- **The in-review watcher and Fix broken checks** are `review/InReview.ts` (`sweep`, `fixChecks`; `InReview.watcher` is
+  the 15 s loop): in `review/`, the first area above `runs/` (both send through `Runs.send`) and where a task in review
+  belongs. **Decided**: the watcher sends the wake itself rather than through a `PrNews` change for the reactor, since
+  it must check the agent is still idle right before sending (`stillWakes`, HA-53) and the reactor would add a hop with
+  no other step to take. A wake is `{source: "board", auto: true}` (the old `send_as(auto)`); Fix broken checks is
+  `{source: "board"}` (the old `send_for_user`, not re-titled). `AfterLogs` (a `Context.Reference`) runs between the
+  logs' fetch and that check, for the HA-53 tests (the old fake gh's `hold` file). Which tasks were seen when is in a
+  `Ref` (the old `watched` map), rebuilt after a restart.
+- **The wait** (`mcp/Wait.ts`, `mcp/tools/wait.ts`): see 07-agents.md, `wait`.
+- **A run's end** (`RunEnds.ended`) calls `PullRequests.findLater` for any run that wasn't superseded (it skips tasks
+  with no branch or a `pr_url` already, and review threads).
+- **Previews**: `Tasks`' `deriveColumns` already had the preview follow `pr_url` (3.x). Saving a project's
+  `pr_preview_url` offers a new change, **`ProjectChanged { before, after }`** (`Projects.update`, only when the
+  template changed), which the reactor hands to `PullRequests.followPreviews` (the old `follow_pr_previews`: previews it
+  made move, hand-set ones stay, done tasks without one get none).
+- **RPCs**: `tasks.fixChecks` (`operate`; `Invalid` `pr_url` without a readable pull request, `Conflict` with the new
+  reasons `pr_not_open` and `nothing_failed`, a refused message as `tasks.send`), `tasks.unmerged` (`read`),
+  `board.previewStatus` (`read`; `Invalid` `url` for one that isn't http(s); `PreviewStatus` in the board contract).
+- **Main**: `GithubLive` has `PrWatch`, `PullRequests` and `PrWatchRepo`; `areasLayer` has `InReview` and
+  `MergedWatcher` above the merge gate; their loops are `PrLoops`, beside `RunLoops` in `AreasLive` (not in
+  `areasLayer`: tests run `InReview.sweep` and `MergedWatcher.check` themselves).
+- **The fake GitHub** answers `PrWatch`'s query from a pull request's fields (checks with job ids, required flags,
+  suites, conclusions and statuses; comments, reviews and review threads with ids, bots and associations;
+  `threadsPage`; `unreadable`, which fails as gh does, its errors on stdout), the merged watcher's aliased query, and
+  `run view --job N --log-failed` from the repository's `jobs`.
+- **Not here**: the merge facts `Tasks.update` decides a move to Ready for merge with (`approval` with
+  `hasWorkToMerge`, read before the task's lock) are 4.7's, with the other merge facts; linking GitHub stacks when
+  `pr_url` is set is 4.8's (`GhStacks`).
+
 ### Agents, runs, permissions, board tools — [07-agents.md](07-agents.md)
 
 ### Review — [inventory 04](inventory/04-git-review.md) (2.12–2.13, 2.18–2.19)
@@ -346,6 +398,17 @@ never kept in memory. `merge/decide.ts` has the lane rules as a pure function ov
 tests' cases as its table: who holds a slot, who waits, what steps out and rejoins, whole-stack runs.
 `Merges.reconcileLane(lane)` starts the next merge when the slot is free. `MergeGate` (approval before a merge, and
 the check the `gh` tools make), `MergedWatcher`.
+
+As built in 4.5 (HE-5), `merge/MergedWatcher.ts`: `check` reads the pull requests of the tasks `PrWatchRepo.withOpenPrs`
+lists (In review or Needs attention, not merging or running, no `task_type`, `done_when_merged`), skipping those whose
+agent or a reviewer runs, by account and host (an account on another host than the pull request's reads none of it),
+50 to a query, as each task's account (`TaskBase.account`). It records open pull requests' checks, and acts once per
+change of state: merged moves the task to Done through `Tasks.change` (only if it's as it was read), says so, and
+`Worktrees.removeIfMerged(fetch)` with the reason it was kept; closed flags a task in review (Needs attention with the
+old reason) or only says so for one already there. `pr_states` is written only after acting, so a move refused is
+tried again. What follows a move to Done is the reactor's (`startUnblocked` now; restacks, the next merge, workflows
+and terminals join with 4.8, 4.7, 6.6 and 6.1); telemetry's `merge` event is 6.9's. Subprojects' rules are gone with
+them. `MergedWatcher.loop`: first 30 s after start, then 180 s after each check ends.
 
 ### Workflows — [inventory 06](inventory/06-integrations.md) (2.1–2.2), `docs/guide/workflows.md`
 

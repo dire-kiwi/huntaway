@@ -18,7 +18,9 @@ import { previewFor } from "./prWatch/target.ts"
 // git/worktree/pr.ts and api/tasks.ts `preview_status`): finding it once its agent's run ends, whether moving the task to
 // Done would leave work of its unmerged, whether it needs and has an approving review before a merge, and whether its
 // preview answers. Pull requests are opened by the agents; the board only looks them up, as the task's GitHub account
-// and never as another.
+// and never as another. A `pr_url` set (by `find`, an agent or the user) also links GitHub stacks: plan task 4.8's
+// `GhStacks`, from the reactor's `TaskChanged`. The merge facts `Tasks.update` decides a move to Ready for merge with
+// (`approval` here, with `TaskBase.hasWorkToMerge`) are gathered by plan task 4.7.
 
 /** Whether a task's preview URL answers 200 (`board.previewStatus`): its status, or null and why it couldn't be asked. */
 export interface PreviewStatus {
