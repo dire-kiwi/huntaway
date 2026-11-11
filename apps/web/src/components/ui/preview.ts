@@ -72,10 +72,13 @@ async function check(key: string, p: Poller) {
   p.timer = window.setTimeout(() => void check(key, p), POLL_MS)
 }
 
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return
-  for (const [key, p] of pollers) if (p.timer === null && !p.inflight) void check(key, p)
-})
+// Not where there is no page (the web app's unit tests import the components' modules).
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return
+    for (const [key, p] of pollers) if (p.timer === null && !p.inflight) void check(key, p)
+  })
+}
 
 function subscribe(host: string, url: string, listener: () => void) {
   const key = keyOf(host, url)
