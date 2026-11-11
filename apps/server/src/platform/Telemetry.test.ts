@@ -321,16 +321,15 @@ describe("Telemetry", () => {
     ),
   )
 
-  it.effect("the logger queues lines for the tee at the host's level", () =>
+  it.effect("the platform's logger queues lines for the tee at the host's level", () =>
     run(
       Effect.gen(function* () {
         const f = yield* fakeClickHouse
         const { telemetry } = yield* board(f.url)
-        yield* Effect.logWarning("something odd").pipe(
-          Effect.annotateLogs({ module: "tasks" }),
-          Effect.provide(Layer.succeed(Telemetry, telemetry).pipe(Layer.provideMerge(Telemetry.logs))),
-        )
-        yield* Effect.logInfo("just so").pipe(Effect.provide(Layer.succeed(Telemetry, telemetry).pipe(Layer.provideMerge(Telemetry.logs))))
+        // The platform's layer has the tee beside the server's logger: whatever runs over it logs to both.
+        yield* Effect.logWarning("something odd").pipe(Effect.annotateLogs({ module: "tasks" }))
+        yield* Effect.logInfo("just so")
+        yield* Effect.logWarning("its own").pipe(Effect.annotateLogs({ module: "telemetry" }))
         yield* telemetry.drainLogs
         const logs = (yield* outbox).filter((r) => r.target === "logs").map((r) => [r.row["level"], r.row["module"], r.row["message"]])
         assert.deepStrictEqual(logs, [["warn", "tasks", "something odd"]])

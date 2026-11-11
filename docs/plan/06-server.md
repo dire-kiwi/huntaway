@@ -668,6 +668,47 @@ shim (`ia-pty`) if Python proves a burden on a release host. Flow control by ack
 from a hub), `Releases` (check GitHub, download, verify, stage, try, settle, roll back; `app/state.json` shared with
 the desktop shell), `Service` (the systemd user unit with `KillMode=process`). `Analytics`, `Disk`.
 
+#### As built in 6.9 (HE-7): `Telemetry`, `Lag`, `Analytics`, `Disk`
+
+- **Files.** `platform/Telemetry.ts` (the outbox, the exporter's loop, the config and status, the agents' variables, the
+  logs tee's logger and its queue, the minute's metrics), `platform/TelemetryRepo.ts` (its settings, the password as a
+  `Redacted`, the outbox, a task's and a profile's columns), `platform/telemetry/{clickhouse,schema,otlp,backfill}.ts`
+  (the HTTP client over `HttpClient`, the old schema unchanged, the OTLP mapping and the runs' variables, backfill's
+  rows), `platform/Lag.ts`, `http/otlp.ts` (`POST /api/otlp/<run>/v1/<signal>`, the run's secret from
+  `Identity.isRunSecret`), `analytics/{Analytics,Disk,AnalyticsRepo}.ts`, `cli/telemetry.ts` (`init`, `test`,
+  `backfill`), `rpc/{telemetry,analytics}.ts`; contracts `rpc/telemetry.ts` (`admin.telemetry`, `updateTelemetry`,
+  `testTelemetry`, `eventLoop`, all `admin`) and `rpc/analytics.ts` (`report`, `contextStats`, `tokenStats`,
+  `diskUsage`, `read`); `@huntaway/testing`'s `fakeClickHouse`. `--telemetry-url` (`HUNTAWAY_TELEMETRY_URL`) and
+  `HUNTAWAY_LAG_LOG_MS` are in `ServerConfig`, with the server environment's own OTEL variables and `CLAUDE_CONFIG_DIR`/
+  `CODEX_HOME`; the CLI reads `HUNTAWAY_TELEMETRY_PASSWORD` (the old `IA_TELEMETRY_PASSWORD`).
+- **Layers.** `Telemetry`, `Lag` and the logs tee (`Telemetry.logs`, a logger beside the stderr one) are in
+  `platformLayer`, so every area can send; nothing sends unless the host has a ClickHouse. The exporter's loop (flush
+  every 10 s, or at once at 1000 rows, backing off on failures), the minute's metrics and `server_start`
+  (`Telemetry.exporter`), and the 20 ms ticker (`Lag.ticker`) are `PlatformLoops` in `AreasLive`, not in tests, which
+  flush and sample themselves. The logger can't run an effect, so it queues lines (at the host's level, never the
+  `telemetry` module's) and the loop puts them in the outbox, at most 100 a second.
+- **Events sent** (each where its fact is recorded): `task_status` (the reactor, on a status move), `run_start`
+  (`Runs`, once the shim started the agent; `LaunchFacts` says its runtime, model, effort and mode), `run_usage` and
+  `run_end` (`Tokens`, once a run is counted), `side_call` (`SideCalls`; a window restart with the first profile that
+  sends and has the config), `permission` (`ApprovalRules`: decided at once, or when a prompt is settled, with its
+  wait), `review` (`ReviewStats`), `merge` requested (`Merges`) and merged (`MergedWatcher`), `board_tool`
+  (`ToolCalls`, only for a call that began once the host sent), `telemetry_dropped`, `server_start`. Not here:
+  `automation_run` (6.5: `Telemetry.profileEvent`), `link_up`/`link_down` (M7), `server_update` (M8), and `error`
+  (the old crash handler's: this server has none; its error lines go to `logs`). A board tool call resumed after a
+  restart is judged by when this delivery recorded it, not when it first began.
+- **Decided.** Telemetry is in the platform, so its row columns (a task's key and title, a profile's flags) are read
+  with SQL of its own over the areas' tables. The password stays in `settings.telemetry_password` (stored as typed),
+  read only by `TelemetryRepo`, as `04-database.md` says for secrets; there is no `Secrets` service yet. `PATCH`'s
+  checks are `Invalid { field, reason }`. The gzip of a batch and the gunzip of an agent's body are the web streams
+  (`CompressionStream`), as Node's modules are the entry points'. `Lag` measures the ticker's lateness with
+  `Clock.currentTimeNanos` into a histogram of its own (no `monitorEventLoopDelay`); the routes' times on the thread and
+  a stall's "busy" label are gone (requests are fibers that interleave), and so is `route_ms`; the stall log line and
+  `GET /api/debug/event-loop` (now `admin.eventLoop`) remain. `Disk` walks folders with the asynchronous `FileSystem`
+  (`lstat`, blocks, hard links once), not in a worker; the disk's size and free space come from `df -Pk`. Analytics'
+  reads run on the board's connection (no worker either: `04-database.md`'s "slow reads go to a worker" is not built).
+  A finished run's folder is reported kept 14 days (`Disk.RUNS_KEPT_DAYS`), the old constant. The CLI does not ask for
+  a password on a terminal.
+
 ## Hook commands<a id="hook-commands"></a>
 
 `huntaway approval-hook`, `gh-hook` and `gh-run` are started by an agent CLI for a tool call, the first two for

@@ -23,6 +23,8 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | The serde emulation: `_from_json` readers that reproduce Rust's error texts, sorted-key JSON, `hidden()` fields, 422 texts | The Rust port                         | —                                                         |
 | The test seams: `IN_TEST`, `when`/`reached`, `*_BIN` variables read by the code, shortened constants | Tests without layers or a test clock                       | —                                                         |
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
+| `Lag`'s time on the thread per HTTP route (`lag.record`, `busy_with`), a stall's "busy" label and telemetry's `route_ms` metric (6.9) | Finding the route that held the one thread | Requests are fibers that interleave here, so a route's share of the thread can't be measured; the stall log and the delay histogram stay |
+| `huntaway telemetry` asking for a password on a terminal (6.9)                                   | Typing an admin's password                                      | `HUNTAWAY_TELEMETRY_PASSWORD` or the URL give it; a script never waits on a prompt |
 
 What is **not** dropped, although it carries an old name: `ia-shim`, branches `ia/…`, `refs/huntaway/…`, the script
 variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names `ia-…`, and the item id prefix
