@@ -2,6 +2,7 @@ import { clsx } from "clsx"
 import { Hourglass, Loader2 } from "lucide-react"
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { backgroundIdle, type HostTask as Task } from "@huntaway/client"
+import type { Turn } from "@huntaway/contracts"
 import { useSubagentView, type Subagent } from "./thread/subagentView"
 import type { Item, ThreadModel } from "./thread/threadModel"
 import { itemModel } from "./thread/itemModel"
@@ -10,7 +11,9 @@ import { RunningDot, WaitReason, waitTitle } from "../ui"
 import { InMainThread, ThreadCtx, ThreadSource } from "./thread/context"
 import { SubagentBar, SubagentRows, SubagentThread } from "./thread/subagents"
 import { ItemList, TurnsCtx } from "./thread/ItemList"
-import { Composer } from "./thread/Composer"
+import { Composer, rewound } from "./thread/Composer"
+import { RewindDialog } from "./Rewind"
+import { useTurns } from "./turns"
 import { BackgroundBanner } from "./thread/Background"
 
 type ThreadProps = {
@@ -101,8 +104,17 @@ function ThreadView({
     if (el && pinned.current) el.scrollTop = el.scrollHeight
   }, [])
 
-  // The turns with checkpoints, for rewinding to before one of the user's messages, and the rewind dialog: turns,
-  // checkpoints and rewinding are not on this server yet (4.3), so there are none and no rewind marks.
+  // The turns with checkpoints, for rewinding to before one of the user's messages.
+  const turns = useTurns(task)
+  const [rewinding, setRewinding] = useState<Turn | null>(null)
+  const turnsCtx = useMemo(() => {
+    const all = turns.data?.turns
+    if (!all?.length) return null
+    // A message's first turn (the agent can go on by itself after it).
+    const byMessage = new Map<number, Turn>()
+    for (const t of all) if (t.message_id !== null && !byMessage.has(t.message_id)) byMessage.set(t.message_id, t)
+    return { byMessage, rewind: setRewinding }
+  }, [turns.data])
   const items = useStableGroupKeys(model.items, task.id)
   const data = useMemo(
     () => ({ ...model, running: task.running, cwd, hostId: task.host_id, taskId: task.id, follow }),
@@ -244,7 +256,7 @@ function ThreadView({
           )}
           <div ref={list} className={clsx("mx-auto w-full max-w-3xl space-y-4 px-5 py-6 narrow:px-3 narrow:py-4", viewed && "hidden")}>
             {paging.loaded && items.length === 0 && !task.running && !paging.more && empty}
-            <TurnsCtx.Provider value={null}>
+            <TurnsCtx.Provider value={turnsCtx}>
               <SubagentRows>
                 <ItemList items={items} running={task.running} hostId={task.host_id} cwd={cwd} />
               </SubagentRows>
@@ -274,6 +286,15 @@ function ThreadView({
         <BackgroundBanner task={task} />
         {/* A fresh draft per task: its attachments are on this task's host. */}
         <Composer key={task.id} task={task} placeholder={placeholder} />
+        {rewinding && (
+          <RewindDialog
+            task={task}
+            turn={rewinding}
+            head={turns.data?.available ? turns.data.head : null}
+            onClose={() => setRewinding(null)}
+            onDone={(r, convo) => rewound(task, r, convo)}
+          />
+        )}
       </div>
     </ThreadCtx.Provider>
   )

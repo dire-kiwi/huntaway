@@ -165,6 +165,55 @@ read out of a thread).
 edit only if it succeeded, a Bash command unless it was denied) is the git area's, over `commandChangesCode`, with its
 two tool-call test cases.
 
+#### As built in 4.3 (HE-5): `Checkpoints`
+
+- **Files.** `git/Checkpoints.ts` (the service), `git/CheckpointRepo.ts` (the `checkpoints` rows, and what the plan rule
+  reads beside them: a plan document written since a run started, tasks it created), `git/checkpoints/` (`model.ts`
+  the row, limits, refs and errors; `git.ts` running git for checkpoints, the scratch index and `snapshot`; `changed.ts`
+  "files git brought in", stats and patches; `restore.ts`; `conversation.ts`, pure). The wire is
+  `packages/contracts/src/rpc/checkpoints.ts` (`CheckpointRpcs`: `checkpoints.turns` and `turnDiff` at `read`,
+  `rewind` and `cancelRewind` at `git`) and the board event `{type: "checkpoints", task_id}`.
+- **A message is its thread write number.** The old `message_id` of a turn is `checkpoints.write_no`, taken from
+  `runs.write_no`; the wire keeps the name `message_id` (the turns list, `RewindResult`, `task.rewind`), and the web
+  app's rewind marks find a user message's turn by its item's `legacy:<n>`. The turn's end clears `runs.write_no` in
+  the result line's transaction, as the old `after_turn` cleared `turn_message_id`.
+- **The queue** (the old `QUEUES`): a worker fiber per task with jobs, in the service's `FiberSet`, taking them in the
+  order asked and going once there are none; `beforeRun`, `rewind`, `forget` and `settled` wait for theirs, `afterTurn`
+  does not. A failed job is logged. Captures run git with the location variables cleared, `GIT_OPTIONAL_LOCKS=0` and a
+  ten-minute timeout. The cap is `CheckpointCap` (a `Context.Reference`, 200; tests provide 5).
+- **Where it is called.** `LaunchFacts.claude` takes the run's checkpoint after the worktree is known (4.1's setup goes
+  before it) and reads the task again for its rollback (`pendingRewind` → `resumeAt`); `Prepared.rewind` carries it
+  to `Runs.launch`, which calls `Checkpoints.rewound` once the agent has started (the rollback is done with, also one
+  for another session, and "The conversation goes on from before turn N" when it was made). The Claude line handler
+  hands the turn's end to `afterTurn` after the result line commits (`afterCommit`), with the run's row as the line
+  left it. `RunEnds.ended` gives a turn the agent never ended (the run was running, not between turns, not a
+  compaction) its checkpoint, `failed` or `stopped`, before anything else, and then asks `planOnly`.
+- **The plan rule (HA-198) is whole here**: `Checkpoints.planOnly(task, run)` is the old `candidate` (the plan label,
+  a plan document written since the run started, no task created by it) and `changed_only_plan` (a task working in
+  its own folder: yes; one in its project's repository: no; else every turn of the run left the files and HEAD as they
+  were, once its checkpoints are taken). `RunEnds` computes it before its first transaction, so the column is written
+  once, with the rest of the run's end. There is no unsettled state for a restart to find: the old `settle_plans`
+  existed because the old `finish` wrote the run's end and left the column for later; here a server that stops before
+  `RunEnds` committed has the run still live, and re-attaching ends it again. Recovery has nothing to add.
+- **Paths.** Git's paths are kept as byte strings for git; the file system (Effect's `FileSystem`, which takes text)
+  gets them as UTF-8, and a path that isn't UTF-8 is left alone by a rewind and listed in its `skipped` (the old one
+  wrote and removed such paths through `Buffer`s). An empty folder a removal leaves is removed after reading it empty
+  (`FileSystem` has no `rmdir`).
+- **Errors.** `CheckpointFailed` (git or the file system: the wire's `Unavailable`), `RewindRefused` (`Conflict` with
+  `agent_running` for the agent or a review running, `in_use` for a merge, rebase, cherry-pick or revert in progress,
+  `changed_meanwhile` for a checkpoint gone, a rewritten branch, a conversation that can't go back or a rewind that
+  stopped part way), `CheckpointInvalid` (`Invalid`: no worktree, no turn for that message), `CheckpointNotFound`.
+- **Not here.** Codex's `thread/revert` to `rewind.before_turn` is 5.2's (the turn list already says `agent: "codex"`
+  and the conversation rule has Codex's case). `forget` is called by 4.1's teardown. The web app's Changes tab and
+  review views read turns (`turnsAtom`, `checkpoints.turnDiff`) when 4.2 and 4.6 bring them back.
+- **Web (step 1).** `components/task/turns.ts` (`useTurns` over @huntaway/client's `turnsAtom`, which reads
+  `checkpoints.turns` again on the task's `checkpoints` event and when its run, worktree or session changes),
+  `Rewind.tsx` (`RewindDialog`, `RewindNote`), the thread's rewind marks and dialog, and the rewound message put back
+  in the composer's draft (`rewound` in `thread/Composer.tsx`). The old suite had no `tests/ui` check of a rewind; it
+  was looked at in a browser on a test server with a hand-made worktree and the fake agent (two turns, a rewind with
+  the branch and the conversation, "Keep the conversation", the next run's `--resume-session-at`, marks following a
+  live run).
+
 ### GitHub — [inventory 03](inventory/03-mcp.md) (2.9, 2.10), [04](inventory/04-git-review.md), [06](inventory/06-integrations.md)
 
 `Gh` (running `gh` with one account's token and nothing else, target checks, the unsandboxed-git hardening),

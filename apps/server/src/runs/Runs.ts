@@ -6,6 +6,7 @@ import { ContextMeter } from "../agents/ContextMeter.ts"
 import { planRest, startInstructions } from "../agents/prompts/start.ts"
 import { worthAsking } from "../agents/titles/text.ts"
 import { Titles } from "../agents/Titles.ts"
+import { Checkpoints } from "../git/Checkpoints.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { Usage } from "../profiles/Usage.ts"
@@ -173,6 +174,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const profileRepo = yield* ProfileRepo
       const configRepo = yield* AgentConfigRepo
       const fs = yield* FileSystem.FileSystem
+      const checkpoints = yield* Checkpoints
       // The launches being prepared, by task: a stop interrupts one.
       const launches = yield* FiberMap.make<TaskId>()
       // The runs that may write their task's documents folder (they started with labels): a `/plan` is steered only
@@ -232,6 +234,8 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           // Once the shim is asked to start, it is let finish: a stop meanwhile reaps what it started.
           yield* Effect.uninterruptible(shim.spawn(run.id, prepared.spec))
           yield* runs.setPhase(run.id, "running")
+          // 4.3: the conversation rollback a rewind asked for is done with (made, or for another session).
+          yield* checkpoints.rewound(run.task_id, prepared.rewind ?? null)
           // Preparing is over: from here a stop goes to the agent, and messages sent meanwhile go to it now.
           yield* input.writeSteers(run.task_id)
           const started = yield* runs.get(run.id)

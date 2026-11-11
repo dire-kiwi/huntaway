@@ -9,6 +9,7 @@ import {
   ApprovalRulesRpcs,
   AttachmentRpcs,
   BoardRpcs,
+  CheckpointRpcs,
   ConfigRpcs,
   HostRpcGroup,
   PenRpcs,
@@ -31,6 +32,8 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { CheckpointRepo } from "./git/CheckpointRepo.ts"
+import { Checkpoints } from "./git/Checkpoints.ts"
 import { Git } from "./git/Git.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
@@ -86,6 +89,7 @@ import { ApprovalRulesHandlers } from "./rpc/approvalRules.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
+import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
@@ -151,7 +155,7 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(TasksLive),
 )
 /** The git area: running git; worktrees, a task's base, the Changes tab and checkpoints join this line (M4). */
-const GitLive = Git.layer.pipe(Layer.provideMerge(ThreadsLive))
+const GitLive = Checkpoints.layer.pipe(Layer.provideMerge(Layer.mergeAll(Git.layer, CheckpointRepo.layer)), Layer.provideMerge(ThreadsLive))
 /** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
 export interface ModelCalls<T, E1, R1, E2, R2> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
@@ -263,6 +267,7 @@ export const Served = PublicRpcs.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
+  CheckpointRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -279,6 +284,7 @@ export const HandlersLive = Layer.mergeAll(
   ApprovalRulesHandlers,
   ThreadHandlers,
   PermissionHandlers,
+  CheckpointHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
