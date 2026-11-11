@@ -218,7 +218,8 @@ test("staging and unstaging chosen lines does what choosing them means", () => {
     }
     git("checkout", "-q", "--", "f")
   }
-})
+  // 120 random patches, each applied by git: a couple of seconds here, slower on CI.
+}, 30_000)
 
 test("part of a new or deleted file leaves it there, changed; all of it adds or removes it", () => {
   for (let run = 0; run < 40; run++) {

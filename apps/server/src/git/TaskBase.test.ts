@@ -526,69 +526,73 @@ describe("where a branch starts", () => {
   // Second takes in some of First's later work, and the board hears of it as First is done or as First's worktree and
   // branch are removed, without anyone reading Second's changes before First's branch is gone. (The old test's third
   // case, Second's run ending, goes the same way through the reactor's `RunExited`: not run here, as it needs a run.)
-  it.live("a stacked task keeps its own changes when the branch it stacks on is deleted", () =>
-    Effect.forEach(
-      ["done", "teardown"] as const,
-      (how) =>
-        run(
-          Effect.gen(function* () {
-            const base = yield* TaskBase
-            const g = yield* Git
-            const { repo, project } = yield* stackingRepo
-            const a = yield* setUp((yield* make(project, "First")).id)
-            const aWt = a.worktree_path ?? ""
-            const aBranch = a.branch ?? ""
-            yield* commitFile(aWt, "parent-file")
-            const b = yield* setUp((yield* make(project, "Second", { start_from: "X-1" })).id)
-            const bWt = b.worktree_path ?? ""
-            const takenIn = yield* commitFile(aWt, "more-parent-file")
-            yield* git(bWt, ["merge", "-q", "--no-edit", aBranch])
-            yield* commitFile(bWt, "child-file")
-            // First moves on again, past what Second took in.
-            yield* commitFile(aWt, "latest-parent-file")
-            // First is squashed into master, done, and its branch deleted (pushed and fetched too), before Second is
-            // brought up to date: its changes are still only its own.
-            yield* git(repo, ["merge", "-q", "--squash", aBranch])
-            yield* git(repo, ["commit", "-qm", "First"])
-            yield* git(repo, ["push", "-q", "origin", "master", `${aBranch}:${aBranch}`])
-            yield* git(repo, ["fetch", "-q", "origin"])
-            // Second's agent is at work, so the board doesn't restack it onto master as First is merged (4.8's
-            // `Restack`, which this case isn't about): its start ref is what's looked at.
-            const tasks = yield* Tasks
-            yield* tasks.change(b.id, () => ({ running: true }), Actor.board).pipe(Effect.orDie)
-            yield* done(a.id)
-            if (how === "done") {
+  it.live(
+    "a stacked task keeps its own changes when the branch it stacks on is deleted",
+    () =>
+      Effect.forEach(
+        ["done", "teardown"] as const,
+        (how) =>
+          run(
+            Effect.gen(function* () {
+              const base = yield* TaskBase
+              const g = yield* Git
+              const { repo, project } = yield* stackingRepo
+              const a = yield* setUp((yield* make(project, "First")).id)
+              const aWt = a.worktree_path ?? ""
+              const aBranch = a.branch ?? ""
+              yield* commitFile(aWt, "parent-file")
+              const b = yield* setUp((yield* make(project, "Second", { start_from: "X-1" })).id)
+              const bWt = b.worktree_path ?? ""
+              const takenIn = yield* commitFile(aWt, "more-parent-file")
+              yield* git(bWt, ["merge", "-q", "--no-edit", aBranch])
+              yield* commitFile(bWt, "child-file")
+              // First moves on again, past what Second took in.
+              yield* commitFile(aWt, "latest-parent-file")
+              // First is squashed into master, done, and its branch deleted (pushed and fetched too), before Second is
+              // brought up to date: its changes are still only its own.
+              yield* git(repo, ["merge", "-q", "--squash", aBranch])
+              yield* git(repo, ["commit", "-qm", "First"])
+              yield* git(repo, ["push", "-q", "origin", "master", `${aBranch}:${aBranch}`])
+              yield* git(repo, ["fetch", "-q", "origin"])
+              // Second's agent is at work, so the board doesn't restack it onto master as First is merged (4.8's
+              // `Restack`, which this case isn't about): its start ref is what's looked at.
+              const tasks = yield* Tasks
+              yield* tasks.change(b.id, () => ({ running: true }), Actor.board).pipe(Effect.orDie)
+              yield* done(a.id)
+              if (how === "done") {
+                yield* (yield* Reactor).idle
+                assert.strictEqual(yield* g.commit(repo, startRef(b.id)), takenIn, how)
+                yield* git(repo, ["worktree", "remove", "--force", aWt])
+                yield* git(repo, ["branch", "-q", "-D", aBranch])
+              } else yield* (yield* Worktrees).teardown(a.id, { force: true, deleteBranch: true })
+              assert.strictEqual(yield* g.commit(repo, `refs/heads/${aBranch}`), null)
+              yield* git(repo, ["push", "-q", "origin", "--delete", aBranch])
+              yield* git(repo, ["fetch", "-q", "--prune", "origin"])
+              assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"], how)
+              // So do a review and a summary, which compare with the same commit, rather than the pull request's diff.
+              const bNow = yield* getTask(b.id)
+              assert.strictEqual((yield* base.changesBase(bWt, bNow, project)).start, yield* rev(bWt, "HEAD~1"), how)
+              assert.deepStrictEqual(yield* base.workScope(bWt, bNow, project), { ref: takenIn, ownStart: true }, how)
+              // And its branch's, with its worktree removed.
+              yield* tasks.change(b.id, () => ({ running: false }), Actor.board).pipe(Effect.orDie)
               yield* (yield* Reactor).idle
-              assert.strictEqual(yield* g.commit(repo, startRef(b.id)), takenIn, how)
-              yield* git(repo, ["worktree", "remove", "--force", aWt])
-              yield* git(repo, ["branch", "-q", "-D", aBranch])
-            } else yield* (yield* Worktrees).teardown(a.id, { force: true, deleteBranch: true })
-            assert.strictEqual(yield* g.commit(repo, `refs/heads/${aBranch}`), null)
-            yield* git(repo, ["push", "-q", "origin", "--delete", aBranch])
-            yield* git(repo, ["fetch", "-q", "--prune", "origin"])
-            assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"], how)
-            // So do a review and a summary, which compare with the same commit, rather than the pull request's diff.
-            const bNow = yield* getTask(b.id)
-            assert.strictEqual((yield* base.changesBase(bWt, bNow, project)).start, yield* rev(bWt, "HEAD~1"), how)
-            assert.deepStrictEqual(yield* base.workScope(bWt, bNow, project), { ref: takenIn, ownStart: true }, how)
-            // And its branch's, with its worktree removed.
-            yield* tasks.change(b.id, () => ({ running: false }), Actor.board).pipe(Effect.orDie)
-            yield* (yield* Reactor).idle
-            yield* (yield* Worktrees).teardown(b.id, { force: false, deleteBranch: false })
-            assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"], how)
-            yield* setUp(b.id)
-            // Rebased onto master (First's commits dropped), it's compared with master.
-            yield* git(bWt, ["rebase", "-q", "--onto", "master", "HEAD~1"])
-            assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"], how)
-            assert.strictEqual((yield* diff(b.id)).merge_base, yield* rev(repo, "master"))
-            assert.deepStrictEqual(yield* base.workScope(bWt, yield* getTask(b.id), project), { ref: yield* rev(repo, "master"), ownStart: false }, how)
-            // Deleting the task drops what it kept.
-            yield* (yield* TaskDeletion).delete(b.id, { deleteBranch: false }, Actor.user)
-            assert.strictEqual(yield* g.commit(repo, startRef(b.id)), null)
-          }),
-        ),
-      { concurrency: 1 },
-    ),
+              yield* (yield* Worktrees).teardown(b.id, { force: false, deleteBranch: false })
+              assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"], how)
+              yield* setUp(b.id)
+              // Rebased onto master (First's commits dropped), it's compared with master.
+              yield* git(bWt, ["rebase", "-q", "--onto", "master", "HEAD~1"])
+              assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"], how)
+              assert.strictEqual((yield* diff(b.id)).merge_base, yield* rev(repo, "master"))
+              assert.deepStrictEqual(yield* base.workScope(bWt, yield* getTask(b.id), project), { ref: yield* rev(repo, "master"), ownStart: false }, how)
+              // Deleting the task drops what it kept.
+              yield* (yield* TaskDeletion).delete(b.id, { deleteBranch: false }, Actor.user)
+              assert.strictEqual(yield* g.commit(repo, startRef(b.id)), null)
+            }),
+          ),
+        { concurrency: 1 },
+      ),
+    // Two cases of git worktrees and branches made and removed: well under a second each here, slower on CI.
+    30_000,
   )
 
   it.live("a remote's branch is that remote's", () =>
