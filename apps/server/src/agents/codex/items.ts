@@ -1,4 +1,5 @@
 import { Predicate } from "effect"
+import { toolPrefix } from "../claude/access.ts"
 import { jsonText } from "../claude/tools.ts"
 
 // What a Codex item shows as (huntaway's agent/codex/output.ts and the helpers of adapter.ts): the tool call it is, with
@@ -26,11 +27,8 @@ export const field = (v: unknown, key: string): unknown => {
   return x === undefined ? null : x
 }
 
-/** The tool names' prefix for an MCP server: `mcp__<name>`, its characters but letters, digits, `_` and `-` as `_`. */
-export const toolPrefix = (server: string): string =>
-  `mcp__${Array.from(server)
-    .map((c) => (/^[A-Za-z0-9_-]$/u.test(c) ? c : "_"))
-    .join("")}`
+/** The tool names' prefix for an MCP server (`access.ts`'): `mcp__<name>`, its characters but letters, digits, `_` and `-` as `_`. */
+export { toolPrefix }
 
 /**
  * A child keeps the same row across spawn, wait, follow-up and resumed runs. Its messages can arrive before the spawn

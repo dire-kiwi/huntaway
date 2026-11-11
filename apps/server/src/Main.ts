@@ -21,6 +21,8 @@ import {
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
+import type { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
 import { ContextStatsRepo } from "./agents/ContextStatsRepo.ts"
 import { Prompts } from "./agents/Prompts.ts"
@@ -150,16 +152,20 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(TasksLive),
 )
 /** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
-export interface ModelCalls<T, E1, R1, E2, R2> {
+export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
   readonly titles: Layer.Layer<TitleModel | T, E1, R1>
   readonly window: Layer.Layer<WindowPrompt, E2, R2>
+  /** `CodexQueries`: a config's models, skills, rate limits and titles from a short-lived `codex app-server` (5.3). */
+  readonly codex: Layer.Layer<CodexQueries | C, E3, R3>
 }
 /** The agents area over what is above it. */
-const agentsLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
+const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   UsageWindow.loop.pipe(
     Layer.provideMerge(Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer)),
-    Layer.provideMerge(Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window)),
+    Layer.provideMerge(
+      Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window, models.codex),
+    ),
     Layer.provideMerge(ThreadsLive),
   )
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
@@ -219,7 +225,7 @@ export const BoardHooks = Layer.effect(
 )
 
 /** Every area's services, with `models` for the board's own model calls. */
-export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
+export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
@@ -245,7 +251,7 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
 export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.scanner)
 
 /** Every area's services, and their loops. */
-export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })))
+export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })))
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(

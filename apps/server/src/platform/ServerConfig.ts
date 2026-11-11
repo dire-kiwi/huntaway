@@ -61,6 +61,11 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.String("HUNTAWAY_CLAUDE_BIN")),
     Flag.optional,
   ),
+  codexBin: Flag.String("codex-bin").pipe(
+    Flag.withDescription("The Codex program Codex runs and queries start (default codex, on PATH)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_CODEX_BIN")),
+    Flag.optional,
+  ),
   noAgents: Flag.Boolean("no-agents").pipe(
     Flag.withDescription("Run no agent at all (test servers)"),
     Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_AGENTS")),
@@ -119,6 +124,7 @@ export interface ServeArgs {
   // Optional so that a command that serves nothing (`token`) need not give them.
   readonly shimBin?: Option.Option<string>
   readonly claudeBin?: Option.Option<string>
+  readonly codexBin?: Option.Option<string>
   readonly noAgents?: boolean
 }
 
@@ -146,6 +152,8 @@ export interface ServerConfigShape {
   readonly shimBin: string | null
   /** `--claude-bin`/`HUNTAWAY_CLAUDE_BIN`: the Claude Code program (default `claude`). */
   readonly claudeBin: string
+  /** `--codex-bin`/`HUNTAWAY_CODEX_BIN`: the Codex program (default `codex`), which a Codex run's adapter is told of too. */
+  readonly codexBin: string
   /** `--no-agents`/`HUNTAWAY_NO_AGENTS`: this host runs no agent at all (test servers). `Runs` checks it. */
   readonly noAgents: boolean
   /** The launcher this server was started by (`HUNTAWAY_EXE`, which bin/huntaway sets), if any. */
@@ -197,6 +205,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           home,
           shimBin: args.shimBin === undefined ? null : Option.getOrNull(Option.map(args.shimBin, expand)),
           claudeBin: args.claudeBin === undefined ? "claude" : Option.getOrElse(Option.map(args.claudeBin, expand), () => "claude"),
+          codexBin: args.codexBin === undefined ? "codex" : Option.getOrElse(Option.map(args.codexBin, expand), () => "codex"),
           noAgents: args.noAgents ?? false,
           exe: Option.getOrNull(exe),
           agentEnv: AGENT_ENV,
@@ -226,6 +235,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         // No agent starts unless a test gives a shim (and a fake `claude`); never the real Claude Code.
         shimBin: "/nonexistent/ia-shim",
         claudeBin: `${config.dataDir}/no-claude-in-tests`,
+        codexBin: `${config.dataDir}/no-codex-in-tests`,
         noAgents: false,
         exe: null,
         agentEnv: AGENT_ENV,
