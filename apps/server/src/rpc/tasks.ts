@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
 import type { ConflictReason, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
+import { AgentTools } from "../agents/AgentTools.ts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
 import { StackTitles } from "../agents/StackTitles.ts"
 import { PullRequests } from "../github/PullRequests.ts"
@@ -82,6 +83,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const reviewErrors = { TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused, ReviewRefused: reviewRefused }
     const inReview = yield* InReview
     const pullRequests = yield* PullRequests
+    const agentTools = yield* AgentTools
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
@@ -152,6 +154,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
           Effect.map((unmerged) => ({ unmerged })),
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
+      // 6.4: the skills for the composer's `/` menu.
+      "tasks.skills": ({ id }) => agentTools.taskSkills(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
     })
   }),
 )

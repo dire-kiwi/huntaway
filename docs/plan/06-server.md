@@ -496,6 +496,38 @@ As built in 4.5 (HE-5):
 
 ### Agents, runs, permissions, board tools — [07-agents.md](07-agents.md)
 
+#### As built in 6.4 (HE-7): `AgentTools`
+
+- **Files.** `agents/AgentTools.ts` (the service), `agents/AgentToolsRepo.ts` (the six tables' rows: `agent_skills`,
+  `agent_mcp_servers`, `agent_tool_switches`, `project_agent_tools`, `skill_sources`, and `thread_tools` read for a
+  thread's skills and the servers a workflow step turns off; no migration), `agents/agentTools/validation.ts` (the old
+  checks and their messages: frontmatter, `SKILL.md`, a server's name and config, others' skill names, what to clone),
+  `effective.ts` (what's on: own, then global by switch, then a thread's extra skills; `google` never for a project; the
+  `/` menu's rules; merging what a run reported), `files.ts` (`discover`, `copySkill`, `syncSkills`: links never
+  followed or copied), `sourcePlan.ts` (a fresh clone's effect on a source's skills, as a plan the repository carries out
+  in one transaction: matched by folder then by name, renames in two steps), `taskSkills.ts` (a Claude task's skills:
+  folders, plugins' installations, synced descriptions, aliases).
+- **Methods.** `global`, `project`, `updateProject`, `setSwitch`, `addSkill`/`updateSkill`/`removeSkill`,
+  `addServer`/`updateServer`/`removeServer` (owner `null` for the host's), `addSource`/`updateSource`/`removeSource`
+  (one at a time: a `Semaphore`; git through `Git` with `GIT_ALLOW_PROTOCOL`, ssh in batch mode, 180 s), `forRun(task)`
+  (skills written, then `RunTools`), `preview(task)` (the same unwritten), `recordSeen(task, init)` (database only: the
+  Claude line handler calls it in the `init` line's transaction), `taskSkills(task)` (Codex's from `CodexQueries.skills`),
+  `removeThreadSkills`. Errors: `ToolInvalid`, `ToolNotFound`, `ToolConflict`, `SourceFailed`; `rpc/agentTools.ts` maps
+  them to `Invalid`, `NotFound`, `Conflict` (`duplicate_name`) and `External` (`git`).
+- **RPCs.** The `agentTools` group (`get`, `project`, `updateProject`, `setSwitch`, `addSource`, `updateSource`,
+  `removeSource`, `addSkill`, `updateSkill`, `removeSkill`, `addServer`, `updateServer`, `removeServer`; the project-scoped
+  routes are the same methods with a `project_id`), `tasks.skills`. Nothing is emitted, as before: the settings read again
+  after a change.
+- **Where runs get them.** `LaunchFacts` gives `forRun(task)` to both launches (it was `noRunTools`); `Prompts` tells a
+  run of the gh server unless its project has its own `gh` or turns it off (`usesServer(preview(task), "gh", true)`;
+  `docsTools` is 6.3's, the same way); `TaskDeletion` removes a deleted task's review threads' skill folders.
+- **Decided.** A task's config for `seen` and the `/` menu is its own, else (no conversation yet) its first available,
+  as `LaunchFacts` picks it; `recordSeen` keys by the task's `claude_config_id` (written at launch). The `/` menu reads a
+  task's cwd as the old `skill_places` did (a ready worktree, else the repository), its documents folder and its group's
+  repositories as added folders. Skill, server and source ids are branded in `contracts/agentTools.ts` (not `ids.ts`).
+- **Left for others.** The assistant's `google` server helpers (`add_global_mcp_server`, `set_profile_switch`) are
+  `addServer` and `setSwitch` (6.7); writing a workflow step's `thread_tools.disabled_mcp_servers` is 6.6's.
+
 ### Review — [inventory 04](inventory/04-git-review.md) (2.12–2.13, 2.18–2.19)
 
 `Reviews`: reviewers each in their own thread and run, read-only in the task's worktree; `submit_review`; combining

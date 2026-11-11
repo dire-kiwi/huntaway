@@ -1,4 +1,6 @@
 export * from "./agentConfig.ts"
+// 6.4: skills and MCP servers.
+export * from "./agentTools.ts"
 export * from "./approval.ts"
 export * from "./attachment.ts"
 export * from "./capabilities.ts"
@@ -12,6 +14,7 @@ export * from "./ids.ts"
 export * from "./pen.ts"
 export * from "./profile.ts"
 export * from "./project.ts"
+export * from "./rpc/agentTools.ts"
 export * from "./rpc/approvalRules.ts"
 // 6.11: Asana, config archives, fan-outs, adding a project from GitHub.
 export * from "./rpc/asana.ts"
