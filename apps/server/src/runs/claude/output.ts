@@ -1,6 +1,7 @@
 import { Cause, Effect, Exit, Layer, MutableHashMap, Option, Result, Schema } from "effect"
 import type { NewEvent, RunId, TaskId } from "@huntaway/contracts"
 import { SavedEvent } from "@huntaway/contracts"
+import { AgentTools } from "../../agents/AgentTools.ts"
 import { INIT_PREFIX } from "../../agents/claude/launch.ts"
 import { ContextMeter } from "../../agents/ContextMeter.ts"
 import { Checkpoints } from "../../git/Checkpoints.ts"
@@ -124,6 +125,7 @@ export const ClaudeOutput = Layer.effect(
     const usage = yield* Usage
     const waits = yield* RunWaits
     const checkpoints = yield* Checkpoints
+    const agentTools = yield* AgentTools
     // Changed in place, one key at a time (a line's run is the only writer of its task's entry), and emptied of a run's
     // entry when the follower lets the run go (`released`), so it holds the threads being followed and no more.
     const kept = MutableHashMap.empty<TaskId, Kept>()
@@ -325,6 +327,8 @@ export const ClaudeOutput = Layer.effect(
       // The wait its agent is in (3.5): its own thread's other calls and its turn's end end it, a subagent's end is recorded.
       yield* waits.line(run, line)
       if (line.type === "control_response") yield* initRefused(run, line)
+      // 6.4: what the run's agent had (skills, MCP servers), for its project's settings.
+      if (line.type === "system" && line.subtype === "init") yield* agentTools.recordSeen(run.task_id, line)
       yield* repo.saveOffset(run.id, end, agentAt === undefined ? undefined : { agent_at: agentAt })
       // The reply being written, once the line is committed: in order with what the thread publishes then (an item that
       // ends the preview), also when later lines share the transaction.

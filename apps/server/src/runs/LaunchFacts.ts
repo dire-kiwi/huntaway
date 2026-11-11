@@ -3,7 +3,8 @@ import { SecureRandom } from "effect/crypto"
 import type { AgentConfigId, PermissionMode, Project, Rewind, Task, TaskId } from "@huntaway/contracts"
 import type { LaunchSpec } from "../agents/AgentDriver.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
-import { cacheDirsIn, codexEffort, noRunTools, reviewFilesystem } from "../agents/claude/access.ts"
+import { AgentTools } from "../agents/AgentTools.ts"
+import { cacheDirsIn, codexEffort, reviewFilesystem } from "../agents/claude/access.ts"
 import { claudeLaunch, recordedEffort } from "../agents/claude/launch.ts"
 import { codexLaunch } from "../agents/codex/launch.ts"
 import type { LaunchRefused } from "../agents/codex/launch.ts"
@@ -34,7 +35,7 @@ import { RunRepo } from "./RunRepo.ts"
 
 // What a run's launch is made of (huntaway's runner/launch.ts, its preparing half; inventory 01, section 2 "Prepare"):
 // the facts gathered from the areas for `claudeLaunch`, which is pure. Worktrees and checkpoints (M4), the task's temp
-// folder and its lost background work (2.8), the project's own tools (`AgentTools`), attachments' folders, telemetry's
+// folder and its lost background work (2.8), attachments' folders, telemetry's
 // environment and Codex (M5) join here with their areas.
 
 export interface Prepared {
@@ -107,6 +108,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const threads = yield* Threads
       const queries = yield* CodexQueries
       const proc = yield* Proc
+      // 6.4: the project's skills and servers (its skills written for the run).
+      const agentTools = yield* AgentTools
       // Where the package managers' caches are, when the environment says (Codex's sandbox would keep them read-only).
       const cacheEnv: Readonly<Record<string, string | null>> = Object.fromEntries(
         yield* Effect.forEach(
@@ -258,7 +261,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           effort,
           permissionMode,
           rules: yield* rules.forTask(task),
-          tools: noRunTools,
+          tools: yield* agentTools.forRun(task),
           served: yield* requests.served,
           githubAccount: nonBlank(project?.github_account) ?? nonBlank(profile?.github_account),
           addDirs: [...group, ...(docs !== null && docs !== cwd ? [docs] : [])],
@@ -370,7 +373,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           effort,
           permissionMode,
           rules: yield* rules.forTask(task),
-          tools: noRunTools,
+          tools: yield* agentTools.forRun(task),
           served: yield* requests.served,
           githubAccount: nonBlank(project?.github_account) ?? nonBlank(profile?.github_account),
           systemPrompt,

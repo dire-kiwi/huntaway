@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import { Conflict } from "@huntaway/contracts"
 import type { TaskId } from "@huntaway/contracts"
+import { AgentTools } from "../agents/AgentTools.ts"
 import { Worktrees } from "../git/Worktrees.ts"
 import type { Actor } from "../platform/Changes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
@@ -29,6 +30,7 @@ export class TaskDeletion extends Context.Service<TaskDeletion, TaskDeletionShap
       const repo = yield* TaskRepo
       const tasks = yield* Tasks
       const worktrees = yield* Worktrees
+      const agentTools = yield* AgentTools
 
       const remove = Effect.fn("TaskDeletion.delete")(function* (id: TaskId, options: { readonly deleteBranch: boolean }, by: Actor) {
         const task = yield* repo.get(id)
@@ -38,9 +40,15 @@ export class TaskDeletion extends Context.Service<TaskDeletion, TaskDeletionShap
           return yield* new Conflict({ reason: "in_use", detail: "the profile's assistant can't be deleted" })
         // Its run is stopped at once and its queue dropped, and its reviewers', who work in its worktree.
         yield* runs.abort(id)
-        for (const r of yield* repo.reviewThreads(id)) yield* runs.abort(r.id)
+        const reviewThreads = yield* repo.reviewThreads(id)
+        for (const r of reviewThreads) yield* runs.abort(r.id)
         yield* worktrees.forDeletion(task, options.deleteBranch)
-        return yield* tasks.delete(id, options, by)
+        // 6.4: its review and summary threads' own skills folders go with them.
+        const skillFolders = Effect.forEach(reviewThreads, (r) => (r.project_id === null ? Effect.void : agentTools.removeThreadSkills(r.project_id, r.id)), {
+          concurrency: 1,
+          discard: true,
+        })
+        return yield* tasks.delete(id, options, by).pipe(Effect.tap(() => skillFolders))
       })
 
       return TaskDeletion.of({ delete: remove })

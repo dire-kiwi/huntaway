@@ -1,3 +1,5 @@
+// 6.4
+import { AgentToolsRpcs } from "./agentTools.ts"
 import { ApprovalRulesRpcs } from "./approvalRules.ts"
 import { AttachmentRpcs } from "./attachments.ts"
 import { BoardRpcs } from "./board.ts"
@@ -25,6 +27,7 @@ export const HostRpcs = HostRpcGroup.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  AgentToolsRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

@@ -6,6 +6,8 @@ import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
 import {
+  // 6.4
+  AgentToolsRpcs,
   ApprovalRulesRpcs,
   AttachmentRpcs,
   BoardRpcs,
@@ -21,6 +23,9 @@ import {
   TaskRpcs,
   ThreadRpcs,
 } from "@huntaway/contracts"
+// 6.4: skills and MCP servers.
+import { AgentTools } from "./agents/AgentTools.ts"
+import { AgentToolsRepo } from "./agents/AgentToolsRepo.ts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
 import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
@@ -117,6 +122,8 @@ import { Profiles } from "./profiles/Profiles.ts"
 import { Usage } from "./profiles/Usage.ts"
 import { ProjectRepo } from "./projects/ProjectRepo.ts"
 import { Projects } from "./projects/Projects.ts"
+// 6.4
+import { AgentToolsHandlers } from "./rpc/agentTools.ts"
 import { ApprovalRulesHandlers } from "./rpc/approvalRules.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
@@ -231,6 +238,9 @@ const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1,
     ),
     // 4.8: stack titles, over the same model as task titles.
     Layer.provideMerge(StackTitles.layer),
+    // 6.4: skills and MCP servers (Prompts reads a project's gh switch), over Codex's skills.
+    Layer.provideMerge(AgentTools.layer),
+    Layer.provideMerge(AgentToolsRepo.layer),
     Layer.provideMerge(
       Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, StackTitleRepo.layer, models.titles, models.window),
     ),
@@ -362,6 +372,8 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.4
+  AgentToolsRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +392,8 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.4
+  AgentToolsHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
