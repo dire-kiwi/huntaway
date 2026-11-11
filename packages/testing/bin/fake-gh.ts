@@ -432,9 +432,10 @@ const currentBranch = () => git(["symbolic-ref", "--short", "HEAD"])
 
 /** The pull request a `pr` command names (number, URL or branch; the current branch's with none). */
 const findPr = (state: State, p: Parsed, target: string | undefined): { key: string; pr: Pull } => {
-  let key = repoOf(state, p)
   let ref = target
   const url = ref === undefined ? null : /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(ref)
+  // A pull request's URL names its repository: no other is looked for.
+  let key = url === null ? repoOf(state, p) : ""
   if (url !== null) {
     key = url[1] === "github.com" ? `${url[2]}/${url[3]}` : `${url[1]}/${url[2]}/${url[3]}`
     ref = url[4]
