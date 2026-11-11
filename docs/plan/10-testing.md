@@ -117,3 +117,21 @@ ia-shim and the server's follower, from the first line written to the last item 
 whichever server), 736 ms against 622 ms. The profile of what is left: the Effect runtime about a third, node:sqlite
 a fifth, schema decoding and encoding a tenth, GC 7%; the follower's design is in
 [07-agents.md](07-agents.md#the-follower-after-the-m2-measurement-he-4).
+
+The other M2 measurements (HE-4), on an i9-13900K (32 threads, 62 GiB, Linux, Node 26.13) shared with a live board, both
+servers on the same synthetic data made through their own APIs (3 projects, 2,848 tasks; no scrubbed live copy until the
+importer, M9), the old one at `f2298f0c` through its own `test-server.sh`, the same fake agent for both, medians:
+
+| What                                                   | New                 | Old                 | New/old | Limit   |
+| ------------------------------------------------------ | ------------------- | ------------------- | ------- | ------- |
+| RSS at idle: empty board / 2,908 tasks                 | 150 / 150 MB        | 113 / 132 MB        | 1.33× / 1.13× | ≤ 1.5× |
+| RSS with ten runs live / 10 s after they ended         | 162 / 163 MB        | 131 / 133 MB        | 1.23×   | ≤ 1.5×  |
+| Start to `HUNTAWAY_READY`: fresh / 2,908 tasks         | 526 / 556 ms        | 315 / 341 ms        | 1.7×    | < 2 s   |
+| `/api/health` p99 while 10,000 lines arrive at once    | 1.3 ms              | 935 ms              |         | ≤ old   |
+| `/api/health` p99, ~485 assistant lines/s              | 1.3 ms              | 10.1 ms             | 0.13×   | ≤ old   |
+| Board's first message (snapshot; old: its 15 loads)    | 154 ms, 5.5 MB      | 65 ms, 5.7 MB       | 2.4×    | recorded |
+| `approval-hook`, cold / warm compile cache             | 56 / 30 ms          | 50 / 25 ms          |         | < 60 ms |
+| `pnpm check` / `pnpm test`                             | 4.2 s / 7.0 s       |                     |         | recorded |
+
+The probe is `scripts/event-loop-probe.mjs`. The memory and event-loop figures were taken before the follower's changes
+above, which lower the CPU per line; they were not taken again.
