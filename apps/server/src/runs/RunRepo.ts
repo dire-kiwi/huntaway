@@ -85,6 +85,12 @@ export interface RunRepoShape {
   readonly setPhase: (run: RunId, phase: RunPhase) => Effect.Effect<void>
   /** Set progress columns. */
   readonly update: (run: RunId, columns: RunColumns) => Effect.Effect<void>
+  /**
+   * The tasks whose conversation has been idle since `idleSince` but not since before `notBefore` (their latest run, a
+   * prompt run, ended between the two), not running, not done, not waiting to merge or under review, in no archived
+   * project: what idle-session compaction compacts.
+   */
+  readonly idleSessions: (idleSince: Timestamp, notBefore: Timestamp) => Effect.Effect<ReadonlyArray<TaskId>>
   /** The tasks marked running with no run that hasn't exited (their last run ended as the server stopped). */
   readonly idleRunning: Effect.Effect<ReadonlyArray<TaskId>>
   /** A live run between turns is in a turn again (`between_turns` 1 → 0). */
@@ -176,6 +182,16 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
         saveOffset: (run, offset) => sql`UPDATE runs SET out_offset = ${offset} WHERE id = ${run}`.pipe(Effect.as(offset), Effect.orDie),
         setPhase: (run, phase) => sql`UPDATE runs SET status = ${phase} WHERE id = ${run}`.pipe(Effect.asVoid, Effect.orDie),
         update,
+        idleSessions: (idleSince, notBefore) =>
+          sql<{ readonly id: TaskId }>`SELECT t.id FROM tasks t JOIN runs r ON r.id = (SELECT id FROM runs WHERE task_id = t.id ORDER BY seq DESC LIMIT 1)
+            WHERE t.session_id IS NOT NULL AND t.running = 0 AND t.status != 'done' AND t.last_activity_at <= ${idleSince}
+              AND NOT (t.merging = 1 AND t.status = 'ready_for_merge')
+              AND (t.review IS NULL OR json_extract(t.review, '$.state') IS NOT 'running')
+              AND (t.project_id IS NULL OR t.project_id NOT IN (SELECT id FROM projects WHERE archived_at IS NOT NULL))
+              AND r.kind = 'prompt' AND r.status = 'exited' AND r.ended_at <= ${idleSince} AND r.ended_at > ${notBefore}`.pipe(
+            Effect.map((rows) => rows.map((r) => r.id)),
+            Effect.orDie,
+          ),
         idleRunning: sql<{ readonly id: TaskId }>`SELECT t.id FROM tasks t WHERE t.running = 1
           AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.task_id = t.id AND r.status != 'exited') ORDER BY t.created_at`.pipe(
           Effect.map((rows) => rows.map((r) => r.id)),

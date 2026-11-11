@@ -713,3 +713,11 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   and `DevServers`. RPCs: `host.usage { refresh? }`, `tasks.stopServer { id, port }`, `tasks.context { id }`. Not wired:
   `tasks.waitForLimit` (the "Carry on then" button; no contract yet) and `Titles.generateLater` on task creation (in
   `tasks.create`'s handler, another piece's).
+- **`Compaction`** (`runs/Compaction.ts`): `compactIdle`, one pass, compacts (`Runs.compact`, the board's own, with
+  its notice) each Claude session whose latest run, a prompt run, ended 50 to 60 minutes ago (`RunRepo.idleSessions`,
+  the old `idle_sessions`); the loop runs it at start and every minute. It and `Runs.limitResets` are `RunLoops` in
+  `Main.ts`, part of `AreasLive` but not of `areasLayer`, so a test board's clock moves without them (tests run a pass).
+- **Not built yet: `BackgroundWork`** (Claude's `background_tasks_changed`, the `background*` run files,
+  `Task.background_work`, the idle-vs-working rule, `BACKGROUND_GRACE`/`FOLLOW_UP_GRACE` at the hooks in
+  `RunInput.turnEnded`, `tasks.stopBackground`, the lost-background note in `Prompts.start`, the method 3.5's
+  `background_wait` needs).

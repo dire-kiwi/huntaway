@@ -13,6 +13,9 @@ import type { RunExitStatus } from "../platform/Changes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Threads } from "../threads/Threads.ts"
 import type { RunDir } from "./RunDir.ts"
+import type { ServerConfig } from "../platform/ServerConfig.ts"
+import { compactIdle } from "./Compaction.ts"
+import type { LaunchFacts } from "./LaunchFacts.ts"
 import { RunEnds } from "./RunEnds.ts"
 import { RunInput } from "./RunInput.ts"
 import { RunOutput } from "./RunOutput.ts"
@@ -32,6 +35,8 @@ const Json = Schema.fromJsonString(Schema.Unknown)
 const OK: RunExitStatus = { code: 0, signal: null }
 
 type Env =
+  | LaunchFacts
+  | ServerConfig
   | SecureRandom.SecureRandom
   | Runs
   | RunEnds
@@ -364,6 +369,30 @@ describe("after a restart", () => {
         assert.include(yield* notices(waiting), "Nothing it depends on is left to merge, so its agent is starting")
         const said = (yield* items(waiting)).flatMap((i) => (i.type === "user_message" ? [i.text] : []))
         assert.deepStrictEqual(said, ["The tasks this one was waiting for are merged (or no longer needed), so carry on with it."])
+      }),
+    ),
+  )
+
+  it.effect("sessions are compacted once idle for 50 minutes, while their prompt cache is warm, and the card stays", () =>
+    run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const idle = yield* newTask({ status: "in_review", running: false })
+        const stale = yield* newTask({ status: "in_review", running: false })
+        const epoch = "1970-01-01T00:00:00.000Z"
+        yield* sql`UPDATE tasks SET last_activity_at = ${epoch}`.pipe(Effect.orDie)
+        yield* sql`INSERT INTO runs (id, task_id, kind, status, created_at, ended_at) VALUES
+          ('r-idle', ${idle}, 'prompt', 'exited', ${epoch}, '1970-01-01T00:05:00.000Z'),
+          ('r-stale', ${stale}, 'prompt', 'exited', ${epoch}, ${epoch})`.pipe(Effect.orDie)
+        // A pass (the loop's, every minute): the first has been idle for 51 minutes, the second for 56.
+        yield* TestClock.adjust("56 minutes")
+        yield* compactIdle
+        const repo = yield* RunRepo
+        assert.strictEqual(Option.getOrThrow(yield* repo.latest(idle)).kind, "compact")
+        assert.include(yield* notices(idle), "Compacting the conversation after 50 minutes idle")
+        assert.strictEqual(Option.getOrThrow(yield* repo.latest(stale)).kind, "compact")
+        const t = yield* task(idle)
+        assert.deepStrictEqual([t.status, t.running], ["in_review", true])
       }),
     ),
   )

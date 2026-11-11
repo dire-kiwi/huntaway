@@ -62,6 +62,7 @@ import { RunFollower } from "./runs/RunFollower.ts"
 import type { RunOutput } from "./runs/RunOutput.ts"
 import { RunInput } from "./runs/RunInput.ts"
 import { RunRepo } from "./runs/RunRepo.ts"
+import { Compaction } from "./runs/Compaction.ts"
 import { RunEnds } from "./runs/RunEnds.ts"
 import { Runs } from "./runs/Runs.ts"
 import { Shim } from "./runs/Shim.ts"
@@ -159,8 +160,7 @@ export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
  * The runs area: the commands (`Runs`) and what a launch is made of, the follower with the Claude line handler, what
  * the server writes to a run's input, and the registry the areas below answer agents' requests through.
  */
-const RunsArea = Runs.limitResets.pipe(
-  Layer.provideMerge(Runs.layer),
+const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
   Layer.provideMerge(ClaudeOutput),
@@ -197,7 +197,14 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   )
 
 /** Every area's services. */
-export const AreasLive = areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })
+/**
+ * The runs area's loops: tasks whose usage limit reset carry on (every 30 s), idle sessions are compacted (every
+ * minute). Not in `areasLayer`, so a test board's clock moves without them; tests run a pass themselves.
+ */
+export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction)
+
+/** Every area's services, and their loops. */
+export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })))
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(
