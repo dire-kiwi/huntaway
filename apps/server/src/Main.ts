@@ -4,7 +4,9 @@ import { Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
+import { createSocket } from "node:dgram"
 import { createServer } from "node:http"
+import { networkInterfaces } from "node:os"
 import {
   ApprovalRulesRpcs,
   AttachmentRpcs,
@@ -34,6 +36,9 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { Discovery } from "./hosts/Discovery.ts"
+import { Tailscale } from "./hosts/discovery/Tailscale.ts"
+import { Udp } from "./hosts/discovery/Udp.ts"
 import { LinkConnections } from "./hosts/LinkConnections.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
 import { Links } from "./hosts/Links.ts"
@@ -205,10 +210,16 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
-/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay, settings sync. */
-const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, SettingsSyncExchange.layer, SettingsSync.observer).pipe(
+/**
+ * Node's UDP sockets and network interfaces, for mDNS: Effect's `DatagramSocket` can't pick the interface each datagram
+ * goes out of, nor list them (`hosts/discovery/Udp.ts`). Named here, as Node's HTTP server is.
+ */
+const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
+
+/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay, settings sync, discovery. */
+const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, SettingsSyncExchange.layer, SettingsSync.observer, Discovery.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(LinkConnections.layer, SettingsSync.layer)),
-  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, SettingsSyncRepo.layer)),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, SettingsSyncRepo.layer, UdpLive, Tailscale.layer)),
 )
 
 /**
@@ -321,7 +332,8 @@ export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, RelayRoute, McpHt
  * server that is still starting (the old server bound first and held requests at a gate instead).
  */
 export const serverLayer = (config: ServerConfig["Service"]) =>
-  HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }).pipe(
+  // Discovery answers once the server listens, on the port it got.
+  Layer.mergeAll(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Discovery.responder).pipe(
     Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
     Layer.provideMerge(AreasLive),
     Layer.provideMerge(PlatformLive),

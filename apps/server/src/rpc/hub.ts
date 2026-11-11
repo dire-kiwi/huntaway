@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { HubHostRpcs, Session, Unavailable } from "@huntaway/contracts"
+import { Discovery } from "../hosts/Discovery.ts"
 import { Links } from "../hosts/Links.ts"
 import { Relay } from "../hosts/Relay.ts"
 
@@ -10,6 +11,7 @@ export const HubHostHandlers = HubHostRpcs.toLayer(
   Effect.gen(function* () {
     const links = yield* Links
     const relay = yield* Relay
+    const discovery = yield* Discovery
     return HubHostRpcs.of({
       "hub.hosts.watch": () => links.watch,
       "hub.hosts.list": () => links.list,
@@ -17,7 +19,7 @@ export const HubHostHandlers = HubHostRpcs.toLayer(
       "hub.hosts.addSsh": () => later("linking over SSH"),
       "hub.hosts.sshKey": () => later("the hub's SSH key"),
       "hub.hosts.join": ({ url }) => links.join(url),
-      "hub.hosts.discover": () => later("finding hosts"),
+      "hub.hosts.discover": () => discovery.discover,
       "hub.hosts.update": ({ id, name, uplink }) => links.update(id, { name, uplink }),
       "hub.hosts.remove": ({ id }) => links.remove(id),
       "hub.hosts.copyConfig": () => later("copying a config between hosts"),
