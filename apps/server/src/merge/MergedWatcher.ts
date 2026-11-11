@@ -125,7 +125,8 @@ export class MergedWatcher extends Context.Service<MergedWatcher, MergedWatcherS
 
       const check = Effect.gen(function* () {
         const ids = yield* repo.withOpenPrs
-        const found = yield* taskRepo.getMany(ids)
+        // In the order listed (by project and number).
+        const found = (yield* taskRepo.getMany(ids)).toSorted((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
         // By account and host, then by pull request (tasks can share one).
         const groups = new Map<string, { readonly account: string | null; readonly host: string; readonly prs: Array<readonly [Target, Array<Task>]> }>()
         for (const t of found) {
