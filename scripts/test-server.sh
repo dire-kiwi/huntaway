@@ -77,7 +77,7 @@ launch() {
   done
   mkdir -p "$dir/tmp"
   TMPDIR="$dir/tmp" env "${unset[@]}" \
-    setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test "${serve[@]}" \
+    setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test --no-discovery "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!
   echo "$pid" > "$dir/server.pid"

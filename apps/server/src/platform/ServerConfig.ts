@@ -66,6 +66,22 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_AGENTS")),
     Flag.withDefault(false),
   ),
+  // Hosts (docs/plan/08-hosts.md).
+  hub: Flag.String("hub").pipe(
+    Flag.withDescription("URL[,URL]: hubs to dial in to as one of their hosts (with --hub-token)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_HUB")),
+    Flag.optional,
+  ),
+  hubToken: Flag.Redacted("hub-token").pipe(
+    Flag.withDescription("The hub token of the hubs given with --hub"),
+    Flag.withFallbackConfig(Config.Redacted("HUNTAWAY_HUB_TOKEN")),
+    Flag.optional,
+  ),
+  noDiscovery: Flag.Boolean("no-discovery").pipe(
+    Flag.withDescription("Neither answer nor send mDNS queries for other hosts (test servers)"),
+    Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_DISCOVERY")),
+    Flag.withDefault(false),
+  ),
 }
 
 /**
@@ -97,6 +113,7 @@ export const SERVE_ENV = [
   "HUNTAWAY_TELEMETRY_URL",
   "HUNTAWAY_SKIP_DB_BACKUP",
   "HUNTAWAY_NO_AGENTS",
+  "HUNTAWAY_NO_DISCOVERY",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -120,6 +137,9 @@ export interface ServeArgs {
   readonly shimBin?: Option.Option<string>
   readonly claudeBin?: Option.Option<string>
   readonly noAgents?: boolean
+  readonly hub?: Option.Option<string>
+  readonly hubToken?: Option.Option<Redacted.Redacted>
+  readonly noDiscovery?: boolean
 }
 
 export interface ServerConfigShape {
@@ -159,6 +179,12 @@ export interface ServerConfigShape {
   readonly tmpDir: string
   /** The root of the tasks' temp folders when it is not the usual one in `tmpDir`: tests put it in their data folder. */
   readonly taskTmpRoot: string | null
+  /** `--hub URL[,URL]`: the hubs this host dials in to, without a trailing slash. */
+  readonly hubs: ReadonlyArray<string>
+  /** `--hub-token`: what it presents to them. */
+  readonly hubToken: Redacted.Redacted | null
+  /** `--no-discovery`: no mDNS responder or browser (test servers, which must never find or answer a real board). */
+  readonly noDiscovery: boolean
 }
 
 /** The version of this build. A release sets it when it packages the server. */
@@ -202,6 +228,16 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           agentEnv: AGENT_ENV,
           tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
           taskTmpRoot: null,
+          hubs: Option.match(args.hub ?? Option.none(), {
+            onNone: () => [],
+            onSome: (list) =>
+              list
+                .split(",")
+                .map((url) => url.trim().replace(/\/+$/, ""))
+                .filter((url) => url !== ""),
+          }),
+          hubToken: Option.getOrNull(args.hubToken ?? Option.none()),
+          noDiscovery: args.noDiscovery ?? false,
         })
       }),
     )
@@ -231,6 +267,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         agentEnv: AGENT_ENV,
         tmpDir: config.dataDir,
         taskTmpRoot: `${config.dataDir}/task-tmp`,
+        hubs: [],
+        hubToken: null,
+        noDiscovery: true,
         ...config,
       }),
     )
