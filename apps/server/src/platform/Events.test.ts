@@ -3,7 +3,7 @@ import { Effect, Layer, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { ProjectId } from "@huntaway/contracts"
 import { Db } from "./Db.ts"
-import { Events } from "./Events.ts"
+import { BACKLOG, Events } from "./Events.ts"
 
 const TestLive = Events.layer.pipe(Layer.provideMerge(Db.layerMemory), Layer.provideMerge(SecureRandom.layerWebCrypto))
 const gone = (id: string) => ({ type: "project_deleted" as const, id: ProjectId.make(id) })
@@ -66,6 +66,17 @@ describe("Events", () => {
       assert.strictEqual(ahead.replay, null)
       const fresh = yield* events.watch(undefined)
       assert.strictEqual(fresh.replay, null)
+    }).pipe(Effect.scoped, Effect.provide(TestLive)),
+  )
+
+  it.effect("a subscriber that falls too far behind is cut off with resync", () =>
+    Effect.gen(function* () {
+      const events = yield* Events
+      const watch = yield* events.watch(undefined)
+      for (let i = 0; i <= BACKLOG; i++) yield* events.emit(gone(String(i)))
+      const seen = yield* watch.live.pipe(Stream.runCollect)
+      assert.strictEqual(seen.length, BACKLOG + 1)
+      assert.strictEqual(seen.at(-1)?.type, "resync")
     }).pipe(Effect.scoped, Effect.provide(TestLive)),
   )
 })

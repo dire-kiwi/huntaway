@@ -5,7 +5,7 @@ import { HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
-import { ConfigRpcs, HostRpcGroup, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
+import { BoardRpcs, ConfigRpcs, HostRpcGroup, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
 import { ApiNotFound, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -17,6 +17,7 @@ import { KeyedLock } from "./platform/KeyedLock.ts"
 import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
+import { Board } from "./lifecycle/Board.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
@@ -26,6 +27,7 @@ import { Profiles } from "./profiles/Profiles.ts"
 import { ProjectRepo } from "./projects/ProjectRepo.ts"
 import { Projects } from "./projects/Projects.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
+import { BoardHandlers } from "./rpc/board.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
@@ -66,7 +68,7 @@ const ProfilesLive = Profiles.ensureFromConfig.pipe(
 )
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
 const TasksLive = Layer.mergeAll(Tasks.layer, TaskRefs.layer).pipe(Layer.provideMerge(TaskRepo.layer), Layer.provideMerge(ProjectsLive))
-const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive).pipe(Layer.provideMerge(Dependencies.layer), Layer.provideMerge(TasksLive))
+const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(Layer.provideMerge(Dependencies.layer), Layer.provideMerge(TasksLive))
 
 /** Every area's services. */
 export const AreasLive = LifecycleLive
@@ -78,7 +80,7 @@ export const Served = PublicRpcs.merge(
   ConfigRpcs,
   ProjectRpcs,
   TaskRpcs,
-  // board (1.4)
+  BoardRpcs,
   // pens and attachments (1.7)
 )
 
@@ -90,7 +92,7 @@ export const HandlersLive = Layer.mergeAll(
   ConfigHandlers,
   ProjectHandlers,
   TaskHandlers,
-  // board (1.4)
+  BoardHandlers,
   // pens and attachments (1.7)
 ).pipe(Layer.provideMerge(AuthLive))
 
