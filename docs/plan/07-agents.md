@@ -557,9 +557,11 @@ export class ToolCalls extends Context.Service<ToolCalls, {
   for reviewers · a thread in plan mode only tools marked for planning (checked per call: a run's tool list is fixed
   at launch while its mode changes) · any call but `wait` ends the run's current wait · approval rules (assistant
   threads) · the tool.
-- **Who the caller is**: run → task → profile. Access to other profiles' boards, `<profile>:<key>` references and
-  falling through to linked hosts when something is not found here are `mcp/resolve.ts`, kept rule for rule
-  (inventory 03, section 2.3).
+- **Who the caller is**: run → task → profile. Access to other profiles' boards and `<profile>:<key>` references are
+  `mcp/resolve.ts`, falling through to linked hosts when something is not found here `mcp/acrossHosts.ts`, kept rule
+  for rule (inventory 03, section 2.3). An agent on another host is a caller with no run or thread here (7.4,
+  [08-hosts.md](08-hosts.md#board-tools-across-hosts)): the thread's own tools and anything that must ask the user
+  refuse it.
 - **A handler is a service call.** `create_task` calls `Tasks.create` with the agent as the actor; it does not reach
   into another area's internals. The old tools reused the HTTP handlers' inner functions.
 - The per-run secret for the HTTP transport stays `HMAC-SHA256(board token, "mcp:" + run id)`.

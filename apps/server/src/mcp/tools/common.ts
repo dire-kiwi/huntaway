@@ -2,8 +2,8 @@ import { Effect, Schema } from "effect"
 import type { Tool } from "effect/ai"
 import { toolHandler } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
-import { ToolError } from "../tool.ts"
-import type { McpCaller, ToolHandler } from "../tool.ts"
+import { ownThread, ToolError } from "../tool.ts"
+import type { LocalCaller, McpCaller, ToolHandler } from "../tool.ts"
 
 // What the board's tools share (docs/plan/07-agents.md, Board tools): the arguments every area's tools take, copied
 // from the old mcp.ts `board_tools`, the way a tool's handler is registered, and the services' errors as the agent is
@@ -63,6 +63,16 @@ export const boardTool = <Config extends HandledConfig>(
   }
 }
 
+/**
+ * A tool for the calling agent's own thread (`THREAD_TOOLS`), registered as `boardTool` does: its handler is given the
+ * caller's run and thread, and an agent on another host is refused ("only works on the host the agent runs on").
+ */
+export const threadTool = <Config extends HandledConfig>(
+  tool: Tool.Tool<string, Config, unknown>,
+  handle: (params: Tool.Parameters<Tool.Tool<string, Config, unknown>>, caller: LocalCaller) => ReturnType<ToolHandler<Tool.Tool<string, Config, unknown>>>,
+  options: BoardToolOptions = {},
+): RegisteredTool => boardTool(tool, (params, caller) => Effect.flatMap(ownThread(caller, tool.name), (local) => handle(params, local)), options)
+
 /** A string argument, or null when it's left out or blank (the old `str_arg`). */
 export const given = (v: string | undefined): string | null => (v === undefined || v === "" ? null : v)
 
@@ -94,5 +104,8 @@ export const toolErrorOf = (e: ServiceError): ToolError => {
 /** `self` with a board service's errors as the agent is told them. */
 export const told = <A, E extends ServiceError, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, ToolError, R> => Effect.mapError(self, toolErrorOf)
 
-/** The call asking the user (`Approvals`, `Permissions.approve`). */
-export const asker = (caller: McpCaller) => ({ run: caller.run, call_id: caller.call_id })
+/**
+ * The call asking the user (`Approvals`, `Permissions.approve`): none for an agent on another host, which has no thread
+ * here to ask in.
+ */
+export const asker = (caller: McpCaller) => (caller.run === null ? null : { run: caller.run, call_id: caller.call_id })

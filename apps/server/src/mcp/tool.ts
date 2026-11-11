@@ -56,16 +56,59 @@ export const annotation = <A>(tool: Tool.Any, key: Context.Reference<A>): A => C
 /**
  * Who is calling (docs/plan/07-agents.md, Who the caller is): the run the call came from, its task, and the task's
  * profile, with the call's id. A handler acts as this agent: on its profile's board, asking in its thread.
+ *
+ * An agent on another host (a call that came down a link, or up one: 7.4) has no run or thread here: `run` and `task`
+ * are null, and its profile is this host's profile of its name (`id` null when this host has none by that name: it
+ * reaches only the boards of the profiles that let that name in). The tools for the agent's own thread refuse it
+ * (`ownThread`), and a change that needs the user's approval is refused for it (there is no thread here to ask in).
  */
 export interface McpCaller {
   readonly call_id: CallId
   readonly server: ServerName
-  readonly run: Run
-  readonly task: Task
-  readonly profile: Profile
+  readonly run: Run | null
+  readonly task: Task | null
+  readonly profile: CallerProfile
   /** The thread's permission mode at the call: its own, else its project's, else the host's default. */
   readonly mode: PermissionMode
 }
+
+/** The caller's profile as the tools read it: its id here (null: this host has none of that name) and its name. */
+export interface CallerProfile {
+  readonly id: Profile["id"] | null
+  readonly name: string
+}
+
+/** A caller whose agent runs on this host: its run and its thread. */
+export interface LocalCaller extends McpCaller {
+  readonly run: Run
+  readonly task: Task
+}
+
+/** Whether the call came from an agent on this host. */
+export const isLocal = (caller: McpCaller): caller is LocalCaller => caller.run !== null && caller.task !== null
+
+/**
+ * The tools that act for the calling agent's own thread, which only its own host can run (the old `THREAD_TOOLS`):
+ * refused for a call from another host's agent, and never passed to another host.
+ */
+export const THREAD_TOOLS: ReadonlyArray<string> = [
+  "permission_prompt",
+  "request_user_input",
+  "finish_work",
+  "submit_review",
+  "wait",
+  "background_wait",
+  "track_work",
+  "untrack_work",
+  "list_tracked_work",
+]
+
+/** What a thread tool tells an agent on another host. */
+export const onlyOnItsHost = (tool: string) => `${tool} only works on the host the agent runs on`
+
+/** The caller as one on this host, or the refusal a thread tool gives an agent on another. */
+export const ownThread = (caller: McpCaller, tool: string): Effect.Effect<LocalCaller, ToolError> =>
+  isLocal(caller) ? Effect.succeed(caller) : Effect.fail(ToolError.other(onlyOnItsHost(tool)))
 
 /**
  * Why a tool failed, as the agent is told. `notFound`: what it names is not on this host (so linked hosts may be asked,
@@ -86,11 +129,14 @@ export type ToolHandler<T extends Tool.Any> = (params: Tool.Parameters<T>, calle
 export type ToolHandlers<Tools extends Record<string, Tool.Any>> = { readonly [K in keyof Tools]: ToolHandler<Tools[K]> }
 
 /** How a call came out: the tool's result as JSON, or the message of its error. What `mcp_calls` records. */
-export type ToolResult = { readonly _tag: "Ok"; readonly value: unknown } | { readonly _tag: "Err"; readonly message: string }
+export type ToolResult =
+  | { readonly _tag: "Ok"; readonly value: unknown }
+  /** `notFound`: what it names isn't on this host (an up-call's answer says so); not recorded, so unset on a call answered again. */
+  | { readonly _tag: "Err"; readonly message: string; readonly notFound?: boolean | undefined }
 
 export const ToolResult = {
   ok: (value: unknown): ToolResult => ({ _tag: "Ok", value }),
-  err: (message: string): ToolResult => ({ _tag: "Err", message }),
+  err: (message: string, notFound?: boolean): ToolResult => (notFound === true ? { _tag: "Err", message, notFound } : { _tag: "Err", message }),
 }
 
 /** A tool as `tools/list` shows it. */

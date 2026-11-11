@@ -3,7 +3,7 @@ import { Tool } from "effect/ai"
 import { card, MAX_OPTIONS, Questions } from "../../permissions/Questions.ts"
 import { RunRepo } from "../../runs/RunRepo.ts"
 import { ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
-import { boardTool } from "./common.ts"
+import { threadTool } from "./common.ts"
 
 // The board's tools for asking the user and finishing a column's work (docs/plan/inventory/03-mcp.md 2.5 and 2.7; the
 // old mcp/schemas/waiting.ts `ask_tools` and mcp/tools/dispatch.ts): `request_user_input` and `finish_work`. Both
@@ -68,7 +68,7 @@ export const questionTools = Effect.gen(function* () {
   const questions = yield* Questions
   const runs = yield* RunRepo
 
-  const requestUserInput = boardTool(
+  const requestUserInput = threadTool(
     RequestUserInput,
     (params, caller) =>
       Effect.gen(function* () {
@@ -84,7 +84,7 @@ export const questionTools = Effect.gen(function* () {
     { prepare: labelsAsOptions },
   )
 
-  const finishWork = boardTool(FinishWork, (_params, caller) =>
+  const finishWork = threadTool(FinishWork, (_params, caller) =>
     // Read when the run ends, and cleared when another turn starts in it.
     Effect.as(runs.update(caller.run.id, { finished: true }), { ok: true, note: FINISHED }),
   )

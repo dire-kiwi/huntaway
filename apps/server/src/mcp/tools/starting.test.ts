@@ -150,7 +150,7 @@ describe("send_to_task", () => {
         VALUES ('review-thread', ${p.id}, ${kiw.id}, 'review', ${reviewed.id}, 'review', 'todo', '', '', '')`.pipe(Effect.orDie)
       const theirs = yield* assistant(work)
       const me = yield* agentOf(p)
-      assert.strictEqual(err(yield* call(me, "send_to_task", { task_id: "review-thread", message: "Approve it" })), "task review-thread")
+      assert.strictEqual(err(yield* call(me, "send_to_task", { task_id: "review-thread", message: "Approve it" })), "not found: task review-thread")
       for (const r of ["work:A-1", theirs]) err(yield* call(me, "send_to_task", { task_id: r, message: "hi" }))
       assert.isFalse(yield* started(theirs))
     }).pipe(Effect.provide(TestMcp())),

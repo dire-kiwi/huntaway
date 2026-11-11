@@ -5,7 +5,8 @@ import type { RunId, Task, TaskId } from "@huntaway/contracts"
 export type Actor =
   | { readonly _tag: "User" }
   | { readonly _tag: "Device"; readonly device_id: string }
-  | { readonly _tag: "Agent"; readonly task_id: TaskId }
+  /** An agent: its thread here, or null for an agent on another host (its board tool call came over a link). */
+  | { readonly _tag: "Agent"; readonly task_id: TaskId | null }
   | { readonly _tag: "Automation"; readonly automation_id: string }
   | { readonly _tag: "Board" }
 

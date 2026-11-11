@@ -12,6 +12,7 @@ import { ProjectRpcs } from "./projects.ts"
 import { SettingsSyncRpcs } from "./settingsSync.ts"
 import { TaskRpcs } from "./tasks.ts"
 import { ThreadRpcs } from "./threads.ts"
+import { ToolRpcs } from "./tools.ts"
 
 /** Every group a host serves about itself (docs/plan/05-protocol.md, The contract package). */
 export const HostRpcs = HostRpcGroup.merge(
@@ -27,6 +28,7 @@ export const HostRpcs = HostRpcGroup.merge(
   PermissionRpcs,
   SettingsSyncRpcs,
   AdminRpcs,
+  ToolRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 
