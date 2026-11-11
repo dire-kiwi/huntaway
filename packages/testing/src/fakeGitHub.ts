@@ -6,7 +6,9 @@ import { tempDir } from "./TestBoard.ts"
 // board's and its agents' gh calls from, and the `gh` to give the server (`ServerConfig.ghBin`). bin/fake-gh.ts says
 // what it answers. A test makes one with what it needs (accounts, repositories with their pull requests, checks,
 // reviews and stacks), gives `bin` to the server, and reads back what changed and every call gh was given (`calls`).
-// Later tasks extend it: pull requests' GraphQL reads (4.5), merges (4.7), stacks (4.8).
+// Later tasks extend it: merges (4.7), stacks (4.8). Pull requests' GraphQL reads (4.5) take a pull request's checks
+// (with their job ids, required flags, suites and statuses), comments, reviews and review threads (paged by `threadsPage`),
+// and its failed jobs' logs from the repository's `jobs`.
 
 /** A login gh has: `auth token --hostname=<host> --user=<login>` prints its token. */
 export const FakeAccount = Schema.Struct({
@@ -26,22 +28,55 @@ export const FakeCheck = Schema.Struct({
   link: Schema.optional(Schema.String),
   startedAt: Schema.optional(Schema.String),
   completedAt: Schema.optional(Schema.String),
+  /** Its check run's id, which is its GitHub Actions job's (default 1000 + its index). */
+  id: Schema.optional(Schema.Finite),
+  /** How it ended, as GraphQL has it (CANCELLED, TIMED_OUT…), when `bucket` doesn't say enough. */
+  conclusion: Schema.optional(Schema.String),
+  required: Schema.optional(Schema.Boolean),
+  /** `status` for a commit status rather than a check run. */
+  kind: Schema.optional(Schema.Literals(["check", "status"])),
+  /** Its workflow run (check suite), for one with a `workflow`: default id 1, and completed unless it's pending. */
+  suite: Schema.optional(Schema.Struct({ id: Schema.Finite, status: Schema.String })),
 })
+
+/** What a comment, review or review comment may say of itself: its id (default by its place), a bot's, its URL. */
+const remarkFields = {
+  id: Schema.optional(Schema.String),
+  bot: Schema.optional(Schema.Boolean),
+  url: Schema.optional(Schema.String),
+}
 
 export const FakeComment = Schema.Struct({
   author: Schema.String,
   body: Schema.String,
   createdAt: Schema.optional(Schema.String),
   authorAssociation: Schema.optional(Schema.String),
+  ...remarkFields,
 })
 
 export const FakeReview = Schema.Struct({
   author: Schema.String,
-  /** APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED. */
+  /** APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING. */
   state: Schema.String,
   body: Schema.optional(Schema.String),
   submittedAt: Schema.optional(Schema.String),
   authorAssociation: Schema.optional(Schema.String),
+  ...remarkFields,
+})
+
+/** A review thread on a file, with its comments. */
+export const FakeThread = Schema.Struct({
+  path: Schema.String,
+  comments: Schema.Array(
+    Schema.Struct({
+      author: Schema.String,
+      body: Schema.String,
+      createdAt: Schema.optional(Schema.String),
+      authorAssociation: Schema.optional(Schema.String),
+      line: Schema.optional(Schema.NullOr(Schema.Finite)),
+      ...remarkFields,
+    }),
+  ),
 })
 
 /** A pull request. Left out: what the fake gives by default (mergeable, no checks, not in a stack…). */
@@ -77,6 +112,11 @@ export const FakePull = Schema.Struct({
   /** How a merge-async of it goes: merged at once (default), pending until it is looked at again, or failed. */
   mergeAsync: Schema.optional(Schema.Literals(["merged", "pending", "failed"])),
   mergeAsyncPending: Schema.optional(Schema.Boolean),
+  reviewThreads: Schema.optional(Schema.Array(FakeThread)),
+  /** How many review threads a GraphQL read gets at a time (default 100, as GitHub's). */
+  threadsPage: Schema.optional(Schema.Finite),
+  /** A GraphQL read of it fails with this. */
+  unreadable: Schema.optional(Schema.String),
 })
 export type FakePull = typeof FakePull.Type
 
@@ -111,6 +151,8 @@ export const FakeRepo = Schema.Struct({
   runs: Schema.optional(Schema.Array(FakeRun)),
   /** GitHub stacks by number: their pull requests' numbers, bottom first. */
   stacks: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.Finite))),
+  /** What `gh run view --job <id> --log-failed` prints, by job id. */
+  jobs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 })
 export type FakeRepo = typeof FakeRepo.Type
 

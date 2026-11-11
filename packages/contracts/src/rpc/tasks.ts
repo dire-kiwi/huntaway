@@ -63,4 +63,18 @@ export class TaskRpcs extends RpcGroup.make(
     success: Schema.Struct({ context: Schema.NullOr(TaskContext), detail: Schema.Unknown }),
     error: NotFound,
   }).annotate(RequiredScope, "read"),
+  /**
+   * Fix broken checks (the old `POST /tasks/{id}/fix_checks`): read the task's pull request now and send its agent the
+   * head commit's failed checks with the ends of their logs. `Invalid` (`pr_url`) without a readable pull request,
+   * `Conflict` (`pr_not_open`, `nothing_failed`) when there's nothing to fix; a refused message as `tasks.send`. The task.
+   */
+  Rpc.make("tasks.fixChecks", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
+  /** Whether moving the task to Done would leave work of its unmerged, for the board to ask first (the old `GET /tasks/{id}/unmerged`). */
+  Rpc.make("tasks.unmerged", { payload: { id: TaskId }, success: Schema.Struct({ unmerged: Schema.Boolean }), error: NotFound }).annotate(
+    RequiredScope,
+    "read",
+  ),
 ).middleware(Auth) {}

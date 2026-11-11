@@ -3,6 +3,9 @@ import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@hu
 import type { ConflictReason } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
+import { PullRequests } from "../github/PullRequests.ts"
+import { InReview } from "../review/InReview.ts"
+import type { FixChecksRefused } from "../review/InReview.ts"
 import { DevServers } from "../runs/DevServers.ts"
 import { Questions } from "../permissions/Questions.ts"
 import { Runs } from "../runs/Runs.ts"
@@ -43,6 +46,16 @@ export const sendRefused = (e: SendRefused) => {
   return Effect.fail(new Invalid({ field: "text", reason: e.detail }))
 }
 
+/** Fix broken checks refused, as the contract's errors (the old 400 and 409s). */
+const fixRefused = (e: FixChecksRefused) =>
+  Effect.fail(
+    e.reason === "not_open"
+      ? new Conflict({ reason: "pr_not_open", detail: e.detail })
+      : e.reason === "nothing_failed"
+        ? new Conflict({ reason: "nothing_failed", detail: e.detail })
+        : new Invalid({ field: "pr_url", reason: e.detail }),
+  )
+
 export const TaskHandlers = TaskRpcs.toLayer(
   Effect.gen(function* () {
     const tasks = yield* Tasks
@@ -52,6 +65,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const questions = yield* Questions
     const devServers = yield* DevServers
     const meter = yield* ContextMeter
+    const inReview = yield* InReview
+    const pullRequests = yield* PullRequests
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
@@ -101,6 +116,15 @@ export const TaskHandlers = TaskRpcs.toLayer(
           }),
         ),
       "tasks.context": ({ id }) => meter.get(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      // 4.5: Fix broken checks, and whether Done would leave work unmerged.
+      "tasks.fixChecks": ({ id }) =>
+        inReview.fixChecks(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused, FixChecksRefused: fixRefused })),
+      "tasks.unmerged": ({ id }) =>
+        tasks.get(id).pipe(
+          Effect.flatMap((t) => pullRequests.unmerged(t)),
+          Effect.map((unmerged) => ({ unmerged })),
+          Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
+        ),
     })
   }),
 )

@@ -26,6 +26,9 @@ export const ConflictReason = Schema.Literals([
   "restart_in_progress",
   "in_use",
   "worktree_kept",
+  // Fix broken checks (4.5): the pull request is merged or closed, or none of its checks failed.
+  "pr_not_open",
+  "nothing_failed",
 ])
 export type ConflictReason = typeof ConflictReason.Type
 

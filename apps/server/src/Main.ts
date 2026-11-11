@@ -41,6 +41,9 @@ import { Git } from "./git/Git.ts"
 import { Gh } from "./github/Gh.ts"
 import { GithubRemote } from "./github/GithubRemote.ts"
 import { GitHubAccessLive } from "./github/GitHubAccessLive.ts"
+import { PrWatch } from "./github/PrWatch.ts"
+import { PrWatchRepo } from "./github/PrWatchRepo.ts"
+import { PullRequests } from "./github/PullRequests.ts"
 import { StatusScripts } from "./git/StatusScripts.ts"
 import { TaskBase } from "./git/TaskBase.ts"
 import { Worktrees } from "./git/Worktrees.ts"
@@ -62,6 +65,8 @@ import { McpCallRepo } from "./mcp/McpCallRepo.ts"
 import { askRuleWith, cancelledWith, McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { MergeGate } from "./merge/MergeGate.ts"
+import { MergedWatcher } from "./merge/MergedWatcher.ts"
+import { InReview } from "./review/InReview.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { Wait } from "./mcp/Wait.ts"
 import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
@@ -182,8 +187,14 @@ const GitLive = Layer.mergeAll(Worktrees.layer, StatusScripts.layer).pipe(
   Layer.provideMerge(Git.layer),
   Layer.provideMerge(ThreadsLive),
 )
-/** The github area: gh as one account (`Gh`, on the git line), where a task's pull request goes (`GithubRemote`). */
-const GithubLive = GithubRemote.layer.pipe(Layer.provideMerge(GitLive))
+/**
+ * The github area: gh as one account (`Gh`, on the git line), where a task's pull request goes (`GithubRemote`), reading
+ * pull requests and what agents were told of them (`PrWatch`), and a task's pull request (`PullRequests`, 4.5).
+ */
+const GithubLive = Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer).pipe(
+  Layer.provideMerge(PrWatchRepo.layer),
+  Layer.provideMerge(GitLive),
+)
 /**
  * What asks a model besides runs: titles, window restarts, and Codex's one-off questions (its models, skills, rate limits
  * and titles). Tests give scripted ones, so no test calls a model or starts a Codex.
@@ -272,6 +283,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
+    Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
     // The merge gate the gh tools ask before a merge (4.7 fills it).
     Layer.provideMerge(MergeGate.layer),
     Layer.provideMerge(PermissionsLive),
@@ -293,8 +306,16 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
  */
 export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.scanner)
 
+/**
+ * The pull requests' loops (4.5): the in-review watcher (every 15 s) and the merged watcher (30 s after start, then every
+ * 3 minutes). Not in `areasLayer`, as `RunLoops`: tests run `InReview.sweep` and `MergedWatcher.check` themselves.
+ */
+export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
+
 /** Every area's services, and their loops. */
-export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })))
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops).pipe(
+  Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
+)
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(

@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { Titles } from "../agents/Titles.ts"
 import { StatusScripts } from "../git/StatusScripts.ts"
 import { TaskBase } from "../git/TaskBase.ts"
+import { PullRequests } from "../github/PullRequests.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
@@ -32,6 +33,7 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const permissions = yield* Permissions
       const statusScripts = yield* StatusScripts
       const taskBase = yield* TaskBase
+      const pullRequests = yield* PullRequests
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -40,6 +42,11 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           yield* runEnds.ended(change)
           // What its agent took in of the branch it's stacked on, and the tasks stacked on it of its own (4.1).
           yield* taskBase.keepStarts(change.task)
+          return
+        }
+        // 4.5: a project's preview template changed: its tasks' previews follow it.
+        if (change._tag === "ProjectChanged") {
+          yield* pullRequests.followPreviews(change.before, change.after)
           return
         }
         const task = change.after ?? change.before
