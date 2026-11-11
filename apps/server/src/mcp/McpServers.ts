@@ -1,9 +1,9 @@
 import { Context, Effect, Layer, Ref, Schema } from "effect"
-import type { Tool } from "effect/ai"
+import { Tool } from "effect/ai"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { askedProtocol, METHOD_NOT_FOUND, rpcError, rpcResult } from "./jsonrpc.ts"
 import type { RpcResponse } from "./jsonrpc.ts"
-import { annotation, ForReviewers, listed, ReviewersOnly, ToolError, toolArguments } from "./tool.ts"
+import { annotation, BOARD_SERVER, ForReviewers, listed, ReviewersOnly, ToolError, toolArguments } from "./tool.ts"
 import type { ListedTool, McpCaller, ServerName, ToolArguments, ToolHandler } from "./tool.ts"
 
 // The board's MCP servers (docs/plan/07-agents.md, Board tools): which tools each has, with their handlers, and the
@@ -23,10 +23,18 @@ export const INSTRUCTIONS =
   "smaller tasks that are each reviewed and merged on their own and then land together, create them with merges_into that " +
   "task (new subprojects can't be made any more); group related tasks, across projects too, in a pen."
 
-/** What each server says it is in `initialize` (`serverInfo.name`, `instructions`). gh's instructions name the run's account (M4). */
+/** The gh server's (huntaway's mcp/gh_mcp.ts), copied word for word; a run with a GitHub account is told which (`ghInstructions`). */
+export const GH_INSTRUCTIONS =
+  "GitHub through the gh CLI, run outside any sandbox with the user's GitHub login. Use these tools instead of running gh in Bash (where it may not reach GitHub or its login, or act as the wrong account), and git_push instead of `git push` if that fails. They work in your working directory's repository by default; pass repo (OWNER/REPO) for another one, or dir to run in another checkout. pr_* tools take a pull request number, URL or branch, defaulting to the current branch's PR. For anything else, call the gh tool with gh's arguments."
+
+/** What the gh server tells a run whose tools act as `account`. */
+export const ghInstructions = (account: string | null): string =>
+  account === null ? GH_INSTRUCTIONS : `${GH_INSTRUCTIONS} They act as the GitHub account ${account}.`
+
+/** What each server says it is in `initialize` (`serverInfo.name`, `instructions`). gh's name the run's account (`ghInstructions`). */
 export const SERVER_INFO: { readonly [S in ServerName]: { readonly name: string; readonly instructions: string | null } } = {
   huntaway: { name: "huntaway", instructions: INSTRUCTIONS },
-  gh: { name: "huntaway-gh", instructions: null },
+  gh: { name: "huntaway-gh", instructions: GH_INSTRUCTIONS },
   docs: { name: "huntaway-docs", instructions: null },
   desktop: { name: "huntaway-desktop", instructions: null },
 }
@@ -70,9 +78,19 @@ export const toolHandler = <Config extends HandledConfig>(
   }
 }
 
-/** The tools a server offers a run: a review thread's run the reviewers' tools, any other run all but those. */
-const offered = (registered: RegisteredTool, review: boolean) =>
-  review ? annotation(registered.tool, ForReviewers) : !annotation(registered.tool, ReviewersOnly)
+/**
+ * A tool as a server lists it. The board's servers but its own say whether each only reads (`readOnlyHint`): Codex
+ * runs those without asking.
+ */
+const listedOn = (server: ServerName, tool: Tool.Any): ListedTool =>
+  server === BOARD_SERVER ? listed(tool) : { ...listed(tool), annotations: { readOnlyHint: Context.get(tool.annotations, Tool.Readonly) } }
+
+/**
+ * The tools a server offers a run: on the board's own, a review thread's run the reviewers' tools and any other run all
+ * but those. The other servers offer every run all of theirs (a reviewer's gh writes are the CLI's to refuse, as before).
+ */
+const offered = (server: ServerName, registered: RegisteredTool, review: boolean) =>
+  server !== BOARD_SERVER ? true : review ? annotation(registered.tool, ForReviewers) : !annotation(registered.tool, ReviewersOnly)
 
 export interface McpServersShape {
   /** Adds tools to a server, after the ones it has (the order `tools/list` shows them in). A name already there is replaced. */
@@ -81,13 +99,14 @@ export interface McpServersShape {
   readonly find: (server: ServerName, name: string) => Effect.Effect<RegisteredTool | undefined>
   /** The tools a server offers a run (`tools/list`): a review thread's the reviewers' tools. */
   readonly tools: (server: ServerName, review: boolean) => Effect.Effect<ReadonlyArray<ListedTool>>
-  /** A server's answer to `initialize` for a client that asks for `protocol`. */
-  readonly initializeResult: (server: ServerName, protocol: string) => Readonly<Record<string, unknown>>
+  /** A server's answer to `initialize` for a client that asks for `protocol` (gh's naming the run's GitHub account). */
+  readonly initializeResult: (server: ServerName, protocol: string, account?: string | null) => Readonly<Record<string, unknown>>
   /** The answer to a request that calls nothing: `initialize`, `ping`, `tools/list`; anything else but `tools/call` is -32601. */
   readonly answer: (
     server: ServerName,
     review: boolean,
     request: { readonly id: string | number; readonly method: string; readonly params: unknown },
+    account?: string | null,
   ) => Effect.Effect<RpcResponse>
 }
 
@@ -100,12 +119,13 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
 
       const find = (server: ServerName, name: string) => Effect.map(Ref.get(registry), (all) => all[server].find((r) => r.tool.name === name))
       const tools = (server: ServerName, review: boolean) =>
-        Effect.map(Ref.get(registry), (all) => all[server].filter((r) => offered(r, review)).map((r) => listed(r.tool)))
+        Effect.map(Ref.get(registry), (all) => all[server].filter((r) => offered(server, r, review)).map((r) => listedOn(server, r.tool)))
 
-      const initializeResult = (server: ServerName, protocol: string) => {
+      const initializeResult = (server: ServerName, protocol: string, account: string | null = null) => {
         const info = SERVER_INFO[server]
         const result = { protocolVersion: protocol, capabilities: { tools: {} }, serverInfo: { name: info.name, version: config.version } }
-        return info.instructions === null ? result : { ...result, instructions: info.instructions }
+        const instructions = server === "gh" ? ghInstructions(account) : info.instructions
+        return instructions === null ? result : { ...result, instructions }
       }
 
       return McpServers.of({
@@ -117,10 +137,10 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
         find,
         tools,
         initializeResult,
-        answer: Effect.fn("McpServers.answer")(function* (server, review, request) {
+        answer: Effect.fn("McpServers.answer")(function* (server, review, request, account) {
           switch (request.method) {
             case "initialize":
-              return rpcResult(request.id, initializeResult(server, askedProtocol(request.params)))
+              return rpcResult(request.id, initializeResult(server, askedProtocol(request.params), account ?? null))
             case "ping":
               return rpcResult(request.id, {})
             case "tools/list":

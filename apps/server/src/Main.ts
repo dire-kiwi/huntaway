@@ -32,6 +32,9 @@ import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
 import { Git } from "./git/Git.ts"
+import { Gh } from "./github/Gh.ts"
+import { GithubRemote } from "./github/GithubRemote.ts"
+import { GitHubAccessLive } from "./github/GitHubAccessLive.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -49,12 +52,14 @@ import { Reactor } from "./lifecycle/Reactor.ts"
 import { McpCallRepo } from "./mcp/McpCallRepo.ts"
 import { askRuleWith, cancelledWith, McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
+import { MergeGate } from "./merge/MergeGate.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { Wait } from "./mcp/Wait.ts"
 import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
+import { GhTools } from "./mcp/tools/gh.ts"
 import { Approvals } from "./permissions/Approvals.ts"
 import { PermissionRepo } from "./permissions/PermissionRepo.ts"
 import { Permissions } from "./permissions/Permissions.ts"
@@ -152,6 +157,11 @@ const ThreadsLive = Threads.pruner.pipe(
 )
 /** The git area: running git; worktrees, a task's base, the Changes tab and checkpoints join this line (M4). */
 const GitLive = Git.layer.pipe(Layer.provideMerge(ThreadsLive))
+/**
+ * The github area: gh as one account (`Gh`), where a task's pull request goes (`GithubRemote`), and what the git area
+ * needs of GitHub (`GitHubAccess`, whose live layer is here: the git area sits above it).
+ */
+const GithubLive = GitHubAccessLive.pipe(Layer.provideMerge(Layer.mergeAll(Gh.layer, GithubRemote.layer)), Layer.provideMerge(GitLive))
 /** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
 export interface ModelCalls<T, E1, R1, E2, R2> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
@@ -163,7 +173,7 @@ const agentsLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =
   UsageWindow.loop.pipe(
     Layer.provideMerge(Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer)),
     Layer.provideMerge(Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window)),
-    Layer.provideMerge(GitLive),
+    Layer.provideMerge(GithubLive),
   )
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
 export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
@@ -188,7 +198,7 @@ const RunsArea = Runs.layer.pipe(
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   McpControlRegistered.pipe(
-    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools)),
+    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
@@ -230,6 +240,8 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // The merge gate the gh tools ask before a merge (4.7 fills it).
+    Layer.provideMerge(MergeGate.layer),
     Layer.provideMerge(PermissionsLive),
     // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
     Layer.provideMerge(RunEnds.layer),
