@@ -95,7 +95,7 @@ Leaving: `zustand` (atoms replace the store) and the server's direct dependency 
 | -------------------- | ---------------------- | ------------------------------------------------------------------------------------------- |
 | `vite-plus`          | 1.5.0                  | `vp check` (Oxfmt, Oxlint, the type check on TypeScript 7), `vp test` (Vitest 5.1), `vp build` |
 | `@effect/vitest`     | 4.1.3                  | `it.effect`, `layer(...)`, the test clock                                                   |
-| `@effect/tsgo`       | 0.67.7                 | Effect's diagnostics inside `vp check` and the editor. Its list of supported Oxlint and tsgolint versions includes Vite+ 1.5.0's |
+| `@effect/tsgo`       | 0.67.7                 | Effect's lint rules inside `vp check` (the `effecttsgo` Oxlint plugin and its `strict` preset) and the editor's language service. Its list of supported Oxlint and tsgolint versions includes Vite+ 1.5.0's |
 | `tsrs`               | 0.22.0-ts7.1.0-beta    | Compiling the server to JavaScript for a release package, as now                            |
 | `playwright`         | 1.64.1                 | `tests/ui` and Vitest's browser mode                                                        |
 | `electron-builder`   | ^26                    | Desktop packages                                                                            |
@@ -151,8 +151,9 @@ Node types, which is how the type check keeps them portable.
 | `pnpm desktop`      | The Electron shell from the checkout                                                             |
 | `cargo test`        | The shim's tests                                                                                 |
 
-Formatting stays Oxfmt at 160 columns and linting stays Oxlint with type-aware rules, both configured in the root
-`vite.config.ts`. Markdown under `docs/` is wrapped at 120.
+Formatting stays Oxfmt at 160 columns. Linting is Oxlint with type-aware rules plus `@effect/tsgo`'s strict preset,
+with every rule at error and warnings failing the check: [12-conventions.md](12-conventions.md#linting) has the
+configuration, which was run in [the spike](spike/lint/README.md). Markdown under `docs/` is wrapped at 120.
 
 ## CI
 

@@ -116,8 +116,8 @@ rely on that anywhere. Instead:
 - **Interrupting a fiber never signals an agent.** Agents run under `ia-shim` and outlive the server by design.
   Stopping an agent is an explicit method (`Runs.stop`), never a finalizer.
 - **Timeouts, retries and polling are `Effect.timeout`, `Effect.retry` and `Effect.repeat` with a `Schedule`**, and
-  durations are written as strings (`"20 seconds"`). No `setTimeout`, `setInterval` or `Date.now()` in server code:
-  time comes from `Clock`/`DateTime.now`, so tests run on `TestClock`.
+  durations are written as strings (`"20 seconds"`). No `setTimeout`, `setInterval` or `Date.now()` in server code
+  (lint errors): time comes from `Clock`/`DateTime.now`, so tests run on `TestClock`.
 - **Emit after commit.** A method that changes state publishes its events after its transaction commits, in the
   order it committed (the `Events` service does both; see [06-server.md](06-server.md#events)).
 
@@ -154,6 +154,120 @@ rely on that anywhere. Instead:
   folder, a fake link).
 - **A fixed bug gets a test that fails without the fix.**
 
+## Linting
+
+The code base starts strict and stays strict: **every rule that is on is an error, and a warning fails the check too.**
+There is no backlog of warnings to grow, which is what the old repository ended up with. The configuration below was
+run against a file that breaks it ([spike/lint](spike/lint/README.md)): 13 errors from 24 lines, exit code 1.
+
+`pnpm check` is `effect-tsgo vp check`: Oxfmt, Oxlint with type-aware rules, the type check, and the Effect rules
+that `@effect/tsgo` adds to Oxlint as the `effecttsgo` plugin. The root `vite.config.ts`:
+
+```ts
+import { strict } from "@effect/tsgo/oxlint-presets"
+import { defineConfig } from "vite-plus"
+
+export default defineConfig({
+  fmt: { printWidth: 160 },
+  lint: {
+    // 97 Effect rules, every one at "error": correctness, anti-patterns and style.
+    extends: [strict],
+    options: { typeAware: true, typeCheck: true, denyWarnings: true },
+    categories: { correctness: "error", suspicious: "error", perf: "error" },
+    rules: {
+      // Effect rules the strict preset leaves off. Time, timers, randomness, the environment, logging and JSON go
+      // through Effect's services, so tests control them and failures are typed.
+      "effecttsgo/global-date": "error",
+      "effecttsgo/global-date-in-effect": "error",
+      "effecttsgo/global-timers": "error",
+      "effecttsgo/global-timers-in-effect": "error",
+      "effecttsgo/global-random": "error",
+      "effecttsgo/global-random-in-effect": "error",
+      "effecttsgo/global-console": "error",
+      "effecttsgo/global-console-in-effect": "error",
+      "effecttsgo/global-fetch": "error",
+      "effecttsgo/global-fetch-in-effect": "error",
+      "effecttsgo/global-json": "error",
+      "effecttsgo/global-json-in-effect": "error",
+      "effecttsgo/process-env": "error",
+      "effecttsgo/process-env-in-effect": "error",
+      "effecttsgo/crypto-random-uuid": "error",
+      "effecttsgo/crypto-random-uuid-in-effect": "error",
+      "effecttsgo/node-builtin-import": "error",
+      "effecttsgo/async-function": "error",
+      "effecttsgo/new-promise": "error",
+      "effecttsgo/extends-native-error": "error",
+      "effecttsgo/instance-of-schema": "error",
+      "effecttsgo/schema-sync": "error",
+      // Layers are provided at entry points only; errors and services are declared one way.
+      "effecttsgo/strict-effect-provide": "error",
+      "effecttsgo/effect-try-without-catch": "error",
+      "effecttsgo/any-unknown-in-error-context": "error",
+      "effecttsgo/unsafe-effect-type-assertion": "error",
+      "effecttsgo/prefer-schema-tagged-error": "error",
+      "effecttsgo/service-not-as-class": "error",
+      "effecttsgo/deterministic-keys": "error",
+      "effecttsgo/schema-union-of-literals": "error",
+      "effecttsgo/nested-effect-gen-yield": "error",
+      // TypeScript.
+      "typescript/no-explicit-any": "error",
+      "typescript/no-non-null-assertion": "error",
+      "typescript/no-floating-promises": "error",
+      "typescript/no-misused-promises": "error",
+      "typescript/switch-exhaustiveness-check": "error",
+      "typescript/consistent-type-imports": "error",
+      "typescript/no-unnecessary-type-assertion": "error",
+      "typescript/only-throw-error": "error",
+      "import/no-cycle": "error",
+      "eslint/no-restricted-imports": ["error", { /* the package boundaries of 02-repository.md */ }]
+    },
+    overrides: [
+      // Plain TypeScript by design: no Effect, so the Effect-native rules do not apply.
+      { files: ["packages/shared/**", "apps/server/src/hooks/**"], rules: { /* effect-native rules off */ } },
+      // The kept React components: view code, moved over one feature at a time (09-frontend.md).
+      { files: ["apps/web/src/components/**", "apps/mobile/src/app/**"], plugins: ["react"], rules: {
+          "react/rules-of-hooks": "error",
+          "react/exhaustive-deps": "error"
+          /* async-function, global-date and global-timers off: event handlers and DOM timers */
+      } },
+      // Entry points provide layers and read the environment.
+      { files: ["apps/server/src/bin.ts", "apps/server/src/Main.ts", "apps/server/src/platform/ServerConfig.ts", "**/*.test.ts", "packages/testing/**"],
+        rules: { "effecttsgo/strict-effect-provide": "off", "effecttsgo/process-env": "off" } }
+    ]
+  },
+  test: { projects: ["apps/server", "apps/web", "packages/*"] }
+})
+```
+
+And in `tsconfig.base.json`, the language service's options, which the lint reads too:
+
+```jsonc
+"plugins": [{
+  "name": "@effect/language-service",
+  "diagnostics": false, // Oxlint reports them; the editor would show each twice
+  // The unstable modules this code base has decided to build on. Anything else unstable is an error, so a new one is a
+  // reviewed change to this list. Experimental APIs: none.
+  "allowedUnstableApis": ["effect/http", "effect/http-api", "effect/rpc", "effect/sql", "effect/process", "effect/socket",
+    "effect/cli", "effect/reactivity", "effect/ai", "effect/schema", "effect/testing", "effect/workers", "effect/crypto"],
+  "keyPatterns": [{ "target": "service", "pattern": "default", "skipLeadingPath": ["apps/server/src/", "packages/"] }]
+}]
+```
+
+Rules for living with it:
+
+- **A rule is switched off for a line, with its reason**, never for a file or a folder outside the `overrides`
+  above: `// @effect-diagnostics-next-line globalDate:off -- the DOM event carries a wall-clock time`. A structural
+  test counts the suppressions and fails when the count grows without the list in `docs/effect.md` growing with it.
+- **Service and error keys are the ones `deterministic-keys` computes** from the package and the file's path (its
+  quick fix writes them). The examples in this plan write `"huntaway/tasks/Tasks"` for short.
+- **A rule is never lowered to `warn`.** If a rule is wrong for this code base it is turned off in the config, in a
+  change that says why.
+- **The three unverified names** in the config above (`import/no-cycle`, the `react/*` rules and
+  `eslint/no-restricted-imports`' option shape under Vite+ 1.5.0) are checked in M0; the Effect rules, `typeAware`,
+  `denyWarnings` and `allowedUnstableApis` were checked in the spike.
+- **`@effect/tsgo` supports listed versions** of Oxlint and tsgolint (0.67.7: Oxlint 1.89 to 1.93; Vite+ 1.5.0 bundles
+  1.91.0). An upgrade of Vite+ checks that list first.
+
 ## Structural tests
 
 `apps/server/tests/structure/` holds the rules a reviewer would otherwise repeat. Each reads the sources with the
@@ -162,8 +276,8 @@ type checker or a pattern and fails with the file and line:
 1. Nothing outside the entry points and `packages/testing` runs an Effect or makes a runtime.
 2. No `yield*` inside a `try` block.
 3. Every call that takes a `concurrency` option passes it.
-4. No `setTimeout`, `setInterval`, `Date.now()`, `new Date()` without an argument, `Math.random()` or `process.env`
-   in `apps/server/src` outside `Config.ts` and the entry points.
+4. The number of lint suppressions (`@effect-diagnostics`, `oxlint-disable`) matches the list in `docs/effect.md`.
+   (Timers, the clock, randomness and `process.env` are lint rules now, not a test.)
 5. `packages/contracts` imports only `effect` and itself; `packages/client` does not import `apps/*` or Node
    modules; nothing in `apps/web/src/components` imports `effect/rpc`, `effect/http` or a `packages/client`
    internal (only its public atoms and types).
@@ -172,5 +286,4 @@ type checker or a pattern and fails with the file and line:
 8. Every RPC in the contract has a handler, and every board MCP tool has a schema and a handler (the layer would
    also fail to build; this gives a readable message).
 
-Effect's own diagnostics run in `pnpm check` through `@effect/tsgo`, with `floatingEffect` and
-`tryCatchInEffectGen` as errors and the `outdatedApi` rule on.
+These cover what a lint rule cannot see. Everything a rule can see is in [Linting](#linting).

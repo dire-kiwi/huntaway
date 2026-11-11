@@ -1,0 +1,13 @@
+{
+  "name": "huntaway-effect-lint-spike",
+  "private": true,
+  "type": "module",
+  "description": "The lint configuration the plan proposes, with a file that breaks it: not part of the workspace",
+  "devDependencies": {
+    "@effect/tsgo": "0.67.7",
+    "@types/node": "^24.19.2",
+    "effect": "4.1.4",
+    "typescript": "7.0.2",
+    "vite-plus": "1.5.0"
+  }
+}
