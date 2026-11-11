@@ -281,7 +281,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   old ones on `hubRpc` (`settings/hosts/hub.ts`) and the query atoms; they load nothing in effects. Over SSH, the hub's
   key and nearby hosts answer `Unavailable` until 7.3 and 7.5, and say so.
 - **Cut with a note**: the row's Update (the hub pushing its code or release to a host) needs `hub.hosts.pushUpdate`,
-  which is not in the contract yet, and the host's restart state (`admin.status`): 8.1. A row's version line shows
+  which is not in the contract yet, and the host's restart state (`admin.status`): 8.1 (done there, and in 6.12). A row's version line shows
   `protocol` where it showed the API number. Copying a login between hosts is on the host page and Agent configs, which
   are 6.12's (its RPC, `hub.hosts.copyConfig`, is 7.5's).
 - **Checks**: `packages/client/test/hosts.test.ts` (an in-memory hub with two hosts; the relay socket's new ticket per
@@ -445,11 +445,25 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - **Marked slots, for the areas that bring them.** Agent tools (6.4): the Skills and MCP project tab, and the skills a
   reviewer or summarizer picks from (names are typed until then). Automations (6.5) and Workflows (6.6): their project
   tabs, and the Review tab's note on which workflows take reviews over (it says what using workflows means until then).
-  6.11: gh's accounts in `GithubAccountSelect` (`profiles.githubAccounts`, a stub that lists none), `CopyLoginModal`,
-  config archives, and connecting Asana (`AsanaAccount`). The host page's Settings sync, version, Server and Remove for a
-  linked host, and the service (`admin.*`, `hub.hosts.*`: M7 and M8, board task HE-6), Terminal tools (6.1), Telemetry
-  (6.9) and Desktop (6.10) are `Slot`s; Settings → Server shows what `host.info` says, and its restart, update, release,
-  shell and service parts and the sidebar's `UpdateButton` are HE-6's.
+  6.11: gh's accounts in `GithubAccountSelect` (`profiles.githubAccounts`, a stub that lists none), config archives, and
+  connecting Asana (`AsanaAccount`). Terminal tools (6.1), Telemetry (6.9) and Desktop (6.10) are `Slot`s on the host
+  page.
+- **HE-6's parts, after it merged.** Settings → Server is the old one over `admin.status` (polled, and on focus) with
+  `host.info`'s machine and data folder: Rebuild & restart, Update to a deployed commit, the source checkout and the
+  deployment and their new commits, and under `settings/server/` the release checks (`Releases`: Check now, the
+  download, prereleases through `host.updateSettings`, Roll back), the desktop app's own update (`ShellNotice`, its
+  preload's `shellUpdateKind`/`updateShell` read with `Reflect` as notifier.ts does), and `RestartModal` (restart,
+  `admin.update`, `admin.updateRelease`, `admin.rollback`). This host's restart is followed by the board's `restart`
+  (its `restart` and `restart_log` events): where the old modal set the store's restart to "starting", it keeps the
+  board's restart as it was when it asked and shows "Starting…" until that changes. The sidebar has `UpdateButton`
+  again. The host page has `HostVersion`, settings sync (`hosts/SettingsSync.tsx` over `settingsSync.get` and
+  `resolve`, read again when the host's settings change), a linked host's `RemoteServer` and any host's `HostService`
+  (`server/RemoteServer.tsx`, polling that host's `admin.status` through the relay, as its events go down with it), and
+  Remove (`hub.hosts.remove`). `CopyLoginModal` is mounted from Agent configs and the host page's configs with the
+  board's connected hosts that run agents and `hub.hosts.copyConfig`, whose `files` are now the archive's entries (it
+  said how many) and which now copies through 6.11's archives (08-hosts.md). HE-6's row Update is the old one again:
+  it sends the hub's checkout as it is (`hosts/useUpdateCommit.ts`, the hub's `admin.status`), a release host only a
+  newer version, follows the host's phases by polling it, and ends on its new boot.
 - **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the
   two-file database scheme, moving threads onto items). `Devices.tsx` and the paired phones under Network access, with
   device pairing (14, Deferred).
@@ -460,8 +474,15 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `summarizers` no longer reads the single `summarizer`; `guide` opens the workflows page by its address (the old check
   followed the Workflows tab's link, 6.6's); the shortcut moved is the search field's (Triage isn't on this server).
   Not ported: `databaseFile` (dropped), `worktreeSetup` (the board's setup thread, not a settings panel), `devices`
-  (deferred), and the settings checks of other areas (`hostRelease`, `hostUpdate`, `release-update`, `nearbyHosts`,
-  `telemetry`, `skillSources`, `agentTools`, `automations`, `workflows*`, `githubClone`, `githubCreate`).
+  (deferred), and the settings checks of other areas (`telemetry`, `skillSources`, `agentTools`, `automations`,
+  `workflows*`, `githubClone`, `githubCreate`). With HE-6's parts: `hostRelease`, `hostUpdate`, `releaseUpdate` (the
+  old `release-update`) and `nearbyHosts`, with `tests/ui/servers.mjs` answering `admin.*`, `hub.hosts.pushUpdate` and
+  rewriting what the hub says of its hosts on the page's socket and the relays (where the old checks routed
+  `/api/admin`, `/api/h/<host>` and `/api/hosts`), and pushing `restart` events on the board stream; the linked hosts
+  are a second test server. New: `hostPage` (a config's login copied to a linked host for real, settings sync switched
+  on there, Remove). Not ported: hostUpdate's "the events socket reconnects at once when the network comes back"
+  (HA-38): the client's session retries on its own schedule and does not listen for `online`, which is
+  `packages/client`'s to decide. The old checks' `fastClock` is gone: the polls they sped up (1.5 s) fit in a step.
 ### As built in 6.8 (HE-7): notifications and push
 
 - **`state/notify.ts`**: which changes notify (`taskEvent`, `stillApplies`, `notificationText`, `attentionCount`), the

@@ -1,8 +1,9 @@
 import { Context, Effect, Layer } from "effect"
 import { Invalid, LinkId, NotFound, Unavailable } from "@huntaway/contracts"
-import type { AgentConfig, AgentConfigId, CopyConfig as CopyConfigPayload, HostOffline, NewAgentConfig } from "@huntaway/contracts"
+import type { AgentConfig, AgentConfigId, Conflict, CopyConfig as CopyConfigPayload, HostOffline, NewAgentConfig } from "@huntaway/contracts"
 import { Identity } from "../platform/Identity.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
+import { ConfigArchives } from "../profiles/ConfigArchives.ts"
 import { LinkConnections } from "./LinkConnections.ts"
 
 // Copying an agent config's login and settings from one host to another (`hub.hosts.copyConfig`; inventory 05 §2.2,
@@ -10,8 +11,8 @@ import { LinkConnections } from "./LinkConnections.ts"
 // connection. The config is matched by name and made on the target when it has none of that name, in the source's
 // folder unless another is given.
 //
-// The login itself travels as the config's archive (`configs.exportArchive` and `configs.importArchive`), which comes
-// with plan task 6.11: until then the copy stops at the export, before anything is made on the target.
+// The login itself travels as the config's archive (`configs.exportArchive` and `configs.importArchive`, 6.11): exported
+// before anything is made on the target, so a config with nothing to copy leaves the target as it was.
 // Copying a profile's login (`profile`, the old hosts' before API 20) is gone with `/profiles/{id}/claude-config`
 // (docs/plan/14-dropped-and-open.md).
 
@@ -20,25 +21,29 @@ interface ConfigHost {
   readonly name: string
   readonly configs: Effect.Effect<ReadonlyArray<AgentConfig>, Unavailable>
   readonly create: (config: NewAgentConfig) => Effect.Effect<AgentConfig, Invalid | Unavailable>
-  /** The config's login and settings as an archive, and how many files it holds. */
-  readonly exportArchive: (id: AgentConfigId) => Effect.Effect<{ readonly archive: string; readonly files: number }, Unavailable>
-  readonly importArchive: (id: AgentConfigId, archive: string, overwrite: boolean) => Effect.Effect<void, Unavailable>
+  /** The config's login and settings as an archive, and the entries it holds. */
+  readonly exportArchive: (id: AgentConfigId) => Effect.Effect<{ readonly archive: string; readonly files: ReadonlyArray<string> }, Invalid | Unavailable>
+  readonly importArchive: (id: AgentConfigId, archive: string, overwrite: boolean) => Effect.Effect<void, Invalid | Unavailable>
 }
 
 /** What `hub.hosts.copyConfig` takes. */
 type CopyConfigInput = typeof CopyConfigPayload.Type
 
-/** Config archives come with plan task 6.11. */
-const noArchives = Effect.fail(new Unavailable({ what: "copying a config's login", reason: "hosts can't export a config's login yet (config archives)" }))
-
 /** A failed call to a linked host, as what the copy fails with. */
 const unavailable = (host: string) => (e: { readonly message: string; readonly _tag: string }) =>
   new Unavailable({ what: `the agent configs on ${host}`, reason: e.message === "" ? e._tag : e.message })
 
+/** tar couldn't be run on this host. */
+const tar = (e: { readonly reason: string }) => Effect.fail(new Unavailable({ what: "tar", reason: e.reason }))
+/** The config went while it was being copied. */
+const gone = (e: { readonly id: string }) => Effect.fail(new Unavailable({ what: "agent config", reason: `${e.id} was deleted meanwhile` }))
+/** A login already there, which only `overwrite` replaces. */
+const inUse = (e: Conflict) => Effect.fail(new Invalid({ field: "overwrite", reason: e.detail }))
+
 export interface CopyConfigShape {
   readonly copy: (
     input: CopyConfigInput,
-  ) => Effect.Effect<{ readonly ok: boolean; readonly files: number | null }, Invalid | NotFound | HostOffline | Unavailable>
+  ) => Effect.Effect<{ readonly ok: boolean; readonly files: ReadonlyArray<string> | null }, Invalid | NotFound | HostOffline | Unavailable>
 }
 
 export class CopyConfig extends Context.Service<CopyConfig, CopyConfigShape>()("huntaway-server/hosts/CopyConfig") {
@@ -48,13 +53,17 @@ export class CopyConfig extends Context.Service<CopyConfig, CopyConfigShape>()("
       const identity = yield* Identity
       const configs = yield* AgentConfigs
       const connections = yield* LinkConnections
+      const archives = yield* ConfigArchives
 
       const local: ConfigHost = {
         name: identity.hostName,
         configs: configs.list,
         create: configs.create,
-        exportArchive: () => noArchives,
-        importArchive: () => noArchives,
+        exportArchive: (config) => archives.exportArchive(config).pipe(Effect.catchTags({ AgentConfigNotFound: gone, ArchiveUnavailable: tar })),
+        importArchive: (config, archive, overwrite) =>
+          archives
+            .importArchive(config, archive, overwrite)
+            .pipe(Effect.catchTags({ AgentConfigNotFound: gone, ArchiveUnavailable: tar, Conflict: inUse }), Effect.asVoid),
       }
 
       const hostOf = (id: string): Effect.Effect<ConfigHost, HostOffline> =>
@@ -73,8 +82,14 @@ export class CopyConfig extends Context.Service<CopyConfig, CopyConfigShape>()("
                     }),
                     Effect.mapError((e) => (e._tag === "Invalid" ? e : unavailable(name)(e))),
                   ),
-                exportArchive: () => noArchives,
-                importArchive: () => noArchives,
+                exportArchive: (config) =>
+                  live.client("configs.exportArchive", { id: config }).pipe(Effect.mapError((e) => (e._tag === "Invalid" ? e : unavailable(name)(e)))),
+                importArchive: (config, archive, overwrite) =>
+                  live.client("configs.importArchive", { id: config, archive, overwrite }).pipe(
+                    Effect.catchTag("Conflict", inUse),
+                    Effect.mapError((e) => (e._tag === "Invalid" ? e : unavailable(name)(e))),
+                    Effect.asVoid,
+                  ),
               } satisfies ConfigHost
             })
 

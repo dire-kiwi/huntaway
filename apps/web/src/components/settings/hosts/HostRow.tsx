@@ -2,11 +2,14 @@ import type { Host } from "@huntaway/contracts"
 import { LinkId } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Loader2, Server, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useBoard } from "../../../state/board"
 import { navigate } from "../../../state/route"
-import { Button, Input, timeAgo, Toggle, useAsyncAction, useConfirm } from "../../ui"
+import { rpc } from "../../../state/rpc"
+import { Button, errorText, Input, timeAgo, Toggle, useAsyncAction, useConfirm } from "../../ui"
+import { compareVersions } from "../versions"
 import { hubRpc } from "./hub"
+import { useUpdateCommit } from "./useUpdateCommit"
 
 const MODE_LABEL: Record<Host["mode"], string> = {
   local: "this host",
@@ -39,29 +42,73 @@ function statusOf(host: Host): { label: string; dot: string } {
 
 /**
  * The version line: what the host runs, and whether it needs an update. A host on another protocol shows "needs an
- * update" and nothing else (docs/plan/05-protocol.md, Versions). Update sends this board's code (or the release it
- * runs) to the host, which rebuilds and restarts (`hub.hosts.pushUpdate`, the host's `admin.update`); it is over when
- * the host comes back on the board's commit or version. Agents keep running meanwhile.
+ * update" (docs/plan/05-protocol.md, Versions). Update sends this board's code (its checkout as it is, `useUpdateCommit`)
+ * or, to a host installed from a release, the release it runs (only a newer one) to the host, which rebuilds and
+ * restarts (`hub.hosts.pushUpdate`, the host's `admin.update`). Its phases show while it does; it is over when the host
+ * comes back (a new boot), or reconnects on that commit or version. Agents keep running meanwhile.
  */
 export function HostVersion({ host }: { host: Host }) {
   const local = useBoard((s) => s.hosts.find((h) => h.local))
-  const update = useAsyncAction()
-  const [sent, setSent] = useState<"updating" | "up to date" | null>(null)
+  const target = useUpdateCommit(local)
+  const [phase, setPhase] = useState<string | null>(null)
+  // The host's boot id before the update: it's over when that changes, as the restart's state goes with the old server.
+  const [boot, setBoot] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [upToDate, setUpToDate] = useState(false)
   const outdated = host.status === "needs_update"
   const behind = !host.local && !!host.commit && !!local?.commit && host.commit !== local.commit
+  const differs = !!host.commit && !!target && host.commit !== target
+  // A host installed from a release goes by version instead: Update takes it to the release this board runs.
   const release = host.updates_from === "releases"
-  const olderRelease = release && !!local?.version && !!host.version && local.version !== host.version
+  const releaseTarget = release && local?.version && host.version && compareVersions(local.version, host.version) > 0 ? local.version : null
   const live = host.status === "connected" || outdated
-  const canUpdate = !host.local && live && (outdated || behind || olderRelease)
-  // The host back on the board's code ends "updating".
-  const arrived = sent === "updating" && !canUpdate
+  const canUpdate = !host.local && live && (release ? !!releaseTarget : !!host.commit && !!target && (differs || outdated))
+  // Back on what it was sent.
+  if (phase && (release ? !!local?.version && host.version === local.version : !!target && host.commit === target)) setPhase(null)
+
+  // While the host rebuilds, show its progress; done when it comes back (a new boot).
+  const following = phase !== null
+  useEffect(() => {
+    if (!following) return undefined
+    const id = setInterval(() => {
+      rpc(host.id, "admin.status", undefined).then(
+        (st) => {
+          if (boot && st.boot_id !== boot) {
+            setPhase(null)
+            setBoot(null)
+          } else if (st.restart?.phase === "failed") {
+            setErr(st.restart.error ?? "update failed")
+            setPhase(null)
+          } else if (st.restart) setPhase(st.restart.phase)
+        },
+        () => setPhase("restarting"),
+      )
+    }, 1500)
+    return () => clearInterval(id)
+  }, [following, boot, host.id])
+
   if (!host.version && !outdated) return null
-  const push = () =>
-    void update.run(async () => {
-      setSent(null)
+  const update = async () => {
+    setErr(null)
+    setUpToDate(false)
+    setPhase("starting")
+    try {
+      setBoot(
+        await rpc(host.id, "admin.status", undefined).then(
+          (st) => st.boot_id,
+          () => null,
+        ),
+      )
       const r = await hubRpc("hub.hosts.pushUpdate", { id: LinkId.make(host.id) })
-      setSent(r.up_to_date ? "up to date" : "updating")
-    })
+      if (r.up_to_date) {
+        setPhase(null)
+        setUpToDate(true)
+      }
+    } catch (e) {
+      setErr(errorText(e))
+      setPhase(null)
+    }
+  }
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-faint">
       {host.version && (
@@ -77,24 +124,23 @@ export function HostVersion({ host }: { host: Host }) {
         </span>
       )}
       {behind && !outdated && <span className="text-muted">differs from this board ({short(local?.commit)})</span>}
-      {canUpdate && sent !== "updating" && (
+      {canUpdate && !phase && (
         <button
           type="button"
-          className="text-accent hover:underline disabled:opacity-50"
-          disabled={update.busy}
-          onClick={push}
+          className="text-accent hover:underline"
+          onClick={() => void update()}
           title={
             release
               ? "The host downloads this release and restarts onto it. Agents keep running."
               : "Send this board's code to the host, which rebuilds and restarts. Agents keep running."
           }
         >
-          {update.busy ? "Updating…" : `Update to ${release ? `v${local?.version ?? "?"}` : (short(local?.commit) ?? "this board's code")}`}
+          Update to {release ? `v${releaseTarget ?? "?"}` : short(target)}
         </button>
       )}
-      {sent === "updating" && !arrived && <span className="text-st-progress">updating…</span>}
-      {sent === "up to date" && <span className="text-muted">already up to date</span>}
-      {update.error && <span className="text-red-400">{update.error}</span>}
+      {phase && <span className="text-st-progress">{phase.replace("_", " ")}…</span>}
+      {upToDate && !phase && <span className="text-muted">already up to date</span>}
+      {err && <span className="text-red-400">{err}</span>}
     </div>
   )
 }
