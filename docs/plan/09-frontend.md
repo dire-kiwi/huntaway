@@ -392,3 +392,14 @@ thing to prove (T3 Code ships an Expo 58 app on Effect 4, which is good evidence
   fake agent, by visible text and roles, so they carry over with a new harness under them (`startServer`, an RPC
   call helper in place of `api()`). They are the port's parity suite for the UI: [10-testing.md](10-testing.md).
   Checks that injected events by intercepting `/api/ws` use a test server's `debug.emit` method instead.
+
+### Step 1 as done for automations (6.5, HE-7)
+
+- `components/settings/Automations.tsx` (`ProjectAutomations`) and `settings/automations/*` (the editor, row, run history,
+  test delivery, webhook and guard fields, `draft.ts`, `text.ts`), reading `automationsAtom` and `automationRunsAtom`
+  (`packages/client/src/board/automations.ts`, read again on the host board's `automations` map, which the
+  `automations_changed` event bumps by owner and by automation), writing through `useRpc()`. The old host-version gates
+  are gone. `TemplateField.tsx` is the workflows' (6.6).
+- Where it mounts is 6.12's: project settings' `automations` tab renders `<ProjectAutomations project={project} />`.
+  `tests/ui/automations.test.mjs` (the old three cases) passes with it mounted there, and is skipped (`MOUNTED`) until it is.
+  `task/Routines.tsx` is 6.7's: the editor and row take the owner (no project: a routine) as props.

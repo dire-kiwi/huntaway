@@ -636,6 +636,42 @@ backfill), `Webhooks` (the check order: token, rate limit, signature, enabled, p
 answered 202 before the action runs), `Routines`, `Automations`. Cron and time-zone arithmetic use `Cron` and
 `DateTime` from `effect` in place of the hand-rolled versions, with the old DST cases as tests.
 
+#### As built in 6.5 (HE-7)
+
+- **Files** (`automations/`): `schedule.ts` (pure: the host's zone, `Cron` with the old five fields, `@daily`-style
+  aliases and Sunday as 7; a daily time is a `Cron` too; `align`, active hours, `at`), `model.ts` (the checks, with the
+  old texts as `Invalid`'s reasons), `delivery.ts` (templates, filters, untrusted-data wrapping), `stored.ts` (rows read
+  leniently: left-out fields take their defaults, a label as `task_type` is a label), `AutomationRepo.ts`,
+  `Automations.ts` (CRUD, what the board shows, Run now, runs; `act.ts` the guards and the action, `receive.ts` a
+  delivery's checks, dedupe and coalescing in one transaction), `Scheduler.ts` (`startDue`/`tick`, `markInterrupted`,
+  `prune`; `Scheduler.loop` is `Main`'s `AutomationLoops`, outside `areasLayer` so tests tick it), `Webhooks.ts` (token,
+  rate, then `receive`; the answers' statuses), `Routines.ts`, `RoutineHost.ts`, `precheck.ts`,
+  `AutomationApprovals.ts` (the board tools' asking). The route is `http/webhooks.ts` (`POST /api/hooks/:id/:token`, 1 MiB,
+  413 past it); the tools `mcp/tools/automations.ts`; the RPCs `automations.*` (one `list` for a project's or a
+  profile's, by `project_id` or `profile_id`). Event `automations_changed {project_id, profile_id, automation_id}`.
+- **Time.** The zone is `DateTime.CurrentTimeZone` if the layer has one (tests: Pacific/Auckland, whose rules the old
+  tests made by hand), else `DateTime.zoneMakeLocal()`. `Cron.next` alone runs a time in a DST gap as long after the gap
+  as it was into it (3:30 for a 2:30 that doesn't exist); `cronNext` moves it to the gap's end (3:00), as before. A
+  repeated time runs at its first, once (`Cron`'s default). The rate limit and every timestamp are on `Clock`.
+- **Decided.** Costs: the run that takes an automation's message in is charged with it as it's registered or steered
+  (`RunRepo.chargeAutomationRuns`, from `Runs.register` and `RunInput.steered`); the reactor's `RunExited` step calls
+  `Routines.runEnded` after `RunEnds.ended` (the cost split, and a routine thread's report). A report is a notice with
+  code `routine_report` and the old report as its metadata (`Threads.report`); read is `metadata.read`
+  (`Threads.updateItem`). The old `STARTING` and `IN_FLIGHT` sets are `Ref`s; a claim taken before a database error is
+  given up (the old test). A routine thread is a `TaskRepo.insert` of family `assistant` (it isn't on the board: no
+  `Changes` offer). The routine whose assistant runs elsewhere is refused `Conflict` (`in_use`) on create, and fails
+  its runs, with the old text (the link's name is its id until M7). The approval input has every key the contract's
+  `AutomationChange` has (null where the old one left a key out).
+- **What 6.7 adds.** The assistant area sits below automations, so routines reach it through `RoutineHost`: 6.7 calls
+  `RoutineHost.register({ assistant, workspace, google })` when its layer is built (`assistant`: get or create the
+  profile's assistant; `workspace`: its checked workspace, no symlinks; `google`: the `{{google}}` line). Until then the
+  profile's existing assistant row is used and none is made. 6.7 also prefaces the assistant's prompt with
+  `Routines.unreadReports(assistant)` and calls `Routines.markRead` once its agent has started with them (the old
+  launch's `unread_reports`/`mark_read`), and ports `task/Routines.tsx` (the editor and row take the owner as props).
+- **Not here.** Telemetry's `automation_run` event (6.9); deleting the assistant's routine threads with it and refusing a
+  thread under an assistant being deleted (the assistant is never deleted here; 6.7, with its profile); the read-only
+  server's not mounting the route (`ReadOnlyMain` doesn't exist yet).
+
 ### Documents and docs — [inventory 02](inventory/02-agent-support.md) (2.7–2.8)
 
 `TaskDocuments` (a plan, artifact or diagram a task's agent writes, a version per turn, answers sent back),
