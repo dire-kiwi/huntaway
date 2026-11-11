@@ -61,6 +61,11 @@ export interface HostBoard {
    * which what shows its turns reads them again on.
    */
   readonly checkpoints: ReadonlyMap<TaskId, number>
+  /**
+   * 6.5: by owner (a project's id, or a profile's for its routines) and by automation, the number of the latest
+   * `automations_changed` event about it, which what shows them reads them again on.
+   */
+  readonly automations: ReadonlyMap<string, number>
 }
 
 const noSettings: HostSettings = {
@@ -90,6 +95,7 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   approvals: [],
   restart: null,
   checkpoints: new Map(),
+  automations: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -233,6 +239,12 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
     }
     case "checkpoints":
       return { ...next, checkpoints: new Map(board.checkpoints).set(message.task_id, message.seq) }
+    case "automations_changed": {
+      const automations = new Map(board.automations)
+      automations.set(message.project_id ?? message.profile_id, message.seq)
+      automations.set(message.automation_id, message.seq)
+      return { ...next, automations }
+    }
     case "approval_rules":
     case "approval_log":
       // A profile's approval rules and action log are read where Settings shows them, not kept in the board.

@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { Mac, SecureRandom } from "effect/crypto"
+import { Digest, Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
@@ -8,6 +8,8 @@ import { createServer } from "node:http"
 import {
   ApprovalRulesRpcs,
   AttachmentRpcs,
+  // 6.5
+  AutomationRpcs,
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
@@ -23,6 +25,15 @@ import {
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+// 6.5: automations, the scheduler, webhooks and routines.
+import { AutomationRepo } from "./automations/AutomationRepo.ts"
+import { Automations } from "./automations/Automations.ts"
+import { RoutineHost } from "./automations/RoutineHost.ts"
+import { Routines } from "./automations/Routines.ts"
+import { Scheduler } from "./automations/Scheduler.ts"
+import { Webhooks } from "./automations/Webhooks.ts"
+import { WebhookRoute } from "./http/webhooks.ts"
+import { AutomationHandlers } from "./rpc/automations.ts"
 import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
 import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
@@ -164,6 +175,8 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Identity.layer),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
+    // 6.5: a signed webhook delivery is known by its body's SHA-256.
+    Layer.provideMerge(Digest.layerWebCrypto),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
 
@@ -276,6 +289,16 @@ const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.register
   Layer.provideMerge(PermissionRepo.layer),
 )
 
+/**
+ * 6.5: a project's automations and a profile's routines, taking webhook deliveries, and the scheduler (whose loop is
+ * `AutomationLoops`). What routines need of the assistant is `RoutineHost`, which the assistant area (6.7) registers with.
+ */
+const AutomationsLive = Layer.mergeAll(Scheduler.layer, Webhooks.layer).pipe(
+  Layer.provideMerge(Automations.layer),
+  Layer.provideMerge(Routines.layer),
+  Layer.provideMerge(Layer.mergeAll(AutomationRepo.layer, RoutineHost.layer)),
+)
+
 /** The review area (4.6): reviews, summaries of the changes, and what reviewers reported. */
 const ReviewLive = Reviews.layer.pipe(Layer.provideMerge(Layer.mergeAll(Summaries.layer, ReviewStats.layer)), Layer.provideMerge(ReviewRepo.layer))
 
@@ -315,6 +338,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     // 4.8: where held tasks go now, a whole stack's merge, and the agent asked to restack.
     Layer.provideMerge(Layer.mergeAll(Merges.layer, MergeTargets.layer)),
     Layer.provideMerge(MergeGate.layer),
+    // 6.5: automations and routines, over the runs, tasks and approvals they use.
+    Layer.provideMerge(AutomationsLive),
     // Reviews and summaries (4.6), over the runs they start.
     Layer.provideMerge(ReviewLive),
     Layer.provideMerge(PermissionsLive),
@@ -342,8 +367,11 @@ export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.
  */
 export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
 
+/** 6.5: the automations' scheduler (a pass every 5 s, pruning every hour). Not in `areasLayer`: tests run `Scheduler.tick`. */
+export const AutomationLoops = Scheduler.loop
+
 /** Every area's services, and their loops. */
-export const AreasLive = Layer.mergeAll(RunLoops, PrLoops).pipe(
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, AutomationLoops).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
 )
 
@@ -362,6 +390,8 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.5
+  AutomationRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +410,8 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.5
+  AutomationHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
@@ -389,7 +421,17 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
+export const RoutesLive = Layer.mergeAll(
+  RpcLive,
+  HealthRoute,
+  McpHttpRoute,
+  // 6.5: automations' webhooks.
+  WebhookRoute,
+  ApiNotFound,
+  StaticUi,
+  HttpRouter.cors({ maxAge: 86400 }),
+  BodyLimit,
+)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a

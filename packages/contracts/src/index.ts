@@ -1,6 +1,8 @@
 export * from "./agentConfig.ts"
 export * from "./approval.ts"
 export * from "./attachment.ts"
+// 6.5
+export * from "./automation.ts"
 export * from "./capabilities.ts"
 export * from "./dirs.ts"
 export * from "./errors.ts"
@@ -12,6 +14,8 @@ export * from "./profile.ts"
 export * from "./project.ts"
 export * from "./rpc/approvalRules.ts"
 export * from "./rpc/attachments.ts"
+// 6.5
+export * from "./rpc/automations.ts"
 export * from "./rpc/board.ts"
 export * from "./rpc/checkpoints.ts"
 export * from "./rpc/git.ts"

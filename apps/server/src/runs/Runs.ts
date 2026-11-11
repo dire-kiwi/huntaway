@@ -298,6 +298,8 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
             }
             const combined = combine([...taken, ...(message === null ? [] : [rowOf(message)])])
             const run = yield* runs.insert({ id: runId, task_id: id, kind, created_at: at })
+            // 6.5: the automation runs whose messages it starts with are its, for their cost.
+            yield* runs.chargeAutomationRuns(run.id, combined.automationRuns)
             const writeNo = explain === undefined ? yield* record(before, kind, combined, message) : yield* explain(before)
             // The message its first turn starts with (checkpoints).
             if (writeNo !== null) yield* runs.update(run.id, { write_no: writeNo })

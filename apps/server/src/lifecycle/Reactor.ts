@@ -15,6 +15,7 @@ import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { RunEnds } from "../runs/RunEnds.ts"
+import { Routines } from "../automations/Routines.ts"
 import { Runs } from "../runs/Runs.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 
@@ -49,12 +50,15 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const mergeTargets = yield* MergeTargets
       const restack = yield* Restack
       const ghStacks = yield* GhStacks
+      const routines = yield* Routines
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
         // as for any change of the task (the `TaskChanged` it offers).
         if (change._tag === "RunExited") {
           yield* runEnds.ended(change)
+          // 6.5: what the automation runs whose messages it took in cost, and a routine thread's report.
+          yield* routines.runEnded(change)
           // What its agent took in of the branch it's stacked on, and the tasks stacked on it of its own (4.1).
           yield* taskBase.keepStarts(change.task)
           // 4.8: a restack its agent (or a reviewer) held off is done now that none is in its worktree.
