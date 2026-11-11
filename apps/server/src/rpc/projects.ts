@@ -22,7 +22,8 @@ export const ProjectHandlers = ProjectRpcs.toLayer(
       "projects.get": ({ id }) => projects.get(id).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
       "projects.create": ({ project }) => projects.create(project).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
       "projects.update": ({ id, patch }) => projects.update(id, patch).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
-      "projects.delete": ({ id }) => projects.delete(id).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
+      // Its tasks' worktrees go first (`Worktrees.deleteProject`).
+      "projects.delete": ({ id }) => worktrees.deleteProject(id).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
       "projects.branches": ({ id }) =>
         projects.get(id).pipe(
           Effect.flatMap((p) => base.branches(p.repo_path)),
