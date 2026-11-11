@@ -41,7 +41,12 @@ const toDone = (agent: "claude" | "codex") =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const repo = yield* repository
-    const github = yield* fakeGitHub({ accounts: [{ host: "github.com", login: "me", token: "tok-me", active: true }], repos: { "o/r": { pulls: [] } } })
+    // gh in the task's worktree takes o/r for its repository (its `origin` is fetched from a folder).
+    const github = yield* fakeGitHub({
+      accounts: [{ host: "github.com", login: "me", token: "tok-me", active: true }],
+      repos: { "o/r": { pulls: [] } },
+      defaultRepo: "o/r",
+    })
     const { port, token, dataDir } = yield* startServer(["--claude-bin", FAKE_CLAUDE, "--codex-bin", FAKE_CODEX, "--gh-bin", github.bin], {
       HUNTAWAY_FAKE_CLAUDE_MERGE: "pr",
       HUNTAWAY_FAKE_CLAUDE_GH: github.bin,
@@ -115,6 +120,19 @@ const toDone = (agent: "claude" | "codex") =>
     assert.include([null, "done"], after.done.resolution, "merged: done, as done")
     assert.isFalse(after.done.merging)
     assert.strictEqual((yield* github.pull("o/r", 7))?.state, "MERGED")
+    // Its own runs were the agent's it was given (a Codex run's folder has the `codex.json` its adapter read).
+    const runs = yield* fs.readDirectory(`${dataDir}/runs`)
+    const codexRuns = yield* Effect.forEach(runs, (r) => fs.exists(`${dataDir}/runs/${r}/codex.json`), { concurrency: 1 })
+    if (agent === "codex")
+      assert.isTrue(
+        codexRuns.some((c) => c),
+        "a Codex run",
+      )
+    else
+      assert.isFalse(
+        codexRuns.some((c) => c),
+        "no Codex run",
+      )
     const calls = yield* github.calls
     assert.isTrue(
       calls.some((c) => c.args.slice(0, 2).join(" ") === "pr merge"),
