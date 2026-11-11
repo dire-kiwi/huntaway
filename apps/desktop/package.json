@@ -1,0 +1,31 @@
+{
+  "name": "huntaway-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Huntaway's desktop app: the Electron shell that finds or starts a server and shows its board",
+  "homepage": "https://github.com/dire-kiwi/huntaway",
+  "license": "MIT",
+  "author": "Ivan Meredith",
+  "type": "module",
+  "main": "dist/boot.cjs",
+  "scripts": {
+    "build": "vp pack",
+    "start": "vp pack && electron .",
+    "dist": "vp pack && node scripts/dist.ts",
+    "stamp": "node scripts/stamp.ts"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@huntaway/contracts": "workspace:*",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "electron": "catalog:",
+    "electron-builder": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -10,5 +10,6 @@ coverage/
 /target
 /.huntaway-test-env
 /apps/web/.vitest
+/apps/desktop/release
 /.vitest
 *.tsbuildinfo

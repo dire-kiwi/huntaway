@@ -1,0 +1,8 @@
+{
+  // The main process, the frame and the scripts: Node and Electron's types, no DOM. The preload has a tsconfig of its own
+  // (src/preload), with the DOM's types.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["src", "scripts", "vite.config.ts"],
+  "exclude": ["src/preload"]
+}

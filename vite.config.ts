@@ -95,6 +95,20 @@ export default defineConfig({
         files: ["packages/shared/**", "apps/server/src/hooks/**"],
         rules: { ...off(effectNative), "no-restricted-imports": restrict([noEffect, noTesting, noApps]) },
       },
+      // The desktop shell's plain parts: the frame (src/boot), which a release can't replace and so stays small, with no
+      // effect import, and runs before any shell; the decisions it shares with the main process (src/shared); and the
+      // preload, which Electron runs in the page's sandboxed renderer, with the DOM and Electron's renderer modules.
+      {
+        files: ["apps/desktop/src/boot/**", "apps/desktop/src/shared/**", "apps/desktop/src/preload/**"],
+        rules: {
+          ...off(effectNative),
+          "no-restricted-imports": restrict([
+            { ...noEffect, message: "Plain TypeScript: the desktop shell's frame, preload and shared decisions do not import effect." },
+            noTesting,
+            noApps,
+          ]),
+        },
+      },
       {
         files: ["packages/contracts/**"],
         rules: {
@@ -143,6 +157,7 @@ export default defineConfig({
           "apps/server/src/bin.ts",
           "apps/server/src/Main.ts",
           "apps/server/src/platform/ServerConfig.ts",
+          "apps/desktop/src/main/main.ts",
           "**/*.test.ts",
           "**/*.test.tsx",
           "packages/testing/**",
@@ -156,7 +171,10 @@ export default defineConfig({
       // The tools agents and tests drive the board with (ui-check.mjs and the like): plain Node scripts with a promise
       // API that test harnesses import, so the Effect-native rules do not apply; a step loop awaits in order by design.
       // So are the programs packages/testing/bin has in place of outside ones (fake-claude stands in for Claude Code).
-      { files: ["scripts/**", "apps/web/tests/ui/**", "packages/testing/bin/**"], rules: { ...off(effectNative), "no-await-in-loop": "off" } },
+      {
+        files: ["scripts/**", "apps/web/tests/ui/**", "packages/testing/bin/**", "apps/desktop/scripts/**"],
+        rules: { ...off(effectNative), "no-await-in-loop": "off" },
+      },
       // The workspace's own configuration files: plain Node.
       {
         files: ["vite.config.ts", "**/vite.config.ts", "**/vitest.config.ts"],
@@ -165,6 +183,6 @@ export default defineConfig({
     ],
   },
   test: {
-    projects: ["apps/server", "apps/web", "packages/*"],
+    projects: ["apps/server", "apps/web", "apps/desktop", "packages/*"],
   },
 })

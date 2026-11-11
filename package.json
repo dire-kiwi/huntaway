@@ -12,7 +12,8 @@
     "test:e2e": "pnpm --filter huntaway-server test:e2e",
     "test:ui": "pnpm --filter huntaway-web test:ui",
     "dev": "pnpm --filter huntaway-web dev",
-    "build": "pnpm --filter huntaway-web build"
+    "build": "pnpm --filter huntaway-web build",
+    "desktop": "pnpm --filter huntaway-desktop start"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
