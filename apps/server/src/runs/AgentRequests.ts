@@ -31,6 +31,16 @@ export interface AgentRequestHandler {
   readonly handle: (run: Run, request: ControlRequest) => Effect.Effect<void>
   /** A `control_cancel_request`: the agent no longer wants request `requestId` answered. Every handler hears of it. */
   readonly cancel: (run: Run, requestId: string) => Effect.Effect<void>
+  /**
+   * After a restart, before the run's output is read again from its saved offset (which is past the requests already
+   * read): take up again the requests of `run` still open. Every handler hears of it.
+   */
+  readonly resume?: ((run: Run) => Effect.Effect<void>) | undefined
+  /**
+   * `run` has ended: what it asked and nobody answered can't be answered now. `idle`: no later run has started on its
+   * task (the old `expire_for_task`; else `expire_for_run`). Every handler hears of it.
+   */
+  readonly ended?: ((run: Run, idle: boolean) => Effect.Effect<void>) | undefined
 }
 
 /** What the launch is told of the board's MCP servers. */
@@ -64,6 +74,10 @@ export interface AgentRequestsShape {
   readonly handle: (run: Run, request: ControlRequest) => Effect.Effect<void>
   /** A `control_cancel_request` on `run`'s output. */
   readonly cancel: (run: Run, requestId: string) => Effect.Effect<void>
+  /** After a restart, before `run` is followed again: every handler takes up its open requests. */
+  readonly resume: (run: Run) => Effect.Effect<void>
+  /** `run` has ended (`idle`: no later run has started): every handler lets its open requests go. */
+  readonly ended: (run: Run, idle: boolean) => Effect.Effect<void>
   /** Answer a request on the run's input (`control_response`). False when the agent takes no input any more. */
   readonly respond: (run: RunId, response: unknown) => Effect.Effect<boolean>
   readonly manifest: (review: boolean) => Effect.Effect<BoardManifest>
@@ -113,6 +127,18 @@ export class AgentRequests extends Context.Service<AgentRequests, AgentRequestsS
         cancel: Effect.fn("AgentRequests.cancel")(function* (run: Run, requestId: string) {
           for (const handler of (yield* Ref.get(handlers)).values()) {
             yield* handler.cancel(run, requestId).pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} cancelling request ${requestId}`, cause)))
+          }
+        }),
+        resume: Effect.fn("AgentRequests.resume")(function* (run: Run) {
+          for (const handler of (yield* Ref.get(handlers)).values()) {
+            if (handler.resume === undefined) continue
+            yield* handler.resume(run).pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} taking up its requests again`, cause)))
+          }
+        }),
+        ended: Effect.fn("AgentRequests.ended")(function* (run: Run, idle: boolean) {
+          for (const handler of (yield* Ref.get(handlers)).values()) {
+            if (handler.ended === undefined) continue
+            yield* handler.ended(run, idle).pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} letting its requests go`, cause)))
           }
         }),
         respond,

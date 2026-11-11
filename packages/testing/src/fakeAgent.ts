@@ -115,7 +115,13 @@ export const fakeAgent = (options: FakeAgentOptions = {}) =>
       writeRaw,
       input,
       inputClosed: dir.inputClosed(id),
-      end: (exit: RunExit = { code: 0, signal: null }) => dir.writeExit(id, exit).pipe(Effect.orDie),
+      // As the shim writes it: whole, by a rename, so a follower never reads half of it.
+      end: (exit: RunExit = { code: 0, signal: null }) =>
+        encode(exit).pipe(
+          Effect.flatMap((text) => fs.writeFileString(`${path}/.exit.tmp`, text)),
+          Effect.andThen(fs.rename(`${path}/.exit.tmp`, `${path}/exit`)),
+          Effect.orDie,
+        ),
       shimGone: fs.writeFileString(`${path}/shim.pid`, String(DEAD_PID)).pipe(Effect.orDie),
       row,
     } satisfies FakeAgent

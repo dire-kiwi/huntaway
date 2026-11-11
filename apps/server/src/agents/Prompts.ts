@@ -29,6 +29,8 @@ import { systemPrompt } from "./prompts/system.ts"
 export interface RunTold {
   readonly codex: boolean
   readonly permission_mode: PermissionMode
+  /** The task's temp folder (its `TMPDIR`), which it is told of; none by default. */
+  readonly tmp?: string | null | undefined
 }
 
 /** The options of a new thread that change what it is told (the old `GET /projects/{id}/system-prompt`'s query). */
@@ -140,6 +142,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
             : []
         const context: PromptContext = {
           ...OFF,
+          tmp: run.tmp ?? null,
           task,
           project,
           parent:

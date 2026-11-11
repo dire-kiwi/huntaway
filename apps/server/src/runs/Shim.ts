@@ -82,6 +82,8 @@ export interface ShimShape {
   readonly reap: (run: RunId) => Effect.Effect<void>
   /** Watch a run marked `reap` until its agent has exited or can no longer start (`REAP_WAIT`), stopping it if it starts. */
   readonly watchReap: (run: RunId) => Effect.Effect<void>
+  /** After a restart: carry on the kill a run's folder is marked for (`orphan`, `reap`), in the background. */
+  readonly resumeMarked: (run: RunId) => Effect.Effect<void>
 }
 
 /** How long the shim of a launch given up on may still start its agent. */
@@ -256,7 +258,14 @@ export class Shim extends Context.Service<Shim, ShimShape>()("huntaway-server/ru
         yield* FiberSet.run(escalations, watchReap(run))
       })
 
-      return Shim.of({ binary, spawn, kill, isAlive: alive, vanished, stopOrphan, watchOrphan, reap, watchReap })
+      const resumeMarked = Effect.fn("Shim.resumeMarked")(function* (run: RunId) {
+        if (yield* dir.marker(run, "orphan")) yield* FiberSet.run(escalations, watchOrphan(run))
+        if (!(yield* dir.marker(run, "reap"))) return
+        yield* closeInput(run)
+        yield* FiberSet.run(escalations, watchReap(run))
+      })
+
+      return Shim.of({ binary, spawn, kill, isAlive: alive, vanished, stopOrphan, watchOrphan, reap, watchReap, resumeMarked })
     }),
   )
 }

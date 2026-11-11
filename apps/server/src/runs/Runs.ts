@@ -1,8 +1,15 @@
-import { Cause, Context, Effect, Exit, Fiber, FiberMap, FileSystem, Layer, Option, Ref, Schema } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Fiber, FiberMap, FileSystem, Layer, Option, Ref, Schedule, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { DocumentLabel, RunId, threadKindOf } from "@huntaway/contracts"
-import type { Task, TaskId, Timestamp } from "@huntaway/contracts"
+import type { ProjectId, Task, TaskId, Timestamp } from "@huntaway/contracts"
+import { ContextMeter } from "../agents/ContextMeter.ts"
 import { planRest, startInstructions } from "../agents/prompts/start.ts"
+import { worthAsking } from "../agents/titles/text.ts"
+import { Titles } from "../agents/Titles.ts"
+import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
+import { ProfileRepo } from "../profiles/ProfileRepo.ts"
+import { Usage } from "../profiles/Usage.ts"
+import { isResetDue } from "../profiles/usage/limits.ts"
 import { Actor, Changes } from "../platform/Changes.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { Db } from "../platform/Db.ts"
@@ -12,16 +19,17 @@ import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
-import { isMerged } from "../tasks/Dependencies.ts"
+import { Dependencies, isMerged } from "../tasks/Dependencies.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import type { WriteNo } from "../threads/model.ts"
 import { LaunchFacts } from "./LaunchFacts.ts"
-import { combine, decideSend, newCommand, rowOf } from "./queue.ts"
+import { combine, decideSend, isCompact, newCommand, rowOf } from "./queue.ts"
 import type { Outgoing, Refusal, Take } from "./queue.ts"
 import type { Run, RunKind } from "./Run.ts"
-import { RunDir } from "./RunDir.ts"
+import { AgentRequests } from "./AgentRequests.ts"
+import { formatSupport, RunDir } from "./RunDir.ts"
 import { RunFollower } from "./RunFollower.ts"
 import { RunInput } from "./RunInput.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -83,8 +91,20 @@ export interface RunsShape {
   readonly newSession: (task: TaskId) => Effect.Effect<Task, TaskNotFound | SendRefused>
   /** Compact the conversation (the board's own, `why` its notice); unlike a prompt, the card stays where it is. */
   readonly compact: (task: TaskId, why: string) => Effect.Effect<Task, TaskNotFound | SendRefused>
-  /** For Recovery (plan task 2.6): adopt every run that had not exited. */
+  /**
+   * For Recovery: carry on the kills a restart interrupted, then adopt every run that had not exited (its open requests
+   * taken up again, its timers re-armed, followed from its saved offset), ending those that cannot be followed, and
+   * the tasks marked running with no run send what is queued or need attention.
+   */
   readonly reattach: Effect.Effect<void>
+  /**
+   * Start the agent of a task that was waiting (for its dependencies, or a usage limit's reset) (the old
+   * `start_waiting`): what is queued, else its start, else a note to carry on. If its project has been archived since,
+   * it goes back to waiting.
+   */
+  readonly startWaiting: (task: TaskId) => Effect.Effect<void>
+  /** Start the waiting tasks whose dependencies are all merged, in a project (every project for null) (`start_unblocked`). */
+  readonly startUnblocked: (project: ProjectId | null) => Effect.Effect<void>
 }
 
 /** What registering a run did. */
@@ -96,6 +116,14 @@ interface Registered {
 }
 
 export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/runs/Runs") {
+  /** Tasks waiting for a usage limit carry on once it resets: every 30 seconds, as long as the server runs. */
+  static readonly limitResets = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const runs = yield* Runs
+      yield* runs.startUnblocked(null).pipe(Effect.repeat(Schedule.spaced("30 seconds")), Effect.forkScoped)
+    }),
+  )
+
   static readonly layer = Layer.effect(
     Runs,
     Effect.gen(function* () {
@@ -114,6 +142,13 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const random = yield* SecureRandom.SecureRandom
       const config = yield* ServerConfig
       const facts = yield* LaunchFacts
+      const requests = yield* AgentRequests
+      const dependencies = yield* Dependencies
+      const meter = yield* ContextMeter
+      const titles = yield* Titles
+      const usage = yield* Usage
+      const profileRepo = yield* ProfileRepo
+      const configRepo = yield* AgentConfigRepo
       const fs = yield* FileSystem.FileSystem
       // The launches being prepared, by task: a stop interrupts one.
       const launches = yield* FiberMap.make<TaskId>()
@@ -368,11 +403,76 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: actorOf(message) })
           return done.after
         }
+        // A config that's out of usage would refuse the run: it starts on another, or waits for the reset.
+        if (decision.kind === "prompt" && task.kind === "task" && !task.merging) {
+          const held = yield* usageGate(task, message, at)
+          if (held !== null) return held
+        }
         if (plan) {
           yield* db.tx(labelled(task))
           yield* fs.makeDirectory(facts.documentsOf(id), { recursive: true }).pipe(Effect.ignore)
         }
         return yield* start(id, message, decision.kind, decision.take)
+      })
+
+      /**
+       * A task out of usage waits in In progress, keeping `message` queued, until its config's limit resets (the old
+       * `wait_for_limit`); `Runs.startUnblocked` carries it on then.
+       */
+      const waitForLimit = Effect.fnUntraced(function* (task: Task, configName: string, until: Timestamp, message: Outgoing | null, at: Timestamp) {
+        const done = yield* db.tx(
+          Effect.gen(function* () {
+            if (message !== null) yield* tasks.enqueue(task.id, rowOf(message), at)
+            if (!(task.waiting && task.limit_reset_at === until)) {
+              yield* threads.notice(task.id, "info", `Waiting for ${configName}'s usage limit to reset`, `It resets at ${until}`)
+            }
+            const idle = task.running && !(yield* runs.hasActive(task.id))
+            const after = yield* write(
+              task,
+              { waiting: true, limit_reset_at: until, status: "in_progress", attention_reason: null, ...(idle ? { running: false } : {}) },
+              at,
+            )
+            return after
+          }),
+        )
+        yield* changes.offer({ _tag: "TaskChanged", before: task, after: done, cause: actorOf(message) })
+        return done
+      })
+
+      /**
+       * Before a run of `task` starts (the old `usage::before_run`): already waiting for a reset, a message joins the
+       * queue; else with its config out of usage, a task that hasn't started moves to another config of the same agent
+       * with room (the profile's `limit_switch`), or it waits for the reset (`limit_wait`). The task if it waits.
+       */
+      const usageGate = Effect.fnUntraced(function* (task: Task, message: Outgoing | null, at: Timestamp) {
+        const nowMs = Date.parse(at)
+        const own = yield* facts.config(task)
+        const name = own?.name ?? "its config"
+        if (task.limit_reset_at !== null && task.waiting && !isResetDue(task.limit_reset_at, nowMs)) {
+          return yield* waitForLimit(task, name, task.limit_reset_at, message, at)
+        }
+        const profile = Option.getOrNull(yield* profileRepo.get(task.profile_id))
+        if (profile === null || own === null || (!profile.limit_wait && !profile.limit_switch)) return null
+        const until = yield* usage.outUntil(own.id)
+        if (until === null) return null
+        if (profile.limit_switch && task.session_id === null) {
+          // Another of its configs with the same agent, so its model and effort still apply.
+          const project = task.project_id === null ? null : yield* tasks.project(task.project_id)
+          for (const other of yield* tasks.configs(task.profile_id, project)) {
+            if (other === own.id) continue
+            const row = Option.getOrNull(yield* configRepo.get(other))
+            if (row === null || row.agent !== own.agent || (yield* usage.outUntil(other)) !== null) continue
+            yield* db.tx(
+              Effect.gen(function* () {
+                yield* write(task, { claude_config_id: other }, at)
+                yield* threads.notice(task.id, "info", `Starting on ${row.name} instead: ${own.name} is out of usage`, `${own.name} resets at ${until}`)
+              }),
+            )
+            return null
+          }
+        }
+        if (!profile.limit_wait) return null
+        return yield* waitForLimit(task, own.name, until, message, at)
       })
 
       const withLock = <A, E>(id: TaskId, effect: Effect.Effect<A, E>) => locks.withLock(["task", id])(effect)
@@ -394,6 +494,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
               at,
             )
             yield* threads.notice(id, "info", "The next message starts a new conversation with the agent")
+            yield* meter.clear(id)
             return after
           }),
         )
@@ -408,7 +509,10 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           const renewed = yield* withLock(id, newSessionLocked(id))
           return rest === "" ? renewed : yield* withLock(id, sendLocked(id, { ...message, text: rest }))
         }
-        return yield* withLock(id, sendLocked(id, message))
+        const sent = yield* withLock(id, sendLocked(id, message))
+        // The user's prompt may have moved the task on, so its title follows.
+        if (message.source === "user" && message.auto !== true && !isCompact(message.text) && worthAsking(message.text)) yield* titles.refreshLater(id)
+        return sent
       })
 
       // ---- stopping ----
@@ -469,6 +573,133 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         )
       })
 
+      // ---- after a restart ----
+
+      /** A run that can't be followed ends here: what it may start is stopped, and the reactor hears of its end. */
+      const giveUp = Effect.fnUntraced(function* (run: Run, error: string) {
+        yield* shim.reap(run.id)
+        yield* changes.offer({ _tag: "RunExited", run: run.id, task: run.task_id, exit: { code: null, signal: null, error }, errorTail: "" })
+      })
+
+      const adopt = Effect.fnUntraced(function* (run: Run) {
+        // Written by a newer build (a downgrade): it can't be followed safely, so its agent is stopped rather than left
+        // working (and calling the board's tools) unfollowed.
+        if ((yield* dir.started(run.id)) && formatSupport(yield* dir.header(run.id)) === "newer") {
+          yield* giveUp(run, "This run was started by a newer huntaway; update this host to follow it")
+          return
+        }
+        // Stopped while it was prepared, before the agent started (or before ia-shim wrote its output): an agent the
+        // shim starts now is stopped.
+        if (!(yield* dir.started(run.id))) {
+          yield* giveUp(run, "Interrupted by a server restart before the agent started")
+          return
+        }
+        if (run.phase === "preparing") yield* runs.setPhase(run.id, "running")
+        yield* Effect.logInfo(`run=${run.id} resuming at offset ${run.out_offset}`)
+        // The requests it asked before that offset and still open, before its output is read again.
+        const now = yield* runs.get(run.id)
+        if (Option.isNone(now)) return
+        yield* requests.resume(now.value)
+        yield* follower.follow(now.value)
+        // A run started before steering, or by a build that queued its messages, takes none.
+        const steerable = run.kind !== "compact" && (yield* dir.acceptsInput(run.id))
+        const task = yield* tasks.get(run.task_id)
+        if (task !== null && task.steerable !== steerable) yield* db.tx(write(task, { steerable }, yield* nowTimestamp))
+        yield* input.rearm(now.value)
+      })
+
+      /** A task marked running with no run: its last one ended as the server stopped, before its end was written. */
+      const idleRunning = Effect.fnUntraced(function* (id: TaskId) {
+        const queued = (yield* tasks.queued(id)).some((q) => q.text.trim() !== "")
+        if (queued) {
+          const sent = yield* Effect.exit(sendQueued(id))
+          if (Exit.isSuccess(sent) && (sent.value.running || sent.value.waiting)) return
+        }
+        const done = yield* withLock(
+          id,
+          db.tx(
+            Effect.gen(function* () {
+              const before = yield* load(id)
+              if (!before.running || (yield* runs.hasActive(id))) return null
+              yield* threads.notice(id, "warning", "Run interrupted by server restart")
+              const after = yield* write(
+                before,
+                {
+                  running: false,
+                  ...(before.kind === "task" ? { status: "needs_attention" as const, attention_reason: "Interrupted by server restart" } : {}),
+                },
+                yield* nowTimestamp,
+              )
+              return { before, after }
+            }),
+          ),
+        )
+        if (done !== null) yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: Actor.board })
+      })
+
+      const reattach = Effect.gen(function* () {
+        for (const name of yield* dir.list) yield* shim.resumeMarked(RunId.make(name))
+        for (const run of yield* runs.active) {
+          yield* adopt(run).pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} re-attaching`, cause)))
+        }
+        for (const id of yield* runs.idleRunning) {
+          yield* idleRunning(id).pipe(Effect.catchCause((cause) => Effect.logError(`task=${id} ending a run the restart interrupted`, cause)))
+        }
+      }).pipe(Effect.withSpan("Runs.reattach"), Effect.annotateLogs({ module: "runs" }))
+
+      const sendQueued = Effect.fn("Runs.sendQueued")(function* (id: TaskId) {
+        return yield* withLock(id, sendLocked(id, null))
+      })
+
+      const startWaiting = Effect.fn("Runs.startWaiting")(function* (id: TaskId) {
+        if (yield* runs.hasActive(id)) return
+        const before = yield* load(id).pipe(Effect.orElseSucceed(() => null))
+        if (before === null) return
+        const limit = before.limit_reset_at !== null
+        yield* withLock(
+          id,
+          db.tx(
+            Effect.gen(function* () {
+              const task = yield* load(id)
+              yield* write(task, { waiting: false, limit_reset_at: null }, yield* nowTimestamp)
+              const why = limit
+                ? "Its usage limit has reset, so its agent is carrying on"
+                : task.depends_on.length === 0
+                  ? "Its agent is starting"
+                  : "Nothing it depends on is left to merge, so its agent is starting"
+              yield* threads.notice(id, "info", why)
+            }),
+          ),
+        ).pipe(Effect.orDie)
+        const queued = (yield* tasks.queued(id)).some((q) => q.text.trim() !== "")
+        const text = queued
+          ? null
+          : before.session_id === null
+            ? ""
+            : limit
+              ? "The usage limit you ran into has reset, so carry on where you left off."
+              : "The tasks this one was waiting for are merged (or no longer needed), so carry on with it."
+        const sent = yield* Effect.exit(text === null ? sendQueued(id) : send(id, { text, source: "board", auto: true }))
+        if (Exit.isSuccess(sent)) return
+        const archived = Cause.findErrorOption(sent.cause).pipe(Option.exists((e) => e._tag === "SendRefused" && e.reason === "archived"))
+        const done = yield* withLock(
+          id,
+          db.tx(
+            Effect.gen(function* () {
+              const task = yield* load(id)
+              if (archived) {
+                yield* threads.notice(id, "info", "Its project was archived, so it waits until the project is unarchived")
+                return { before: task, after: yield* write(task, { waiting: true, limit_reset_at: before.limit_reset_at }, yield* nowTimestamp) }
+              }
+              const reason = `Couldn't start the agent: ${Cause.pretty(sent.cause).split("\n")[0] ?? ""}`
+              yield* threads.notice(id, "error", reason)
+              return { before: task, after: yield* write(task, { status: "needs_attention", attention_reason: reason }, yield* nowTimestamp) }
+            }),
+          ),
+        ).pipe(Effect.orDie)
+        yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: Actor.board })
+      })
+
       const compact = Effect.fn("Runs.compact")(function* (id: TaskId, why: string) {
         return yield* withLock(
           id,
@@ -483,9 +714,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
 
       return Runs.of({
         send,
-        sendQueued: Effect.fn("Runs.sendQueued")(function* (id: TaskId) {
-          return yield* withLock(id, sendLocked(id, null))
-        }),
+        sendQueued,
         stop,
         abort,
         dropQueued,
@@ -499,8 +728,12 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           return yield* withLock(id, newSessionLocked(id))
         }),
         compact,
-        // Plan task 2.6: re-attach each run that had not exited (`RunInput.rearm`, the follower from its offset).
-        reattach: Effect.void,
+        reattach,
+        startWaiting,
+        startUnblocked: Effect.fn("Runs.startUnblocked")(function* (project: ProjectId | null) {
+          if (config.noAgents) return
+          for (const id of yield* dependencies.ready(project, yield* Clock.currentTimeMillis)) yield* startWaiting(id)
+        }),
       })
     }),
   )

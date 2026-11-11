@@ -2,6 +2,8 @@ import { Effect } from "effect"
 import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
 import type { ConflictReason } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
+import { ContextMeter } from "../agents/ContextMeter.ts"
+import { DevServers } from "../runs/DevServers.ts"
 import { Questions } from "../permissions/Questions.ts"
 import { Runs } from "../runs/Runs.ts"
 import type { SendRefused } from "../runs/Runs.ts"
@@ -46,6 +48,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const refs = yield* TaskRefs
     const runs = yield* Runs
     const questions = yield* Questions
+    const devServers = yield* DevServers
+    const meter = yield* ContextMeter
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
@@ -72,6 +76,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
           return yield* runs.stop(id)
         }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.dropQueued": ({ id }) => runs.dropQueued(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.stopServer": ({ id, port }) => devServers.stop(id, port).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.context": ({ id }) => meter.get(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
     })
   }),
 )

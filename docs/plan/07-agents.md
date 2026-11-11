@@ -269,7 +269,7 @@ As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
 - **`Runs`** (`runs/Runs.ts`): `send(task, Outgoing) → Task` (fails `TaskNotFound | SendRefused`), `sendQueued(task)`
   (for 2.6: what is queued, `take: "Only"`), `stop(task) → { stopped }`, `abort(task)`, `dropQueued(task) → Task` (as
   it was), `isRunning(task)`, `newSession(task)` (`/new`), `compact(task, why)` (the board's own compaction, with a
-  notice), `launched(task)` (waits for a launch: tests) and `reattach` (a no-op until 2.6). `Outgoing` is `{ text,
+  notice), `launched(task)` (waits for a launch: tests), `reattach`, `startWaiting(task)` and `startUnblocked(project)` (2.6, below). `Outgoing` is `{ text,
   source: user | agent | routine | automation | board, auto?, review_round?, automation_run_id?, review? }`.
   `SendRefused.reason` is `archived`, `merge_queued`, `no_agents`, `already_running`, `no_conversation`,
   `nothing_queued` or `agent_running`; `rpc/tasks.ts` maps them to `Conflict`, `Unavailable` and `Invalid`.
@@ -364,6 +364,43 @@ As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
 
 Review, summary and workflow-step threads' runs hand their outcome to `Reviews`, `Summaries` and `WorkflowEngine`
 instead of step 4.
+
+As built in 2.6 (HE-4):
+
+- **`decideFinish(facts) → { notices, columns, sendQueued, nudge }`** (`runs/finish.ts`, pure) is the old `finish`
+  table, first match wins, with `outcomeOf(run, exit, errorTail)` (the old `on_exit`) and the todo-list hold
+  (`unfinished`, `todoReason`, `nudged`). The facts later areas give are there and false until they come: `mergeHeld`
+  and the merge rows (M4), `mergesToDone` (6.6), `planOnly` (a plan-only run needs the turns' checkpoints, M4: until
+  then a plan task goes to In review), the workflow column that takes a task on (6.6, not in the facts yet). A compaction
+  only stops running (with "Compacting stopped" / "Compacting failed"); a review thread's run only stops running (its
+  outcome is `Reviews`' later).
+- **`runs/RunEnds.ended(RunExited)`**, which the reactor calls: (1) under the task's lock, in one transaction: the
+  outcome, `RunRepo.end` (a run already ended is left alone, so an exit read twice does nothing), the run's steers queued
+  again ahead of what was queued since (`takeSteers` + `queueAhead`), whether a later run exists, the decision and its
+  notices; (2) `Tokens.runEnded`, `DevServers.notifyRunEnded`, `AgentRequests.ended(run, idle)` (the handlers let the
+  run's prompts go: 3.3), the preview ended; (3) with no later run, `Runs.sendQueued` unless out of usage (a run started,
+  or the task waiting for dependencies, ends it there; a refusal is said: "Couldn't send the queued message: …"); (4)
+  under the lock again, the column, written only if no later run has started meanwhile, then `TaskChanged`; (5) the
+  nudge, a board message (`auto`) that starts a run, or Needs attention if it can't be sent. The column is written with
+  `TaskRepo.write` and `deriveColumns` under the lock rather than `Tasks.change` (which takes the lock itself), with the
+  `TaskChanged` offered here.
+- **`Runs.reattach`** (Recovery, before `startUnblocked(null)`): each folder marked `orphan` or `reap` carries on
+  (`Shim.resumeMarked`); each run that had not exited is adopted: a newer format, or one never started (no `out.jsonl`
+  nor `exit`), is reaped and offered as `RunExited` with the old error texts; otherwise it goes `running`, its open
+  requests are taken up again (`AgentRequests.resume`, before its output is read again), it is followed from its offset,
+  `steerable` is set right, and `RunInput.rearm` re-arms its stop grace and, between turns, writes unwritten steers and
+  closes the input or arms `STEER_GRACE`. Tasks marked running with no live run send what is queued, else need
+  attention ("Interrupted by server restart"). Plan columns left unsettled by a restart (the old `settle_plans`) wait
+  for checkpoints (M4).
+- **`Runs.startUnblocked(project)`** (the reactor on a status, dependency or deletion change, and Recovery) starts the
+  tasks `Dependencies.ready` finds with `Runs.startWaiting` (the old `start_waiting`: what is queued, else the task's
+  start, else a note to carry on; an archived project's task goes back to waiting; a failure needs attention).
+  `Dependencies.reconcile` stays as it was for tests of `ready`. `Dependencies.layer` moved into `TasksLive`.
+- **Whole-server tests** (`tests/e2e/restart.test.ts`): the server stopped under a running fake agent, and the next on
+  the same data folder adopts the run and ends it in In review; a power cut, the database put back to a copy taken while
+  the agent worked, and the run's output applied again from the offset the copy has, with nothing doubled. Because a
+  line's thread items and the offset after it are one transaction, a power cut loses both or neither. The e2e harness
+  kills the agents a data folder's runs started when the test ends (`e2eDataDir`).
 
 ## Threads<a id="threads"></a>
 
@@ -677,3 +714,20 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   `TitleScript`, window prompts fail) and `layerTest`'s `claudeBin` names no program. Codex titles, Codex rate limits
   and the window's Codex case are M5; stack titles are 4.8. A failed usage request's error shows the status number
   only (the old one added its text).
+- **Wired into the run (HE-4, after 2.6)**: the line handler makes the calls above after the line's commit (the
+  context request before `turnEnded` closes the input; `CompactMetadata` keeps `duration_ms`); the launch gives the task's
+  temp folder as `TMPDIR`, an `--add-dir` and `Prompts.system`'s `tmp` (`RunTold.tmp`); `Runs.send`'s gate is
+  `usageGate` (`waitForLimit` keeps the message queued with `waiting` and `limit_reset_at`); `Runs.limitResets` (a layer
+  in `RunsArea`) runs `startUnblocked(null)` every 30 s, and `Dependencies.ready(project, nowMs)` includes the tasks whose
+  reset is due; `/new` clears the meter; a user's prompt refreshes the title; the end of a run (`RunEnds`) calls `Tokens`
+  and `DevServers`. RPCs: `host.usage { refresh? }`, `tasks.stopServer { id, port }`, `tasks.context { id }`. Not wired:
+  `tasks.waitForLimit` (the "Carry on then" button; no contract yet) and `Titles.generateLater` on task creation (in
+  `tasks.create`'s handler, another piece's).
+- **`Compaction`** (`runs/Compaction.ts`): `compactIdle`, one pass, compacts (`Runs.compact`, the board's own, with
+  its notice) each Claude session whose latest run, a prompt run, ended 50 to 60 minutes ago (`RunRepo.idleSessions`,
+  the old `idle_sessions`); the loop runs it at start and every minute. It and `Runs.limitResets` are `RunLoops` in
+  `Main.ts`, part of `AreasLive` but not of `areasLayer`, so a test board's clock moves without them (tests run a pass).
+- **Not built yet: `BackgroundWork`** (Claude's `background_tasks_changed`, the `background*` run files,
+  `Task.background_work`, the idle-vs-working rule, `BACKGROUND_GRACE`/`FOLLOW_UP_GRACE` at the hooks in
+  `RunInput.turnEnded`, `tasks.stopBackground`, the lost-background note in `Prompts.start`, the method 3.5's
+  `background_wait` needs).

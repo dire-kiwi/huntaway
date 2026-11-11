@@ -2,7 +2,8 @@ import { Context, Effect, Layer } from "effect"
 import { Titles } from "../agents/Titles.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
-import { Dependencies } from "../tasks/Dependencies.ts"
+import { RunEnds } from "../runs/RunEnds.ts"
+import { Runs } from "../runs/Runs.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 
 export interface ReactorShape {
@@ -21,19 +22,24 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
     Reactor,
     Effect.gen(function* () {
       const changes = yield* Changes
-      const dependencies = yield* Dependencies
+      const runs = yield* Runs
+      const runEnds = yield* RunEnds
       const taskTmp = yield* TaskTmp
       const titles = yield* Titles
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
-        // A run's end is decided in M2's next steps (docs/plan/07-agents.md, When a run ends).
-        if (change._tag !== "TaskChanged") return
+        // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
+        // as for any change of the task (the `TaskChanged` it offers).
+        if (change._tag === "RunExited") {
+          yield* runEnds.ended(change)
+          return
+        }
         const task = change.after ?? change.before
         if (task === null) return
         const moved = change.before?.status !== change.after?.status
         const depsChanged = change.before?.depends_on !== change.after?.depends_on
         // A task that moved, was deleted or changed what it waits for may unblock tasks waiting on its project.
-        if (moved || depsChanged || change.after === null) yield* dependencies.reconcile(task.project_id)
+        if (moved || depsChanged || change.after === null) yield* runs.startUnblocked(task.project_id)
         // A deleted task's temp folder goes (in the background), with what it left running.
         if (change.after === null) yield* taskTmp.deleted(task.id)
         else {
