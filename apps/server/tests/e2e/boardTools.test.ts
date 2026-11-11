@@ -69,7 +69,17 @@ describe("the board's tools on a whole server", () => {
           )
       const listed = yield* rpc(1, "tools/list", {})
       const names = (listed.result.tools ?? []).map((t) => t.name)
-      assert.deepStrictEqual(names.slice(0, 6), ["request_user_input", "finish_work", "wait", "background_wait", "list_projects", "list_tasks"])
+      assert.deepStrictEqual(names.slice(0, 9), [
+        "request_user_input",
+        "finish_work",
+        "track_work",
+        "untrack_work",
+        "list_tracked_work",
+        "wait",
+        "background_wait",
+        "list_projects",
+        "list_tasks",
+      ])
 
       const created = yield* Schema.decodeEffect(Summary)(
         textOf(yield* rpc(2, "tools/call", { name: "create_task", arguments: { title: "From an agent", type: "scratch", start: false } })),

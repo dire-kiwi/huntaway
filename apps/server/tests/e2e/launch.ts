@@ -1,4 +1,4 @@
-import { Deferred, Effect, FileSystem, Layer, Path, Ref, Schema, Stream } from "effect"
+import { Deferred, Effect, FileSystem, Layer, Path, Ref, Schedule, Schema, Stream } from "effect"
 import { Headers } from "effect/http"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
@@ -9,23 +9,36 @@ const launcher = new URL("../../bin/huntaway", import.meta.url)
 
 const ReadyLine = Schema.fromJsonString(Schema.Struct({ port: Schema.Int, token: Schema.NullOr(Schema.String) }))
 
-/** The process groups of the agents a server's runs started (each run folder's `pid`). */
+/** The process groups of the shims and agents a server's runs started (each run folder's `shim.pid` and `pid`), shims first. */
 const agentGroups = (dataDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const runs = yield* fs.readDirectory(`${dataDir}/runs`).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
     const pids: Array<number> = []
-    for (const run of runs) {
-      const text = yield* fs.readFileString(`${dataDir}/runs/${run}/pid`).pipe(Effect.orElseSucceed(() => ""))
-      const pid = Number(text.trim())
-      if (Number.isInteger(pid) && pid > 1) pids.push(pid)
+    for (const file of ["shim.pid", "pid"]) {
+      for (const run of runs) {
+        const text = yield* fs.readFileString(`${dataDir}/runs/${run}/${file}`).pipe(Effect.orElseSucceed(() => ""))
+        const pid = Number(text.trim())
+        if (Number.isInteger(pid) && pid > 1) pids.push(pid)
+      }
     }
     return pids
   })
 
+/** Whether a process group still has a process in it. */
+const groupAlive = (pid: number) => {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
- * A fresh data folder for the scope. Agents outlive their server by design, so before the folder goes, the agents its
- * runs started are killed (their process groups, from the runs' `pid` files): a test leaves nothing running.
+ * A fresh data folder for the scope. Agents outlive their server by design, so before the folder goes, the shims and
+ * agents its runs started are killed (their process groups, from the runs' `shim.pid` and `pid` files), shims first so
+ * none writes its `exit` file into a folder being removed, and waited for: a test leaves nothing running.
  */
 export const e2eDataDir = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
@@ -41,7 +54,13 @@ export const e2eDataDir = Effect.gen(function* () {
               // Gone already.
             }
           }
-        }),
+          return pids
+        }).pipe(
+          // Up to two seconds for them to be gone (a killed process is gone at once, but a group's last member may take a moment).
+          Effect.flatMap((killed) =>
+            Effect.sync(() => killed.some(groupAlive)).pipe(Effect.repeat({ until: (alive) => !alive, schedule: Schedule.spaced("20 millis"), times: 100 })),
+          ),
+        ),
       ),
     ),
   )
