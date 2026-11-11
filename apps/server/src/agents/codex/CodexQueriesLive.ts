@@ -3,7 +3,8 @@ import type { Scope } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { ServerConfig, VERSION } from "../../platform/ServerConfig.ts"
 import type { AgentConfigRow } from "../../profiles/AgentConfigRepo.ts"
-import { CodexQueries, CodexUnavailable } from "../CodexQueries.ts"
+import { AgentConfigRepo } from "../../profiles/AgentConfigRepo.ts"
+import { CodexQueries, CodexUnavailable, configModelsWith } from "../CodexQueries.ts"
 import { configDir } from "../configEnv.ts"
 import type { TitleAnswer } from "../TitleModel.ts"
 import type { Spent } from "../tokens/calls.ts"
@@ -35,6 +36,7 @@ export const CodexQueriesLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* ServerConfig
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+    const repo = yield* AgentConfigRepo
     const models = yield* Ref.make<ReadonlyMap<string, Cached<ReadonlyArray<CodexModel>>>>(new Map())
     const skills = yield* Ref.make<ReadonlyMap<string, Cached<ReadonlyArray<CodexSkill>>>>(new Map())
 
@@ -174,6 +176,6 @@ export const CodexQueriesLive = Layer.effect(
       return answer
     })
 
-    return CodexQueries.of({ models: listModels, skills: listSkills, rateLimits: readLimits, title })
+    return CodexQueries.of({ models: listModels, configModels: configModelsWith(repo, listModels), skills: listSkills, rateLimits: readLimits, title })
   }),
 )

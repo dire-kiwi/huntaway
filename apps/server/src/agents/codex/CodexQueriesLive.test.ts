@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Result } from "effect"
 import { AgentConfigId, Timestamp } from "@huntaway/contracts"
 import { FAKE_CODEX, TestPlatform } from "@huntaway/testing"
+import { AgentConfigRepo } from "../../profiles/AgentConfigRepo.ts"
 import type { AgentConfigRow } from "../../profiles/AgentConfigRepo.ts"
 import { CodexQueries } from "../CodexQueries.ts"
 import { CodexQueriesLive } from "./CodexQueriesLive.ts"
@@ -25,8 +26,8 @@ const codex: AgentConfigRow = {
 }
 
 /** The live queries over a test platform (which has Node's services) whose Codex is `codexBin`. */
-const live = <A, E>(effect: Effect.Effect<A, E, CodexQueries>, codexBin = FAKE_CODEX) =>
-  effect.pipe(Effect.provide(CodexQueriesLive.pipe(Layer.provideMerge(TestPlatform({ codexBin })))))
+const live = <A, E>(effect: Effect.Effect<A, E, CodexQueries | AgentConfigRepo>, codexBin = FAKE_CODEX) =>
+  effect.pipe(Effect.provide(CodexQueriesLive.pipe(Layer.provideMerge(AgentConfigRepo.layer), Layer.provideMerge(TestPlatform({ codexBin })))))
 
 const ids = (rl: unknown) => rateLimits(rl).map((l) => [l.id, l.label])
 const window = (mins: number | null) => ({ usedPercent: 10, windowDurationMins: mins, resetsAt: 1793521800 })
@@ -73,6 +74,23 @@ describe("CodexQueries against fake-codex", () => {
         const answer = yield* (yield* CodexQueries).title(codex, "/", "Write a title.", "<task>\nx\n</task>")
         assert.isTrue(Result.isSuccess(answer.reply))
         assert.isNotNull(answer.spent)
+      }),
+    ),
+  )
+
+  it.live("configs.models: a Codex config's models; a Claude config's none; a config that isn't there is not found", () =>
+    live(
+      Effect.gen(function* () {
+        const repo = yield* AgentConfigRepo
+        const queries = yield* CodexQueries
+        yield* repo.insert(codex.id, codex.created_at, { name: "Codex", config_dir: codex.config_dir, agent: "codex" })
+        yield* repo.insert(AgentConfigId.make("cl"), codex.created_at, { name: "Claude", config_dir: "", agent: "claude" })
+        assert.deepStrictEqual(
+          (yield* queries.configModels(codex.id)).map((m) => m.id),
+          ["gpt-fake", "gpt-fake-mini"],
+        )
+        assert.deepStrictEqual(yield* queries.configModels(AgentConfigId.make("cl")), [])
+        assert.strictEqual((yield* queries.configModels(AgentConfigId.make("gone")).pipe(Effect.flip))._tag, "AgentConfigNotFound")
       }),
     ),
   )

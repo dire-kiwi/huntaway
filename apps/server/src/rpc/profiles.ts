@@ -1,5 +1,6 @@
 import { Effect } from "effect"
-import { ConfigRpcs, NotFound, ProfileRpcs } from "@huntaway/contracts"
+import { ConfigRpcs, NotFound, ProfileRpcs, Unavailable } from "@huntaway/contracts"
+import { CodexQueries } from "../agents/CodexQueries.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import type { AgentConfigNotFound } from "../profiles/AgentConfigs.ts"
 import { Profiles } from "../profiles/Profiles.ts"
@@ -23,11 +24,19 @@ export const ProfileHandlers = ProfileRpcs.toLayer(
 export const ConfigHandlers = ConfigRpcs.toLayer(
   Effect.gen(function* () {
     const configs = yield* AgentConfigs
+    const codex = yield* CodexQueries
     return ConfigRpcs.of({
       "configs.list": () => configs.list,
       "configs.create": ({ config }) => configs.create(config),
       "configs.update": ({ id, patch }) => configs.update(id, patch).pipe(Effect.catchTag("AgentConfigNotFound", configNotFound)),
       "configs.delete": ({ id }) => configs.delete(id).pipe(Effect.catchTag("AgentConfigNotFound", configNotFound)),
+      "configs.models": ({ id }) =>
+        codex.configModels(id).pipe(
+          Effect.catchTags({
+            AgentConfigNotFound: configNotFound,
+            CodexUnavailable: (e) => Effect.fail(new Unavailable({ what: "Codex", reason: `couldn't list Codex models: ${e.reason}` })),
+          }),
+        ),
     })
   }),
 )

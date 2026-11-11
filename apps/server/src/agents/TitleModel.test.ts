@@ -49,7 +49,8 @@ const ask = (bin: string, cfg: AgentConfigRow | null) =>
   }).pipe(
     Effect.provide(
       TitleModel.layer.pipe(
-        Layer.provideMerge(Layer.mergeAll(AgentConfigRepo.layer, CodexQueries.layerTest)),
+        Layer.provideMerge(CodexQueries.layerTest),
+        Layer.provideMerge(AgentConfigRepo.layer),
         Layer.provideMerge(TestPlatform({ claudeBin: bin })),
       ),
     ),
