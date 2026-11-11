@@ -629,6 +629,51 @@ with their tests. A run's state is one row rewritten under the run's lock, so co
 instead of relying on nothing awaiting. The engine never moves a task itself: it calls `Tasks.change` and lets the
 reactor carry the consequences, which removes the old `MOVING`, `CHAIN` and `QUIET` guards against its own echoes.
 
+#### As built in 6.6 (HE-7): `WorkflowEngine`, `Workflows`, the workflow tools
+
+- **Files.** `workflows/graph.ts` (pure: the model's questions — ports, wires, `agentWorks`, `afterDone`, `afterMerge`,
+  `opensPr`, `upstream` — and a run as a value: `plan`, `settle`, `reachable`, `endNodes`, the reasons a run leaves a
+  task where it is, `pickPath`, `keptPath`, `changedSince`, and the values: `render`, `inputValue`, `outputValue`,
+  `columnText` over a `ValueSource` with the earlier runs read beside it), `workflows/check.ts` (`checkGraph`,
+  `checkName`, `cycle`, `dataCycle`), `workflows/read.ts` (a graph an agent gives, read leniently: defaults, null as not
+  given, the old `trigger on status|finished` and `set_status` as column nodes), `workflows/reviewSettings.ts`
+  (`reviewSettingsGraph`, `hasReviewStep`), `WorkflowStore` (the two tables and `thread_tools.disabled_mcp_servers`),
+  `Workflows` (CRUD, a column with the agent's work in one workflow that's on, `moveReviewSettings`), `WorkflowEngine`
+  with its parts in `workflows/engine/` (`start.ts`: start, `onStatus`, `onFinished`, `onMergeFinished`, `resume`;
+  `advance.ts`: the loop and the board's own steps — condition, A/B test, send, an edge into a column, `open_pr`;
+  `agentStep.ts`: the step's thread, `submit`, `stepEnded`; `stop.ts`: `stopRun`, `release`, `unheld`, `mergeLeft`;
+  `facts.ts`: what `WorkflowFacts` reads), `WorkflowApprovals` (the tools' asking), `mcp/tools/workflows.ts`, and
+  `rpc/workflows.ts` (`workflows.*`, contract `packages/contracts/src/rpc/workflows.ts`, types in `workflow.ts`).
+- **Locks.** `KeyedLock` gains `["workflows", task]` (one start per task at a time: the old global `STARTING`) and
+  `["workflowRun", run]` (a run's row read and rewritten by one at a time, `withRun`); neither is held across a step's
+  work (a push, an agent's start), as the old engine didn't hold `STARTING` while advancing.
+- **No echo guards.** A move a step makes is `Tasks.update` with the new `Actor` `Workflow { run, chain }`; the reactor's
+  `TaskChanged` (status moved) calls `WorkflowEngine.onStatus`, which stops runs waiting at a column the task left and
+  starts the new column's workflows in the engine's `FiberSet` (the reactor isn't held up by a push). `CHAIN` is the
+  move's `chain` + 1 (still stopping at `MAX_CHAIN` = 10); `MOVING` is gone; `QUIET` is "a move a run that has ended
+  made back into the column it started at doesn't start it again" (`release`'s move to In review carries its run).
+- **Changes.** `WorkflowWorkDone { task, due, mergeFinished }` (from `RunEnds`, after the column is written: the column
+  that held the task goes on, `onFinished`; or the merging agent said it's merged, `onMergeFinished`) and
+  `WorkflowRunSettled { run, task, why }` (from the engine when a run ends or is stopped for good: `release`). A workflow
+  step's thread's `ReviewFinished` goes to `stepEnded` (and `Reviews.finished` ignores it); `PromptStarted` also
+  `supersede`s (runs but those waiting at a column); `ProjectChanged` (now also offered when `use_workflows` turns on)
+  moves the Review tab's reviews into a workflow. Recovery calls `resume` after the reviews' reconcile.
+- **`WorkflowFacts`** (`agents/WorkflowFacts.ts`, a seam the engine registers, as `MergeFacts`): `startInstructions`
+  and `boardOpensPr` for `Prompts`, `finishDue`, `mergeFinish` and `withDueFinish` for `RunEnds` (its new facts:
+  `finishDue`, and `mergesToDone` read for real), `mergeInstructions` and `mergeFinish` for the merge request
+  (`MergeRequestInput.workflow`). `decideFinish` gains the old `finish_due` rows: held for the column (`workDone`), or
+  "The agent ended its turn without saying its work in … is done (with finish_work)"; a plan waiting for the user and an
+  unfinished todo list come first.
+- **Decided.** The task's Stop is `WorkflowEngine.stopTask` (it calls `Reviews.stopTask`, then stops the workflow runs,
+  "Workflow stopped"); `tasks.stop`'s handler calls it. A run by hand refused says `Conflict` (`changed_meanwhile`, the
+  old 409 text as detail) or `Invalid` (a task of another project). A column clash is `Conflict` `in_use`. Agent-step
+  threads are made with `ReviewRepo.insertThread` (`task_type` `workflow`). Workflow events say "read again":
+  `workflows_changed { project_id, workflow_id }` and `workflow_runs_changed { task_id }` (the client's `workflowsAtom`
+  and `workflowRunsAtom` read them again, as turns are). The board tools' `graph` parameter keeps the old JSON Schema
+  (its enums refuse the old kinds an agent could still name there; stored rows are converted by the importer).
+- **Not here.** The one-time startup move of every `use_workflows` project's reviews (`workflows_reviews_moved`:
+  [14-dropped-and-open.md](14-dropped-and-open.md)); telemetry of runs (6.9).
+
 ### Automations — [inventory 06](inventory/06-integrations.md) (2.3)
 
 `Scheduler` (a five-second tick that claims a due run in one conditional transaction before doing anything; no

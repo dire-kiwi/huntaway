@@ -61,10 +61,7 @@ describe("checking a graph", () => {
     bad({ nodes: [], edges: [] }, "needs a column node")
     bad({ nodes: [{ id: "a", kind: "trigger", on: "status" }], edges: [] }, "needs its column")
     bad({ nodes: [manual, { id: "b", kind: "trigger", on: "manual" }], edges: [] }, "one start")
-    bad(
-      { nodes: [manual, { id: "b", kind: "set_status", status: "todo" }], edges: [{ from: "a", port: "yes", to: "b" }] },
-      "has no port yes",
-    )
+    bad({ nodes: [manual, { id: "b", kind: "set_status", status: "todo" }], edges: [{ from: "a", port: "yes", to: "b" }] }, "has no port yes")
     bad({ nodes: [manual, { id: "b", kind: "set_status", status: "todo" }], edges: [{ from: "b", port: "out", to: "a" }] }, "into the start")
     bad(
       {

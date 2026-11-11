@@ -1,7 +1,5 @@
-import { Effect, FileSystem, Result, Schema } from "effect"
-import type { Scope } from "effect"
-import type { SecureRandom } from "effect/crypto"
-import type { ChildProcessSpawner } from "effect/process"
+import { Effect, FileSystem, Option, Result, Schema } from "effect"
+import type { Layer, Scope } from "effect"
 import { SqlClient } from "effect/sql"
 import { ProjectId, TaskId, Timestamp, WorkflowId, WorkflowRunId } from "@huntaway/contracts"
 import type { Item, Task, Workflow, WorkflowNodeRun } from "@huntaway/contracts"
@@ -9,13 +7,16 @@ import { fakeAgent, git, gitRepo, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import { Checkpoints } from "../../git/Checkpoints.ts"
 import { Reactor } from "../../lifecycle/Reactor.ts"
+import { Actor } from "../../platform/Changes.ts"
 import { toJson } from "../../platform/columns.ts"
 import type { ServerConfigShape } from "../../platform/ServerConfig.ts"
+import { ProjectRepo } from "../../projects/ProjectRepo.ts"
 import { ReviewRepo } from "../../review/ReviewRepo.ts"
 import { RunEnds } from "../../runs/RunEnds.ts"
 import { RunOutput } from "../../runs/RunOutput.ts"
 import { Runs } from "../../runs/Runs.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
+import { Tasks } from "../../tasks/Tasks.ts"
 import { ThreadReaders } from "../../threads/ThreadReaders.ts"
 import { Threads } from "../../threads/Threads.ts"
 import { readGraph } from "../read.ts"
@@ -36,24 +37,8 @@ export const TASK = TaskId.make("t1")
 const Json = Schema.fromJsonString(Schema.Unknown)
 
 /** A test board's services. */
-export const onBoard = <A, E>(
-  effect: Effect.Effect<A, E, Scope.Scope | SqlClient.SqlClient | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | TestServices>,
-  config: Partial<ServerConfigShape> = {},
-) => effect.pipe(Effect.scoped, Effect.provide(TestBoard(config)))
-
-type TestServices =
-  | Workflows
-  | WorkflowEngine
-  | WorkflowStore
-  | Reactor
-  | Runs
-  | RunEnds
-  | RunOutput
-  | Checkpoints
-  | TaskRepo
-  | ReviewRepo
-  | Threads
-  | ThreadReaders
+export const onBoard = <A, E>(effect: Effect.Effect<A, E, Scope.Scope | Layer.Success<ReturnType<typeof TestBoard>>>, config: Partial<ServerConfigShape> = {}) =>
+  effect.pipe(Effect.scoped, Effect.provide(TestBoard(config)))
 
 export interface Setup {
   readonly status?: Task["status"]
@@ -283,3 +268,35 @@ export const agentFinishes = (options: { readonly finished?: boolean; readonly t
     yield* ends(agent)
     return agent
   })
+
+/** The user moves the task to `status` (through `Tasks`, as the board does); then what follows. */
+export const moveTo = (status: Task["status"]) =>
+  Effect.gen(function* () {
+    yield* (yield* Tasks).update(TASK, { status }, Actor.user)
+    yield* settle
+  })
+
+/** The project as it is now. */
+export const project = Effect.gen(function* () {
+  const p = yield* (yield* ProjectRepo).get(PROJECT)
+  return Option.isSome(p) ? p.value : yield* Effect.die("the project is gone")
+})
+
+/** A whole task's way across the board, as column nodes: work, a pull request, review (sending its issues back), merge. */
+export const lifecycle = (o: { readonly work?: object; readonly review?: object; readonly merge?: object } = {}) => ({
+  nodes: [
+    { id: "work", kind: "column", status: "in_progress", prompt: "Build {{task.title}}.", ...o.work },
+    { id: "pr", kind: "open_pr" },
+    { id: "review", kind: "column", status: "in_review", ...o.review },
+    { id: "reviewer", kind: "agent", name: "Reviewer", output: "verdict" },
+    { id: "merge", kind: "column", status: "ready_for_merge", prompt: "Squash it into {{task.key}}.", ...o.merge },
+  ],
+  edges: [
+    { from: "work", port: "done", to: "pr" },
+    { from: "pr", port: "opened", to: "review" },
+    { from: "pr", port: "exists", to: "review" },
+    { from: "review", port: "done", to: "reviewer" },
+    { from: "reviewer", port: "issues", to: "work" },
+    { from: "reviewer", port: "pass", to: "merge" },
+  ],
+})

@@ -315,6 +315,27 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   branches stand behind their keys); and, with `--fake-claude`, the approval card after the summary run, Approve
   deciding the merge ("approved", "Merge approved: …", and the merge request sent).
 
+### Step 1 as done for workflows (6.6, HE-7)
+
+- **Files.** `settings/Workflows.tsx` (`ProjectWorkflows`: the list, its switch, the editor, "Use workflows") and
+  `settings/workflows/*` (the canvas editor, its inspectors, presets, text, geometry and hooks), `settings/TemplateField.tsx`
+  and `templateCompletion.ts` (as 6.12 copies them), `task/Workflows.tsx` (the `wf:` tabs, `WorkflowTabView`,
+  `WorkflowsList`, `useWorkflowRuns`, `workflowRunning`), `task/thread/workflowChange.tsx` (the approval card's detail,
+  reading the approval's graph with the contract's `WorkflowGraph`). The lists come from `workflowsAtom` and
+  `workflowRunsAtom` (`packages/client/src/board/workflows.ts`), read again on `workflows_changed` and
+  `workflow_runs_changed` as a task's turns are; changes are `mutations.workflows.*`, and nothing reloads after one.
+- **Gone.** `legacyGraph`, `set_status` and a start on a status, every API-version check (`COLUMN_WORKFLOWS_API`,
+  `AB_TEST_API`, `REVIEWS_IN_WORKFLOWS_API`). A node's field set to undefined is removed, never sent as null
+  (`patchNode`). A send step still shows only its `exhausted` port in the editor, as before.
+- **Where it mounts.** The project settings' Workflows tab (`/p/<id>/settings/workflows`): until 6.12 brings
+  `project/ProjectSettings.tsx` over, its placeholder renders `ProjectWorkflows` for that tab. `settings/AgentStepTools.tsx`
+  is a stub (the step's own skills and turned-off MCP servers, no project list to pick from) that 6.4 replaces;
+  `task/Reviewers.tsx` has only `ReviewerRow`, as 6.12's. The column preview says "The board's default start/merge
+  prompt." for a blank prompt until `host.defaultPrompts` (6.12) gives the text.
+- **Checks.** `tests/ui/workflows.test.mjs`, `workflowPresets.test.mjs`, `workflowWires.test.mjs` (the old ones on the
+  new harness, through `workflows.*`). Not ported: `graphPicks.test.mjs` (subprojects), the `/settings/review` and
+  `/guide/workflows` assertions (6.12's pages), the agent-tools picks of the skills case (6.4).
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |

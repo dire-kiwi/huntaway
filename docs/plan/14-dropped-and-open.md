@@ -23,6 +23,7 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | The serde emulation: `_from_json` readers that reproduce Rust's error texts, sorted-key JSON, `hidden()` fields, 422 texts | The Rust port                         | —                                                         |
 | The test seams: `IN_TEST`, `when`/`reached`, `*_BIN` variables read by the code, shortened constants | Tests without layers or a test clock                       | —                                                         |
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
+| The one-time startup move of the Review tab's reviews into a workflow for projects that used workflows before HA-277 (`move_all_review_settings`, setting `workflows_reviews_moved`) (6.6) | Boards from before HA-277 | Ran on the old board before its import |
 
 What is **not** dropped, although it carries an old name: `ia-shim`, branches `ia/…`, `refs/huntaway/…`, the script
 variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names `ia-…`, and the item id prefix

@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem } from "effect"
+import { Effect, FileSystem, Result } from "effect"
 import { SqlClient } from "effect/sql"
 
 import type { Project, Task, TaskId } from "@huntaway/contracts"
@@ -12,14 +12,16 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
 import { Tasks } from "../tasks/Tasks.ts"
+import { Reactor } from "../lifecycle/Reactor.ts"
+import { readGraph } from "../workflows/read.ts"
+import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
+import { Workflows } from "../workflows/Workflows.ts"
+import { WorkflowStore } from "../workflows/WorkflowStore.ts"
 import { Threads } from "../threads/Threads.ts"
 import { change, reload } from "../mcp/tools/tests/wait.ts"
 import { MergedWatcher } from "./MergedWatcher.ts"
 
 // The merged watcher (the old review/merged.test.ts) over the fake GitHub, its checks run by hand. Dropped, with why:
-// - `a_task_its_pull_request_moves_starts_the_workflows_of_its_new_column` (HA-262): workflows are plan task 6.6, which
-//   starts them on the move to Done or Needs attention like any other (the watcher moves the task with `Tasks.change`,
-//   so the reactor sees it);
 // - in `leaves_tasks_that_are_busy_merging_opted_out_or_in_a_subproject`, the subproject cases: subprojects are gone.
 // `builds_one_query_and_reads_its_answer` is in github/prWatch/pr.test.ts.
 
@@ -243,6 +245,49 @@ describe("the merged watcher", () => {
         assert.deepStrictEqual(yield* queries(fake), [["alice", "github.com", [7]]])
         const root = `${(yield* ServerConfig).cacheDir}/huntaway/gh-account`
         assert.deepStrictEqual(yield* (yield* FileSystem.FileSystem).readDirectory(root).pipe(Effect.orDie), [])
+      }),
+    ),
+  )
+
+  // HA-262 (6.6): a task its pull request moved to Done (or Needs attention) starts the workflows that start when a task
+  // enters that column, as moving it there does: the watcher moves it with `Tasks.change`, and the reactor sees it.
+  it.effect("a task its pull request moves starts the workflows of its new column", () =>
+    onBoard(github({ 7: "OPEN", 8: "OPEN" }), (fake) =>
+      Effect.gen(function* () {
+        const { project } = yield* projectOnRepo("x")
+        const a = yield* taskInReview(project, URL7)
+        const b = yield* taskInReview(project, URL8)
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`UPDATE projects SET use_workflows = 1 WHERE id = ${project.id}`.pipe(Effect.orDie)
+        // A step after the column: a column with nothing after it runs nothing.
+        const on = (status: string) =>
+          Effect.gen(function* () {
+            const graph = readGraph({
+              nodes: [
+                { id: "t", kind: "column", status },
+                { id: "c", kind: "condition", check: "has_pr" },
+              ],
+              edges: [{ from: "t", port: "done", to: "c" }],
+            })
+            if (Result.isFailure(graph)) return yield* Effect.die(graph.failure)
+            return yield* (yield* Workflows).create({ project_id: project.id, name: status, graph: graph.success }).pipe(Effect.orDie)
+          })
+        const done = yield* on("done")
+        const flagged = yield* on("needs_attention")
+        yield* setState(fake, 7, "MERGED")
+        yield* setState(fake, 8, "CLOSED")
+        yield* check
+        for (let i = 0; i < 4; i++) {
+          yield* (yield* Reactor).idle
+          yield* (yield* WorkflowEngine).idle
+        }
+        assert.deepStrictEqual([(yield* reload(a.id)).status, (yield* reload(b.id)).status], ["done", "needs_attention"])
+        const store = yield* WorkflowStore
+        const ran = (w: { readonly id: string }, t: TaskId) => Effect.map(store.runsOfTask(t), (rs) => rs.find((r) => r.workflow_id === w.id)?.state ?? null)
+        assert.deepStrictEqual(
+          [yield* ran(done, a.id), yield* ran(flagged, b.id), yield* ran(done, b.id), yield* ran(flagged, a.id)],
+          ["done", "done", null, null],
+        )
       }),
     ),
   )
