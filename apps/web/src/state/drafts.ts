@@ -5,8 +5,8 @@ import { ExternalLink } from "@huntaway/contracts"
 import { stored, storedBare } from "./storage"
 
 // User work that must not be lost, and the new task dialog's remembered choices (inventory 10, section 3.3), under the
-// old keys. The new task dialog (layout/newTask) and the task's composer keep drafts here; line comments' and plan
-// answers' drafts come with their components (M4, M6).
+// old keys. The new task dialog (layout/newTask), the task's composer and the Changes tab's line comments (4.2) keep
+// drafts here; plan answers' drafts come with their component (M6).
 
 /** A file attached to a draft: enough to fetch it again. */
 const AttachmentRef = Schema.Struct({ id: Schema.String, name: Schema.String, path: Schema.String })
