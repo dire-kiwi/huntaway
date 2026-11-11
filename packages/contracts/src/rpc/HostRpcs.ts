@@ -8,6 +8,8 @@ import { PenRpcs } from "./pens.ts"
 import { PermissionRpcs } from "./permissions.ts"
 import { ConfigRpcs, ProfileRpcs } from "./profiles.ts"
 import { ProjectRpcs } from "./projects.ts"
+// 6.8: the hub's, served by the host until hubs come (M7).
+import { PushRpcs } from "./push.ts"
 import { TaskRpcs } from "./tasks.ts"
 import { ThreadRpcs } from "./threads.ts"
 
@@ -25,6 +27,7 @@ export const HostRpcs = HostRpcGroup.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  PushRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

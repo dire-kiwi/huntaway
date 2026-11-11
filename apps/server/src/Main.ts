@@ -1,6 +1,8 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
 import { Mac, SecureRandom } from "effect/crypto"
+// 6.8: Web Push's cryptography.
+import { Aead, Digest, Kdf, KeyAgreement, Signature } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
@@ -18,6 +20,7 @@ import {
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
+  PushRpcs,
   TaskRpcs,
   ThreadRpcs,
 } from "@huntaway/contracts"
@@ -63,6 +66,7 @@ import { Identity } from "./platform/Identity.ts"
 import { KeyedLock } from "./platform/KeyedLock.ts"
 import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
+import { Secrets } from "./platform/Secrets.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
 import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
@@ -129,6 +133,10 @@ import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
+import { PushHandlers } from "./rpc/push.ts"
+import { Push } from "./push/Push.ts"
+import { PushRepo } from "./push/PushRepo.ts"
+import { WebPush } from "./push/WebPush.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
 import { About } from "./settings/About.ts"
@@ -158,12 +166,13 @@ import { ThreadStore } from "./threads/ThreadStore.ts"
  * reads Anthropic's usage endpoint). `db` is swapped for tests.
  */
 export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
-  Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer).pipe(
+  Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer, Secrets.layer).pipe(
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
+    Layer.provideMerge(Layer.mergeAll(KeyAgreement.layerWebCrypto, Kdf.layerWebCrypto, Aead.layerWebCrypto, Signature.layerWebCrypto, Digest.layerWebCrypto)),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
 
@@ -303,6 +312,10 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // 6.8: push, watching the board's events for what devices want.
+    Layer.provideMerge(Push.watcher),
+    Layer.provideMerge(Push.layer),
+    Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
@@ -362,6 +375,7 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  PushRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +394,7 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  PushHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
