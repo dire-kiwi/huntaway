@@ -4,3 +4,5 @@ export * from "./threadFixtures.ts"
 export * from "./fakeAgent.ts"
 export * from "./mcpTools.ts"
 export * from "./fakeGitHub.ts"
+// 6.11: a fake Asana.
+export * from "./fakeAsana.ts"

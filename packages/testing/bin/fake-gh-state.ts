@@ -110,6 +110,19 @@ export interface Run {
 }
 export interface Repo {
   default_branch?: string
+  // 6.11: what a list of repositories shows, who else sees it or contributed to it, and where a clone of it comes from.
+  description?: string | null
+  private?: boolean
+  fork?: boolean
+  archived?: boolean
+  pushed_at?: string | null
+  collaborators?: Array<string>
+  contributors?: Array<string>
+  source?: string
+  cloneFails?: string
+  cloneBreaks?: "checkout" | "after"
+  created?: boolean
+  pushed?: boolean
   pulls?: Array<Pull>
   issues?: Array<Issue>
   runs?: Array<Run>
@@ -124,6 +137,11 @@ export interface Route {
 }
 export interface State {
   accounts?: Array<Account>
+  // 6.11: an account's organizations (by login), gh's clone protocol by host, and why a `repo create` or its push fails.
+  orgs?: Record<string, Array<string>>
+  gitProtocol?: Record<string, string>
+  createFails?: string
+  pushFails?: string
   defaultRepo?: string | null
   repos?: Record<string, Repo>
   help?: Record<string, string>

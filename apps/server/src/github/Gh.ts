@@ -73,6 +73,13 @@ export interface GhCallOptions {
   readonly repo?: string | null | undefined
   /** Default 60 seconds. */
   readonly timeout?: Duration.Input | undefined
+  /**
+   * 6.11: without `UNSANDBOXED_GIT`, for the board's own clone and repository creation (`GithubRepos`), whose git is the
+   * user's as the old `gh_vars` ran it (their hooks, a local remote), not an agent's.
+   */
+  readonly plain?: boolean | undefined
+  /** 6.11: more variables, over the rest. */
+  readonly env?: Readonly<Record<string, string>> | undefined
 }
 
 /** How a board's own gh call ended. */
@@ -477,7 +484,7 @@ export class Gh extends Context.Service<Gh, GhShape>()("huntaway-server/github/G
               const a = yield* accountOf(options.account)
               env = { ...env, ...(yield* accountConfig(a, yield* token(a))) }
             }
-            env = noRepoCommands(env)
+            env = options.plain === true ? { ...env, ...options.env } : noRepoCommands({ ...env, ...options.env })
             env["GH_REPO"] = options.repo ?? undefined
             const timeout = options.timeout ?? "60 seconds"
             const out = yield* execute(config.ghBin, args, { cwd: options.cwd, env, timeout }).pipe(

@@ -99,7 +99,7 @@ export class GithubRepoRpcs extends RpcGroup.make(
   }).annotate(RequiredScope, "read"),
   /**
    * Clones a repository with gh as the profile's GitHub account and adds it as a project (the old `POST
-   * /profiles/{id}/projects/clone`). A clone of it already in the folder is added as it is. `Conflict` (`duplicate_name`)
+   * /profiles/{id}/projects/clone`). A clone of it already in the folder is added as it is. `Conflict` (`in_use`)
    * when the folder is a project of the profile's already; `External` when gh can't clone it.
    */
   Rpc.make("projects.clone", {

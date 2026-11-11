@@ -7,6 +7,11 @@ import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
 import {
   ApprovalRulesRpcs,
+  // 6.11
+  AsanaRpcs,
+  ConfigArchiveRpcs,
+  FanoutRpcs,
+  GithubRepoRpcs,
   AttachmentRpcs,
   BoardRpcs,
   CheckpointRpcs,
@@ -45,11 +50,16 @@ import { Git } from "./git/Git.ts"
 import { Gh } from "./github/Gh.ts"
 import { GhStacks } from "./github/GhStacks.ts"
 import { GithubRemote } from "./github/GithubRemote.ts"
+// 6.11: adding a project from GitHub.
+import { GithubRepos } from "./github/GithubRepos.ts"
 import { GitHubAccessStacked } from "./github/GitHubAccessLive.ts"
 import { PrWatch } from "./github/PrWatch.ts"
 import { PrWatchRepo } from "./github/PrWatchRepo.ts"
 import { PullRequests } from "./github/PullRequests.ts"
 import { Restack } from "./git/Restack.ts"
+// 6.11: relocation.
+import { Relocation } from "./git/Relocation.ts"
+import { RelocationRepo } from "./git/RelocationRepo.ts"
 import { StatusScripts } from "./git/StatusScripts.ts"
 import { TaskBase } from "./git/TaskBase.ts"
 import { Worktrees } from "./git/Worktrees.ts"
@@ -91,6 +101,9 @@ import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { ReviewRepo } from "./review/ReviewRepo.ts"
 import { Reviews } from "./review/Reviews.ts"
 import { ReviewStats } from "./review/ReviewStats.ts"
+// 6.11: fan-outs.
+import { Fanout } from "./review/Fanout.ts"
+import { FanoutRepo } from "./review/FanoutRepo.ts"
 import { Summaries } from "./review/Summaries.ts"
 import { DevServers } from "./runs/DevServers.ts"
 import { AgentRequests } from "./runs/AgentRequests.ts"
@@ -112,12 +125,20 @@ import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
+// 6.11: Asana, config archives.
+import { Asana } from "./profiles/Asana.ts"
+import { ConfigArchives } from "./profiles/ConfigArchives.ts"
 import { ProfileRepo } from "./profiles/ProfileRepo.ts"
 import { Profiles } from "./profiles/Profiles.ts"
 import { Usage } from "./profiles/Usage.ts"
 import { ProjectRepo } from "./projects/ProjectRepo.ts"
 import { Projects } from "./projects/Projects.ts"
 import { ApprovalRulesHandlers } from "./rpc/approvalRules.ts"
+// 6.11
+import { AsanaHandlers } from "./rpc/asana.ts"
+import { ConfigArchiveHandlers } from "./rpc/configArchives.ts"
+import { FanoutHandlers } from "./rpc/fanout.ts"
+import { GithubRepoHandlers } from "./rpc/githubRepos.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
@@ -172,9 +193,10 @@ export const PlatformLive = platformLayer(Db.layer)
 // Step 4: every area, bottom up. Each line provides the ones above it.
 const SettingsLive = Layer.mergeAll(About.layer, HostSettings.layer, Folders.layer).pipe(Layer.provideMerge(SettingsRepo.layer))
 const ProfilesLive = Profiles.ensureFromConfig.pipe(
-  Layer.provideMerge(Layer.mergeAll(Profiles.layer, Usage.layer)),
+  Layer.provideMerge(Layer.mergeAll(Profiles.layer, Usage.layer, ConfigArchives.layer)),
   Layer.provideMerge(AgentConfigs.layer),
-  Layer.provideMerge(Layer.mergeAll(ProfileRepo.layer, AgentConfigRepo.layer)),
+  // 6.11: Asana (connecting a profile, its search) and config archives.
+  Layer.provideMerge(Layer.mergeAll(ProfileRepo.layer, AgentConfigRepo.layer, Asana.layer)),
   Layer.provideMerge(SettingsLive),
 )
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
@@ -196,6 +218,8 @@ const ThreadsLive = Threads.pruner.pipe(
 const GitLive = Restack.layer.pipe(
   // 4.8: restacking stack levels, over their worktrees.
   Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer)),
+  // 6.11: a project's folder moved or followed, which a worktree setup holds where it is.
+  Layer.provideMerge(Relocation.layer.pipe(Layer.provideMerge(RelocationRepo.layer))),
   Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
   Layer.provideMerge(Layer.mergeAll(GitHubAccessStacked, CheckpointRepo.layer)),
   // 4.8: GitHub's stacks, which `GitHubAccess` offers the restack (it needs only `Gh` and the task rows).
@@ -208,7 +232,7 @@ const GitLive = Restack.layer.pipe(
  * The github area: gh as one account (`Gh`, on the git line), where a task's pull request goes (`GithubRemote`), reading
  * pull requests and what agents were told of them (`PrWatch`), and a task's pull request (`PullRequests`, 4.5).
  */
-const GithubLive = Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer).pipe(
+const GithubLive = Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer, GithubRepos.layer).pipe(
   Layer.provideMerge(PrWatchRepo.layer),
   Layer.provideMerge(GitLive),
 )
@@ -277,7 +301,12 @@ const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.register
 )
 
 /** The review area (4.6): reviews, summaries of the changes, and what reviewers reported. */
-const ReviewLive = Reviews.layer.pipe(Layer.provideMerge(Layer.mergeAll(Summaries.layer, ReviewStats.layer)), Layer.provideMerge(ReviewRepo.layer))
+const ReviewLive = Reviews.layer.pipe(
+  // 6.11: comparing and picking among tasks made from one prompt.
+  Layer.provideMerge(Fanout.layer),
+  Layer.provideMerge(Layer.mergeAll(Summaries.layer, ReviewStats.layer)),
+  Layer.provideMerge(Layer.mergeAll(ReviewRepo.layer, FanoutRepo.layer)),
+)
 
 /**
  * What a board call needs of the areas built after `ToolCalls`' (`McpHooks`): `Wait`'s `callMade` (any call but `wait`
@@ -343,7 +372,10 @@ export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.
 export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
 
 /** Every area's services, and their loops. */
-export const AreasLive = Layer.mergeAll(RunLoops, PrLoops).pipe(
+/** 6.11: the fingerprint recorder: what each project's folder is, until its history is known (now, then hourly). */
+export const ProjectLoops = Projects.recorder
+
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
 )
 
@@ -362,6 +394,11 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.11
+  AsanaRpcs,
+  ConfigArchiveRpcs,
+  FanoutRpcs,
+  GithubRepoRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +417,11 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.11
+  AsanaHandlers,
+  ConfigArchiveHandlers,
+  FanoutHandlers,
+  GithubRepoHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

@@ -11,7 +11,7 @@ import { Task } from "../task.ts"
 export const FanoutFacts = Schema.Struct({
   id: TaskId,
   /** How long its agent has run, all of its runs together (one still going, up to now), and how many runs. */
-  run_secs: Schema.Number,
+  run_secs: Schema.Finite,
   runs: Schema.Int,
   /** Its agent, or one of its reviewers, is at work. */
   working: Schema.Boolean,

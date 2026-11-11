@@ -19,6 +19,8 @@ export type LockKey =
   | readonly ["task", string]
   | readonly ["run", string]
   | readonly ["workspace", string]
+  // 6.11: a folder a clone or a new GitHub repository goes into, until its project is added (before the project's).
+  | readonly ["folder", string]
 
 export interface KeyedLockShape {
   /** One holder per key at a time, waiters in order, released on any exit. */
