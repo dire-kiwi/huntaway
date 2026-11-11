@@ -1,7 +1,9 @@
 import { Context, Effect, Layer } from "effect"
+import { Titles } from "../agents/Titles.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
 import { Dependencies } from "../tasks/Dependencies.ts"
+import { TaskTmp } from "../tasks/TaskTmp.ts"
 
 export interface ReactorShape {
   /** Waits until every change offered so far has been handled. Tests wait on this instead of sleeping. */
@@ -20,6 +22,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
     Effect.gen(function* () {
       const changes = yield* Changes
       const dependencies = yield* Dependencies
+      const taskTmp = yield* TaskTmp
+      const titles = yield* Titles
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end is decided in M2's next steps (docs/plan/07-agents.md, When a run ends).
@@ -30,6 +34,14 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         const depsChanged = change.before?.depends_on !== change.after?.depends_on
         // A task that moved, was deleted or changed what it waits for may unblock tasks waiting on its project.
         if (moved || depsChanged || change.after === null) yield* dependencies.reconcile(task.project_id)
+        // A deleted task's temp folder goes (in the background), with what it left running.
+        if (change.after === null) yield* taskTmp.deleted(task.id)
+        else {
+          // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.
+          if (moved || change.before?.running !== change.after.running) yield* taskTmp.changed(change.after)
+          // An unpinned title catches up with what was said since.
+          if (change.before?.title_pinned === true && !change.after.title_pinned) yield* titles.refreshLater(change.after.id)
+        }
       })
 
       // Handled one at a time, in the order they were committed. A failure is logged and does not stop the loop.

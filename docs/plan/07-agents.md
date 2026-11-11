@@ -469,3 +469,37 @@ As built in HE-4 (2.5):
 `Titles` (a small model call writes a title from the description and reconsiders it after each prompt unless
 pinned), `Usage`, `Tokens` (counting a session's tokens across resumed runs: keep the snapshot-and-tail algorithm
 and its tests as they are) and `ContextMeter` are ported as they stand; inventory 02 sections 2.2, 2.3 and 2.11.
+
+As built in HE-4 (2.8), with the services the runs area calls that don't need `Runs`:
+
+- **Where they sit**: `profiles/Usage` (and the pure `profiles/usage/limits.ts`); `agents/` has `Tokens` (+ `TokenRepo`,
+  pure `tokens/count.ts` and `tokens/counts.ts`), `ContextMeter` (+ `ContextStatsRepo`), `SideCalls` (`call_usage`:
+  titles and window restarts), `Titles` over a replaceable `TitleModel`, and `UsageWindow` over a replaceable
+  `WindowPrompt` — **moved from `profiles/` to `agents/`**, as it runs `claude` and records a side call;
+  `agents/configEnv.ts` gives a one-off `claude` its config folder and proxy (the old `api_env`). `tasks/TaskTmp` and
+  `tasks/Leftovers` (stopping what a done task left running; worktree teardown, M4, uses it too). `runs/DevServers`.
+- **Tokens are counted after a run exits**, from `out.jsonl`, as before (not per line, which the snapshot-and-tail
+  algorithm cannot do): `Tokens.runEnded(task)` at the end of a run, `countPending(null)` in `Recovery` and before the
+  run pruner removes folders. Telemetry's `run_usage`, `run_end` and `side_call` wait for `Telemetry`.
+- **The context meter and the servers column** write the task's row with a `task` event (`TaskRepo.write` +
+  `Events.emit` in one transaction), not `Tasks.change`: they change on every reply or scan and nothing in the
+  reactor depends on them. Titles go through `Tasks.change` (a compare-and-set under the task's lock).
+- **What the line handler calls** (2.5's Claude `RunOutput`): `ContextMeter.onAssistant(run, line)` for each
+  assistant line; `onCompacted(run, metadata)` for a compaction; `onControlResponse(task, line)` for a control
+  response; on a `result`: `onResult(task, line)`, append `ContextMeter.requestLine` to the run's input,
+  `RunRepo.addCost`, then `recordTurn(run, turnCost)`; `Usage.onRateLimit(config, line)` for a rate limit, and on a
+  usage-limit refusal `Usage.outUntil(config)` into `tasks.limit_reset_at`. `/new` calls `ContextMeter.clear(task)`.
+- **What `Runs` calls**: `Usage.outUntil(config)` is the gate of `send` (the old `before_run`: `limit_switch` and
+  `limit_wait`, with `isResetDue` and its 60-second grace from `profiles/usage/limits.ts`); the 30-second loop that
+  starts tasks whose reset is due, and `tasks.waitForLimit`, are `Runs`' (they need tasks and runs). The launch calls
+  `TaskTmp.ensure(task)` (the run's `TMPDIR` and the prompt's temp folder) and puts `HUNTAWAY_TASK_ID` in the agent's
+  environment for `DevServers`. A user prompt calls `Titles.refreshLater(task)` when `worthAsking(text)`; a new task
+  whose title is to be written calls `Titles.generateLater(task, sendTheStart)`.
+- **What the end of a run calls**: `Tokens.runEnded(task)`, `DevServers.notifyRunEnded(task)`; the reactor calls
+  `TaskTmp.changed` when a task moves or its `running` changes and `TaskTmp.deleted` when it is deleted, and
+  `Titles.refreshLater` when a title is unpinned.
+- **Decided**: the per-task temp root of tests is `ServerConfig.taskTmpRoot` (`<data dir>/task-tmp` in
+  `ServerConfig.layerTest`), not an environment check; the test board (`packages/testing`) asks no model (titles from
+  `TitleScript`, window prompts fail) and `layerTest`'s `claudeBin` names no program. Codex titles, Codex rate limits
+  and the window's Codex case are M5; stack titles are 4.8. A failed usage request's error shows the status number
+  only (the old one added its text).

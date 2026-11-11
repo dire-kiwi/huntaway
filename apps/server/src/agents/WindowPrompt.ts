@@ -59,4 +59,10 @@ export class WindowPrompt extends Context.Service<WindowPrompt, WindowPromptShap
       return WindowPrompt.of({ send })
     }),
   )
+
+  /** For tests that don't restart windows (`packages/testing`'s board): every prompt fails, and no model runs. */
+  static readonly layerNone = Layer.succeed(
+    WindowPrompt,
+    WindowPrompt.of({ send: () => Effect.fail(new WindowPromptFailed({ reason: "no window prompts in tests" })) }),
+  )
 }

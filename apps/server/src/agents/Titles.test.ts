@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Deferred, Effect, Fiber, Layer } from "effect"
+import { Deferred, Effect, Fiber } from "effect"
 import { SqlClient } from "effect/sql"
 import { ProfileId, Timestamp } from "@huntaway/contracts"
 import type { Status, TaskId, TaskPatch } from "@huntaway/contracts"
@@ -7,19 +7,19 @@ import { TestBoard } from "@huntaway/testing"
 import { Actor } from "../platform/Changes.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
-import { SideCalls } from "./SideCalls.ts"
-import { TitleModel, TitleScript } from "./TitleModel.ts"
+import { TitleScript } from "./TitleModel.ts"
 import { Titles } from "./Titles.ts"
 import { spentFromClaude } from "./tokens/calls.ts"
 
-// The old title.test.ts's cases that call the model, against a scripted model (`TitleModel.layerScripted`) on the whole
-// board's services. Dropped: the direct `replace_title` call (the save is internal now; a rename while a title is
+// The old title.test.ts's cases that call the model, against a scripted model (`TitleModel.layerScripted`, which the
+// test board provides) on the whole board's services. Dropped: the direct `replace_title` call (the save is internal now; a rename while a title is
 // written is the "last word" case's last part) and a `title_pinned: "no"` update (the contract's schema refuses it).
 // An unpinned title catching up at once is the reactor's call to `refresh` (not wired yet): here the test makes it.
 
 const AT = Timestamp.make("2026-11-12T00:00:00.000Z")
 
-const TitlesTest = Titles.layer.pipe(Layer.provideMerge(Layer.mergeAll(TitleModel.layerScripted, SideCalls.layer)), Layer.provideMerge(TestBoard()))
+// The board's own `Titles`, over its scripted model.
+const TitlesTest = TestBoard()
 
 const run = <A, E>(effect: Effect.Effect<A, E, Titles | TitleScript | Tasks | Threads | SqlClient.SqlClient>) => effect.pipe(Effect.provide(TitlesTest))
 

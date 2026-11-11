@@ -273,6 +273,7 @@ describe("TaskTmp", () => {
         writeFileSync(`${goneDir}/x`, "x")
         yield* sql`DELETE FROM tasks WHERE id = ${gone.id}`.pipe(Effect.orDie)
         yield* tmp.deleted(gone.id)
+        yield* tmp.idle
         assert.isTrue(existsSync(keptDir) && !existsSync(goneDir))
         assert.strictEqual(readdirSync(tmp.root).length, 1)
       }),

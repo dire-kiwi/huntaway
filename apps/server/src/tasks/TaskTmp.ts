@@ -86,7 +86,7 @@ export interface TaskTmpShape {
   readonly changed: (task: Pick<Task, "id" | "kind" | "parent_id" | "status">) => Effect.Effect<void>
   /** Waits until the removals `changed` started have finished: what tests wait on. */
   readonly idle: Effect.Effect<void>
-  /** Task `id` has been deleted (with its agents stopped): its folder goes. */
+  /** Task `id` has been deleted (with its agents stopped): its folder goes, in the background (`idle` waits for it). */
   readonly deleted: (id: TaskId) => Effect.Effect<void>
   /** Remove folder `name` (see `folder`) if it can go, stopping what the task left running first. Returns whether it went. */
   readonly remove: (name: string) => Effect.Effect<boolean>
@@ -241,7 +241,7 @@ export class TaskTmp extends Context.Service<TaskTmp, TaskTmpShape>()("huntaway-
       })
 
       const deleted = Effect.fn("TaskTmp.deleted")(function* (id: TaskId) {
-        yield* remove(folder(id))
+        yield* FiberSet.run(background, remove(folder(id)))
       })
 
       /**

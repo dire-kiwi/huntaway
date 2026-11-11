@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer, Queue, Ref, Schema } from "effect"
+import { Clock, Effect, Layer, Queue, Ref, Schema } from "effect"
 import type { FileSystem, Scope } from "effect"
 import { HttpClient, HttpClientError } from "effect/http"
 import { TestClock } from "effect/testing"
@@ -65,12 +65,11 @@ const layerWith = (script: Script) =>
 
 type Env = UsageWindow | Usage | Db | FileSystem.FileSystem | Scope.Scope
 
-const test = <A, E>(body: (script: Script) => Effect.Effect<A, E, Env>, loop = false) =>
+const test = <A, E>(body: (script: Script) => Effect.Effect<A, E, Env>) =>
   Effect.gen(function* () {
     const script: Script = { outputs: yield* Ref.make<ReadonlyArray<Output>>([]), pings: yield* Queue.unbounded<AgentConfigId>() }
     yield* TestClock.setTime(NOW)
-    const layer = loop ? UsageWindow.loop.pipe(Layer.provideMerge(layerWith(script))) : layerWith(script)
-    return yield* body(script).pipe(Effect.provide(layer))
+    return yield* body(script).pipe(Effect.provide(layerWith(script)))
   }).pipe(Effect.scoped)
 
 let made = 0
@@ -251,20 +250,25 @@ describe("UsageWindow", () => {
     ),
   )
 
-  it.effect("the loop looks every 30 seconds", () =>
-    test(
-      (script) =>
-        Effect.gen(function* () {
-          const c = yield* config
-          yield* session(c, NOW + MIN)
-          yield* push(script, { ok: yield* fiveHour(NOW + 6 * HOUR) })
-          // The window ends a minute from now, and the prompt goes a minute after that, at the next look.
-          yield* TestClock.adjust("2 minutes")
-          assert.strictEqual(yield* Queue.take(script.pings), c)
-          assert.strictEqual((yield* watchOf(c)).failures, 0)
-        }),
-      true,
-    ),
+  // The loop over a tick that only says when it ran: a real tick reads files, which the test clock does not wait for.
+  it.effect("the loop looks at once, then every 30 seconds", () =>
+    Effect.gen(function* () {
+      const ticks = yield* Queue.unbounded<number>()
+      const counted = Layer.succeed(
+        UsageWindow,
+        UsageWindow.of({ tick: Effect.flatMap(Clock.currentTimeMillis, (at) => Queue.offer(ticks, at)), watch: () => Effect.succeed(null) }),
+      )
+      yield* TestClock.setTime(NOW)
+      yield* Effect.gen(function* () {
+        assert.strictEqual(yield* Queue.take(ticks), NOW)
+        yield* TestClock.adjust("29 seconds")
+        assert.strictEqual(yield* Queue.size(ticks), 0)
+        yield* TestClock.adjust("1 second")
+        assert.strictEqual(yield* Queue.take(ticks), NOW + 30_000)
+        yield* TestClock.adjust("30 seconds")
+        assert.strictEqual(yield* Queue.take(ticks), NOW + 60_000)
+      }).pipe(Effect.provide(UsageWindow.loop.pipe(Layer.provideMerge(counted))))
+    }).pipe(Effect.scoped),
   )
 })
 

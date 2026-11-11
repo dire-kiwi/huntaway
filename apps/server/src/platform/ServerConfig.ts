@@ -224,7 +224,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         commit: null,
         home: config.dataDir,
         shimBin: null,
-        claudeBin: "claude",
+        // Never the real Claude Code: a test that wants an agent gives the fake one.
+        claudeBin: `${config.dataDir}/no-claude-in-tests`,
         noAgents: false,
         exe: null,
         agentEnv: AGENT_ENV,

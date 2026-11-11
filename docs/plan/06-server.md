@@ -16,13 +16,13 @@ calls the engine) are where its hardest rules hid.
 platform      ServerConfig · DataDir · Identity · Db · Migrations · Backup · Events · Changes · KeyedLock · Proc
               Secrets · Telemetry · Lag
 settings      HostSettings
-profiles      Profiles · AgentConfigs · Usage · UsageWindow
+profiles      Profiles · AgentConfigs · Usage
 projects      Projects · Relocation
-tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp
+tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp · Leftovers
 threads       ThreadStore · Threads · ThreadReaders
 git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts
 github        Gh · PullRequests · PrWatch · GithubRepos · GhStacks
-agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · Titles
+agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · SideCalls · Titles · UsageWindow
 runs          RunRepo · RunDir · Shim · RunFollower · Runs · BackgroundWork · DevServers · Compaction
 permissions   Permissions · Questions · Approvals
 review        Reviews · Summaries · ReviewStats · Fanout
@@ -108,7 +108,7 @@ tail and publishes it. A subscriber that cannot keep up is cut off with `resync`
 | `Profiles`      | Profiles and what hangs off them: config lists, reviewers, summarizers, GitHub account, access for other profiles' agents, tint            |
 | `AgentConfigs`  | Config folders and their agent; proxy settings; listing Codex models; exporting and importing a login as an archive                        |
 | `Usage`         | Plan limits per config (Anthropic's usage endpoint, Codex's rate limits, a proxy's accounts), "out until", tasks waiting for a reset. In memory, with the durable part on the task |
-| `UsageWindow`   | Restarting a 5-hour window with a throwaway prompt                                                                                         |
+| `UsageWindow`   | Restarting a 5-hour window with a throwaway prompt. In `agents/` (2.8): it runs `claude` and records a side call, as `Titles` does         |
 
 ### Projects — [inventory 07](inventory/07-server-root-api.md), [04](inventory/04-git-review.md)
 
