@@ -77,8 +77,10 @@ const NodeArg = Schema.Struct({
     "compose",
     "join",
     "switch",
+    // From before column nodes, read as column nodes (`readGraph`), as GRAPH says.
+    "set_status",
   ]),
-  on: o(Schema.Literals(["manual"])),
+  on: o(Schema.Literals(["manual", "status", "finished"])),
   status: o(Status),
   check: o(Schema.Literals(["changed", "has_commits", "has_pr", "task_type", "label"])),
   value: o(Schema.String),

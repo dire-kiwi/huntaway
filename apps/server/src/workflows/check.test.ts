@@ -55,6 +55,24 @@ const abGraph = (split: Record<string, unknown>, paths: number) => ({
 
 const manual = { id: "a", kind: "trigger", on: "manual" }
 
+/** A manual start into agent step `a` with settings `o`. */
+const graph = (o: Record<string, unknown>) => ({
+  nodes: [
+    { id: "t", kind: "trigger", on: "manual" },
+    { id: "a", kind: "agent", name: "A", output: "text", ...o },
+  ],
+  edges: [{ from: "t", port: "out", to: "a" }],
+})
+
+/** In progress with settings `n`, then a check. */
+const inProgress = (n: Record<string, unknown>) => ({
+  nodes: [
+    { id: "work", kind: "column", status: "in_progress", ...n },
+    { id: "c", kind: "condition", check: "has_pr" },
+  ],
+  edges: [{ from: "work", port: "done", to: "c" }],
+})
+
 describe("checking a graph", () => {
   it("a graph needs a start, real ports and no loops", () => {
     ok(reviewGraph)
@@ -130,13 +148,6 @@ describe("checking a graph", () => {
   })
 
   it("an agent step's effort and model are checked", () => {
-    const graph = (o: Record<string, unknown>) => ({
-      nodes: [
-        { id: "t", kind: "trigger", on: "manual" },
-        { id: "a", kind: "agent", name: "A", output: "text", ...o },
-      ],
-      edges: [{ from: "t", port: "out", to: "a" }],
-    })
     for (const wrong of [{ effort: "extreme" }, { model: "--dangerously-skip-permissions" }, { model: "opus plus" }, { model: "x".repeat(101) }]) {
       assert.isTrue(Result.isFailure(checked(graph(wrong))), Object.values(wrong).join())
     }
@@ -253,17 +264,10 @@ describe("checking a graph", () => {
   })
 
   it("an In progress node's max_rounds is checked", () => {
-    const g = (n: Record<string, unknown>) => ({
-      nodes: [
-        { id: "work", kind: "column", status: "in_progress", ...n },
-        { id: "c", kind: "condition", check: "has_pr" },
-      ],
-      edges: [{ from: "work", port: "done", to: "c" }],
-    })
-    const five = ok(g({ max_rounds: 5 })).nodes[0]
+    const five = ok(inProgress({ max_rounds: 5 })).nodes[0]
     assert.strictEqual(five?.kind === "column" ? five.max_rounds : null, 5)
-    bad(g({ max_rounds: 0 }), "1 to 20 times")
-    bad(g({ max_rounds: 21 }), "1 to 20 times")
+    bad(inProgress({ max_rounds: 0 }), "1 to 20 times")
+    bad(inProgress({ max_rounds: 21 }), "1 to 20 times")
     const review = ok({ nodes: [{ id: "r", kind: "column", status: "in_review", max_rounds: 5 }], edges: [] }).nodes[0]
     assert.isFalse(review !== undefined && "max_rounds" in review)
   })

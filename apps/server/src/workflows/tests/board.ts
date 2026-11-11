@@ -1,5 +1,5 @@
-import { Effect, FileSystem, Option, Result, Schema } from "effect"
-import type { Layer, Scope } from "effect"
+import { Effect, Layer, FileSystem, Option, Result, Schema } from "effect"
+import type { Scope } from "effect"
 import { SqlClient } from "effect/sql"
 import { ProjectId, TaskId, Timestamp, WorkflowId, WorkflowRunId } from "@huntaway/contracts"
 import type { Item, Task, Workflow, WorkflowNodeRun } from "@huntaway/contracts"
@@ -17,7 +17,6 @@ import { RunOutput } from "../../runs/RunOutput.ts"
 import { Runs } from "../../runs/Runs.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { Tasks } from "../../tasks/Tasks.ts"
-import { ThreadReaders } from "../../threads/ThreadReaders.ts"
 import { Threads } from "../../threads/Threads.ts"
 import { readGraph } from "../read.ts"
 import { WorkflowEngine } from "../WorkflowEngine.ts"
@@ -37,8 +36,12 @@ export const TASK = TaskId.make("t1")
 const Json = Schema.fromJsonString(Schema.Unknown)
 
 /** A test board's services. */
-export const onBoard = <A, E>(effect: Effect.Effect<A, E, Scope.Scope | Layer.Success<ReturnType<typeof TestBoard>>>, config: Partial<ServerConfigShape> = {}) =>
-  effect.pipe(Effect.scoped, Effect.provide(TestBoard(config)))
+export const onBoard = <A, E>(
+  effect: Effect.Effect<A, E, Scope.Scope | Layer.Success<ReturnType<typeof TestBoard>>>,
+  config: Partial<ServerConfigShape> = {},
+) =>
+  // The board's layer built for this test's scope, its services given to the test.
+  Effect.scoped(Effect.flatMap(Layer.build(TestBoard(config)), (services) => Effect.provideContext(Effect.scoped(effect), services)))
 
 export interface Setup {
   readonly status?: Task["status"]
@@ -300,3 +303,10 @@ export const lifecycle = (o: { readonly work?: object; readonly review?: object;
     { from: "reviewer", port: "pass", to: "merge" },
   ],
 })
+
+/** A graph as an agent gives it, read leniently (old kinds and defaults), for `Workflows.update`. */
+export const graphOf = (graph: unknown) =>
+  Effect.gen(function* () {
+    const g = readGraph(graph)
+    return Result.isFailure(g) ? yield* Effect.die(g.failure) : g.success
+  })

@@ -106,6 +106,13 @@ export class WorkflowApprovals extends Context.Service<WorkflowApprovals, Workfl
       const ask = Effect.fnUntraced(function* (asker: Asker, op: "create" | "update" | "delete", input: unknown, name: string) {
         const answer = yield* permissions.approve(asker, "automation", `${op}_workflow`, input)
         if (Result.isSuccess(answer)) return answer.success
+        // Deleted while the user was asked (which took the question with it). `delete` says so itself.
+        if (op === "update") {
+          const asked = yield* Effect.option(read(input))
+          if (Option.isSome(asked) && Result.isFailure(yield* Effect.result(workflows.get(asked.value.workflow.id)))) {
+            return yield* new NotApproved({ message: `the workflow "${name}" was deleted meanwhile, so nothing was changed` })
+          }
+        }
         return yield* new NotApproved({
           message: `The user didn't approve ${VERB[op]} the workflow "${name}", so nothing was ${NOTHING[op]}: ${answer.failure}`,
         })

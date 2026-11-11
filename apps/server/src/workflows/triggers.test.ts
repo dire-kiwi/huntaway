@@ -1,9 +1,32 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
+import { SqlClient } from "effect/sql"
+import type { WorkflowNodeRun } from "@huntaway/contracts"
+import { fakeAgent } from "@huntaway/testing"
+import { MergeGate } from "../merge/MergeGate.ts"
 import { Actor } from "../platform/Changes.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { Workflows } from "./Workflows.ts"
-import { agentFinishes, engine, latest, make, onBoard, PROJECT, runsOf, setProject, setTask, settle, states, task, TASK, workable } from "./tests/board.ts"
+import {
+  agentFinishes,
+  engine,
+  latest,
+  make,
+  onBoard,
+  PROJECT,
+  runByHand,
+  runsOf,
+  sent,
+  setProject,
+  setTask,
+  settle,
+  states,
+  stepAgent,
+  stepThread,
+  task,
+  TASK,
+  workable,
+} from "./tests/board.ts"
 
 // What starts a run (huntaway's integrations/workflows/triggers.test.ts): a task entering a column, its agent finishing,
 // and what holds a task for its run. The task moves through `Tasks`, and the reactor starts what its new column starts.
@@ -194,6 +217,128 @@ describe("what starts a run", () => {
         yield* agentFinishes({ finished: true, todos: [] })
         assert.strictEqual((yield* task()).status, "backlog")
         assert.strictEqual(PROJECT, (yield* task()).project_id)
+      }),
+    ),
+  )
+  // A merge approved or denied on its card didn't start the workflows of the column that moved the task to.
+  it.effect("deciding a merge starts the workflows of the column it moves the task to", () =>
+    onBoard(
+      Effect.gen(function* () {
+        yield* workable({ status: "needs_attention", task: { merging: true, merge_approval: "pending" } })
+        const w = yield* make({
+          nodes: [
+            { id: "t", kind: "trigger", on: "status", status: "in_review" },
+            { id: "c", kind: "condition", check: "has_pr" },
+          ],
+          edges: [{ from: "t", port: "out", to: "c" }],
+        })
+        // Its summary run has ended, and the card waits for the user's answer.
+        assert.strictEqual((yield* (yield* MergeGate).decide(TASK, false)).status, "in_review")
+        yield* settle
+        assert.strictEqual((yield* latest(w)).state, "done")
+      }),
+    ),
+  )
+
+  it.effect("a stopped finished run moves the task on unless its agent started again", () =>
+    onBoard(
+      Effect.gen(function* () {
+        yield* workable({ status: "in_progress" })
+        const w = yield* make({
+          nodes: [
+            { id: "t", kind: "trigger", on: "finished" },
+            { id: "a", kind: "agent", name: "Notes" },
+            { id: "m", kind: "set_status", status: "in_review" },
+          ],
+          edges: [
+            { from: "t", port: "out", to: "a" },
+            { from: "a", port: "done", to: "m" },
+          ],
+        })
+        // Started as its agent's finishing starts it, its step's agent working.
+        const thread = yield* stepThread("notes", "Notes (Review) of X-1")
+        yield* stepAgent(thread)
+        const steps: Readonly<Record<string, WorkflowNodeRun>> = {
+          t: { state: "done", port: "done", start: true },
+          a: { state: "running", thread_id: thread, after_run: "" },
+        }
+        let run = yield* runByHand(w, steps, { source: "finished" })
+        // Its agent starts again: the task is that run's, and stays where it is.
+        const again = yield* fakeAgent({ task: TASK, kind: "prompt" })
+        const e = yield* engine
+        yield* e.supersede(TASK)
+        yield* settle
+        assert.strictEqual((yield* latest(w)).state, "stopped")
+        assert.strictEqual((yield* task()).status, "in_progress")
+        // Stopped by the user once that run has ended: Needs attention.
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`UPDATE runs SET status = 'exited' WHERE task_id = ${TASK}`.pipe(Effect.orDie)
+        run = yield* runByHand(w, steps, { source: "finished", task_run: again.run.id })
+        assert.deepStrictEqual(yield* e.stopTask(TASK), { stopped: true })
+        yield* settle
+        assert.strictEqual((yield* latest(w)).id, run.id)
+        const t = yield* task()
+        assert.strictEqual(t.status, "needs_attention")
+        assert.isTrue((t.attention_reason ?? "").startsWith('The workflow "Review" was stopped before it moved the task'), t.attention_reason ?? "")
+      }),
+    ),
+  )
+
+  // finish_work belongs to the run that called it, so the agent asked to finish its list after saying its work is done
+  // is asked to say so again, in that run.
+  it.effect("a task held for its todo list is asked to say its work is done again", () =>
+    onBoard(
+      Effect.gen(function* () {
+        yield* workable({ status: "in_progress" })
+        yield* make({
+          nodes: [
+            { id: "work", kind: "column", status: "in_progress", done_when: "finish" },
+            { id: "out", kind: "column", status: "backlog" },
+          ],
+          edges: [{ from: "work", port: "done", to: "out" }],
+        })
+        // It says its work is done with an item unfinished: it's held, and asked to finish the list, then to say so.
+        yield* agentFinishes({ finished: true, todos: [{ text: "Add tests", status: "pending" }] })
+        const asked = (yield* sent()).at(-1) ?? ""
+        assert.isTrue(asked.startsWith("Your todo list still has unfinished items"), asked)
+        assert.include(asked, "call `finish_work`")
+        assert.include(asked, "The board then moves the task to Backlog")
+        // That run's launch fails here; the agent's next run finishes the list and says so: the workflow takes it on.
+        yield* agentFinishes({ finished: true, todos: [] })
+        assert.strictEqual((yield* task()).status, "backlog")
+      }),
+    ),
+  )
+
+  // The same for a column other than In progress whose prompt waits for finish_work: the reminder ends with that
+  // column's note, and the run that finishes the list and says so moves the task on.
+  it.effect("a task held for its todo list in another column is asked for that column's finish_work", () =>
+    onBoard(
+      Effect.gen(function* () {
+        yield* workable({ status: "todo", task: { session_id: "sess" } })
+        const w = yield* make({
+          nodes: [
+            { id: "ci", kind: "column", status: "in_review", prompt: "Check the CI.", done_when: "finish" },
+            { id: "out", kind: "column", status: "backlog" },
+          ],
+          edges: [{ from: "ci", port: "done", to: "out" }],
+        })
+        yield* move("in_review")
+        const note =
+          "call `finish_work`, then end your turn with a summary of what you did. A turn that ends without it leaves the task in Needs attention. The board then moves the task to Backlog."
+        assert.include((yield* sent()).at(-1) ?? "", note)
+        // The prompt's launch fails here: the workflow still waits.
+        assert.strictEqual((yield* latest(w)).state, "running")
+        // It says its work is done with an item unfinished: held, and asked to finish the list, then to say so.
+        yield* agentFinishes({ finished: true, todos: [{ text: "Fix CI", status: "pending" }] })
+        const asked = (yield* sent()).at(-1) ?? ""
+        assert.isTrue(asked.startsWith("Your todo list still has unfinished items"), asked)
+        assert.include(asked, note)
+        assert.strictEqual((yield* latest(w)).state, "running")
+        // The next run finishes the list and says so: the workflow takes it on.
+        yield* agentFinishes({ finished: true, todos: [] })
+        assert.strictEqual((yield* task()).status, "backlog")
+        assert.strictEqual((yield* latest(w)).state, "done")
       }),
     ),
   )
