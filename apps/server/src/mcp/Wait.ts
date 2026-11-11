@@ -4,7 +4,7 @@ import { Timestamp } from "@huntaway/contracts"
 import type { AgentWait, BoardEvent, CallId, RunId, Task, TaskId, WaitPr, WaitTask } from "@huntaway/contracts"
 import { githubAccount } from "../agents/claude/access.ts"
 import { Gh } from "../github/Gh.ts"
-import { POLL, PrWatch, storedPr } from "../github/PrWatch.ts"
+import { PrWatch, storedPr } from "../github/PrWatch.ts"
 import type { PrRequest } from "../github/PrWatch.ts"
 import { targetLabel } from "../github/prWatch/target.ts"
 import { nowTimestamp } from "../platform/columns.ts"
@@ -204,7 +204,7 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
         // A pull request without news is read (straight away for a wait carried on after a restart) until there is some,
         // which `PrWatch` records on the stored wait: its task's event has the wait look again.
         if (wait.pull_request !== undefined && wait.pull_request.news === undefined) {
-          yield* Effect.forkScoped(prWatch.watch(task, wait, readNow ? "0 millis" : POLL))
+          yield* Effect.forkScoped(prWatch.watch(task, wait, readNow))
         }
         while (true) {
           const ended = yield* check(task.id, wait)

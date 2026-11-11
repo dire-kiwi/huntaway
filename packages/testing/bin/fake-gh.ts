@@ -170,10 +170,17 @@ const statePath = env["HUNTAWAY_FAKE_GH_STATE"]
 /** Fails the call as gh does: a message on stderr and an exit code (1). */
 class Failure extends Error {
   readonly code: number
-  constructor(message: string, code = 1) {
+  /** What it prints on stdout too (gh prints a GraphQL query's errors there). */
+  readonly stdout: string
+  constructor(message: string, code = 1, stdout = "") {
     super(message)
     this.code = code
+    this.stdout = stdout
   }
+}
+/** A GraphQL query that fails as gh does: its errors on stdout, `gh: <message>` on stderr, exit 1. */
+const graphqlFail = (message: string): never => {
+  throw new Failure(`gh: ${message}`, 1, `${JSON.stringify({ errors: [{ message }] })}\n`)
 }
 const fail = (message: string, code = 1): never => {
   throw new Failure(message, code)
@@ -759,7 +766,7 @@ const graphql = (state: State, as: Account | null, p: Parsed): unknown => {
       const key = keyOf(str(vars[`o${i}`]), str(vars[`n${i}`]))
       const n = Number(vars[`p${i}`])
       const pr = state.repos?.[key]?.pulls?.find((x) => x.number === n)
-      if (pr?.unreadable !== undefined) return fail(pr.unreadable)
+      if (pr?.unreadable !== undefined) return graphqlFail(pr.unreadable)
       if (pr === undefined) {
         errors.push({ message: `Could not resolve to a PullRequest with the number of ${n}.` })
         data[`pr${i}`] = { pullRequest: null }
@@ -770,11 +777,12 @@ const graphql = (state: State, as: Account | null, p: Parsed): unknown => {
     }
     return errors.length === 0 ? { data } : { data, errors }
   }
+  const named = `${str(vars["owner"])}/${str(vars["name"] ?? vars["repo"])}`
   const key = keyOf(str(vars["owner"]), str(vars["name"] ?? vars["repo"]))
-  const repo = repoIn(state, key)
+  const repo = state.repos?.[key] ?? graphqlFail(`Could not resolve to a Repository with the name '${named}'.`)
   const n = Number(vars["number"])
-  const pr = pulls(repo).find((x) => x.number === n) ?? fail(`GraphQL: Could not resolve to a PullRequest with the number of ${n}. (repository.pullRequest)`)
-  if (pr.unreadable !== undefined) return fail(pr.unreadable)
+  const pr = pulls(repo).find((x) => x.number === n) ?? graphqlFail(`Could not resolve to a PullRequest with the number of ${n}.`)
+  if (pr.unreadable !== undefined) return graphqlFail(pr.unreadable)
   const after = vars["after"] === undefined ? null : str(vars["after"])
   if (after !== null) return { data: { repository: { pullRequest: { reviewThreads: threadsOf(key, pr, after) } } } }
   return { data: { viewer: { login: as?.login ?? "" }, repository: { pullRequest: prNode(key, pr, null) } } }
@@ -949,6 +957,7 @@ const main = (): number => {
     return 0
   } catch (e) {
     if (e instanceof Failure) {
+      process.stdout.write(e.stdout)
       if (e.code === 8) process.stdout.write(e.message)
       else process.stderr.write(e.message.endsWith("\n") || e.message === "" ? e.message : `${e.message}\n`)
       return e.code

@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Option } from "effect"
-import type { Project } from "@huntaway/contracts"
+import type { Project, Task } from "@huntaway/contracts"
 import { fakePull, git } from "@huntaway/testing"
 import type { FakeGitHubState, FakePull } from "@huntaway/testing"
 import { ProjectRepo } from "../../projects/ProjectRepo.ts"
@@ -16,6 +16,14 @@ export const onGitHub = (p: Project, url = "git@github.com:o/r.git") =>
     yield* git(dir, ["init", "-q", "-b", "main"])
     yield* git(dir, ["remote", "add", "origin", url])
     return dir
+  })
+
+/** The `origin` of task `t`'s project's repository set to `url`. */
+export const setOrigin = (t: Task, url: string) =>
+  Effect.gen(function* () {
+    const found = t.project_id === null ? Option.none() : yield* (yield* ProjectRepo).get(t.project_id)
+    const dir = Option.isSome(found) ? found.value.repo_path : yield* Effect.die("no project")
+    yield* git(dir, ["remote", "set-url", "origin", url])
   })
 
 /** Pull request 7 of o/r, open and mergeable, its head `a1`, with `fields`. */

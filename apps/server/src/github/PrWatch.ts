@@ -51,10 +51,14 @@ export const GIVE_UP = 5
 /** How long a gh call for a read may take. */
 export const GH_TIMEOUT = "60 seconds"
 
-const POLL_MILLIS = Duration.toMillis(Duration.fromInputUnsafe(POLL))
+/** How often a wait's pull request is read (`POLL`; tests shorten it, as the old `POLL` was 100 ms in tests). */
+export const PrPoll = Context.Reference<Duration.Input>("huntaway-server/github/PrWatch/PrPoll", { defaultValue: () => POLL })
 
-/** How long to wait before reading again after `failures` failed reads in a row. */
-export const backoff = (failures: number): Duration.Duration => Duration.millis(Math.min(POLL_MILLIS * 2 ** Math.min(failures, 4), POLL_MILLIS * 10))
+/** How long to wait before reading again after `failures` failed reads in a row, reading every `poll`. */
+export const backoff = (failures: number, poll: Duration.Input = POLL): Duration.Duration => {
+  const every = Duration.toMillis(Duration.fromInputUnsafe(poll))
+  return Duration.millis(Math.min(every * 2 ** Math.min(failures, 4), every * 10))
+}
 
 /** What a wait's `pull_request` and `pull_request_events` ask for. */
 export interface PrRequest {
@@ -113,10 +117,11 @@ export interface PrWatchShape {
    */
   readonly poll: (task: TaskId, call: string, events: ReadonlyArray<string>, reader: Reader) => Effect.Effect<News | null, PrUnreadable>
   /**
-   * Read the pull request a stored wait watches (after `delay`, then every `POLL`) until there's news, which it records
-   * on the wait (if it's still waiting), or it has failed `GIVE_UP` times in a row. Interrupting it stores nothing more.
+   * Read the pull request a stored wait watches (straight away with `readNow`, a wait carried on after a restart; else
+   * after `PrPoll`), then every `PrPoll`, until there's news, which it records on the wait (if it's still waiting), or it
+   * has failed `GIVE_UP` times in a row. Interrupting it stores nothing more.
    */
-  readonly watch: (task: Task, wait: AgentWait, delay: Duration.Input) => Effect.Effect<void>
+  readonly watch: (task: Task, wait: AgentWait, readNow: boolean) => Effect.Effect<void>
   /** The news the wait `call` found on `pr` has reached the agent: it's been told. */
   readonly delivered: (task: TaskId, call: string, pr: WaitPr) => Effect.Effect<void>
   /** What the last read of `pr` for `task` found, with when, for a wait that ended otherwise. */
@@ -321,14 +326,15 @@ export class PrWatch extends Context.Service<PrWatch, PrWatchShape>()("huntaway-
         )
       })
 
-      const watch = Effect.fn("PrWatch.watch")(function* (task: Task, wait: AgentWait, delay: Duration.Input) {
+      const watch = Effect.fn("PrWatch.watch")(function* (task: Task, wait: AgentWait, readNow: boolean) {
         const pr = wait.pull_request
         if (pr === undefined || pr.news !== undefined) return
         const target = targetOf(pr)
         if (target === null) return
         const reader = yield* readerOf(task, target)
+        const every = yield* PrPoll
         let failures = 0
-        let next: Duration.Input = delay
+        let next: Duration.Input = readNow ? Duration.zero : every
         while (true) {
           yield* Effect.sleep(next)
           const news = yield* Effect.result(poll(task.id, wait.call_id, pr.events, reader))
@@ -340,7 +346,7 @@ export class PrWatch extends Context.Service<PrWatch, PrWatchShape>()("huntaway-
               yield* record(task.id, wait.call_id, unreadable(targetLabel(target), target.number, targetUrl(target), GIVE_UP, msg))
               return
             }
-            next = backoff(failures)
+            next = backoff(failures, every)
             continue
           }
           if (news.success !== null) {
@@ -348,7 +354,7 @@ export class PrWatch extends Context.Service<PrWatch, PrWatchShape>()("huntaway-
             return
           }
           failures = 0
-          next = POLL
+          next = every
         }
       })
 
