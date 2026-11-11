@@ -287,7 +287,8 @@ export interface TaskRepoShape {
   /**
    * Every task a client keeps, in one read (the board's snapshot): what the old client's `loadAll` loaded. Every
    * project's tasks and review threads, and every profile's tasks in no project with its assistant, pens thread and
-   * pens' threads; not the routine threads, nor the tasks of archived projects (it loaded neither).
+   * pens' threads; not the routine threads. Unlike `loadAll`, archived projects' tasks too: the client keeps them off
+   * the board, and unarchiving a project then shows them with no load beside the stream.
    */
   readonly all: Effect.Effect<ReadonlyArray<Task>>
   /** The old list queries: review threads only when a project's are asked for; never the routine threads. */
@@ -330,7 +331,7 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
       const everything = taskRows(
         Schema.Void,
         () =>
-          sql`${select} WHERE (t.project_id IS NULL AND t.task_type IS NOT 'routine') OR (t.project_id IS NOT NULL AND p.archived_at IS NULL)
+          sql`${select} WHERE t.project_id IS NOT NULL OR t.task_type IS NOT 'routine'
             ORDER BY t.project_id, t.position, t.created_at`,
       )
       const byIds = taskRows(Schema.Array(Schema.String), (ids) => sql`${select} WHERE ${sql.in("t.id", ids)}`)

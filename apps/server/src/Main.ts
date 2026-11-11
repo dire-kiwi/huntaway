@@ -5,7 +5,7 @@ import { HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
-import { BoardRpcs, ConfigRpcs, HostRpcGroup, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
+import { AttachmentRpcs, BoardRpcs, ConfigRpcs, HostRpcGroup, PenRpcs, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
 import { ApiNotFound, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -18,6 +18,7 @@ import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
 import { Board } from "./lifecycle/Board.ts"
+import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
@@ -26,9 +27,11 @@ import { ProfileRepo } from "./profiles/ProfileRepo.ts"
 import { Profiles } from "./profiles/Profiles.ts"
 import { ProjectRepo } from "./projects/ProjectRepo.ts"
 import { Projects } from "./projects/Projects.ts"
+import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
 import { HostHandlers } from "./rpc/host.ts"
+import { PenHandlers } from "./rpc/pens.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
@@ -37,7 +40,10 @@ import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
 import { HostSettings } from "./settings/HostSettings.ts"
 import { SettingsRepo } from "./settings/SettingsRepo.ts"
+import { Attachments } from "./tasks/Attachments.ts"
 import { Dependencies } from "./tasks/Dependencies.ts"
+import { PenRepo } from "./tasks/PenRepo.ts"
+import { Pens } from "./tasks/Pens.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
 import { TaskRepo } from "./tasks/TaskRepo.ts"
 import { Tasks } from "./tasks/Tasks.ts"
@@ -67,22 +73,23 @@ const ProfilesLive = Profiles.ensureFromConfig.pipe(
   Layer.provideMerge(SettingsLive),
 )
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
-const TasksLive = Layer.mergeAll(Tasks.layer, TaskRefs.layer).pipe(Layer.provideMerge(TaskRepo.layer), Layer.provideMerge(ProjectsLive))
-const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(Layer.provideMerge(Dependencies.layer), Layer.provideMerge(TasksLive))
+const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner).pipe(
+  Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer)),
+  Layer.provideMerge(ProjectsLive),
+)
+// The demo board is seeded once every area is built, before Recovery runs.
+const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
+  Layer.provideMerge(DemoLive),
+  Layer.provideMerge(Dependencies.layer),
+  Layer.provideMerge(TasksLive),
+)
 
 /** Every area's services. */
 export const AreasLive = LifecycleLive
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
-export const Served = PublicRpcs.merge(
-  HostRpcGroup,
-  ProfileRpcs,
-  ConfigRpcs,
-  ProjectRpcs,
-  TaskRpcs,
-  BoardRpcs,
-  // pens and attachments (1.7)
-)
+export const Served = PublicRpcs.merge(HostRpcGroup, ProfileRpcs, ConfigRpcs, ProjectRpcs, TaskRpcs, BoardRpcs, PenRpcs, AttachmentRpcs)
 
 /** Their handlers. One line per area. */
 export const HandlersLive = Layer.mergeAll(
@@ -93,7 +100,8 @@ export const HandlersLive = Layer.mergeAll(
   ProjectHandlers,
   TaskHandlers,
   BoardHandlers,
-  // pens and attachments (1.7)
+  PenHandlers,
+  AttachmentHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

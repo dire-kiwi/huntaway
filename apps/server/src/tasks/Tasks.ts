@@ -1,6 +1,6 @@
 import { Context, DateTime, Effect, Layer, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { Conflict, Invalid, TaskId, Timestamp } from "@huntaway/contracts"
+import { Conflict, Invalid, NotFound, PenId, TaskId, Timestamp } from "@huntaway/contracts"
 import type { NewTask, Task, TaskFilter, TaskPatch } from "@huntaway/contracts"
 import { Changes } from "../platform/Changes.ts"
 import type { Actor } from "../platform/Changes.ts"
@@ -8,6 +8,8 @@ import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { decideCreate, decideDeleted, decideUpdate, deriveColumns } from "./decide.ts"
+import { nextPenColor, penWanted } from "./penChecks.ts"
+import { PenRepo } from "./PenRepo.ts"
 import type { CreateFacts, TaskColumns, UpdateFacts } from "./decide.ts"
 import { TaskRepo } from "./TaskRepo.ts"
 import type { ProjectRef } from "./TaskRepo.ts"
@@ -22,7 +24,11 @@ export interface TasksShape {
   readonly list: (filter: TaskFilter) => Effect.Effect<ReadonlyArray<Task>, ProjectNotFound>
   /** A task in a project, a scratch task in none, or a group task (`NewTask` says which). */
   readonly create: (input: NewTask, by: Actor) => Effect.Effect<Task, ProjectNotFound | ProfileNotFound | Invalid | Conflict>
-  readonly update: (id: TaskId, patch: TaskPatch, by: Actor) => Effect.Effect<Task, TaskNotFound | Invalid | Conflict>
+  /**
+   * `pen` puts it in the profile's pen by that name (made, with a `pens` event, if there's none) and `pen_id` in a pen
+   * by id (`NotFound` for one that isn't the profile's); null or blank takes it out.
+   */
+  readonly update: (id: TaskId, patch: TaskPatch, by: Actor) => Effect.Effect<Task, TaskNotFound | Invalid | Conflict | NotFound>
   /**
    * For other services: change columns the patch does not expose, with the same derived columns. `decide` sees the task
    * as it is under its lock and returns the columns to write, or null to leave it.
@@ -63,6 +69,7 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
       const changes = yield* Changes
       const locks = yield* KeyedLock
       const random = yield* SecureRandom.SecureRandom
+      const pens = yield* PenRepo
 
       const now = Effect.map(DateTime.now, (t) => Timestamp.make(DateTime.formatIso(t)))
       const load = Effect.fnUntraced(function* (id: string) {
@@ -95,6 +102,25 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
           endOfMergeQueue: merge ? yield* repo.endPosition(before.project_id, "ready_for_merge") : 0,
         }
         return facts
+      })
+
+      /** The pen `patch` puts `before` in, made if it names one the profile hasn't; undefined when it asks for none. */
+      const resolvePen = Effect.fnUntraced(function* (before: Task, patch: TaskPatch, at: Timestamp) {
+        const wanted = yield* Effect.fromResult(penWanted(before, patch))
+        if (wanted._tag === "Keep") return undefined
+        if (wanted._tag === "Out") return null
+        if (wanted._tag === "ById") {
+          const pen = yield* pens.get(wanted.id)
+          if (pen === null || pen.profile_id !== before.profile_id) return yield* new NotFound({ what: "pen", id: wanted.id })
+          return pen.id
+        }
+        const found = yield* pens.byName(before.profile_id, wanted.name)
+        if (found !== null) return found.id
+        const id = PenId.make(yield* random.uuidV4())
+        const color = nextPenColor((yield* pens.list(before.profile_id)).map((p) => p.color))
+        yield* pens.insert({ id, profile_id: before.profile_id, name: wanted.name, active: true, color, now: at })
+        yield* events.emit({ type: "pens", profile_id: before.profile_id, pens: yield* pens.list(before.profile_id) })
+        return id
       })
 
       const createFacts = Effect.fnUntraced(function* (input: NewTask) {
@@ -165,7 +191,8 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
             const done = yield* db.tx(
               Effect.gen(function* () {
                 const before = yield* load(id)
-                const decision = yield* Effect.fromResult(decideUpdate(before, patch, yield* updateFacts(before, patch), by, at))
+                const pen = yield* resolvePen(before, patch, at)
+                const decision = yield* Effect.fromResult(decideUpdate(before, patch, { ...(yield* updateFacts(before, patch)), pen }, by, at))
                 // Nothing to write: nothing changed, and nothing is told.
                 if (Object.keys(decision.columns).length === 0) return { before, after: null }
                 return { before, after: yield* commit(before, decision.columns, at) }

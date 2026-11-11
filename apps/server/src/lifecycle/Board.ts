@@ -8,6 +8,7 @@ import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
+import { PenRepo } from "../tasks/PenRepo.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 
 export interface BoardShape {
@@ -33,6 +34,7 @@ export class Board extends Context.Service<Board, BoardShape>()("huntaway-server
       const projects = yield* Projects
       const settings = yield* HostSettings
       const tasks = yield* TaskRepo
+      const pens = yield* PenRepo
 
       const snapshot = Effect.fn("Board.snapshot")(function* (seq: number) {
         return yield* db.tx(
@@ -52,8 +54,8 @@ export class Board extends Context.Service<Board, BoardShape>()("huntaway-server
               projects: active,
               archived_projects: archived,
               tasks: yield* tasks.all,
-              // Pens join with 1.7; usage with M2.
-              pens: [],
+              pens: yield* pens.all,
+              // Usage joins with M2.
               settings: yield* settings.get,
               usage: [],
             }

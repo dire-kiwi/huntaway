@@ -5,7 +5,8 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { About } from "../settings/About.ts"
 
 const loopbackHost = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/i
-const isLoopbackOnly = (host: string) => host === "127.0.0.1" || host === "localhost" || host === "::1"
+/** A server bound to this machine only (huntaway's serve.ts `loopback_only`): any 127.x address, localhost or ::1. */
+const isLoopbackOnly = (host: string) => host.startsWith("127.") || host === "localhost" || host === "::1"
 
 export const PublicHandlers = PublicRpcs.toLayer(
   Effect.gen(function* () {

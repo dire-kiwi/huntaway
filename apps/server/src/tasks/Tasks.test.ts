@@ -242,11 +242,11 @@ describe("Tasks", () => {
           ids(yield* tasks.list({ _tag: "Projectless", profile_id: profile, include_assistant: true, include_pens: true, include_pen_threads: true })),
           ["assistant", "pen", "pens", scratch.id].toSorted(),
         )
-        // The board's snapshot: everything the old client loaded, so not routine threads nor archived projects' tasks.
+        // The board's snapshot: everything the old client loaded but routine threads, and archived projects' tasks too.
         const archived = yield* seed("me", "OLD", { archived: true })
         yield* sql`INSERT INTO tasks (id, profile_id, project_id, title, last_activity_at, created_at, updated_at)
           VALUES ('shelved', 'me', ${archived.project}, 'Shelved', ${AT}, ${AT}, ${AT})`.pipe(Effect.orDie)
-        assert.deepStrictEqual(ids(yield* (yield* TaskRepo).all), ["assistant", code.id, "pen", "pens", "review", scratch.id].toSorted())
+        assert.deepStrictEqual(ids(yield* (yield* TaskRepo).all), ["assistant", code.id, "pen", "pens", "review", scratch.id, "shelved"].toSorted())
       }),
     ),
   )

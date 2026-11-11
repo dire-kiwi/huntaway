@@ -1,6 +1,19 @@
 import { Result } from "effect"
 import { canMoveTo, Conflict, takesStatus, threadKindOf } from "@huntaway/contracts"
-import type { AgentConfigId, ConflictReason, Invalid, NewTask, ProfileId, ProjectId, StartFrom, Task, TaskId, TaskPatch, Timestamp } from "@huntaway/contracts"
+import type {
+  AgentConfigId,
+  ConflictReason,
+  Invalid,
+  NewTask,
+  PenId,
+  ProfileId,
+  ProjectId,
+  StartFrom,
+  Task,
+  TaskId,
+  TaskPatch,
+  Timestamp,
+} from "@huntaway/contracts"
 import type { Actor } from "../platform/Changes.ts"
 import {
   checkBaseBranch,
@@ -132,6 +145,11 @@ export interface UpdateFacts {
   readonly prApproval: PrApproval
   /** A position after every task in its project's Ready for merge column. */
   readonly endOfMergeQueue: number
+  /**
+   * The pen the change puts the task in, found or made from its `pen` or `pen_id` (`penWanted`), or null for none;
+   * unset when it asks for neither.
+   */
+  readonly pen?: PenId | null | undefined
 }
 
 export interface Decision {
@@ -259,6 +277,7 @@ export const decideUpdate = (before: Task, patch: TaskPatch, facts: UpdateFacts,
     const worktreeSettings = changes(columns, "use_worktree", "base_branch", "start_from")
     const retarget = patch.merges_into === undefined ? null : yield* mergesIntoColumns(before, patch.merges_into, columns, facts, tasks)
 
+    if (facts.pen !== undefined && facts.pen !== before.pen_id) columns.pen_id = facts.pen
     if (patch.labels !== undefined) {
       if (before.kind !== "task") return yield* invalid("labels", "only a task can have labels")
       columns.labels = orderLabels(patch.labels)
