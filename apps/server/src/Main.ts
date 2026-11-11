@@ -41,6 +41,8 @@ import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { McpControlLive } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
+import { BoardTools } from "./mcp/tools/board.ts"
+import { Questions } from "./permissions/Questions.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { RunDir } from "./runs/RunDir.ts"
 import { RunFollower } from "./runs/RunFollower.ts"
@@ -126,12 +128,13 @@ const RunsLive = runsLayer(RunOutput.layerLog).pipe(Layer.provideMerge(AgentsLiv
  * test's own, built over the whole board's services, is not the one those already have.
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
-  Layer.mergeAll(Layer.fresh(McpControlLive)).pipe(
+  Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools).pipe(
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 /** `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come. */
-const McpLive = mcpLayer(McpHooks.layerNone).pipe(Layer.provideMerge(RunsLive))
+const PermissionsLive = Questions.layer.pipe(Layer.provideMerge(RunsLive))
+const McpLive = mcpLayer(McpHooks.layerNone).pipe(Layer.provideMerge(PermissionsLive))
 // The demo board is seeded once every area is built, before Recovery runs.
 const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
   Layer.provideMerge(DemoLive),
