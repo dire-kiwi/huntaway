@@ -2,11 +2,15 @@ import { clsx } from "clsx"
 import { Archive, Bell, Bot, KeyRound, Keyboard, Network, Puzzle, Server, Users, Wifi } from "lucide-react"
 import type { ReactNode } from "react"
 import { navigate } from "../../state/route"
-import { MenuButton, NotYet } from "../ui"
+import { canRunAgents } from "@huntaway/client"
+import { profileNames } from "../boardHelpers"
+import { useBoard } from "../../state/board"
+import { MenuButton } from "../ui"
 import { NotificationsPanel } from "../layout/Notifications"
 import { GlobalAgentToolsPanel } from "./agentTools/GlobalAgentToolsPanel"
 import { AssistantsPanel } from "./Assistants"
-import { ClaudeConfigsPanel } from "./ClaudeConfigs"
+import { ArchivedProjectsPanel } from "./ArchivedProjects"
+import { ClaudeConfigsPanel, configHosts } from "./ClaudeConfigs"
 import { HostsPanel } from "./Hosts"
 import { ProfilesPanel } from "./hosts/ProfilesPanel"
 import { NetworkPanel } from "./Network"
@@ -28,23 +32,24 @@ const SETTINGS_TABS: { id: SettingsTab; label: string; icon: ReactNode; panel: (
   { id: "tools", label: "Skills and MCP", icon: <Puzzle size={14} />, panel: () => <GlobalAgentToolsPanel /> },
   { id: "notifications", label: "Notifications", icon: <Bell size={14} />, panel: () => <NotificationsPanel /> },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: <Keyboard size={14} />, panel: () => <ShortcutsPanel /> },
-  { id: "archived", label: "Archived projects", icon: <Archive size={14} />, panel: () => <NotYet what="Archived projects" /> },
+  { id: "archived", label: "Archived projects", icon: <Archive size={14} />, panel: () => <ArchivedProjectsPanel /> },
   { id: "server", label: "Server", icon: <Server size={14} />, panel: () => <ServerPanel /> },
   { id: "network", label: "Network access", icon: <Wifi size={14} />, panel: () => <NetworkPanel /> },
 ]
 
 export function Settings({ tab }: { tab?: string | undefined }) {
+  const hosts = useBoard((s) => s.hosts)
+  const profiles = useBoard((s) => s.profiles)
   // The panels that show nothing without a host (or profile) for them have no tab then.
-  // 6.12 brings the old conditions (a host that runs agents, a profile…).
   const shown: Record<SettingsTab, boolean> = {
     hosts: true,
-    configs: true,
+    configs: configHosts(hosts).length > 0,
     profiles: true,
-    assistant: true,
-    tools: true,
+    assistant: profileNames(profiles).length > 0,
+    tools: hosts.some((h) => canRunAgents(h)),
     notifications: true,
     shortcuts: true,
-    archived: true,
+    archived: profiles.length > 0,
     server: true,
     network: true,
   }
