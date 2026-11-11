@@ -115,7 +115,7 @@ column are that table's.
 | `attachments`  | `upload`, `get`                                                                                                                                                  | operate; read        | 38–39      |
 | `desktop`      | `status`, `setEnabled`, `install`, `uninstall`, `stop`, `check`, `frame`, `ops`                                                                                  | terminal; admin      | 51–56      |
 | `admin`        | `status`, `restart`, `update`, `checkRelease`, `updateRelease`, `rollback`, `installService`, `telemetry`, `updateTelemetry`, `testTelemetry`                    | admin                | 31–32, 40–47 |
-| `settingsSync` | `get`, `merge`, `resolve`                                                                                                                                        | settings; link       | 28–30      |
+| `settingsSync` | `get`, `merge`, `resolve` (`merge` too needs `settings`, not `link`: the hub token alone must not write a host's synced settings; review of HE-6) | settings             | 28–30      |
 | `tools`        | `call`                                                                                                                                                           | link                 | 34         |
 | `hub.hosts`    | `watch` (stream), `list`, `add`, `addSsh`, `sshKey`, `join`, `discover`, `update`, `remove`, `copyConfig`, `pushUpdate`, `openRelay` (gives a ticket)           | read; admin          | 6–13, 22   |
 | `hub.push`     | `info`, `subscribe`, `update`, `unsubscribe`, `test`                                                                                                             | read; operate        | 15–18      |

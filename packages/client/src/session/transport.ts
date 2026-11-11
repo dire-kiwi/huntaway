@@ -13,7 +13,7 @@ import { HostSession } from "./HostSession.ts"
 export type Transport = (host: HostId | null) => Layer.Layer<HostClient | HostSession, Unavailable>
 
 /**
- * A session over `socket`, with `token` on every request. The RPC client's own ping (5 s) finds a dead connection and
+ * A session over `socket`, with `token` on every request (none when null). The RPC client's own ping (5 s) finds a dead connection and
  * its retry schedule reconnects (opening the socket again); the session's latch follows the connection.
  */
 export const socketSession = <E, R>(socket: Layer.Layer<Socket.Socket, E, R>, token: string | null): Layer.Layer<HostClient | HostSession, E, R> => {
@@ -30,8 +30,9 @@ export const socketSession = <E, R>(socket: Layer.Layer<Socket.Socket, E, R>, to
     Layer.provide(RpcSerialization.layerNdjson),
     Layer.provide(hooks),
   )
+  // No token, no header: a relayed session's requests carry nothing of the hub's (they cross to another host as they are).
   const auth = RpcMiddleware.layerClient(Auth, ({ next, request }) =>
-    next({ ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${token ?? ""}`) }),
+    next(token === null ? request : { ...request, headers: Headers.set(request.headers, "authorization", `Bearer ${token}`) }),
   )
   return Layer.effect(HostClient, RpcClient.make(ClientRpcs, { flatten: true })).pipe(Layer.provide(protocol), Layer.provide(auth), Layer.provideMerge(session))
 }

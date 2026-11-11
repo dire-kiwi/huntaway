@@ -98,8 +98,11 @@ const Hello = Schema.Struct({ host_id: HostId, name: Schema.String, protocol: Sc
    link's token, and gives the handlers a `Session` with the asserted scopes, never more than a board user's and
    never `link`. A relayed client cannot forge the header: it never holds the link's token, and a header it sends
    inside an RPC request fails the mac.
-5. The client's own `Auth` middleware still puts its hub token on each request. The host ignores it: a relayed
-   socket's session comes from the signed header only.
+5. A relayed session's requests carry **no token**. RPC request headers travel inside each frame, and the hub pipes
+   frames to the host as they are, so a token there would hand the hub's own board token to every host it links (a
+   dial-in host that only ever held the hub token included). The host takes a relayed socket's session from the signed
+   header only. (Corrected on review of HE-6: the plan first had the client's `Auth` put its hub token on each request,
+   for the host to ignore; the old hub too kept its token to itself.)
 
 As built (7.2, `packages/client/src/session/relay.ts`): the socket's URL is an effect that asks for a ticket, so every
 connection, the RPC client's reconnects included, takes a new one. It asks only once the hub's directory

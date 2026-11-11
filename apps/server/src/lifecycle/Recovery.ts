@@ -3,7 +3,6 @@ import { Tokens } from "../agents/Tokens.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Runs } from "../runs/Runs.ts"
-import { Releases } from "../update/Releases.ts"
 
 /**
  * Startup step 5 (docs/plan/06-server.md, Startup): call every reconciler once, which is how the server recovers from
@@ -28,7 +27,6 @@ export const RecoveryLive = Layer.effectDiscard(
     yield* runs.startUnblocked(null)
     yield* toolCalls.resume
     yield* tokens.countPending(null)
-    // A release that has come up is current now; `app/` keeps what nothing else needs (8.2).
-    yield* (yield* Releases).settle
+    // A release is settled by `serve` once the server listens, not here (Releases.settle).
   }).pipe(Effect.withSpan("Recovery"), Effect.annotateLogs({ module: "recovery" })),
 )

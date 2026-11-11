@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { HostId } from "@huntaway/contracts"
-import { hostsIn, isPrivate, lanAddresses, parse, parseTailscaleStatus, query, response, SERVICE } from "./dns.ts"
+import { hostsHeard, hostsIn, isPrivate, lanAddresses, parse, parseTailscaleStatus, query, response, SERVICE } from "./dns.ts"
 import type { Ad } from "./dns.ts"
 
 // The old discovery.test.ts's pure cases: the DNS-SD record, which addresses are answered and used, Tailscale's status.
@@ -37,6 +37,22 @@ describe("mDNS records", () => {
 
   it("a host that listens on one address gives that address", () => {
     assert.strictEqual(hostsIn(response({ ...ad("h2", 7878), address: "192.168.1.9" }, []), "10.0.0.5")[0]?.url, "http://192.168.1.9:7878")
+  })
+
+  // Review of HE-6: the TXT record's `address=` is anyone's on the network. One that isn't an IPv4 address used to go
+  // into the URL as it was: `[` or `a b` made `new URL` throw in the browser's listener, `x/y@z` pointed elsewhere.
+  it("an address that isn't IPv4 is not taken: the host is where it was heard from", () => {
+    for (const address of ["a b", "[", "::1", "x/y@z", "evil.example", "1.2.3.4/x", "999.1.1.1"]) {
+      const heard = hostsHeard(response({ ...ad("h4", 7878), address }, []), "10.0.0.5")
+      assert.deepStrictEqual(
+        heard.map((h) => [h.ip, h.host.url]),
+        [["10.0.0.5", "http://10.0.0.5:7878"]],
+        address,
+      )
+    }
+    // An IPv4-mapped sender is its IPv4 address; one that is no IPv4 address at all is not listed.
+    assert.strictEqual(hostsIn(response(ad("h5", 7878), []), "::ffff:10.0.0.6")[0]?.url, "http://10.0.0.6:7878")
+    assert.deepStrictEqual(hostsIn(response({ ...ad("h6", 7878), address: "[" }, []), "fe80::1"), [])
   })
 
   it("the record never carries more than how to reach the host", () => {

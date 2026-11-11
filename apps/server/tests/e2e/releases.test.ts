@@ -22,8 +22,12 @@ const launcher = launcherUrl
 const entry = new URL("../../src/bin.ts", import.meta.url)
 const PLATFORM = `${process.platform === "darwin" ? "mac" : process.platform}-${process.arch}`
 
-/** A release's server: this checkout's, with the release's build.json; or one that never comes up; or a wrong `--version`. */
-type Kind = "good" | "never_up" | "wrong_version"
+/**
+ * A release's server: this checkout's, with the release's build.json; or one that never comes up; or a wrong
+ * `--version`; or this checkout's that fails once its areas are built and Recovery has run (it binds an address this
+ * machine doesn't have, 192.0.2.1 from TEST-NET-1).
+ */
+type Kind = "good" | "never_up" | "wrong_version" | "dies_after_recovery"
 
 /** A server tarball for `version` in the release layout: one top folder with `huntaway`, `ia-shim`, `ui/`, `build.json`. */
 const tarball = (version: string, kind: Kind): Buffer => {
@@ -43,9 +47,11 @@ const tarball = (version: string, kind: Kind): Buffer => {
       `${root}/server/src/bin.ts`,
       kind === "good"
         ? `import "${entry.href}"\n`
-        : kind === "never_up"
-          ? `if (process.argv[2] === "--version") console.log("huntaway ${version}")\nelse { console.error("this release never comes up"); process.exit(1) }\n`
-          : `console.log("huntaway 0.0.1")\n`,
+        : kind === "dies_after_recovery"
+          ? `if (process.argv[2] !== "--version") process.argv = process.argv.map((a) => (a === "127.0.0.1" ? "192.0.2.1" : a))\nawait import("${entry.href}")\n`
+          : kind === "never_up"
+            ? `if (process.argv[2] === "--version") console.log("huntaway ${version}")\nelse { console.error("this release never comes up"); process.exit(1) }\n`
+            : `console.log("huntaway 0.0.1")\n`,
     )
     execFileSync("tar", ["-czf", `${dir}/out.tar.gz`, top], { cwd: dir })
     return readFileSync(`${dir}/out.tar.gz`)
@@ -222,5 +228,32 @@ describe("release updates, through the launcher", () => {
         assert.deepStrictEqual([state.current, state.bad.toSorted()], [null, ["0.2.0", "0.4.0"]])
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     180_000,
+  )
+
+  // Review of HE-6: a release is settled (made current) only once it listens. One that fails after Recovery (here, at
+  // binding) is still `trying` when it exits, so the next start marks it bad and runs the server it came from, instead
+  // of starting the broken one again and again.
+  it.live(
+    "a release that fails after Recovery stays trying, and the next start marks it bad and runs the one before",
+    () =>
+      Effect.gen(function* () {
+        const github = yield* fakeGithub
+        const dataDir = yield* e2eDataDir
+        github.publish("0.5.0", "dies_after_recovery")
+        const server = yield* launch(dataDir, github.url)
+        const first = yield* server.nextReady
+        assert.isNull(yield* checkAndWait(first.port, first.token))
+        yield* rpc(first.port, first.token, (c) => c["admin.updateRelease"]({ version: "0.5.0" }))
+        assert.notStrictEqual(yield* server.exited, 0)
+        const after = yield* installed(dataDir)
+        assert.deepStrictEqual([after.current, after.trying], [null, "0.5.0"])
+
+        const again = yield* launch(dataDir, github.url)
+        const second = yield* again.nextReady
+        assert.strictEqual((yield* rpc(second.port, second.token, (c) => c["admin.status"]())).version, "0.1.0")
+        const state = yield* installed(dataDir)
+        assert.deepStrictEqual([state.current, state.trying, state.bad], [null, null, ["0.5.0"]])
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    120_000,
   )
 })

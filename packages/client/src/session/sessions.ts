@@ -123,7 +123,7 @@ export const hostRuntime: (host: HostId) => Atom.AtomRuntime<HostClient | HostSe
     // the health check settling must not rebuild every host's runtime (and resubscribe its board).
     if (host === get.once(localHostIdAtom)) return get(ownLayerAtom)
     const transport = get(transportAtom)
-    return transport ? transport(host) : relayTransport(get(serverUrlAtom), get(tokenAtom), openRelay(host))
+    return transport ? transport(host) : relayTransport(get(serverUrlAtom), openRelay(host))
   }),
 )
 

@@ -6,6 +6,7 @@ import { HttpServer } from "effect/http"
 import { installServiceCommand } from "./cli/installService.ts"
 import { rpcCommand } from "./cli/rpc.ts"
 import { sshHostCommand } from "./cli/sshHost.ts"
+import { Releases } from "./update/Releases.ts"
 import { Supervisor } from "./update/Supervisor.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
@@ -30,6 +31,10 @@ const serve = (args: ServeArgs) =>
     const context = yield* Layer.build(serverLayer(config))
     const server = Context.get(context, HttpServer.HttpServer)
     const identity = Context.get(context, Identity)
+    // Only now, listening with the hubs dialled and discovery answering, has a release come up: it becomes current (the
+    // old server settled after listen, dial-out and discovery). One that fails before this stays `trying`, and the next
+    // start marks it bad and goes back (Releases.execInstalled).
+    yield* Context.get(context, Releases).settle
     const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
     yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
     const line = yield* Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) })

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Exit, Layer, Ref, SubscriptionRef } from "effect"
+import { Context, Deferred, Effect, Exit, Layer, Ref, SubscriptionRef } from "effect"
 import { Socket } from "effect/socket"
 import { ProjectId, PROTOCOL, TaskId } from "@huntaway/contracts"
-import { boardAtom, hostSessionAtom, relaySocket, relayUrl } from "../src/index.ts"
+import { boardAtom, HostClient, hostSessionAtom, relaySocket, relayUrl, socketSession } from "../src/index.ts"
+import type { HostSession } from "../src/index.ts"
 import { fakeHost } from "./fakeHost.ts"
 import { hostEntry, project, snapshot, task } from "./fixtures.ts"
 import { registryFor, until } from "./registry.ts"
@@ -128,6 +129,47 @@ describe("the relay's socket", () => {
       const refused = yield* Effect.flip(Effect.scoped(socket.reader))
       expect(refused.reason._tag).toBe("SocketOpenError")
       expect(opened).toHaveLength(2)
+    }),
+  )
+})
+
+// Review of HE-6: the hub pipes a relayed session's frames to the host as they are, request headers included, so a
+// token on them would hand the hub's board token to every host linked to it (a dial-in one only ever held the hub
+// token). A relayed session's requests carry none; a session of the page's own board keeps its token.
+/** A frame as text. */
+const frameText = (chunk: unknown) => (typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? String.fromCharCode(...chunk) : "")
+
+/** The frames `session` writes for one call, on a socket that records them and never answers. */
+const framesOf = (session: (socket: Layer.Layer<Socket.Socket>) => Layer.Layer<HostClient | HostSession>) =>
+  Effect.gen(function* () {
+    const written = yield* Ref.make<ReadonlyArray<string>>([])
+    const sent = yield* Deferred.make<void>()
+    const record = (chunks: ReadonlyArray<unknown>) =>
+      Effect.andThen(
+        Ref.update(written, (all) => [...all, ...chunks.map(frameText)]),
+        Effect.flatMap(Ref.get(written), (all) => (all.some((f) => f.includes("host.info")) ? Deferred.succeed(sent, undefined) : Effect.void)),
+      )
+    const socket = Layer.succeed(
+      Socket.Socket,
+      Socket.make({
+        reader: Effect.succeed({ pull: Effect.never, upgrade: Socket.SocketUpgradeError.unsupported }),
+        writer: Effect.succeed({ write: (chunk) => record([chunk]), writeAll: (chunks) => record(chunks) }),
+      }),
+    )
+    const context = yield* Layer.build(session(socket))
+    yield* Effect.forkScoped(Context.get(context, HostClient)("host.info", undefined))
+    yield* Deferred.await(sent)
+    return (yield* Ref.get(written)).join("\n")
+  }).pipe(Effect.scoped)
+
+describe("what a session's requests carry", () => {
+  it.live("a relayed session sends no token; the page's own sends its own", () =>
+    Effect.gen(function* () {
+      const relayed = yield* framesOf((socket) => socketSession(socket, null))
+      expect(relayed).toContain("host.info")
+      expect(relayed).not.toContain("authorization")
+      const own = yield* framesOf((socket) => socketSession(socket, "the-board-token"))
+      expect(own).toContain("Bearer the-board-token")
     }),
   )
 })

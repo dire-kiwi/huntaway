@@ -256,8 +256,9 @@ As built in 8.1 and 8.2 (`apps/server/src/update/`):
   its version; for `hub.hosts.pushUpdate`), and the `--update-from` check every 5 minutes.
 - **`Releases`**, with its rules as pure functions in `update/releases/` (`semver`, `installed` for `app/state.json`,
   `github` for picking and the desktop shell, `tarball` for the safety rules). `execInstalled` is a layer that
-  `Main.ts`'s platform builds between `DataDir` and `Identity` (with `Supervisor` under it); `settle` is the last step of
-  `Recovery`. "A backup, or room for one" before an Update or Roll back is a room check only (the backups folder can be
+  `Main.ts`'s platform builds between `DataDir` and `Identity` (with `Supervisor` under it); `settle` runs in `serve`
+  once the server listens and the hubs and discovery have started, before the ready line (step 6; it was the last step of
+  `Recovery`, until review of HE-6: a release that failed binding or after would have been current already). "A backup, or room for one" before an Update or Roll back is a room check only (the backups folder can be
   made, and `df` says the database fits), since every release backs the database up itself before it migrates;
   `--skip-db-backup` goes on without it. A changed "Include prereleases" checks again by watching `settings_changed`
   (`HostSettings` is above the update area). Digests are taken with `effect/crypto`'s `Digest` over the downloaded file.
@@ -317,8 +318,9 @@ the one-off moves removed:
 5. `Recovery`: resume kills left half done · for each run that had not exited: re-ask its open prompts and tool
    calls, then follow it from its saved offset, re-arm its timers · tasks marked running with no run · expire
    prompts with no live run · `Merges.reconcileAll` · `Dependencies.reconcileAll` · `Reviews.reconcileAll` ·
-   `WorkflowEngine.resume` · `Restack.resume` · `Releases.settle`.
-6. Open the gate: links dial, discovery answers, the RPC and HTTP routes serve. Print `HUNTAWAY_READY
+   `WorkflowEngine.resume` · `Restack.resume`.
+6. Open the gate: links dial, discovery answers, the RPC and HTTP routes serve. Then `Releases.settle` (a release that
+   got this far is current; one that failed before stays `trying` and is marked bad at the next start). Print `HUNTAWAY_READY
    {"port":…,"token":…}` on stdout (the desktop shell and test scripts read it), and tell the launcher it started.
 
 Shutdown (SIGTERM, SIGINT, or the launcher gone) closes the root scope: the listener stops, fibers are interrupted,

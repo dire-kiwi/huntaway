@@ -16,7 +16,7 @@ export class SettingsSyncRpcs extends RpcGroup.make(
     payload: { entries: Schema.Array(SyncEntry) },
     success: Schema.Struct({ merged: Schema.Int }),
     error: Schema.Union([Unavailable, Invalid]),
-  }).annotate(RequiredScope, "link"),
+  }).annotate(RequiredScope, "settings"),
   /**
    * `value` (one that lost, or any other) becomes the setting's value, or with none the value that won stays; either way
    * a change made here, which the other hosts take. A value this host cannot take, or a name it has no entry for, is

@@ -1,6 +1,6 @@
 import { Duration, Effect, Exit, Fiber, Scope, Stream, SubscriptionRef } from "effect"
 import { HostId } from "@huntaway/contracts"
-import { asksForUs, hostsIn, isPrivate, isTailscale, lanAddresses, MDNS_GROUP, MDNS_PORT, parse, query, response } from "./dns.ts"
+import { asksForUs, hostsHeard, isPrivate, isTailscale, lanAddresses, MDNS_GROUP, MDNS_PORT, parse, query, response } from "./dns.ts"
 import type { Ad, Found, Peer } from "./dns.ts"
 import { Udp } from "./Udp.ts"
 import type { UdpMessage, UdpSocket } from "./Udp.ts"
@@ -133,9 +133,8 @@ export const browse = (o: BrowseOptions) =>
 
     const heard = (m: UdpMessage) =>
       Effect.sync(() => {
-        for (const h of hostsIn(m.data, m.address)) {
+        for (const { ip, host: h } of hostsHeard(m.data, m.address)) {
           answered.add(m.address)
-          const ip = new URL(h.url).hostname
           const via = peerIps.has(ip) || isTailscale(ip) ? "tailscale" : "lan"
           // Once on each: a host on several networks answers on each of them.
           const key = `${h.host_id} ${via}`

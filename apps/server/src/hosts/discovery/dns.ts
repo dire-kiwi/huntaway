@@ -259,11 +259,22 @@ export const parse = (msg: Uint8Array): Message | null => {
 
 const lower = (s: string) => s.toLowerCase()
 
-/** The hosts a response advertises, reached at `from` unless they say they listen on one address. */
-export const hostsIn = (msg: Uint8Array, from: string): Array<Omit<Found, "via">> => {
+/** `ip` as a dotted IPv4 address (an IPv4-mapped IPv6 one unwrapped), or null for anything else. */
+const asIpv4 = (ip: string): string | null => {
+  const plain = ip.startsWith("::ffff:") ? ip.slice(7) : ip
+  return ipv4Num(plain) === null ? null : plain
+}
+
+/**
+ * The hosts a response advertises, each with the address it is reached at: the one its TXT record's `address=` names
+ * when that is an IPv4 address, else `from` (the sender). The TXT record comes from anyone on the network, so nothing
+ * else of it goes into a URL (`address=x/y@z` would point it at another host, `address=[` would not parse); a sender
+ * that is not IPv4 (the sockets are) is skipped.
+ */
+export const hostsHeard = (msg: Uint8Array, from: string): Array<{ readonly ip: string; readonly host: Omit<Found, "via"> }> => {
   const p = parse(msg)
   if (p === null || !p.response) return []
-  const out: Array<Omit<Found, "via">> = []
+  const out: Array<{ readonly ip: string; readonly host: Omit<Found, "via"> }> = []
   for (const ptr of p.records) {
     if (ptr.type !== PTR || lower(ptr.name) !== SERVICE || ptr.ptr === undefined) continue
     const inst = lower(ptr.ptr)
@@ -271,19 +282,26 @@ export const hostsIn = (msg: Uint8Array, from: string): Array<Omit<Found, "via">
     const txt = p.records.find((r) => r.txt !== undefined && lower(r.name) === inst)?.txt
     const id = txt?.["id"]
     if (srv === undefined || txt === undefined || id === undefined || id === "") continue
-    const ip = txt["address"] || from
+    const ip = asIpv4(txt["address"] ?? "") ?? asIpv4(from)
+    if (ip === null) continue
     const protocol = Number(txt["proto"])
     out.push({
-      host_id: HostId.make(id),
-      name: txt["name"] || id,
-      url: `http://${ip}:${srv.port}`,
-      version: txt["v"] || null,
-      protocol: txt["proto"] !== undefined && txt["proto"] !== "" && Number.isInteger(protocol) ? protocol : null,
-      capabilities: null,
+      ip,
+      host: {
+        host_id: HostId.make(id),
+        name: txt["name"] || id,
+        url: `http://${ip}:${srv.port}`,
+        version: txt["v"] || null,
+        protocol: txt["proto"] !== undefined && txt["proto"] !== "" && Number.isInteger(protocol) ? protocol : null,
+        capabilities: null,
+      },
     })
   }
   return out
 }
+
+/** The hosts a response advertises (`hostsHeard` without where each was heard). */
+export const hostsIn = (msg: Uint8Array, from: string): Array<Omit<Found, "via">> => hostsHeard(msg, from).map((h) => h.host)
 
 /** Whether a message is a query for the service (or for anything, as `ANY`). */
 export const asksForUs = (p: Message): boolean => !p.response && p.questions.some(([name, type]) => lower(name) === SERVICE && (type === PTR || type === ANY))
