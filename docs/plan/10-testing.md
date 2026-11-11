@@ -54,7 +54,7 @@ Rules:
 | `git`                  | A repository in a temp folder with commits, branches and a bare remote; `squashMerge`                              |
 | `fakeAgent`            | A scripted agent for service tests: feed lines to a run's `out.jsonl`, read what was written to its input, end it. Replaces `runner/testing.ts` |
 | `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`; and `fake-until-interrupted`, new: a turn that goes on until a stop interrupts it) and knobs. What it must do is inventory 01, section 10 |
-| `fakeGh`, `fakeGithub` | `gh` answers and a GraphQL pull request that tests change over time                                                |
+| `fakeGh`, `fakeGithub` | `gh` answers and a GraphQL pull request that tests change over time. As built (4.4): `fakeGitHub(state)` and `fakePull` over `bin/fake-gh` (its state, a JSON file a test sets and reads back, is documented there); `test-server.sh --fake-gh` |
 | `twoHosts`             | Two `TestBoard`s linked in memory, and the same over real sockets for the whole-server tier                        |
 | `fixtures/threads/`    | The recorded sessions                                                                                              |
 | `fakeHost` (browser)   | The component checks' fake                                                                                         |
