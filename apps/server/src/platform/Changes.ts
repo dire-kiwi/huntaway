@@ -73,6 +73,16 @@ export type Change =
       readonly run: RunId
     }
   | {
+      /**
+       * 4.8: the board couldn't restack a stack level (`git/Restack`), for the first time: its agent is asked to (`text`),
+       * out of the merge queue meanwhile; one that can't be asked needs attention for `reason` (`Merges.askToRestack`).
+       */
+      readonly _tag: "RestackAsk"
+      readonly task: TaskId
+      readonly text: string
+      readonly reason: string
+    }
+  | {
       /** A project's settings changed (`projects/Projects.update`): its tasks follow what they take from them (4.5: previews). */
       readonly _tag: "ProjectChanged"
       readonly before: Project

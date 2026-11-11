@@ -1,4 +1,4 @@
-import type { Task, TaskId } from "@huntaway/contracts"
+import type { Task } from "@huntaway/contracts"
 import { isMerged } from "./checks.ts"
 
 // What a task's work goes to and how it merges, as plain functions of its project's task rows (docs/plan/06-server.md,
@@ -55,7 +55,7 @@ export const targetState = (rows: Rows, t: Task): "none" | "open" | "merged" | "
 }
 
 /** The open tasks whose work goes to task `id`: merging into it, or into its merged ones in turn (huntaway's `db.reaching`). */
-export const reaching = (rows: Rows, id: TaskId): Array<Task> => {
+export const reaching = (rows: Rows, id: string): Array<Task> => {
   const out: Array<Task> = []
   const seen = new Set<string>([id])
   const walk = (to: string, depth: number) => {

@@ -26,6 +26,9 @@
 // What it answers: `--version`; `auth token|status`; `pr create|view|list|checks|diff|comment|edit|merge|close`;
 // `issue view|list|create|comment`; `run list|view`; `repo view`; `api` for `user`, `repos/O/R`, `repos/O/R/pulls/N`
 // (GET, PATCH), `.../pulls/N/merge` (PUT), `.../pulls/N/merge-async` (PUT, then GET of its id), `repos/O/R/stacks/N`,
+// GitHub stacks (4.8: POST `repos/O/R/stacks` and `…/stacks/N/add` with `pull_requests[]`, POST `…/stacks/N/unstack`;
+// a pull request's `stack` with its place, `mergeable_state`; its base can't change while it's in one; merging one in a
+// stack retargets the level above and rebases it to its `rebasedTo`),
 // and `graphql` for a pull request (state, checks, comments, reviews and review threads, paged, as PrWatch reads it)
 // and for many pull requests' states at once (the merged watcher's); `run view --job N --log-failed` from the repository's
 // `jobs`. `--json` picks fields, and `--jq` takes a path (`.url`, `.a.b`). Anything else fails as gh does
@@ -34,133 +37,7 @@
 import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs"
 
-type Json = Record<string, unknown>
-
-interface Account {
-  host: string
-  login: string
-  token: string
-  active?: boolean
-}
-interface Check {
-  name: string
-  state: string
-  bucket: string
-  workflow?: string
-  link?: string
-  startedAt?: string
-  completedAt?: string
-  id?: number
-  conclusion?: string
-  required?: boolean
-  kind?: string
-  suite?: { id: number; status: string }
-}
-interface Comment {
-  author: string
-  body: string
-  createdAt?: string
-  authorAssociation?: string
-  id?: string
-  bot?: boolean
-  url?: string
-}
-interface Review {
-  author: string
-  state: string
-  body?: string
-  submittedAt?: string
-  authorAssociation?: string
-  id?: string
-  bot?: boolean
-  url?: string
-}
-interface ThreadComment {
-  author: string
-  body: string
-  id?: string
-  createdAt?: string
-  authorAssociation?: string
-  bot?: boolean
-  url?: string
-  line?: number | null
-}
-interface Thread {
-  path: string
-  comments: Array<ThreadComment>
-}
-interface Pull {
-  number: number
-  title: string
-  body: string
-  state: string
-  isDraft?: boolean
-  head: string
-  base: string
-  headOid?: string
-  author?: string
-  mergeable?: string
-  mergeStateStatus?: string
-  reviewDecision?: string
-  isCrossRepository?: boolean
-  checks?: Array<Check>
-  comments?: Array<Comment>
-  reviews?: Array<Review>
-  diff?: string
-  stack?: number | null
-  merged_at?: string | null
-  mergeMethod?: string
-  autoMerge?: boolean
-  deletedBranch?: boolean
-  mergeAsync?: string
-  mergeAsyncPending?: boolean
-  reviewThreads?: Array<Thread>
-  threadsPage?: number
-  unreadable?: string
-}
-interface Issue {
-  number: number
-  title: string
-  body: string
-  state: string
-  author?: string
-  labels?: Array<string>
-  comments?: Array<Comment>
-}
-interface Run {
-  databaseId: number
-  workflowName?: string
-  displayTitle?: string
-  headBranch?: string
-  event?: string
-  status?: string
-  conclusion?: string
-  url?: string
-  createdAt?: string
-  log?: string
-}
-interface Repo {
-  default_branch?: string
-  pulls?: Array<Pull>
-  issues?: Array<Issue>
-  runs?: Array<Run>
-  stacks?: Record<string, Array<number>>
-  jobs?: Record<string, string>
-}
-interface Route {
-  stdout?: string
-  stderr?: string
-  code?: number
-  json?: unknown
-}
-interface State {
-  accounts?: Array<Account>
-  defaultRepo?: string | null
-  repos?: Record<string, Repo>
-  help?: Record<string, string>
-  routes?: Record<string, Route>
-  calls?: Array<Json>
-}
+import type { Account, Check, Issue, Json, Pull, Repo, State } from "./fake-gh-state.ts"
 
 const NOW = "2026-11-12T00:00:00Z"
 const env = process.env
@@ -410,7 +287,14 @@ const prView = (key: string, pr: Pull) => ({
 })
 
 /** A pull request as GitHub's REST API has it. */
-const prRest = (key: string, pr: Pull) => ({
+/** Where pull request `n` is in its repository's GitHub stack, as the REST API says: its number, place (1 the bottom) and size. */
+const stackPlace = (repo: Repo | undefined, pr: Pull) => {
+  if (pr.stack === null || pr.stack === undefined) return null
+  const list = repo?.stacks?.[String(pr.stack)] ?? []
+  return { number: pr.stack, position: list.indexOf(pr.number) + 1, size: list.length }
+}
+
+const prRest = (key: string, pr: Pull, repo?: Repo) => ({
   number: pr.number,
   title: pr.title,
   body: pr.body,
@@ -421,7 +305,8 @@ const prRest = (key: string, pr: Pull) => ({
   head: { ref: pr.head, sha: pr.headOid ?? "0000000000000000000000000000000000000000" },
   base: { ref: pr.base },
   draft: pr.isDraft ?? false,
-  stack: pr.stack === null || pr.stack === undefined ? null : { number: pr.stack },
+  stack: stackPlace(repo, pr),
+  mergeable_state: pr.mergeableState ?? (pr.mergeable === "CONFLICTING" ? "dirty" : "clean"),
 })
 
 // ---- Pull requests
@@ -525,7 +410,12 @@ const prCommand = (state: State, as: Account | null, sub: string | undefined, p:
       const { key, pr } = findPr(state, p, target)
       pr.title = one(p, "title") ?? pr.title
       pr.body = one(p, "body") ?? pr.body
-      pr.base = one(p, "base") ?? pr.base
+      const base = one(p, "base")
+      // GitHub doesn't change the base of a pull request in a stack (4.8).
+      if (base !== null && base !== pr.base && pr.stack !== null && pr.stack !== undefined) {
+        fail(`GraphQL: Cannot change the base branch of a pull request in a stack (updatePullRequest)`)
+      }
+      pr.base = base ?? pr.base
       return `${prUrl(key, pr.number)}\n`
     }
     case "merge": {
@@ -646,7 +536,12 @@ const fieldsOf = (p: Parsed): Json => {
     } catch {
       // A string.
     }
-    out[f.slice(0, f.indexOf("="))] = parsed
+    const name = f.slice(0, f.indexOf("="))
+    // `name[]=v`, as gh sends an array, once for each of its values.
+    if (name.endsWith("[]")) {
+      const list = out[name.slice(0, -2)]
+      out[name.slice(0, -2)] = [...(Array.isArray(list) ? list : []), parsed]
+    } else out[name] = parsed
   }
   return out
 }
@@ -654,11 +549,22 @@ const fieldsOf = (p: Parsed): Json => {
 /** A string as it is, a number or boolean as text, anything else "". */
 const str = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "")
 
-const merge = (pr: Pull, method: string) => {
+const merge = (pr: Pull, method: string, repo?: Repo) => {
   pr.state = "MERGED"
   pr.merged_at = NOW
   pr.mergeMethod = method
   pr.mergeAsyncPending = false
+  // In a GitHub stack: it leaves it, and GitHub retargets the level above to where it went and rebases it (`rebasedTo`).
+  if (repo !== undefined && pr.stack !== null && pr.stack !== undefined) {
+    const list = repo.stacks?.[String(pr.stack)] ?? []
+    const above = pulls(repo).find((x) => x.number === list[list.indexOf(pr.number) + 1])
+    if (repo.stacks !== undefined) repo.stacks[String(pr.stack)] = list.filter((n) => n !== pr.number)
+    if (above !== undefined) {
+      above.base = pr.base
+      if (above.rebasedTo !== undefined) above.headOid = above.rebasedTo
+      else above.mergeableState = "dirty"
+    }
+  }
 }
 
 /** A check as GraphQL's `statusCheckRollup.contexts` has it: a check run (of a workflow's job, with its suite), or a status. */
@@ -803,6 +709,38 @@ const apiCommand = (state: State, as: Account | null, p: Parsed): string => {
   const host = one(p, "hostname")
   const keyOf = (o: string, r: string) => (host === null || host === "github.com" ? `${o}/${r}` : `${host}/${o}/${r}`)
   if (endpoint === "user") return out({ login: as?.login ?? "" })
+  // GitHub stacks (4.8): POST `repos/O/R/stacks` makes one of `pull_requests` (bottom first); POST `…/stacks/N/add`
+  // puts more on its top; POST `…/stacks/N/unstack` takes every pull request out of it.
+  const st = /^repos\/([^/]+)\/([^/]+)\/stacks(?:\/(\d+)\/(add|unstack))?$/.exec(endpoint)
+  if (st !== null && method === "POST") {
+    const key = keyOf(st[1] ?? "", st[2] ?? "")
+    const repo = repoIn(state, key)
+    const given = Array.isArray(fields["pull_requests"]) ? fields["pull_requests"].map(Number) : []
+    const stacks = (repo.stacks ??= {})
+    const prOf = (k: number) => pulls(repo).find((x) => x.number === k) ?? fail(`gh: Pull request #${k} not found (HTTP 422)`)
+    if (st[4] === "unstack") {
+      const list = stacks[st[3] ?? ""] ?? fail("gh: Not Found (HTTP 404)")
+      for (const k of list) prOf(k).stack = null
+      delete stacks[st[3] ?? ""]
+      return out({ number: Number(st[3]), pull_requests: [] })
+    }
+    for (const k of given) {
+      const pr = prOf(k)
+      if (pr.state !== "OPEN") fail(`gh: Pull request #${k} isn't open (HTTP 422)`)
+      if (pr.stack !== null && pr.stack !== undefined && st[4] !== "add") fail(`gh: Pull request #${k} is in a stack already (HTTP 422)`)
+    }
+    const n = st[3] !== undefined ? Number(st[3]) : Math.max(0, ...Object.keys(stacks).map(Number)) + 1
+    const list = st[3] !== undefined ? (stacks[st[3]] ?? fail("gh: Not Found (HTTP 404)")) : []
+    // Each on the one below: its base is the head of the one below it.
+    for (const k of given) {
+      const below = list.length > 0 ? prOf(list[list.length - 1] ?? 0) : null
+      if (below !== null && prOf(k).base !== below.head) fail(`gh: Pull request #${k} isn't based on #${below.number}'s branch (HTTP 422)`)
+      prOf(k).stack = n
+      list.push(k)
+    }
+    stacks[String(n)] = list
+    return out({ number: n, pull_requests: list.map((k) => ({ number: k })) })
+  }
   const m = /^repos\/([^/]+)\/([^/]+)(?:\/(pulls|stacks)\/(\d+)(?:\/(merge|merge-async)(?:\/([^/]+))?)?)?$/.exec(endpoint)
   if (m === null) return fail("gh: Not Found (HTTP 404)")
   const key = keyOf(m[1] ?? "", m[2] ?? "")
@@ -824,20 +762,23 @@ const apiCommand = (state: State, as: Account | null, p: Parsed): string => {
     if (method === "PATCH") {
       if (typeof fields["title"] === "string") pr.title = fields["title"]
       if (typeof fields["body"] === "string") pr.body = fields["body"]
-      if (typeof fields["base"] === "string") pr.base = fields["base"]
+      if (typeof fields["base"] === "string") {
+        if (pr.stack !== null && pr.stack !== undefined) fail("gh: Cannot change the base branch of a pull request in a stack (HTTP 422)")
+        pr.base = fields["base"]
+      }
       if (fields["state"] === "closed") pr.state = "CLOSED"
     }
-    return out(prRest(key, pr))
+    return out(prRest(key, pr, repo))
   }
   if (m[5] === "merge") {
     if (method !== "PUT") return fail("gh: Not Found (HTTP 404)")
     if (pr.state !== "OPEN") return fail("gh: Pull Request is not mergeable (HTTP 405)")
-    merge(pr, str(fields["merge_method"]) || "merge")
+    merge(pr, str(fields["merge_method"]) || "merge", repo)
     return out({ merged: true, message: "Pull Request successfully merged" })
   }
   // merge-async: PUT starts it, GET of its id says how it went.
   if (m[6] !== undefined) {
-    if (pr.mergeAsyncPending === true) merge(pr, pr.mergeMethod ?? "merge")
+    if (pr.mergeAsyncPending === true) merge(pr, pr.mergeMethod ?? "merge", repo)
     return out({ status: pr.state === "MERGED" ? "merged" : "failed", details: pr.state === "MERGED" ? { sha: pr.headOid ?? "" } : { message: "not merged" } })
   }
   if (method !== "PUT") return fail("gh: Not Found (HTTP 404)")
@@ -849,7 +790,7 @@ const apiCommand = (state: State, as: Account | null, p: Parsed): string => {
     pr.mergeMethod = mergeMethod
     return out({ status: "pending", details: { uuid: `u${pr.number}` } })
   }
-  merge(pr, mergeMethod)
+  merge(pr, mergeMethod, repo)
   return out({ status: "merged", details: { sha: pr.headOid ?? "" } })
 }
 

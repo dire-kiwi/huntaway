@@ -27,6 +27,10 @@ export const mutations = {
     send: mutation("tasks.send"),
     stop: mutation("tasks.stop"),
     dropQueued: mutation("tasks.dropQueued"),
+    // 4.8: where the tasks merging into a closed or deleted task go now, a whole stack's merge, a stack's title.
+    mergeTarget: mutation("tasks.mergeTarget"),
+    mergeStack: mutation("tasks.mergeStack"),
+    updateStack: mutation("tasks.updateStack"),
   },
   projects: { create: mutation("projects.create"), update: mutation("projects.update"), delete: mutation("projects.delete") },
   profiles: { create: mutation("profiles.create"), update: mutation("profiles.update"), delete: mutation("profiles.delete") },

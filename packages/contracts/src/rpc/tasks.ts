@@ -94,6 +94,41 @@ export class TaskRpcs extends RpcGroup.make(
     RequiredScope,
     "operate",
   ),
+  /**
+   * 4.8: where the open tasks merging into (or stacked on) the same closed or deleted task as this one go now, all of them
+   * at once (the old `POST /tasks/{id}/merge-target`): `onward` (where that one was going), `close` (done as that one
+   * ended), or one of them by id (it takes that one's place). The tasks changed. `Conflict` when there's nothing to choose
+   * or one's agent is running; `Invalid` (`to`) for a task that isn't one of them.
+   */
+  Rpc.make("tasks.mergeTarget", {
+    payload: { id: TaskId, to: Schema.String },
+    success: Schema.Array(Task),
+    error: Schema.Union([NotFound, Invalid, Conflict]),
+  }).annotate(RequiredScope, "operate"),
+  /**
+   * 4.8: merge the whole stack the task is in as one run (the old `POST /tasks/{id}/merge-stack`): every open level of its
+   * main line moves to Ready for merge, bottom first, and they merge with nothing else between them. The levels, bottom
+   * first. `Conflict` says why it can't yet ("The stack can't merge yet: …"); `Invalid` for a task in no stack.
+   */
+  Rpc.make("tasks.mergeStack", {
+    payload: { id: TaskId },
+    success: Schema.Array(Task),
+    error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
+  }).annotate(RequiredScope, "operate"),
+  /**
+   * 4.8: a stack's title and description (the old `PATCH /tasks/{id}/stack`), kept on its bottom task: set by hand (which
+   * pins them), or written again by the model (`regenerate`, which unpins them). `id` is any level. The bottom task.
+   */
+  Rpc.make("tasks.updateStack", {
+    payload: {
+      id: TaskId,
+      title: Schema.optional(Schema.String),
+      description: Schema.optional(Schema.String),
+      regenerate: Schema.optional(Schema.Boolean),
+    },
+    success: Task,
+    error: Schema.Union([NotFound, Invalid]),
+  }).annotate(RequiredScope, "operate"),
   /** Whether moving the task to Done would leave work of its unmerged, for the board to ask first (the old `GET /tasks/{id}/unmerged`). */
   Rpc.make("tasks.unmerged", { payload: { id: TaskId }, success: Schema.Struct({ unmerged: Schema.Boolean }), error: NotFound }).annotate(
     RequiredScope,

@@ -32,6 +32,10 @@ export const ConflictReason = Schema.Literals([
   // Fix broken checks (4.5): the pull request is merged or closed, or none of its checks failed.
   "pr_not_open",
   "nothing_failed",
+  // Merge targets and stacks (4.8): what a task merges into isn't closed or deleted, so there's nothing to choose; a whole
+  // stack can't merge yet (the detail says why).
+  "nothing_to_choose",
+  "stack_not_ready",
 ])
 export type ConflictReason = typeof ConflictReason.Type
 

@@ -1,9 +1,12 @@
 import { Effect, Layer } from "effect"
 import { Tokens } from "../agents/Tokens.ts"
+import { StackTitles } from "../agents/StackTitles.ts"
 import { Worktrees } from "../git/Worktrees.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Merges } from "../merge/Merges.ts"
+import { Restack } from "../git/Restack.ts"
+import { GhStacks } from "../github/GhStacks.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { Runs } from "../runs/Runs.ts"
 
@@ -38,7 +41,12 @@ export const RecoveryLive = Layer.effectDiscard(
     yield* runs.startUnblocked(null)
     // 4.6: reviews and summaries left running whose threads have no run going end as their runs did.
     yield* reviews.reconcileAll
+    // 4.8: the restacks that were due when the server stopped, and the stack levels to link on GitHub (both in the background).
+    yield* (yield* Restack).resume
+    yield* (yield* GhStacks).linkAll
     yield* toolCalls.resume
     yield* tokens.countPending(null)
+    // 4.8: a minute on, the open stacks whose titles weren't written from what their levels say now (in the background).
+    yield* (yield* StackTitles).resume
   }).pipe(Effect.withSpan("Recovery"), Effect.annotateLogs({ module: "recovery" })),
 )

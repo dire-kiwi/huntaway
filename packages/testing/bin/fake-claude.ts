@@ -61,7 +61,9 @@
 // its own task ($HUNTAWAY_TASK_ID) through the in-process server:
 //   branch  its base branch is moved to the run's HEAD (`git push . HEAD:<base>`, or to the base's remote when it has
 //           one): a fast-forward, which fails (and the task isn't moved) when the base has moved on
-//   pr      `gh pr merge <branch> --squash`, with $HUNTAWAY_GH_BIN (the fake gh of `test-server.sh --fake-gh`) or gh
+//   pr      `<fake gh> pr merge <branch> --squash`, with the fake gh in $HUNTAWAY_FAKE_CLAUDE_GH (`test-server.sh
+//           --fake-gh` sets it to the server's); without it, it doesn't merge ("couldn't merge: no fake gh"), and it
+//           never runs the machine's gh
 //   refuse  it doesn't merge, and replies so (the board then says it finished without merging)
 // Without it, a merge request is answered like any other prompt.
 import { spawnSync } from "node:child_process"
@@ -454,9 +456,13 @@ const merge = async (text: string) => {
   }
   let merged: { readonly ok: boolean; readonly out: string }
   if (how === "pr") {
-    // The fake GitHub's pull request of the branch, with the gh the board's tools would run (`HUNTAWAY_GH_BIN`).
-    const gh = spawnSync(env.HUNTAWAY_GH_BIN ?? "gh", ["pr", "merge", branch, "--squash"], { encoding: "utf8" })
-    merged = { ok: gh.status === 0, out: `${gh.stdout ?? ""}${gh.stderr ?? ""}`.trim().slice(0, 300) }
+    // The fake GitHub's pull request of the branch, with the fake gh (`HUNTAWAY_FAKE_CLAUDE_GH`); never the machine's gh.
+    const fakeGh = env.HUNTAWAY_FAKE_CLAUDE_GH ?? ""
+    if (fakeGh === "") merged = { ok: false, out: "no fake gh (HUNTAWAY_FAKE_CLAUDE_GH)" }
+    else {
+      const gh = spawnSync(fakeGh, ["pr", "merge", branch, "--squash"], { encoding: "utf8" })
+      merged = { ok: gh.status === 0, out: `${gh.stdout ?? ""}${gh.stderr ?? ""}`.trim().slice(0, 300) }
+    }
   } else {
     // Its base moved on to the branch (a fast-forward), in the repository and, with a remote, there too.
     const remote = gitIn(["config", `branch.${base}.remote`]).out

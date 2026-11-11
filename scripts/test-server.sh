@@ -219,6 +219,8 @@ start() {
     printf '#!/bin/sh\nHUNTAWAY_FAKE_GH_STATE=%q exec %q "$@"\n' "$dir/github.json" "$root/packages/testing/bin/fake-gh" > "$dir/gh"
     chmod +x "$dir/gh"
     serve+=(--gh-bin "$dir/gh")
+    # The fake claude's merge (HUNTAWAY_FAKE_CLAUDE_MERGE=pr) merges with this gh, never the machine's.
+    export HUNTAWAY_FAKE_CLAUDE_GH="$dir/gh"
   fi
   # What `restart` needs to start the same server again, the fake claude's knobs too.
   {
