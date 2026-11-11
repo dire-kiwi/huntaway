@@ -26,8 +26,9 @@
 // What it answers: `--version`; `auth token|status`; `pr create|view|list|checks|diff|comment|edit|merge|close`;
 // `issue view|list|create|comment`; `run list|view`; `repo view`; `api` for `user`, `repos/O/R`, `repos/O/R/pulls/N`
 // (GET, PATCH), `.../pulls/N/merge` (PUT), `.../pulls/N/merge-async` (PUT, then GET of its id), `repos/O/R/stacks/N`,
-// and `graphql` for a pull request's state, checks and reviews by the `owner`, `name` and `number` variables (plan
-// task 4.5 extends it). `--json` picks fields, and `--jq` takes a path (`.url`, `.a.b`). Anything else fails as gh does
+// and `graphql` for a pull request (state, checks, comments, reviews and review threads, paged, as PrWatch reads it)
+// and for many pull requests' states at once (the merged watcher's); `run view --job N --log-failed` from the repository's
+// `jobs`. `--json` picks fields, and `--jq` takes a path (`.url`, `.a.b`). Anything else fails as gh does
 // for a command it doesn't have. Calls change the file under a lock (a folder beside it), so concurrent ones don't
 // lose each other's changes.
 import { execFileSync } from "node:child_process"
@@ -49,12 +50,20 @@ interface Check {
   link?: string
   startedAt?: string
   completedAt?: string
+  id?: number
+  conclusion?: string
+  required?: boolean
+  kind?: string
+  suite?: { id: number; status: string }
 }
 interface Comment {
   author: string
   body: string
   createdAt?: string
   authorAssociation?: string
+  id?: string
+  bot?: boolean
+  url?: string
 }
 interface Review {
   author: string
@@ -62,6 +71,23 @@ interface Review {
   body?: string
   submittedAt?: string
   authorAssociation?: string
+  id?: string
+  bot?: boolean
+  url?: string
+}
+interface ThreadComment {
+  author: string
+  body: string
+  id?: string
+  createdAt?: string
+  authorAssociation?: string
+  bot?: boolean
+  url?: string
+  line?: number | null
+}
+interface Thread {
+  path: string
+  comments: Array<ThreadComment>
 }
 interface Pull {
   number: number
@@ -88,6 +114,9 @@ interface Pull {
   deletedBranch?: boolean
   mergeAsync?: string
   mergeAsyncPending?: boolean
+  reviewThreads?: Array<Thread>
+  threadsPage?: number
+  unreadable?: string
 }
 interface Issue {
   number: number
@@ -116,6 +145,7 @@ interface Repo {
   issues?: Array<Issue>
   runs?: Array<Run>
   stacks?: Record<string, Array<number>>
+  jobs?: Record<string, string>
 }
 interface Route {
   stdout?: string
@@ -140,10 +170,17 @@ const statePath = env["HUNTAWAY_FAKE_GH_STATE"]
 /** Fails the call as gh does: a message on stderr and an exit code (1). */
 class Failure extends Error {
   readonly code: number
-  constructor(message: string, code = 1) {
+  /** What it prints on stdout too (gh prints a GraphQL query's errors there). */
+  readonly stdout: string
+  constructor(message: string, code = 1, stdout = "") {
     super(message)
     this.code = code
+    this.stdout = stdout
   }
+}
+/** A GraphQL query that fails as gh does: its errors on stdout, `gh: <message>` on stderr, exit 1. */
+const graphqlFail = (message: string): never => {
+  throw new Failure(`gh: ${message}`, 1, `${JSON.stringify({ errors: [{ message }] })}\n`)
 }
 const fail = (message: string, code = 1): never => {
   throw new Failure(message, code)
@@ -395,9 +432,10 @@ const currentBranch = () => git(["symbolic-ref", "--short", "HEAD"])
 
 /** The pull request a `pr` command names (number, URL or branch; the current branch's with none). */
 const findPr = (state: State, p: Parsed, target: string | undefined): { key: string; pr: Pull } => {
-  let key = repoOf(state, p)
   let ref = target
   const url = ref === undefined ? null : /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(ref)
+  // A pull request's URL names its repository: no other is looked for.
+  let key = url === null ? repoOf(state, p) : ""
   if (url !== null) {
     key = url[1] === "github.com" ? `${url[2]}/${url[3]}` : `${url[1]}/${url[2]}/${url[3]}`
     ref = url[4]
@@ -580,6 +618,11 @@ const runCommand = (state: State, sub: string | undefined, p: Parsed): string =>
       .slice(0, Number(one(p, "limit") ?? 20))
     return shown(p, list, pickFields)
   }
+  if (sub === "view" && one(p, "job") !== null) {
+    const job = one(p, "job") ?? ""
+    const log = repoIn(state, repoOf(state, p)).jobs?.[job]
+    return log ?? fail(`HTTP 404: Not Found (https://api.github.com/repos/jobs/${job})`)
+  }
   if (sub === "view") {
     const id = Number(p.positional[2] ?? Number.NaN)
     const run = runs.find((r) => r.databaseId === id) ?? fail(`HTTP 404: Not Found (https://api.github.com/repos/run/${id})`)
@@ -618,28 +661,132 @@ const merge = (pr: Pull, method: string) => {
   pr.mergeAsyncPending = false
 }
 
-const graphql = (state: State, p: Parsed): unknown => {
-  const vars = fieldsOf(p)
-  const owner = str(vars["owner"])
-  const name = str(vars["name"] ?? vars["repo"])
-  const host = env["GH_HOST"] ?? "github.com"
-  const key = host === "github.com" ? `${owner}/${name}` : `${host}/${owner}/${name}`
-  const repo = repoIn(state, key)
-  const n = Number(vars["number"])
-  const pr = pulls(repo).find((x) => x.number === n) ?? fail(`GraphQL: Could not resolve to a PullRequest with the number of ${n}. (repository.pullRequest)`)
+/** A check as GraphQL's `statusCheckRollup.contexts` has it: a check run (of a workflow's job, with its suite), or a status. */
+const contextNode = (c: Check, i: number) => {
+  if (c.kind === "status") {
+    const state = c.bucket === "pass" ? "SUCCESS" : c.bucket === "fail" ? "FAILURE" : "PENDING"
+    return { __typename: "StatusContext", context: c.name, state, targetUrl: c.link ?? null, createdAt: c.startedAt ?? NOW, isRequired: c.required ?? false }
+  }
+  const pending = c.bucket === "pending"
+  const conclusion = c.conclusion ?? (c.bucket === "pass" ? "SUCCESS" : c.bucket === "fail" ? "FAILURE" : c.bucket === "skipping" ? "SKIPPED" : null)
+  return {
+    __typename: "CheckRun",
+    databaseId: c.id ?? 1000 + i,
+    name: c.name,
+    status: pending ? "IN_PROGRESS" : "COMPLETED",
+    conclusion: pending ? null : conclusion,
+    detailsUrl: c.link ?? null,
+    isRequired: c.required ?? false,
+    checkSuite:
+      c.workflow === undefined
+        ? null
+        : { databaseId: c.suite?.id ?? 1, status: c.suite?.status ?? (pending ? "IN_PROGRESS" : "COMPLETED"), workflowRun: { workflow: { name: c.workflow } } },
+  }
+}
+
+const authorNode = (login: string, bot: boolean | undefined) => ({ __typename: bot === true ? "Bot" : "User", login })
+
+/** A pull request's review threads from `after` (a page's cursor: the index of its first), `page` at a time. */
+const threadsOf = (key: string, pr: Pull, after: string | null) => {
+  const all = pr.reviewThreads ?? []
+  const size = pr.threadsPage ?? 100
+  const start = after === null ? 0 : Number(after)
+  const nodes = all.slice(start, start + size).map((t, i) => ({
+    path: t.path,
+    comments: {
+      nodes: t.comments.map((c, j) => ({
+        id: c.id ?? `t${start + i}c${j}`,
+        author: authorNode(c.author, c.bot),
+        authorAssociation: c.authorAssociation ?? "NONE",
+        body: c.body,
+        url: c.url ?? `${prUrl(key, pr.number)}#discussion_t${start + i}c${j}`,
+        createdAt: c.createdAt ?? NOW,
+        path: t.path,
+        line: c.line ?? null,
+        originalLine: c.line ?? null,
+      })),
+    },
+  }))
+  const next = start + size
+  return { pageInfo: { hasNextPage: next < all.length, endCursor: next < all.length ? String(next) : null }, nodes }
+}
+
+/** A pull request as `PrWatch`'s query has it (huntaway-server's github/prWatch/pr.ts `QUERY`). */
+const prNode = (key: string, pr: Pull, after: string | null) => {
   const view = prView(key, pr)
   return {
-    data: {
-      repository: {
-        pullRequest: {
-          ...view,
-          commits: { nodes: [{ commit: { oid: view.headRefOid, statusCheckRollup: { state: "", contexts: { nodes: view.statusCheckRollup } } } }] },
-          comments: { nodes: view.comments },
-          reviews: { nodes: view.reviews },
-        },
-      },
+    url: view.url,
+    number: pr.number,
+    title: pr.title,
+    state: pr.state,
+    isDraft: view.isDraft,
+    baseRefName: pr.base,
+    headRefOid: view.headRefOid,
+    mergeable: view.mergeable,
+    mergeStateStatus: view.mergeStateStatus,
+    reviewDecision: pr.reviewDecision ?? null,
+    commits: { nodes: [{ commit: { oid: view.headRefOid, statusCheckRollup: { contexts: { nodes: (pr.checks ?? []).map(contextNode) } } } }] },
+    comments: {
+      nodes: (pr.comments ?? []).map((c, i) => ({
+        id: c.id ?? `c${i}`,
+        author: authorNode(c.author, c.bot),
+        authorAssociation: c.authorAssociation ?? "NONE",
+        body: c.body,
+        url: c.url ?? `${view.url}#issuecomment-${i + 1}`,
+        createdAt: c.createdAt ?? NOW,
+      })),
     },
+    reviews: {
+      nodes: (pr.reviews ?? []).map((r, i) => ({
+        id: r.id ?? `r${i}`,
+        author: authorNode(r.author, r.bot),
+        authorAssociation: r.authorAssociation ?? "NONE",
+        state: r.state,
+        body: r.body ?? "",
+        url: r.url ?? `${view.url}#pullrequestreview-${i + 1}`,
+        submittedAt: r.submittedAt ?? NOW,
+      })),
+    },
+    reviewThreads: threadsOf(key, pr, after),
   }
+}
+
+/**
+ * `api graphql`: a pull request by `owner`, `name` and `number` (its review threads after `after`, for a page past
+ * the first), or many pull requests' states at once (`o0`, `n0`, `p0`…, aliased `pr0`…), as the board asks. A pull
+ * request with `unreadable` fails the query with that message.
+ */
+const graphql = (state: State, as: Account | null, p: Parsed): unknown => {
+  const vars = fieldsOf(p)
+  const host = one(p, "hostname") ?? env["GH_HOST"] ?? "github.com"
+  const keyOf = (owner: string, name: string) => (host === "github.com" ? `${owner}/${name}` : `${host}/${owner}/${name}`)
+  if (vars["o0"] !== undefined) {
+    const data: Record<string, unknown> = {}
+    const errors: Array<{ message: string }> = []
+    for (let i = 0; vars[`o${i}`] !== undefined; i++) {
+      const key = keyOf(str(vars[`o${i}`]), str(vars[`n${i}`]))
+      const n = Number(vars[`p${i}`])
+      const pr = state.repos?.[key]?.pulls?.find((x) => x.number === n)
+      if (pr?.unreadable !== undefined) return graphqlFail(pr.unreadable)
+      if (pr === undefined) {
+        errors.push({ message: `Could not resolve to a PullRequest with the number of ${n}.` })
+        data[`pr${i}`] = { pullRequest: null }
+        continue
+      }
+      const node = prNode(key, pr, null)
+      data[`pr${i}`] = { pullRequest: { state: node.state, headRefOid: node.headRefOid, commits: node.commits } }
+    }
+    return errors.length === 0 ? { data } : { data, errors }
+  }
+  const named = `${str(vars["owner"])}/${str(vars["name"] ?? vars["repo"])}`
+  const key = keyOf(str(vars["owner"]), str(vars["name"] ?? vars["repo"]))
+  const repo = state.repos?.[key] ?? graphqlFail(`Could not resolve to a Repository with the name '${named}'.`)
+  const n = Number(vars["number"])
+  const pr = pulls(repo).find((x) => x.number === n) ?? graphqlFail(`Could not resolve to a PullRequest with the number of ${n}.`)
+  if (pr.unreadable !== undefined) return graphqlFail(pr.unreadable)
+  const after = vars["after"] === undefined ? null : str(vars["after"])
+  if (after !== null) return { data: { repository: { pullRequest: { reviewThreads: threadsOf(key, pr, after) } } } }
+  return { data: { viewer: { login: as?.login ?? "" }, repository: { pullRequest: prNode(key, pr, null) } } }
 }
 
 const apiCommand = (state: State, as: Account | null, p: Parsed): string => {
@@ -647,7 +794,7 @@ const apiCommand = (state: State, as: Account | null, p: Parsed): string => {
   const fields = fieldsOf(p)
   const method = (one(p, "method") ?? (Object.keys(fields).length > 0 ? "POST" : "GET")).toUpperCase()
   const out = (v: unknown) => shown({ positional: [], flags: new Map(p.flags.has("jq") ? [["jq", p.flags.get("jq") ?? []]] : []) }, v, pickFields)
-  if (endpointGiven === "graphql") return out(graphql(state, p))
+  if (endpointGiven === "graphql") return out(graphql(state, as, p))
   let endpoint = endpointGiven.replace(/^\//, "")
   if (endpoint.includes("{owner}") || endpoint.includes("{repo}")) {
     const [owner, name] = ownerName(repoOf(state, p)).split("/")
@@ -811,6 +958,7 @@ const main = (): number => {
     return 0
   } catch (e) {
     if (e instanceof Failure) {
+      process.stdout.write(e.stdout)
       if (e.code === 8) process.stdout.write(e.message)
       else process.stderr.write(e.message.endsWith("\n") || e.message === "" ? e.message : `${e.message}\n`)
       return e.code

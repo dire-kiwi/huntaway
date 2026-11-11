@@ -2,6 +2,7 @@ import { Cause, Context, Effect, Exit, Layer, Option } from "effect"
 import type { Task, TaskId, Timestamp } from "@huntaway/contracts"
 import { Tokens } from "../agents/Tokens.ts"
 import { Checkpoints } from "../git/Checkpoints.ts"
+import { PullRequests } from "../github/PullRequests.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Actor, Change } from "../platform/Changes.ts"
 import { nowTimestamp } from "../platform/columns.ts"
@@ -69,6 +70,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const background = yield* BackgroundWork
       const waits = yield* RunWaits
       const checkpoints = yield* Checkpoints
+      const pullRequests = yield* PullRequests
 
       const board: Actor = { _tag: "Board" }
 
@@ -193,6 +195,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
           yield* changes.offer({ _tag: "ReviewFinished", thread: run.task_id, run: run.id, outcome, attention: run.attention })
         }
         if (later) return
+        // 4.5: the pull request its agent may have opened, looked up in the background for a task with a branch and none.
+        yield* pullRequests.findLater(run.task_id)
         // The queued message carries on the conversation, so the task stays where it is. Out of usage, it would only be
         // refused too: it stays queued for when the limit resets.
         if (first.queued !== null && decision.sendQueued) {

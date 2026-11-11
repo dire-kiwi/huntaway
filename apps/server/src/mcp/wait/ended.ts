@@ -1,4 +1,5 @@
 import { Result } from "effect"
+import { note as prNote } from "../../github/prWatch/pr.ts"
 import type { AgentWait, ReviewState, Status, Task, TaskId, WaitTask } from "@huntaway/contracts"
 
 // The `wait` tool's rules as plain functions (docs/plan/inventory/03-mcp.md 2.8; huntaway's mcp/wait.ts): how long a
@@ -51,7 +52,7 @@ export type Ended =
   | { readonly _tag: "Moved"; readonly status: Status }
   /** The wait's command exited, with this code (null if a signal ended it) and the end of its output. */
   | { readonly _tag: "Command"; readonly code: number | null; readonly output: string }
-  /** There's news about the wait's pull request, or it couldn't be read (plan task 4.5). */
+  /** There's news about the wait's pull request, or it couldn't be read (`PrWatch`'s `News`). */
   | { readonly _tag: "PullRequest"; readonly news: unknown }
 
 /** What the tool's `ended` says, for each way a wait ends. */
@@ -79,12 +80,10 @@ const REVIEW_ENDED: { readonly [S in ReviewState]: string } = {
   stopped: "was stopped",
 }
 
-/** What a pull request's news says (plan task 4.5, `PrWatch`'s note): until then, where to read it. */
-export const PR_NOTE = "There's news about your pull request (see pull_request)."
-
 /** What the tool tells the agent about how its wait ended, given the tasks it watched. */
 export const note = (e: Ended, watched: ReadonlyArray<WaitTask>): string => {
   const key = (id: TaskId) => watched.find((w) => w.id === id)?.key ?? id
+  if (e._tag === "PullRequest") return prNote(e.news)
   if (e._tag === "Tasks") {
     const parts: Array<string> = []
     if (e.tasks.length > 0) parts.push(`${e.tasks.map(key).join(", ")} changed status`)
@@ -99,13 +98,12 @@ export const note = (e: Ended, watched: ReadonlyArray<WaitTask>): string => {
 }
 
 /** The notes that say nothing more than how the wait ended. */
-const NOTES: { readonly [T in Exclude<Ended["_tag"], "Tasks" | "Moved" | "Command">]: string } = {
+const NOTES: { readonly [T in Exclude<Ended["_tag"], "Tasks" | "Moved" | "Command" | "PullRequest">]: string } = {
   Timeout: "The wait period is over. Check on what you were waiting for, and wait again if it isn't ready yet.",
   Subagent: "A subagent finished (see subagent).",
   Message: "A message was sent to you; you'll read it once this call returns.",
   Stopped: "The run was stopped.",
   Resumed: "The wait ended because you carried on with other work (another tool call).",
-  PullRequest: PR_NOTE,
 }
 
 /** What the note adds when the wait ended otherwise while its command ran. */

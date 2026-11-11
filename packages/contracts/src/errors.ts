@@ -29,6 +29,9 @@ export const ConflictReason = Schema.Literals([
   // The Changes tab (4.2): git's own refusal, and what would act on a whole repository the project is only a folder of.
   "git_refused",
   "whole_repository",
+  // Fix broken checks (4.5): the pull request is merged or closed, or none of its checks failed.
+  "pr_not_open",
+  "nothing_failed",
 ])
 export type ConflictReason = typeof ConflictReason.Type
 

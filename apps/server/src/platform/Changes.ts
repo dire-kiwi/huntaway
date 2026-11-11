@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Queue, Stream, SubscriptionRef } from "effect"
-import type { RunId, Task, TaskId } from "@huntaway/contracts"
+import type { Project, RunId, Task, TaskId } from "@huntaway/contracts"
 
 /** Who asked for a change (docs/plan/06-server.md, Tasks): decides what may be set, and is recorded as its cause. */
 export type Actor =
@@ -63,6 +63,12 @@ export type Change =
       readonly _tag: "PromptStarted"
       readonly task: TaskId
       readonly run: RunId
+    }
+  | {
+      /** A project's settings changed (`projects/Projects.update`): its tasks follow what they take from them (4.5: previews). */
+      readonly _tag: "ProjectChanged"
+      readonly before: Project
+      readonly after: Project
     }
 
 export interface ChangesShape {

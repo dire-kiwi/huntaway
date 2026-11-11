@@ -2,6 +2,7 @@ import { Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect
 import { SecureRandom } from "effect/crypto"
 import { Invalid, Project, ProjectId } from "@huntaway/contracts"
 import type { Conflict, NewProject, ProfileId, ProjectPatch, Timestamp } from "@huntaway/contracts"
+import { Changes } from "../platform/Changes.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
@@ -70,6 +71,7 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
       const configs = yield* AgentConfigRepo
       const db = yield* Db
       const events = yield* Events
+      const changes = yield* Changes
       const locks = yield* KeyedLock
       const proc = yield* Proc
       const dataDir = yield* DataDir
@@ -281,7 +283,15 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
         }).pipe(Effect.catchTag("Previewed", (e) => Effect.succeed(e.after)))
 
       const update = Effect.fn("Projects.update")(function* (id: ProjectId, patch: ProjectPatch) {
-        return yield* locks.withLock(["project", id])(write(id, patch, true))
+        return yield* locks.withLock(["project", id])(
+          Effect.gen(function* () {
+            const before = yield* getProject(id)
+            const after = yield* write(id, patch, true)
+            // What its tasks take from its settings follows them, by the reactor (4.5: previews of pull requests).
+            if (after.pr_preview_url !== before.pr_preview_url) yield* changes.offer({ _tag: "ProjectChanged", before, after })
+            return after
+          }),
+        )
       })
 
       // The project as the change would leave it, however each setting is stored.

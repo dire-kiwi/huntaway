@@ -8,8 +8,8 @@ import { usePreviewUp } from "./preview"
 export const showsPreview = (t: Task) => t.status === "in_review" && !!t.preview_url
 
 /** Green when the preview answers 200, yellow until then. Links to it. */
-export function PreviewDot({ url, label, className }: { url: string; label?: boolean | undefined; className?: string | undefined }) {
-  const up = usePreviewUp(url)
+export function PreviewDot({ url, host, label, className }: { url: string; host: string; label?: boolean | undefined; className?: string | undefined }) {
+  const up = usePreviewUp(url, host)
   return (
     <a
       href={url}
