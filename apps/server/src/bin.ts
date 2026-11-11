@@ -1,8 +1,11 @@
-import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Console, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { Command, Flag } from "effect/cli"
-import { Mac, SecureRandom } from "effect/crypto"
-import { HttpServer } from "effect/http"
+import { createServer } from "node:http"
+import { Digest, Mac, SecureRandom } from "effect/crypto"
+import { FetchHttpClient, HttpServer } from "effect/http"
+// 6.7: the Google consent step for the assistant's Google server.
+import { googleAuthCommand } from "./cli/googleAuth.ts"
 import { rpcCommand } from "./cli/rpc.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
@@ -72,7 +75,13 @@ const tokenCommand = Command.make(
 
 const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
   Command.withDescription("Huntaway: a kanban board for orchestrating Claude Code and Codex agents"),
-  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand]),
+  Command.withSubcommands([
+    serveCommand,
+    tokenCommand,
+    rpcCommand,
+    // 6.7: Node's HTTP server on the loopback, for the browser's way back.
+    googleAuthCommand((port) => NodeHttpServer.layer(createServer, { port, host: "127.0.0.1" })),
+  ]),
 )
 
 const program =
@@ -83,6 +92,16 @@ const program =
 
 program.pipe(
   Effect.catchTag("StartupError", (e) => Console.error(`huntaway: ${e.reason}`).pipe(Effect.andThen(Effect.sync(() => process.exit(1))))),
-  Effect.provide(Layer.mergeAll(NodeServices.layer, LoggingLive, InfoAndAbove)),
+  Effect.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      LoggingLive,
+      InfoAndAbove,
+      // 6.7: `google-auth`'s token request and PKCE.
+      FetchHttpClient.layer,
+      SecureRandom.layerWebCrypto,
+      Digest.layerWebCrypto,
+    ),
+  ),
   NodeRuntime.runMain,
 )

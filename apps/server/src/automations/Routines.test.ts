@@ -7,6 +7,7 @@ import type { NewAutomation, Profile, Task } from "@huntaway/contracts"
 import { fakeAgent, tempDir } from "@huntaway/testing"
 import { TestClock } from "effect/testing"
 import { Actor } from "../platform/Changes.ts"
+import { DataDir } from "../platform/DataDir.ts"
 import type { ServerConfigShape } from "../platform/ServerConfig.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
@@ -74,14 +75,15 @@ const reason = <A, E extends { readonly _tag: string }, R>(self: Effect.Effect<A
 
 const AT = Timestamp.make("2026-10-01T00:00:00.000Z")
 
-/** The profile's assistant (`A-1`), working in a folder of its own. */
+/** The profile's assistant (`A-1`), working in its workspace. */
 const assistantOf = (p: Profile) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     const fs = yield* FileSystem.FileSystem
-    const dir = `${yield* tempDir}/assistant`
-    yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.orDie)
     const id = TaskId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4())
+    // 6.7: its own workspace in the data folder (`Memory.checked` refuses any other), as an absolute path, as the importer writes it.
+    const dir = `${(yield* DataDir).root}/assistants/${id}`
+    yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.orDie)
     yield* sql`INSERT INTO tasks (id, profile_id, title, status, task_type, number, work_dir, model, permission_mode, last_activity_at, created_at, updated_at)
       VALUES (${id}, ${p.id}, 'Assistant', 'todo', 'assistant', 1, ${dir}, 'opus', 'acceptEdits', ${AT}, ${AT}, ${AT})`.pipe(Effect.orDie)
     return (yield* (yield* TaskRepo).get(id)) ?? assert.fail("no assistant")

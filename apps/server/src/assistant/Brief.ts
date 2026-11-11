@@ -90,6 +90,8 @@ export class Brief extends Context.Service<Brief, BriefShape>()("huntaway-server
       const document = Effect.fn("Brief.document")(function* (id: TaskId, asked: number | undefined) {
         const task = yield* tasks.get(id)
         if (task === null) return yield* new TaskNotFound({ id })
+        // Only the assistant has one.
+        if (task.kind !== "task" || task.task_type !== "assistant") return yield* new NotFound({ what: "brief", id })
         const versions = yield* repo.versions(id, LABEL)
         const version = asked ?? versions.at(-1)?.version ?? null
         const content = version === null ? null : yield* repo.content(id, LABEL, version)
@@ -106,7 +108,7 @@ export class Brief extends Context.Service<Brief, BriefShape>()("huntaway-server
         }
         const doc: TaskDocument = {
           label: "brief",
-          file: task.kind === "task" && task.task_type === "assistant" ? yield* fileOf(task) : null,
+          file: yield* fileOf(task),
           versions,
           version: content === null ? null : version,
           content,
