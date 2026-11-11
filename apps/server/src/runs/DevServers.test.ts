@@ -76,7 +76,7 @@ const server = (task: TaskId, detached: boolean) =>
   Effect.gen(function* () {
     const port = yield* Deferred.make<number, string>()
     const exited = yield* Deferred.make<void>()
-    const script = "const s = require('node:net').createServer(); s.listen(0, '127.0.0.1', () => console.log('port ' + s.address().port)) /* dev-server */"
+    const script = "/* dev-server */ const s = require('node:net').createServer(); s.listen(0, '127.0.0.1', () => console.log('port ' + s.address().port))"
     const child = yield* Effect.acquireRelease(
       Effect.sync(() => {
         const p = spawn(process.execPath, ["-e", script], { detached, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, [TASK_ENV]: task } })
