@@ -22,12 +22,16 @@ export const bearer = (authorization: string | undefined): string | null => {
 
 const boardSession: SessionShape = { kind: "board", scopes: boardScopes, device_id: null, via_link: null }
 
+/** A host that dialled in, with the hub token every such host shares: `link` and nothing else. */
+const hubTokenSession: SessionShape = { kind: "link", scopes: new Set(["link"]), device_id: null, via_link: null }
+
 /**
  * The server's side of `Auth` (docs/plan/05-protocol.md, Sessions and scopes). A socket a hub relays carries its
  * session sealed in the headers of its upgrade request (`x-huntaway-link`, `x-huntaway-session`), which the RPC server
  * puts before each request's own: such a request's session comes from the seal alone, and its bearer token is ignored.
  * A request header of the same name joins the upgrade's (`a, b`) and fails the seal, so a relayed client can spoil its
- * own session but never forge one. Otherwise the board token gives every scope but `link`. The RPC's `RequiredScope`
+ * own session but never forge one. Otherwise the board token gives every scope but `link`, and the hub token (a host
+ * that dials in) `link` alone. The RPC's `RequiredScope`
  * must be among the session's, and an RPC without one is refused.
  */
 export const AuthLive = Layer.effect(
@@ -36,6 +40,7 @@ export const AuthLive = Layer.effect(
     const identity = yield* Identity
     const seal = yield* SessionSeal
     const token = Redacted.value(identity.token)
+    const hubToken = Redacted.value(identity.hubToken)
     return Auth.of((effect, { headers, rpc }) => {
       const scope = Context.get(rpc.annotations, RequiredScope)
       const withSession = (session: SessionShape) =>
@@ -45,8 +50,9 @@ export const AuthLive = Layer.effect(
       if (link !== undefined || sealed !== undefined)
         return Effect.flatMap(seal.open(link ?? "", sealed ?? ""), Option.match({ onNone: () => Effect.fail(new Unauthorized()), onSome: withSession }))
       const given = bearer(headers["authorization"])
-      if (given === null || !sameSecret(given, token)) return Effect.fail(new Unauthorized())
-      return withSession(boardSession)
+      if (given !== null && sameSecret(given, token)) return withSession(boardSession)
+      if (given !== null && sameSecret(given, hubToken)) return withSession(hubTokenSession)
+      return Effect.fail(new Unauthorized())
     })
   }),
 )

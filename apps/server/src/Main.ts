@@ -11,6 +11,8 @@ import {
   BoardRpcs,
   ConfigRpcs,
   HostRpcGroup,
+  HubHostRpcs,
+  LinkRpcs,
   PenRpcs,
   PermissionRpcs,
   ProfileRpcs,
@@ -31,7 +33,12 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { LinkConnections } from "./hosts/LinkConnections.ts"
+import { LinkRepo } from "./hosts/LinkRepo.ts"
+import { Links } from "./hosts/Links.ts"
+import { Relay } from "./hosts/Relay.ts"
 import { SessionSeal } from "./hosts/SessionSeal.ts"
+import { RelayRoute } from "./http/relay.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -87,6 +94,8 @@ import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
 import { HostHandlers } from "./rpc/host.ts"
+import { HubHostHandlers } from "./rpc/hub.ts"
+import { LinkHandlers } from "./rpc/link.ts"
 import { PenHandlers } from "./rpc/pens.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
@@ -191,6 +200,12 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
+/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay. */
+const HostsLive = Layer.mergeAll(Links.layer, Relay.layer).pipe(
+  Layer.provideMerge(LinkConnections.layer),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer)),
+)
+
 /**
  * The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered), questions, and the
  * board's changes that always ask (with a deleted project's approvals expiring).
@@ -225,7 +240,7 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
     // Hosts: links, the relay, tools across hosts (M7).
-    Layer.provideMerge(SessionSeal.layer),
+    Layer.provideMerge(HostsLive),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
@@ -263,6 +278,8 @@ export const Served = PublicRpcs.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
+  HubHostRpcs,
+  LinkRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -279,6 +296,8 @@ export const HandlersLive = Layer.mergeAll(
   ApprovalRulesHandlers,
   ThreadHandlers,
   PermissionHandlers,
+  HubHostHandlers,
+  LinkHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
@@ -288,7 +307,7 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
+export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, RelayRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a

@@ -1,4 +1,5 @@
 import { ApprovalRulesRpcs } from "./approvalRules.ts"
+import { LinkRpcs } from "./link.ts"
 import { AttachmentRpcs } from "./attachments.ts"
 import { BoardRpcs } from "./board.ts"
 import { HostRpcGroup } from "./host.ts"
@@ -26,3 +27,7 @@ export type HostRpcs = typeof HostRpcs
 
 /** What a client of its own board can call: `HostRpcs` and `PublicRpcs` (`HubRpcs` joins with the hosts, M7). */
 export { PublicRpcs } from "./public.ts"
+
+/** What a hub calls on a host it links: the host's own groups and `link.*` (docs/plan/08-hosts.md). */
+export const PeerRpcs = HostRpcs.merge(LinkRpcs)
+export type PeerRpcs = typeof PeerRpcs
