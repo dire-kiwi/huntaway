@@ -172,6 +172,32 @@ The translator's state for a thread is kept by `Threads` while the thread is bei
 stored items when it is not. Two kinds of held state are lost on a restart today (results before their call, prompts
 before their call); they are now part of what a run's follower rebuilds by re-reading from the saved offset.
 
+As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
+
+- **`lines.ts`**: `decodeLine(text) → Result<ClaudeLine, LineProblem>`, one precompiled decoder per `type`
+  (`system/<subtype>` for system lines). A problem is `NotJson`, `Codex` (a `method`), `Ignored` (system `status`,
+  `hook_*`, `api_retry`, `thinking_tokens`), `Unknown` (a newer type) or `Malformed` (a field the server reads of the
+  wrong type): the follower logs and skips it. Decoding drops what the server does not read, which is most of `slim`.
+- **`translate(state, line, { writeNo, at, turn? }) → { state, events, metas, effects, warnings }`**. The state is
+  immutable (persistent `HashMap`s), so a caller whose append failed keeps the state from before the line. `writeNo`
+  is the board's write number the line's own ids take (`legacy:<writeNo>…`). For a `result`, `turn` carries what the
+  run knows: the cost the turn added (`turnCost(line)` → `RunRepo.addCost`, computed before translating), whether a
+  stop cut it short, whether the run is a compaction's. `isForeignResult` is the HA-404/405 check the follower makes
+  before. Effects: `SessionStarted`, `TurnStarted` (`init` — unless a steer started it —, `message_start`,
+  `assistant`), `TurnEnded` (`error` = the run's `result_error`, `interrupted`, `usageLimit`), `PreviewReset`,
+  `PreviewText`, `Echoed` (an `isReplay` echo: its uuid and `<task-notification>` task id), `AgentAt`, `RateLimit`,
+  `Compacted`. Control lines and `background_tasks_changed` make nothing: the follower reads them.
+- **Board writes are not translated**: `observe(state, events)` takes in what `Threads` wrote itself (a user message
+  starts what a turn says afresh; any item ends a compaction's claim to the next summary; requests and their
+  resolutions are what link prompts and make a denied call's error `denied`). `requestForPrompt(state, prompt)`
+  (`requests.ts`) builds a prompt's request (plan, questions, permission) and links it to its call with the old rules
+  (`linkPrompt`); `translate` opens it again, linked, when a call it waited for comes. `stateFromItems(items, requests,
+  meta)` is the old `Translator.from`.
+- **`ItemMeta`** (the schema of inventory 08, 3.3) is declared in `state.ts` until the thread store's is merged.
+- **Decided**: a Claude `compact_boundary` with a `parent_tool_use_id` goes in that subagent (the old `slim` dropped the
+  field, so its summary was never placed); a `task_*` line's `session_id` is not used to tell calls apart (the old
+  board deleted it); the import-only `finish` (cancel what is open at the end of a history) is not ported.
+
 `codex-run`, the adapter process between a run's files and `codex app-server`, is ported as its own entry point
 ([inventory 01](inventory/01-run-lifecycle.md), section 5, _Codex_).
 
