@@ -260,7 +260,7 @@ export const BoardEvent = Schema.Union([
 ```
 
 Gone: `message`, `message_updated`, `delta`, `delta_reset` (legacy), `thread_event` and `thread_resync` (a thread
-is its own subscription, [05-protocol.md](05-protocol.md#threads)), `telegram`, `tick` (the RPC client pings).
+is its own subscription, [05-protocol.md](05-protocol.md#a-thread)), `telegram`, `tick` (the RPC client pings).
 `hosts_changed` moves to the hub's own stream.
 
 ## Errors that cross the wire

@@ -1,0 +1,97 @@
+# 10. Testing and tools
+
+How the port is known to behave like the old board, and the tools agents use while they build it.
+
+## What "the same behaviour" is checked against
+
+There is no old API to compare answers with, because the transport changes. Parity is held by three things that do
+not depend on the transport:
+
+1. **The old tests' cases.** The old server has about 53,000 lines of tests beside its modules. Most assert
+   behaviour through functions that no longer exist, so the code is not carried, but each test's _case_ is: the
+   situation, the action, what must be true after. A task that ports an area lists the old test files it covers
+   (they are named after the parts: `agent/runner/queue.test.ts`, `mcp/wait/tests.test.ts`,
+   `git/worktree/tests.test.ts`…) and ports their cases onto the new services. A case that is dropped is named in
+   the pull request with the reason.
+2. **Recorded agent sessions.** The 42 scenarios under `threads/fixtures/` (raw Claude and Codex output with the
+   events it must produce) run against the new translators unchanged. They move to `packages/testing/fixtures/`.
+3. **The whole-app checks.** The 93 files of `apps/web/tests/ui` drive the built UI in Chromium against a real
+   server with a fake agent, finding things by visible text and role. The components are kept, so these run against
+   the new server with a new harness under them. They cover drag and drop, the thread, approvals, the Changes tab,
+   settings, hosts, notifications and reloads. **The port is ready to switch to when this suite passes.**
+
+## Tiers
+
+| Tier            | Where                                         | Runs                                             | Against                                                                 |
+| --------------- | --------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------- |
+| Pure            | beside the module, `*.test.ts`                | `it(…)`                                          | Decision functions, reducers, translators, parsers, graph rules: tables of cases |
+| Service         | beside the service                            | `it.effect` on `TestClock`, `layer(TestBoard)`   | Real SQLite in memory, a real temp folder, real `git`; fake agent CLIs, `gh`, GitHub, other hosts |
+| Whole server    | `apps/server/tests/e2e/`                      | `it.live`, one server process per file           | The real launcher and shim, a fake `claude` on `PATH`, the typed RPC client |
+| Structure       | `apps/server/tests/structure/`                | reads the sources                                | The rules in [12-conventions.md](12-conventions.md#structural-tests)     |
+| Component       | `apps/web/tests/browser/`                     | Vitest browser mode                              | Components on a fake host ([09-frontend.md](09-frontend.md#tests))       |
+| Whole app       | `apps/web/tests/ui/`                          | Playwright, a test server per file               | The built UI and a real server with agents off or faked                 |
+| Mobile          | `apps/mobile/tests/`                          | Jest                                             | Screens on a fake client                                                |
+| Shim            | `rust/shim/tests/`                            | `cargo test`                                     | As now                                                                  |
+
+Rules:
+
+- **No sleeps, no polling loops, no wall-clock assertions** in the pure and service tiers. Wait for what the code
+  produces: `Reactor.idle`, an event from `Events`, a `Deferred`, the end of a fiber. Move time with
+  `TestClock.adjust`. The old suite sleeps 142 times and shortens constants under a test flag; neither survives.
+- **A dependency is replaced with a layer.** No `IN_TEST` flag, no `*_BIN` variable read by the code under test, no
+  `when(point)`/`reached(point)` race hooks. A race is tested by controlling the fibers: fork both sides, let one
+  reach a `Latch`, then the other.
+- **The whole-server tier is for what only a process can show**: a restart under a running agent, the launcher's
+  exec-on-75, a crash and its backoff, two hosts linked over real sockets, a webhook over HTTP.
+- **Each fixed bug gets a test that fails without the fix**, as now.
+- Behaviour checks go in the lowest tier that can show them.
+
+## `packages/testing`
+
+| Module                 | Gives                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `TestBoard`            | A layer of the whole server's services on an in-memory database and a scoped temp data folder, with the clock, agent CLIs, `gh` and other hosts replaced. `TestBoard.with(overrides)` swaps any service |
+| `board`                | Builders: `profile()`, `project({ git: true })`, `task()`, `taskWithWork()`, `review()`, `stack()`                  |
+| `git`                  | A repository in a temp folder with commits, branches and a bare remote; `squashMerge`                              |
+| `fakeAgent`            | A scripted agent for service tests: feed lines to a run's `out.jsonl`, read what was written to its input, end it. Replaces `runner/testing.ts` |
+| `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`) and knobs. What it must do is inventory 01, section 10 |
+| `fakeGh`, `fakeGithub` | `gh` answers and a GraphQL pull request that tests change over time                                                |
+| `twoHosts`             | Two `TestBoard`s linked in memory, and the same over real sockets for the whole-server tier                        |
+| `fixtures/threads/`    | The recorded sessions                                                                                              |
+| `fakeHost` (browser)   | The component checks' fake                                                                                         |
+
+## Tools for agents<a id="tools-for-agents"></a>
+
+The old repository's `CLAUDE.md` tells every agent how to try a change without touching the live board. The same
+tools exist from M0, because every later task is built with them.
+
+| Old                              | New                                                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `scripts/test-server.sh`         | Same name and behaviour: a server from this worktree on a free port with a fresh data folder, `--seed`, `--demo`, `--fake-claude`, `--no-agents`, `restart`, `stop`. It prints and saves `export HUNTAWAY_TEST_URL=…` lines (`_TOKEN`, `_PID`, `_DATA_DIR`, `_ENV`, and with `--seed` `_PROFILE`, `_PROJECT`, `_REPO`) |
+| `scripts/ia-api`                 | `huntaway rpc <method> [json]` and `huntaway dev new-task \| start \| send \| task \| thread \| pending \| approve-all \| wait-idle`, with the same exit codes (0, 2 needs attention, 124 timeout) and the same refusal to touch anything but a test server |
+| `scripts/ui-check.mjs`           | Carried over: the step language (`goto`, `click`, `type`, `press`, `wait`, `gone`, `shot`…) and the module API are unchanged |
+| `scripts/ui-profile.mjs`, `event-loop-probe.mjs`, `copy-live-board.sh` | Carried over, pointed at the new server and database                                       |
+| `IA_SERVER=… pnpm dev`           | `HUNTAWAY_SERVER=… pnpm dev`                                                                                              |
+
+The rules around them are unchanged and go into the new `CLAUDE.md`: never a fixed port, never the live daemon,
+build in the worktree, test agent runs with a cheap model and the default permission mode, look at UI changes in a
+browser before finishing.
+
+## Measurements
+
+Taken at the end of M2 and again before the switch, on a copy of a live board's data, and compared with the old
+server on the same data:
+
+| What                                                        | How                                         | Limit                                   |
+| ----------------------------------------------------------- | ------------------------------------------- | --------------------------------------- |
+| Memory at idle and with ten runs followed                   | RSS after start; after ten fake runs        | No worse than 1.5× the old server       |
+| Time to ready                                               | Start to `HUNTAWAY_READY`                   | Under 2 s on the reference machine      |
+| Event-loop delay under a busy agent                         | `event-loop-probe.mjs`                      | p99 no worse than the old server        |
+| One line of agent output, read to stored                    | A run of 10,000 lines through the follower  | Within 1.5× the old server              |
+| The board snapshot                                          | Bytes and time for `board.watch`'s first message | Recorded; a filter is added if a phone needs it |
+| A hook's start                                              | `approval-hook` wall time                   | Under 60 ms                             |
+| `pnpm check`, `pnpm test`                                   | Wall time                                   | Recorded per milestone                  |
+
+Schema decoding is the cost Effect adds on the hot path. If the follower misses its limit, its line schemas are
+decoded with precompiled decoders and the per-line span is dropped (`Effect.fnUntraced`), before anything else is
+tried.

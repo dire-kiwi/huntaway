@@ -20,7 +20,7 @@ profiles      Profiles · AgentConfigs · Usage · UsageWindow
 projects      Projects · Relocation
 tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp
 threads       ThreadStore · Threads · ThreadReaders
-git           Git · Worktrees · TaskBase · Changes(tab) · Checkpoints · Restack · StatusScripts
+git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts
 github        Gh · PullRequests · PrWatch · GithubRepos · GhStacks
 agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · Titles
 runs          RunRepo · RunDir · Shim · RunFollower · Runs · BackgroundWork · DevServers · Compaction

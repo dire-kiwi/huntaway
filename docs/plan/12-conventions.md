@@ -283,7 +283,11 @@ type checker or a pattern and fails with the file and line:
    internal (only its public atoms and types).
 6. The hook commands' import graphs do not reach `effect`.
 7. No source file passes 1,000 lines (tests, fixtures and generated files excepted).
-8. Every RPC in the contract has a handler, and every board MCP tool has a schema and a handler (the layer would
-   also fail to build; this gives a readable message).
+8. Every RPC in the contract has a handler and states the scope it needs, and every board MCP tool has a schema and
+   a handler (the layer would also fail to build; this gives a readable message).
+9. Imports under `apps/server/src` follow the dependency order in [06-server.md](06-server.md#dependency-order): an
+   area imports the platform and the areas above it, never one below.
+10. A repository (`*Repo.ts`, `*Store.ts`) imports no process, network or file-system service, so a transaction
+    cannot contain a wait.
 
 These cover what a lint rule cannot see. Everything a rule can see is in [Linting](#linting).
