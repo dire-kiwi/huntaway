@@ -5,7 +5,20 @@ import { HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
-import { AttachmentRpcs, BoardRpcs, ConfigRpcs, HostRpcGroup, PenRpcs, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
+import {
+  ApprovalRulesRpcs,
+  AttachmentRpcs,
+  BoardRpcs,
+  ConfigRpcs,
+  HostRpcGroup,
+  PenRpcs,
+  ProfileRpcs,
+  ProjectRpcs,
+  PublicRpcs,
+  TaskRpcs,
+} from "@huntaway/contracts"
+import { ApprovalRules } from "./agents/ApprovalRules.ts"
+import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -27,6 +40,7 @@ import { ProfileRepo } from "./profiles/ProfileRepo.ts"
 import { Profiles } from "./profiles/Profiles.ts"
 import { ProjectRepo } from "./projects/ProjectRepo.ts"
 import { Projects } from "./projects/Projects.ts"
+import { ApprovalRulesHandlers } from "./rpc/approvalRules.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
@@ -78,18 +92,19 @@ const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner).pipe(
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer)),
   Layer.provideMerge(ProjectsLive),
 )
+const AgentsLive = ApprovalRules.layer.pipe(Layer.provideMerge(ApprovalRulesRepo.layer), Layer.provideMerge(TasksLive))
 // The demo board is seeded once every area is built, before Recovery runs.
 const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
   Layer.provideMerge(DemoLive),
   Layer.provideMerge(Dependencies.layer),
-  Layer.provideMerge(TasksLive),
+  Layer.provideMerge(AgentsLive),
 )
 
 /** Every area's services. */
 export const AreasLive = LifecycleLive
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
-export const Served = PublicRpcs.merge(HostRpcGroup, ProfileRpcs, ConfigRpcs, ProjectRpcs, TaskRpcs, BoardRpcs, PenRpcs, AttachmentRpcs)
+export const Served = PublicRpcs.merge(HostRpcGroup, ProfileRpcs, ConfigRpcs, ProjectRpcs, TaskRpcs, BoardRpcs, PenRpcs, AttachmentRpcs, ApprovalRulesRpcs)
 
 /** Their handlers. One line per area. */
 export const HandlersLive = Layer.mergeAll(
@@ -102,6 +117,7 @@ export const HandlersLive = Layer.mergeAll(
   BoardHandlers,
   PenHandlers,
   AttachmentHandlers,
+  ApprovalRulesHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

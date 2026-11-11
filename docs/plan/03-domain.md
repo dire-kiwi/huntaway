@@ -206,7 +206,7 @@ Each keeps its old fields. What changes:
 | `Host`, `HostInfo`, `HostSettings`, `ServerStatus`, `ReleaseStatus` | `server.ts` | `api_version`/`api_compat` replaced by `protocol` and `version`; `capabilities` stays. `HostInfo` gains `read_only` (a [rehearsal](11-migration.md#rehearsal)). `HostSettings` without `thread_items` |
 | `Usage`, `UsageLimit`   | `usage.ts`                                 | Same                                                                                             |
 | `PendingPermission`, `Approval` | `permissions.ts`, `approvals.ts`   | `kind` is `tool \| project \| delete_task \| automation \| workflow`, each with its own input    |
-| `ApprovalRules`, `ApprovalAction` | `approval_rules.ts`              | Same                                                                                             |
+| `ApprovalRules`, `ApprovalAction` | `approval_rules.ts`              | Same, in `approval.ts` (3.6): the view is `ApprovalRulesView`, the stored rules `ApprovalRuleSet`, a save `ApprovalRulesUpdate` |
 | `GitStatus`, `DiffResult`, `Turn`, `Checkpoint` | `git.ts` and handler-local types | Declared for the first time: the old handlers returned untyped JSON                      |
 | `SyncEntry`, `SettingsSync` | `settings_sync.ts`                     | Same                                                                                             |
 
@@ -264,7 +264,9 @@ export const BoardEvent = Schema.Union([
 
 Where the old event said "read them again" (`profiles_changed`, `settings_changed`, `pens`), the new one carries
 what to read (all profiles and configs, the settings, the profile's pens), so a client never loads lists beside the
-stream (HE-3).
+stream (HE-3). So do `approval_rules { profile_id, rules }` (the view `approvalRules.get` gives) and
+`approval_log { profile_id, task_id, action }` (the entry as written or settled) (3.6). The board snapshot carries
+neither: Settings reads them per profile with `approvalRules.get` and `log`.
 
 Gone: `message`, `message_updated`, `delta`, `delta_reset` (legacy), `thread_event` and `thread_resync` (a thread
 is its own subscription, [05-protocol.md](05-protocol.md#a-thread)), `telegram`, `tick` (the RPC client pings).

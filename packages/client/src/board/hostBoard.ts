@@ -205,6 +205,10 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       if (board.usage.get(usage.config_id) === usage) return next
       return { ...next, usage: new Map(board.usage).set(usage.config_id, usage) }
     }
+    case "approval_rules":
+    case "approval_log":
+      // A profile's approval rules and action log are read where Settings shows them, not kept in the board.
+      return next
     default:
       // A kind this version does not know (a newer host's): its number is taken, as nothing in it applies.
       return next
