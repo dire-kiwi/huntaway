@@ -10,6 +10,7 @@ import {
   AttachmentRpcs,
   BoardRpcs,
   ConfigRpcs,
+  GitRpcs,
   HostRpcGroup,
   PenRpcs,
   PermissionRpcs,
@@ -32,6 +33,10 @@ import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
 import { Git } from "./git/Git.ts"
+import { GitHubAccess } from "./git/GitHubAccess.ts"
+import { StatusScripts } from "./git/StatusScripts.ts"
+import { TaskBase } from "./git/TaskBase.ts"
+import { Worktrees } from "./git/Worktrees.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -72,6 +77,8 @@ import { RunRepo } from "./runs/RunRepo.ts"
 import { BackgroundWork } from "./runs/BackgroundWork.ts"
 import { Compaction } from "./runs/Compaction.ts"
 import { RunEnds } from "./runs/RunEnds.ts"
+import { SetupThread } from "./runs/SetupThread.ts"
+import { TaskDeletion } from "./runs/TaskDeletion.ts"
 import { Runs } from "./runs/Runs.ts"
 import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
@@ -86,6 +93,7 @@ import { ApprovalRulesHandlers } from "./rpc/approvalRules.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
+import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
@@ -150,8 +158,15 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(ThreadStore.layer),
   Layer.provideMerge(TasksLive),
 )
-/** The git area: running git; worktrees, a task's base, the Changes tab and checkpoints join this line (M4). */
-const GitLive = Git.layer.pipe(Layer.provideMerge(ThreadsLive))
+/**
+ * The git area: running git; a task's base and worktrees, status scripts (4.1); the Changes tab and checkpoints join
+ * this line (M4). What it needs of GitHub is `GitHubAccess`: none here until 4.4 gives the live one (`github/`).
+ */
+const GitLive = Layer.mergeAll(Worktrees.layer, StatusScripts.layer).pipe(
+  Layer.provideMerge(TaskBase.layer),
+  Layer.provideMerge(Layer.mergeAll(Git.layer, GitHubAccess.layerNone)),
+  Layer.provideMerge(ThreadsLive),
+)
 /** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
 export interface ModelCalls<T, E1, R1, E2, R2> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
@@ -235,6 +250,8 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
     Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.layer),
+    // What deleting a task and a project's setup thread are made of: runs, tasks and worktrees (4.1).
+    Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
     Layer.provideMerge(RunsArea),
     Layer.provideMerge(agentsLayer(models)),
   )
@@ -263,6 +280,7 @@ export const Served = PublicRpcs.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
+  GitRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -279,6 +297,7 @@ export const HandlersLive = Layer.mergeAll(
   ApprovalRulesHandlers,
   ThreadHandlers,
   PermissionHandlers,
+  GitHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

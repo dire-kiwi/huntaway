@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import { Titles } from "../agents/Titles.ts"
+import { StatusScripts } from "../git/StatusScripts.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
@@ -28,6 +29,7 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const taskTmp = yield* TaskTmp
       const titles = yield* Titles
       const permissions = yield* Permissions
+      const statusScripts = yield* StatusScripts
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -51,6 +53,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         } else {
           // The thread's mode changed: what it waits on that the new mode decides is settled (3.3).
           if (change.before !== null && change.before.permission_mode !== change.after.permission_mode) yield* permissions.applyMode(change.after.id)
+          // The project's status scripts for the move, in the background, one task's in order (4.1).
+          if (moved && change.before !== null) yield* statusScripts.changed(change.after, change.before.status)
           // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.
           if (moved || change.before?.running !== change.after.running) yield* taskTmp.changed(change.after)
           // An unpinned title catches up with what was said since.
