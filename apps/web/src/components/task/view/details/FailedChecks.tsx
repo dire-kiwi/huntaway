@@ -1,23 +1,51 @@
+import { useState } from "react"
 import { failedChecks, prChecks, type HostTask as Task } from "@huntaway/client"
-import { CircleX } from "lucide-react"
-import { Ago } from "../../../ui"
+import { CircleX, Loader2 } from "lucide-react"
+import { rpc } from "../../../../state/rpc"
+import { Ago, Button, ErrorBox, useAsyncAction } from "../../../ui"
 
-// "Fix broken checks" (the old `api.fixChecks`, which reads the pull request's checks and sends the failures to the
-// agent) comes with pull requests (4.5): until then this shows the checks as the board last read them.
-
-/** An open task's pull request's failed checks, as the board last read them. */
+/**
+ * Fix broken checks for an open task's pull request (`tasks.fixChecks`), with its failed checks as the board last read
+ * them. The button is there without them too: a pull request that no read watches (in a project that neither watches
+ * pull requests in review nor moves them to Done when merged, or a task idle in another column) has none, or an
+ * outdated one, and the button reads it afresh, sending the failures it finds or saying there are none.
+ */
 export function FailedChecks({ task }: { task: Task }) {
+  const { busy, error, run } = useAsyncAction()
+  // The head commit whose failures were sent, while it's still the one that failed.
+  const [sent, setSent] = useState<string | null>(null)
   if (!task.pr_url || task.status === "done") return null
   const checks = failedChecks(task)
+  const fix = () => run(async () => setSent((await rpc(task.host_id, "tasks.fixChecks", { id: task.id })).pr_checks?.head ?? null))
+  const button = (
+    <Button
+      size="sm"
+      disabled={busy}
+      onClick={() => void fix()}
+      title="Read the pull request's checks now and send the agent the failed ones, with the ends of their logs, asking it to fix them and push"
+    >
+      {busy && <Loader2 size={12} className="animate-spin" />}
+      Fix broken checks
+    </Button>
+  )
   if (!checks) {
     const last = prChecks(task)
-    if (!last) return null
     return (
       <div className="mt-2 space-y-2" data-checks="none">
-        <span className="text-[11px] text-faint">
-          Checks {last.outcome === "none" ? "none" : last.outcome} on <span className="font-mono">{last.head.slice(0, 7)}</span> as last read,{" "}
-          <Ago at={last.since} />
-        </span>
+        <div className="flex items-center gap-2">
+          {button}
+          <span className="text-[11px] text-faint">
+            {last ? (
+              <>
+                Checks {last.outcome === "none" ? "none" : last.outcome} on <span className="font-mono">{last.head.slice(0, 7)}</span> as last read,{" "}
+                <Ago at={last.since} />
+              </>
+            ) : (
+              "Reads the pull request's checks now"
+            )}
+          </span>
+        </div>
+        {error && <ErrorBox>{error}</ErrorBox>}
       </div>
     )
   }
@@ -48,11 +76,12 @@ export function FailedChecks({ task }: { task: Task }) {
         ))}
         {checks.more_failed > 0 && <li className="text-faint">and {checks.more_failed} more</li>}
       </ul>
-      {checks.pending > 0 && (
-        <div className="mt-2 flex items-center gap-2">
-          <span className="ml-auto text-[11px] text-faint">{checks.pending} still running</span>
-        </div>
-      )}
+      <div className="mt-2 flex items-center gap-2">
+        {button}
+        {sent === checks.head && <span className="text-[11px] text-muted">Sent to the agent</span>}
+        {checks.pending > 0 && <span className="ml-auto text-[11px] text-faint">{checks.pending} still running</span>}
+      </div>
+      {error && <ErrorBox className="mt-2">{error}</ErrorBox>}
     </div>
   )
 }

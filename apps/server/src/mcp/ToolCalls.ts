@@ -5,6 +5,7 @@ import type { PermissionMode, RemoteToolCall, Task, ToolOutcome } from "@huntawa
 import { blockedReason } from "@huntaway/shared"
 import { SecureRandom } from "effect/crypto"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
+import { codexResponse, toolAnswer } from "../agents/codex/requests.ts"
 import { ASKS_ITSELF } from "../agents/rules.ts"
 import { toJson } from "../platform/columns.ts"
 import { Identity } from "../platform/Identity.ts"
@@ -55,6 +56,8 @@ export const PRUNE_BATCH = 1000
 export interface ControlAnswer {
   readonly request_id: string
   readonly rpc_id: RpcId
+  /** A Codex dynamic tool's call (`item/tool/call`, 5.2): answered with a `codex_response` to request `rpc_id`. */
+  readonly codex?: boolean | undefined
 }
 
 export interface CallInput {
@@ -301,7 +304,10 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
         const to = input.answer
         if (to === undefined) return
         if ((yield* Ref.get(cancelled)).has(input.call_id)) return
-        const line = yield* mcpResponseLine(to.request_id, rpcResult(to.rpc_id, yield* callResult(result)))
+        const line =
+          to.codex === true
+            ? yield* codexResponse(to.rpc_id, { result: toolAnswer(yield* callResult(result)) })
+            : yield* mcpResponseLine(to.request_id, rpcResult(to.rpc_id, yield* callResult(result)))
         const sent = yield* dirs
           .appendInput(input.run, line)
           .pipe(Effect.catch((e) => Effect.logWarning(`run=${input.run} answering its ${to.request_id}: ${e.reason}`).pipe(Effect.as(true))))
@@ -322,7 +328,14 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
           const registered = yield* servers.find(input.server, input.tool)
           const run = yield* runs.get(input.run)
           const saved =
-            input.answer === undefined ? input.args : { request_id: input.answer.request_id, rpc_id: input.answer.rpc_id, arguments: input.args ?? null }
+            input.answer === undefined
+              ? input.args
+              : {
+                  request_id: input.answer.request_id,
+                  rpc_id: input.answer.rpc_id,
+                  arguments: input.args ?? null,
+                  ...(input.answer.codex === true ? { codex: true } : {}),
+                }
           const record: NewCall = {
             id: input.call_id,
             run_id: input.run,
@@ -404,19 +417,18 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
       const resumeOne = (open: OpenCall) =>
         Schema.decodeEffect(SavedJson)(open.args).pipe(
           Effect.flatMap((saved) =>
-            saved.codex !== undefined
-              ? Effect.void // Codex's dynamic tool calls are answered on their own lines (M5).
-              : FiberSet.run(
-                  fibers,
-                  call({
-                    call_id: open.id,
-                    run: open.run_id,
-                    server: BOARD_SERVER,
-                    tool: open.tool,
-                    args: saved.arguments ?? null,
-                    answer: { request_id: saved.request_id, rpc_id: saved.rpc_id },
-                  }),
-                ).pipe(Effect.asVoid),
+            FiberSet.run(
+              fibers,
+              call({
+                call_id: open.id,
+                run: open.run_id,
+                server: BOARD_SERVER,
+                tool: open.tool,
+                args: saved.arguments ?? null,
+                // A Codex dynamic tool's call is answered as Codex takes it (5.2).
+                answer: { request_id: saved.request_id, rpc_id: saved.rpc_id, ...(saved.codex === undefined ? {} : { codex: true }) },
+              }),
+            ).pipe(Effect.asVoid),
           ),
           Effect.catch((e) => Effect.logWarning(`call ${open.id} can't be taken up again: ${e.message}`)),
         )

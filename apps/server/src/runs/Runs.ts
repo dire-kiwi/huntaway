@@ -6,6 +6,7 @@ import { ContextMeter } from "../agents/ContextMeter.ts"
 import { planRest, startInstructions } from "../agents/prompts/start.ts"
 import { worthAsking } from "../agents/titles/text.ts"
 import { Titles } from "../agents/Titles.ts"
+import { Checkpoints } from "../git/Checkpoints.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { Usage } from "../profiles/Usage.ts"
@@ -20,6 +21,7 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
 import { Dependencies, isMerged } from "../tasks/Dependencies.ts"
+import { activeMerge, mergeLane, stackWaits } from "../tasks/lanes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
@@ -173,6 +175,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const profileRepo = yield* ProfileRepo
       const configRepo = yield* AgentConfigRepo
       const fs = yield* FileSystem.FileSystem
+      const checkpoints = yield* Checkpoints
       // The launches being prepared, by task: a stop interrupts one.
       const launches = yield* FiberMap.make<TaskId>()
       // The runs that may write their task's documents folder (they started with labels): a `/plan` is steered only
@@ -222,7 +225,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       /** Prepares the run's folder and starts its agent, then follows it. Interrupted by a stop while it prepares. */
       const launch = (run: Run, text: string) =>
         Effect.gen(function* () {
-          const prepared = yield* facts.claude(run, text)
+          const prepared = yield* facts.launch(run, text)
           if (prepared.writesDocuments) yield* Ref.update(writesDocuments, (all) => new Set([...all, run.id]))
           yield* dir.prepare(run.id, prepared.spec)
           // Not if it was stopped meanwhile (after spec.json, which a reap goes by): an agent started now would work
@@ -232,6 +235,8 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           // Once the shim is asked to start, it is let finish: a stop meanwhile reaps what it started.
           yield* Effect.uninterruptible(shim.spawn(run.id, prepared.spec))
           yield* runs.setPhase(run.id, "running")
+          // 4.3: the conversation rollback a rewind asked for is done with (made, or for another session).
+          yield* checkpoints.rewound(run.task_id, prepared.rewind ?? null)
           // Preparing is over: from here a stop goes to the agent, and messages sent meanwhile go to it now.
           yield* input.writeSteers(run.task_id)
           const started = yield* runs.get(run.id)
@@ -330,7 +335,9 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         const done = yield* register(id, message, kind, take, explain)
         yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: actorOf(message) })
         yield* FiberMap.run(launches, id, launch(done.run, done.text))
-        // The agent is changing the work under review: reviews, summaries and workflow steps are superseded (5.x, 6.x).
+        // The agent is changing the work under review: its review and summaries (4.6) and workflow steps (6.6) are
+        // superseded, by the reactor.
+        if (kind === "prompt" && done.after.kind === "task") yield* changes.offer({ _tag: "PromptStarted", task: id, run: done.run.id })
         return done.after
       })
 
@@ -349,10 +356,44 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         return (yield* tasks.getMany(task.depends_on)).filter((t) => !isMerged(t)).map((t) => t.key)
       })
 
+      /**
+       * 4.7: the task merging in `task`'s merge lane, if another and it waits for its turn (its approval isn't pending):
+       * a message to it is refused, as it can't run alongside the merge going on.
+       */
+      const activeMergeOf = Effect.fnUntraced(function* (task: Task) {
+        if (!task.merging || task.merge_approval === "pending" || task.project_id === null) return null
+        const rows = yield* tasks.projectTasks(task.project_id)
+        const other = activeMerge(rows, mergeLane(rows, task), yield* tasks.finishedLast(task.project_id))
+        return other !== null && other.id !== task.id ? { title: other.title } : null
+      })
+
+      /**
+       * 4.8: a stack level waiting in Ready for merge for the one below it isn't merging yet, so a message to it takes it
+       * out of the merge queue while its agent works, holding no merge slot; it goes back to waiting when its run ends
+       * (`remerge`). Not one summarising its merge for the user's approval, which is out of the queue as it is.
+       */
+      const outOfStackWait = Effect.fnUntraced(function* (task: Task, live: boolean) {
+        if (!task.merging || task.status !== "ready_for_merge" || task.running || live || task.merge_approval === "pending" || task.project_id === null) {
+          return task
+        }
+        if (!stackWaits(yield* tasks.projectTasks(task.project_id), task)) return task
+        const at = yield* nowTimestamp
+        const after = yield* db.tx(
+          Effect.gen(function* () {
+            yield* threads
+              .notice(task.id, "info", "Out of Ready for merge while its agent works: it goes back to waiting for the task it lands after when it's done")
+              .pipe(Effect.catchTag("TaskNotFound", () => Effect.void))
+            return yield* write(task, { status: "in_progress", merging: false, remerge: true }, at)
+          }),
+        )
+        yield* changes.offer({ _tag: "TaskChanged", before: task, after, cause: Actor.board })
+        return after
+      })
+
       const sendLocked = Effect.fnUntraced(function* (id: TaskId, message: Outgoing | null) {
-        const task = yield* load(id)
-        const project = task.project_id === null ? null : yield* tasks.project(task.project_id)
         const live = yield* liveRun(id)
+        const task = yield* outOfStackWait(yield* load(id), live !== null)
+        const project = task.project_id === null ? null : yield* tasks.project(task.project_id)
         const text = message?.text.trim() ?? ""
         const plan = task.kind === "task" && message !== null && !message.review && planRest(text) !== null
         const decision = decideSend({
@@ -360,8 +401,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           message,
           plan,
           project: project === null ? null : { name: project.name, archived: project.archived },
-          // Merges are plan task 4.x: until then no task is merging another's lane.
-          activeMerge: null,
+          activeMerge: yield* activeMergeOf(task),
           live:
             live === null
               ? null

@@ -2,7 +2,12 @@ import { Context, Effect, Layer, Option } from "effect"
 import { DocumentLabel, threadKindOf } from "@huntaway/contracts"
 import { TaskId } from "@huntaway/contracts"
 import type { Agent, PermissionMode, ProjectId, Task, ThreadKind, ThreadKindFields } from "@huntaway/contracts"
+import { GithubRemote } from "../github/GithubRemote.ts"
+import { Git } from "../git/Git.ts"
+import { taskBase } from "../git/worktree/stacks.ts"
+import { isMerged } from "../tasks/checks.ts"
 import { DataDir } from "../platform/DataDir.ts"
+import { ServerConfig } from "../platform/ServerConfig.ts"
 import type { DocumentFile } from "../prompts/documentGuide.ts"
 import type { LostWork } from "../prompts/lostBackground.ts"
 import { penBrief } from "../prompts/penBrief.ts"
@@ -107,6 +112,21 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
       const settings = yield* HostSettings
       const penRepo = yield* PenRepo
       const dataDir = yield* DataDir
+      const remote = yield* GithubRemote
+      const config = yield* ServerConfig
+
+      const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
+
+      /**
+       * Where a task with its own branch opens its pull request, if its repository is on GitHub (huntaway's
+       * runner/launch.ts): the remote a branch from its base is pushed to. 4.1's `TaskBase` gives the base a stacked
+       * task's branch is pushed from (the old `remote_base`); until then the task's own base, else its project's.
+       */
+      const githubOf = (task: ContextTask, project: PromptProject | null) =>
+        task.kind === "task" && project !== null && task.branch !== null
+          ? remote.github(expand(project.repo_path), task.base_branch ?? set(project.base_branch))
+          : Effect.succeed(null)
+      const git = yield* Git
 
       const projectOf = (id: ProjectId | null) => (id === null ? Effect.succeed(null) : projectRepo.get(id).pipe(Effect.map(Option.getOrNull)))
 
@@ -165,12 +185,28 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           profiles: yield* profiles.list,
           githubAccount: set(project?.github_account) ?? set(profile.github_account),
           pen: kind._tag === "Pen" ? yield* penOf(task, kind) : "",
+          github: yield* githubOf(task, project),
+          // The board serves gh (4.4); a project that has its own `gh` server or turns it off is 6.4's (`AgentTools`).
+          ghTools: true,
         }
         return context
       })
 
+      /**
+       * 4.8: the task as its agent is told of it (huntaway's runner/merge.ts `as_told`): one stacked on (or merging into)
+       * a task that's merged by now goes, and opens its pull request, where that one went, and isn't stacked any more,
+       * also once the board has restacked it there (its base branch is that already).
+       */
+      const asTold = Effect.fnUntraced(function* (task: Task) {
+        if ((task.start_from?.type !== "task" && task.merges_into === null) || task.branch === null) return task
+        const project = yield* projectOf(task.project_id)
+        const base = yield* taskBase((id) => taskRepo.get(id), task, project)
+        const below = task.start_from?.type === "task" ? yield* taskRepo.get(task.start_from.task_id) : null
+        return base !== task.base_branch || (below !== null && isMerged(below)) ? Object.assign({}, task, { base_branch: base, start_from: null }) : task
+      })
+
       const system = Effect.fn("Prompts.system")(function* (id: TaskId, run: RunTold) {
-        const task = yield* tasks.get(id)
+        const task = yield* asTold(yield* tasks.get(id))
         const kind = threadKindOf(task)
         return systemPrompt(kind, yield* contextOf(task, kind, run))
       })
@@ -235,9 +271,10 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         const scratchTask = o.type === "scratch"
         const number = yield* projectRepo.nextNumber(project.id)
         const useWorktree = (scratchTask ? false : (o.worktree ?? project.use_worktrees)) && project.is_git
-        // Where worktree setup would put it (its folder is `<number>-<the title's slug>`). The branch it is made from when
-        // the project names none is read from git by plan task 4.1 (`Worktrees`).
+        // Where worktree setup would put it (its folder is `<number>-<the title's slug>`), from the branch the project
+        // names, else the one checked out in its repository, as setup does (`Worktrees`).
         const name = `${number}-task-title`
+        const baseBranch = useWorktree ? (set(project.base_branch) ?? (yield* git.currentBranch(project.repo_path))) : null
         const task: ContextTask = {
           id: TaskId.make("<task id>"),
           profile_id: profile.id,
@@ -257,7 +294,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           use_worktree: useWorktree,
           worktree_path: useWorktree ? `${project.worktrees_root}/${name}` : null,
           branch: useWorktree ? `ia/${project.key.toLowerCase()}-${name}` : null,
-          base_branch: useWorktree ? set(project.base_branch) : null,
+          base_branch: baseBranch,
           start_from: null,
           merges_into: null,
           github_stack: null,

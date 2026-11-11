@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react"
 import { taskKey, type HostTask as Task } from "@huntaway/client"
 import type { Resolution } from "@huntaway/contracts"
+import { rpc } from "../../state/rpc"
 import { useProject } from "../boardHelpers"
 import { Button, Modal, ModalFooter, prLabel, RESOLUTION_LABELS } from "../ui"
 import { keyList, openIncomingNow } from "./MergesInto"
@@ -30,9 +31,14 @@ export function useConfirmDone() {
     }
     // Closed without being merged: the tasks merging into it wait for you.
     if (resolution !== "done") return incoming.length || levels.length ? ask() : true
-    // With Done, the old board asked whether the task's work is merged (`api.unmerged`): not yet on this server, which
-    // has no git until M4, so the move goes ahead.
-    return true
+    // With Done, whether the task's work is merged (its branch, or its pull request on GitHub). A check that fails
+    // doesn't stop the move.
+    if (task.kind !== "task" || !task.project_id || task.task_type) return true
+    const unmerged = await rpc(task.host_id, "tasks.unmerged", { id: task.id }).then(
+      (r) => r.unmerged,
+      () => false,
+    )
+    return unmerged ? ask() : true
   }, [])
   const close = (go: boolean) => {
     asking?.answer(go)

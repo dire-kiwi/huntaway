@@ -57,10 +57,81 @@ export class TaskRpcs extends RpcGroup.make(
     RequiredScope,
     "operate",
   ),
+  /**
+   * 4.6: review the task's work now (the old `POST /tasks/{id}/review`), even if the project doesn't review by itself or
+   * this commit was reviewed; it starts a fresh cycle of fixes. A task in In progress or Needs attention moves to In
+   * review. `Conflict` says why it can't ("Can't review: …").
+   */
+  Rpc.make("tasks.review", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
+  /**
+   * 4.6: give a task whose review still found issues after its rounds of fixes as many more (at least one): its agent is
+   * sent the issues again (the old `POST /tasks/{id}/review/extend`).
+   */
+  Rpc.make("tasks.extendReview", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
+  /** 4.6: summarise the task's changes now, whatever its review and column (the old `POST /tasks/{id}/summary`). */
+  Rpc.make("tasks.summarize", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
   /** How full the task's agent's context is: the summary on the task and the latest breakdown (the old `GET /tasks/{id}/context`). */
   Rpc.make("tasks.context", {
     payload: { id: TaskId },
     success: Schema.Struct({ context: Schema.NullOr(TaskContext), detail: Schema.Unknown }),
     error: NotFound,
   }).annotate(RequiredScope, "read"),
+  /**
+   * Fix broken checks (the old `POST /tasks/{id}/fix_checks`): read the task's pull request now and send its agent the
+   * head commit's failed checks with the ends of their logs. `Invalid` (`pr_url`) without a readable pull request,
+   * `Conflict` (`pr_not_open`, `nothing_failed`) when there's nothing to fix; a refused message as `tasks.send`. The task.
+   */
+  Rpc.make("tasks.fixChecks", { payload: { id: TaskId }, success: Task, error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]) }).annotate(
+    RequiredScope,
+    "operate",
+  ),
+  /**
+   * 4.8: where the open tasks merging into (or stacked on) the same closed or deleted task as this one go now, all of them
+   * at once (the old `POST /tasks/{id}/merge-target`): `onward` (where that one was going), `close` (done as that one
+   * ended), or one of them by id (it takes that one's place). The tasks changed. `Conflict` when there's nothing to choose
+   * or one's agent is running; `Invalid` (`to`) for a task that isn't one of them.
+   */
+  Rpc.make("tasks.mergeTarget", {
+    payload: { id: TaskId, to: Schema.String },
+    success: Schema.Array(Task),
+    error: Schema.Union([NotFound, Invalid, Conflict]),
+  }).annotate(RequiredScope, "operate"),
+  /**
+   * 4.8: merge the whole stack the task is in as one run (the old `POST /tasks/{id}/merge-stack`): every open level of its
+   * main line moves to Ready for merge, bottom first, and they merge with nothing else between them. The levels, bottom
+   * first. `Conflict` says why it can't yet ("The stack can't merge yet: …"); `Invalid` for a task in no stack.
+   */
+  Rpc.make("tasks.mergeStack", {
+    payload: { id: TaskId },
+    success: Schema.Array(Task),
+    error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
+  }).annotate(RequiredScope, "operate"),
+  /**
+   * 4.8: a stack's title and description (the old `PATCH /tasks/{id}/stack`), kept on its bottom task: set by hand (which
+   * pins them), or written again by the model (`regenerate`, which unpins them). `id` is any level. The bottom task.
+   */
+  Rpc.make("tasks.updateStack", {
+    payload: {
+      id: TaskId,
+      title: Schema.optional(Schema.String),
+      description: Schema.optional(Schema.String),
+      regenerate: Schema.optional(Schema.Boolean),
+    },
+    success: Task,
+    error: Schema.Union([NotFound, Invalid]),
+  }).annotate(RequiredScope, "operate"),
+  /** Whether moving the task to Done would leave work of its unmerged, for the board to ask first (the old `GET /tasks/{id}/unmerged`). */
+  Rpc.make("tasks.unmerged", { payload: { id: TaskId }, success: Schema.Struct({ unmerged: Schema.Boolean }), error: NotFound }).annotate(
+    RequiredScope,
+    "read",
+  ),
 ).middleware(Auth) {}

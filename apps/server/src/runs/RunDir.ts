@@ -2,6 +2,8 @@ import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect"
 import type { PlatformError } from "effect"
 import type { RunId } from "@huntaway/contracts"
 import type { LaunchSpec, McpRunSettings } from "../agents/AgentDriver.ts"
+import { specFromJson } from "../agents/codex/spec.ts"
+import type { CodexSpec } from "../agents/codex/spec.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
@@ -223,6 +225,10 @@ export interface RunDirShape {
   readonly readFile: (run: RunId, name: RunFile) => Effect.Effect<string | null>
   /** Write it (whole, by a rename), or remove it for null. */
   readonly writeFile: (run: RunId, name: RunFile, text: string | null) => Effect.Effect<void, RunFileError>
+  /** A Codex run's `codex.json` as it was launched; null for a Claude run, or one that doesn't read. */
+  readonly codexSpec: (run: RunId) => Effect.Effect<CodexSpec | null>
+  /** Whether the run is Codex's (its adapter's `codex.json`). */
+  readonly isCodex: (run: RunId) => Effect.Effect<boolean>
   // `background-waited` (plan task 3.5, the `background_wait` tool; the rest of the `background*` files are 2.8's).
   /** The ids of the background shells the agent said it waits on (`background_wait`); none if the file is missing or odd. */
   readonly backgroundWaited: (run: RunId) => Effect.Effect<ReadonlyArray<string>>
@@ -391,6 +397,8 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
           if (spec.mcpRun !== null) yield* writeMcpRun(run, spec.mcpRun)
           if (spec.mcpServers !== null) yield* writeMcpConfig(run, spec.mcpServers)
           if (spec.systemPrompt !== null) yield* write(run, "system-prompt.md", spec.systemPrompt)
+          // A Codex run's spec, which its adapter reads (and which marks the run as Codex's).
+          if (spec.codex !== undefined && spec.codex !== null) yield* writeJson(run, "codex.json", Schema.Unknown, spec.codex, true)
           yield* writeJson(run, "spec.json", RunSpec, { args: [...spec.args], config_dir: spec.configDir, cwd: spec.cwd }, true)
         })
 
@@ -451,6 +459,8 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
             : write(run, `.${name}.tmp`, text).pipe(
                 Effect.andThen(fs.rename(file(run, `.${name}.tmp`), file(run, name)).pipe(Effect.mapError(failed(run, name)))),
               ),
+        codexSpec: (run) => readJson(run, "codex.json", Schema.Unknown).pipe(Effect.map((v) => (v === null ? null : specFromJson(v)))),
+        isCodex: (run) => has(run, "codex.json"),
         backgroundWaited: (run) =>
           readJson(run, "background-waited", Schema.Array(Schema.Unknown)).pipe(
             Effect.map((ids) => (ids ?? []).filter((id): id is string => typeof id === "string")),

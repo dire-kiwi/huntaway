@@ -3,6 +3,8 @@ import { ApprovalRulesRpcs } from "./approvalRules.ts"
 import { LinkRpcs } from "./link.ts"
 import { AttachmentRpcs } from "./attachments.ts"
 import { BoardRpcs } from "./board.ts"
+import { CheckpointRpcs } from "./checkpoints.ts"
+import { GitRpcs } from "./git.ts"
 import { HostRpcGroup } from "./host.ts"
 import { HubHostRpcs } from "./hub.ts"
 import { PenRpcs } from "./pens.ts"
@@ -29,6 +31,8 @@ export const HostRpcs = HostRpcGroup.merge(
   SettingsSyncRpcs,
   AdminRpcs,
   ToolRpcs,
+  CheckpointRpcs,
+  GitRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

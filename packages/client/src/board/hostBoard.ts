@@ -56,6 +56,11 @@ export interface HostBoard {
   /** The board's own approvals waiting for the user, oldest first. */
   readonly approvals: ReadonlyArray<HostApproval>
   readonly restart: RestartState | null
+  /**
+   * By task: the number of the latest `checkpoints` event about it (a turn's checkpoint was taken, or it was rewound),
+   * which what shows its turns reads them again on.
+   */
+  readonly checkpoints: ReadonlyMap<TaskId, number>
 }
 
 const noSettings: HostSettings = {
@@ -84,6 +89,7 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   usage: new Map(),
   approvals: [],
   restart: null,
+  checkpoints: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -239,6 +245,8 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
     case "release_download":
       // What a release check found is read where Settings shows it (`admin.status`).
       return next
+    case "checkpoints":
+      return { ...next, checkpoints: new Map(board.checkpoints).set(message.task_id, message.seq) }
     case "approval_rules":
     case "approval_log":
       // A profile's approval rules and action log are read where Settings shows them, not kept in the board.

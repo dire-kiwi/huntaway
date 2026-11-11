@@ -3,6 +3,8 @@ import { Tool } from "effect/ai"
 import { ReviewState, Status } from "@huntaway/contracts"
 import type { Task, WaitTask } from "@huntaway/contracts"
 import { ApprovalRules } from "../../agents/ApprovalRules.ts"
+import { PrWatch } from "../../github/PrWatch.ts"
+import { EVENTS, note as prNote } from "../../github/prWatch/pr.ts"
 import { approvesOwnWaits } from "../../agents/claude/access.ts"
 import { toJson } from "../../platform/columns.ts"
 import { BackgroundWork } from "../../runs/BackgroundWork.ts"
@@ -13,7 +15,7 @@ import { ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
 import type { LocalCaller } from "../tool.ts"
 import { Wait } from "../Wait.ts"
 import { CommandApproval } from "../wait/CommandApproval.ts"
-import { COMMAND_MAX_SECS, COMMAND_STOPPED, DEFAULT_SECS, endedName, MAX_SECS, note, PR_NOTE, resuming, UNWATCHED_MAX_SECS } from "../wait/ended.ts"
+import { COMMAND_MAX_SECS, COMMAND_STOPPED, DEFAULT_SECS, endedName, MAX_SECS, note, resuming, UNWATCHED_MAX_SECS } from "../wait/ended.ts"
 import { Json, threadTool } from "./common.ts"
 import type { JsonObject } from "./common.ts"
 import { makeTaskJson } from "./taskJson.ts"
@@ -21,9 +23,6 @@ import { makeTaskJson } from "./taskJson.ts"
 // The waiting tools (docs/plan/inventory/03-mcp.md 2.5, 2.8; the old mcp/schemas/waiting.ts `wait_tools`,
 // mcp/tools/dispatch.ts `wait_tool` and agent/runner/background.ts `wait_tool`): `wait`, which blocks until something
 // happens (`Wait`), and `background_wait`, which says the agent waits on a background shell of its own.
-
-/** What a wait on a pull request ends on besides its being merged or closed. */
-export const PR_EVENTS = ["checks_failed", "checks_passed", "comments", "conflicts"] as const
 
 /**
  * The bounds the agent is shown for `seconds`. They are not enforced, as before: a shorter wait lasts a second, a longer
@@ -74,14 +73,15 @@ export const WaitTool = Tool.make("wait", {
           "Give the review state when you wait for a task's review: a review that ends between your read and the wait is otherwise missed.",
       }),
     ),
+    // A number is taken too, as agents send one (`7`, or `7.0`).
     pull_request: Schema.optionalKey(
-      Schema.String.annotate({
+      Schema.Union([Schema.String, Schema.Finite]).annotate({
         description:
           "A pull request to watch: its number (in your task's repository), OWNER/REPO#NUMBER or URL. The wait ends on news about it you haven't been told yet (see pull_request_events): its head commit's checks finished (one failed, or all the required ones passed), someone other than your GitHub account commented or reviewed, it started to conflict with its base branch, or it was merged or closed. It says what happened in pull_request: the failed checks with their links, new comments with their author, file, line and text, and its merge state. What you've been told is remembered across waits, so after acting on the news wait on it again: a comment made meanwhile ends that wait straight away. The first wait on a pull request reports how its checks ended and a conflict, but not its earlier comments. GitHub is read every minute or so, as your GitHub account.",
       }),
     ),
     pull_request_events: Schema.optionalKey(
-      Schema.Array(Schema.Literals(PR_EVENTS)).annotate({
+      Schema.Array(Schema.Literals(EVENTS)).annotate({
         description:
           "With pull_request, news to end the wait on besides checks_failed, checks_passed and conflicts, which every wait on a pull request ends on (default all of it): comments (comments and reviews), and the three it always has. Its being merged or closed always ends it too, and so does its conflicting while none of its checks is running, since GitHub runs no pull request checks on it then.",
       }),
@@ -117,10 +117,6 @@ export const BackgroundWait = Tool.make("background_wait", {
   .annotate(ForReviewers, true)
   .annotate(ForPlanning, true)
 
-/** What a pull request wait is refused with until the board watches pull requests (plan task 4.5). */
-export const NO_PR_WATCH =
-  "The wait didn't start: this board can't watch pull requests yet. Give a command that exits once what you're waiting for is ready instead (e.g. 'gh pr checks 12 --watch')."
-
 /** What `background_wait` tells the agent. */
 export const BACKGROUND_WAITING =
   "The board shows this task as working while it runs. You're told when it ends; call background_wait with waiting=false if you stop waiting on it."
@@ -136,9 +132,15 @@ export const waitTools = Effect.gen(function* () {
   const rules = yield* ApprovalRules
   const dirs = yield* RunDir
   const background = yield* BackgroundWork
+  const prWatch = yield* PrWatch
 
-  /** Whether the agent's own reviewer has reviewed its wait calls (Claude in auto mode; Codex's is M5's). */
+  /**
+   * Whether the agent's own reviewer has reviewed its wait calls: Claude's classifier in auto mode, or Codex's reviewer
+   * on the board's MCP server (`codex.json`'s `review_waits`; a dynamic tool's call is the board's to ask about).
+   */
   const reviewsOwnWaits = Effect.fnUntraced(function* (caller: LocalCaller) {
+    const codex = yield* dirs.codexSpec(caller.run.id)
+    if (codex !== null) return codex.review_waits
     const spec = yield* dirs.spec(caller.run.id)
     return spec !== null && approvesOwnWaits(spec.args)
   })
@@ -202,11 +204,14 @@ export const waitTools = Effect.gen(function* () {
         const answer = yield* approval.ask(caller, { command, cwd, description: `Run while waiting${reason !== "" ? `: ${reason}` : ""}` })
         if (!answer.allowed) return yield* ToolError.other(`The command wasn't approved, so the wait didn't start: ${answer.message ?? "denied"}`)
       }
-      // 4.5: the pull request is read (as the task's GitHub account) before the wait starts, so one that can't be read
-      // doesn't start it, and is watched while it lasts.
-      if (!resumed && params.pull_request !== undefined && params.pull_request.trim() !== "") return yield* ToolError.other(NO_PR_WATCH)
+      // Read as the task's GitHub account, which isn't asked about: it only reads.
+      const given = params.pull_request
+      const pullRequest =
+        resumed || given === undefined || String(given).trim() === ""
+          ? null
+          : yield* prWatch.request(task, given, params.pull_request_events ?? null).pipe(Effect.mapError((e) => ToolError.other(e.reason)))
       const started = yield* Clock.currentTimeMillis
-      const out = yield* waits.wait(caller, { reason, seconds: params.seconds ?? null, tasks, command })
+      const out = yield* waits.wait(caller, { reason, seconds: params.seconds ?? null, tasks, command, pullRequest })
       const watched = yield* Effect.forEach(
         out.wait.tasks,
         (x) =>
@@ -235,13 +240,13 @@ export const waitTools = Effect.gen(function* () {
         result["note"] = `${String(result["note"])} ${COMMAND_STOPPED}`
       }
       if (ended._tag === "Subagent") result["subagent"] = ended.agent
-      // Its news, whatever ended the wait (4.5: or else how it was when last read).
+      // Its news, whatever ended the wait, or else how it was when last read.
       const pr = out.wait.pull_request
       if (pr !== undefined) {
         if (pr.news !== undefined) {
-          if (ended._tag !== "PullRequest") result["note"] = `${String(result["note"])} ${PR_NOTE}`
+          if (ended._tag !== "PullRequest") result["note"] = `${String(result["note"])} ${prNote(pr.news)}`
           result["pull_request"] = pr.news
-        } else result["pull_request"] = { url: pr.url, number: pr.number }
+        } else result["pull_request"] = (yield* prWatch.last(task.id, pr)) ?? { url: pr.url, number: pr.number }
       }
       return result
     }),

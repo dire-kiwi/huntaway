@@ -10,7 +10,32 @@ import { useOpenLevels } from "../../../board/StackedOn"
 import { ConfirmModal, Toggle } from "../../../ui"
 import type { Mode } from "../layout"
 
-// The old TeardownModal (Tear down worktree) comes with worktrees (4.1); a subproject's tasks were a legacy branch.
+// A subproject's tasks were a legacy branch, and are gone.
+
+export function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
+  const [force, setForce] = useState(false)
+  const [deleteBranch, setDeleteBranch] = useState(false)
+  return (
+    <ConfirmModal
+      title="Tear down worktree"
+      width="max-w-lg"
+      body={
+        <>
+          <p>
+            Runs the project's teardown script, then removes the worktree directory. The branch <span className="font-mono text-fg">{task.branch}</span> is kept
+            unless you delete it, so the agent can pick up where it left off later.
+          </p>
+          <Toggle checked={force} onChange={setForce} label="Discard uncommitted changes" />
+          <Toggle checked={deleteBranch} onChange={setDeleteBranch} label="Also delete the branch" />
+        </>
+      }
+      action="Tear down"
+      danger
+      onConfirm={() => rpc(task.host_id, "git.teardownWorktree", { id: TaskId.make(task.id), force, delete_branch: deleteBranch })}
+      onClose={onClose}
+    />
+  )
+}
 
 export function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mode; onClose: () => void }) {
   const [deleteBranch, setDeleteBranch] = useState(false)

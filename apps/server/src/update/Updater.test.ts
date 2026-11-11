@@ -72,7 +72,7 @@ const host = (src: string, deployed: () => string | null = () => null, config: P
           Systemd.layerTest({ booted: false }),
         ),
       ),
-      Layer.provideMerge(TestBoard({ sourceDir: src, updateFrom: DEPLOYED, ...config })),
+      Layer.provideMerge(TestBoard({ sourceDir: src, updateFrom: DEPLOYED, path: "", ...config })),
     )
     const context = yield* Layer.build(layer)
     return { updater: Context.get(context, Updater), context }

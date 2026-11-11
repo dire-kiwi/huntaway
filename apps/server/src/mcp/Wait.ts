@@ -1,12 +1,18 @@
 import { Cause, Clock, Context, DateTime, Duration, Effect, Exit, Fiber, FiberMap, FileSystem, Layer, Option, Queue, Ref, Result, Stream } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { Timestamp } from "@huntaway/contracts"
-import type { AgentWait, BoardEvent, CallId, RunId, Task, TaskId, WaitTask } from "@huntaway/contracts"
+import type { AgentWait, BoardEvent, CallId, RunId, Task, TaskId, WaitPr, WaitTask } from "@huntaway/contracts"
+import { githubAccount } from "../agents/claude/access.ts"
+import { Gh } from "../github/Gh.ts"
+import { PrWatch, storedPr } from "../github/PrWatch.ts"
+import type { PrRequest } from "../github/PrWatch.ts"
+import { targetLabel } from "../github/prWatch/target.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import type { Run } from "../runs/Run.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
@@ -30,8 +36,8 @@ import type { Ended, Watched } from "./wait/ended.ts"
 // - a change of status of a task it watches, one being deleted, or its review finishing;
 // - one of its subagents completing, failing or stopping (recorded on the stored wait by the run's output: `RunWaits`);
 // - the exit of the shell command it was given, which runs in the agent's working directory while it waits;
-// - news about the pull request it was given (plan task 4.5: recorded on the stored wait by `PrWatch`; the seams are
-//   marked "4.5" below);
+// - news about the pull request it was given (read before the wait starts, then by `PrWatch.watch` racing the wait,
+//   which records it on the stored wait);
 // - a message sent to the agent (queued, or steered into this run), which it reads after the call;
 // - the run being stopped, or ending, or the task gone;
 // - the task moved to another column, explicitly (`moved_to`, which `Tasks.update` writes with the move);
@@ -52,6 +58,8 @@ export interface WaitRequest {
   readonly tasks: ReadonlyArray<WaitTask>
   /** A shell command to run while waiting, in the agent's working directory. */
   readonly command: string | null
+  /** A pull request whose news ends the wait (`PrWatch.request`), read as the task's GitHub account. */
+  readonly pullRequest: PrRequest | null
 }
 
 /** How a wait ended. */
@@ -93,6 +101,9 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
       const tasks = yield* TaskRepo
       const runs = yield* RunRepo
       const projects = yield* ProjectRepo
+      const profiles = yield* ProfileRepo
+      const gh = yield* Gh
+      const prWatch = yield* PrWatch
       const events = yield* Events
       const runWaits = yield* RunWaits
       const tmp = yield* TaskTmp
@@ -164,7 +175,7 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
       })
 
       /** How the wait ended, and the end of its command's output so far if that hadn't exited. */
-      const waitOut = Effect.fnUntraced(function* (task: Task, wait: AgentWait, live: Stream.Stream<BoardEvent>) {
+      const waitOut = Effect.fnUntraced(function* (task: Task, wait: AgentWait, live: Stream.Stream<BoardEvent>, readNow: boolean) {
         const until = millisOf(wait.until, yield* Clock.currentTimeMillis)
         const ids = new Set<string>([...wait.tasks.map((t) => t.id), task.id])
         // A change to one of the tasks involved (or a subscriber that fell behind) has the wait look again.
@@ -178,15 +189,23 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
         if (wait.command !== undefined) {
           // In the agent's working directory, with the task's temp folder as its TMPDIR, as the agent's own commands
           // have: a command that looks for a file the agent put in $TMPDIR would otherwise look in the wrong place for
-          // as long as the wait lasts (HA-301). gh acting as the task's GitHub account is plan task 4.4's.
+          // as long as the wait lasts (HA-301). gh in it acts as the task's GitHub account, as the gh tools do (through
+          // `huntaway gh-run`), and it doesn't run as another one when that account isn't signed in.
           const cwd = yield* workDir(task)
           const dir = yield* tmp.ensure(task)
-          command = yield* startCommand(spawner, wait.command, cwd, { ...config.agentEnv, ...(dir === null ? {} : { TMPDIR: dir }) })
+          const project = task.project_id === null ? null : Option.getOrNull(yield* projects.get(task.project_id))
+          const profile = Option.getOrNull(yield* profiles.get(task.profile_id))
+          const account = profile === null ? null : githubAccount(project, profile)
+          const ghEnv = yield* gh.shellEnv(account).pipe(Effect.mapError((e) => ToolError.other(e.message)))
+          command = yield* startCommand(spawner, wait.command, cwd, { ...config.agentEnv, ...(dir === null ? {} : { TMPDIR: dir }), ...ghEnv })
         }
         const exited = command === null ? null : yield* Effect.forkScoped(command.exited)
         const soFar = command === null ? Effect.succeed(null) : command.soFar
-        // 4.5: a pull request without news is read (straight away for a wait carried on after a restart) until there is
-        // some, which `PrWatch` records on the stored wait, racing here.
+        // A pull request without news is read (straight away for a wait carried on after a restart) until there is some,
+        // which `PrWatch` records on the stored wait: its task's event has the wait look again.
+        if (wait.pull_request !== undefined && wait.pull_request.news === undefined) {
+          yield* Effect.forkScoped(prWatch.watch(task, wait, readNow))
+        }
         while (true) {
           const ended = yield* check(task.id, wait)
           if (ended !== null) return { ended, output: yield* soFar }
@@ -210,10 +229,25 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
           const task = yield* tasks.get(caller.task.id)
           if (task === null) return yield* ToolError.other("unknown task")
           let wait = resuming(task, caller.call_id)
+          const resumed = wait !== null
           if (wait === null) {
             const command = request.command?.trim() ?? ""
-            const secs = period({ seconds: request.seconds, tasks: request.tasks, command, pullRequest: false })
+            const secs = period({ seconds: request.seconds, tasks: request.tasks, command, pullRequest: request.pullRequest !== null })
             if (Result.isFailure(secs)) return yield* ToolError.other(secs.failure)
+            // Read before the wait starts, so a pull request that can't be read doesn't start it.
+            const pr = request.pullRequest
+            let pullRequest: WaitPr | null = null
+            if (pr !== null) {
+              const reader = yield* prWatch.readerOf(task, pr.target)
+              const news = yield* prWatch.poll(task.id, caller.call_id, pr.events, reader).pipe(
+                Effect.mapError((e) => {
+                  // A host from the task's remote may be an SSH alias that couldn't be looked up.
+                  const hint = pr.target.host === "github.com" ? "" : ` (if ${pr.target.host} isn't a GitHub host, give the pull request's URL)`
+                  return ToolError.other(`The wait didn't start: ${targetLabel(pr.target)} couldn't be read: ${e.reason}${hint}`)
+                }),
+              )
+              pullRequest = storedPr(pr, news)
+            }
             const now = yield* Clock.currentTimeMillis
             const reason = request.reason?.trim() ?? ""
             wait = {
@@ -224,11 +258,12 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
               ...(command === "" ? {} : { command }),
               call_id: caller.call_id,
               run_id: caller.run.id,
+              ...(pullRequest === null ? {} : { pull_request: pullRequest }),
             }
             yield* store(task.id, wait)
           }
           yield* Ref.set(shown, wait)
-          const out = yield* Effect.exit(waitOut(task, wait, watching.live))
+          const out = yield* Effect.exit(waitOut(task, wait, watching.live, resumed))
           // Stopped with the server: the stored wait stays, for the call retried after the restart.
           if (Exit.isFailure(out) && Cause.hasInterruptsOnly(out.cause)) return yield* Effect.failCause(out.cause)
           // As it is now, with what came in meanwhile, before it's cleared.
@@ -237,8 +272,10 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
           yield* clear(task.id, caller.call_id)
           if (Exit.isFailure(out)) return yield* Effect.failCause(out.cause)
           const ended = out.value
-          // 4.5: the call returns its pull request's news, unless the agent won't see it (Stopped, Resumed), which
-          // `PrWatch` then counts as told.
+          // The call returns its pull request's news (whatever ended it), unless the agent won't see it: then it's left
+          // for the next wait.
+          const pr = last.pull_request
+          if (pr?.news !== undefined && ended.ended._tag !== "Stopped" && ended.ended._tag !== "Resumed") yield* prWatch.delivered(task.id, caller.call_id, pr)
           const outcome: WaitOutcome = { ended: ended.ended, wait: last, output: ended.output }
           return outcome
         }).pipe(Effect.scoped)

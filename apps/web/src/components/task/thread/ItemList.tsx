@@ -2,6 +2,7 @@ import { clsx } from "clsx"
 import { History, Repeat } from "lucide-react"
 import { createContext, memo, useContext, useMemo } from "react"
 import { splitAttachments } from "@huntaway/client"
+import type { Turn } from "@huntaway/contracts"
 import { openTaskModal } from "../../../state/route"
 import { AttachmentList } from "../Attachments"
 import { CompactLine, EventLine, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
@@ -9,16 +10,6 @@ import { Markdown } from "./Markdown"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
 import type { Item } from "./threadModel"
 import { ToolGroup } from "./tools"
-
-/**
- * A turn with a checkpoint, as the old API's turns list had it (API 70). Turns, checkpoints and rewinding are not on
- * this server yet: the thread provides no turns (`TurnsCtx` is null), so no rewind marks are drawn.
- */
-export interface Turn {
-  readonly message_id: number | null
-  readonly stale?: boolean | undefined
-  readonly rewind: { readonly ok: boolean }
-}
 
 // Memoized: the thread redraws for changes to its task (e.g. its context use), which leave the items as they were.
 export const ItemList = memo(function ItemList({
@@ -41,10 +32,10 @@ export const ItemList = memo(function ItemList({
   )
 })
 
-/** The thread's turns with checkpoints, by the message each started with, and how to rewind to before one (API 70). */
+/** The thread's turns with checkpoints, by the message (its write number) each started with, and how to rewind to before one. */
 export const TurnsCtx = createContext<{ byMessage: Map<number, Turn>; rewind: (t: Turn) => void } | null>(null)
 
-/** Beside a user message that started a turn: rewind the task to before it, or that it was rewound. Nothing without turns. */
+/** Beside a user message that started a turn: rewind the task to before it, or that it was rewound. */
 function RewindMark({ id }: { id: string }) {
   const turns = useContext(TurnsCtx)
   const turn = turns?.byMessage.get(Number(id))

@@ -45,6 +45,28 @@
 // assistant message. A prompt containing "fake-until-interrupted" keeps its turn going until an `interrupt` (which the
 // sleep before a reply doesn't heed), then ends it as Claude Code does: "[Request interrupted by user]" and an
 // error_during_execution result.
+//
+// Reviews (plan task 4.6). A reviewer's run (its prompt starts "Review the work on task", and it quotes the task's
+// description) calls `submit_review` through the in-process server before it replies: `pass`, unless the description
+// says "fake-review-fixes" (`needs_fixes` every round, with one serious issue, "fake issue: …") or
+// "fake-review-fixes-once" (`needs_fixes` on a first round; `pass` on a round that checks the issues found before, whose
+// prompt says "The previous review found these serious issues"). A run that is asked to fix a review's issues ("Fix them,
+// then commit") or whose prompt contains "fake-commit" (a task's first run quotes its description) makes an empty commit
+// ("fake work") in its working directory, so the branch has new work for the next round to review. A summarizer's run
+// replies as any other (its reply is the summary).
+//
+// Merges (plan task 4.7). With HUNTAWAY_FAKE_CLAUDE_MERGE set, a run asked to merge (its prompt is the merge request,
+// 'The user moved this task to "Ready for merge". … Merge branch `<branch>` into `<base>`', and not the summary an
+// approval asks for first, which says "Do not merge yet") merges and then calls `update_task` with `status: "done"` for
+// its own task ($HUNTAWAY_TASK_ID) through the in-process server:
+//   branch  its base branch is moved to the run's HEAD (`git push . HEAD:<base>`, or to the base's remote when it has
+//           one): a fast-forward, which fails (and the task isn't moved) when the base has moved on
+//   pr      `<fake gh> pr merge <branch> --squash`, with the fake gh in $HUNTAWAY_FAKE_CLAUDE_GH (`test-server.sh
+//           --fake-gh` sets it to the server's); without it, it doesn't merge ("couldn't merge: no fake gh"), and it
+//           never runs the machine's gh
+//   refuse  it doesn't merge, and replies so (the board then says it finished without merging)
+// Without it, a merge request is answered like any other prompt.
+import { spawnSync } from "node:child_process"
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -376,42 +398,117 @@ const callBoard = async (text: string) => {
     const space = after.search(/\s/)
     const name = space < 0 ? after : after.slice(0, space)
     const rest = space < 0 ? "" : after.slice(space).trim()
-    const toolArgs = rest === "" ? {} : parse(rest)
-    if (!sdkServers.includes("huntaway")) {
-      answers.push(`board ${name}: no in-process board server`)
-      continue
-    }
-    const tool = `toolu_${hex(12)}`
-    const ask = randomUUID()
-    rpc += 1
-    say([{ type: "tool_use", id: tool, name: `mcp__huntaway__${name}`, input: toolArgs }])
-    emit({
-      type: "control_request",
-      request_id: ask,
-      request: {
-        subtype: "mcp_message",
-        server_name: "huntaway",
-        message: {
-          jsonrpc: "2.0",
-          id: rpc,
-          method: "tools/call",
-          params: { name, arguments: toolArgs, _meta: { "claudecode/toolUseId": tool, progressToken: rpc } },
-        },
-      },
-    })
-    const r = field(field(await awaitResponse(ask), "response"), "mcp_response")
-    const res = field(r, "result")
-    const content = field(res, "content")
-    const said =
-      field(r, "id") === rpc
-        ? (Array.isArray(content) ? content : [])
-            .filter(isObject)
-            .map((c) => str(c.text))
-            .join(" ")
-        : `wrong JSON-RPC id ${JSON.stringify(field(r, "id") ?? null)}`
-    answers.push(`board ${name}: ${said.split(/\s+/).filter(Boolean).join(" ").slice(0, 300)}`)
-    toolResult(tool, said, null, field(res, "isError") === true)
+    await callTool(name, rest === "" ? {} : parse(rest))
   }
+}
+
+/** A reviewer's verdict (see "Reviews" above): `submit_review` before it replies. */
+const review = async (text: string) => {
+  if (!text.startsWith("Review the work on task")) return
+  const recheck = text.includes("The previous review found these serious issues")
+  const fixes = text.includes("fake-review-fixes-once") ? !recheck : text.includes("fake-review-fixes")
+  await callTool(
+    "submit_review",
+    fixes
+      ? {
+          verdict: "needs_fixes",
+          summary: "Fake review: one thing to fix.",
+          serious_issues: ["fake issue: the fake reviewer wants a fix (fake-review-fixes)"],
+          minor_issues: [],
+        }
+      : { verdict: "pass", summary: recheck ? "Fake review: the issues are fixed." : "Fake review: looks good.", serious_issues: [], minor_issues: [] },
+  )
+}
+
+/** An empty commit in the working directory, for a task's run asked to make one or to fix a review's issues. */
+const commit = (text: string) => {
+  if (text.startsWith("Review the work on task") || text.startsWith("Summarise the changes made")) return
+  if (!text.includes("fake-commit") && !text.includes("Fix them, then commit")) return
+  const made = spawnSync(
+    "git",
+    ["-c", "user.name=fake", "-c", "user.email=fake@example.com", "commit", "-q", "--allow-empty", "--no-verify", "-m", "fake work"],
+    {
+      encoding: "utf8",
+    },
+  )
+  answers.push(made.status === 0 ? "committed fake work" : `couldn't commit: ${(made.stderr ?? "").trim().slice(0, 200)}`)
+}
+
+/** git in the run's folder; what it printed, or why it failed. */
+const gitIn = (gitArgs: ReadonlyArray<string>): { readonly ok: boolean; readonly out: string } => {
+  const r = spawnSync("git", ["-c", "user.name=fake", "-c", "user.email=fake@example.com", ...gitArgs], { encoding: "utf8" })
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().slice(0, 300) }
+}
+
+/**
+ * The merge (see "Merges" above): asked to merge (the merge request, not the summary for an approval), the branch is
+ * merged into its base as `HUNTAWAY_FAKE_CLAUDE_MERGE` says, then `update_task` says it's done.
+ */
+const merge = async (text: string) => {
+  const how = env.HUNTAWAY_FAKE_CLAUDE_MERGE ?? ""
+  if (how === "" || !text.startsWith('The user moved this task to "Ready for merge".') || text.includes("Do not merge yet")) return
+  const asked = /Merge branch `([^`]+)` into `([^`]+)`/.exec(text)
+  const branch = asked?.[1]
+  const base = asked?.[2]
+  if (how === "refuse" || branch === undefined || base === undefined) {
+    answers.push("not merged (fake)")
+    return
+  }
+  let merged: { readonly ok: boolean; readonly out: string }
+  if (how === "pr") {
+    // The fake GitHub's pull request of the branch, with the fake gh (`HUNTAWAY_FAKE_CLAUDE_GH`); never the machine's gh.
+    const fakeGh = env.HUNTAWAY_FAKE_CLAUDE_GH ?? ""
+    if (fakeGh === "") merged = { ok: false, out: "no fake gh (HUNTAWAY_FAKE_CLAUDE_GH)" }
+    else {
+      const gh = spawnSync(fakeGh, ["pr", "merge", branch, "--squash"], { encoding: "utf8" })
+      merged = { ok: gh.status === 0, out: `${gh.stdout ?? ""}${gh.stderr ?? ""}`.trim().slice(0, 300) }
+    }
+  } else {
+    // Its base moved on to the branch (a fast-forward), in the repository and, with a remote, there too.
+    const remote = gitIn(["config", `branch.${base}.remote`]).out
+    merged = gitIn(["push", "--quiet", "--no-verify", remote === "" ? "." : remote, `HEAD:refs/heads/${base}`])
+  }
+  answers.push(merged.ok ? `merged ${branch} into ${base}` : `couldn't merge: ${merged.out}`)
+  const task = env.HUNTAWAY_TASK_ID
+  if (merged.ok && task !== undefined) await callTool("update_task", { task_id: task, status: "done" })
+}
+
+/** Calls a tool of the in-process board server, waiting for its answer; what it returned goes in the reply. */
+const callTool = async (name: string, toolArgs: unknown) => {
+  if (!sdkServers.includes("huntaway")) {
+    answers.push(`board ${name}: no in-process board server`)
+    return
+  }
+  const tool = `toolu_${hex(12)}`
+  const ask = randomUUID()
+  rpc += 1
+  say([{ type: "tool_use", id: tool, name: `mcp__huntaway__${name}`, input: toolArgs }])
+  emit({
+    type: "control_request",
+    request_id: ask,
+    request: {
+      subtype: "mcp_message",
+      server_name: "huntaway",
+      message: {
+        jsonrpc: "2.0",
+        id: rpc,
+        method: "tools/call",
+        params: { name, arguments: toolArgs, _meta: { "claudecode/toolUseId": tool, progressToken: rpc } },
+      },
+    },
+  })
+  const r = field(field(await awaitResponse(ask), "response"), "mcp_response")
+  const res = field(r, "result")
+  const content = field(res, "content")
+  const said =
+    field(r, "id") === rpc
+      ? (Array.isArray(content) ? content : [])
+          .filter(isObject)
+          .map((c) => str(c.text))
+          .join(" ")
+      : `wrong JSON-RPC id ${JSON.stringify(field(r, "id") ?? null)}`
+  answers.push(`board ${name}: ${said.split(/\s+/).filter(Boolean).join(" ").slice(0, 300)}`)
+  toolResult(tool, said, null, field(res, "isError") === true)
 }
 
 const subagent = () => {
@@ -439,6 +536,9 @@ const clock = (seconds: number) => {
 const turn = async (text: string) => {
   await askPermissions(text)
   await callBoard(text)
+  await review(text)
+  commit(text)
+  await merge(text)
   if (text.trim() === "/compact") {
     emit({ type: "system", subtype: "compact_boundary", session_id: session, compact_metadata: { trigger: "manual", pre_tokens: 1234 } })
   }

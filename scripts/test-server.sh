@@ -14,6 +14,9 @@
 #   --fake-claude  run agents with packages/testing/bin/fake-claude (prints a reply and a result, no model; its
 #                  HUNTAWAY_FAKE_CLAUDE_* knobs are kept for `restart`, and it logs to <data-dir>/fake-claude.log)
 #   --no-agents    no agent runs at all (`serve --no-agents`)
+#   --fake-gh      run gh as packages/testing/bin/fake-gh over a fake GitHub kept in <data-dir>/github.json (its state,
+#                  which a test reads and changes: accounts, repositories, pull requests; see fake-gh.ts), starting from
+#                  $HUNTAWAY_FAKE_GH_SEED's file if set, else from no accounts and no repositories
 #
 # `start` prints shell assignments (HUNTAWAY_TEST_URL, HUNTAWAY_TEST_TOKEN, HUNTAWAY_TEST_PID, HUNTAWAY_TEST_DATA_DIR,
 # HUNTAWAY_TEST_ENV, and with --seed HUNTAWAY_TEST_PROFILE, HUNTAWAY_TEST_PROJECT, HUNTAWAY_TEST_REPO), so
@@ -172,11 +175,12 @@ build_shim() {
 }
 
 start() {
-  local bin=${HUNTAWAY_TEST_BIN:-} do_seed="" agents=1 fake="" serve=()
+  local bin=${HUNTAWAY_TEST_BIN:-} do_seed="" agents=1 fake="" fake_gh="" serve=()
   for a in "$@"; do
     case $a in
       --seed) do_seed=1 ;;
       --fake-claude) fake=1 ;;
+      --fake-gh) fake_gh=1 ;;
       --no-agents) agents="" ;;
       *) serve+=("$a") ;;
     esac
@@ -210,6 +214,14 @@ start() {
   dir="$(mktemp -d -t huntaway-test-XXXXXX)"
   touch "$dir/$marker"
   [[ -n $fake ]] && export HUNTAWAY_FAKE_CLAUDE_LOG="$dir/fake-claude.log"
+  if [[ -n $fake_gh ]]; then
+    if [[ -n ${HUNTAWAY_FAKE_GH_SEED:-} ]]; then cp "$HUNTAWAY_FAKE_GH_SEED" "$dir/github.json"; else echo '{}' > "$dir/github.json"; fi
+    printf '#!/bin/sh\nHUNTAWAY_FAKE_GH_STATE=%q exec %q "$@"\n' "$dir/github.json" "$root/packages/testing/bin/fake-gh" > "$dir/gh"
+    chmod +x "$dir/gh"
+    serve+=(--gh-bin "$dir/gh")
+    # The fake claude's merge (HUNTAWAY_FAKE_CLAUDE_MERGE=pr) merges with this gh, never the machine's.
+    export HUNTAWAY_FAKE_CLAUDE_GH="$dir/gh"
+  fi
   # What `restart` needs to start the same server again, the fake claude's knobs too.
   {
     declare -p bin serve

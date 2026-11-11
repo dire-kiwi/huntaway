@@ -1,9 +1,24 @@
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
-import { Conflict, Invalid, NotFound } from "../errors.ts"
-import { ProfileId, ProjectId } from "../ids.ts"
+import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
+import { ProfileId, ProjectId, TaskId } from "../ids.ts"
 import { NewProject, Project, ProjectPatch } from "../project.ts"
 import { Auth, RequiredScope } from "../session.ts"
+import { Task } from "../task.ts"
+
+/** A branch a task can start from: `feature` for a local one, `origin/feature` (`remote`) for one only on a remote. */
+export const Branch = Schema.Struct({ name: Schema.String, remote: Schema.Boolean })
+export interface Branch extends Schema.Schema.Type<typeof Branch> {}
+
+/** What removing merged worktrees did with a done task's worktree: removed, or kept and why (`detail`). */
+export const MergedWorktreeResult = Schema.Struct({
+  task_id: TaskId,
+  number: Schema.Int,
+  title: Schema.String,
+  removed: Schema.Boolean,
+  detail: Schema.String,
+})
+export interface MergedWorktreeResult extends Schema.Schema.Type<typeof MergedWorktreeResult> {}
 
 /** Projects (the old `/profiles/{id}/projects` and `/projects/{id}`). Changes emit `project` or `project_deleted`. */
 export class ProjectRpcs extends RpcGroup.make(
@@ -26,4 +41,24 @@ export class ProjectRpcs extends RpcGroup.make(
   }).annotate(RequiredScope, "settings"),
   /** Deletes the project and its tasks; its repository folder is left alone. */
   Rpc.make("projects.delete", { payload: { id: ProjectId }, error: Schema.Union([NotFound, Conflict]) }).annotate(RequiredScope, "settings"),
+  /** The repository's branches, newest commit first, at most 200 (the old `GET /projects/{id}/branches`). */
+  Rpc.make("projects.branches", { payload: { id: ProjectId }, success: Schema.Array(Branch), error: NotFound }).annotate(RequiredScope, "read"),
+  /**
+   * Remove the worktrees of the project's done tasks whose work is merged and that have nothing uncommitted, one at a
+   * time, each base branch fetched once first: one result for each done task that had a worktree.
+   */
+  Rpc.make("projects.removeMergedWorktrees", { payload: { id: ProjectId }, success: Schema.Array(MergedWorktreeResult), error: NotFound }).annotate(
+    RequiredScope,
+    "git",
+  ),
+  /**
+   * The project's setup thread, whose agent helps make its folder a git repository with a commit, started with `message`
+   * after its instructions; the one it has already is returned as it is. `Conflict` (`worktree_made`) when the folder is
+   * ready for worktrees already.
+   */
+  Rpc.make("projects.setupThread", {
+    payload: { id: ProjectId, message: Schema.optional(Schema.String) },
+    success: Task,
+    error: Schema.Union([NotFound, Conflict, Invalid, Unavailable]),
+  }).annotate(RequiredScope, "git"),
 ).middleware(Auth) {}

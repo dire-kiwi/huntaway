@@ -3,6 +3,8 @@ import type { RunId } from "@huntaway/contracts"
 import type { ControlRequestLine } from "../agents/claude/lines.ts"
 import { controlResponse } from "../agents/claude/launch.ts"
 import type { BoardManifest, ServedServers } from "../agents/claude/launch.ts"
+import { classify, codexResponse } from "../agents/codex/requests.ts"
+import type { Classified, CodexAnswer, CodexRequest } from "../agents/codex/requests.ts"
 import { toJson } from "../platform/columns.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
@@ -41,6 +43,24 @@ export interface AgentRequestHandler {
    * task (the old `expire_for_task`; else `expire_for_run`). Every handler hears of it.
    */
   readonly ended?: ((run: Run, idle: boolean) => Effect.Effect<void>) | undefined
+}
+
+/**
+ * Codex's requests (5.2), as a Codex run's line handler read them (`agents/codex/requests.ts`): approvals and questions
+ * (`prompt`, which `Permissions` answers) and the board's tools' calls (`tool`, the dynamic-tools transport's). Their
+ * cancellations (`serverRequest/resolved`) go to every handler's `cancel` as request `codex:<id>`, and a re-attached
+ * run's open ones to `resume`, as Claude's do.
+ */
+export type CodexRequestKind = "prompt" | "tool"
+
+/** An area's answerer for one kind of Codex request. */
+export interface CodexRequestHandler<K extends CodexRequestKind> {
+  /** In the background, as `AgentRequestHandler.handle`: it answers on the run's input itself (`AgentRequests.respondCodex`). */
+  readonly handle: (
+    run: Run,
+    request: CodexRequest,
+    classified: Extract<Classified, { readonly _tag: K extends "prompt" ? "Prompt" : "Tool" }>,
+  ) => Effect.Effect<void>
 }
 
 /** What the launch is told of the board's MCP servers. */
@@ -82,6 +102,16 @@ export interface AgentRequestsShape {
   readonly respond: (run: RunId, response: unknown) => Effect.Effect<boolean>
   readonly manifest: (review: boolean) => Effect.Effect<BoardManifest>
   readonly served: Effect.Effect<ServedServers>
+  /** An area answers this kind of Codex request from now on (5.2). */
+  readonly registerCodex: <K extends CodexRequestKind>(kind: K, handler: CodexRequestHandler<K>) => Effect.Effect<void>
+  /**
+   * A request on a Codex run's output: one the board answers at once (a method it doesn't handle, a tool it doesn't
+   * have, an elicitation it can't fill in) is answered here; the others go to the area registered for them, in the
+   * background, or are refused when there is none.
+   */
+  readonly handleCodex: (run: Run, request: CodexRequest) => Effect.Effect<void>
+  /** Answer Codex's request `id` on the run's input (`codex_response`). False when the agent takes no input any more. */
+  readonly respondCodex: (run: RunId, id: string | number, answer: CodexAnswer) => Effect.Effect<boolean>
 }
 
 export class AgentRequests extends Context.Service<AgentRequests, AgentRequestsShape>()("huntaway-server/runs/AgentRequests") {
@@ -115,7 +145,39 @@ export class AgentRequests extends Context.Service<AgentRequests, AgentRequestsS
         )
       })
 
+      // ---- Codex's requests (5.2) ----
+
+      const codexHandlers = yield* Ref.make<{
+        readonly prompt?: CodexRequestHandler<"prompt"> | undefined
+        readonly tool?: CodexRequestHandler<"tool"> | undefined
+      }>({})
+
+      const respondCodex = Effect.fnUntraced(function* (run: RunId, id: string | number, answer: CodexAnswer) {
+        const sent = yield* dir
+          .appendInput(run, yield* codexResponse(id, answer))
+          .pipe(Effect.catch((e) => Effect.logWarning(`run=${run} answering Codex: ${e.reason}`).pipe(Effect.as(false))))
+        if (!sent) yield* Effect.logWarning(`run=${run} the agent no longer takes input, so Codex's request ${yield* toJson(id)} wasn't answered`)
+        return sent
+      })
+
+      const handleCodex = Effect.fn("AgentRequests.handleCodex")(function* (run: Run, request: CodexRequest) {
+        const classified = classify(request)
+        const all = yield* Ref.get(codexHandlers)
+        const refuse = (what: string) =>
+          respondCodex(run.id, request.id, { error: { code: -32601, message: `the board doesn't handle ${what} yet` } }).pipe(Effect.asVoid)
+        const background = (work: Effect.Effect<void>) =>
+          FiberSet.run(working, work.pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} answering Codex's ${request.method}`, cause)))).pipe(
+            Effect.asVoid,
+          )
+        if (classified._tag === "Answer") yield* respondCodex(run.id, request.id, classified.answer)
+        else if (classified._tag === "Prompt") yield* all.prompt === undefined ? refuse("approvals") : background(all.prompt.handle(run, request, classified))
+        else yield* all.tool === undefined ? refuse("the board's tools") : background(all.tool.handle(run, request, classified))
+      })
+
       return AgentRequests.of({
+        registerCodex: (kind, handler) => Ref.update(codexHandlers, (all) => ({ ...all, [kind]: handler })),
+        handleCodex,
+        respondCodex,
         register: (kind, handler) =>
           Ref.update(handlers, (all) => {
             const next = new Map(all)

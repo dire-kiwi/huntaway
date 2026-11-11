@@ -1,6 +1,7 @@
 import { documentsOnly, isAssistant, isPenThread, isPensThread, isScratch, taskLabels, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
-import { Copy, GitBranch, Trash2 } from "lucide-react"
+import { TaskId } from "@huntaway/contracts"
+import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../../state/board"
 import { rpc } from "../../../../state/rpc"
@@ -8,7 +9,8 @@ import { isGroupTask, useProject } from "../../../boardHelpers"
 import { Dependencies } from "../../../board/Dependencies"
 import { useConfirmDone } from "../../../board/ConfirmDone"
 import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/MergesInto"
-import { stackedBelowId } from "../../../board/StackedOn"
+import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
+import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
 import { Button, errorText, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
 import { TitleSection } from "../Title"
 import type { Mode } from "../layout"
@@ -16,7 +18,7 @@ import { AgentSection } from "./AgentSection"
 import { DescriptionSection } from "./DescriptionSection"
 import { FailedChecks } from "./FailedChecks"
 import { LabelsSection } from "./LabelsSection"
-import { DeleteTaskModal } from "./Modals"
+import { DeleteTaskModal, TeardownModal } from "./Modals"
 import { Row, Section, TextInput } from "./Section"
 import { StartFromRow } from "./StartFromRow"
 import { StatusSection } from "./StatusSection"
@@ -25,8 +27,8 @@ import { TrackedWork } from "./TrackedWork"
 
 // Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the Asana links
 // (ExternalLinks, 6.11), the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12), the task's workflows
-// (Workflows, 6.6), the stack sections "Stacked on" and "Landing after this" (stacks, 4.8), and setting up and tearing
-// down a worktree (Worktrees, 4.1). Subprojects were a legacy branch and are gone.
+// (Workflows, 6.6). Subprojects were a legacy branch and are gone. The stack sections "Stacked on" and "Landing after
+// this" are back (stacks, 4.8).
 
 export function Details({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
   const project = useProject(task.project_id)
@@ -54,10 +56,26 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
       return next
     })
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [teardown, setTeardown] = useState(false)
+  // A worktree being set up from here (the button's, until the call ends).
+  const [wtBusy, setWtBusy] = useState(false)
+  const setUp = async () => {
+    setWtBusy(true)
+    setErr("worktree", null)
+    try {
+      await rpc(task.host_id, "git.setupWorktree", { id: TaskId.make(task.id) })
+    } catch (e) {
+      setErr("worktree", errorText(e))
+    } finally {
+      setWtBusy(false)
+    }
+  }
 
   const { confirmDone, dialog: doneDialog } = useConfirmDone()
   // What its work merges into (API 128): a code task in a project, which merge as they did.
   const incoming = useIncoming(task.id)
+  // The stack levels on it, and the one it's stacked on (API 142), apart from what it merges into.
+  const levels = useLevels(task.id)
   const mergeable = task.kind === "task" && !!task.project_id && !groupTask && !docsOnly && !scratch && !lasting && !task.parent_id
   // It needs a worktree; once it's done, only to show where it went.
   const showMergesInto = mergeable && (task.use_worktree || !!task.branch || !!task.merges_into) && (task.status !== "done" || !!task.merges_into)
@@ -123,7 +141,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
       {!lasting && (
         <Section
           title="Preview"
-          right={showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} label className="text-[11.5px] text-faint" />}
+          right={showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} host={task.host_id} label className="text-[11.5px] text-faint" />}
         >
           <TextInput
             value={task.preview_url ?? null}
@@ -162,6 +180,18 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
       {incoming.length > 0 && (
         <Section title="Merging into this">
           <IncomingSection task={task} project={project} />
+        </Section>
+      )}
+
+      {stackedBelowId(task) && (
+        <Section title={stackedOnTitle(task)}>
+          <StackedOnSection task={task} project={project} />
+        </Section>
+      )}
+
+      {levels.length > 0 && (
+        <Section title={levelsTitle(levels)}>
+          <LevelsSection task={task} project={project} />
         </Section>
       )}
 
@@ -228,8 +258,17 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
               {task.worktree_error && (
                 <div className="rounded bg-red-500/10 p-2 font-mono text-[11px] whitespace-pre-wrap text-red-300">{task.worktree_error}</div>
               )}
-              {/* Set up and Tear down… come with worktrees (4.1). */}
               <div className="flex flex-wrap gap-2 pt-2">
+                {task.worktree_state !== "ready" && (
+                  <Button size="sm" disabled={wtBusy || task.running} onClick={() => void setUp()}>
+                    {wtBusy ? <Loader2 size={12} className="animate-spin" /> : null} Set up
+                  </Button>
+                )}
+                {task.worktree_state === "ready" && (
+                  <Button size="sm" disabled={wtBusy || task.running} onClick={() => setTeardown(true)}>
+                    Tear down…
+                  </Button>
+                )}
                 {task.worktree_state === "none" && (
                   <Button
                     size="sm"
@@ -261,6 +300,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </div>
       )}
 
+      {teardown && <TeardownModal task={task} onClose={() => setTeardown(false)} />}
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
       {doneDialog}
     </aside>

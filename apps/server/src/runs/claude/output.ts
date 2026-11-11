@@ -3,6 +3,7 @@ import type { NewEvent, RunId, TaskId } from "@huntaway/contracts"
 import { SavedEvent } from "@huntaway/contracts"
 import { INIT_PREFIX } from "../../agents/claude/launch.ts"
 import { ContextMeter } from "../../agents/ContextMeter.ts"
+import { Checkpoints } from "../../git/Checkpoints.ts"
 import { Usage } from "../../profiles/Usage.ts"
 import { decodeLine } from "../../agents/claude/lines.ts"
 import type { ClaudeLine, LineProblem, ResultLine } from "../../agents/claude/lines.ts"
@@ -122,6 +123,7 @@ export const ClaudeOutput = Layer.effect(
     const background = yield* BackgroundWork
     const usage = yield* Usage
     const waits = yield* RunWaits
+    const checkpoints = yield* Checkpoints
     // Changed in place, one key at a time (a line's run is the only writer of its task's entry), and emptied of a run's
     // entry when the follower lets the run go (`released`), so it holds the threads being followed and no more.
     const kept = MutableHashMap.empty<TaskId, Kept>()
@@ -177,9 +179,19 @@ export const ClaudeOutput = Layer.effect(
       if (dud) yield* Effect.logInfo(`task=${run.task_id} run=${run.id} session ${line.session_id} was never answered, so the next run starts a new one`)
       const session = dud ? null : typeof line.session_id === "string" ? line.session_id : task.session_id
       yield* writeTask(run.task_id, { cost_usd: task.cost_usd + cost, session_id: session })
+      // 4.3: a checkpoint of what the turn left, taken in the background once this commits, with the message the turn
+      // started with, which goes (a turn the agent starts by itself didn't start with one).
+      const ended = Option.getOrElse(yield* repo.get(run.id), () => run)
+      yield* db.sql.afterCommit(checkpoints.afterTurn(ended, stop === "requested" ? "stopped" : error !== null ? "failed" : "done"))
       // The turn a stop interrupted: from here, a message it takes in starts a new one.
-      yield* repo.update(run.id, { stop: stop === "requested" ? "interrupted" : undefined, saw_result: true, between_turns: true, result_error: error })
-      // Checkpoints (4.x), documents (6.2), memory (6.7), the context meter (2.8) hear of the turn's end here.
+      yield* repo.update(run.id, {
+        stop: stop === "requested" ? "interrupted" : undefined,
+        saw_result: true,
+        between_turns: true,
+        result_error: error,
+        write_no: null,
+      })
+      // Documents (6.2), memory (6.7), the context meter (2.8) hear of the turn's end here.
     })
 
     /** What a line tells the run, in its transaction, given its row as the line found it: whether it ended a turn, and started one. */

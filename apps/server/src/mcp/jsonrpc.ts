@@ -1,7 +1,7 @@
 import { Effect, Option, Schema } from "effect"
 import { McpSchema } from "effect/ai"
 import { toJson } from "../platform/columns.ts"
-import type { ToolResult } from "./tool.ts"
+import type { ServerName, ToolResult } from "./tool.ts"
 
 // The JSON-RPC the board's MCP servers speak (docs/plan/inventory/03-mcp.md 2.1, 2.2 and 7), shared by the transports:
 // how a message is read (leniently, as the old server read it), and the shapes of the answers.
@@ -91,14 +91,23 @@ export const toolError = (text: string) => ({ content: [{ type: "text", text }],
 
 const PrettyJson = Schema.fromJsonString(Schema.Unknown, { space: 2 })
 
-/** A `tools/call`'s result: what the tool gave, as pretty JSON text, or its error. */
-export const callResult = (result: ToolResult) =>
+/** A tool's result that is MCP content already (the gh tools' output, `isError` when gh failed). */
+const Content = Schema.Struct({ content: Schema.Array(Schema.Unknown), isError: Schema.optional(Schema.Boolean) })
+const isContent = Schema.is(Content)
+
+/**
+ * A `tools/call`'s result: what the tool gave, as pretty JSON text, or its error. The board's other servers' tools
+ * (gh's) give their content as it is.
+ */
+export const callResult = (result: ToolResult, server: ServerName = "huntaway"): Effect.Effect<unknown> =>
   result._tag === "Err"
     ? Effect.succeed(toolError(`Error: ${result.message}`))
-    : Schema.encodeEffect(PrettyJson)(result.value).pipe(
-        Effect.orDie,
-        Effect.map((text) => ({ content: [{ type: "text", text }] })),
-      )
+    : server !== "huntaway" && isContent(result.value)
+      ? Effect.succeed(result.value)
+      : Schema.encodeEffect(PrettyJson)(result.value).pipe(
+          Effect.orDie,
+          Effect.map((text) => ({ content: [{ type: "text", text }] })),
+        )
 
 /**
  * What a board call that came on a run's output (`mcp_message`) is recorded with (`mcp_calls.args`): the request and

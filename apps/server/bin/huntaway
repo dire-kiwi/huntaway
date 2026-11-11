@@ -62,6 +62,11 @@ case "$1" in
     export NODE_COMPILE_CACHE
     exec "$node" $flags "$src/hooks/$hook.$ext" "$@"
     ;;
+  # The Codex adapter, a run's own process under ia-shim (docs/plan/06-server.md, The CLI): its own entry file too.
+  codex-run)
+    shift
+    exec "$node" $flags "$src/codex-run.$ext" "$@"
+    ;;
   "" | serve) ;;
   *) exec "$node" $flags "$src/bin.$ext" "$@" ;;
 esac

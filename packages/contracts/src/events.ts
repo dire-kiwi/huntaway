@@ -65,6 +65,8 @@ export const RestartLog = Schema.Struct({ type: Schema.Literal("restart_log"), l
 export const ReleaseChecked = Schema.Struct({ type: Schema.Literal("release_checked"), ...seq })
 /** The background download of a release moved on; null once it is staged. */
 export const ReleaseDownloadChanged = Schema.Struct({ type: Schema.Literal("release_download"), download: Schema.NullOr(ReleaseDownload), ...seq })
+/** A task's checkpoints changed (a turn's was taken, or it was rewound): its turns are read again (`checkpoints.turns`). */
+export const CheckpointsChanged = Schema.Struct({ type: Schema.Literal("checkpoints"), task_id: TaskId, ...seq })
 
 export const BoardEvent = Schema.Union([
   Hello,
@@ -84,6 +86,7 @@ export const BoardEvent = Schema.Union([
   RestartLog,
   ReleaseChecked,
   ReleaseDownloadChanged,
+  CheckpointsChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

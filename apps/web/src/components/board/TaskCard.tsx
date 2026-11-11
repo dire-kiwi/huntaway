@@ -47,6 +47,7 @@ import {
 import { useNarrow, useTouch } from "../../narrow"
 import { resetsIn, resetTime } from "../ui/usageConfigs"
 import { useBoard } from "../../state/board"
+import { ReviewBadge } from "../task/Review"
 
 /** How many of the tasks a group task or a plan created are done. */
 export type Progress = { done: number; total: number }
@@ -176,7 +177,7 @@ function TaskBadges({
       <StackedOnBadge task={task} project={project} compact={compact} />
       <LevelsBadge task={task} project={project} compact={compact} />
       {task.fanout_id && <FanoutBadge task={task} />}
-      {/* Its review (task/Review) comes with reviews on this server. */}
+      <ReviewBadge task={task} compact={compact} />
     </>
   )
 }
@@ -318,7 +319,7 @@ export const TaskCard = memo(function TaskCard({
       {!!task.todos?.length && <CardTodos todos={task.todos} />}
       {(task.branch || task.pr_url || task.cost_usd > 0 || showsPreview(task)) && (
         <div className="mt-2 flex items-center gap-2 text-[11px] text-faint">
-          {showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} label />}
+          {showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} host={task.host_id} label />}
           {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
           {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
           <ChecksMark task={task} />
@@ -387,7 +388,7 @@ export const TaskRow = memo(function TaskRow({
         <TaskBadges task={task} project={project} progress={progress} />
         {task.running && <RunState task={task} />}
         <ResolutionBadge task={task} />
-        {showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} label />}
+        {showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} host={task.host_id} label />}
         {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         <ChecksMark task={task} />

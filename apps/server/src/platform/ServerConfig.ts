@@ -63,6 +63,16 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.String("HUNTAWAY_CLAUDE_BIN")),
     Flag.optional,
   ),
+  ghBin: Flag.String("gh-bin").pipe(
+    Flag.withDescription("The GitHub CLI the gh tools and the board's own GitHub calls run (default gh, on PATH)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_GH_BIN")),
+    Flag.optional,
+  ),
+  codexBin: Flag.String("codex-bin").pipe(
+    Flag.withDescription("The Codex program Codex runs and queries start (default codex, on PATH)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_CODEX_BIN")),
+    Flag.optional,
+  ),
   noAgents: Flag.Boolean("no-agents").pipe(
     Flag.withDescription("Run no agent at all (test servers)"),
     Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_AGENTS")),
@@ -133,6 +143,7 @@ export const SERVE_ENV = [
   "HUNTAWAY_NO_AGENTS",
   "HUNTAWAY_NO_DISCOVERY",
   "HUNTAWAY_SSH_BIN",
+  "HUNTAWAY_GH_BIN",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -155,6 +166,8 @@ export interface ServeArgs {
   // Optional so that a command that serves nothing (`token`) need not give them.
   readonly shimBin?: Option.Option<string>
   readonly claudeBin?: Option.Option<string>
+  readonly ghBin?: Option.Option<string>
+  readonly codexBin?: Option.Option<string>
   readonly noAgents?: boolean
   readonly hub?: Option.Option<string>
   readonly hubToken?: Option.Option<Redacted.Redacted>
@@ -188,6 +201,16 @@ export interface ServerConfigShape {
   readonly shimBin: string | null
   /** `--claude-bin`/`HUNTAWAY_CLAUDE_BIN`: the Claude Code program (default `claude`). */
   readonly claudeBin: string
+  /** `--gh-bin`/`HUNTAWAY_GH_BIN`: the GitHub CLI (default `gh`, on PATH). Tests give the fake (`@huntaway/testing`'s `fakeGitHub`). */
+  readonly ghBin: string
+  /** The server's `PATH`: a wait's command's gets the gh shim put in front of it (`github/Gh`); a rebuild looks for pnpm and cargo on it. */
+  readonly path: string
+  /** The user's cache folder (`$XDG_CACHE_HOME`, else `~/.cache`): the gh tools' private gh config folders go in it. */
+  readonly cacheDir: string
+  /** The SSH config `ssh -G` reads for a remote's host alias (`-F`); null for the user's own. Tests give `/dev/null`. */
+  readonly sshConfig: string | null
+  /** `--codex-bin`/`HUNTAWAY_CODEX_BIN`: the Codex program (default `codex`), which a Codex run's adapter is told of too. */
+  readonly codexBin: string
   /** `--no-agents`/`HUNTAWAY_NO_AGENTS`: this host runs no agent at all (test servers). `Runs` checks it. */
   readonly noAgents: boolean
   /** The launcher this server was started by (`HUNTAWAY_EXE`, which bin/huntaway sets), if any. */
@@ -242,8 +265,6 @@ export interface ServerConfigShape {
   readonly configHome: string
   /** `XDG_RUNTIME_DIR`, else `/run/user/<uid>`: what `systemctl --user` needs to find the user's manager. */
   readonly runtimeDir: string | null
-  /** `PATH`, where a rebuild looks for pnpm and cargo. */
-  readonly path: string
 }
 
 /** What a release package says of itself in `build.json`, beside its launcher. */
@@ -349,7 +370,6 @@ const updateConfig = (args: ServeArgs, home: string, exe: string | null, expand:
       cwd: process.cwd(),
       configHome: (yield* text("XDG_CONFIG_HOME")) ?? `${home}/.config`,
       runtimeDir: (yield* text("XDG_RUNTIME_DIR")) ?? (uid === null ? null : `/run/user/${uid}`),
-      path: (yield* text("PATH")) ?? "",
       // A release reports its own version and commit, and serves its own UI, not the deployment's.
       ...(build === null
         ? { commit: pickCommit(null, deployed, false) }
@@ -376,6 +396,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const exe = yield* Config.String("HUNTAWAY_EXE").pipe(Config.option)
         const tmpDir = yield* Config.String("TMPDIR").pipe(Config.withDefault("/tmp"))
         const sshBin = yield* Config.String("HUNTAWAY_SSH_BIN").pipe(Config.option)
+        const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""))
+        const cacheHome = yield* Config.String("XDG_CACHE_HOME").pipe(Config.withDefault(""))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -396,6 +418,11 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           home,
           shimBin: args.shimBin === undefined ? null : Option.getOrNull(Option.map(args.shimBin, expand)),
           claudeBin: args.claudeBin === undefined ? "claude" : Option.getOrElse(Option.map(args.claudeBin, expand), () => "claude"),
+          ghBin: args.ghBin === undefined ? "gh" : Option.getOrElse(Option.map(args.ghBin, expand), () => "gh"),
+          path: pathEnv,
+          cacheDir: cacheHome.startsWith("/") ? cacheHome : `${home}/.cache`,
+          sshConfig: null,
+          codexBin: args.codexBin === undefined ? "codex" : Option.getOrElse(Option.map(args.codexBin, expand), () => "codex"),
           noAgents: args.noAgents ?? false,
           exe: Option.getOrNull(exe),
           agentEnv: AGENT_ENV,
@@ -437,6 +464,12 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         // No agent starts unless a test gives a shim (and a fake `claude`); never the real Claude Code.
         shimBin: "/nonexistent/ia-shim",
         claudeBin: `${config.dataDir}/no-claude-in-tests`,
+        // Nor the real gh: a test gives the fake one.
+        ghBin: `${config.dataDir}/no-gh-in-tests`,
+        path: process.env["PATH"] ?? "",
+        cacheDir: `${config.dataDir}/cache`,
+        sshConfig: "/dev/null",
+        codexBin: `${config.dataDir}/no-codex-in-tests`,
         noAgents: false,
         exe: null,
         agentEnv: AGENT_ENV,
@@ -465,7 +498,6 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         cwd: config.dataDir,
         configHome: `${config.dataDir}/config`,
         runtimeDir: null,
-        path: "",
         ...config,
       }),
     )

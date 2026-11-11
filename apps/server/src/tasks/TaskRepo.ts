@@ -319,6 +319,8 @@ export interface TaskRepoShape {
   readonly delete: (id: TaskId) => Effect.Effect<void>
   /** A position after every task in a column. */
   readonly endPosition: (project: ProjectId | null, status: Task["status"]) => Effect.Effect<number>
+  /** A project's tasks whose latest run said it finished (`finish_work`): a merge handed to a workflow (`lanes.ts` `isHandoff`). */
+  readonly finishedLast: (project: ProjectId) => Effect.Effect<ReadonlySet<string>>
   readonly project: (id: ProjectId) => Effect.Effect<ProjectRef | null>
   readonly projects: Effect.Effect<ReadonlyArray<ProjectRef>>
   readonly profile: (id: ProfileId) => Effect.Effect<ProfileRef | null>
@@ -565,6 +567,12 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
         write,
         delete: remove,
         endPosition,
+        finishedLast: (id) =>
+          Effect.map(
+            idRows(sql`SELECT t.id AS id FROM tasks t WHERE t.project_id = ${id} AND t.kind = 'task'
+              AND (SELECT r.finished FROM runs r WHERE r.task_id = t.id ORDER BY r.seq DESC LIMIT 1) = 1`),
+            (rows) => new Set(rows.map((r) => r.id)),
+          ),
         project,
         projects,
         profile,

@@ -16,13 +16,17 @@ import {
 } from "@huntaway/client"
 import { clsx } from "clsx"
 import { Cause } from "effect"
-import { ArrowUp, Clock, Loader2, Square, X } from "lucide-react"
+import { ArrowUp, Clock, Loader2, MessageSquare, Square, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTouch } from "../../../narrow"
+import type { RewindResult } from "@huntaway/contracts"
 import { composerDraftAtom, composerDraftKey, composerUnsavedAtom } from "../../../state/drafts"
+import { registry } from "../../../state/registry"
 import { rpc } from "../../../state/rpc"
 import { errorText } from "../../ui"
+import { lineRange, removeComments, useReview, withComments, type LineComment } from "../../changes/lineComments"
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments"
+import { RewindNote } from "../Rewind"
 import { RefChips, RefMenu, useRefCompletion, useRefMentions } from "../RefCompletion"
 import { SkillHint, SkillMenu, useSkillMenu } from "../SkillMenu"
 import { ModeSelect, useModeControl } from "./ModeSelect"
@@ -32,8 +36,40 @@ import { threadRef } from "./threadView"
 // Step 1 (docs/plan/09-frontend.md): what the old composer kept in module-level maps (the sends in flight and their
 // listeners, the drafts the browser couldn't keep, the composers to fill) is @huntaway/client's `sendMessage` and the
 // draft atom in state/drafts.ts, so a send outlives the composer that started it and takes only what it sent off the
-// draft. Cut until their areas come: the Changes tab's line comments that go with a message (M4, 4.2), and rewinding
-// (`RewindNote`, and a rewound message put back here: 4.3).
+// draft. The Changes tab's line comments go with the next message, and come off its review once it has gone (4.2).
+
+/** The diff's comments waiting to go with the next message: each one's file and lines, and its note. */
+function ComposerComments({ task, comments }: { task: Task; comments: ReadonlyArray<LineComment> }) {
+  return (
+    <div className="border-b border-line px-4 py-2" data-comments>
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-faint">
+        <MessageSquare size={11} className="text-accent" />
+        {comments.length === 1 ? "A comment" : `${comments.length} comments`} on the diff, sent with this message
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {comments.map((c) => (
+          <span
+            key={c.id}
+            title={`${c.path}, ${lineRange(c)} (${c.source})\n\n${c.note}`}
+            className="flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-line-strong bg-raised py-0.5 pr-0.5 pl-2 text-[11.5px]"
+          >
+            <span className="shrink-0 font-mono text-muted">
+              {c.path.split("/").pop()}:{c.start === c.end ? c.start : `${c.start}–${c.end}`}
+            </span>
+            <span className="max-w-[28ch] min-w-0 truncate text-fg">{c.note}</span>
+            <button
+              onClick={() => removeComments(task.host_id, task.id, [c.id])}
+              title="Remove the comment"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-faint hover:bg-white/10 hover:text-fg"
+            >
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function QueuedMessage({ text, hostId }: { text: string; hostId: string }) {
   const { text: body, files } = splitAttachments(text)
@@ -55,6 +91,18 @@ function fitText(el: HTMLTextAreaElement | null) {
 /** The failure of a send or an unqueue, to show; null while there is none. */
 function failureOf(result: { readonly _tag: string; readonly cause?: Cause.Cause<unknown> }): string | null {
   return result._tag === "Failure" && result.cause ? errorText(Cause.squash(result.cause)) : null
+}
+
+/**
+ * After a rewind that took the conversation back: the message rewound to goes into the task's composer (ahead of what's
+ * there), to edit and send again. Not the board's own messages (a review's issues, say).
+ */
+export function rewound(task: Task, r: RewindResult, conversation: boolean) {
+  if (!conversation || r.message.auto || !r.message.text?.trim()) return
+  const { text, files } = splitAttachments(r.message.text.trim())
+  const atom = composerDraftAtom(composerDraftKey(task))
+  const d = registry.get(atom)
+  registry.set(atom, { text: d?.text.trim() ? `${text}\n\n${d.text}` : text, files: [...files, ...(d?.files ?? [])] })
 }
 
 /** `onSend` is called as a message starts to send: a tab other than the thread goes to the thread with it (HA-334). */
@@ -105,6 +153,8 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   })
   // The keys in it that name a project or task, listed with their names (HA-400).
   const mentions = useRefMentions(text, task)
+  // Comments on lines of the diff (the Changes tab's), which go with the message.
+  const { comments } = useReview(task.host_id, task.id)
   // After the text with a picked key in it is drawn: the caret after the key.
   useLayoutEffect(() => {
     if (caretTo.current == null) return
@@ -135,11 +185,12 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
 
   const send = () => {
     const files = attach.files
-    const body = withAttachments(text, files)
+    const body = withAttachments(withComments(text, comments), files)
     if (blocked || busy || attach.uploading) return
     if (!body && (task.session_id || task.running)) return
     setErr(null)
-    send$({ body, sent: text, files, draft: draftAtom })
+    const ids = comments.map((c) => c.id)
+    send$({ body, sent: text, files, draft: draftAtom, onSent: () => removeComments(task.host_id, task.id, ids) })
     // The thread's composer shows the send under way, and the send takes what it sent off the draft once it's gone.
     onSend?.()
   }
@@ -157,6 +208,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
+        <RewindNote task={task} />
         {shownErr && <div className="mb-2 text-xs text-red-400">{shownErr}</div>}
         {unsaved && (
           <div className="mb-2 text-xs text-amber-400">
@@ -204,8 +256,10 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
               </button>
             </div>
           )}
+          {comments.length > 0 && <ComposerComments task={task} comments={comments} />}
           <SkillMenu menu={skills} />
           {skills.hint && <SkillHint item={skills.hint} />}
+
           <textarea
             ref={textarea}
             value={text}
@@ -236,17 +290,19 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
             }}
             rows={1}
             placeholder={
-              working
-                ? canQueue
-                  ? task.queued_message
-                    ? "Add to the queued message…"
-                    : canSteer
-                      ? "Message the agent: it reads it after its current step…"
-                      : "Queue a message for when the agent finishes…"
-                  : "Agent is working…"
-                : dependencyQueued(task) || limitQueued(task)
-                  ? "Queue a message for when its agent starts…"
-                  : (placeholder ?? (canStartEmpty ? "Add extra instructions, or press Enter to start" : "Reply to the agent…"))
+              comments.length > 0 && !blocked
+                ? `Add a message to the comment${comments.length === 1 ? "" : "s"}, or press Enter to send ${comments.length === 1 ? "it" : "them"}…`
+                : working
+                  ? canQueue
+                    ? task.queued_message
+                      ? "Add to the queued message…"
+                      : canSteer
+                        ? "Message the agent: it reads it after its current step…"
+                        : "Queue a message for when the agent finishes…"
+                    : "Agent is working…"
+                  : dependencyQueued(task) || limitQueued(task)
+                    ? "Queue a message for when its agent starts…"
+                    : (placeholder ?? (canStartEmpty ? "Add extra instructions, or press Enter to start" : "Reply to the agent…"))
             }
             className="block max-h-[260px] w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[13.5px] text-fg placeholder:text-faint outline-none"
           />
@@ -261,7 +317,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
             </span>
             <div className="ml-auto flex items-center gap-1.5">
               <AttachButton draft={attach} />
-              {working && canQueue && (text.trim() || attach.items.length > 0) && (
+              {working && canQueue && (text.trim() || attach.items.length > 0 || comments.length > 0) && (
                 <button
                   onClick={send}
                   disabled={busy || attach.uploading}
@@ -285,7 +341,8 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
               ) : (
                 <button
                   onClick={send}
-                  disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !canStartEmpty)}
+                  disabled={busy || attach.uploading || (!text.trim() && !attach.items.length && !comments.length && !canStartEmpty)}
+
                   title={`Send${enter}`}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-strong text-white hover:bg-accent disabled:bg-white/10 disabled:text-faint narrow:h-9 narrow:w-9"
                 >
