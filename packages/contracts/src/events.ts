@@ -56,6 +56,9 @@ export const ApprovalLogChanged = Schema.Struct({
  */
 export const ApprovalChanged = Schema.Struct({ type: Schema.Literal("approval"), request_id: RequestId, approval: Schema.NullOr(Approval), ...seq })
 
+/** A task's checkpoints changed (a turn's was taken, or it was rewound): its turns are read again (`checkpoints.turns`). */
+export const CheckpointsChanged = Schema.Struct({ type: Schema.Literal("checkpoints"), task_id: TaskId, ...seq })
+
 export const BoardEvent = Schema.Union([
   Hello,
   Resync,
@@ -70,6 +73,7 @@ export const BoardEvent = Schema.Union([
   ApprovalRulesChanged,
   ApprovalLogChanged,
   ApprovalChanged,
+  CheckpointsChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

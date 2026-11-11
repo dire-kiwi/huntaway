@@ -1,6 +1,7 @@
 import { Cause, Context, Effect, Exit, Layer, Option } from "effect"
 import type { Task, TaskId, Timestamp } from "@huntaway/contracts"
 import { Tokens } from "../agents/Tokens.ts"
+import { Checkpoints } from "../git/Checkpoints.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Actor, Change } from "../platform/Changes.ts"
 import { nowTimestamp } from "../platform/columns.ts"
@@ -67,6 +68,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const requests = yield* AgentRequests
       const background = yield* BackgroundWork
       const waits = yield* RunWaits
+      const checkpoints = yield* Checkpoints
 
       const board: Actor = { _tag: "Board" }
 
@@ -79,7 +81,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       })
 
       /** Part one, under the lock: the outcome, the run ended, its steers queued again, the decision and its notices. */
-      const recordEnd = (change: RunExited) =>
+      const recordEnd = (change: RunExited, planOnly: boolean) =>
         db.tx(
           Effect.gen(function* () {
             const found = yield* repo.get(change.run)
@@ -108,7 +110,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
               configName: config?.name ?? "Its config",
               mergeHeld: null,
               mergesToDone: false,
-              planOnly: false,
+              planOnly,
               nudged: nudged(yield* readers.lastUserMessage(task.id)),
               endOfMergeQueue: yield* tasks.endPosition(task.project_id, "ready_for_merge"),
             })
@@ -155,8 +157,26 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         if (done !== null) yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: board })
       })
 
+      /**
+       * 4.3: the checkpoints of the run's turns. A turn the agent never ended (stopped, failed or killed) gets its
+       * checkpoint here, while the run still holds the thread: before a rewind or the next run (a queued message) can ask
+       * for theirs. Then whether the run only wrote its plan (HA-198), once its turns' checkpoints are taken.
+       */
+      const turnCheckpoints = Effect.fnUntraced(function* (change: RunExited) {
+        const found = yield* repo.get(change.run)
+        if (Option.isNone(found) || !found.value.isLive) return false
+        const run = found.value
+        if (run.phase === "running" && !run.between_turns && run.kind !== "compact") {
+          const failed = outcomeOf(run, change.exit, change.errorTail)._tag === "Failed"
+          yield* checkpoints.afterTurn(run, failed ? "failed" : "stopped")
+        }
+        const task = yield* tasks.get(run.task_id)
+        return task === null ? false : yield* checkpoints.planOnly(task, run)
+      })
+
       const ended = Effect.fn("RunEnds.ended")(function* (change: RunExited) {
-        const first = yield* locks.withLock(["task", change.task])(recordEnd(change))
+        const planOnly = yield* turnCheckpoints(change)
+        const first = yield* locks.withLock(["task", change.task])(recordEnd(change, planOnly))
         if (first === null) return
         const { run, decision, later } = first
         // What the run had going goes with it: its wait is over (the old `wait.ended`), its tokens are counted, its

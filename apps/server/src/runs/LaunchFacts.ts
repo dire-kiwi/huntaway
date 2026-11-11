@@ -1,11 +1,12 @@
 import { Context, Effect, FileSystem, Layer, Option, Redacted } from "effect"
 import { SecureRandom } from "effect/crypto"
-import type { AgentConfigId, PermissionMode, Task, TaskId } from "@huntaway/contracts"
+import type { AgentConfigId, PermissionMode, Rewind, Task, TaskId } from "@huntaway/contracts"
 import type { LaunchSpec } from "../agents/AgentDriver.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { noRunTools } from "../agents/claude/access.ts"
 import { claudeLaunch, recordedEffort } from "../agents/claude/launch.ts"
 import { Prompts } from "../agents/Prompts.ts"
+import { Checkpoints, pendingRewind } from "../git/Checkpoints.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
@@ -32,6 +33,8 @@ export interface Prepared {
   readonly spec: LaunchSpec
   /** The run may write its task's documents folder (it started with labels). */
   readonly writesDocuments: boolean
+  /** The conversation rollback a rewind asked for that the run makes (`Checkpoints.rewound` once its agent starts). */
+  readonly rewind?: Rewind | null
 }
 
 /** Trimmed, or null when blank. */
@@ -83,6 +86,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const random = yield* SecureRandom.SecureRandom
       const taskTmp = yield* TaskTmp
       const background = yield* BackgroundWork
+      const checkpoints = yield* Checkpoints
 
       const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
       const exists = (path: string) => fs.exists(expand(path)).pipe(Effect.orElseSucceed(() => false))
@@ -160,6 +164,11 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         }
         const compact = run.kind === "compact"
         const cwd = yield* cwdOf(task, project?.repo_path ?? null)
+        // 4.3: a checkpoint of the worktree before the agent changes it (once it is set up), taken after any rewind asked
+        // for meanwhile, whose conversation rollback this run makes: the task is read again after it.
+        yield* checkpoints.beforeRun(task, run)
+        task = yield* load(task.id)
+        const rewind = pendingRewind(task)
         // A labelled task's agent writes its documents in the task's own folder, wherever it works.
         const docs = task.kind === "task" && task.labels.length > 0 ? dataDir.documents(task.id) : null
         if (docs !== null) yield* mkdir(docs)
@@ -191,7 +200,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           apiEnv: yield* apiEnv(cfg),
           telemetryEnv: [],
           tmp,
-          resumeAt: null,
+          resumeAt: rewind?.resume_at ?? null,
           model,
           effort,
           permissionMode,
@@ -212,7 +221,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         })
         // Where its conversation is kept, if it starts one, and the effort it was given (review statistics).
         yield* runs.update(run.id, { config_dir: configDir ?? "", effort: recordedEffort(effort) })
-        const prepared: Prepared = { spec, writesDocuments: docs !== null }
+        const prepared: Prepared = { spec, writesDocuments: docs !== null, rewind }
         return prepared
       })
 
