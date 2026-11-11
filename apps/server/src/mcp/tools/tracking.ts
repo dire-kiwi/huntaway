@@ -2,8 +2,8 @@ import { Effect, Result, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { SecureRandom } from "effect/crypto"
 import type { TaskId, TrackedItem } from "@huntaway/contracts"
-import { effectiveStatus, MAX_ITEMS, NOT_THE_ASSISTANT, owner, track, TRACKED_STATUSES, untrack } from "../../assistant/tracked.ts"
-import type { Link, Linked } from "../../assistant/tracked.ts"
+import { effectiveStatus, MAX_ITEMS, NOT_THE_ASSISTANT, owner, track, TRACKED_STATUSES, untrack } from "../../assistant/trackedList.ts"
+import type { Link, Linked } from "../../assistant/trackedList.ts"
 import { nowTimestamp } from "../../platform/columns.ts"
 import { isMerged } from "../../tasks/checks.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
@@ -16,7 +16,7 @@ import type { JsonObject } from "./common.ts"
 
 // The assistant's tracked work tools (docs/plan/inventory/03-mcp.md 2.5; the old mcp/schemas/tracked.ts and
 // mcp/tools/dispatch.ts `tracked_tool`): `track_work`, `untrack_work` and `list_tracked_work`, on the assistant task's
-// `tracked` list. The rules of the list are `assistant/tracked.ts`; each change reads and writes the list in one
+// `tracked` list. The rules of the list are `assistant/trackedList.ts`; each change reads and writes the list in one
 // `Tasks.change`, so two calls at once both land. Listed for everyone, but only the assistant and its routines' threads
 // may use them.
 

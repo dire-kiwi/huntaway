@@ -31,6 +31,9 @@ import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import { AgentRequests } from "./AgentRequests.ts"
+// 6.7: the assistant's workspace, memory and routines' reports.
+import { AssistantLaunch } from "./AssistantLaunch.ts"
+import type { WorkspaceRefused } from "./AssistantLaunch.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
@@ -47,6 +50,8 @@ export interface Prepared {
   readonly writesDocuments: boolean
   /** The conversation rollback a rewind asked for that the run makes (`Checkpoints.rewound` once its agent starts). */
   readonly rewind?: Rewind | null
+  /** 6.7: what's done once its agent has started (the assistant's routines' reports it starts with are read). */
+  readonly started?: Effect.Effect<void> | undefined
 }
 
 /** Trimmed, or null when blank. */
@@ -70,9 +75,9 @@ const threadConfigKey = (task: Task): "assistant_config_id" | "threads_config_id
 
 export interface LaunchFactsShape {
   /** Everything a run is launched with, by its thread's config's agent (Claude's, or Codex's: 5.2). */
-  readonly launch: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound | LaunchRefused | WorktreeFailed>
+  readonly launch: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound | LaunchRefused | WorktreeFailed | WorkspaceRefused>
   /** Everything a Claude run of `run` is launched with, its folder's contents included: prepared for `RunDir.prepare` and `Shim.spawn`. */
-  readonly claude: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound | WorktreeFailed>
+  readonly claude: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound | WorktreeFailed | WorkspaceRefused>
   /** The config a thread runs on (the old `task_claude_config`): its own, else (with no conversation yet) its first available. */
   readonly config: (task: Task) => Effect.Effect<AgentConfigRow | null>
   /** A task's documents folder. */
@@ -120,6 +125,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const proc = yield* Proc
       // 6.4: the project's skills and servers (its skills written for the run).
       const agentTools = yield* AgentTools
+      // 6.7
+      const assistantLaunch = yield* AssistantLaunch
       // Where the package managers' caches are, when the environment says (Codex's sandbox would keep them read-only).
       const cacheEnv: Readonly<Record<string, string | null>> = Object.fromEntries(
         yield* Effect.forEach(
@@ -234,7 +241,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         }
         const compact = run.kind === "compact"
         task = yield* prepareWork(run, task, project)
-        const cwd = yield* cwdOf(task, project?.repo_path ?? null)
+        // 6.7: the assistant and its routine threads work in its workspace, with its memory.
+        const workspace = yield* assistantLaunch.workspace(task)
+        const cwd = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
         const rewind = pendingRewind(task)
         // A labelled task's agent writes its documents in the task's own folder, wherever it works.
         const docs = task.kind === "task" && task.labels.length > 0 ? dataDir.documents(task.id) : null
@@ -248,7 +257,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const model = nonBlank(task.model) ?? nonBlank(project?.model) ?? nonBlank(profile?.default_model) ?? nonBlank(host.default_model)
         const effort = nonBlank(task.effort) ?? nonBlank(host.default_effort)
         // What the end of its last run stopped of its background work, which it never heard about: once.
-        const prompt = compact ? text : yield* prompts.start(task.id, text, yield* background.takeLost(task.id))
+        // 6.7: the assistant reads its routines' reports since its last turn with the next message.
+        const reports = compact ? null : yield* assistantLaunch.reports(task)
+        const prompt = compact ? text : (reports?.preface ?? "") + (yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         // The task's own temp folder, its TMPDIR, which goes once it's done.
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
@@ -258,6 +269,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           permission_mode: permissionMode,
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
+          memory: workspace?.memory,
         })
         const configDir = yield* configDirOf(task, cfg)
         const review = task.kind === "review"
@@ -295,7 +307,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         })
         // Where its conversation is kept, if it starts one, and the effort it was given (review statistics).
         yield* runs.update(run.id, { config_dir: configDir ?? "", effort: recordedEffort(effort) })
-        const prepared: Prepared = { spec, writesDocuments: docs !== null, rewind }
+        const prepared: Prepared = { spec, writesDocuments: docs !== null, rewind, started: reports?.started }
         return prepared
       })
 
@@ -354,7 +366,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const host = yield* settings.get
         const compact = run.kind === "compact"
         const review = task.kind === "review"
-        const cwd = yield* cwdOf(task, project?.repo_path ?? null)
+        // 6.7: as Claude's launch.
+        const workspace = yield* assistantLaunch.workspace(task)
+        const cwd = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
         const docs = task.kind === "task" && task.labels.length > 0 ? dataDir.documents(task.id) : null
         if (docs !== null) yield* mkdir(docs)
         const permissionMode: PermissionMode = task.permission_mode ?? project?.permission_mode ?? host.default_permission_mode ?? "default"
@@ -367,7 +381,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         // (when its models can be listed).
         const asked = nonBlank(task.effort) ?? nonBlank(host.default_effort)
         const effort = asked === null ? null : codexEffort(asked, model, yield* queries.models(cfg).pipe(Effect.orElseSucceed(() => [])))
-        const prompt = compact ? "" : yield* prompts.start(task.id, text, yield* background.takeLost(task.id))
+        const reports = compact ? null : yield* assistantLaunch.reports(task)
+        const prompt = compact ? "" : (reports?.preface ?? "") + (yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
         const served = yield* requests.served
@@ -376,6 +391,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           permission_mode: permissionMode,
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
+          memory: workspace?.memory,
         })
         const configDir = yield* configDirOf(task, cfg)
         const gitDir = nonBlank(yield* git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
@@ -420,7 +436,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           },
         })
         yield* runs.update(run.id, { config_dir: configDir ?? "", effort: effort?.trim() ?? "", board_tools: launched.boardTools })
-        const prepared: Prepared = { spec: launched.spec, writesDocuments: docs !== null, rewind: pending }
+        const prepared: Prepared = { spec: launched.spec, writesDocuments: docs !== null, rewind: pending, started: reports?.started }
         return prepared
       })
 
@@ -447,7 +463,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       // 6.1: a task's terminal works where its agent does, with its config.
       const workEnv = Effect.fn("LaunchFacts.workEnv")(function* (task: Task) {
         const project = task.project_id === null ? null : Option.getOrNull(yield* projects.get(task.project_id))
-        const at = yield* cwdOf(task, project?.repo_path ?? null)
+        // 6.7: the assistant's terminal is in its workspace.
+        const workspace = yield* assistantLaunch.workspace(task).pipe(Effect.orElseSucceed(() => null))
+        const at = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
         // A worktree that's gone (being set up, or removed by hand) is no place to start: the repository is.
         const cwd = expand(at === task.worktree_path && project !== null && !(yield* exists(at)) ? project.repo_path : at)
         const cfg = yield* configOf(task)

@@ -251,7 +251,7 @@ export const makeCodexOutput = Effect.gen(function* () {
         case "TurnEnded": {
           yield* meter.recordTurn(run, null)
           // 6.2: the task's documents the turn changed are kept, their versions closed.
-          yield* turnHooks.turnEnded(run.task_id)
+          yield* turnHooks.turnEnded(run.task_id, { compact: run.kind === "compact" })
           // Refused for the account's usage limit: the config is out until it resets, which the run's end reads.
           if (effect.usageLimit) {
             const config = yield* configOf(run)

@@ -14,6 +14,8 @@ import { Runs } from "../runs/Runs.ts"
 import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { ThreadReaders } from "../threads/ThreadReaders.ts"
+// 6.7: a report's id, for push.
+import { legacyId } from "../threads/model.ts"
 import { Threads } from "../threads/Threads.ts"
 import { AutomationRepo } from "./AutomationRepo.ts"
 import type { StoredAutomation } from "./AutomationRepo.ts"
@@ -230,9 +232,16 @@ export class Routines extends Context.Service<Routines, RoutinesShape>()("huntaw
         }
         if (text !== null) {
           const data = { automation_id: automation?.id ?? null, automation: name, task_id: thread.id, key: thread.key, outcome: kind, text }
-          yield* threads
-            .report(assistant, kind === "failed" ? "error" : "info", text, data)
-            .pipe(Effect.catchTag("TaskNotFound", () => Effect.logWarning(`task=${thread.id} posting a routine's report: the assistant is gone`)))
+          const said = kind
+          yield* threads.report(assistant, kind === "failed" ? "error" : "info", text, data).pipe(
+            // 6.7 (for 6.8's push): the report, after its write commits.
+            Effect.flatMap((n) =>
+              said === "reported" || said === "failed" || said === "asked"
+                ? events.emit({ type: "routine_report", id: legacyId(n), task_id: thread.id, automation: name, outcome: said, text })
+                : Effect.void,
+            ),
+            Effect.catchTag("TaskNotFound", () => Effect.logWarning(`task=${thread.id} posting a routine's report: the assistant is gone`)),
+          )
         }
         if (run !== null) {
           const now = yield* tasks.get(thread.id)

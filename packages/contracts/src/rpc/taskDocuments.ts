@@ -5,6 +5,8 @@ import { TaskId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
 import { DocumentLabel } from "../task.ts"
 import { Timestamp } from "../time.ts"
+// 6.7: the assistant's morning brief, with its items.
+import { BriefItem } from "../assistant.ts"
 
 // A task's documents (docs/plan/06-server.md, Documents and docs; inventory 02, section 2.7; the old
 // `GET /tasks/{id}/document?label=&version=`): the plan, artifact or diagram its agent writes in the task's own folder,
@@ -21,15 +23,21 @@ export const DocumentVersion = Schema.Struct({
 })
 export type DocumentVersion = typeof DocumentVersion.Type
 
+/** A task's labels' documents, and the assistant's morning brief (`brief`, 6.7). */
+export const TaskDocumentLabel = Schema.Literals([...DocumentLabel.literals, "brief"])
+export type TaskDocumentLabel = typeof TaskDocumentLabel.Type
+
 /** A version of a task's document for a label, and the list of its versions (oldest first). */
 export const TaskDocument = Schema.Struct({
-  label: DocumentLabel,
+  label: TaskDocumentLabel,
   /** Where its agent writes it, or null. */
   file: Schema.NullOr(Schema.String),
   versions: Schema.Array(DocumentVersion),
   /** The version given (null when there is none yet). */
   version: Schema.NullOr(Schema.Int),
   content: Schema.NullOr(Schema.String),
+  /** 6.7: the brief's items to rate (those its run wrote the same day as the version shown); only the brief's. */
+  items: Schema.optionalKey(Schema.Array(BriefItem)),
 })
 export type TaskDocument = typeof TaskDocument.Type
 
@@ -39,7 +47,7 @@ export class TaskDocumentRpcs extends RpcGroup.make(
    * `NotFound` for a task or a version that isn't there.
    */
   Rpc.make("tasks.document", {
-    payload: { id: TaskId, label: Schema.optional(DocumentLabel), version: Schema.optional(Schema.Int) },
+    payload: { id: TaskId, label: Schema.optional(TaskDocumentLabel), version: Schema.optional(Schema.Int) },
     success: TaskDocument,
     error: NotFound,
   }).annotate(RequiredScope, "read"),
