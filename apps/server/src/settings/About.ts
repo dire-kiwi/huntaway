@@ -3,6 +3,7 @@ import { Capability, PROTOCOL } from "@huntaway/contracts"
 import type { Health, HostInfo } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
+import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 
 export interface AboutShape {
@@ -21,7 +22,19 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
       const config = yield* ServerConfig
       const dataDir = yield* DataDir
       const capabilities: ReadonlyArray<string> = [Capability.settingsSync]
-      const health: Health = { ok: true, host_id: identity.hostId, version: config.version, protocol: PROTOCOL, capabilities, commit: config.commit }
+      // The commit it runs: a checkout's HEAD when it started, else the release's or the deployment's (`ServerConfig`).
+      const proc = yield* Proc
+      const head =
+        config.sourceDir === null
+          ? null
+          : yield* proc.run("git", ["rev-parse", "HEAD"], { cwd: config.sourceDir }).pipe(
+              Effect.map((r) => (r.code === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : null)),
+              Effect.orElseSucceed(() => null),
+            )
+      const commit = head ?? config.commit
+      // How it updates when a hub asks: its checkout, else the releases it follows.
+      const updatesFrom = config.sourceDir !== null ? "checkout" : config.releaseRepo !== null ? "releases" : null
+      const health: Health = { ok: true, host_id: identity.hostId, version: config.version, protocol: PROTOCOL, capabilities, commit }
       const info: HostInfo = {
         host_id: identity.hostId,
         host_name: identity.hostName,
@@ -30,8 +43,8 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
         protocol: PROTOCOL,
         capabilities,
         read_only: false,
-        commit: config.commit,
-        updates_from: null,
+        commit,
+        updates_from: updatesFrom,
         // It runs agents unless started with --no-agents (the old `can_run_agents`), with Claude Code only until Codex
         // comes (M5). The web app offers Start, and starts a fresh task moved into In progress, only where this is true.
         agents: !config.noAgents,

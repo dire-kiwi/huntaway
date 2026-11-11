@@ -1,3 +1,4 @@
+import { AdminRpcs } from "./admin.ts"
 import { ApprovalRulesRpcs } from "./approvalRules.ts"
 import { LinkRpcs } from "./link.ts"
 import { AttachmentRpcs } from "./attachments.ts"
@@ -25,6 +26,7 @@ export const HostRpcs = HostRpcGroup.merge(
   ThreadRpcs,
   PermissionRpcs,
   SettingsSyncRpcs,
+  AdminRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 
