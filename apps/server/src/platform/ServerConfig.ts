@@ -216,7 +216,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         version: VERSION,
         commit: null,
         home: config.dataDir,
-        shimBin: null,
+        // No agent starts unless a test gives a shim (and a fake `claude`).
+        shimBin: "/nonexistent/ia-shim",
         claudeBin: "claude",
         noAgents: false,
         exe: null,

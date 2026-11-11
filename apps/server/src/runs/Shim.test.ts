@@ -266,4 +266,48 @@ describe.skipIf(SHIM === null)("Shim (needs cargo to build ia-shim)", () => {
       }),
     ),
   )
+
+  // huntaway's launch.test.ts a_launch_that_fails_leaves_no_agent_behind: given up on (or stopped) before ia-shim had
+  // started the agent, which it does after. The restart cases (carrying on after a restart) are plan task 2.6's.
+  it.effect("an agent the shim starts after its launch was given up on is stopped", () =>
+    withShim(() =>
+      Effect.gen(function* () {
+        const shim = yield* Shim
+        const dir = yield* RunDir
+        const fs = yield* FileSystem.FileSystem
+        const agent = yield* fakeAgent()
+        yield* fs.writeFileString(`${agent.dir}/spec.json`, "{}")
+        yield* shim.reap(agent.run.id)
+        assert.isTrue(yield* agent.inputClosed, "an agent that reads its input as it works isn't left waiting for more")
+        assert.isTrue(yield* dir.marker(agent.run.id, "reap"))
+        const late = yield* agentProcess("echo ready; exec sleep 60")
+        yield* fs.writeFileString(`${agent.dir}/pid`, String(late.pid))
+        yield* whileTicking(late.exitCode.pipe(Effect.ignore), "100 millis")
+      }),
+    ),
+  )
+
+  it.effect("a late agent that ignores SIGTERM is killed after REAP_GRACE; one that never starts is given up after REAP_WAIT", () =>
+    withShim(() =>
+      Effect.gen(function* () {
+        const shim = yield* Shim
+        const dir = yield* RunDir
+        const fs = yield* FileSystem.FileSystem
+        const agent = yield* fakeAgent()
+        yield* fs.writeFileString(`${agent.dir}/spec.json`, "{}")
+        const late = yield* agentProcess("trap '' TERM; echo ready; exec sleep 60")
+        yield* fs.writeFileString(`${agent.dir}/pid`, String(late.pid))
+        yield* whileTicking(shim.watchReap(agent.run.id), "1 second")
+        assert.isFalse(yield* shim.isAlive(-Number(late.pid)))
+        assert.isFalse(yield* dir.marker(agent.run.id, "reap"))
+        // No spec.json: the shim was never asked to start, so there is nothing to watch.
+        const never = yield* fakeAgent()
+        yield* shim.reap(never.run.id)
+        assert.isFalse(yield* dir.marker(never.run.id, "reap"))
+        const slow = yield* fakeAgent()
+        yield* fs.writeFileString(`${slow.dir}/spec.json`, "{}")
+        yield* whileTicking(shim.watchReap(slow.run.id), "10 seconds")
+      }),
+    ),
+  )
 })

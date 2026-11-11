@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Exit, FiberMap, FileSystem, Layer, Option, Ref, Schema } from "effect"
+import { Cause, Context, Effect, Exit, Fiber, FiberMap, FileSystem, Layer, Option, Ref, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { DocumentLabel, RunId, threadKindOf } from "@huntaway/contracts"
 import type { Task, TaskId, Timestamp } from "@huntaway/contracts"
@@ -77,6 +77,8 @@ export interface RunsShape {
   /** Take back what is queued: the task as it was, so that the text can be given back to the user. */
   readonly dropQueued: (task: TaskId) => Effect.Effect<Task, TaskNotFound>
   readonly isRunning: (task: TaskId) => Effect.Effect<boolean>
+  /** Waits until the task's run being prepared, if any, has started its agent or given up (tests). */
+  readonly launched: (task: TaskId) => Effect.Effect<void>
   /** `/new`: the thread's next message starts a new conversation with its agent; its items stay. Refused while it runs. */
   readonly newSession: (task: TaskId) => Effect.Effect<Task, TaskNotFound | SendRefused>
   /** Compact the conversation (the board's own, `why` its notice); unlike a prompt, the card stays where it is. */
@@ -177,6 +179,8 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           return yield* Option.isSome(started) ? follower.follow(started.value) : Effect.void
         }).pipe(
           Effect.onExit((exit) => launchEnded(run, exit)),
+          // Its end is told above; a failure is not the map's.
+          Effect.ignore,
           Effect.annotateLogs({ module: "runs", run: run.id }),
         )
 
@@ -486,6 +490,11 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         abort,
         dropQueued,
         isRunning: (id) => runs.hasActive(id),
+        launched: (id) =>
+          FiberMap.get(launches, id).pipe(
+            Effect.flatMap((found) => (Option.isSome(found) ? Fiber.await(found.value) : Effect.void)),
+            Effect.asVoid,
+          ),
         newSession: Effect.fn("Runs.newSession")(function* (id: TaskId) {
           return yield* withLock(id, newSessionLocked(id))
         }),

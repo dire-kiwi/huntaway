@@ -1,4 +1,4 @@
-import { Context, Effect, FiberMap, Layer } from "effect"
+import { Context, Effect, Fiber, FiberMap, Layer, Option } from "effect"
 import type { RunId, TaskId } from "@huntaway/contracts"
 import { interruptLine, userInput } from "../agents/claude/launch.ts"
 import { Prompts } from "../agents/Prompts.ts"
@@ -58,6 +58,8 @@ export interface RunInputShape {
   readonly closeInput: (run: RunId) => Effect.Effect<void>
   /** After a restart (2.6's `Runs.reattach`): the stop's grace and the end of a turn that had ended, armed again from the run's row. */
   readonly rearm: (run: Run) => Effect.Effect<void>
+  /** Waits until the run's stop (or steer) grace has done what it does (tests, after moving the clock past it). */
+  readonly settled: (run: RunId, timer: "stop" | "steer") => Effect.Effect<void>
 }
 
 export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaway-server/runs/RunInput") {
@@ -207,6 +209,11 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
         closeAndKill,
         closeInput,
         rearm,
+        settled: (run, timer) =>
+          FiberMap.get(timer === "stop" ? stopTimers : steerTimers, run).pipe(
+            Effect.flatMap((found) => (Option.isSome(found) ? Fiber.await(found.value) : Effect.void)),
+            Effect.asVoid,
+          ),
       })
     }),
   )
