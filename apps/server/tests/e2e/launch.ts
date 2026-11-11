@@ -11,16 +11,18 @@ const ReadyLine = Schema.fromJsonString(Schema.Struct({ port: Schema.Int, token:
 
 /**
  * A server started through the launcher on a free port with a fresh data folder, as a service manager or the desktop
- * app starts it, for the scope. It is stopped with SIGTERM when the scope closes, if the test has not stopped it.
+ * app starts it, for the scope, with `env` added to its environment. It is stopped with SIGTERM when the scope closes, if the test has not stopped it.
  */
-export const startServer = (args: ReadonlyArray<string> = []) =>
+export const startServer = (args: ReadonlyArray<string> = [], env: Readonly<Record<string, string>> = {}) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const path = yield* Path.Path
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "huntaway-e2e-" })
     const bin = yield* path.fromFileUrl(launcher)
-    const process = yield* spawner.spawn(ChildProcess.make(bin, ["serve", "--port", "0", "--host", "127.0.0.1", "--data-dir", dataDir, ...args]))
+    const process = yield* spawner.spawn(
+      ChildProcess.make(bin, ["serve", "--port", "0", "--host", "127.0.0.1", "--data-dir", dataDir, ...args], { env, extendEnv: true }),
+    )
     // Its stdout carries the ready line; its log (stderr) is kept to show if it never gets there. Both are read to
     // their end, so neither pipe fills.
     const ready = yield* Deferred.make<string>()

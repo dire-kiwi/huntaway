@@ -9,8 +9,9 @@ import { RunRepo } from "./RunRepo.ts"
 import { Shim } from "./Shim.ts"
 
 // Following a run (docs/plan/07-agents.md, Following; inventory 01, section 5): read its output from the saved offset,
-// hand each line to `RunOutput`, save the offset after each chunk, and once it has exited and everything is read, tell
-// the reactor (`RunExited`). One fiber per live run, in a `FiberMap` keyed by run id. Interrupting one never signals
+// hand each line to `RunOutput` with the offset after it (the handler saves it with what the line says; the follower
+// saves it after a line whose handling failed, and after the chunk), and once it has exited and everything is read,
+// tell the reactor (`RunExited`). One fiber per live run, in a `FiberMap` keyed by run id. Interrupting one never signals
 // the agent: agents outlive the server, and stopping one is `Runs.stop`'s.
 
 /** How long the follower waits when there is nothing new. */
@@ -44,8 +45,15 @@ export class RunFollower extends Context.Service<RunFollower, RunFollowerShape>(
 
       const exited = (run: Run, exit: RunExitStatus, errorTail: string) => changes.offer({ _tag: "RunExited", run: run.id, task: run.task_id, exit, errorTail })
 
-      const apply = (run: Run, line: string) =>
-        output.handle(run, line).pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} handling a line of output failed`, cause)))
+      // The handler saves the offset with what the line says; one that failed is skipped.
+      const apply = (run: Run, line: string, end: number) =>
+        output
+          .handle(run, line, end)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError(`run=${run.id} handling a line of output failed`, cause).pipe(Effect.andThen(repo.saveOffset(run.id, end))),
+            ),
+          )
 
       const loop = (run: Run) =>
         Effect.gen(function* () {
@@ -53,7 +61,8 @@ export class RunFollower extends Context.Service<RunFollower, RunFollowerShape>(
           let idle = 0
           while (true) {
             const chunk = yield* dir.readOutput(run.id, offset)
-            for (const line of chunk.lines) yield* apply(run, line)
+            for (const [i, line] of chunk.lines.entries()) yield* apply(run, line, chunk.ends[i] ?? chunk.end)
+            // Past the end of what was read (a file cut short), or nothing at all applied: as far as was read.
             if (chunk.end > offset) offset = yield* repo.saveOffset(run.id, chunk.end)
             if (chunk.exit !== null && chunk.drained) return yield* exited(run, chunk.exit, yield* dir.errorTail(run.id))
             if (chunk.lines.length > 0) continue

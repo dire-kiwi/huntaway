@@ -35,7 +35,11 @@ export type Change =
       readonly cause: Actor
     }
   | {
-      /** A run's agent exited and its follower has applied all its output (`runs/RunFollower`). */
+      /**
+       * A run's agent exited and its follower has applied all its output (`runs/RunFollower`); or its launch ended
+       * before the agent started (`runs/Runs`: given up, failed, or stopped while it was prepared), with `code` and
+       * `signal` null and `error` saying why.
+       */
       readonly _tag: "RunExited"
       readonly run: RunId
       readonly task: TaskId

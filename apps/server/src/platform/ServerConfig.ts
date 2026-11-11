@@ -223,8 +223,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         version: VERSION,
         commit: null,
         home: config.dataDir,
-        shimBin: null,
-        // Never the real Claude Code: a test that wants an agent gives the fake one.
+        // No agent starts unless a test gives a shim (and a fake `claude`); never the real Claude Code.
+        shimBin: "/nonexistent/ia-shim",
         claudeBin: `${config.dataDir}/no-claude-in-tests`,
         noAgents: false,
         exe: null,

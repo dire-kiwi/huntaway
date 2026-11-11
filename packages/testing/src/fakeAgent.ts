@@ -23,8 +23,8 @@ const AT = Timestamp.make("2026-11-12T00:00:00.000Z")
 const Json = Schema.fromJsonString(Schema.Unknown)
 
 /** The runs area on the platform (an in-memory database, a temp data folder), with `output` handling runs' lines. No reactor reads `Changes`, so a test can. */
-export const TestRuns = <E = never, R = never>(output: Layer.Layer<RunOutput, E, R> = RunOutput.layerLog, overrides: Partial<ServerConfigShape> = {}) =>
-  runsLayer(output).pipe(Layer.provideMerge(TestPlatform(overrides)))
+export const TestRuns = <E = never, R = never>(output?: Layer.Layer<RunOutput, E, R>, overrides: Partial<ServerConfigShape> = {}) =>
+  runsLayer<E, R | RunRepo>(output ?? RunOutput.layerLog).pipe(Layer.provideMerge(TestPlatform(overrides)))
 
 /** A task to hang runs on: a profile "p" (made once) and a task in no project. */
 export const fakeTask = Effect.gen(function* () {

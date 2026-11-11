@@ -1,6 +1,9 @@
 import { Effect } from "effect"
-import { NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
+import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
+import type { ConflictReason } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
+import { Runs } from "../runs/Runs.ts"
+import type { SendRefused } from "../runs/Runs.ts"
 import { TaskRefs } from "../tasks/TaskRefs.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 
@@ -18,10 +21,28 @@ const notFound = {
   ProfileNotFound: (e: { readonly id: string }) => Effect.fail(new NotFound({ what: "profile", id: e.id })),
 }
 
+/** A message `Runs` refused, as the contract's errors (the old 409s, 400s and 503). */
+const conflicts: { readonly [R in SendRefused["reason"]]: ConflictReason | null } = {
+  archived: "archived",
+  merge_queued: "merging",
+  already_running: "already_running",
+  agent_running: "agent_running",
+  nothing_queued: "changed_meanwhile",
+  no_conversation: null,
+  no_agents: null,
+}
+const sendRefused = (e: SendRefused) => {
+  const conflict = conflicts[e.reason]
+  if (conflict !== null) return Effect.fail(new Conflict({ reason: conflict, detail: e.detail }))
+  if (e.reason === "no_agents") return Effect.fail(new Unavailable({ what: "agents", reason: e.detail }))
+  return Effect.fail(new Invalid({ field: "text", reason: e.detail }))
+}
+
 export const TaskHandlers = TaskRpcs.toLayer(
   Effect.gen(function* () {
     const tasks = yield* Tasks
     const refs = yield* TaskRefs
+    const runs = yield* Runs
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
@@ -31,14 +52,19 @@ export const TaskHandlers = TaskRpcs.toLayer(
         ),
       "tasks.update": ({ id, patch }) =>
         Effect.flatMap(actor, (by) => tasks.update(id, patch, by)).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      // Its run is stopped at once and its queue dropped first (`Runs.abort`).
       "tasks.delete": ({ id, delete_branch }) =>
-        Effect.flatMap(actor, (by) => tasks.delete(id, { deleteBranch: delete_branch ?? false }, by)).pipe(
+        Effect.flatMap(actor, (by) => runs.abort(id).pipe(Effect.andThen(tasks.delete(id, { deleteBranch: delete_branch ?? false }, by)))).pipe(
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
-      // Served by `Runs` (2.5).
-      "tasks.send": () => Effect.fail(new Unavailable({ what: "agents", reason: "runs are not built yet" })),
-      "tasks.stop": () => Effect.succeed({ stopped: false }),
-      "tasks.dropQueued": ({ id }) => tasks.get(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.send": ({ id, text }) =>
+        runs.send(id, { text, source: "user" }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused })),
+      "tasks.stop": ({ id }) =>
+        Effect.gen(function* () {
+          yield* tasks.get(id)
+          return yield* runs.stop(id)
+        }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.dropQueued": ({ id }) => runs.dropQueued(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
     })
   }),
 )

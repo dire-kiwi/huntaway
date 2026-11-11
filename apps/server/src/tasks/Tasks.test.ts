@@ -267,7 +267,8 @@ describe("Tasks", () => {
         assert.strictEqual(read.queued_message, "first\n\nsecond")
         assert.deepStrictEqual(read.steering, [
           { id: "s1", text: "look", from_agent: true, run_id: RunId.make("r"), written: true },
-          { id: "s2", text: "daily", from_agent: false, run_id: RunId.make("r"), written: false, routine_runs: ["ar"], routine: true },
+          // A routine's message is another agent's, as huntaway's send_from_routine sent it.
+          { id: "s2", text: "daily", from_agent: true, run_id: RunId.make("r"), written: false, routine_runs: ["ar"], routine: true },
         ])
         assert.deepStrictEqual([read.todos, read.review], [[], null])
       }),
