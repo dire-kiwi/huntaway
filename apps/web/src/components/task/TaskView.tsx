@@ -15,7 +15,7 @@ import {
   type DocumentType,
 } from "@huntaway/client"
 import { clsx } from "clsx"
-import { ChevronLeft, ChevronRight, Clock, Folder, Play, Square, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Clock, Folder, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { boardTaskUrl, groupTaskUrl, href, profileTaskUrl, type Panel } from "../../router"
 import { closeTask, closeTaskModal, navigate } from "../../state/route"
@@ -36,12 +36,13 @@ import { TabContent } from "./view/TabContent"
 import { TitleEditor } from "./view/Title"
 import { ReviewDot } from "./Review"
 import { ReviewThreadView } from "./view/ReviewThreadView"
+import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowTabs } from "./Workflows"
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
-// left out here, each with a note: the terminal and its tools (M6), the browser pane and the desktop view (M6),
-// workflows' tabs (6.6), the assistant's brief, memory, routines and
-// action log (M6), finding a routine's thread on other hosts (M6), and the Agents pill (layout/AgentsPill, with the
-// assistant's and the layout's later pieces). Subprojects are a legacy branch, deleted.
+// left out here, each with a note: the terminal and its tools (M6), the browser pane and the desktop view (M6), the
+// assistant's brief, memory, routines and action log (M6), finding a routine's thread on other hosts (M6), and the
+// Agents pill (layout/AgentsPill, with the assistant's and the layout's later pieces). Subprojects are a legacy branch,
+// deleted.
 
 const isLabel = (t: Tab): t is DocumentType => LABELS.some((l) => l === t)
 
@@ -153,6 +154,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const narrow = useNarrow()
   const canMark = useCanMark(task)
   const [markErr, setMarkErr] = useState<string | null>(null)
+  const workflows = useWorkflowRuns(task)
   // The opening tab is picked when the task opens (or once it's loaded), not again as its status moves on.
   const found = !!task
   const [tab, setTab] = useState<Tab>(() => openingTab(task))
@@ -196,14 +198,16 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task)
   const docsOnly = documentsOnly(task)
   const tabs: Tab[] = [...labels, ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])]
-  // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (6.6).
-  // Unless one of the board's is still running, from before it switched.
+  // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (a
+  // Review one, say). Unless one of the board's is still running, from before it switched.
   const boardReviews = !project?.use_workflows || task.review?.state === "running"
   const reviews = task.kind === "task" && group === undefined && !docsOnly && !scratch && !assistant && !routine && !pensThread && boardReviews
   if (reviews) tabs.push("review")
   // Once there's a summary, or a review that passed to summarise: the tabs fit a phone's width until then.
   const summaries = reviews && (task.summaries.length > 0 || task.review?.state === "passed")
   if (summaries) tabs.push("summary")
+  // A tab for each the task's workflow steps show their output in.
+  if (task.kind === "task") tabs.push(...workflowTabs(workflows).map(workflowTab))
   if (!wide) tabs.push("details")
   // Until the render above drops it, a details tab while wide shows the thread beside the column.
   // A label taken off shows the thread instead; so does a tab this task hasn't got (review, summary, a workflow's).
@@ -227,9 +231,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   }
 
   // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
-  // Stopping the task also stops its review and summaries, so it can be stopped while only those run (and its
-  // workflows, with 6.6).
-  const reviewing = task.review?.state === "running" || task.summaries.some((s) => s.state === "running")
+  // Stopping the task also stops its review, summaries and workflows, so it can be stopped while only those run.
+  const reviewing = task.review?.state === "running" || task.summaries.some((s) => s.state === "running") || workflowRunning(workflows)
   const run =
     task.running || reviewing ? (
       <Button
@@ -240,7 +243,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             ? "Stop the agent's run, and the background work it left going with it (the banner above the message field stops just that). The agent is told what stopped with your next message."
             : task.running
               ? stopTitle(task, runningAgentSteers(task))
-              : "Stop the review and the summaries"
+              : "Stop the review, the summaries and the task's workflows"
         }
       >
         <Square size={11} fill="currentColor" /> {backgroundIdle(task) ? "Stop all" : "Stop"}
@@ -284,7 +287,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             )}
           >
             {t === "review" && <ReviewDot task={task} />}
-            {t}
+            {isWorkflowTab(t) ? (
+              <span className="flex items-center gap-1 normal-case" title="A workflow's tab">
+                <WorkflowIcon size={11} className="text-faint" />
+                {t.slice(3)}
+              </span>
+            ) : (
+              t
+            )}
           </button>
         ))}
       </div>

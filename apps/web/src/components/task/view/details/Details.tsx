@@ -24,11 +24,11 @@ import { StartFromRow } from "./StartFromRow"
 import { StatusSection } from "./StatusSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
 import { TrackedWork } from "./TrackedWork"
+import { useWorkflowRuns, WorkflowsList } from "../../Workflows"
 
 // Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the Asana links
-// (ExternalLinks, 6.11), the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12), the task's workflows
-// (Workflows, 6.6). Subprojects were a legacy branch and are gone. The stack sections "Stacked on" and "Landing after
-// this" are back (stacks, 4.8).
+// (ExternalLinks, 6.11), the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12). Subprojects were a
+// legacy branch and are gone. The stack sections "Stacked on" and "Landing after this" are back (stacks, 4.8).
 
 export function Details({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
   const project = useProject(task.project_id)
@@ -74,6 +74,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   const { confirmDone, dialog: doneDialog } = useConfirmDone()
   // What its work merges into (API 128): a code task in a project, which merge as they did.
   const incoming = useIncoming(task.id)
+  const workflows = useWorkflowRuns(task)
   // The stack levels on it, and the one it's stacked on (API 142), apart from what it merges into.
   const levels = useLevels(task.id)
   const mergeable = task.kind === "task" && !!task.project_id && !groupTask && !docsOnly && !scratch && !lasting && !task.parent_id
@@ -152,6 +153,12 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             }}
           />
           {errs.preview && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.preview}</div>}
+        </Section>
+      )}
+
+      {!!workflows?.workflows.length && (
+        <Section title="Workflows">
+          <WorkflowsList task={task} />
         </Section>
       )}
 
