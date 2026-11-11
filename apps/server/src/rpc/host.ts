@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import { HostRpcGroup } from "@huntaway/contracts"
 import { Usage } from "../profiles/Usage.ts"
+import { PROJECT_PROMPT_DEFAULTS } from "../prompts/projectDefaults.ts"
 import { About } from "../settings/About.ts"
 import { Folders } from "../settings/Folders.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
@@ -17,6 +18,8 @@ export const HostHandlers = HostRpcGroup.toLayer(
       "host.updateSettings": ({ patch }) => settings.update(patch),
       "host.listDirs": ({ path }) => folders.list(path),
       "host.usage": ({ refresh }) => usage.list(refresh ?? false),
+      // The texts themselves: nothing to ask a service (6.12).
+      "host.defaultPrompts": () => Effect.succeed(PROJECT_PROMPT_DEFAULTS),
     })
   }),
 )

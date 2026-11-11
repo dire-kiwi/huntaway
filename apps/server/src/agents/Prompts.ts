@@ -42,14 +42,14 @@ export interface RunTold {
 /** The options of a new thread that change what it is told (the old `GET /projects/{id}/system-prompt`'s query). */
 export interface PreviewOptions {
   /** A task (the default) or a scratch task. */
-  readonly type?: "task" | "scratch"
-  readonly labels?: ReadonlyArray<DocumentLabel>
+  readonly type?: "task" | "scratch" | undefined
+  readonly labels?: ReadonlyArray<DocumentLabel> | undefined
   /** For a task: whether it has its own worktree (by default, as the project's new tasks do). */
-  readonly worktree?: boolean
+  readonly worktree?: boolean | undefined
   /** By default, what a new task in the project runs on. */
-  readonly runtime?: Agent
+  readonly runtime?: Agent | undefined
   /** By default, the project's, else the host's. */
-  readonly permission_mode?: PermissionMode
+  readonly permission_mode?: PermissionMode | undefined
 }
 
 /** What a new thread would be told, what it runs on, and its permission mode (the one given, or the one it inherits). */
