@@ -30,7 +30,15 @@
           "effect/schema",
           "effect/testing",
           "effect/workers",
-          "effect/crypto"
+          "effect/crypto",
+          "effect/FileSystem",
+          "effect/Path",
+          "effect/PlatformError",
+          "@effect/sql-sqlite-node",
+          "@effect/platform-node",
+          "@effect/platform-browser",
+          "@effect/atom-react",
+          "@effect/vitest"
         ],
         "keyPatterns": [{ "target": "service", "pattern": "default", "skipLeadingPath": ["src/"] }]
       }

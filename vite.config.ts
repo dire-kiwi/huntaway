@@ -85,6 +85,9 @@ export default defineConfig({
       "typescript/no-unnecessary-type-assertion": "error",
       "typescript/only-throw-error": "error",
       "import/no-cycle": "error",
+      // Off: `_tag` is the discriminant of every Effect data type (`Exit`, `Result`, `Option`, tagged errors), and
+      // the `_tag` of our own internal unions (docs/effect.md, Schemas). The rule would fire on every match.
+      "no-underscore-dangle": "off",
     },
     overrides: [
       // Plain TypeScript by design: no Effect, so the Effect-native rules do not apply.
@@ -143,7 +146,8 @@ export default defineConfig({
           "packages/testing/**",
           "apps/server/tests/**",
         ],
-        rules: { "effecttsgo/strict-effect-provide": "off", "effecttsgo/process-env": "off" },
+        // Node's HTTP server has no Effect counterpart to create it with: the composition root names it.
+        rules: { "effecttsgo/strict-effect-provide": "off", "effecttsgo/process-env": "off", "effecttsgo/node-builtin-import": "off" },
       },
       // The workspace's own configuration files: plain Node.
       {
@@ -154,6 +158,5 @@ export default defineConfig({
   },
   test: {
     projects: ["apps/server", "packages/*"],
-    passWithNoTests: true,
   },
 })

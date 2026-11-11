@@ -275,7 +275,7 @@ A small closed set, so a client can handle any call the same way. Each is a `Sch
 | `Conflict`       | `reason` (a literal), `detail`           | 409                       | The detail; the reason lets the UI offer the fix (`todos_unfinished` offers "move anyway") |
 | `Forbidden`      | `scope`                                  | 403                       | "this device can't …"                           |
 | `Unauthorized`   | none                                     | 401                       | The token screen                                |
-| `HostOffline`    | `host_id`, `name`                        | 503 from the proxy        | The host's offline state                        |
+| `HostOffline`    | `host_id`, `host_name`                      | 503 from the proxy        | The host's offline state                        |
 | `HostRefused`    | `host_id`, `reason`                      | 502 from the proxy        | "link it again"                                 |
 | `Unavailable`    | `what`, `reason`                         | 503 (no tmux, no gh, agents can't run here) | The reason                    |
 | `External`       | `service`, `reason`                      | 502 (Asana, GitHub, docs site) | The reason                                 |
