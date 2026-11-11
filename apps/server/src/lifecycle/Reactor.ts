@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import { Titles } from "../agents/Titles.ts"
 import { StatusScripts } from "../git/StatusScripts.ts"
+import { TaskBase } from "../git/TaskBase.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
@@ -30,12 +31,15 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const titles = yield* Titles
       const permissions = yield* Permissions
       const statusScripts = yield* StatusScripts
+      const taskBase = yield* TaskBase
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
         // as for any change of the task (the `TaskChanged` it offers).
         if (change._tag === "RunExited") {
           yield* runEnds.ended(change)
+          // What its agent took in of the branch it's stacked on, and the tasks stacked on it of its own (4.1).
+          yield* taskBase.keepStarts(change.task)
           return
         }
         const task = change.after ?? change.before
@@ -53,6 +57,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         } else {
           // The thread's mode changed: what it waits on that the new mode decides is settled (3.3).
           if (change.before !== null && change.before.permission_mode !== change.after.permission_mode) yield* permissions.applyMode(change.after.id)
+          // Done: the tasks stacked on it keep where they took its branch up to, which may well be deleted now (4.1).
+          if (moved && change.after.status === "done") yield* taskBase.keepStarts(change.after.id)
           // The project's status scripts for the move, in the background, one task's in order (4.1).
           if (moved && change.before !== null) yield* statusScripts.changed(change.after, change.before.status)
           // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.
