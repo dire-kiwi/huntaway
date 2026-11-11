@@ -6,6 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { git, tempDir, TestBoard } from "@huntaway/testing"
 import type { NewTask, Project, Task, TaskId, TaskPatch } from "@huntaway/contracts"
 import { Reactor } from "../lifecycle/Reactor.ts"
+import { Restack } from "./Restack.ts"
 import { Actor } from "../platform/Changes.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
@@ -27,7 +28,7 @@ import { isGithubCom, remoteRepo } from "./worktree/remote.ts"
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null"
 process.env["GIT_CONFIG_NOSYSTEM"] = "1"
 
-type Env = Worktrees | TaskBase | Tasks | Projects | Profiles | Threads | Git | Reactor | TaskDeletion
+type Env = Worktrees | TaskBase | Tasks | Projects | Profiles | Threads | Git | Reactor | TaskDeletion | Restack
 type Needs = Env | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
 
 /** The whole board, with the git area's own `TaskBase` and `Worktrees` built over a fake GitHub, and `options`. */
@@ -70,7 +71,13 @@ const make = (project: Project, title: string, more: Partial<NewTask> = {}) =>
 const setUp = (id: TaskId) => Effect.flatMap(Worktrees, (w) => w.setup(id))
 const getTask = (id: TaskId) => Effect.flatMap(Tasks, (tasks) => tasks.get(id)).pipe(Effect.orDie)
 const patchTask = (id: TaskId, patch: TaskPatch) => Effect.flatMap(Tasks, (tasks) => tasks.update(id, patch, Actor.user))
-const done = (id: TaskId) => Effect.flatMap(Tasks, (tasks) => tasks.change(id, () => ({ status: "done" }), Actor.board)).pipe(Effect.orDie)
+/** Moves a task to Done and waits for the reactor, which keeps the starts of the tasks stacked on it (`keepStarts`) before
+ * anything deletes its branch, as a move to Done is followed by the reactor on the board. */
+const done = (id: TaskId) =>
+  Effect.flatMap(Tasks, (tasks) => tasks.change(id, () => ({ status: "done" }), Actor.board)).pipe(
+    Effect.orDie,
+    Effect.andThen(Effect.flatMap(Reactor, (r) => r.idle)),
+  )
 const failure = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.map(Effect.flip(effect), (e) => ("reason" in e && typeof e.reason === "string" ? e.reason : e._tag))
 const log = (id: TaskId) =>
@@ -815,11 +822,14 @@ describe("stacks", () => {
         yield* git(repo, ["merge", "-q", "--squash", a.branch ?? ""])
         yield* git(repo, ["commit", "-qm", "First"])
         yield* done(a.id)
+        // First merged, Second is restacked onto where it went (4.8) before First's branch goes.
+        yield* (yield* Restack).settled(b.id)
         yield* (yield* Worktrees).teardown(a.id, { force: true, deleteBranch: true })
         yield* (yield* TaskDeletion).delete(a.id, { deleteBranch: false }, Actor.user)
-        // Second goes to master, its changes still only its own.
+        // Second goes to master, from the commit it was restacked onto, its changes still only its own.
         const bNow = yield* getTask(b.id)
-        assert.deepStrictEqual([bNow.base_branch, bNow.start_from], ["master", { type: "commit", commit: aTip }])
+        assert.deepStrictEqual([bNow.base_branch, bNow.start_from], ["master", { type: "commit", commit: yield* rev(repo, "master") }])
+        assert.notStrictEqual(aTip, yield* rev(repo, "master"))
         assert.strictEqual(yield* base.taskBase(bNow, project), "master")
         assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"])
         assert.include(yield* log(b.id), "X-1, which this task landed after, was deleted: it's merged, so this task goes to master")

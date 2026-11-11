@@ -137,7 +137,8 @@ test("answers changed while the answers are being sent are kept, to send next", 
     assert.match(posted[0], /`notes`\): First answer/)
     assert.deepEqual(await saved(page), { notes: { v: ["Second answer"] } })
     assert.equal(await page.getByText("Answers sent").count(), 0)
-    assert.ok(await page.getByRole("button", { name: "Send answers" }).isEnabled())
+    // The button is enabled again once the send's end has drawn (it may come a moment after the saved answers change).
+    await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.includes("Send answers") && !b.disabled))
     await page.reload()
     frame = await openPlan(ui)
     assert.equal(await frame.locator("textarea[name=notes]").inputValue(), "Second answer")

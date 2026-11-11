@@ -35,7 +35,8 @@ const task = (t) => server.rpc("tasks.get", { id: t.id })
 // HA-51: the tasks made from one prompt, compared side by side or one at a time, and one of them picked.
 test("compares the tasks from one prompt, and picking one completes the others but keeps uncommitted work", async () => {
   const [opus, sonnet, haiku] = tasks
-  await withBrowser(server, {}, async (ui) => {
+  // A pick tears down the others' worktrees with git before it answers: CI's runner takes longer than a step's usual 5 s.
+  await withBrowser(server, { timeout: 20000 }, async (ui) => {
     await ui.run([
       `goto /p/${project.id}`,
       // The model badge on a card opens it.
