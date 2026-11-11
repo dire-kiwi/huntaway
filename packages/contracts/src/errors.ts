@@ -25,6 +25,7 @@ export const ConflictReason = Schema.Literals([
   "duplicate_name",
   "restart_in_progress",
   "in_use",
+  "worktree_kept",
 ])
 export type ConflictReason = typeof ConflictReason.Type
 

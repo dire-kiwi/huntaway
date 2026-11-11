@@ -7,6 +7,7 @@ import { noRunTools } from "../agents/claude/access.ts"
 import { claudeLaunch, recordedEffort } from "../agents/claude/launch.ts"
 import { Prompts } from "../agents/Prompts.ts"
 import { Checkpoints, pendingRewind } from "../git/Checkpoints.ts"
+import { Worktrees, WorktreeFailed } from "../git/Worktrees.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
@@ -18,6 +19,7 @@ import { HostSettings } from "../settings/HostSettings.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
+import { Threads } from "../threads/Threads.ts"
 import { AgentRequests } from "./AgentRequests.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
 import type { Run } from "./Run.ts"
@@ -53,7 +55,7 @@ const threadConfigKey = (task: Task): "assistant_config_id" | "threads_config_id
 
 export interface LaunchFactsShape {
   /** Everything a Claude run of `run` is launched with, its folder's contents included: prepared for `RunDir.prepare` and `Shim.spawn`. */
-  readonly claude: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound>
+  readonly claude: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound | WorktreeFailed>
   /** The config a thread runs on (the old `task_claude_config`): its own, else (with no conversation yet) its first available. */
   readonly config: (task: Task) => Effect.Effect<AgentConfigRow | null>
   /** A task's documents folder. */
@@ -87,6 +89,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const taskTmp = yield* TaskTmp
       const background = yield* BackgroundWork
       const checkpoints = yield* Checkpoints
+      const worktrees = yield* Worktrees
+      const threads = yield* Threads
 
       const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
       const exists = (path: string) => fs.exists(expand(path)).pipe(Effect.orElseSucceed(() => false))
@@ -163,6 +167,19 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           task = yield* load(task.id)
         }
         const compact = run.kind === "compact"
+        // 4.8: wait for the project's relocation and for a restack of the task's branch (or its parent's) here.
+        // ---- 4.1: the worktree it works in (the old launch's). A review thread works in its task's, once that's set up;
+        // a task with a worktree of its own has it set up first, and a setup that fails fails the launch.
+        if (project !== null && task.kind === "review" && task.parent_id !== null) {
+          const parent = yield* tasks.get(task.parent_id)
+          if (parent !== null && parent.worktree_state !== "ready" && parent.use_worktree) {
+            return yield* new WorktreeFailed({ reason: "the task's worktree isn't set up" })
+          }
+        } else if (project !== null && task.kind === "task" && task.use_worktree && task.work_dir === null) {
+          if (task.worktree_state !== "ready") yield* threads.notice(task.id, "info", "Setting up worktree…").pipe(Effect.ignore)
+          task = yield* worktrees.setup(task.id).pipe(Effect.catchTag("AgentInWorktree", (e) => Effect.fail(new WorktreeFailed({ reason: e.message }))))
+        }
+        // ---- end of 4.1's block.
         const cwd = yield* cwdOf(task, project?.repo_path ?? null)
         // 4.3: a checkpoint of the worktree before the agent changes it (once it is set up), taken after any rewind asked
         // for meanwhile, whose conversation rollback this run makes: the task is read again after it.

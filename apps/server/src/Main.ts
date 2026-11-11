@@ -11,6 +11,7 @@ import {
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
+  GitRpcs,
   HostRpcGroup,
   PenRpcs,
   PermissionRpcs,
@@ -38,6 +39,9 @@ import { Git } from "./git/Git.ts"
 import { Gh } from "./github/Gh.ts"
 import { GithubRemote } from "./github/GithubRemote.ts"
 import { GitHubAccessLive } from "./github/GitHubAccessLive.ts"
+import { StatusScripts } from "./git/StatusScripts.ts"
+import { TaskBase } from "./git/TaskBase.ts"
+import { Worktrees } from "./git/Worktrees.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -80,6 +84,8 @@ import { RunRepo } from "./runs/RunRepo.ts"
 import { BackgroundWork } from "./runs/BackgroundWork.ts"
 import { Compaction } from "./runs/Compaction.ts"
 import { RunEnds } from "./runs/RunEnds.ts"
+import { SetupThread } from "./runs/SetupThread.ts"
+import { TaskDeletion } from "./runs/TaskDeletion.ts"
 import { Runs } from "./runs/Runs.ts"
 import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
@@ -95,6 +101,7 @@ import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
 import { CheckpointHandlers } from "./rpc/checkpoints.ts"
+import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
@@ -159,13 +166,20 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(ThreadStore.layer),
   Layer.provideMerge(TasksLive),
 )
-/** The git area: running git; worktrees, a task's base, the Changes tab and checkpoints join this line (M4). */
-const GitLive = Checkpoints.layer.pipe(Layer.provideMerge(Layer.mergeAll(Git.layer, CheckpointRepo.layer)), Layer.provideMerge(ThreadsLive))
 /**
- * The github area: gh as one account (`Gh`), where a task's pull request goes (`GithubRemote`), and what the git area
- * needs of GitHub (`GitHubAccess`, whose live layer is here: the git area sits above it).
+ * The git area: running git; a task's base and worktrees, status scripts (4.1), checkpoints (4.3); the Changes tab
+ * joins this line (4.2). What it needs of GitHub is `GitHubAccess`, whose live layer is the github area's (4.4), built
+ * here under the git area's services since it only needs `Gh`, which only needs `Git`.
  */
-const GithubLive = GitHubAccessLive.pipe(Layer.provideMerge(Layer.mergeAll(Gh.layer, GithubRemote.layer)), Layer.provideMerge(GitLive))
+const GitLive = Layer.mergeAll(Worktrees.layer, StatusScripts.layer).pipe(
+  Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
+  Layer.provideMerge(Layer.mergeAll(GitHubAccessLive, CheckpointRepo.layer)),
+  Layer.provideMerge(Gh.layer),
+  Layer.provideMerge(Git.layer),
+  Layer.provideMerge(ThreadsLive),
+)
+/** The github area: gh as one account (`Gh`, on the git line), where a task's pull request goes (`GithubRemote`). */
+const GithubLive = GithubRemote.layer.pipe(Layer.provideMerge(GitLive))
 /** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
 export interface ModelCalls<T, E1, R1, E2, R2> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
@@ -251,6 +265,8 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
     Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.layer),
+    // What deleting a task and a project's setup thread are made of: runs, tasks and worktrees (4.1).
+    Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
     Layer.provideMerge(RunsArea),
     Layer.provideMerge(agentsLayer(models)),
   )
@@ -280,6 +296,7 @@ export const Served = PublicRpcs.merge(
   ThreadRpcs,
   PermissionRpcs,
   CheckpointRpcs,
+  GitRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -297,6 +314,7 @@ export const HandlersLive = Layer.mergeAll(
   ThreadHandlers,
   PermissionHandlers,
   CheckpointHandlers,
+  GitHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

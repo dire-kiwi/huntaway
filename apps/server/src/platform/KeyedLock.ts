@@ -1,7 +1,16 @@
 import { Context, Effect, Layer, Ref, Semaphore } from "effect"
 
-/** What a lock is taken on. Locks are taken in this order (project, then task, then run) and never across a wait for a person. */
-export type LockKey = readonly ["project", string] | readonly ["task", string] | readonly ["run", string] | readonly ["workspace", string]
+/**
+ * What a lock is taken on. Locks are taken in this order (project, then worktree, then task, then run) and never across a
+ * wait for a person. `["worktree", task]` serialises a task's worktree setup, teardown and restack, which can take
+ * minutes (a setup script), so its `["task", task]` lock is only taken for each write meanwhile.
+ */
+export type LockKey =
+  | readonly ["project", string]
+  | readonly ["worktree", string]
+  | readonly ["task", string]
+  | readonly ["run", string]
+  | readonly ["workspace", string]
 
 export interface KeyedLockShape {
   /** One holder per key at a time, waiters in order, released on any exit. */

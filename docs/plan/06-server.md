@@ -165,6 +165,66 @@ read out of a thread).
 edit only if it succeeded, a Bash command unless it was denied) is the git area's, over `commandChangesCode`, with its
 two tool-call test cases.
 
+#### As built in 4.1 (HE-5)
+
+- **`Git`** (`git/Git.ts`) runs every git command (`run`, `bytes`, `ok`, and the old helpers); `git/paths.ts` has the
+  path and text helpers (`pathStartsWith`, `slugify`, `truncate`, `expandHome`). Hooks are not switched off: the old
+  server ran them for `worktree add` too (a test relies on a `post-checkout` hook).
+- **`GitHubAccess`** (`git/GitHubAccess.ts`) is what the git area needs of GitHub, which is below it: `fetchEnv(cwd,
+  account, remoteUrl)` (the old `authenticate_fetch`) and `pullRequest(cwd, account, ref, repo)` (`gh pr view … --json
+  state,headRefName,baseRefName,headRefOid,isCrossRepository,url`), with `GitHubUnavailable`. Main's git line has
+  4.4's live layer (`github/GitHubAccessLive`, built under the git area's services: it only needs `Gh`, which only needs
+  `Git`); tests may give `GitHubAccess.layerNone` (unauthenticated fetches, no pull request read).
+- **`TaskBase`** (`git/TaskBase.ts`, bodies in `git/worktree/{upstream,start,remote,stacks,changes}.ts`): `account`,
+  `upstream`, `fetch`/`fetchBase` (60 s, through `fetchEnv`, none for remote `.`), `startPoint` (the four cases and the
+  fast-forward), `compareRef`, `pickStart` (the four `start_from` kinds; a task stacked on one with no branch sets that
+  one up through a `setUp` the caller gives), `branches`, `github`/`pushRemote`/`pushRepo` (the old `remote.ts`, `ssh -G`
+  through `Proc` for SSH aliases; 4.5 builds pull requests on them), `taskBase`/`stackedBase` (`merges_into` and
+  `start_from` followed through merged tasks, 16 deep), `remoteBase`, `unstack`, `changesDir`, `changesBase`,
+  `workScope` (4.6's reviews), `keepStarts`, `diff` (`git.taskDiff`), `hasWorkToMerge`, `forgetStart`; `startRef(id)`.
+  `unmerged` is 4.5's (it needs the pull request's state).
+- **`Worktrees`** (`git/Worktrees.ts`): `setup`, `teardown`, `removeIfMerged`, `removeMerged`, `agentInWorktree` (its
+  `running` column or a review thread's), `forDeletion`, `deleteProject`, `deleteProfile`, `recover`, `withLock`. One at a time per task
+  under **`KeyedLock` `["worktree", id]`**, a key added for it, not `["task", id]`: a setup script may run 30 minutes,
+  and a stop, a message or an update takes the task's lock meanwhile (each write inside a setup takes it briefly
+  through `Tasks.change`). The order is project, worktree, task, run. A setup goes on in the layer's scope when its
+  caller goes (a launch stopped meanwhile), as the old one ran to its end: one cut short would leave git's worktree half
+  made. Failures are `WorktreeFailed { reason }` with the old texts; asked by hand while an agent works there,
+  `AgentInWorktree`. Files brought in (`git/worktree/files.ts`, with `relink` for `Relocation`), scripts
+  (`git/worktree/scripts.ts`: `bash -c` in a process group of its own, `SIGKILL` to it after the limit; a script that
+  succeeded keeps what it started; one that fails has its group stopped, which the old one didn't), the removal checks
+  (`git/worktree/remove.ts`). A path that isn't UTF-8 in a marked file's index entry can't be compared, so it counts as
+  changed (kept) rather than skipped.
+- **Deleting a task** goes through `runs/TaskDeletion` (the one place `tasks.delete` and an agent's approved
+  `delete_task` both reach, the lowest area that sees the runs to stop and the worktree to remove): the task's and its
+  reviewers' runs aborted, `Worktrees.forDeletion` (the worktree as it is once a setup under way is done, torn down
+  forced, its branch deleted when asked; `unstack`; the start ref dropped), then `Tasks.delete`. **Deleting a project**
+  is `Worktrees.deleteProject` (refused while an agent runs; each task's worktree removed forced once a setup under way
+  is done, branches kept; then `Projects.delete`), which `projects.delete` calls; deleting a profile is
+  `Worktrees.deleteProfile` (its projects' worktrees the same way, then `Profiles.delete`), which `profiles.delete` calls.
+- **At launch** (`runs/LaunchFacts`, one block): a review thread whose task uses a worktree that isn't ready fails with
+  "the task's worktree isn't set up"; a task with `use_worktree` (not documents-only) gets "Setting up worktree…" and
+  `Worktrees.setup`; a failed setup fails the launch (`RunExited` with `WorktreeFailed: <reason>`), as the old
+  `Failed: <reason>`.
+- **The reactor**: `StatusScripts.changed(after, before.status)` on every status move (a `kind=task`'s, queued per task,
+  first in first out, in the background; `StatusScripts.idle` for tests); `TaskBase.keepStarts` as a run ends
+  (`RunExited`) and as a task moves to Done.
+- **Recovery** repairs what a stopped server left: `setting_up` becomes `error` ("the server stopped while the worktree
+  was being set up"), so the next run or the button sets it up again; `tearing_down` becomes `ready` if the folder is
+  there, else `none`. The old server left both as they were.
+- **RPCs**: `git.setupWorktree` (`Conflict` `agent_running`; `Invalid` `worktree` with the reason, the old 400),
+  `git.teardownWorktree {force?, delete_branch?}` (`Conflict` with the new reason `worktree_kept`, the old 409),
+  `git.taskDiff` (`read`); `projects.branches` (`read`), `projects.removeMergedWorktrees`, `projects.setupThread
+  {message?}` (`runs/SetupThread`; the instructions are `prompts/setupThread.ts`). Arrays are returned as they are, not
+  in the old `{branches}`/`{results}` objects.
+- **Web**: the Details panel's Set up and Tear down… (the old `TeardownModal`) are back. The board's setup thread for a
+  folder that isn't ready (the old `task/WorktreeSetup`) is not: its RPC is there.
+- **Not here**: relocation's hold on the project's folder during a setup and its fingerprint (`Relocation`);
+  terminals killed at teardown (M6, marked in `teardown`); checkpoints dropped at teardown and at a project's deletion
+  (4.3, marked); `Tasks.update`'s `gitWork`, `worktreeFolderExists` and `startCommit` facts are still `false`/`null`
+  (`TaskBase.hasWorkToMerge` and `startRef` are what 4.7 and 4.8 fill them from); the restack wait at launch (4.8,
+  marked); subprojects (dropped).
+
 #### As built in 4.3 (HE-5): `Checkpoints`
 
 - **Files.** `git/Checkpoints.ts` (the service), `git/CheckpointRepo.ts` (the `checkpoints` rows, and what the plan rule

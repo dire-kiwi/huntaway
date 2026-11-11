@@ -11,10 +11,10 @@ import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { Projects } from "../projects/Projects.ts"
 import type { ProjectNotFound } from "../projects/Projects.ts"
 import { Runs } from "../runs/Runs.ts"
+import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import { expandTilde } from "../settings/Folders.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import { Tasks } from "../tasks/Tasks.ts"
 import { Permissions } from "./Permissions.ts"
 import type { Asker } from "./Permissions.ts"
 
@@ -201,9 +201,9 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
       const permissions = yield* Permissions
       const projects = yield* Projects
       const projectRepo = yield* ProjectRepo
-      const tasks = yield* Tasks
       const taskRepo = yield* TaskRepo
       const runs = yield* Runs
+      const deletions = yield* TaskDeletion
       const settings = yield* HostSettings
       const proc = yield* Proc
       const fs = yield* FileSystem.FileSystem
@@ -364,9 +364,8 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
         if (Result.isFailure(asked)) return (yield* gone) ? already : yield* asked.failure
         const t = yield* taskRepo.get(doomed.id)
         if (t === null) return already
-        // Its agent stops and its queue goes first, as when the user deletes it.
-        yield* runs.abort(t.id)
-        const done = yield* Effect.result(tasks.delete(t.id, { deleteBranch: deleteBranch === true }, { _tag: "Agent", task_id: asker.run.task_id }))
+        // Its agent stops and its queue goes first, then its worktree, as when the user deletes it (`TaskDeletion`).
+        const done = yield* Effect.result(deletions.delete(t.id, { deleteBranch: deleteBranch === true }, { _tag: "Agent", task_id: asker.run.task_id }))
         if (Result.isFailure(done)) return done.failure._tag === "TaskNotFound" ? already : yield* done.failure
         const out: Deleted = { deleted: true, key: doomed.key, title: t.title }
         return out

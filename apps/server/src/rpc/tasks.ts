@@ -6,6 +6,7 @@ import { ContextMeter } from "../agents/ContextMeter.ts"
 import { DevServers } from "../runs/DevServers.ts"
 import { Questions } from "../permissions/Questions.ts"
 import { Runs } from "../runs/Runs.ts"
+import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import type { SendRefused } from "../runs/Runs.ts"
 import { TaskRefs } from "../tasks/TaskRefs.ts"
 import { Tasks } from "../tasks/Tasks.ts"
@@ -47,6 +48,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const tasks = yield* Tasks
     const refs = yield* TaskRefs
     const runs = yield* Runs
+    const deletion = yield* TaskDeletion
     const questions = yield* Questions
     const devServers = yield* DevServers
     const meter = yield* ContextMeter
@@ -62,9 +64,9 @@ export const TaskHandlers = TaskRpcs.toLayer(
         ),
       "tasks.update": ({ id, patch }) =>
         Effect.flatMap(actor, (by) => tasks.update(id, patch, by)).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
-      // Its run is stopped at once and its queue dropped first (`Runs.abort`).
+      // Its run is stopped at once and its queue dropped first, then its worktree goes (`TaskDeletion`).
       "tasks.delete": ({ id, delete_branch }) =>
-        Effect.flatMap(actor, (by) => runs.abort(id).pipe(Effect.andThen(tasks.delete(id, { deleteBranch: delete_branch ?? false }, by)))).pipe(
+        Effect.flatMap(actor, (by) => deletion.delete(id, { deleteBranch: delete_branch ?? false }, by)).pipe(
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
       "tasks.send": ({ id, text }) =>
