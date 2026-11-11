@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { startServer, withBrowser } from "./harness.mjs"
+import { makeProfile, startServer, withBrowser } from "./harness.mjs"
 
 // The host's Telemetry section (the old tests/ui/telemetry.test.mjs), against a fake ClickHouse: a node:http server that
-// records what it was sent. Until the host page is brought over (6.12), its placeholder shows the section.
+// records what it was sent. The host page shows a board with a profile (one without opens onboarding).
 
 let server
 let clickhouse
@@ -12,6 +12,7 @@ let clickhouse
 const seen = []
 beforeAll(async () => {
   server = startServer()
+  await makeProfile(server, "me")
   clickhouse = createServer((req, res) => {
     req.resume()
     req.on("end", () => {
