@@ -247,7 +247,11 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `attachmentFiles.ts` (two names differing only in case).
 - **Checks**: `tests/ui/threads.mjs` writes a thread's items into a test server's database before the page opens it
   (`seedThread`), since only runs write threads and this server has none yet; the checks that need a run are written
-  against `--fake-claude` and skipped until Runs (2.5) is in.
+  against `--fake-claude` and skipped until Runs (2.5) is in. With 2.7 they run (`threadUpdates`, `threadLive`'s
+  streaming, `detailsStatusStart`, `uiState`'s Stop): a fresh task moved into In progress starts its agent only where
+  `host.info` says `agents: true`, which the server now reports unless it runs with `--no-agents`; the fake agent
+  streams a reply only for a prompt with `fake-subagent`, and keeps a turn going until a stop interrupts it only for
+  one with `fake-until-interrupted` (its sleep before a reply doesn't heed a stop).
 
 ### Step 2: by hand, a feature folder at a time
 

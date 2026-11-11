@@ -53,7 +53,7 @@ Rules:
 | `board`                | Builders: `profile()`, `project({ git: true })`, `task()`, `taskWithWork()`, `review()`, `stack()`                  |
 | `git`                  | A repository in a temp folder with commits, branches and a bare remote; `squashMerge`                              |
 | `fakeAgent`            | A scripted agent for service tests: feed lines to a run's `out.jsonl`, read what was written to its input, end it. Replaces `runner/testing.ts` |
-| `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`) and knobs. What it must do is inventory 01, section 10 |
+| `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`; and `fake-until-interrupted`, new: a turn that goes on until a stop interrupts it) and knobs. What it must do is inventory 01, section 10 |
 | `fakeGh`, `fakeGithub` | `gh` answers and a GraphQL pull request that tests change over time                                                |
 | `twoHosts`             | Two `TestBoard`s linked in memory, and the same over real sockets for the whole-server tier                        |
 | `fixtures/threads/`    | The recorded sessions                                                                                              |

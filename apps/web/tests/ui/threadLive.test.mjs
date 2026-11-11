@@ -58,11 +58,12 @@ test("a task changed in one tab, or elsewhere, shows in another tab's open task 
   })
 })
 
-// Waits for Runs (plan task 2.5): the fake agent's reply streams in (HUNTAWAY_FAKE_CLAUDE_TEXT, sent a delta at a time
-// every HUNTAWAY_FAKE_CLAUDE_STREAM_SLEEP seconds) as the preview. It checks that a thread at its end follows the
-// streamed text, that one scrolled up stays where it is, and that the saved reply takes the streamed text's place, in
-// both tabs (the old liveUpdates check, IA-167, with the deltas its socket sent).
-test.skip("the reply being written streams into the thread, which follows it at its end (waits for Runs, 2.5)", async () => {
+// The fake agent's reply streams in as the preview (HUNTAWAY_FAKE_CLAUDE_TEXT, sent a delta at a time every
+// HUNTAWAY_FAKE_CLAUDE_STREAM_SLEEP seconds, for a prompt with the "fake-subagent" marker, which also runs a subagent).
+// It checks that a thread at its end follows the streamed text, that one scrolled up stays where it is, and that the
+// saved reply takes the streamed text's place, in both tabs (the old liveUpdates check, IA-167, with the deltas its
+// socket sent).
+test("the reply being written streams into the thread, which follows it at its end", async () => {
   const paragraphs = Array.from({ length: 60 }, (_, i) => `streamed ${i}`)
   Object.assign(process.env, { HUNTAWAY_FAKE_CLAUDE_TEXT: `Streaming **now**\n\n${paragraphs.join("\n\n")}`, HUNTAWAY_FAKE_CLAUDE_STREAM_SLEEP: "0.05" })
   const running = startServer("--fake-claude")
@@ -76,17 +77,21 @@ test.skip("the reply being written streams into the thread, which follows it at 
       await other.goto(`${running.url}${panel}`)
       await ui.run([`goto ${panel}`, "wait No agent has worked on this yet"])
 
-      await ui.run(["click css=textarea", "type Write a long reply", "press Enter"])
+      await ui.run(["click css=textarea", "type Write a long reply fake-subagent", "press Enter"])
       // Drawn as it comes, as plain text: the saved message is Markdown.
       await ui.run(["wait Streaming **now**"])
       await other.getByText("Streaming **now**").waitFor()
-      await ui.run(["wait streamed 10"])
+      // Once it's long enough to scroll (the old check had forty replies above the streamed one; here the streamed
+      // reply is most of the thread), a thread at its end follows it.
+      await eventually(async () => assert.ok(await threadScroller(page).evaluate((el) => el.scrollHeight - el.clientHeight > 200)))
       assert.ok((await scrolledAt(page)).gap < 80, "a thread at its end follows streamed text")
       // Scrolled up, it stays where it is.
-      await threadScroller(page).evaluate((el) => {
+      const scrolled = await threadScroller(page).evaluate((el) => {
         el.scrollTop = 100
         el.dispatchEvent(new Event("scroll"))
+        return el.scrollTop
       })
+      assert.equal(scrolled, 100)
       await ui.run(["wait streamed 40"])
       assert.equal((await scrolledAt(page)).top, 100, "a thread scrolled up isn't moved by streamed text")
       // The saved reply takes the streamed text's place.

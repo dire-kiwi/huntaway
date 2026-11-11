@@ -1,8 +1,7 @@
 // Moving a fresh task to In progress starts its agent, from its details as from a drop on the board (HA-32, HA-262),
 // from the old detailsStatusStart check. Agents run with the fake claude (packages/testing/bin/fake-claude), which logs
-// each call to <data dir>/fake-claude.log and answers without a model.
-//
-// Both wait for Runs (plan task 2.5): until then the server answers the message that starts the agent with Unavailable.
+// each call to <data dir>/fake-claude.log and answers without a model. The web app starts it only on a host whose
+// `host.info` says it runs agents.
 import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import { afterAll, beforeAll, test } from "vite-plus/test"
@@ -20,9 +19,9 @@ const logged = (text) => {
   return existsSync(log) && readFileSync(log, "utf8").includes(text)
 }
 
-// Waits for Runs (2.5). HA-32: moving a fresh task to In progress from its Details tab only changed its column, where a
-// drop on the board starts its agent too. It checks the agent starts with the task, replies, and the task moves on.
-test.skip("In progress from a task's Details starts its agent (waits for Runs, 2.5)", async () => {
+// HA-32: moving a fresh task to In progress from its Details tab only changed its column, where a drop on the board
+// starts its agent too. It checks the agent starts with the task, replies, and the task moves on.
+test("In progress from a task's Details starts its agent", async () => {
   const task = await server.rpc("tasks.create", { task: { project_id: board.project.id, title: "Start me", description: "Say hello." } })
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
@@ -35,9 +34,9 @@ test.skip("In progress from a task's Details starts its agent (waits for Runs, 2
   assert.ok(logged("Say hello."), "the agent was started with the task")
 })
 
-// Waits for Runs (2.5). HA-262: the board's drop and the phone's Move go through moveTask, as Details does. It checks a
-// fresh task dropped into In progress starts its agent with the task.
-test.skip("a fresh task dropped into In progress on the board starts its agent (waits for Runs, 2.5)", async () => {
+// HA-262: the board's drop and the phone's Move go through moveTask, as Details does. It checks a fresh task dropped
+// into In progress starts its agent with the task.
+test("a fresh task dropped into In progress on the board starts its agent", async () => {
   await server.rpc("tasks.create", { task: { project_id: board.project.id, title: "Drop me", description: "Say hi from the drop." } })
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui

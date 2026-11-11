@@ -39,14 +39,15 @@ owns() {
   [[ -r /proc/$1/cmdline ]] && tr '\0' ' ' < "/proc/$1/cmdline" | grep -qF -- "$2"
 }
 
+# Stops $1 (signalling $2, its process group say, if given): TERM, then KILL after 5 s.
 stop_pid() {
-  local pid=$1
-  kill -TERM -- "$pid" 2>/dev/null || return 0
+  local pid=$1 target=${2:-$1}
+  kill -TERM -- "$target" 2>/dev/null || return 0
   for _ in $(seq 250); do
     kill -0 "$pid" 2>/dev/null || return 0
     sleep 0.02
   done
-  kill -KILL -- "$pid" 2>/dev/null || true
+  kill -KILL -- "$target" 2>/dev/null || true
 }
 
 # The data dir to restart or stop: the argument, $HUNTAWAY_TEST_DATA_DIR, or the latest server's.
@@ -258,6 +259,18 @@ stop() {
   if [[ -n $pid ]] && owns "$pid" "$dir"; then
     stop_pid "$pid"
   fi
+  # Agent runs outlive the server (each under its own ia-shim, which writes runs/<id>/shim.pid and the agent's pid):
+  # stop those too, or a fake agent waiting for more input runs on.
+  for run in "$dir"/runs/*/; do
+    [[ -d $run ]] || continue
+    local shim agent
+    shim="$(cat "$run/shim.pid" 2>/dev/null || true)"
+    agent="$(cat "$run/pid" 2>/dev/null || true)"
+    [[ -n $shim ]] && owns "$shim" "$dir" || continue
+    # The agent leads its own process group.
+    [[ -n $agent ]] && stop_pid "$agent" "-$agent"
+    stop_pid "$shim"
+  done
   # A process the server started (a git command) may still be writing in it for a moment: "Directory not empty".
   rm -rf "$dir" 2>/dev/null || { sleep 0.5; rm -rf "$dir"; }
   [[ $(readlink "$latest" 2>/dev/null) == "$dir/env" ]] && rm -f "$latest"

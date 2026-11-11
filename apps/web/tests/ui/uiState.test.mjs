@@ -175,10 +175,11 @@ test("an edit of the description survives a change to it, and a failed save says
   })
 })
 
-// Waits for Runs (plan task 2.5): Stop shows only while the task's agent runs, which needs the fake agent kept running
-// (HUNTAWAY_FAKE_CLAUDE_SLEEP). It checks that a Stop the host refuses says so, in the header and in the composer.
-// IA-161: the Stop buttons ignored a failed request.
-test.skip("a Stop that fails says so (waits for Runs, 2.5)", async () => {
+// Stop shows only while the task's agent runs, which needs the fake agent kept running (HUNTAWAY_FAKE_CLAUDE_SLEEP). It
+// checks that a Stop the host refuses says so, in the header and in the composer. The message re-titles the task (the
+// fake agent's "Fake title"), so the header is waited on for its Stop, not the title. IA-161: the Stop buttons ignored a
+// failed request.
+test("a Stop that fails says so", async () => {
   process.env.HUNTAWAY_FAKE_CLAUDE_SLEEP = "30"
   const running = startServer("--fake-claude")
   try {
@@ -188,7 +189,7 @@ test.skip("a Stop that fails says so (waits for Runs, 2.5)", async () => {
     await withBrowser(running, {}, async (ui) => {
       const { page } = ui
       await routeRpc(page, (r) => (r.tag === "tasks.stop" ? failure({ _tag: "NotFound", what: "run", id: task.id }) : undefined))
-      await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait css=header >> text=Stop me"])
+      await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait css=header button:has-text('Stop')"])
       // In the header, and in the composer.
       await page.locator("header button", { hasText: "Stop" }).click()
       await ui.run(["wait Couldn't stop the agent: No run"])

@@ -42,7 +42,9 @@
 // `tools/call` control request), waiting for each answer as for a permission, and its reply says what each returned
 // ("board wait: {...}"). A `/compact` prompt prints a compact_boundary. A prompt containing "fake-subagent" runs a
 // subagent (a Task call, with a Read inside it), and streams its reply's text (stream_event deltas) before the
-// assistant message.
+// assistant message. A prompt containing "fake-until-interrupted" keeps its turn going until an `interrupt` (which the
+// sleep before a reply doesn't heed), then ends it as Claude Code does: "[Request interrupted by user]" and an
+// error_during_execution result.
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -271,11 +273,14 @@ const takeIn = (m: Json) => {
   )
 }
 
+// The control requests that came while it slept, which only a turn that waits to be interrupted reads.
+const slept: Array<Json> = []
 if (streamInput) {
   // What was steered into the turn while it slept, echoed back as Claude Code does when it takes it in.
   for (const line of await stdin.waiting()) {
     const m = parse(line)
     if (isObject(m) && m.type === "user") takeIn(m)
+    else if (isObject(m) && m.type === "control_request") slept.push(m)
   }
 }
 
@@ -438,6 +443,31 @@ const turn = async (text: string) => {
     emit({ type: "system", subtype: "compact_boundary", session_id: session, compact_metadata: { trigger: "manual", pre_tokens: 1234 } })
   }
   if (text.includes("fake-subagent")) subagent()
+  if (text.includes("fake-until-interrupted")) {
+    // A turn that goes on until it's interrupted (by one that came during the sleep too), as a long one of Claude
+    // Code's does: messages steered meanwhile are taken in, and the interrupt ends the turn with Claude Code's note and
+    // an error result. With stream-json input it then waits for more.
+    for (;;) {
+      const line = slept.length > 0 ? null : await stdin.line()
+      if (line === "") await exit(0)
+      const m = line === null ? slept.shift() : parse(line)
+      if (!isObject(m)) continue
+      if (m.type === "user") takeIn(m)
+      if (m.type !== "control_request") continue
+      const interrupt = field(m.request, "subtype") === "interrupt"
+      emit({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: interrupt ? { still_queued: [] } : {} } })
+      if (!interrupt) continue
+      emit({
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] },
+        parent_tool_use_id: null,
+        session_id: session,
+        uuid: randomUUID(),
+      })
+      emit({ type: "result", subtype: "error_during_execution", is_error: true, session_id: session, duration_ms: 1, num_turns: 1, total_cost_usd: 0 })
+      return
+    }
+  }
   const usage = env.HUNTAWAY_FAKE_CLAUDE_USAGE || (text.includes("on-extra-usage") ? "extra" : text.includes("out-of-usage") ? "out" : "")
   const window = env.HUNTAWAY_FAKE_CLAUDE_WINDOW
   if (window !== undefined && window !== "" && usage === "") {

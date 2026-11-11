@@ -3,8 +3,6 @@
 // run with the fake claude (packages/testing/bin/fake-claude), which answers without a model, waiting
 // HUNTAWAY_FAKE_CLAUDE_SLEEP seconds first so a run can be caught while it runs.
 //
-// Every check here waits for Runs (plan task 2.5): until then the server answers `tasks.send` with Unavailable.
-//
 // Dropped from the old check: a group of tool calls whose results come after them, a prompt and then its answer, a
 // subagent's items as they come (the fake agent makes no tool calls or subagents; the translator's tests and
 // packages/client/test/thread.test.ts cover the items and their events; answering prompts is 3.3), a closed thread not
@@ -26,9 +24,9 @@ afterAll(() => server?.stop())
 
 const newTask = (title, fields = {}) => server.rpc("tasks.create", { task: { project_id: board.project.id, title, status: "in_review", ...fields } })
 
-// Waits for Runs (2.5). It checks a message sent from the composer shows in the thread, the agent's reply after it, and
-// the task's state with them (working, then done), and that the draft is gone once it's sent.
-test.skip("a message sent from the composer starts the agent, and its reply shows (waits for Runs, 2.5)", async () => {
+// It checks a message sent from the composer shows in the thread, the agent's reply after it, and the task's state
+// with them (working, then done), and that the draft is gone once it's sent.
+test("a message sent from the composer starts the agent, and its reply shows", async () => {
   const task = await newTask("Updates: send")
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
@@ -39,9 +37,9 @@ test.skip("a message sent from the composer starts the agent, and its reply show
   })
 })
 
-// Waits for Runs (2.5). It checks a message sent while the agent works is steered into its run (shown above the composer
-// until the agent reads it, then in the thread) and answered in the same run.
-test.skip("a message sent while the agent works is steered into its run (waits for Runs, 2.5)", async () => {
+// It checks a message sent while the agent works is steered into its run (shown above the composer until the agent
+// reads it, then in the thread) and answered in the same run.
+test("a message sent while the agent works is steered into its run", async () => {
   const task = await newTask("Updates: steer")
   await withBrowser(server, {}, async (ui) => {
     await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click css=textarea", "type First message", "press Enter", "wait Working…"])
@@ -51,22 +49,29 @@ test.skip("a message sent while the agent works is steered into its run (waits f
   })
 })
 
-// Waits for Runs (2.5). It checks Stop in the header ends the run: the thread says the turn was interrupted, and the
-// task isn't running any more.
-test.skip("Stop ends the agent's run (waits for Runs, 2.5)", async () => {
+// It checks Stop in the header ends the run: the thread says the turn was interrupted, and the task isn't running any
+// more. The fake agent's sleep before its reply doesn't heed a stop, so the message asks it (fake-until-interrupted)
+// for a turn that goes on until one comes, as Claude Code's does.
+test("Stop ends the agent's run", async () => {
   const task = await newTask("Updates: stop")
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click css=textarea", "type Take your time", "press Enter", "wait Working…"])
+    await ui.run([
+      `goto /p/${board.project.id}?task=${task.id}`,
+      "click css=textarea",
+      "type Take your time fake-until-interrupted",
+      "press Enter",
+      "wait Working…",
+    ])
     await page.locator("header button", { hasText: "Stop" }).click()
     await ui.run(["gone Working…", "wait Interrupted"])
     await eventually(async () => assert.equal((await server.rpc("tasks.get", { id: task.id })).running, false))
   })
 })
 
-// Waits for Runs (2.5). IA-161 review: a send still going when its composer went (another card) must not come back as a
-// draft. Against the real run: the send is answered after the card changes.
-test.skip("a message sent while its composer is gone doesn't come back as a draft (waits for Runs, 2.5)", async () => {
+// IA-161 review: a send still going when its composer went (another card) must not come back as a draft. Against the
+// real run: the send is answered after the card changes.
+test("a message sent while its composer is gone doesn't come back as a draft", async () => {
   const task = await newTask("Updates: gone", { status: "todo" })
   const other = await newTask("Updates: other", { status: "todo" })
   await withBrowser(server, {}, async (ui) => {
@@ -81,9 +86,9 @@ test.skip("a message sent while its composer is gone doesn't come back as a draf
   })
 })
 
-// Waits for Runs (2.5). It checks the thread of a task closed while its agent replied has the reply when it's opened
-// again (kept subscribed for ten seconds after it's closed, then subscribed again).
-test.skip("a thread opened again has what came while it was closed (waits for Runs, 2.5)", async () => {
+// It checks the thread of a task closed while its agent replied has the reply when it's opened again (kept subscribed
+// for ten seconds after it's closed, then subscribed again).
+test("a thread opened again has what came while it was closed", async () => {
   const task = await newTask("Updates: reopened")
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui

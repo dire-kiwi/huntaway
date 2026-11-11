@@ -236,7 +236,12 @@ As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
   place the environment is read; `Proc`'s scripts take it from there too when they come.
 - **`fake-claude`** (`packages/testing/bin/fake-claude`) with stream-json input now waits for more after its result,
   as Claude Code does: each further user message is echoed and answered by a turn, and it exits when its input ends.
-  The old one exited after its first result, which let a server that never closes the input pass.
+  The old one exited after its first result, which let a server that never closes the input pass. A prompt with
+  `fake-until-interrupted` (new) keeps its turn going until an `interrupt`, then ends it as Claude Code does
+  ("[Request interrupted by user]" and an `error_during_execution` result), for checks of a stop.
+- **`host.info`** says `agents: !noAgents` and `agent_clis: ["claude"]` (none with `--no-agents`), the old
+  `can_run_agents` without its look for the shim and `claude` on the PATH; it had said `agents: false`, so the web app
+  never started a fresh task moved into In progress.
 
 ### As built in 2.4 and 2.5 (HE-4): the Claude launch, `Runs`, the line handler
 
