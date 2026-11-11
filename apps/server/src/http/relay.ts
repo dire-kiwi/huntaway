@@ -16,7 +16,9 @@ export const RelayRoute = HttpRouter.use(
       "/api/relay/:ticket",
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
-        const opened = yield* relay.take(params["ticket"] ?? "").pipe(Effect.option, Effect.map(Option.flatten))
+        const taken = yield* Effect.result(relay.take(params["ticket"] ?? ""))
+        if (taken._tag === "Failure") return HttpServerResponse.jsonUnsafe({ error: `host ${taken.failure.host_name} is offline` }, { status: 503 })
+        const opened = taken.success
         if (Option.isNone(opened)) return HttpServerResponse.jsonUnsafe({ error: "no such relay ticket, or it was used or has expired" }, { status: 404 })
         const client = yield* accept
         const host = yield* opened.value.end
