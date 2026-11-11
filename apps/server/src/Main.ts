@@ -6,7 +6,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
 import { AttachmentRpcs, BoardRpcs, ConfigRpcs, HostRpcGroup, PenRpcs, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
-import { ApiNotFound, HealthRoute, StaticUi } from "./http/routes.ts"
+import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
 import { DataDir } from "./platform/DataDir.ts"
@@ -111,7 +111,7 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }))
+export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a

@@ -1,5 +1,5 @@
-import { Effect, FileSystem, Layer, Path } from "effect"
-import { HttpRouter, HttpServerResponse, HttpStaticServer } from "effect/http"
+import { ByteSize, Effect, FileSystem, Layer, Path } from "effect"
+import { HttpIncomingMessage, HttpRouter, HttpServerResponse, HttpStaticServer } from "effect/http"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { About } from "../settings/About.ts"
 
@@ -61,3 +61,12 @@ export const StaticUi = Layer.unwrap(
     )
   }),
 )
+
+/**
+ * The largest request body read: an attachment's 10 MiB as base64 in one RPC, with room (docs/plan/inventory/
+ * 07-server-root-api.md, 7.3). A larger one is answered 413 without being kept in memory; the RPC's own framing
+ * refuses messages over 16 MiB anyway.
+ */
+export const MAX_BODY = ByteSize.mebibytes(16)
+
+export const BodyLimit = HttpRouter.middleware((app) => Effect.provideService(app, HttpIncomingMessage.MaxBodySize, MAX_BODY), { global: true })

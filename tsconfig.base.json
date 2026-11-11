@@ -33,6 +33,7 @@
           "effect/crypto",
           "effect/FileSystem",
           "effect/Path",
+          "effect/ByteSize",
           "effect/PlatformError",
           "@effect/sql-sqlite-node",
           "@effect/platform-node",

@@ -77,7 +77,10 @@ describe("RPCs", () => {
     ).toEqual([])
   })
 
-  describe("HostRpcs not served yet", () => {
-    for (const tag of unserved) it.todo(tag)
-  })
+  // Listed while an area is still to come; empty once every RPC is served.
+  if (unserved.length > 0) {
+    describe("HostRpcs not served yet", () => {
+      for (const tag of unserved) it.todo(tag)
+    })
+  }
 })

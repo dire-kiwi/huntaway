@@ -121,6 +121,8 @@ const call = Effect.fn("rpc.call")(
       )
     }
     const value = yield* result.pipe(Effect.catch(failed))
+    // A method that answers nothing (a delete) prints nothing.
+    if (value === undefined) return yield* Effect.void
     return yield* Schema.encodeUnknownEffect(Schema.fromJsonString(rpc.successSchema, { space: 2 }))(value).pipe(Effect.flatMap(Console.log), Effect.orDie)
   },
   Effect.scoped,
