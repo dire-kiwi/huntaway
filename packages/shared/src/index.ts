@@ -1,3 +1,5 @@
 export * from "./approvalRules.ts"
 export * from "./keys.ts"
 export * from "./shell.ts"
+export * from "./gh.ts"
+export * from "./ghTargets.ts"

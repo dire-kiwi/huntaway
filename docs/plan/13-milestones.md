@@ -92,6 +92,12 @@ it. **Measure** ([10-testing.md](10-testing.md#measurements)) before going on.
 **Shows:** a task goes from To do to Done on its own: worktree, agent, pull request, reviewers, a round of fixes,
 merge. This is the point at which this repository's own work can move onto a board running the new server.
 
+As checked in HE-5: `apps/server/tests/e2e/flow.test.ts` runs it on a whole server through the launcher, with the fake
+agent and the fake GitHub: the worktree set up, the agent's commit, its pull request found as the run ends, a reviewer
+that finds an issue, a round of fixes, a review that passes and a summary, then the move to Ready for merge, the merge
+request to the task's own agent, its `gh pr merge` and `update_task` to Done. The same test runs the task with Codex
+as its agent (the fake `codex app-server` under `codex-run`), its reviewer the fake claude. A real model was not used.
+
 ## M5: Codex
 
 | Task | Does                                                                                           | Needs | Read; inventory          |
@@ -99,6 +105,9 @@ merge. This is the point at which this repository's own work can move onto a boa
 | 5.1  | `codex-run`, the adapter process                                                               | 2.3   | inv 01 §5 _Codex_        |
 | 5.2  | `CodexDriver`: launch spec, permission-mode mapping, line schemas, the translator against the 20 recorded sessions, requests, the dynamic-tools transport | 5.1, 3.3 | 07; inv 01 §5, 08 §3.6, 03 §2.7 |
 | 5.3  | Codex queries: models, skills, rate limits, titles; approval rules as server config            | 5.2   | inv 01 §2, 02            |
+
+**Shows** (HE-5): the M4 flow with Codex as the task's agent (`tests/e2e/flow.test.ts`), and one run of a real
+codex-cli on a test server (07-agents.md, Codex).
 
 ## M6: the rest of one host
 

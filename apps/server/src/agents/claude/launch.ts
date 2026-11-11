@@ -158,8 +158,8 @@ const ghTool = (t: string) => `mcp__${GH_SERVER}__${t}`
 /** `~` expanded against `home`. */
 const expand = (path: string, home: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
 
-/** The run's `mcpServers` entries for the board's servers: HTTP, with the run's secret. */
-const boardServers = (input: ClaudeLaunchInput, servers: ServedServers, inProcess: boolean): Record<string, unknown> => {
+/** The run's `mcpServers` entries for the board's servers: HTTP, with the run's secret (a Codex run's too). */
+export const boardServers = (input: Pick<ClaudeLaunchInput, "mcp" | "tools">, servers: ServedServers, inProcess: boolean): Record<string, unknown> => {
   const headers = { Authorization: `Bearer ${input.mcp.secret}` }
   const url = (name: string) => `${input.mcp.url}${name}`
   const out: Record<string, unknown> = {}

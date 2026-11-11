@@ -78,6 +78,8 @@ describe("applyBoardEvent", () => {
         (b) => expect(b.pens.map((p) => [p.name, p.host_id])).toEqual([["Pen", H]]),
       ],
       [{ type: "usage", seq: 12, usage: usage({ plan: "max" }) }, (b) => expect(b.usage.get(config().id)?.plan).toBe("max")],
+      // A task's checkpoints changed: what shows its turns reads them again.
+      [{ type: "checkpoints", seq: 13, task_id: T1 }, (b) => expect(b.checkpoints.get(T1)).toBe(13)],
     ]
     let b = board
     for (const [event, check] of steps) {

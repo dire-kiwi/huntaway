@@ -603,6 +603,17 @@ export class ToolCalls extends Context.Service<ToolCalls, {
 - `mcp_calls` older than an hour whose run is gone or ended an hour ago are pruned when `ToolCalls` starts and hourly,
   1000 at a time. The `board_tool` telemetry event is left for analytics.
 
+### As built in 4.4 (HE-5): the `gh` server
+
+The `gh` server's 17 tools are `mcp/tools/gh.ts` (`GhTools`, `McpServers.register("gh", …)`,
+through `ToolCalls` like every call, over `Gh.run`; null arguments dropped as the board's). Their result is MCP content
+(gh's output, `isError` when gh failed), which `callResult(result, server)` passes through for every server but the
+board's; `GhRefused` is the tool's `Error: …`. The servers other than the board's offer a reviewer every tool (the
+reviewer and plan gates were the board's only already) and list `readOnlyHint` (`Tool.Readonly`; those tools are also
+`Rerunnable`). `initialize` on gh says the run's account (`initializeResult(server, protocol, account)`, from
+`mcp-run.json`). `McpControlRegistered` now tells the launch gh is served, so Claude runs get gh in `mcp.json` and the
+gh hook. 3.1's test of an ended run gives gh's call arguments it takes, since an unknown argument is refused first.
+
 ### As built in 3.2 (HE-4)
 
 - **`mcp/tools/<area>.ts`** declare and handle the board's tools: `questions.ts` (`request_user_input`, `finish_work`),
@@ -675,10 +686,16 @@ As built in 3.5 (HE-4):
   Schema, not enforced: the period clamps, as before) and `background_wait`, which checks the id against the task's
   `background_work` of this run and writes the run's `background-waited` (`RunDir.backgroundWaited`,
   `setBackgroundWaited`); 2.8's `BackgroundWork` reads that file when it shows the task's background work again.
-- **Pull requests (4.5)**: a wait given `pull_request` is refused for now. The seams: the read before the wait starts
-  (into the stored wait's `pull_request`), the watcher racing in `waitOut` that records news on the stored wait (which
-  `check` already ends on), `delivered` after the call returns, the note (`PR_NOTE` stands in) and the last read in the
-  result.
+- **Pull requests (as built in 4.5, HE-5)**: the tool asks `PrWatch.request` (the target in the task's repository,
+  `pull_request_events` added to the three every wait has, the account's host) and passes it in `WaitRequest.pullRequest`;
+  `pull_request` takes a number too (`7`, `7.0`), as agents send one. A new wait reads the pull request before it is
+  stored (`PrWatch.poll` for its call: one that can't be read fails the call, "The wait didn't start: …", with the SSH
+  alias hint off github.com), and keeps the news found in the stored wait's `pull_request`. `waitOut` forks
+  `PrWatch.watch` in the wait's scope, which reads every `PrPoll` (straight away for a wait carried on after a
+  restart) and records news on the stored wait in one transaction, publishing the task, which `check` already ends on.
+  After the call, news that reaches the agent (not `Stopped` or `Resumed`) is `delivered`: told. The note is
+  `prompts/pullRequests.ts`' (`prNote`, through `github/prWatch/pr.ts` `note`, which decodes the stored news); the
+  result's `pull_request` is the news, or else `PrWatch.last` (the last read with `read_at`).
 
 ## Permissions, questions, approvals
 
@@ -803,6 +820,92 @@ As built in 3.4 (HE-4), `permissions/Approvals.ts`:
   `ProjectCreationDetail` and `TaskDeletionDetail`; the approval card shows them while it waits (or once opened) and a
   line otherwise. The browser check is `apps/web/tests/ui/boardApprovals.test.mjs` (the old suite had none).
 
+## Codex<a id="codex"></a>
+
+### As built in 5.1–5.3 (HE-5)
+
+- **The pure parts are `agents/codex/`**: `spec.ts` (`CodexSpec`, `codex.json`, read back leniently with `specFromJson`
+  as serde did, unreadable `approval_rules` making it no spec; `policy(mode, review)`, `threadParams`, `REVIEW_PROFILE`,
+  `isClaudeModel`), `servers.ts` (`mcpServerConfig`; the approval rules as per-server config, `codexServer`, and
+  `codexPolicy`, which returns why a never rule on Codex's own tools refuses the run rather than throwing), `items.ts`
+  (an item as a tool call: `toolUse`, `toolOutput`, `displayCommand`, `fileChanges`, `subagentId`, `ownThread`),
+  `requests.ts` (`classify(request)`: a `Prompt` for `Permissions`, a `Tool` call of the board's, or an `Answer` given at
+  once; `promptAnswer`, `toolAnswer`, `codexResponse`, `requestId` (`codex:<id>`), `boardTools(manifest)`), `lines.ts`
+  (a schema per line, by `method`: `decodeLine → Result<CodexLine, LineProblem>`, `CodexLine` a `Notification` of the
+  adapter's kept list, a `Request`, `Resolved`, `Model`, `BoardTools` or `Echo`), `translate.ts` (below), `launch.ts`
+  (`codexLaunch(input) → { spec, codex, boardTools }`, failing `LaunchRefused`), `queries.ts` (`parseModels`,
+  `parseSkills`, `titleModel`, `rateLimits`, `planType`), and `rpc.ts`, the app-server client (`appServer(options)`, a
+  scoped process: `request`, `notify`, `initialize`, `next`, `respond`, `respondError`, `exitStatus`, `exited`; killed
+  with SIGKILL when its scope closes).
+- **`codex-run` (5.1)** is `apps/server/src/codex-run.ts`, an entry point of its own (the launcher execs it as it does the
+  hooks, without `bin.ts`), over `agents/codex/adapter/` (`runAdapter`, the old adapter line for line: the handshake,
+  `skills/extraRoots/set`, `thread/start` with the board's tools as dynamic tools or `thread/resume`, `thread/revert`, the
+  turn loop with steers, interrupts and echoes, a compaction's `thread/compact/start`, the requests on the output and
+  their answers from the input, declined without a board, child threads closed as it ends). It reads stdin as a stream
+  and writes each output line with one `writeSync`, so nothing is lost on exit. It finds `codex` in
+  `HUNTAWAY_CODEX_BIN`, which the launch sets from `ServerConfig.codexBin` (`--codex-bin`/`HUNTAWAY_CODEX_BIN`, default
+  `codex`).
+- **The launch** is `LaunchFacts.launch(run, text)`, which `Runs` calls: Claude's (`claude`) unless the thread's config
+  is Codex's. The Codex half gathers the old launch's Codex facts: the model (the task's, else the first of its
+  project's, profile's and host's that isn't Claude's), the effort as the model takes it (`codexEffort` over
+  `CodexQueries.models`, unchanged when they can't be listed), the git directory and package caches as writable roots, a
+  reviewer's read-only sandbox (`git ls-files`/`check-ignore` for the ignored folders it may write), the rules, whether
+  the session has the board's tools as dynamic tools (`RunRepo.sessionBoardTools`), and a rewind's `before_turn` when
+  the rewind is for the task's session (4.3 clears it). `codexLaunch` runs `<launcher> codex-run <dir>/codex.json`,
+  feeds the prompt as the first stream-json user message (no `awaited`: the adapter echoes only steered messages), and
+  sets `CODEX_HOME`, `TMPDIR`, `HUNTAWAY_TASK_ID` and `HUNTAWAY_CODEX_BIN`. `RunDir.prepare` writes `codex.json` (before
+  `spec.json`); `RunDir.codexSpec` and `isCodex` read it. The run records its effort and `board_tools`. A server not
+  started by its launcher (`HUNTAWAY_EXE` unset) refuses Codex runs.
+- **The line handler** is `runs/codex/output.ts`. `CodexOutput` is the follower's `RunOutput` for both agents: a run whose
+  folder has `codex.json` (looked at once per run) goes to the Codex handler, the others to `ClaudeOutput`, which it is
+  built over (`Main.ts`). A request goes to `AgentRequests.handleCodex`, a resolution to `AgentRequests.cancel` as request
+  `codex:<id>`, `huntaway/model` only moves the offset (tokens read `out.jsonl`); a notification is translated and
+  written with what it tells the run and the offset in one transaction, as a Claude line is (one line to a transaction:
+  no chunks), and a turn's end closes the input even when recording it failed. After the commit: the reply being written,
+  `Usage.setLimits` from `account/rateLimits/updated`, `ContextMeter.onCodexUsage`/`onCompacted`/`recordTurn`, a
+  subagent's end on the wait (`RunWaits.subagentEnded`), and a usage-limit refusal (`Usage.codexRefused`, the task's
+  `limit_reset_at`). `// 4.3: Checkpoints.afterTurn` marks where a turn's checkpoint goes.
+- **The translator** (`translate.ts`) is the old driver's `map` and the thread half of `handle` and `finish_turn`, pure:
+  `translate(state, line, ctx) → { state, events, metas, effects, warnings }`, with `observe` and `stateFromItems`. Its
+  state is the thread's tool calls with their places and the ids of its other items (what the old `View` read), so a line
+  read again adds nothing. A turn's end is a `turn_result` (`legacy:<writeNo>`, only `turn/completed` and
+  `thread/compacted` take a write number) as Claude's result would make it for the old Codex result line; Codex's
+  `/compact` reporting its end twice makes one. Its effects: `SessionStarted`, `TurnStarted` (the turn id, `agent_at`),
+  `TurnEnded`, `PreviewReset`/`PreviewText`, `Working` (the run's wait ends), `SubagentEnded`, `Notice` (the board's
+  warnings, written with `Threads.notice`), `RateLimits`, `TokenUsage`, `Compacted`, `ToolDone`, `Echoed`,
+  `BoardToolsRefused`. The 20 recorded Codex sessions pass unchanged (`agents/codex/fixtures.test.ts`).
+- **Requests**: `AgentRequests` gained `registerCodex(kind, handler)` (`prompt`, `tool`), `handleCodex` and
+  `respondCodex` (a `codex_response` line). `Permissions.onCodex` (registered by `Permissions.registered`) asks a Codex
+  approval or question as `stdio:<run>:codex:<id>` through the same `answerControl` as `can_use_tool`, answering with
+  `promptAnswer`; the request it opens keeps what answering needs (`metadata.codex`), so `Permissions.resume` answers it
+  as Codex takes it after a restart. Codex's questions are question requests (`requestForPrompt` takes
+  `request_user_input`, ids from the questions, no forced answer of one's own). The dynamic-tools transport is
+  `mcp/transport/codex.ts` (`McpCodexRegistered`): `ToolCalls.call` with `answer: { request_id, rpc_id, codex: true }`,
+  answered with `codex_response` and recorded with `codex`, so `ToolCalls.resume` takes it up again.
+- **`Wait`**: a Codex run's waits are its reviewer's to approve when `codex.json` says `review_waits`.
+- **Queries (5.3)** are the service `agents/CodexQueries` (`models`, cached 10 minutes per config folder; `skills`, a
+  minute; `rateLimits`; `title`; `configModels`), live in `agents/codex/CodexQueriesLive.ts` on short-lived app-servers
+  (20 s, 60 s for a title), `CodexQueries.layerTest` in tests (models from `CodexModelsScript`, nothing else). It is
+  `ModelCalls.codex` in `Main.ts`. `TitleModel` asks it for a Codex config's titles; `Usage` reads a Codex config's plan
+  and limits through it (`Usage.provideCodex`, registered by `CodexQueries.registered`, since `profiles/` is above
+  `agents/`). `configs.models { id } → AgentModel[]` (new: `NotFound`, `Unavailable`) lists a config's models (none for
+  a Claude config); the web's model pickers (the thread's, the new task's) read them through the client's
+  `configModelsAtom`. `host.info`'s `agent_clis` lists `codex` when its program is there.
+- **Decided**: the board's namespace's description is cut to the whole sentences of the board's instructions that fit
+  1024 characters (`fitted`): codex-cli 0.167 refused `thread/start` with the whole text (found by the run on the real
+  Codex, below). Codex runs use the stream-json input Claude's do (`RunInput` unchanged): a user message, an `interrupt`
+  control request, and the `codex_response` answers.
+- **Left out**: a Codex run's skills in the composer (`CodexQueries.skills` is there; the composer's skills are
+  `AgentTools`, 6.4); telemetry's `config_overrides` (6.9); `documents.follow` on a tool's end (6.2); refusing to start a
+  Codex run on a host without the CLI (the run fails at its start, with the adapter's error); the old `codex_run_effort`
+  fallback when models can't be listed is the effort as given.
+- **Tests**: the 20 sessions; the old driver, adapter, launch, requests and `tests.test.ts` cases (`agents/codex/*.test.ts`,
+  `runs/codex/output.test.ts`); the queries against `fake-codex` (`packages/testing/bin/fake-codex.ts`, its markers
+  and knobs at its top); and `tests/e2e/codex.test.ts`, a whole server running a task with Codex as its agent
+  (fake-codex under `codex-run` under ia-shim: an approval, a board tool as a dynamic tool, the reply, In review). One
+  run on the real `codex` (codex-cli 0.167.1, `gpt-6-luna`, low effort, the default mode) on a test server called
+  `list_projects` as a dynamic tool, replied, and ended in In review.
+
 ## Prompts
 
 Every piece of text the board gives an agent is in `apps/server/src/prompts/`, one file per piece, **copied from the
@@ -903,3 +1006,34 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   which `tasks.create` calls: `start` starts the agent, and a task with only a description gets its title written
   first (`Titles.generateLater`, starting it after if asked); `tasks.create` can then fail as `tasks.send` does
   (`Unavailable` added to its contract).
+
+### As built in 4.8 (HE-5): stack titles
+
+- **`agents/StackTitles.ts`** (the old `agent/stack_title.ts`, HA-387) writes a stack's title and description with the
+  model task titles use (`TitleModel`, the bottom's config: Claude, or Codex's cheapest model; its tokens a `title` side
+  call), kept on the stack's bottom (`stack_title`, `stack_description`, `stack_pinned`, through `Tasks.change`). The
+  stack is `tasks/lanes.ts`' `stackOf` over the tasks of the task's project (or its profile's in no project) of its
+  profile. The pure parts are `agents/stackTitles/text.ts` (`stackInput`, `parseStackReply`), the prompt
+  `prompts/stackTitle.ts`.
+- **`changed(change)`** is the reactor's step for every `TaskChanged` (after the merge step): a task made, deleted, or
+  changed in what a stack reads (its title, description, status, kind, target, the task it lands after) has the stacks it
+  was and is in settled at once (the fields moved to the bottom, cleared elsewhere, a split's handed to the part split
+  off) and written after a pause. A deleted task's fields come from its last row in the change (its hidden input isn't
+  known by then, so an unpinned stack is written again, which its lost level would cause anyway).
+- **The pause is 5 s on the clock** (`STACK_DEBOUNCE_MS`): a fiber per bottom in a `FiberMap` sleeps until the time due
+  (taken when it's scheduled, so a fiber that starts late doesn't wait longer), a new change replacing it; then the
+  stack is queued and written by a writer fiber under a one-permit semaphore (never two writes at once; a stack queued
+  twice is written once, from what it says by then). `settled` (tests) waits, on a `SubscriptionRef` of what's waiting,
+  queued and being written, until none is; tests move the clock past the pause first.
+- **What a stack was written from** is the hidden `stack_input` column (`agents/StackTitleRepo.ts`; the column was in
+  the initial migration, not on the wire). **Decided**: it keeps the input text itself, not the old SHA-256 prefix (the
+  server has no digest service; the text is at most 30 levels of 1,000 characters). An imported board's stacks therefore
+  don't match their old keys and are each written once more after the switch (the pass after a start), unless pinned.
+- **`update(id, edit)`** is `tasks.updateStack` (the old `PATCH /tasks/{id}/stack`): through any level, answered with
+  the bottom; `title`/`description` pin them (blank clears), `regenerate` unpins, forgets the input and writes again
+  forced (also for a stack whose tasks are all done). `StackInvalid` (both, neither, over 200/2,000 characters, a task in
+  no stack, another profile's task naming one of this one's) is the wire's `Invalid`; `TaskNotFound` is `NotFound`.
+- **`resume`** (Recovery, last): a minute after start, on the clock, in the service's scope, the open levels' stacks are
+  queued (not forced): those already written from what their levels say cost nothing.
+- **Tests**: `agents/StackTitles.test.ts`, every case of the old `agent/stack_title.test.ts` on the test board with
+  `TitleScript`, but the wire and MCP parts it names at its top.

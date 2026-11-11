@@ -203,6 +203,9 @@ export function fakeHost(b: Board): FakeHost {
         host.emit({ type: "task_deleted", id: TaskId.make(t.id), project_id: t.project_id })
       }),
     )
+    // 4.5: a preview the fake can't reach, and work that is merged (a check gives its own).
+    .on("board.previewStatus", () => ({ up: false, status: null }))
+    .on("tasks.unmerged", () => ({ unmerged: false }))
   installed.current = host
   return host
 }

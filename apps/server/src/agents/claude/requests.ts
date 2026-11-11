@@ -11,6 +11,8 @@ import { question, sameJson, str, toolFields, toolTitle } from "./tools.ts"
 /** The tools whose prompts are a plan and questions. */
 export const EXIT_PLAN = "ExitPlanMode"
 export const ASK_USER = "AskUserQuestion"
+/** Codex's questions (its `item/tool/requestUserInput`), as the board asks them. */
+export const CODEX_QUESTIONS = "request_user_input"
 
 /** A prompt for the user: Claude's can_use_tool, or one of the board's own approvals. */
 export interface Prompt {
@@ -91,11 +93,14 @@ export const requestForPrompt = (
     warnings: [...linked.warnings, ...warnings],
   })
   if (prompt.tool_name === EXIT_PLAN) return done({ ...base, type: "plan", plan: str(input, "plan") ?? "" })
-  if (prompt.tool_name === ASK_USER) {
+  if (prompt.tool_name === ASK_USER || prompt.tool_name === CODEX_QUESTIONS) {
+    const claude = prompt.tool_name === ASK_USER
     const asked: ReadonlyArray<unknown> = Predicate.isObject(input) && Array.isArray(input["questions"]) ? input["questions"] : []
     const texts = asked.map((q) => (Predicate.isObject(q) && typeof q["question"] === "string" ? q["question"] : ""))
-    const byText = texts.every((t, i) => t !== "" && texts.indexOf(t) === i)
-    const questions = asked.map((q, i): Question => question(q, str(q, "id") ?? (byText ? (texts[i] ?? "") : String(i)), true))
+    // Claude's questions are told apart by their text (unless two have the same), and always take an answer of one's
+    // own; Codex's have ids, and take one when they say so.
+    const byText = claude && texts.every((t, i) => t !== "" && texts.indexOf(t) === i)
+    const questions = asked.map((q, i): Question => question(q, str(q, "id") ?? (byText ? (texts[i] ?? "") : String(i)), claude))
     const [first, ...rest] = questions
     if (first === undefined) return done(null, [{ code: "empty_question", text: "a question prompt with no questions" }])
     return done({ ...base, type: "question", questions: [first, ...rest] })

@@ -1,0 +1,7 @@
+#!/bin/sh
+# A stand-in `gh` over a fake GitHub (fake-gh.ts beside this file, which says what it does), its state the JSON file
+# $HUNTAWAY_FAKE_GH_STATE names: Node runs the TypeScript directly, as bin/huntaway does the server's. $HUNTAWAY_NODE, else
+# node on PATH.
+self=$(readlink -f "$0" 2>/dev/null)
+[ -n "$self" ] && [ -f "$self" ] || self=$(cd -P "$(dirname "$0")" && pwd)/$(basename "$0")
+exec "${HUNTAWAY_NODE:-node}" --disable-warning=ExperimentalWarning "$(dirname "$self")/fake-gh.ts" "$@"

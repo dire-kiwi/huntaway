@@ -34,6 +34,8 @@ import { blockedReason } from "@huntaway/shared"
 import type { Rule } from "@huntaway/shared"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { requestForPrompt } from "../agents/claude/requests.ts"
+import { promptAnswer, requestId as codexRequestId } from "../agents/codex/requests.ts"
+import type { Classified, CodexAsk, CodexRequest } from "../agents/codex/requests.ts"
 import { emptyState, stateFromItems } from "../agents/claude/state.ts"
 import { ASKS_ITSELF, BOARD_SERVER, boardRule } from "../agents/rules.ts"
 import { Actor, Changes } from "../platform/Changes.ts"
@@ -111,6 +113,8 @@ export interface ToolUse {
   readonly input: unknown
   /** The call it is for, which links the thread's request to it (and names the subagent asking). */
   readonly tool_use_id: string | null
+  /** A Codex request's (5.2): what answering it needs, kept with the thread's request so a restart can answer it. */
+  readonly codex?: CodexAsk | undefined
 }
 
 /** Who asks: a call (`call_id`) of a run. A `can_use_tool` prompt also has its control request (`control_id`). */
@@ -171,6 +175,8 @@ export interface PermissionsShape {
   readonly onControl: (run: Run, request: ControlRequest) => Effect.Effect<void>
   /** The agent no longer wants control request `requestId` answered: its prompt expires, and it isn't answered. */
   readonly onCancel: (run: Run, requestId: string) => Effect.Effect<void>
+  /** A Codex approval or question on `run`'s output (5.2), as `onControl`: recorded as `stdio:<run>:codex:<id>`. */
+  readonly onCodex: (run: Run, request: CodexRequest, prompt: CodexPrompt) => Effect.Effect<void>
   /** For tests: waits until `can_use_tool` call `call` is no longer being asked here (answered, or given up on). */
   readonly settled: (call: string) => Effect.Effect<void>
   /** For tests: waits until the prompt call `call` raised is being waited on, and gives its id. */
@@ -179,6 +185,14 @@ export interface PermissionsShape {
 
 /** The call id of `can_use_tool` request `request` on run `run`'s output. */
 export const promptCallId = (run: RunId, request: string) => `stdio:${run}:${request}`
+
+/** Codex's approval or question, as `agents/codex/requests.ts` classifies it. */
+export type CodexPrompt = Extract<Classified, { readonly _tag: "Prompt" }>
+
+/** What answering a Codex request needs, as a prompt's thread request keeps it. */
+const decodeCodexAsk = Schema.decodeUnknownOption(
+  Schema.Struct({ id: Schema.Union([Schema.String, Schema.Finite]), method: Schema.String, permissions: Schema.optional(Schema.Unknown) }),
+)
 
 const Json = Schema.fromJsonString(Schema.Unknown)
 /** A stored input: its JSON, or the text itself when it isn't JSON (a row an old board wrote). */
@@ -408,6 +422,8 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         readonly rule: Rule | null
         /** The name the action log gives it. */
         readonly logged: string
+        /** A Codex request's, in the thread request's metadata. */
+        readonly codex?: CodexAsk | undefined
       }
 
       /**
@@ -455,7 +471,11 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
             const opened = (n: WriteNo): ThreadRequest => {
               const shown =
                 request ?? ({ id, type: "permission", kind: "other", name: r.tool, input: r.input ?? {}, created_at: created } satisfies ThreadRequest)
-              const metadata = { ...metadataOf({ ...base, write_no: n }, shown.type, r.input), tool_use_id: r.toolUseId }
+              const metadata = {
+                ...metadataOf({ ...base, write_no: n }, shown.type, r.input),
+                tool_use_id: r.toolUseId,
+                ...(r.codex === undefined ? {} : { codex: r.codex }),
+              }
               return { ...shown, metadata }
             }
             const { writeNo } = yield* threads.writeFromAgent(r.task.id, (n) => ({ events: [{ type: "request.opened", request: opened(n) }] }))
@@ -550,6 +570,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           tool: use.tool_name,
           input,
           toolUseId: use.tool_use_id,
+          codex: use.codex,
           attention: reason(use.tool_name, input),
           rule: rule?.decision === "ask" ? rule : null,
           logged: use.tool_name,
@@ -774,7 +795,11 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
             if (Option.isSome(before) && before.value.answered) return
             const asked = yield* decide({ run, call_id: call, control_id: requestId }, use)
             if ((yield* Ref.get(cancelled)).has(call)) return
-            const sent = yield* requests.respond(run.id, { subtype: "success", request_id: requestId, response: asked.decision })
+            // Codex's request is answered as Codex takes it (5.2), Claude's with a control response.
+            const sent =
+              use.codex === undefined
+                ? yield* requests.respond(run.id, { subtype: "success", request_id: requestId, response: asked.decision })
+                : yield* requests.respondCodex(run.id, use.codex.id, { result: promptAnswer(use.codex, asked.decision) })
             if (sent && asked.id !== null) yield* repo.markAnswered(asked.id)
           }).pipe(
             Effect.ensuring(
@@ -791,6 +816,16 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         const request = line.request
         if (request.subtype !== "can_use_tool" || !("tool_name" in request)) return
         yield* answerControl(run, line.request_id, { tool_name: request.tool_name, input: request.input ?? null, tool_use_id: request.tool_use_id ?? null })
+      })
+
+      /** Codex's approval or question on `run`'s output (5.2): asked as its prompt, answered as Codex takes it. Safe to read again. */
+      const onCodex = Effect.fn("Permissions.onCodex")(function* (run: Run, _request: CodexRequest, prompt: CodexPrompt) {
+        yield* answerControl(run, yield* codexRequestId(prompt.ask.id), {
+          tool_name: prompt.tool_name,
+          input: prompt.input,
+          tool_use_id: prompt.tool_use_id,
+          codex: prompt.ask,
+        })
       })
 
       const onCancel = Effect.fn("Permissions.onCancel")(function* (run: Run, requestId: string) {
@@ -812,7 +847,14 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           // The thread's request names the call it is for.
           const stored = yield* store.request(row.task_id, row.id)
           const toolUse = stored?.request.metadata?.["tool_use_id"]
-          const use: ToolUse = { tool_name: row.tool_name, input: parsed(row.input), tool_use_id: typeof toolUse === "string" ? toolUse : null }
+          // A Codex request's, to answer it as Codex takes it.
+          const codex = Option.getOrUndefined(decodeCodexAsk(stored?.request.metadata?.["codex"]))
+          const use: ToolUse = {
+            tool_name: row.tool_name,
+            input: parsed(row.input),
+            tool_use_id: typeof toolUse === "string" ? toolUse : null,
+            ...(codex === undefined ? {} : { codex }),
+          }
           yield* FiberSet.run(background, answerControl(run, row.control_id, use))
         }
       })
@@ -851,6 +893,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         ended,
         onControl,
         onCancel,
+        onCodex,
         settled: (call) =>
           SubscriptionRef.changes(inflight).pipe(
             Stream.filter((all) => !all.has(call)),
@@ -896,6 +939,8 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         resume: permissions.resume,
         ended: permissions.ended,
       })
+      // Codex's approvals and questions (5.2): their cancellations, resumption and runs' ends come through the above.
+      yield* requests.registerCodex("prompt", { handle: permissions.onCodex })
     }),
   )
 }

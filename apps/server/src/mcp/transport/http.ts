@@ -4,6 +4,7 @@ import { Base64Url } from "effect/encoding"
 import { HttpIncomingMessage, HttpRouter, HttpServerResponse } from "effect/http"
 import type { HttpServerRequest } from "effect/http"
 import { CallId, RunId } from "@huntaway/contracts"
+import { accountName, parseAccount } from "@huntaway/shared"
 import { Identity } from "../../platform/Identity.ts"
 import { RunDir } from "../../runs/RunDir.ts"
 import { callParams, callResult, INVALID_REQUEST, PARSE_ERROR, readMessage, rpcError, rpcResult, toolError } from "../jsonrpc.ts"
@@ -107,7 +108,7 @@ export const McpHttpRoute = HttpRouter.use(
     /** The board's call, as a tools/call answer. */
     const board = (call: CallId, run: RunId, server: ServerName, rpcId: RpcId, tool: string, args: unknown) =>
       toolCalls.call({ call_id: call, run, server, tool, args }).pipe(
-        Effect.flatMap(callResult),
+        Effect.flatMap((result) => callResult(result, server)),
         Effect.map((result) => rpcResult(rpcId, result)),
       )
 
@@ -169,7 +170,10 @@ export const McpHttpRoute = HttpRouter.use(
       const message = readMessage(body.value)
       // Notifications (`initialized`, `cancelled`) and responses get no answer.
       if (message._tag !== "Request" || message.method === "") return HttpServerResponse.empty({ status: 202 })
-      if (message.method !== "tools/call") return json(200, yield* servers.answer(server.value, settings.review, message))
+      if (message.method !== "tools/call") {
+        const account = settings.github_account === null ? null : parseAccount(settings.github_account)
+        return json(200, yield* servers.answer(server.value, settings.review, message, account === null ? null : accountName(account)))
+      }
 
       const call = CallId.make(yield* random.uuidV4().pipe(Effect.orDie))
       const { name, args, progressToken } = callParams(message.params)

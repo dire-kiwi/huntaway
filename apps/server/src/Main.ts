@@ -9,7 +9,9 @@ import {
   ApprovalRulesRpcs,
   AttachmentRpcs,
   BoardRpcs,
+  CheckpointRpcs,
   ConfigRpcs,
+  GitRpcs,
   HostRpcGroup,
   PenRpcs,
   PermissionRpcs,
@@ -21,16 +23,36 @@ import {
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
+import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
 import { ContextStatsRepo } from "./agents/ContextStatsRepo.ts"
 import { Prompts } from "./agents/Prompts.ts"
 import { SideCalls } from "./agents/SideCalls.ts"
 import { TitleModel } from "./agents/TitleModel.ts"
 import { Titles } from "./agents/Titles.ts"
+// 4.8: stack titles.
+import { StackTitleRepo } from "./agents/StackTitleRepo.ts"
+import { StackTitles } from "./agents/StackTitles.ts"
 import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { ChangesTab } from "./git/ChangesTab.ts"
+import { CheckpointRepo } from "./git/CheckpointRepo.ts"
+import { Checkpoints } from "./git/Checkpoints.ts"
+import { Git } from "./git/Git.ts"
+import { Gh } from "./github/Gh.ts"
+import { GhStacks } from "./github/GhStacks.ts"
+import { GithubRemote } from "./github/GithubRemote.ts"
+import { GitHubAccessStacked } from "./github/GitHubAccessLive.ts"
+import { PrWatch } from "./github/PrWatch.ts"
+import { PrWatchRepo } from "./github/PrWatchRepo.ts"
+import { PullRequests } from "./github/PullRequests.ts"
+import { Restack } from "./git/Restack.ts"
+import { StatusScripts } from "./git/StatusScripts.ts"
+import { TaskBase } from "./git/TaskBase.ts"
+import { Worktrees } from "./git/Worktrees.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -48,20 +70,32 @@ import { Reactor } from "./lifecycle/Reactor.ts"
 import { McpCallRepo } from "./mcp/McpCallRepo.ts"
 import { askRuleWith, cancelledWith, McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
+import { MergeGate } from "./merge/MergeGate.ts"
+import { MergedWatcher } from "./merge/MergedWatcher.ts"
+import { Merges } from "./merge/Merges.ts"
+import { MergeTargets } from "./merge/MergeTargets.ts"
+import { InReview } from "./review/InReview.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { Wait } from "./mcp/Wait.ts"
 import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
+import { McpCodexRegistered } from "./mcp/transport/codex.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
+import { GhTools } from "./mcp/tools/gh.ts"
 import { Approvals } from "./permissions/Approvals.ts"
 import { PermissionRepo } from "./permissions/PermissionRepo.ts"
 import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
+import { ReviewRepo } from "./review/ReviewRepo.ts"
+import { Reviews } from "./review/Reviews.ts"
+import { ReviewStats } from "./review/ReviewStats.ts"
+import { Summaries } from "./review/Summaries.ts"
 import { DevServers } from "./runs/DevServers.ts"
 import { AgentRequests } from "./runs/AgentRequests.ts"
 import { ClaudeOutput } from "./runs/claude/output.ts"
+import { CodexOutput } from "./runs/codex/output.ts"
 import { LaunchFacts } from "./runs/LaunchFacts.ts"
 import { RunDir } from "./runs/RunDir.ts"
 import { RunFollower } from "./runs/RunFollower.ts"
@@ -71,6 +105,8 @@ import { RunRepo } from "./runs/RunRepo.ts"
 import { BackgroundWork } from "./runs/BackgroundWork.ts"
 import { Compaction } from "./runs/Compaction.ts"
 import { RunEnds } from "./runs/RunEnds.ts"
+import { SetupThread } from "./runs/SetupThread.ts"
+import { TaskDeletion } from "./runs/TaskDeletion.ts"
 import { Runs } from "./runs/Runs.ts"
 import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
@@ -85,6 +121,8 @@ import { ApprovalRulesHandlers } from "./rpc/approvalRules.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
+import { CheckpointHandlers } from "./rpc/checkpoints.ts"
+import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
@@ -100,6 +138,7 @@ import { SettingsRepo } from "./settings/SettingsRepo.ts"
 import { Attachments } from "./tasks/Attachments.ts"
 import { Dependencies } from "./tasks/Dependencies.ts"
 import { Leftovers } from "./tasks/Leftovers.ts"
+import { MergeFacts } from "./tasks/MergeFacts.ts"
 import { PenRepo } from "./tasks/PenRepo.ts"
 import { Pens } from "./tasks/Pens.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
@@ -141,7 +180,7 @@ const ProfilesLive = Profiles.ensureFromConfig.pipe(
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
 const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
-  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer)),
   Layer.provideMerge(ProjectsLive),
 )
 const ThreadsLive = Threads.pruner.pipe(
@@ -149,18 +188,55 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(ThreadStore.layer),
   Layer.provideMerge(TasksLive),
 )
-/** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
-export interface ModelCalls<T, E1, R1, E2, R2> {
+/**
+ * The git area: running git; a task's base and worktrees, status scripts (4.1), checkpoints (4.3), the Changes tab
+ * (4.2). What it needs of GitHub is `GitHubAccess`, whose live layer is the github area's (4.4), built here under the
+ * git area's services since it only needs `Gh`, which only needs `Git`.
+ */
+const GitLive = Restack.layer.pipe(
+  // 4.8: restacking stack levels, over their worktrees.
+  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
+  Layer.provideMerge(Layer.mergeAll(GitHubAccessStacked, CheckpointRepo.layer)),
+  // 4.8: GitHub's stacks, which `GitHubAccess` offers the restack (it needs only `Gh` and the task rows).
+  Layer.provideMerge(GhStacks.layer),
+  Layer.provideMerge(Gh.layer),
+  Layer.provideMerge(Git.layer),
+  Layer.provideMerge(ThreadsLive),
+)
+/**
+ * The github area: gh as one account (`Gh`, on the git line), where a task's pull request goes (`GithubRemote`), reading
+ * pull requests and what agents were told of them (`PrWatch`), and a task's pull request (`PullRequests`, 4.5).
+ */
+const GithubLive = Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer).pipe(
+  Layer.provideMerge(PrWatchRepo.layer),
+  Layer.provideMerge(GitLive),
+)
+/**
+ * What asks a model besides runs: titles, window restarts, and Codex's one-off questions (its models, skills, rate limits
+ * and titles). Tests give scripted ones, so no test calls a model or starts a Codex.
+ */
+export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
   readonly titles: Layer.Layer<TitleModel | T, E1, R1>
   readonly window: Layer.Layer<WindowPrompt, E2, R2>
+  /** `CodexQueries`: a config's models, skills, rate limits and titles from a short-lived `codex app-server` (5.3). */
+  readonly codex: Layer.Layer<CodexQueries | C, E3, R3>
 }
 /** The agents area over what is above it. */
-const agentsLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
+const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   UsageWindow.loop.pipe(
-    Layer.provideMerge(Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer)),
-    Layer.provideMerge(Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window)),
-    Layer.provideMerge(ThreadsLive),
+    Layer.provideMerge(
+      Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer, CodexQueries.registered),
+    ),
+    // 4.8: stack titles, over the same model as task titles.
+    Layer.provideMerge(StackTitles.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, StackTitleRepo.layer, models.titles, models.window),
+    ),
+    // A Codex config's titles are asked of Codex, as its models are (5.3).
+    Layer.provideMerge(models.codex),
+    Layer.provideMerge(GithubLive),
   )
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
 export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
@@ -172,7 +248,8 @@ export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
 const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
-  Layer.provideMerge(ClaudeOutput),
+  // The line handler: Codex runs' lines to the Codex handler (5.2), the others to Claude's.
+  Layer.provideMerge(CodexOutput.pipe(Layer.provide(ClaudeOutput))),
   Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
@@ -180,12 +257,12 @@ const RunsArea = Runs.layer.pipe(
 )
 /**
  * The board's MCP servers over what is above them, with `hooks` (tests give their own): the calls, the server on Claude
- * runs' files, and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
+ * runs' files and Codex runs' dynamic tools (5.2), and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
  * test's own, built over the whole board's services, is not the one those already have.
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
-  McpControlRegistered.pipe(
-    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools)),
+  Layer.mergeAll(McpControlRegistered, McpCodexRegistered).pipe(
+    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
@@ -198,6 +275,9 @@ const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.register
   Layer.provideMerge(Permissions.layer),
   Layer.provideMerge(PermissionRepo.layer),
 )
+
+/** The review area (4.6): reviews, summaries of the changes, and what reviewers reported. */
+const ReviewLive = Reviews.layer.pipe(Layer.provideMerge(Layer.mergeAll(Summaries.layer, ReviewStats.layer)), Layer.provideMerge(ReviewRepo.layer))
 
 /**
  * What a board call needs of the areas built after `ToolCalls`' (`McpHooks`): `Wait`'s `callMade` (any call but `wait`
@@ -219,7 +299,7 @@ export const BoardHooks = Layer.effect(
 )
 
 /** Every area's services, with `models` for the board's own model calls. */
-export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
+export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
@@ -227,11 +307,23 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
+    Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
+    // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
+    // the merge area reads `Tasks.update`'s git and GitHub facts (both registered below the areas they serve).
+    Layer.provideMerge(Layer.mergeAll(Merges.registered, MergeGate.registered)),
+    // 4.8: where held tasks go now, a whole stack's merge, and the agent asked to restack.
+    Layer.provideMerge(Layer.mergeAll(Merges.layer, MergeTargets.layer)),
+    Layer.provideMerge(MergeGate.layer),
+    // Reviews and summaries (4.6), over the runs they start.
+    Layer.provideMerge(ReviewLive),
     Layer.provideMerge(PermissionsLive),
     // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
     Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.layer),
+    // What deleting a task and a project's setup thread are made of: runs, tasks and worktrees (4.1).
+    Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
     Layer.provideMerge(RunsArea),
     Layer.provideMerge(agentsLayer(models)),
   )
@@ -244,8 +336,16 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
  */
 export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.scanner)
 
+/**
+ * The pull requests' loops (4.5): the in-review watcher (every 15 s) and the merged watcher (30 s after start, then every
+ * 3 minutes). Not in `areasLayer`, as `RunLoops`: tests run `InReview.sweep` and `MergedWatcher.check` themselves.
+ */
+export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
+
 /** Every area's services, and their loops. */
-export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })))
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops).pipe(
+  Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
+)
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(
@@ -260,6 +360,8 @@ export const Served = PublicRpcs.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
+  CheckpointRpcs,
+  GitRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -276,6 +378,8 @@ export const HandlersLive = Layer.mergeAll(
   ApprovalRulesHandlers,
   ThreadHandlers,
   PermissionHandlers,
+  CheckpointHandlers,
+  GitHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

@@ -1,10 +1,18 @@
 import { Effect } from "effect"
-import { BoardRpcs } from "@huntaway/contracts"
+import { BoardRpcs, Invalid } from "@huntaway/contracts"
+import { PullRequests } from "../github/PullRequests.ts"
 import { Board } from "../lifecycle/Board.ts"
 
 export const BoardHandlers = BoardRpcs.toLayer(
   Effect.gen(function* () {
     const board = yield* Board
-    return BoardRpcs.of({ "board.watch": ({ since }) => board.watch(since) })
+    const pullRequests = yield* PullRequests
+    return BoardRpcs.of({
+      "board.watch": ({ since }) => board.watch(since),
+      "board.previewStatus": ({ url }) =>
+        url.startsWith("http://") || url.startsWith("https://")
+          ? pullRequests.previewStatus(url)
+          : Effect.fail(new Invalid({ field: "url", reason: "url must be http(s)" })),
+    })
   }),
 )

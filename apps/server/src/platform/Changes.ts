@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Queue, Stream, SubscriptionRef } from "effect"
-import type { RunId, Task, TaskId } from "@huntaway/contracts"
+import type { Project, RunId, Task, TaskId } from "@huntaway/contracts"
 
 /** Who asked for a change (docs/plan/06-server.md, Tasks): decides what may be set, and is recorded as its cause. */
 export type Actor =
@@ -21,6 +21,12 @@ export interface RunExitStatus {
   readonly error?: string | undefined
 }
 
+/** A notice a change leaves in its task's thread. */
+export interface ChangeNote {
+  readonly level: "info" | "warning"
+  readonly text: string
+}
+
 /**
  * What a service tells the reactor after its commit (docs/plan/06-server.md, How an area reaches upward). M1 has task
  * changes; runs, reviews, pull requests and workflows add theirs.
@@ -33,6 +39,8 @@ export type Change =
       /** null for a deleted task. */
       readonly after: Task | null
       readonly cause: Actor
+      /** What the change tells the task's thread (the reactor writes them first): "Nothing to merge…", "Stepped out…". */
+      readonly notes?: ReadonlyArray<ChangeNote> | undefined
     }
   | {
       /**
@@ -46,6 +54,39 @@ export type Change =
       readonly exit: RunExitStatus
       /** The last 4000 bytes of its `err.log`, for a failure's reason. */
       readonly errorTail: string
+    }
+  | {
+      /**
+       * 4.6: a review or summary thread's run ended (`runs/RunEnds`, once its end is recorded), with how it ended and what
+       * its agent asked the user, if anything: the reactor hands it to `Reviews.finished`.
+       */
+      readonly _tag: "ReviewFinished"
+      readonly thread: TaskId
+      readonly run: RunId
+      readonly outcome: { readonly _tag: "Ok" } | { readonly _tag: "Cancelled" } | { readonly _tag: "Failed"; readonly reason: string }
+      readonly attention: string | null
+    }
+  | {
+      /** 4.6: a prompt run of a task was registered (`runs/Runs`): its review and summaries in progress are out of date. */
+      readonly _tag: "PromptStarted"
+      readonly task: TaskId
+      readonly run: RunId
+    }
+  | {
+      /**
+       * 4.8: the board couldn't restack a stack level (`git/Restack`), for the first time: its agent is asked to (`text`),
+       * out of the merge queue meanwhile; one that can't be asked needs attention for `reason` (`Merges.askToRestack`).
+       */
+      readonly _tag: "RestackAsk"
+      readonly task: TaskId
+      readonly text: string
+      readonly reason: string
+    }
+  | {
+      /** A project's settings changed (`projects/Projects.update`): its tasks follow what they take from them (4.5: previews). */
+      readonly _tag: "ProjectChanged"
+      readonly before: Project
+      readonly after: Project
     }
 
 export interface ChangesShape {

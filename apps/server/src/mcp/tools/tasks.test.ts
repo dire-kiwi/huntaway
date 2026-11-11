@@ -521,7 +521,16 @@ describe("task tools", () => {
       const reviewers = (yield* servers.tools("huntaway", true))
         .map((t) => t.name)
         .filter((n) => !n.startsWith("test_") && n !== "wait" && n !== "submit_test_review")
-      assert.deepStrictEqual(reviewers, ["request_user_input", "background_wait", "list_projects", "list_tasks", "get_task", "get_task_field", "get_project"])
+      assert.deepStrictEqual(reviewers, [
+        "request_user_input",
+        "background_wait",
+        "list_projects",
+        "list_tasks",
+        "get_task",
+        "get_task_field",
+        "get_project",
+        "submit_review",
+      ])
       // As the agent is shown it: names, descriptions and argument names as before.
       const create = (yield* servers.tools("huntaway", false)).find((t) => t.name === "create_task")
       assert.deepStrictEqual(Object.keys(Object(at(create?.inputSchema, "properties"))).toSorted(byText), [

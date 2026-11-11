@@ -76,7 +76,7 @@ export interface FinishFacts {
   readonly limitWait: boolean
   /** Its config's name, for what the thread is told. */
   readonly configName: string
-  /** Its merge target was closed or deleted while it ran (M4: never yet). */
+  /** Why it needs attention when its merge target (or the level it lands after) was closed or deleted while it ran (`tasks/lanes.ts` `heldReasonOf`). */
   readonly mergeHeld: string | null
   /** Its project's workflow moves a merged task to Done (6.6: never yet). */
   readonly mergesToDone: boolean
@@ -143,7 +143,7 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
   else if (lasting === "assistant" || lasting === "pens") column = ["todo", null]
   else if (lasting === "routine") column = ["done", null]
   else column = ["in_review", null]
-  // A run that only wrote or revised the plan: it waits for the user (with checkpoints, M4; until then never).
+  // A run that only wrote or revised the plan: it waits for the user (`Checkpoints.planOnly`, from its turns' checkpoints).
   if (isTask && column[0] === "in_review" && f.planOnly) column = ["needs_attention", PLAN_READY]
   // An unfinished todo list holds the task in In progress (HA-330): its agent is asked to finish it, once.
   let nudge: ReadonlyArray<Todo> | null = null

@@ -8,6 +8,7 @@ import { mcpLayer } from "../../../Main.ts"
 import { nowTimestamp, toJson } from "../../../platform/columns.ts"
 import { Db } from "../../../platform/Db.ts"
 import { Events } from "../../../platform/Events.ts"
+import type { ServerConfigShape } from "../../../platform/ServerConfig.ts"
 import { ProjectRepo } from "../../../projects/ProjectRepo.ts"
 import { RunOutput } from "../../../runs/RunOutput.ts"
 import type { TaskColumns } from "../../../tasks/decide.ts"
@@ -27,8 +28,9 @@ export const approvalOf = (asked: Ref.Ref<ReadonlyArray<CommandInput>>, answer: 
 /** The board's MCP area (with `Wait`'s hooks) built again over what is in the environment, with `approval`. */
 export const WaitMcp = (approval: Layer.Layer<CommandApproval> = CommandApproval.layerNone) => mcpLayer(Wait.hooks).pipe(Layer.provideMerge(approval))
 
-/** `WaitMcp` over a fresh board. */
-export const WaitBoard = (approval: Layer.Layer<CommandApproval> = CommandApproval.layerNone) => WaitMcp(approval).pipe(Layer.provideMerge(TestBoard()))
+/** `WaitMcp` over a fresh board (its configuration changed by `overrides`). */
+export const WaitBoard = (approval: Layer.Layer<CommandApproval> = CommandApproval.layerNone, overrides: Partial<ServerConfigShape> = {}) =>
+  WaitMcp(approval).pipe(Layer.provideMerge(TestBoard(overrides)))
 
 /**
  * Subscribes now (in the scope), and gives what waits for task `id` to show its agent waiting: the task as it was

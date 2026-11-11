@@ -1,10 +1,12 @@
-import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Schedule, Schema } from "effect"
+import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Result, Schedule, Schema } from "effect"
 import type { AgentConfigId } from "@huntaway/contracts"
+import { DataDir } from "../platform/DataDir.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
 import { Usage } from "../profiles/Usage.ts"
 import type { SessionReset } from "../profiles/Usage.ts"
 import { field, showsFiveHour } from "../profiles/usage/limits.ts"
+import { CodexQueries } from "./CodexQueries.ts"
 import { SideCalls } from "./SideCalls.ts"
 import { spentFromClaudeStream } from "./tokens/calls.ts"
 import { WindowPrompt } from "./WindowPrompt.ts"
@@ -24,8 +26,8 @@ import { WindowPrompt } from "./WindowPrompt.ts"
 // show one either, stops the restarts until the setting is turned on again (or the server restarts). A prompt that
 // fails, or that doesn't leave a window running, is tried again later, backing off from `RETRY` up to `MAX_RETRY`.
 //
-// Not through a proxy: it picks the account, so there's no one window to restart. Codex configs' windows join with
-// the Codex driver (M5).
+// Not through a proxy: it picks the account, so there's no one window to restart. A Codex config's window is started by
+// a low-effort turn of its cheapest model (`CodexQueries.title`, 5.3), and only its usage says whether it did.
 
 /** How often the loop looks at the windows. */
 export const TICK = "30 seconds"
@@ -70,6 +72,10 @@ export interface UsageWindowShape {
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
+/** The throwaway prompt a Codex config's window is started with (the Claude one's is `WindowPrompt`'s). */
+const CODEX_WINDOW_SYSTEM = "Reply with only the word OK."
+const CODEX_WINDOW_PROMPT = "OK"
+
 export class UsageWindow extends Context.Service<UsageWindow, UsageWindowShape>()("huntaway-server/agents/UsageWindow") {
   static readonly layer = Layer.effect(
     UsageWindow,
@@ -78,6 +84,8 @@ export class UsageWindow extends Context.Service<UsageWindow, UsageWindowShape>(
       const usage = yield* Usage
       const prompt = yield* WindowPrompt
       const sideCalls = yield* SideCalls
+      const codex = yield* CodexQueries
+      const dataDir = yield* DataDir
       const watches = yield* Ref.make<ReadonlyMap<string, Watch>>(new Map())
 
       /**
@@ -98,6 +106,14 @@ export class UsageWindow extends Context.Service<UsageWindow, UsageWindowShape>(
 
       /** Send the prompt that starts a window: whether its rate limits showed a 5-hour window, if they said. Its tokens are kept. */
       const ping = Effect.fnUntraced(function* (c: AgentConfigRow) {
+        // Codex's: a low-effort turn of its cheapest model, away from any repository, as titles are (5.3). Its reply
+        // doesn't say whether a window started; its usage does.
+        if (c.agent === "codex") {
+          const answer = yield* codex.title(c, dataDir.root, CODEX_WINDOW_SYSTEM, CODEX_WINDOW_PROMPT)
+          if (answer.spent !== null) yield* sideCalls.record("window", null, c.id, answer.spent)
+          if (Result.isFailure(answer.reply)) return yield* Effect.fail(answer.reply.failure)
+          return null
+        }
         const out = yield* prompt.send(c).pipe(Effect.mapError((e) => e.reason))
         const spent = spentFromClaudeStream(out.stdout)
         if (spent !== null) yield* sideCalls.record("window", null, c.id, spent)
@@ -127,7 +143,7 @@ export class UsageWindow extends Context.Service<UsageWindow, UsageWindowShape>(
         // The first request after a window ends can still report the old one, or leave the 5-hour window out of its
         // rate limits, so the usage, asked again, says whether the next started.
         const shown = (yield* usage.refresh(c.id)) ? (yield* usage.sessionReset(c.id))._tag !== "None" : null
-        const noWindow = result._tag === "Success" && result.success !== null && !result.success && shown !== true
+        const noWindow = result._tag === "Success" && (result.success !== null ? !result.success && shown !== true : c.agent === "codex" && shown === false)
         if (noWindow) {
           yield* Effect.logInfo(`window: config=${c.name} not restarting its 5-hour window: its plan doesn't have one`)
           return { ...w, no_window: true }
@@ -146,7 +162,7 @@ export class UsageWindow extends Context.Service<UsageWindow, UsageWindowShape>(
       const tick = Effect.gen(function* () {
         const configs: Array<AgentConfigRow> = []
         for (const c of yield* repo.list) {
-          if (c.restart_window && c.agent === "claude" && (yield* usage.proxy(c.id)) === null) configs.push(c)
+          if (c.restart_window && (yield* usage.proxy(c.id)) === null) configs.push(c)
         }
         // A setting turned off forgets what it knew, so turning it on again starts afresh.
         yield* Ref.update(watches, (m) => new Map([...m].filter(([id]) => configs.some((c) => c.id === id))))

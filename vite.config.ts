@@ -141,6 +141,7 @@ export default defineConfig({
       {
         files: [
           "apps/server/src/bin.ts",
+          "apps/server/src/codex-run.ts",
           "apps/server/src/Main.ts",
           "apps/server/src/platform/ServerConfig.ts",
           "**/*.test.ts",

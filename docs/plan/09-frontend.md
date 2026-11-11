@@ -262,6 +262,59 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   Checks: `tests/ui/permissions.test.mjs`, on a test server with `--fake-claude`; the harness starts every other server
   with `--no-agents`.
 
+### Step 1 as done for `changes/` (4.2, HE-5)
+
+- **What came over.** All of the old `components/changes/` but `Compare.tsx`: `Changes.tsx`, `DiffLines.tsx`,
+  `diffs.ts`, `lineComments.ts`, `highlight.ts` with its worker, and `git/*`. The task view's Changes tab mounts it as the
+  old one did (a `preloadable` chunk, preloaded as the task opens: `preloadTabs` in `task/view/TabContent.tsx`). The old
+  view of a host from before API 66 (the branch's whole diff alone) is gone: every host here has the git methods.
+- **Calls.** `api.git*` became `rpc(host, "git.status" | "git.diff" | "git.show" | "git.stage" | …)`, `api.diff`
+  `git.taskDiff`, `api.turnDiff` `checkpoints.turnDiff`; the turns are `useTurns` (4.3's atom, which follows the
+  `checkpoints` event, so the old `turns.reload()` after a rewind is gone). No client atoms were added: the tab keeps its
+  fetches in hooks as step 1 allows. The status is still polled every 4 s while the page is visible and nothing is being
+  changed, and read again when the agent starts or stops or the worktree changes, as the old `useGitStatus` did; the
+  other reads (a file's diffs, the branch's, a commit's, a stash's, a turn's) go through one hook, `git/useLoaded.ts`
+  (read again when its key changes, an answer the same as the last kept as it was, so what's picked in a diff stays).
+- **Line comments.** The review (`ia.review.<host>:<task>`, the old key and format) is `lineReviewAtom` in
+  `state/drafts.ts` (a schema, kept for the page's life, the browser's storage when it can, another tab's changes read
+  again on its `storage` event); `lineComments.ts` keeps the old functions over it. The composer shows the comments and
+  sends them with the message (`withComments`); they come off the review once the send has gone, through `onSent` on
+  @huntaway/client's `SendMessage` (added for this). "Send to the agent" in the tab sends them alone (`tasks.send`).
+- **Smaller changes the lint asked for.** The effects that reset state when a file or a patch changed now adjust it
+  during render; the waiting keys are taken in an effect through `useEffectEvent`; the comment button's handlers are
+  kept in a ref written in a layout effect; lines and runs are keyed by their position in the diff (they have no other
+  identity); the worker listens with `addEventListener` and answers with `{ transfer: [] }`. The highlight worker builds
+  with Vite+ as it did (`worker: { format: "es" }`, Shiki's grammars one chunk each) and was checked to colour a diff.
+- **Cut.** Compare (fan-out) waits for 6.11: it reads and picks through `tasks.fanout`, which isn't on this server
+  (noted in `task/view/details/TaskLists.tsx`).
+- **Checks.** `tests/ui/changes.test.mjs` (the old checks, a commit added) and `tests/ui/lineComments.test.mjs` (on
+  `--fake-claude`): the old checks that slowed `/git/diff` and `/git/show` with `page.route` hold `git.diff`/`git.show`
+  with `routeRpc`; "outside the tab the page's keys work" is shown with the next profile's board (`p`), as the assistant
+  isn't on this server. Unit tests: `tests/unit/changes/{diffs,lineComments,highlight}.test.ts`, every old case
+  (`diffs` drives git through `node:child_process` as the old one did).
+
+### As built in 4.8 (HE-5): web
+
+- **Wired** (the cuts M1/M2 left for merges and stacks), each through `@huntaway/client`'s mutations
+  (`useAtomSet(…, { mode: "promise" })`), what comes back arriving as events: a held task's choice of where it merges
+  now (`board/MergesInto.tsx` `HeldChoice`: onward, close, or one of them taking the closed task's place:
+  `tasks.mergeTarget`, called on the first of them, as before); merging a whole stack from a gathered stack's menu
+  (`board/taskBoard/useBoardStacks.tsx`: `checkOf` is `mergeCheck` again on every host, `tasks.mergeStack`, the server's
+  refusal shown as "Couldn't merge the stack: …"); a stack's title and description edited or written again
+  (`board/StackCard.tsx` `StackEditModal`, `tasks.updateStack`; `hasMeta` is true on every host); the Details panel's
+  "Stacked on"/"Lands after" and "Landing after this"/"Stacked on this" sections (`board/stackSections.tsx`, already
+  split out of `StackedOn.tsx` so it and `MergesInto.tsx` don't import each other); and the New task dialog's branches
+  after `from:` (`layout/newTask/useTokens.ts`, `projects.branches` read once a `from:` is typed, in an effect as the old
+  one was). The merge approval card needed nothing: `task/thread/requestCards.tsx` already answers it through
+  `threads.answerQuestion` and shows approved/denied.
+- **Looked at in a browser** (a `--seed` test server, `ui-check.mjs`): a gathered three-level stack merged from its menu
+  (all levels in Ready for merge, "Merging the stack: 0 of 3 landed"); a stack whose top level has no work refused with
+  the server's reason; the edit dialog saving a title by hand; a task whose target was closed choosing "Go where TES-4 was
+  going" (its thread says "Merges into main now, instead of TES-4"); a level on a closed level closed with it ("Close it
+  too"); Up's "Lands after" and Low's "Landing after this"; `from:` listing the project's branch `main` (the tasks' own
+  branches stand behind their keys); and, with `--fake-claude`, the approval card after the summary run, Approve
+  deciding the merge ("approved", "Merge approved: …", and the merge request sent).
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |

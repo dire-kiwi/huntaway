@@ -101,7 +101,19 @@ read or reasoned, not run.
 - Effect's `Tool.getJsonSchema` output against what Claude Code and Codex accept for each of the 70 tools. Partly checked in
   M3 (HE-4): the board server's 22 tools served so far are accepted by a real Claude Code once every input schema is an
   object with `"type": "object"` (a struct of no fields came out as `{ not: { type: "null" } }`, and Claude Code then
-  dropped the whole list; `mcp/tool.ts` now fixes the shape). Codex, and the `gh`, `docs` and `desktop` servers, are not.
+  dropped the whole list; `mcp/tool.ts` now fixes the shape). Codex in M5 (HE-5): a real codex-cli 0.167.1 took the board
+  server's tools as dynamic tools (their input schemas as `tools/list` gives them) and called `list_projects`, once the
+  namespace's description was cut to 1024 characters (it refused the board's whole instructions); the other tools'
+  schemas were taken, not each called. The `gh`, `docs` and `desktop` servers are not checked.
+- The gh server and `gh-run` against the real gh and GitHub (4.4, HE-5): every test runs the fake gh. Not run: the real
+  gh's `--help` read by `parseHelp` (the old test's texts are gh 2.102's), the token's host-only reach with the real gh
+  (the old `gh_sends_the_token_to_the_accounts_host_only`), a push or fetch over HTTPS to GitHub with the account's
+  token, a stacked merge with GitHub's merge-async, and a real Claude Code (or Codex) taking the gh server's tool list and
+  JSON Schemas over HTTP. `ssh -G` was run with a test config only.
+- Pull requests against the real GitHub (4.5, HE-5): `PrWatch`'s GraphQL query, the merged watcher's aliased one, `gh
+  run view --job N --log-failed` and `gh pr view` were run against the fake GitHub only, which answers them from its own
+  model of a pull request (the shapes are the old code's, which ran against GitHub). Not run: a real Claude Code agent
+  waiting on a pull request, a wake with a real agent, a preview on another host than the board's.
 - The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows. Measured at M2 (HE-4) on
   synthetic data of that size, not a real board: 5.5 MB in 154 ms (the old client's 15 loads: 5.7 MB, 65 ms);
   [10-testing.md](10-testing.md#measurements).

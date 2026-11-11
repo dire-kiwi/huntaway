@@ -307,16 +307,17 @@ describe("MCP over HTTP", () => {
     Effect.gen(function* () {
       const run = yield* running()
       yield* (yield* RunRepo).end(run.agent.run.id, Timestamp.make("2026-11-12T00:00:00.000Z"))
-      for (const [server, tool] of [
-        ["gh", "git_push"],
-        ["docs", "publish_document"],
-        ["huntaway", "test_touch"],
-      ]) {
+      // Each with arguments it takes (gh's tools check theirs first, as the board's do).
+      for (const [server, tool, args] of [
+        ["gh", "git_push", {}],
+        ["docs", "publish_document", { label: "x" }],
+        ["huntaway", "test_touch", { label: "x" }],
+      ] as const) {
         const v = yield* body(
           yield* post(
             run.path(server),
             run.secret,
-            { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: { label: "x" } } },
+            { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: args } },
             "application/json",
           ),
         )

@@ -1,8 +1,10 @@
 // Everything the web app knows about servers (docs/plan/09-frontend.md, packages/client). No DOM, Node or React
 // Native APIs: the app gives the websocket and storage. Components import this root only.
 export * from "./board/board.ts"
+export * from "./board/configModels.ts"
 export * from "./board/hostBoard.ts"
 export * from "./board/tasks.ts"
+export * from "./board/turns.ts"
 export * from "./board/watch.ts"
 export * from "./logic/index.ts"
 export * from "./mutations.ts"

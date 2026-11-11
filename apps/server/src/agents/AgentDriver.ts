@@ -41,4 +41,6 @@ export interface LaunchSpec extends ProcessSpec {
   /** `mcp.json`'s servers (written with sorted keys), if any. */
   readonly mcpServers: Readonly<Record<string, unknown>> | null
   readonly mcpRun: McpRunSettings | null
+  /** A Codex run's `codex.json` (`agents/codex/spec.ts`' `CodexSpec`), which also marks the run as Codex's; none for Claude's. */
+  readonly codex?: unknown
 }

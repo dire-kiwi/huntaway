@@ -35,6 +35,7 @@ import {
   todosRefusal,
 } from "./checks.ts"
 import type { ProjectFacts, TaskIndex } from "./checks.ts"
+import { heldReason, reaching, stackedBelow, stackedLevels, stackWaits } from "./lanes.ts"
 
 // The rules of a task's changes (docs/plan/06-server.md, Tasks), as plain functions of the rows they read: the old
 // `api/tasks.ts` (`update_task_inner`), `api/new_task.ts` and `db/tasks/write.ts` (`update_task`'s side effects),
@@ -395,6 +396,19 @@ export const decideUpdate = (before: Task, patch: TaskPatch, facts: UpdateFacts,
     }
     // Moved without a position (by an agent, say), it joins the back of the merge queue.
     if (merge && columns.position === undefined) columns.position = facts.endOfMergeQueue
+    if (remerge) notes.push("Stepped out of the merge queue to make changes; it rejoins the queue when its agent is done")
+    // A stack level moved to Ready for merge waits for the level below it (4.8).
+    const after = withColumns(before, columns)
+    if (merge && stackWaits(facts.tasks, after)) {
+      const below = stackedBelow(facts.tasks, after)?.task ?? null
+      const key = below?.key ?? "the task it lands after"
+      notes.push(after.restack !== null ? `Waits to be restacked onto where ${key} went` : `Waits for ${key}, which it lands after, to be merged`)
+    }
+    if (retarget !== null && Object.hasOwn(columns, "merges_into")) {
+      const target = columns.merges_into === null || columns.merges_into === undefined ? undefined : tasks.get(columns.merges_into)
+      const where = target?.key ?? "the base branch"
+      notes.push(before.branch !== null ? `Merges into ${where} now: its pull request, if it has one, needs its base changed` : `Merges into ${where} now`)
+    }
     return { columns: deriveColumns(before, columns, now, facts.project?.pr_preview_url ?? null), notes }
   })
 
@@ -516,32 +530,7 @@ export const decideCreate = (input: NewTask, facts: CreateFacts, now: Timestamp)
 
 // ---- delete -----------------------------------------------------------------------------------------------------
 
-/** Why a task whose target or the level it lands after was closed or deleted waits in Needs attention. */
-export const heldReason = (targetKey: string, deleted: boolean, stacked: boolean): string =>
-  `${targetKey}, which this task ${stacked ? "lands after" : "merges into"}, was ${deleted ? "deleted" : "closed without being merged"}: choose where it merges now`
-
-/** The open tasks whose work goes to task `id`: merging into it, or into its merged ones in turn (huntaway's `db.reaching`). */
-export const reaching = (tasks: ReadonlyArray<Task>, id: TaskId): Array<Task> => {
-  const out: Array<Task> = []
-  const seen = new Set<string>([id])
-  const walk = (to: string, depth: number) => {
-    if (depth > 16) return
-    for (const x of tasks) {
-      if (x.merges_into !== to || x.kind !== "task" || seen.has(x.id)) continue
-      seen.add(x.id)
-      if (x.status !== "done") out.push(x)
-      else if (isMerged(x)) walk(x.id, depth + 1)
-    }
-  }
-  walk(id, 0)
-  return out
-}
-
-/** The open stack levels on task `id`: tasks that start from it and merge into no task, in board order. */
-export const stackedLevels = (tasks: ReadonlyArray<Task>, id: TaskId): Array<Task> =>
-  tasks
-    .filter((t) => t.kind === "task" && t.merges_into === null && t.status !== "done" && t.start_from?.type === "task" && t.start_from.task_id === id)
-    .toSorted((a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at))
+export { heldReason, reaching, stackedLevels } from "./lanes.ts"
 
 /**
  * What changes on the other tasks of `gone`'s project as it is deleted (huntaway's api/tasks.ts `delete_one`, with

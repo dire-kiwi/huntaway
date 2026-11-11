@@ -1,7 +1,9 @@
+import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Fiber, FileSystem, Ref, Result, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { TestClock } from "effect/testing"
+import { SqlClient } from "effect/sql"
 import { TaskId, Timestamp } from "@huntaway/contracts"
 import type { WaitTask } from "@huntaway/contracts"
 import { decodeLine } from "../agents/claude/lines.ts"
@@ -13,7 +15,14 @@ import { Runs } from "../runs/Runs.ts"
 import { isActivity, isWaitTool, subagentEnd } from "../runs/RunWaits.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
-import { agentOn, at, call, ok, profile, project, task } from "./tools/tests/board.ts"
+import { fakeGitHub } from "@huntaway/testing"
+import type { FakeAgent, FakeGitHub, FakeGitHubState } from "@huntaway/testing"
+import type { AgentWait, Task } from "@huntaway/contracts"
+import { GIVE_UP, PrPoll, PrWatch } from "../github/PrWatch.ts"
+import { EVENTS, newsOf } from "../github/prWatch/pr.ts"
+import { github, onGitHub, pull7, setOrigin } from "../github/tests/pullRequests.ts"
+import type { ServerConfigShape } from "../platform/ServerConfig.ts"
+import { agentOn, at, call, err, ok, profile, project, task } from "./tools/tests/board.ts"
 import { approvalOf, change, feed, reload, repoOf, WaitBoard, waitingOn } from "./tools/tests/wait.ts"
 import type { CommandInput } from "./wait/CommandApproval.ts"
 import { LAUNCH } from "./wait/command.ts"
@@ -24,8 +33,9 @@ import type { Ended } from "./wait/ended.ts"
 // clock: deadlines are moved with `TestClock.adjust`, and what ends a wait is done once the task shows its agent
 // waiting (its `task` event). The commands are real processes (`it.live` where time must pass for them). Dropped, with
 // why:
-// - the pull request cases (`ends_on_news_about_its_pull_request` and the six after it): plan task 4.5;
-// - `its_command_doesnt_run_as_another_github_account`: the task's GitHub account in its environment is plan task 4.4;
+// - in the pull request cases (on the live clock, their reads being the fake gh's processes, read every 10 ms as the old
+//   tests' were every 100), the old `pr_watch.fake` that answered by account: the fake GitHub has no repository only
+//   one account sees, so the read as the profile's account is checked by the account each call acted as;
 // - `a_codex_agents_own_tool_calls_end_a_wait`: Codex is M5 (the wait tool's names are checked here);
 // - `a_subagents_permission_prompt_isnt_a_move`: the prompt is `Permissions`' (3.3); what it does to the task (the
 //   board's own move to Needs attention and back, without `moved_to`) is checked here;
@@ -119,6 +129,9 @@ describe("Wait's rules", () => {
     // HA-301: a command is the agent's own check, which may never succeed, so it hears how it's doing every 10 minutes.
     assert.deepStrictEqual(req({ command: "gh pr checks 1 --watch", seconds: 1800 }), Result.succeed(600))
     assert.deepStrictEqual(req({ command: "sleep 3500", tasks: 1, seconds: 3500 }), Result.succeed(600))
+    // A wait on a pull request is watched.
+    assert.deepStrictEqual(req({ pullRequest: true, seconds: 1800 }), Result.succeed(1800))
+    assert.deepStrictEqual(req({ pullRequest: true }), Result.succeed(600))
     // A blank command is none.
     const e = req({ command: "  ", seconds: 1800 })
     assert.isTrue(Result.isFailure(e))
@@ -463,5 +476,308 @@ describe("a wait's command", () => {
       const gone = yield* (yield* Proc).run("tail", ["-s", "0.01", "--pid", pid, "-f", "/dev/null"], { timeout: "10 seconds" })
       assert.strictEqual(gone.code, 0, "the command's background process is still running")
     }).pipe(Effect.scoped, Effect.provide(WaitBoard())),
+  )
+})
+
+/** The launcher, which a wait's gh shim runs (`huntaway gh-run`). */
+const BIN = decodeURIComponent(new URL("../../bin/huntaway", import.meta.url).pathname)
+
+/** `body` on a board whose wait commands are all allowed, with the fake GitHub of `state` as its gh, and `overrides`. */
+const allowedOnGitHub = <A, E, R>(state: FakeGitHubState, body: Effect.Effect<A, E, R>, overrides: Partial<ServerConfigShape> = {}) =>
+  Effect.gen(function* () {
+    const fake = yield* fakeGitHub(state)
+    const asked = yield* Ref.make<ReadonlyArray<CommandInput>>([])
+    const out = yield* body.pipe(Effect.scoped, Effect.provide(WaitBoard(approvalOf(asked), { ghBin: fake.bin, exe: BIN, ...overrides })))
+    return { out, calls: yield* fake.calls }
+  }).pipe(Effect.provide(NodeServices.layer))
+
+/** The profile's GitHub account, as its settings would set it. */
+const accountOf = (profileId: string, account: string) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) => sql`UPDATE profiles SET github_account = ${account} WHERE id = ${profileId}`).pipe(Effect.orDie)
+
+describe("a wait's command and GitHub", () => {
+  it.effect("its gh acts as the task's GitHub account, through gh-run", () =>
+    Effect.gen(function* () {
+      const { out, calls } = yield* allowedOnGitHub(
+        {
+          accounts: [
+            { host: "github.com", login: "me", token: "tok-me" },
+            { host: "github.com", login: "other", token: "tok-other", active: true },
+          ],
+          repos: { "o/r": { pulls: [{ number: 1, title: "The change", body: "", state: "OPEN", head: "x", base: "main" }] } },
+        },
+        Effect.gen(function* () {
+          const { planner, me } = yield* running()
+          yield* accountOf(planner.profile_id, "me")
+          return ok(yield* call(me, "wait", { reason: "r", command: "gh pr view 1 --repo o/r --json title --jq .title", seconds: 60 }))
+        }),
+      )
+      assert.deepStrictEqual(out["command"], { exit_code: 0, output: "The change\n" })
+      const view = calls.find((c) => c.args[0] === "pr" && !c.args.includes("--help"))
+      assert.strictEqual(view?.as, "me")
+      assert.isFalse(view?.envToken)
+    }),
+  )
+
+  it.effect("its command doesn't run as another GitHub account", () =>
+    Effect.gen(function* () {
+      // The profile picked an account gh isn't signed in to (or gh isn't there): the command would run as gh's active
+      // account, so it doesn't run at all.
+      const { out } = yield* allowedOnGitHub(
+        { accounts: [{ host: "github.com", login: "other", token: "tok-other", active: true }] },
+        Effect.gen(function* () {
+          const { kiw, planner, me } = yield* running()
+          yield* accountOf(planner.profile_id, "not-signed-in-ia123")
+          const why = err(yield* call(me, "wait", { reason: "r", command: "touch ran", seconds: 60 }))
+          const repo = yield* repoOf(kiw)
+          return { why, ran: yield* (yield* FileSystem.FileSystem).exists(`${repo}/ran`).pipe(Effect.orDie), wait: (yield* reload(planner.id)).agent_wait }
+        }),
+      )
+      assert.include(out.why, "not-signed-in-ia123")
+      assert.isFalse(out.ran)
+      assert.isNull(out.wait)
+    }),
+  )
+})
+
+/**
+ * `body` on a board whose gh is the fake GitHub of `state` (o/r#7 read as `me`), its pull requests read every 10 ms (as
+ * the old tests' `POLL` in tests), with the project's repository pushed to o/r. On the live clock: its reads are processes.
+ */
+const onPullRequests = <A, E, R>(
+  state: FakeGitHubState,
+  body: (fake: FakeGitHub, board: { readonly planner: Task; readonly me: FakeAgent }) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fake = yield* fakeGitHub(state)
+    const asked = yield* Ref.make<ReadonlyArray<CommandInput>>([])
+    return yield* Effect.gen(function* () {
+      const { kiw, planner, me } = yield* running()
+      yield* onGitHub(kiw)
+      return yield* body(fake, { planner, me })
+    }).pipe(Effect.provideService(PrPoll, "10 millis"), Effect.scoped, Effect.provide(WaitBoard(approvalOf(asked), { ghBin: fake.bin })))
+  }).pipe(Effect.provide(NodeServices.layer))
+
+/** The GraphQL reads gh was given, and as whom. */
+const reads = (fake: FakeGitHub) => Effect.map(fake.calls, (calls) => calls.filter((c) => c.args[0] === "api" && c.args[1] === "graphql"))
+
+/** The pull request's news a wait's result has: its events, and its comments' authors. */
+const prNews = (v: Readonly<Record<string, unknown>>) =>
+  Effect.gen(function* () {
+    const news = newsOf(v["pull_request"]) ?? assert.fail(`no news: ${yield* toJson(v)}`)
+    return { events: news.events, authors: (news.comments ?? []).map((c) => c.author), news }
+  })
+
+/** A wait on pull request 7, ended once `then` has run with the task showing it. */
+const waitThenOn = (planner: Task, me: FakeAgent, then: (shown: Task) => Effect.Effect<void>) =>
+  Effect.gen(function* () {
+    const waiting = yield* waitingOn(planner.id)
+    const f = yield* Effect.forkChild(call(me, "wait", { reason: "r", pull_request: "7", seconds: 30 }))
+    yield* then(yield* waiting)
+    return yield* Fiber.join(f)
+  })
+
+const pendingCheck = { name: "test", state: "IN_PROGRESS", bucket: "pending", required: true }
+const failingCheck = { name: "test", state: "FAILURE", bucket: "fail", required: true, link: "https://github.com/o/r/actions/runs/0" }
+const by = (id: string, author: string, body: string) => ({ id, author, body, createdAt: `2026-10-31T00:00:${id}Z` })
+const FAR = Timestamp.make("2099-01-01T00:00:00.000Z")
+
+describe("a wait on a pull request", () => {
+  it.live("ends on news about its pull request", () =>
+    onPullRequests(github([pull7({ checks: [pendingCheck], comments: [by("01", "alice", "old")] })]), (fake, { planner, me }) =>
+      Effect.gen(function* () {
+        const shown = yield* Ref.make<Task | null>(null)
+        const v = ok(
+          yield* waitThenOn(planner, me, (t) =>
+            Effect.andThen(
+              Ref.set(shown, t),
+              // A check fails, someone comments, and so does the agent's own account.
+              fake.update((s) => ({
+                ...s,
+                repos: {
+                  "o/r": {
+                    pulls: [pull7({ checks: [failingCheck], comments: [by("01", "alice", "old"), by("02", "me", "mine"), by("03", "bob", "Looks off")] })],
+                  },
+                },
+              })),
+            ),
+          ),
+        )
+        assert.strictEqual(v["ended"], "pull_request")
+        const { events, authors, news } = yield* prNews(v)
+        assert.deepStrictEqual([events, authors], [["checks_failed", "comments"], ["bob"]])
+        assert.strictEqual(news.checks?.failed[0]?.url, "https://github.com/o/r/actions/runs/0")
+        assert.strictEqual(v["note"], "Pull request #7: checks failed (test); 1 new comment or review from bob (see pull_request).")
+        // The board showed what it watched.
+        const pr = (yield* Ref.get(shown))?.agent_wait?.pull_request
+        assert.deepStrictEqual([pr?.url, pr?.repo, pr?.number, pr?.news], ["https://github.com/o/r/pull/7", "o/r", 7, undefined])
+        assert.isNull((yield* reload(planner.id)).agent_wait)
+        // Read as gh's account (the profile has none).
+        const all = yield* reads(fake)
+        assert.isTrue(all.length >= 2 && all.every((c) => c.as === "me"))
+
+        // Told, it isn't news again.
+        assert.strictEqual(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 1 }))["ended"], "timeout")
+        // A review left while the agent worked between waits ends the next one straight away.
+        yield* fake.update((s) => ({
+          ...s,
+          repos: {
+            "o/r": {
+              pulls: [pull7({ checks: [failingCheck], comments: [by("01", "alice", "old"), by("03", "bob", "Looks off"), by("04", "carol", "Approve?")] })],
+            },
+          },
+        }))
+        const next = yield* prNews(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 30 })))
+        assert.deepStrictEqual([next.events, next.authors], [["comments"], ["carol"]])
+        // Merged ends it whatever it waits for.
+        yield* fake.update((s) => ({ ...s, repos: { "o/r": { pulls: [pull7({ state: "MERGED" })] } } }))
+        const merged = yield* prNews(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", pull_request_events: [], seconds: 30 })))
+        assert.deepStrictEqual(merged.events, ["merged"])
+      }),
+    ),
+  )
+
+  it.live("a wait on checks ends when its pull request conflicts and none will run (HA-287)", () =>
+    onPullRequests(github([pull7({ mergeable: "CONFLICTING" })]), (fake, { me }) =>
+      Effect.gen(function* () {
+        const first = yield* prNews(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 30 })))
+        assert.deepStrictEqual(first.events, ["conflicts"])
+        assert.strictEqual(first.news.mergeable, "conflicting")
+        // Still conflicting, the next wait on checks ends too.
+        assert.deepStrictEqual((yield* prNews(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 30 })))).events, ["conflicts"])
+        // Checks that are running end it themselves.
+        yield* fake.update((s) => ({ ...s, repos: { "o/r": { pulls: [pull7({ mergeable: "CONFLICTING", checks: [pendingCheck] })] } } }))
+        assert.strictEqual(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 1 }))["ended"], "timeout")
+      }),
+    ),
+  )
+
+  it.live("a pull request that can't be read doesn't start the wait", () =>
+    onPullRequests(github([pull7({ unreadable: "Could not resolve to a Repository with the name 'o/r'." })]), (_fake, { planner, me }) =>
+      Effect.gen(function* () {
+        assert.strictEqual(
+          err(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 30 })),
+          "The wait didn't start: o/r#7 couldn't be read: Could not resolve to a Repository with the name 'o/r'.",
+        )
+        assert.isNull((yield* reload(planner.id)).agent_wait)
+        // A host from the task's remote that isn't GitHub's (an SSH alias ssh doesn't know) asks for the URL.
+        yield* setOrigin(planner, "git@github-work:o/r.git")
+        const e = err(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 30 }))
+        assert.isTrue(
+          e.startsWith("The wait didn't start: github-work/o/r#7 couldn't be read: ") &&
+            e.endsWith(" (if github-work isn't a GitHub host, give the pull request's URL)"),
+          e,
+        )
+      }),
+    ),
+  )
+
+  it.live("its pull request is read as the task's GitHub account only", () =>
+    onPullRequests(
+      {
+        accounts: [
+          { host: "github.com", login: "me-personal", token: "tok-p", active: true },
+          { host: "github.com", login: "me-work", token: "tok-w" },
+        ],
+        repos: { "o/r": { pulls: [pull7()] } },
+      },
+      (fake, { planner, me }) =>
+        Effect.gen(function* () {
+          // The personal profile's agents act as one account; it asks for a pull request only the work account sees.
+          yield* accountOf(planner.profile_id, "me-personal")
+          const e = err(yield* call(me, "wait", { reason: "r", pull_request: "https://github.com/work-org/secret/pull/7", seconds: 30 }))
+          assert.isTrue(e.includes("couldn't be read: Could not resolve"), e)
+          assert.deepStrictEqual(
+            (yield* reads(fake)).map((c) => c.as),
+            ["me-personal"],
+          )
+          // Nor is one on another host than its account's asked for at all.
+          yield* accountOf(planner.profile_id, "ghe.acme.com/me")
+          const other = err(yield* call(me, "wait", { reason: "r", pull_request: "https://github.com/work-org/secret/pull/7" }))
+          assert.isTrue(other.includes("is on github.com, but this task's GitHub account ghe.acme.com/me is on ghe.acme.com"), other)
+          assert.strictEqual((yield* reads(fake)).length, 1)
+          // A profile whose account isn't gh's active one reads as that account.
+          yield* accountOf(planner.profile_id, "me-work")
+          assert.strictEqual(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 1 }))["ended"], "timeout")
+          const asWork = (yield* reads(fake)).slice(1)
+          assert.isTrue(asWork.length >= 2 && asWork.every((c) => c.as === "me-work"), asWork.map((c) => c.as).join())
+        }),
+    ),
+  )
+
+  it.live("a pull request wait carried on after a restart keeps what was seen", () =>
+    onPullRequests(github([pull7({ comments: [by("01", "alice", "old")] })]), (fake, { planner, me }) =>
+      Effect.gen(function* () {
+        // A first wait sees alice's comment.
+        assert.strictEqual(ok(yield* call(me, "wait", { reason: "r", pull_request: "7", seconds: 1 }))["ended"], "timeout")
+        // The server restarts during the next one, and bob comments meanwhile.
+        const stored = (callId: string, news?: unknown): AgentWait => ({
+          reason: "waiting for review",
+          since: Timestamp.make(AT(0)),
+          until: FAR,
+          tasks: [],
+          call_id: callId,
+          run_id: me.run.id,
+          pull_request: { url: "https://github.com/o/r/pull/7", repo: "o/r", number: 7, events: [...EVENTS], ...(news === undefined ? {} : { news }) },
+        })
+        yield* change(planner.id, { agent_wait: stored("c2") })
+        yield* fake.update((s) => ({ ...s, repos: { "o/r": { pulls: [pull7({ comments: [by("01", "alice", "old"), by("02", "bob", "new")] })] } } }))
+        const v = ok(yield* call(me, "wait", { reason: "r", seconds: 30 }, "c2"))
+        assert.deepStrictEqual((yield* prNews(v)).authors, ["bob"])
+        // News found before a restart is returned without reading again.
+        const before = (yield* reads(fake)).length
+        const news = { events: ["closed"], number: 7 }
+        yield* change(planner.id, { agent_wait: stored("c3", news) })
+        const again = ok(yield* call(me, "wait", { reason: "r", seconds: 30 }, "c3"))
+        assert.deepStrictEqual([again["ended"], again["pull_request"]], ["pull_request", news])
+        assert.strictEqual((yield* reads(fake)).length, before)
+      }),
+    ),
+  )
+
+  it.live("news that doesn't reach the agent is reported again", () =>
+    onPullRequests(github([pull7({ checks: [failingCheck] })]), (_fake, { planner, me }) =>
+      Effect.gen(function* () {
+        // A read for the wait c1 found the failure, and then the run was stopped.
+        const prWatch = yield* PrWatch
+        const now = yield* reload(planner.id)
+        const reader = yield* prWatch.readerOf(now, { host: "github.com", owner: "o", name: "r", number: 7 })
+        const news = yield* prWatch.poll(planner.id, "c1", [...EVENTS], reader).pipe(Effect.orDie)
+        assert.isNotNull(news)
+        yield* change(planner.id, {
+          agent_wait: {
+            reason: null,
+            since: Timestamp.make(AT(0)),
+            until: FAR,
+            tasks: [],
+            call_id: "c1",
+            run_id: me.run.id,
+            pull_request: { url: "https://github.com/o/r/pull/7", repo: "o/r", number: 7, events: [...EVENTS], ...(news === null ? {} : { news }) },
+          },
+        })
+        yield* (yield* RunRepo).update(me.run.id, { stop: "requested" })
+        assert.strictEqual(ok(yield* call(me, "wait", { reason: "r", seconds: 30 }, "c1"))["ended"], "stopped")
+        // The next run's wait is told.
+        const next = yield* agentOn(now)
+        assert.deepStrictEqual((yield* prNews(ok(yield* call(next, "wait", { reason: "r", pull_request: "7", seconds: 30 })))).events, ["checks_failed"])
+        assert.strictEqual(ok(yield* call(next, "wait", { reason: "r", pull_request: "7", seconds: 1 }))["ended"], "timeout")
+      }),
+    ),
+  )
+
+  it.live("a pull request that stops being readable ends the wait", () =>
+    onPullRequests(github([pull7()]), (fake, { planner, me }) =>
+      Effect.gen(function* () {
+        const v = ok(
+          yield* waitThenOn(planner, me, () => fake.update((s) => ({ ...s, repos: { "o/r": { pulls: [pull7({ unreadable: "HTTP 502: Bad Gateway" })] } } }))),
+        )
+        assert.deepStrictEqual((yield* prNews(v)).events, ["unreadable"])
+        assert.strictEqual((yield* reads(fake)).length, 1 + GIVE_UP)
+        assert.strictEqual(
+          v["note"],
+          "o/r#7 couldn't be read 5 times in a row: HTTP 502: Bad Gateway. Check it yourself (pr_view), and wait on it again once it can be read.",
+        )
+      }),
+    ),
   )
 })

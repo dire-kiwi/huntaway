@@ -15,14 +15,18 @@ import type { CommandAnswer, CommandApproval, CommandInput } from "../wait/Comma
 import { COMMAND_STOPPED } from "../wait/ended.ts"
 import { agentOn, at, call, err, ok, profile, project, task } from "./tests/board.ts"
 import { approvalOf, change, feed, reload, repoOf, review, ServerAgain, WaitBoard, waitingOn } from "./tests/wait.ts"
-import { BACKGROUND_NOT_WAITING, BACKGROUND_WAITING, NO_PR_WATCH } from "./wait.ts"
+import { BACKGROUND_NOT_WAITING, BACKGROUND_WAITING } from "./wait.ts"
+import { failedCheck, github, onGitHub, pull7 } from "../../github/tests/pullRequests.ts"
+import { fakeGitHub, git } from "@huntaway/testing"
+import { NodeServices } from "@effect/platform-node"
 
 // The `wait` and `background_wait` tools as an agent calls them through `ToolCalls` (the wait cases of the old
 // mcp/tools/dispatch.test.ts and agent/runner/requests.test.ts, and background_wait's of runner/background.test.ts).
 // Dropped, with why:
 // - Codex's endings of a subagent and Codex runs whose reviewer reviews waits: Codex is M5;
 // - Don't ask refusing a wait's command without asking: that is `Permissions`' answer (3.3), behind `CommandApproval`;
-// - `an_agent_waits_on_its_pull_request`: watching pull requests is plan task 4.5; until then the wait is refused.
+// - in `an_agent_waits_on_its_pull_request`, its second wait made by a Codex run whose reviewer reviews waits: the wait
+//   is the same tool for both (and a pull request wait has no command to approve).
 
 /** A project KIW with a planner (KIW-1) whose agent is running, and a worker (KIW-2) it can watch. */
 const kiwi = Effect.gen(function* () {
@@ -320,17 +324,63 @@ describe("wait", () => {
     }),
   )
 
-  it.effect("a wait on a pull request is refused until the board watches them", () =>
+  it.effect("an agent waits on its pull request", () =>
     Effect.gen(function* () {
-      const { planner, me } = yield* kiwi
-      assert.strictEqual(err(yield* call(me, "wait", { reason: "CI", pull_request: "#7" })), NO_PR_WATCH)
-      // A blank one is none.
-      const waiting = yield* waitingOn(planner.id)
-      const f = yield* Effect.forkChild(call(me, "wait", { reason: "CI", pull_request: " ", seconds: 1 }))
-      yield* waiting
-      yield* TestClock.adjust("1 second")
-      assert.strictEqual(ok(yield* Fiber.join(f))["ended"], "timeout")
-    }).pipe(Effect.scoped, Effect.provide(WaitBoard())),
+      const fake = yield* fakeGitHub(github([pull7({ checks: [failedCheck("server", 11)] })]))
+      yield* Effect.gen(function* () {
+        const { kiw, planner, me } = yield* kiwi
+        // The project's repository, on GitHub as o/r.
+        const repo = yield* onGitHub(kiw)
+        /** A wait that times out after a second, once the task shows it. */
+        const timedOut = (args: Readonly<Record<string, unknown>>) =>
+          Effect.gen(function* () {
+            const waiting = yield* waitingOn(planner.id)
+            const f = yield* Effect.forkChild(call(me, "wait", { reason: "r", seconds: 1, ...args }))
+            yield* waiting
+            yield* TestClock.adjust("1 second")
+            return ok(yield* Fiber.join(f))
+          })
+        let v = ok(yield* call(me, "wait", { reason: "waiting for CI", pull_request: "7" }))
+        assert.strictEqual(v["ended"], "pull_request")
+        assert.strictEqual(v["note"], "Pull request #7: checks failed (Tests / server) (see pull_request).")
+        assert.isTrue((yield* toJson(at(v, "pull_request", "checks", "failed"))).startsWith('[{"conclusion":"failure","name":"Tests / server"'))
+        assert.deepStrictEqual(at(v, "pull_request", "events"), ["checks_failed"])
+        // Told, a later wait (by URL) times out, saying how it was when last read.
+        v = yield* timedOut({ reason: "waiting for review", pull_request: "https://github.com/o/r/pull/7" })
+        assert.strictEqual(v["ended"], "timeout")
+        assert.deepStrictEqual([at(v, "pull_request", "checks", "outcome"), at(v, "pull_request", "number")], ["failed", 7])
+        assert.strictEqual(typeof at(v, "pull_request", "read_at"), "string")
+        // A blank one is none.
+        assert.isUndefined((yield* timedOut({ pull_request: " " }))["pull_request"])
+
+        let e = err(yield* call(me, "wait", { reason: "r", pull_request: 7, pull_request_events: ["reviews"] }))
+        assert.isTrue(e.includes("pull_request_events"), e)
+        e = err(yield* call(me, "wait", { reason: "r", pull_request: "the PR" }))
+        assert.isTrue(e.includes("the PR isn't a pull request"), e)
+        // A whole number sent as a float (or written as one) is a number.
+        for (const given of [7.0, "7.0"]) {
+          v = yield* timedOut({ pull_request: given })
+          assert.deepStrictEqual([v["ended"], at(v, "pull_request", "number")], ["timeout", 7], String(given))
+        }
+        e = err(yield* call(me, "wait", { reason: "r", pull_request: 7.5 }))
+        assert.isTrue(e.includes("7.5 isn't a pull request"), e)
+        // HA-300: every wait ends on its checks and a conflict, whatever pull_request_events names.
+        yield* fake.update((s) => ({ ...s, repos: { "o/r": { pulls: [pull7({ headOid: "a2", mergeable: "CONFLICTING" })] } } }))
+        v = ok(yield* call(me, "wait", { reason: "r", pull_request: 7, pull_request_events: ["comments"], seconds: 5 }))
+        assert.strictEqual(v["ended"], "pull_request")
+        assert.deepStrictEqual(at(v, "pull_request", "events"), ["conflicts"])
+        // A remote's host that isn't its account's (an SSH alias ssh doesn't know) asks for the URL.
+        yield* git(repo, ["remote", "set-url", "origin", "git@github-work:o/r.git"])
+        yield* (yield* SqlClient.SqlClient)`UPDATE profiles SET github_account = 'me' WHERE id = ${planner.profile_id}`.pipe(Effect.orDie)
+        e = err(yield* call(me, "wait", { reason: "r", pull_request: 7 }))
+        assert.isTrue(e.includes("this task's repository is pushed to github-work, but its GitHub account me is on github.com: give the pull request's URL"), e)
+        // What the agent was told is kept with the task, and goes with it.
+        const sql = yield* SqlClient.SqlClient
+        assert.strictEqual((yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM pr_watches WHERE task_id = ${planner.id}`.pipe(Effect.orDie))[0]?.n, 1)
+        yield* sql`DELETE FROM tasks WHERE id = ${planner.id}`.pipe(Effect.orDie)
+        assert.strictEqual((yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM pr_watches`.pipe(Effect.orDie))[0]?.n, 0)
+      }).pipe(Effect.scoped, Effect.provide(WaitBoard(undefined, { ghBin: fake.bin })))
+    }).pipe(Effect.provide(NodeServices.layer)),
   )
 
   it.effect("a restart picks the stored wait up: its deadline and watched tasks", () =>
