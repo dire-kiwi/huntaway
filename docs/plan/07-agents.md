@@ -437,6 +437,32 @@ export class ToolCalls extends Context.Service<ToolCalls, {
 - `mcp_calls` older than an hour whose run is gone or ended an hour ago are pruned when `ToolCalls` starts and hourly,
   1000 at a time. The `board_tool` telemetry event is left for analytics.
 
+### As built in 3.2 (HE-4)
+
+- **`mcp/tools/<area>.ts`** declare and handle the board's tools: `questions.ts` (`request_user_input`, `finish_work`),
+  `projects.ts` (`list_projects`, `get_project`), `tasks.ts` (`list_tasks`, `get_task`, `get_task_field`,
+  `create_task`, `update_task`; `send_to_task` with `Runs`), `pens.ts` (`list_pens`). `taskJson.ts` is the task as the
+  tools give it (`summary`, `summarize`, `details`, `overview`, `field`), `reminders.ts` the old `reminder_time`,
+  `common.ts` the shared arguments and `boardTool` (the registration, which drops arguments given as null, as the old
+  tools read null as "not given"; `get_task_field` keeps them and refuses a null offset). **`board.ts`** registers
+  every area's tools with one `McpServers.register("huntaway", …)` (`BoardTools`, on the first line of `mcpLayer`),
+  sorted by `BOARD_TOOLS`, the old `tools/list` order of all 33: 3.4's and 3.5's tools add their area's list there.
+- Parameters are `Schema.Struct`s of `Schema.optionalKey` fields, annotated with the old descriptions, so the JSON Schema
+  an agent is shown has the old names, descriptions, enums and bounds (an `Int`'s `maximum` is the largest safe
+  integer). A wrong type is refused by the schema with a message that says so, where the old tools had their own texts
+  ("starred must be…", "model must be a string", "effort must be one of…"). `request_user_input`'s options may still be
+  plain strings (taken as labels). Results are JSON (`Schema.Unknown`), built as the old tools built them.
+- **`mcp/resolve.ts`** (`makeReach`) is the old resolve, rule for rule, over `ProfileRepo`, `ProjectRepo` and `TaskRefs`;
+  what is not found fails with `ToolError.notFound`, the seam for linked hosts (M7). Annotations: `Rerunnable` on the
+  readers, `request_user_input` and `finish_work` (and `get_task_field`, which the old list left out though it only
+  reads); `ForReviewers` and `ForPlanning` as the old lists; `list_pens` for planning only.
+- **Subprojects are gone**: `subproject` is kept in the schemas (names are copied), `"none"` and `"all"` list every
+  task, and any task named is "not a subproject". Left out of a task's JSON: `subproject`, `is_subproject`,
+  `workflows` (M6); of `get_project`'s: `summarizer`, `profile_summarizer`, `subproject_pull_requests` (legacy).
+- **Starting agents waits for `Runs` (2.5)**: until it is merged, `create_task` with `start` (said or by default) makes
+  the task and adds the note that this host can't run agents, `update_task` moves a task into In progress without
+  starting it, and `send_to_task` is not registered.
+
 ### `wait`
 
 `Wait` owns the blocking tool: a wait is a fiber in a `FiberMap` keyed by run, racing a deadline, changes to watched
@@ -470,6 +496,15 @@ export class Permissions extends Context.Service<Permissions, {
 - **Board changes that always ask** (create a project, risky project fields, delete a task, automations,
   workflows) are `Approvals`: it works out what would change, asks, and applies exactly the fields shown.
 - `Questions` is `request_user_input`: a card that is not waited on, answered later as the user's message.
+
+As built in 3.2 (HE-4), `permissions/Questions.ts`: a card is a question request in the thread (`legacy:<n>`, one
+question `q`, metadata the card and the `call_id` that asked), opened with `Threads.openRequest` once per call
+(`ThreadReaders.asked`); the tool sets the run's `attention`. The request is the card's one record: open is pending, an
+`answer` resolution is answered (`answers.q` the picks and the text), a `cancel` is replied, replaced or expired
+(`SETTLED` has each one's message; `settle(task, how)` does it). `card` (the checks of what the agent asks) and
+`replyText` (the user's message an answer sends) are plain functions. `answer(task, requestId, …)` and the
+`threads.answerQuestion` RPC send that message through `Runs.send`, and come with it; whoever sends a user's message
+(`tasks.send`) calls `settle(task, "replied")`.
 
 ## Prompts
 

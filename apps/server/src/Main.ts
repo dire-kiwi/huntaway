@@ -50,6 +50,8 @@ import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { McpControlLive } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
+import { BoardTools } from "./mcp/tools/board.ts"
+import { Questions } from "./permissions/Questions.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { DevServers } from "./runs/DevServers.ts"
 import { RunDir } from "./runs/RunDir.ts"
@@ -153,7 +155,7 @@ export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
  * test's own, built over the whole board's services, is not the one those already have.
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
-  Layer.mergeAll(Layer.fresh(McpControlLive)).pipe(
+  Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools).pipe(
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
@@ -166,6 +168,7 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
     Layer.provideMerge(Dependencies.layer),
     // `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come.
     Layer.provideMerge(mcpLayer(McpHooks.layerNone)),
+    Layer.provideMerge(Questions.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.scanner.pipe(Layer.provideMerge(DevServers.layer))),
     Layer.provideMerge(runsLayer(RunOutput.layerLog)),
