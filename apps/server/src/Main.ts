@@ -18,6 +18,7 @@ import {
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
+  SettingsSyncRpcs,
   TaskRpcs,
   ThreadRpcs,
 } from "@huntaway/contracts"
@@ -38,6 +39,9 @@ import { LinkRepo } from "./hosts/LinkRepo.ts"
 import { Links } from "./hosts/Links.ts"
 import { Relay } from "./hosts/Relay.ts"
 import { SessionSeal } from "./hosts/SessionSeal.ts"
+import { SettingsSync } from "./hosts/SettingsSync.ts"
+import { SettingsSyncExchange } from "./hosts/SettingsSyncExchange.ts"
+import { SettingsSyncRepo } from "./hosts/SettingsSyncRepo.ts"
 import { RelayRoute } from "./http/relay.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
@@ -101,6 +105,7 @@ import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
+import { SettingsSyncHandlers } from "./rpc/settingsSync.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
 import { About } from "./settings/About.ts"
@@ -200,10 +205,10 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
-/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay. */
-const HostsLive = Layer.mergeAll(Links.layer, Relay.layer).pipe(
-  Layer.provideMerge(LinkConnections.layer),
-  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer)),
+/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay, settings sync. */
+const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, SettingsSyncExchange.layer, SettingsSync.observer).pipe(
+  Layer.provideMerge(Layer.mergeAll(LinkConnections.layer, SettingsSync.layer)),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, SettingsSyncRepo.layer)),
 )
 
 /**
@@ -280,6 +285,7 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   HubHostRpcs,
   LinkRpcs,
+  SettingsSyncRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -298,6 +304,7 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   HubHostHandlers,
   LinkHandlers,
+  SettingsSyncHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

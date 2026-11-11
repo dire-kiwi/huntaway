@@ -27,6 +27,9 @@ export const FoundHost = Schema.Struct({
   /** For `mesh`: the linked host that links it. */
   through: Schema.optional(Schema.String),
   version: Schema.NullOr(Schema.String),
+  /** The RPC protocol it speaks (`PROTOCOL`): its mDNS record's or its health's; null when neither said. */
+  protocol: Schema.NullOr(Schema.Int),
+  /** Its capabilities as its health gave them; null for one heard over mDNS only (the record has no room for them). */
   capabilities: Schema.NullOr(Schema.Array(Schema.String)),
   /** Linked here already (by its id, or by its URL). */
   linked: Schema.Boolean,
