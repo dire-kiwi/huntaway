@@ -62,6 +62,7 @@ import { RunFollower } from "./runs/RunFollower.ts"
 import type { RunOutput } from "./runs/RunOutput.ts"
 import { RunInput } from "./runs/RunInput.ts"
 import { RunRepo } from "./runs/RunRepo.ts"
+import { BackgroundWork } from "./runs/BackgroundWork.ts"
 import { Compaction } from "./runs/Compaction.ts"
 import { RunEnds } from "./runs/RunEnds.ts"
 import { Runs } from "./runs/Runs.ts"
@@ -165,6 +166,7 @@ const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(RunFollower.layer),
   Layer.provideMerge(ClaudeOutput),
   Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer)),
+  Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
 )

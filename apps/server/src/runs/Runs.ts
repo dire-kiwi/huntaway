@@ -1,7 +1,7 @@
 import { Cause, Clock, Context, Effect, Exit, Fiber, FiberMap, FileSystem, Layer, Option, Ref, Schedule, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { DocumentLabel, RunId, threadKindOf } from "@huntaway/contracts"
-import type { ProjectId, Task, TaskId, Timestamp } from "@huntaway/contracts"
+import type { NewTask, ProjectId, Task, TaskId, Timestamp } from "@huntaway/contracts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
 import { planRest, startInstructions } from "../agents/prompts/start.ts"
 import { worthAsking } from "../agents/titles/text.ts"
@@ -29,9 +29,10 @@ import { combine, decideSend, isCompact, newCommand, rowOf } from "./queue.ts"
 import type { Outgoing, Refusal, Take } from "./queue.ts"
 import type { Run, RunKind } from "./Run.ts"
 import { AgentRequests } from "./AgentRequests.ts"
+import { BackgroundWork } from "./BackgroundWork.ts"
 import { formatSupport, RunDir } from "./RunDir.ts"
 import { RunFollower } from "./RunFollower.ts"
-import { RunInput } from "./RunInput.ts"
+import { BackgroundRefused, RunInput } from "./RunInput.ts"
 import { RunRepo } from "./RunRepo.ts"
 import { Shim } from "./Shim.ts"
 
@@ -46,6 +47,12 @@ import { Shim } from "./Shim.ts"
 export class SendRefused extends Schema.TaggedError<SendRefused, { readonly brand: unique symbol }>()("SendRefused", {
   reason: Schema.Literals(["archived", "merge_queued", "no_agents", "already_running", "no_conversation", "nothing_queued", "agent_running"]),
   detail: Schema.String,
+}) {}
+
+/** A task can't wait for its usage limit's reset (`invalid`: it isn't a task). */
+export class WaitRefused extends Schema.TaggedError<WaitRefused, { readonly brand: unique symbol }>()("WaitRefused", {
+  reason: Schema.String,
+  invalid: Schema.Boolean,
 }) {}
 
 const refused = (r: Refusal): SendRefused => {
@@ -85,6 +92,19 @@ export interface RunsShape {
   /** Take back what is queued: the task as it was, so that the text can be given back to the user. */
   readonly dropQueued: (task: TaskId) => Effect.Effect<Task, TaskNotFound>
   readonly isRunning: (task: TaskId) => Effect.Effect<boolean>
+  /**
+   * The banner's Stop: stop the agent's background shells (or just `shell`), leaving the agent be (the old
+   * `background.stop`). The ids it asked Claude Code to stop.
+   */
+  readonly stopBackground: (task: TaskId, shell: string | null) => Effect.Effect<ReadonlyArray<string>, BackgroundRefused>
+  /**
+   * A task just created (`Tasks.create`, from `input`): with no title but a description, its title is written first
+   * (`Titles.generateLater`), then its agent starts if it is to; else its agent starts now if it is to (`start`: true, or
+   * a message to start it with). The old `new_task`.
+   */
+  readonly created: (task: Task, input: NewTask) => Effect.Effect<Task, TaskNotFound | SendRefused>
+  /** "Carry on then": a task whose agent ran out of usage waits in In progress for the reset (the old `wait_for_reset`). */
+  readonly waitForReset: (task: TaskId) => Effect.Effect<Task, TaskNotFound | WaitRefused>
   /** Waits until the task's run being prepared, if any, has started its agent or given up (tests). */
   readonly launched: (task: TaskId) => Effect.Effect<void>
   /** `/new`: the thread's next message starts a new conversation with its agent; its items stay. Refused while it runs. */
@@ -144,6 +164,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const facts = yield* LaunchFacts
       const requests = yield* AgentRequests
       const dependencies = yield* Dependencies
+      const background = yield* BackgroundWork
       const meter = yield* ContextMeter
       const titles = yield* Titles
       const usage = yield* Usage
@@ -189,6 +210,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         if (Exit.isSuccess(exit)) return
         // An agent that reads its input as it works would wait for more forever, and one started after the launch
         // gave up on it would work unseen.
+        yield* background.keepKilled(run.id)
         yield* shim.reap(run.id)
         const error = Cause.hasInterruptsOnly(exit.cause) ? "it was stopped while it was being prepared" : Cause.pretty(exit.cause).split("\n")[0]
         if (!Cause.hasInterruptsOnly(exit.cause)) yield* Effect.logError(`task=${run.task_id} run=${run.id} launching the agent failed`, exit.cause)
@@ -520,29 +542,46 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const stopLocked = Effect.fnUntraced(function* (id: TaskId, kill: boolean) {
         const run = yield* liveRun(id)
         if (run === null) return false
-        // `requested` until the turn it interrupts ends, then `interrupted`. A later stop gets its own id, so the grace of
-        // an earlier one leaves it alone.
-        const stopId = `stop-${yield* uuid}`
-        yield* runs.update(run.id, { stop: "requested", stop_id: stopId })
         // Being prepared: the launch is given up, and its end reaps what it may have started.
         if (yield* FiberMap.has(launches, id)) {
+          yield* runs.update(run.id, { stop: "requested", stop_id: `stop-${yield* uuid}` })
           yield* FiberMap.remove(launches, id)
           return true
         }
-        // 2.8: between turns, an agent kept going by its background tasks has no turn to interrupt (it is killed).
-        if (!kill && (yield* input.interrupt(run.id, stopId))) return true
-        const signalled = yield* input.closeAndKill(run.id)
-        // Never got as far as starting the agent: it ends here.
-        if (!signalled && !(yield* dir.started(run.id))) {
-          yield* changes.offer({
-            _tag: "RunExited",
-            run: run.id,
-            task: id,
-            exit: { code: null, signal: null, error: "it was stopped before its agent started" },
-            errorTail: "",
-          })
-        }
+        yield* input.stop(run, kill)
         return true
+      })
+
+      const stopBackground = Effect.fn("Runs.stopBackground")(function* (id: TaskId, shell: string | null) {
+        const run = yield* liveRun(id)
+        if (run === null) return yield* new BackgroundRefused({ reason: "the task's agent isn't running" })
+        return yield* input.stopBackground(run, shell)
+      })
+
+      const waitForReset = Effect.fn("Runs.waitForReset")(function* (id: TaskId) {
+        return yield* withLock(
+          id,
+          Effect.gen(function* () {
+            const task = yield* load(id)
+            if (task.kind !== "task") return yield* new WaitRefused({ reason: "only tasks can wait for a usage limit to reset", invalid: true })
+            // Out of the merge queue's slot while it waited, another merge could start alongside it.
+            if (task.merging) {
+              return yield* new WaitRefused({
+                reason:
+                  "a merge can't wait for a usage limit to reset, as it would give up its place in the merge queue; message its agent once the limit has reset",
+                invalid: false,
+              })
+            }
+            const at = yield* nowTimestamp
+            const until = task.limit_reset_at
+            if (until === null || isResetDue(until, Date.parse(at))) {
+              return yield* new WaitRefused({ reason: "its agent isn't out of usage (or the limit has reset already)", invalid: false })
+            }
+            if (yield* runs.hasActive(id)) return yield* new WaitRefused({ reason: "its agent is running", invalid: false })
+            const own = yield* facts.config(task)
+            return yield* waitForLimit(task, own?.name ?? "its config", until, null, at)
+          }),
+        )
       })
 
       const stop = Effect.fn("Runs.stop")(function* (id: TaskId) {
@@ -577,6 +616,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
 
       /** A run that can't be followed ends here: what it may start is stopped, and the reactor hears of its end. */
       const giveUp = Effect.fnUntraced(function* (run: Run, error: string) {
+        yield* background.keepKilled(run.id)
         yield* shim.reap(run.id)
         yield* changes.offer({ _tag: "RunExited", run: run.id, task: run.task_id, exit: { code: null, signal: null, error }, errorTail: "" })
       })
@@ -719,6 +759,28 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         abort,
         dropQueued,
         isRunning: (id) => runs.hasActive(id),
+        created: Effect.fn("Runs.created")(function* (task: Task, fields: NewTask) {
+          const starting = fields.start === true ? "" : typeof fields.start === "string" ? fields.start : null
+          const generate = (fields.title ?? "").trim() === "" && (fields.description ?? "").trim() !== ""
+          if (generate) {
+            // The user may have started it by hand meanwhile.
+            const then =
+              starting === null
+                ? undefined
+                : Effect.gen(function* () {
+                    if (yield* runs.hasActive(task.id)) return
+                    const sent = yield* Effect.exit(send(task.id, { text: starting, source: "user" }))
+                    if (Exit.isFailure(sent)) {
+                      yield* threads.notice(task.id, "error", "Failed to start agent", Cause.pretty(sent.cause).split("\n")[0]).pipe(Effect.ignore)
+                    }
+                  })
+            yield* titles.generateLater(task.id, then)
+            return task
+          }
+          return starting === null ? task : yield* send(task.id, { text: starting, source: "user" })
+        }),
+        stopBackground,
+        waitForReset,
         launched: (id) =>
           FiberMap.get(launches, id).pipe(
             Effect.flatMap((found) => (Option.isSome(found) ? Fiber.await(found.value) : Effect.void)),

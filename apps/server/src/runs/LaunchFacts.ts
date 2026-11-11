@@ -18,6 +18,7 @@ import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { AgentRequests } from "./AgentRequests.ts"
+import { BackgroundWork } from "./BackgroundWork.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -81,6 +82,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const fs = yield* FileSystem.FileSystem
       const random = yield* SecureRandom.SecureRandom
       const taskTmp = yield* TaskTmp
+      const background = yield* BackgroundWork
 
       const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
       const exists = (path: string) => fs.exists(expand(path)).pipe(Effect.orElseSucceed(() => false))
@@ -169,7 +171,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const permissionMode: PermissionMode = task.permission_mode ?? project?.permission_mode ?? host.default_permission_mode ?? "default"
         const model = nonBlank(task.model) ?? nonBlank(project?.model) ?? nonBlank(profile?.default_model) ?? nonBlank(host.default_model)
         const effort = nonBlank(task.effort) ?? nonBlank(host.default_effort)
-        const prompt = compact ? text : yield* prompts.start(task.id, text)
+        // What the end of its last run stopped of its background work, which it never heard about: once.
+        const prompt = compact ? text : yield* prompts.start(task.id, text, yield* background.takeLost(task.id))
         // The task's own temp folder, its TMPDIR, which goes once it's done.
         const tmp = yield* taskTmp.ensure(task)
         const systemPrompt = yield* prompts.system(task.id, { codex: false, permission_mode: permissionMode, tmp })

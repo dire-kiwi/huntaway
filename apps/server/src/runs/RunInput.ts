@@ -1,11 +1,17 @@
-import { Context, Effect, Fiber, FiberMap, Layer, Option } from "effect"
+import { Context, Effect, Fiber, FiberMap, Layer, Option, Schema } from "effect"
+import type { Duration } from "effect"
+import { SecureRandom } from "effect/crypto"
 import type { RunId, TaskId } from "@huntaway/contracts"
 import { interruptLine, userInput } from "../agents/claude/launch.ts"
 import { Prompts } from "../agents/Prompts.ts"
+import { Changes } from "../platform/Changes.ts"
+import { nowTimestamp, toJson } from "../platform/columns.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { fromAgent, TaskRepo } from "../tasks/TaskRepo.ts"
 import { Threads } from "../threads/Threads.ts"
+import { kindOf, listed, notTakenIn } from "./background.ts"
+import { BackgroundWork } from "./BackgroundWork.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
 import { RunRepo } from "./RunRepo.ts"
@@ -26,9 +32,22 @@ import { Shim } from "./Shim.ts"
 export const STOP_GRACE = "10 seconds"
 /** How long an agent that ended its turn with messages still waiting has to start the next turn with them. */
 export const STEER_GRACE = "30 seconds"
-// Background work (plan task 2.8, `BackgroundWork`) adds BACKGROUND_GRACE (120 s: background tasks ended between turns,
-// wait for the turn Claude Code takes on their outcome) and FOLLOW_UP_GRACE (15 s: tasks ended during the turn whose
-// outcome it was not given), at the hooks marked "2.8" below.
+/**
+ * How long an agent that asks on its output has, once its background tasks have ended between turns, to start the turn
+ * Claude Code takes on their outcome, while it says nothing at all: re-armed while its output grows.
+ */
+export const BACKGROUND_GRACE = "120 seconds"
+/** The same for background tasks that ended during a turn whose outcome Claude Code didn't give the agent in it. */
+export const FOLLOW_UP_GRACE = "15 seconds"
+/** How long Claude Code has to stop a background shell (`stop_task`) before the run is stopped instead. */
+export const BACKGROUND_STOP_GRACE = "10 seconds"
+/** The request id prefix of a `stop_task` the board sends. */
+const BACKGROUND_STOP = "bgstop-"
+
+/** Why a background shell can't be stopped. */
+export class BackgroundRefused extends Schema.TaggedError<BackgroundRefused, { readonly brand: unique symbol }>()("BackgroundRefused", {
+  reason: Schema.String,
+}) {}
 
 export interface RunInputShape {
   /**
@@ -56,10 +75,32 @@ export interface RunInputShape {
   /** End the run now: its input closed and its process stopped (SIGTERM, then SIGKILL). False when there was no process to signal. */
   readonly closeAndKill: (run: RunId) => Effect.Effect<boolean>
   readonly closeInput: (run: RunId) => Effect.Effect<void>
+  /**
+   * Stop the run (its launch over): its row marked stopped, then the turn interrupted with `STOP_GRACE`, or, with
+   * `kill`, between turns kept going only by background work, or when it takes no input, its input closed and its
+   * process stopped; one that never started ends here (`RunExited`).
+   */
+  readonly stop: (run: Run, kill: boolean) => Effect.Effect<void>
+  /**
+   * Claude Code listed the agent's background tasks (`background_tasks_changed`): kept, shown, and with none left
+   * between turns, the input closed as at the end of a turn without them (after `BACKGROUND_GRACE` for the turn Claude
+   * Code takes on their outcome, for an agent that asks on its output). Those that end during a turn are kept, for
+   * `FOLLOW_UP_GRACE` at its end.
+   */
+  readonly backgroundChanged: (run: Run, listed: ReadonlyArray<unknown>) => Effect.Effect<void>
+  /** Claude Code gave the agent the outcome of its background task `id` (its `<task-notification>`). */
+  readonly tookIn: (run: Run, id: string) => Effect.Effect<void>
+  /**
+   * The banner's Stop: stop the agent's background shells (or just `id`) with `stop_task` control requests, leaving
+   * the agent be; the run is stopped instead if they can't be asked, or haven't stopped within 10 s. The ids asked.
+   */
+  readonly stopBackground: (run: Run, id: string | null) => Effect.Effect<ReadonlyArray<string>, BackgroundRefused>
+  /** A `control_response` to a `stop_task`: a refusal stops the run. Whether it was one. */
+  readonly onStopResponse: (run: Run, requestId: string | undefined, ok: boolean) => Effect.Effect<boolean>
   /** After a restart (2.6's `Runs.reattach`): the stop's grace and the end of a turn that had ended, armed again from the run's row. */
   readonly rearm: (run: Run) => Effect.Effect<void>
   /** Waits until the run's stop (or steer) grace has done what it does (tests, after moving the clock past it). */
-  readonly settled: (run: RunId, timer: "stop" | "steer") => Effect.Effect<void>
+  readonly settled: (run: RunId, timer: "stop" | "steer" | "grace" | "shells") => Effect.Effect<void>
 }
 
 export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaway-server/runs/RunInput") {
@@ -74,14 +115,24 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
       const events = yield* Events
       const shim = yield* Shim
       const prompts = yield* Prompts
+      const background = yield* BackgroundWork
+      const changes = yield* Changes
+      const random = yield* SecureRandom.SecureRandom
       const stopTimers = yield* FiberMap.make<RunId>()
       const steerTimers = yield* FiberMap.make<RunId>()
+      const graceTimers = yield* FiberMap.make<RunId>()
+      const shellTimers = yield* FiberMap.make<RunId>()
 
       const closeInput = (run: RunId) => dir.closeInput(run).pipe(Effect.catch((e) => Effect.logError(`run=${run} closing the agent's input: ${e.reason}`)))
       const closeAndKill = Effect.fnUntraced(function* (run: RunId) {
+        // What it has going stops with it, which the agent never hears of: its next prompt says so.
+        yield* background.keepKilled(run)
         yield* closeInput(run)
         return yield* shim.kill(run)
       })
+      /** Whether the agent asks for permission (and calls the board's tools) on its output, so needs its input for any turn. */
+      const asksOnOutput = (run: Run) => (run.kind === "compact" ? Effect.succeed(false) : dir.acceptsInput(run.id))
+      const stopping = (run: RunId) => Effect.map(repo.get(run), (r) => Option.isSome(r) && r.value.stop !== "none")
 
       const publish = Effect.fnUntraced(function* (task: TaskId) {
         const now = yield* tasks.get(task)
@@ -152,18 +203,94 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
           }),
         ).pipe(Effect.asVoid)
 
-      const turnEnded = Effect.fn("RunInput.turnEnded")(function* (run: Run) {
+      const turnEnded: (run: Run) => Effect.Effect<void> = Effect.fn("RunInput.turnEnded")(function* (run: Run) {
         const waiting = yield* tasks.steers(run.task_id, run.id)
         if (waiting.length > 0) {
           yield* closeUnlessTakenIn(
             run,
             waiting.map((s) => s.id),
           )
-        } else {
-          // 2.8: with background tasks going, the input stays open (HA-187) unless the run was stopped (then close
-          // and kill); with tasks that ended during the turn and whose outcome it wasn't given, FOLLOW_UP_GRACE.
-          yield* closeInput(run.id)
+          return
         }
+        // An agent with background tasks going doesn't exit until they end: its input stays open, so what's sent to it
+        // meanwhile starts a turn at once (HA-187). A stopped turn's run is ended instead: the stop was for all of it.
+        if ((yield* background.tasks(run.id)).length > 0) {
+          yield* background.setEnded(run.id, null)
+          if (yield* stopping(run.id)) yield* closeAndKill(run.id)
+          return
+        }
+        // Background tasks ended during the turn: Claude Code takes another on those it didn't give the agent the
+        // outcome of, which may ask for permission on its input.
+        const ended = yield* background.ended(run.id)
+        if (ended !== null) {
+          yield* background.setEnded(run.id, null)
+          if (notTakenIn(ended).length > 0 && (yield* asksOnOutput(run)) && !(yield* stopping(run.id))) {
+            yield* closeUnlessTurnStarts(run, FOLLOW_UP_GRACE)
+            return
+          }
+        }
+        yield* closeInput(run.id)
+      })
+
+      /**
+       * The input is left open for the turn Claude Code takes on what its background tasks did; if none has started
+       * after `grace`, and the agent wrote nothing since, its turn is over as it would have been; if it wrote
+       * something, it gets another `grace`.
+       */
+      const closeUnlessTurnStarts = (run: Run, grace: Duration.Input): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const at = Option.match(yield* repo.get(run.id), { onNone: () => Number.MAX_SAFE_INTEGER, onSome: (r) => r.out_offset })
+          yield* FiberMap.run(
+            graceTimers,
+            run.id,
+            Effect.gen(function* () {
+              yield* Effect.sleep(grace)
+              const now = yield* repo.get(run.id)
+              if (Option.isNone(now) || !now.value.isLive || !now.value.between_turns || (yield* background.tasks(run.id)).length > 0) return
+              if (now.value.out_offset > at) {
+                yield* closeUnlessTurnStarts(now.value, grace)
+                return
+              }
+              yield* Effect.logWarning(`run=${run.id} the agent took no turn on its background tasks' outcome; ending its run`)
+              yield* turnEnded(now.value)
+            }),
+          )
+        })
+
+      const backgroundChanged: (run: Run, given: ReadonlyArray<unknown>) => Effect.Effect<void> = Effect.fn("RunInput.backgroundChanged")(function* (
+        run: Run,
+        given: ReadonlyArray<unknown>,
+      ) {
+        const before = yield* background.tasks(run.id)
+        const after = listed(before, given, yield* nowTimestamp)
+        yield* background.setTasks(run.id, after)
+        yield* background.sync(run.id)
+        const asks = yield* asksOnOutput(run)
+        const row = yield* repo.get(run.id)
+        if (Option.isNone(row) || !row.value.isLive) return
+        const ids = after.map((t) => t.id)
+        if (!row.value.between_turns) {
+          if (!asks) return
+          // Those no longer going; one without an id, if fewer are.
+          const gone: Array<string | null> = before.flatMap((t) => (t.id !== null && !ids.includes(t.id) ? [t.id] : []))
+          if (before.some((t) => t.id === null) && ids.length < before.length) gone.push(null)
+          if (gone.length === 0) return
+          const ended = (yield* background.ended(run.id)) ?? { ended: [], taken: [] }
+          yield* background.setEnded(run.id, { ended: [...ended.ended, ...gone], taken: ended.taken })
+          return
+        }
+        if (ids.length > 0) return
+        // Those the board stopped (the banner's Stop) get no turn: Claude Code takes none on a task it was told to stop.
+        const stopped = new Set((yield* background.killed(run.id)).map((t) => t.id))
+        const unasked = before.some((t) => t.id === null || !stopped.has(t.id))
+        if (asks && unasked && !(yield* stopping(run.id))) yield* closeUnlessTurnStarts(row.value, BACKGROUND_GRACE)
+        else yield* turnEnded(row.value)
+      })
+
+      const tookIn = Effect.fnUntraced(function* (run: Run, id: string) {
+        if (!(yield* asksOnOutput(run))) return
+        const ended = (yield* background.ended(run.id)) ?? { ended: [], taken: [] }
+        if (!ended.taken.includes(id)) yield* background.setEnded(run.id, { ended: ended.ended, taken: [...ended.taken, id] })
       })
 
       /** Stop the run's process if the turn the stop `stopId` interrupts hasn't ended within `STOP_GRACE`. */
@@ -188,16 +315,97 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
         return sent
       })
 
+      const stop = Effect.fn("RunInput.stop")(function* (run: Run, kill: boolean) {
+        // `requested` until the turn it interrupts ends, then `interrupted`. A later stop gets its own id, so the grace
+        // of an earlier one leaves it alone.
+        const stopId = `stop-${yield* random.uuidV4()}`
+        yield* repo.update(run.id, { stop: "requested", stop_id: stopId })
+        let now = kill
+        // Between turns, an agent kept going by its background tasks has no turn to interrupt.
+        if (!now && (yield* background.tasks(run.id)).length > 0) {
+          const row = yield* repo.get(run.id)
+          now = Option.isSome(row) && row.value.between_turns && (yield* tasks.steers(run.task_id, run.id)).length === 0
+        }
+        if (!now && (yield* interrupt(run.id, stopId))) return
+        const signalled = yield* closeAndKill(run.id)
+        // Never got as far as starting the agent: it ends here.
+        if (!signalled && !(yield* dir.started(run.id))) {
+          yield* changes.offer({
+            _tag: "RunExited",
+            run: run.id,
+            task: run.task_id,
+            exit: { code: null, signal: null, error: "it was stopped before its agent started" },
+            errorTail: "",
+          })
+        }
+      })
+
+      const stopBackground = Effect.fn("RunInput.stopBackground")(function* (run: Run, id: string | null) {
+        const shells = (yield* background.tasks(run.id)).filter((t) => kindOf(t) === "shell" && (id === null || t.id === id))
+        if (shells.length === 0) {
+          return yield* new BackgroundRefused({ reason: id === null ? "the agent has no background shells going" : `the agent has no background shell ${id}` })
+        }
+        // For the agent's next prompt if the run ends before it hears of it.
+        yield* background.addKilled(run.id, shells)
+        const asked: Array<string> = []
+        for (const t of shells) {
+          if (t.id === null) continue
+          const line = yield* toJson({
+            type: "control_request",
+            request_id: `${BACKGROUND_STOP}${yield* random.uuidV4()}`,
+            request: { subtype: "stop_task", task_id: t.id },
+          })
+          const sent = yield* dir.appendInput(run.id, line).pipe(Effect.orElseSucceed(() => false))
+          if (sent) asked.push(t.id)
+        }
+        // It can't be asked (no input, or tasks without ids): only the run's stop ends them.
+        if (asked.length < shells.length) {
+          yield* Effect.logWarning(`run=${run.id} stopping the run to end its background shells`)
+          yield* stop(run, false)
+          return asked
+        }
+        yield* FiberMap.run(
+          shellTimers,
+          run.id,
+          Effect.gen(function* () {
+            yield* Effect.sleep(BACKGROUND_STOP_GRACE)
+            const left = (yield* background.tasks(run.id)).filter((t) => t.id !== null && asked.includes(t.id))
+            const now = yield* repo.get(run.id)
+            if (left.length === 0 || Option.isNone(now) || !now.value.isLive) return
+            yield* Effect.logWarning(`run=${run.id} the agent didn't stop its background tasks; stopping the run`)
+            yield* stop(now.value, false)
+          }),
+        )
+        return asked
+      })
+
+      const onStopResponse = Effect.fnUntraced(function* (run: Run, requestId: string | undefined, ok: boolean) {
+        if (requestId === undefined || !requestId.startsWith(BACKGROUND_STOP)) return false
+        if (!ok) {
+          yield* Effect.logWarning(`run=${run.id} the agent refused to stop a background task; stopping the run`)
+          yield* stop(run, false)
+        }
+        return true
+      })
+
       const rearm = Effect.fn("RunInput.rearm")(function* (run: Run) {
         const takesInput = yield* dir.acceptsInput(run.id)
         if (!takesInput) return
         if (run.stop === "requested") yield* stopUnlessInterrupted(run.id, run.stop_id ?? "")
         // Its turn ended, maybe before the end was seen to: the messages it has been sent start the next one, written
-        // now if they weren't, or else its input is closed so it exits. (2.8: or BACKGROUND_GRACE.)
-        if (run.between_turns) {
-          yield* writeSteers(run.task_id)
+        // now if they weren't, or else its input is closed so it exits.
+        if (!run.between_turns) return
+        yield* writeSteers(run.task_id)
+        if ((yield* tasks.steers(run.task_id, run.id)).length > 0) {
           yield* turnEnded(run)
+          return
         }
+        // Its background tasks may have ended just before, and the turn on their outcome may yet ask on its input.
+        if (run.stop === "none" && (yield* background.tasks(run.id)).length === 0 && (yield* asksOnOutput(run))) {
+          yield* closeUnlessTurnStarts(run, BACKGROUND_GRACE)
+          return
+        }
+        yield* turnEnded(run)
       })
 
       return RunInput.of({
@@ -209,8 +417,13 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
         closeAndKill,
         closeInput,
         rearm,
+        stop,
+        backgroundChanged,
+        tookIn,
+        stopBackground,
+        onStopResponse,
         settled: (run, timer) =>
-          FiberMap.get(timer === "stop" ? stopTimers : steerTimers, run).pipe(
+          FiberMap.get(timer === "stop" ? stopTimers : timer === "steer" ? steerTimers : timer === "grace" ? graceTimers : shellTimers, run).pipe(
             Effect.flatMap((found) => (Option.isSome(found) ? Fiber.await(found.value) : Effect.void)),
             Effect.asVoid,
           ),

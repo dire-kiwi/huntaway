@@ -16,6 +16,7 @@ import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { ThreadReaders } from "../threads/ThreadReaders.ts"
 import { Threads } from "../threads/Threads.ts"
 import { AgentRequests } from "./AgentRequests.ts"
+import { BackgroundWork } from "./BackgroundWork.ts"
 import { DevServers } from "./DevServers.ts"
 import { decideFinish, isAhead, nudged, nudgeNotice, outcomeOf, todoReason } from "./finish.ts"
 import type { FinishDecision } from "./finish.ts"
@@ -63,6 +64,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const tokens = yield* Tokens
       const devServers = yield* DevServers
       const requests = yield* AgentRequests
+      const background = yield* BackgroundWork
 
       const board: Actor = { _tag: "Board" }
 
@@ -158,6 +160,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         // What the run had going goes with it: its tokens are counted, its servers looked for a while longer, its
         // prompts expire (`AgentRequests`' handlers), the reply being written ends.
         yield* tokens.runEnded(run.task_id)
+        yield* background.runEnded(run)
         yield* devServers.notifyRunEnded(run.task_id)
         yield* requests.ended(run, !later)
         yield* threads.endPreview(run.task_id)

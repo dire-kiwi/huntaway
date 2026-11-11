@@ -351,7 +351,18 @@ export interface TaskRepoShape {
   readonly takeSteer: (task: TaskId, id: string) => Effect.Effect<SteerRowOf | null>
   /** Takes away the steers of `run` (every run's if none is named), returning them in order. */
   readonly takeSteers: (task: TaskId, run?: RunId) => Effect.Effect<ReadonlyArray<SteerRowOf>>
+  /** The background work its last runs' ends stopped that its agent hasn't been told of (`lost_background`). */
+  readonly lostBackground: (task: TaskId) => Effect.Effect<ReadonlyArray<LostBackground>>
+  /** Set it (the latest ten), or clear it with an empty list. */
+  readonly setLostBackground: (task: TaskId, lost: ReadonlyArray<LostBackground>) => Effect.Effect<void>
 }
+
+/** A piece of background work a run's end stopped: what it was, and a line about it. */
+export interface LostBackground {
+  readonly kind: string
+  readonly label: string
+}
+const LostRows = JsonColumn(Schema.Array(Schema.Struct({ kind: Schema.String, label: Schema.String })), [])
 
 /** The repository of tasks. */
 export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaway-server/tasks/TaskRepo") {
@@ -516,7 +527,17 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
           return rows
         })
 
+      const lostBackground = (task: TaskId) =>
+        Effect.map(decoded(Schema.Struct({ lost: LostRows }), sql`SELECT lost_background AS lost FROM tasks WHERE id = ${task}`), (rows) => rows[0]?.lost ?? [])
+      const setLostBackground = (task: TaskId, lost: ReadonlyArray<LostBackground>) =>
+        Effect.gen(function* () {
+          const text = lost.length === 0 ? null : yield* encodeJson(lost.slice(-10))
+          yield* sql`UPDATE tasks SET lost_background = ${text} WHERE id = ${task}`.pipe(Effect.orDie)
+        })
+
       return TaskRepo.of({
+        lostBackground,
+        setLostBackground,
         queued,
         enqueue,
         takeQueued,

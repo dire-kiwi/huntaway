@@ -15,6 +15,7 @@ import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { Threads } from "../../threads/Threads.ts"
 import { ThreadStore } from "../../threads/ThreadStore.ts"
 import { AgentRequests } from "../AgentRequests.ts"
+import { BackgroundWork } from "../BackgroundWork.ts"
 import type { Run } from "../Run.ts"
 import { RunDir } from "../RunDir.ts"
 import { RunInput } from "../RunInput.ts"
@@ -94,6 +95,7 @@ export const ClaudeOutput = Layer.effect(
     const input = yield* RunInput
     const requests = yield* AgentRequests
     const meter = yield* ContextMeter
+    const background = yield* BackgroundWork
     const usage = yield* Usage
     const kept = yield* Ref.make<ReadonlyMap<TaskId, Kept>>(new Map())
 
@@ -284,7 +286,16 @@ export const ClaudeOutput = Layer.effect(
         // How much of a usage window is left: the config's usage (a `rate_limit_event`, or a turn refused for it).
         else if (effect._tag === "RateLimit") yield* rateLimit(run, line.type === "rate_limit_event" ? line : effect.info)
         else if (effect._tag === "Compacted") yield* meter.onCompacted(run, effect.metadata)
+        // A background task's outcome given to the agent: no turn of its own after this one.
+        else if (effect._tag === "Echoed" && effect.taskNotification !== null) yield* input.tookIn(run, effect.taskNotification)
       }
+      // Its background work: the calls that start shells, their start, the list Claude Code keeps, and the task's banner
+      // as its turns start and end.
+      if (line.type === "assistant") yield* background.onAssistant(run, line)
+      if (line.type === "system" && line.subtype === "task_started") yield* background.started(run, line)
+      if (line.type === "system" && line.subtype === "background_tasks_changed") yield* input.backgroundChanged(run, line.tasks ?? [])
+      if (done.effects.some((e) => e._tag === "TurnStarted" || e._tag === "TurnEnded" || e._tag === "Echoed")) yield* background.sync(run.id)
+      if (line.type === "control_response") yield* input.onStopResponse(run, line.response.request_id, line.response.subtype === "success")
       // The context meter: each request's context, and the breakdown asked for at a turn's end (before the input closes).
       if (line.type === "assistant") yield* meter.onAssistant(run, line)
       if (line.type === "control_response") yield* meter.onControlResponse(run.task_id, line)
