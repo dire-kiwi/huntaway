@@ -243,6 +243,32 @@ Changes:
 - **Permission modes keep both spellings**: Claude Code's on tasks and projects (`acceptEdits`), snake_case in the
   thread protocol (`accept_edits`). One pair of converters in the contracts package replaces the copies.
 
+As built (HE-4, 2.1), in `thread/Thread.ts`, `Item.ts`, `Request.ts`, `Event.ts`, `Command.ts`, `Snapshot.ts`,
+`reducer.ts`, `window.ts`:
+
+- **Names that would clash** with the board's: the request's `Resolution` is `RequestResolution` (the task has a
+  `Resolution`), the protocol's mode is `ThreadPermissionMode` (converters `toThreadPermissionMode`,
+  `fromThreadPermissionMode`), item and request `metadata` is `ThreadMetadata`. A tool call's `todos` are the task's
+  `Todo`, the same shape. The protocol's `Usage` went with the fields that held it.
+- **Also left out, as never produced**: `Thread.status: "error"`, `Thread.usage/error/metadata`, `send`'s
+  `attachments` and `client_id`, and `rewind`'s `turn_id` (it takes the user message's `item_id`). Without `turn_id` a
+  request is anchored by its tool call only; one with none is in every window and in no page, as before.
+- **Fields the old protocol omits when unset are `Schema.optionalKey`** (exact: absent, never `undefined`). The types
+  are `typeof X.Type` aliases, not interfaces, so the reducer can spread them (`no-misused-spread` takes an interface
+  over a schema's type for a class).
+- **The reply being written is a `preview`, not a `delta`.** `threads.watch` streams it as
+  `ThreadPreview { type: "preview", thread_id, seq, item_id, offset, text }`, and the snapshot carries what has
+  streamed so far (`ThreadSnapshot.preview: { item_id, text } | null`). `previewAfter(preview, message)` folds it as
+  the old web did: text at its offset, overlap skipped; a new reply for another `item_id`; none once an item is added
+  to the main conversation. `Delta` stays in `ThreadEvent` (the reducer applies one to an item the thread has, and the
+  recorded sessions have them), but the board does not produce one.
+- **`threads.watch` streams `ThreadMessage`** = `ThreadSnapshot | ThreadEvent | ThreadPreview | UnknownEvent`, in that
+  order, so an event of a newer type, or of a known type whose item this build cannot read, decodes as an
+  `UnknownEvent`. The reducer takes `ThreadEvent | UnknownEvent` and counts what is not a whole `ThreadEvent`.
+- **The recorded sessions are checked in `packages/testing/test/threadFixtures.test.ts`** (contracts has no Node
+  types to read files with): each of the 695 expected events of a declared type decodes as `ThreadEvent` losing only
+  the fields above, and every scenario folds. agent-threads' spec examples are beside them in `fixtures/threads/examples/`.
+
 ## Events
 
 `BoardEvent` is what a host's board stream carries: the old `HostEvent` union
