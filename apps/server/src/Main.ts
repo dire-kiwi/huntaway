@@ -36,6 +36,7 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { CopyConfig } from "./hosts/CopyConfig.ts"
 import { Discovery } from "./hosts/Discovery.ts"
 import { Tailscale } from "./hosts/discovery/Tailscale.ts"
 import { Udp } from "./hosts/discovery/Udp.ts"
@@ -217,7 +218,7 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
 const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
 
 /** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay, settings sync, discovery. */
-const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, SettingsSyncExchange.layer, SettingsSync.observer, Discovery.layer).pipe(
+const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, SettingsSyncExchange.layer, SettingsSync.observer, Discovery.layer, CopyConfig.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(LinkConnections.layer, SettingsSync.layer)),
   Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, SettingsSyncRepo.layer, UdpLive, Tailscale.layer)),
 )
