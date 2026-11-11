@@ -22,7 +22,7 @@ import {
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
 import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
-import type { CodexQueries } from "./agents/CodexQueries.ts"
+import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
 import { ContextStatsRepo } from "./agents/ContextStatsRepo.ts"
 import { Prompts } from "./agents/Prompts.ts"
@@ -153,7 +153,10 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(ThreadStore.layer),
   Layer.provideMerge(TasksLive),
 )
-/** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
+/**
+ * What asks a model besides runs: titles, window restarts, and Codex's one-off questions (its models, skills, rate limits
+ * and titles). Tests give scripted ones, so no test calls a model or starts a Codex.
+ */
 export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
   readonly titles: Layer.Layer<TitleModel | T, E1, R1>
@@ -164,10 +167,12 @@ export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never
 /** The agents area over what is above it. */
 const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   UsageWindow.loop.pipe(
-    Layer.provideMerge(Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer)),
     Layer.provideMerge(
-      Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window, models.codex),
+      Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer, CodexQueries.registered),
     ),
+    Layer.provideMerge(Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window)),
+    // A Codex config's titles are asked of Codex, as its models are (5.3).
+    Layer.provideMerge(models.codex),
     Layer.provideMerge(ThreadsLive),
   )
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */

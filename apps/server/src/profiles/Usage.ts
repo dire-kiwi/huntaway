@@ -31,7 +31,8 @@ import { codexOutUntil, field, mergeLimits, parseLimits, parseTime, poolLimits, 
 // until that limit resets. Usage at 100% alone doesn't make it out: a plan with extra usage carries on past it.
 //
 // Kept in memory and lost on a restart, by design: a task waiting for a reset keeps it on its row (`limit_reset_at`).
-// Codex's rate limits (`account/rateLimits/read`) join with the Codex driver (M5).
+// Codex configs' plan and limits are read from `codex app-server` (`account/rateLimits/read`), by the reader the agents
+// area registers (`provideCodex`, 5.3), and from its runs' `account/rateLimits/updated` (`setLimits`).
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 const BETA = "oauth-2025-04-20"
@@ -109,7 +110,17 @@ export interface UsageShape {
   readonly proxy: (config: AgentConfigId) => Effect.Effect<string | null>
   /** The usage kept for `config`, if any. */
   readonly get: (config: AgentConfigId) => Effect.Effect<UsageData | null>
+  /**
+   * How a Codex config's plan and limits are read (`account/rateLimits/read`, 5.3): the agents area, below this one,
+   * registers it as its layer is built. Until then a Codex config's fetch fails.
+   */
+  readonly provideCodex: (read: CodexLimitsReader) => Effect.Effect<void>
 }
+
+/** Reads a Codex config's plan and limits, or why it can't. */
+export type CodexLimitsReader = (
+  config: AgentConfigRow,
+) => Effect.Effect<{ readonly plan: string | null; readonly limits: ReadonlyArray<UsageLimit> }, { readonly reason: string }>
 
 export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server/profiles/Usage") {
   static readonly layer = Layer.effect(
@@ -122,6 +133,7 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
       const server = yield* ServerConfig
       const client = yield* HttpClient.HttpClient
       const state = yield* Ref.make<ReadonlyMap<string, Entry>>(new Map())
+      const codexReader = yield* Ref.make<CodexLimitsReader | null>(null)
 
       const entryOf = (config: AgentConfigId) => Effect.map(Ref.get(state), (m) => m.get(config) ?? null)
       /** Change `config`'s entry (made if there's none); emits `usage` when `change` says it changed something the board shows. */
@@ -263,14 +275,20 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
         return { plan: `${accounts.length} account${accounts.length === 1 ? "" : "s"}`, limits: poolLimits(accounts), accounts }
       })
 
+      /** A Codex config's plan and limits, from a short-lived `codex app-server` (the agents area's reader). */
+      const fetchCodex = (row: AgentConfigRow): Effect.Effect<Fetched, FetchFailed> =>
+        Effect.flatMap(Ref.get(codexReader), (read) =>
+          read === null
+            ? Effect.fail(new FetchFailed({ reason: "Codex's usage can't be read here" }))
+            : read(row).pipe(
+                Effect.map((got): Fetched => ({ plan: got.plan, limits: got.limits, accounts: null })),
+                Effect.mapError((e) => new FetchFailed({ reason: e.reason })),
+              ),
+        )
+
       const refreshRow = Effect.fnUntraced(function* (row: AgentConfigRow) {
         const url = yield* proxyOf(row)
-        const fetch: Effect.Effect<Fetched, FetchFailed> =
-          url !== null
-            ? fetchProxy(row, url)
-            : row.agent === "codex"
-              ? Effect.fail(new FetchFailed({ reason: "Codex's usage isn't read yet" }))
-              : fetchClaude(row)
+        const fetch: Effect.Effect<Fetched, FetchFailed> = url !== null ? fetchProxy(row, url) : row.agent === "codex" ? fetchCodex(row) : fetchClaude(row)
         const result = yield* Effect.result(fetch)
         const now = yield* Clock.currentTimeMillis
         const at = yield* nowTimestamp
@@ -377,7 +395,19 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
 
       const get = (config: AgentConfigId) => Effect.map(entryOf(config), (e) => e?.usage ?? null)
 
-      return Usage.of({ list, snapshot, refresh, onRateLimit, setLimits, codexRefused, outUntil, sessionReset, proxy, get })
+      return Usage.of({
+        list,
+        snapshot,
+        refresh,
+        onRateLimit,
+        setLimits,
+        codexRefused,
+        outUntil,
+        sessionReset,
+        proxy,
+        get,
+        provideCodex: (read) => Ref.set(codexReader, read),
+      })
     }),
   )
 }

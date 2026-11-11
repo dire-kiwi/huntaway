@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Ref, Result, Schema } from "effect"
 import type { UsageLimit } from "@huntaway/contracts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
+import { Usage } from "../profiles/Usage.ts"
 import type { CodexModel, CodexSkill } from "./codex/queries.ts"
 import type { TitleAnswer } from "./TitleModel.ts"
 
@@ -41,6 +42,15 @@ export class CodexModelsScript extends Context.Service<
 >()("huntaway-server/agents/CodexQueries/CodexModelsScript") {}
 
 export class CodexQueries extends Context.Service<CodexQueries, CodexQueriesShape>()("huntaway-server/agents/CodexQueries") {
+  /** `Usage` (in `profiles/`, above this area) reads a Codex config's plan and limits through these. */
+  static readonly registered = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const queries = yield* CodexQueries
+      const usage = yield* Usage
+      yield* usage.provideCodex(queries.rateLimits)
+    }),
+  )
+
   /** For tests: the models given (settable through `CodexModelsScript`), no skills, no rate limits, no titles. */
   static readonly layerTest = Layer.effect(
     CodexQueries,
