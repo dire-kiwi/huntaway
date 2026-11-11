@@ -1,11 +1,13 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Schema, Stream } from "effect"
-import type { Scope, FileSystem } from "effect"
+import { Effect, FileSystem, Schema, Stream } from "effect"
+import type { Scope } from "effect"
 import type { SecureRandom } from "effect/crypto"
 import type { SqlClient } from "effect/sql"
 import { ThreadSnapshot } from "@huntaway/contracts"
 import { fakeAgent, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
+import { TaskDocuments } from "../../docs/TaskDocuments.ts"
+import { Db } from "../../platform/Db.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { Threads } from "../../threads/Threads.ts"
 import type { RunDir } from "../RunDir.ts"
@@ -178,5 +180,30 @@ describe("Claude output in chunks", () => {
         assert.deepStrictEqual([row.out_offset, row.agent_at], [chunk.at(-1)?.[1], `u${n - 1}`])
       }),
     ),
+  )
+
+  it.effect("6.2: a tool's result keeps the task's document as it's written, and the turn's end closes its version", () =>
+    Effect.gen(function* () {
+      const handler = yield* RunOutput
+      const documents = yield* TaskDocuments
+      const fs = yield* FileSystem.FileSystem
+      const agent = yield* fakeAgent()
+      const { sql } = yield* Db
+      yield* sql`UPDATE tasks SET labels = '["plan"]' WHERE id = ${agent.run.task_id}`.pipe(Effect.orDie)
+      yield* fs.makeDirectory(documents.folder(agent.run.task_id), { recursive: true }).pipe(Effect.orDie)
+      yield* fs.writeFileString(`${documents.folder(agent.run.task_id)}/plan.html`, "<h1>Plan</h1>").pipe(Effect.orDie)
+      const feed = Effect.fnUntraced(function* (lines: ReadonlyArray<unknown>) {
+        const texts = yield* Effect.forEach(lines, (line) => Schema.encodeEffect(Json)(line), { concurrency: 1 }).pipe(Effect.orDie)
+        yield* agent.write(texts)
+        for (const [line, end] of withEnds(texts, (yield* agent.row).out_offset)) yield* handler.handle(yield* agent.row, line, end)
+      })
+      const open = () => Effect.map(documents.get(agent.run.task_id).pipe(Effect.orDie), (d) => [d.content, d.versions.map((v) => v.open)])
+      yield* feed(turn.slice(0, 3))
+      assert.deepStrictEqual(yield* open(), [null, []])
+      yield* feed([turn[3]])
+      assert.deepStrictEqual(yield* open(), ["<h1>Plan</h1>", [true]])
+      yield* feed([result])
+      assert.deepStrictEqual(yield* open(), ["<h1>Plan</h1>", [false]])
+    }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 })

@@ -1,0 +1,748 @@
+/*
+ * The board's theme for plans (see planTheme.ts), ahead of the plan's own HTML in its frame.
+ * Plain HTML gets the theme as it is, and the components below are what plan agents are told to
+ * build with (the list in apps/server/src/agent/documents.ts's PLAN_FORMAT must match). They're modelled on
+ * ODS-23's plan: a slate palette, tinted pills and callouts, cards in a grid and numbered steps.
+ */
+:root {
+  color-scheme: dark;
+  --bg: #11141b;
+  --panel: #181c25;
+  --panel-2: #1c212b;
+  --raised: #202634;
+  --line: #2c3342;
+  --line-strong: #3b4457;
+  --fg: #e3e7ef;
+  --heading: #f1f4f9;
+  --muted: #9aa3b5;
+  --faint: #6c7589;
+  --accent: #8b97ff;
+  --accent-bg: #1c2140;
+  --ok: #6fd49a;
+  --ok-bg: #173527;
+  --warn: #f2c46b;
+  --warn-bg: #3a2e14;
+  --danger: #ff8f97;
+  --danger-bg: #3d1c20;
+  --info: #8fb8f5;
+  --info-bg: #1b2a45;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+::selection {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* A readable column, by padding so a page's own background still fills the width. */
+body {
+  margin: 0;
+  padding: 40px max(24px, calc((100% - 912px) / 2)) 80px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--heading);
+  font-weight: 650;
+}
+h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+h2 {
+  margin: 42px 0 13px;
+  padding-bottom: 5px;
+  border-bottom: 2px solid var(--line);
+  font-size: 21px;
+  line-height: 1.3;
+}
+h3 {
+  margin: 26px 0 8px;
+  font-size: 17px;
+  line-height: 1.35;
+}
+h4 {
+  margin: 18px 0 6px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+p,
+ul,
+ol,
+dl,
+table,
+pre,
+blockquote,
+figure,
+details {
+  margin: 0 0 16px;
+}
+ul,
+ol {
+  padding-left: 24px;
+}
+li {
+  margin: 4px 0;
+}
+li::marker {
+  color: var(--muted);
+}
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+strong,
+b {
+  color: var(--heading);
+  font-weight: 600;
+}
+hr {
+  margin: 32px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+code,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+:not(pre) > code {
+  padding: 0.08em 0.35em;
+  border-radius: 4px;
+  background: var(--raised);
+}
+kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+pre {
+  overflow-x: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 14px;
+  line-height: 1.55;
+}
+blockquote {
+  padding: 2px 0 2px 14px;
+  border-left: 4px solid var(--line-strong);
+  color: var(--muted);
+}
+small,
+figcaption {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14.5px;
+}
+th,
+td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: var(--raised);
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* A row's name, in its first cell. */
+td.n {
+  color: var(--heading);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* A definition list: terms beside their descriptions. */
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 18px;
+}
+dt {
+  color: var(--heading);
+  font-weight: 600;
+}
+dd {
+  margin: 0;
+}
+
+details {
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+summary {
+  cursor: pointer;
+  color: var(--heading);
+  font-weight: 600;
+}
+details[open] > summary {
+  margin-bottom: 8px;
+}
+
+/* Older plans' inline SVG diagrams. New diagrams use Mermaid, shown as images. */
+svg text {
+  fill: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+svg .muted,
+svg text.dim {
+  fill: var(--muted);
+}
+svg .box {
+  fill: var(--panel);
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+svg .box.accent {
+  stroke: var(--accent);
+}
+svg .edge,
+svg .wire {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+}
+svg .edge.accent {
+  stroke: var(--accent);
+}
+svg .arrow,
+svg .head {
+  fill: var(--muted);
+}
+
+/* Components */
+
+/* A line under the title saying what the plan is. */
+p.sub {
+  margin: 0 0 24px;
+  color: var(--muted);
+}
+
+/* Secondary text, such as a step's result. */
+.meta {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* A highlighted note, accent by default; a <strong> lead-in names it ("In short:"). */
+.callout {
+  --tone: var(--accent);
+  --tone-bg: var(--accent-bg);
+  margin: 16px 0;
+  padding: 13px 16px;
+  border-left: 4px solid var(--tone);
+  border-radius: 0 8px 8px 0;
+  background: var(--tone-bg);
+}
+.callout > :first-child {
+  margin-top: 0;
+}
+.callout > :last-child {
+  margin-bottom: 0;
+}
+
+/* An inline label, e.g. in a table cell or a card's heading. */
+.pill {
+  --tone: var(--muted);
+  --tone-bg: var(--raised);
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--tone-bg);
+  color: var(--tone);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+:is(h1, h2, h3, h4) .pill {
+  margin-left: 4px;
+}
+
+/* The tones, for a callout or a pill (grey is a pill's default). */
+:is(.callout, .pill).ok {
+  --tone: var(--ok);
+  --tone-bg: var(--ok-bg);
+}
+:is(.callout, .pill).warn {
+  --tone: var(--warn);
+  --tone-bg: var(--warn-bg);
+}
+:is(.callout, .pill).bad {
+  --tone: var(--danger);
+  --tone-bg: var(--danger-bg);
+}
+:is(.callout, .pill).info {
+  --tone: var(--info);
+  --tone-bg: var(--info-bg);
+}
+:is(.callout, .pill).accent {
+  --tone: var(--accent);
+  --tone-bg: var(--accent-bg);
+}
+.pill.grey {
+  --tone: var(--muted);
+  --tone-bg: var(--raised);
+}
+
+/* Cards side by side, two (or three) to a row, one on a narrow page. */
+.grid2,
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0 0 16px;
+}
+.grid3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.card > h4:first-child,
+.card > h3:first-child {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.card > :last-child {
+  margin-bottom: 0;
+}
+.card > :is(ul, ol):last-child {
+  margin-bottom: 4px;
+}
+:is(.grid2, .grid3) > :is(h2, h3, h4) {
+  margin-top: 0;
+}
+@media (max-width: 720px) {
+  .grid2,
+  .grid3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Numbered steps: each <li> starts with a <strong> title on a line of its own. */
+ol.steps > li {
+  margin-bottom: 16px;
+}
+ol.steps > li > strong:first-child {
+  display: block;
+}
+ol.steps > li::marker {
+  color: var(--heading);
+  font-weight: 600;
+}
+
+ia-diagram {
+  display: block;
+  margin: 0 0 16px;
+  padding: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  text-align: center;
+}
+ia-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+ia-diagram > img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+ia-diagram > pre {
+  text-align: left;
+}
+ia-diagram > pre[hidden] {
+  display: none;
+}
+ia-diagram .ia-diagram-error {
+  color: var(--danger);
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+/* Free-form HTML, as a page of its own in a frame that fits it (planTheme.ts). */
+ia-html {
+  display: block;
+  margin: 0 0 16px;
+}
+ia-html > iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+}
+
+/* A question the user answers in the plan (planTheme.ts turns it into form fields): a callout in the
+   warn tone, as it waits on the user. */
+ia-question {
+  display: block;
+  margin: 16px 0;
+  padding: 13px 16px 15px;
+  border-left: 4px solid var(--warn);
+  border-radius: 0 8px 8px 0;
+  background: var(--panel);
+}
+ia-question > .ia-ask {
+  margin-bottom: 4px;
+  color: var(--heading);
+  font-weight: 600;
+}
+ia-question > p {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 15px;
+}
+ia-question > .ia-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+ia-question > .ia-answer > label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--raised);
+  cursor: pointer;
+}
+ia-question > .ia-answer > label:hover {
+  border-color: var(--line-strong);
+}
+ia-question > .ia-answer > label:has(> input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--accent-bg);
+}
+ia-question > .ia-answer > label:has(> input:disabled) {
+  cursor: default;
+}
+ia-question > .ia-answer > label > input[type="radio"],
+ia-question > .ia-answer > label > input[type="checkbox"] {
+  flex: none;
+  position: relative;
+  top: 2px;
+}
+ia-question > .ia-answer > label > .ia-other {
+  flex: 1;
+  min-width: 0;
+  padding-block: 2px;
+}
+
+/* Form fields, in an <ia-question> or anywhere in the plan. */
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  font-size: 15px;
+  color: var(--fg);
+}
+input:not([type="radio"], [type="checkbox"], [type="range"], [type="color"], [type="submit"], [type="button"], [type="reset"]),
+select,
+textarea {
+  max-width: 100%;
+  padding: 7px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  outline: none;
+}
+button,
+input:is([type="submit"], [type="button"], [type="reset"]) {
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--raised);
+  cursor: pointer;
+}
+ia-question input:not([type="radio"], [type="checkbox"]),
+ia-question select,
+ia-question textarea {
+  width: 100%;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+input[type="radio"],
+input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+textarea {
+  display: block;
+  resize: vertical;
+  line-height: 1.5;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/*
+ * Retired components, from before ODS-23's: no longer offered to agents, but kept so older plans
+ * still read, in the new look.
+ */
+
+ia-lede {
+  display: block;
+  margin: 0 0 24px;
+  color: var(--muted);
+}
+
+ia-callout {
+  --tone: var(--accent);
+  --tone-bg: var(--accent-bg);
+  display: block;
+  margin: 16px 0;
+  padding: 13px 16px;
+  border-left: 4px solid var(--tone);
+  border-radius: 0 8px 8px 0;
+  background: var(--tone-bg);
+}
+ia-callout[title]::before {
+  content: attr(title);
+  display: block;
+  margin-bottom: 4px;
+  color: var(--heading);
+  font-weight: 600;
+}
+ia-callout > :last-child {
+  margin-bottom: 0;
+}
+ia-callout:is([kind="tip"], [kind="decision"]) {
+  --tone: var(--ok);
+  --tone-bg: var(--ok-bg);
+}
+ia-callout:is([kind="warn"], [kind="question"]) {
+  --tone: var(--warn);
+  --tone-bg: var(--warn-bg);
+}
+ia-callout[kind="risk"] {
+  --tone: var(--danger);
+  --tone-bg: var(--danger-bg);
+}
+ia-callout[kind="info"] {
+  --tone: var(--info);
+  --tone-bg: var(--info-bg);
+}
+
+ia-steps {
+  display: block;
+  margin: 0 0 16px;
+  counter-reset: ia-step;
+}
+ia-step {
+  position: relative;
+  display: block;
+  margin: 0 0 16px;
+  padding-left: 28px;
+  counter-increment: ia-step;
+}
+ia-step::before {
+  content: counter(ia-step) ".";
+  position: absolute;
+  left: 4px;
+  color: var(--heading);
+  font-weight: 600;
+}
+ia-step[size]::after {
+  content: attr(size);
+  position: absolute;
+  top: 2px;
+  right: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+ia-step[size] > :first-child {
+  padding-right: 40px;
+}
+ia-step > :first-child {
+  margin-top: 0;
+}
+ia-step > :last-child {
+  margin-bottom: 0;
+}
+
+ia-cards,
+ia-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin: 0 0 16px;
+}
+ia-columns > * {
+  margin-top: 0;
+}
+ia-card {
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+ia-card > :first-child {
+  margin-top: 0;
+}
+ia-card > :last-child {
+  margin-bottom: 0;
+}
+ia-card[kind="rejected"] {
+  opacity: 0.75;
+}
+ia-card:is([kind="chosen"], [kind="rejected"])::before {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+ia-card[kind="chosen"]::before {
+  content: "Chosen";
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+ia-card[kind="rejected"]::before {
+  content: "Not chosen";
+  background: var(--raised);
+  color: var(--muted);
+}
+
+ia-badge {
+  --tone: var(--muted);
+  --tone-bg: var(--raised);
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--tone-bg);
+  color: var(--tone);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+ia-badge[kind="accent"] {
+  --tone: var(--accent);
+  --tone-bg: var(--accent-bg);
+}
+ia-badge[kind="ok"] {
+  --tone: var(--ok);
+  --tone-bg: var(--ok-bg);
+}
+ia-badge[kind="warn"] {
+  --tone: var(--warn);
+  --tone-bg: var(--warn-bg);
+}
+ia-badge[kind="danger"] {
+  --tone: var(--danger);
+  --tone-bg: var(--danger-bg);
+}
+ia-badge[kind="info"] {
+  --tone: var(--info);
+  --tone-bg: var(--info-bg);
+}
+
+ul:is(.pros, .cons, .checklist, .files) {
+  padding-left: 0;
+  list-style: none;
+}
+ul:is(.pros, .cons, .checklist) > li {
+  position: relative;
+  padding-left: 24px;
+}
+ul:is(.pros, .cons, .checklist) > li::before {
+  position: absolute;
+  left: 2px;
+  font-weight: 700;
+}
+ul.pros > li::before {
+  content: "+";
+  color: var(--ok);
+}
+ul.cons > li::before {
+  content: "−";
+  color: var(--danger);
+}
+ul.checklist > li::before {
+  content: "○";
+  color: var(--faint);
+}
+ul.checklist > li.done::before {
+  content: "✓";
+  color: var(--ok);
+}
+ul.checklist > li.done {
+  color: var(--muted);
+}
+ul.files {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+ul.files > li {
+  margin: 0;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+}
+ul.files > li:first-child {
+  border-top: 0;
+}
+ul.files > li > code:first-child {
+  margin-right: 8px;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+}

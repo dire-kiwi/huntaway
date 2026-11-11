@@ -38,6 +38,7 @@ export * from "./rpc/push.ts"
 export * from "./rpc/tasks.ts"
 // 6.1
 export * from "./rpc/terminal.ts"
+export * from "./rpc/taskDocuments.ts"
 export * from "./rpc/threads.ts"
 export * from "./session.ts"
 export * from "./task.ts"

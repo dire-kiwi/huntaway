@@ -451,6 +451,28 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   pushes) and `tests/ui/notifications.test.mjs` (moves by `tasks.update` in place of the old fed websocket; a stopped run
   through the fake agent). The harness's `withBrowser` takes `fullBrowser` again (the full Chromium: notifications,
   service workers). Not ported: answering a prompt from its notification (deferred), a hub's linked hosts (M7).
+### Step 1 as done for a task's documents (6.2, HE-7)
+
+- **What came over.** The old `task/Document.tsx` (its view only: the labels' names and badges were `documentInfo.tsx`
+  already), `htmlFrame.ts`, `mermaid.ts`, `planAnswers.ts`, `planTheme.ts` and `planTheme.css`, under `task/`. The task
+  view's document tabs mount `DocumentView` in place of the placeholder (`task/view/TabContent.tsx`).
+- **Reads and calls.** The document is `taskDocumentAtom({ host_id, task_id, label, version })` in `@huntaway/client`
+  (`board/taskDocument.ts`, read again as the task's `document_at` changes, as the old view refetched on it). Sends (the
+  answers, "Ask the agent to fix it") are `rpc(host, "tasks.send", …)`; the old page-wide `ia-plan-answers` event is a
+  module-level set of listeners. The unsent answers are `loadPlanAnswers`/`savePlanAnswers` in `state/drafts.ts`, under
+  the old `ia.planAnswers:<host>:<task>` key, read from the browser's storage each time as before. The host-version check
+  for sending while the agent runs is gone.
+- **What the lint asked for.** The code that runs in a frame as source (`keepPlace`, `linksInNewTabs`, `noWebRtc`,
+  `iaForm`…) stays self-contained, so its helpers use a constant of their function rather than moving out of it; a
+  worker's URL goes into its script `encodeURIComponent`d rather than as JSON; the frame's document is set in a layout
+  effect (`setAttribute("srcdoc")`), which reads where it was scrolled to and the answers then, rather than in a memo
+  during render; `withPlanDiagrams` renders the diagrams side by side (Mermaid queues its renders itself).
+- **Checks.** `tests/ui/plan.test.mjs`, `planDiagrams.test.mjs`, `planTheme.test.mjs` and `documentCsp.test.mjs` (the
+  old ones), on the demo board (`--demo`), with `tests/ui/documents.mjs`: a document's contents and a send's answer are
+  given on the page's RPC websocket (`routeDocuments`; agents are off), and "a version written over" gets its `task`
+  event the same way. Skipped, with its reason in the file: "a touch held on the board doesn't let a plan open a link",
+  as on Chromium 155 the board's activation after the held touch didn't run out while the plan kept taking the focus.
+  `markdownImages.test.mjs` is about a task's description (Markdown), not its documents, and isn't ported here.
 
 ### Step 2: by hand, a feature folder at a time
 

@@ -17,6 +17,7 @@ import { PushRpcs } from "./push.ts"
 import { TaskRpcs } from "./tasks.ts"
 // 6.1: terminals.
 import { TerminalRpcs } from "./terminal.ts"
+import { TaskDocumentRpcs } from "./taskDocuments.ts"
 import { ThreadRpcs } from "./threads.ts"
 // 6.11: Asana, config archives, fan-outs, adding a project from GitHub.
 import { AsanaRpcs } from "./asana.ts"
@@ -49,6 +50,7 @@ export const HostRpcs = HostRpcGroup.merge(
   DesktopRpcs,
   AgentToolsRpcs,
   PushRpcs,
+  TaskDocumentRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

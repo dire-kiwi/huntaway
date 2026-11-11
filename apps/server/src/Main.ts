@@ -30,6 +30,7 @@ import {
   ProjectRpcs,
   PublicRpcs,
   PushRpcs,
+  TaskDocumentRpcs,
   TaskRpcs,
   // 6.1
   TerminalRpcs,
@@ -143,6 +144,9 @@ import { SetupThread } from "./runs/SetupThread.ts"
 import { TaskDeletion } from "./runs/TaskDeletion.ts"
 import { Runs } from "./runs/Runs.ts"
 import { RunWaits } from "./runs/RunWaits.ts"
+import { TurnHooks } from "./runs/TurnHooks.ts"
+import { TaskDocumentRepo } from "./docs/TaskDocumentRepo.ts"
+import { TaskDocuments } from "./docs/TaskDocuments.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
@@ -171,6 +175,7 @@ import { DesktopHandlers } from "./rpc/desktop.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
+import { TaskDocumentHandlers } from "./rpc/taskDocuments.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
@@ -313,7 +318,7 @@ const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(RunFollower.layer),
   // The line handler: Codex runs' lines to the Codex handler (5.2), the others to Claude's.
   Layer.provideMerge(CodexOutput.pipe(Layer.provide(ClaudeOutput))),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer, TurnHooks.layer)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
@@ -377,25 +382,13 @@ const DesktopLive = DesktopTools.pipe(
   Layer.provideMerge(Layer.mergeAll(CuaDriver.layer, DesktopClaims.layer, DesktopOpRepo.layer)),
 )
 
-/** Every area's services, with `models` for the board's own model calls. */
-export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
-  // The demo board is seeded once every area is built, before Recovery runs.
-  Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
-    Layer.provideMerge(DemoLive),
-    // 6.1: terminals (a tmux session per task and per terminal tool), ended with a worktree's teardown.
-    Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
-    // 6.10: computer use, over the MCP area it registers its server with.
-    Layer.provideMerge(DesktopLive),
-    // 6.8: push, watching the board's events for what devices want.
-    Layer.provideMerge(Push.watcher),
-    Layer.provideMerge(Push.layer),
-    Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)),
-    // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
-    Layer.provideMerge(mcpLayer(BoardHooks)),
-    // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
-    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
-    // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
-    Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
+/**
+ * The areas of M2 to M5 over the agents area: runs and their ends, permissions, reviews, the merge queue and pull
+ * requests. `areasLayer` puts M6's on top (a `pipe` takes twenty steps at most).
+ */
+const runAreasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
+  // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
+  Layer.mergeAll(InReview.layer, MergedWatcher.layer).pipe(
     // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
     // the merge area reads `Tasks.update`'s git and GitHub facts (both registered below the areas they serve).
     Layer.provideMerge(Layer.mergeAll(Merges.registered, MergeGate.registered)),
@@ -413,6 +406,30 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
     Layer.provideMerge(RunsArea),
     Layer.provideMerge(agentsLayer(models)),
+  )
+
+/** Every area's services, with `models` for the board's own model calls. */
+export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
+  // The demo board is seeded once every area is built, before Recovery runs.
+  Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
+    Layer.provideMerge(DemoLive),
+    // 6.1: terminals (a tmux session per task and per terminal tool), ended with a worktree's teardown.
+    Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
+    // 6.10: computer use, over the MCP area it registers its server with.
+    Layer.provideMerge(DesktopLive),
+    // 6.8: push, watching the board's events for what devices want.
+    Layer.provideMerge(Push.watcher),
+    Layer.provideMerge(Push.layer),
+    Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)),
+    // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
+    Layer.provideMerge(mcpLayer(BoardHooks)),
+    // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
+    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
+    Layer.provideMerge(TaskDocuments.registered),
+    Layer.provideMerge(TaskDocuments.layer.pipe(Layer.provideMerge(TaskDocumentRepo.layer))),
+    // M2 to M5's areas.
+    Layer.provideMerge(runAreasLayer(models)),
   )
 
 /** Every area's services. */
@@ -464,6 +481,7 @@ export const Served = PublicRpcs.merge(
   // 6.4
   AgentToolsRpcs,
   PushRpcs,
+  TaskDocumentRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -494,6 +512,7 @@ export const HandlersLive = Layer.mergeAll(
   // 6.4
   AgentToolsHandlers,
   PushHandlers,
+  TaskDocumentHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

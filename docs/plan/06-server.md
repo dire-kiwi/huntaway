@@ -777,6 +777,35 @@ answered 202 before the action runs), `Routines`, `Automations`. Cron and time-z
 `Docs` (published documents: versions, folders, labels, comments), `DocImages` (AVIF conversion with `sharp`),
 `HostedDocs` (publishing to a docs site).
 
+As built in 6.2 (HE-7), `docs/TaskDocuments.ts` (+ `TaskDocumentRepo.ts`, the `documents` table of the initial schema):
+
+- **Following the runs**: `runs/TurnHooks` (new, in the runs area, `register(hook)`, `toolDone(task)`, `turnEnded(task)`),
+  as the areas below `runs/` register with `AgentRequests`: the Claude line handler calls `toolDone` after a `user` line
+  with a `tool_result` and `turnEnded` after a turn's `result`, the Codex one on `ToolDone` and `TurnEnded`, both after
+  the line's commit; `RunEnds.ended` calls `turnEnded` first of all (what a stopped or failed run wrote is kept before
+  the plan rule reads `documents` in `Checkpoints.planOnly`). `TaskDocuments.registered` registers `follow` and
+  `turnEnded`.
+- **Keeping** (`keepOne`, the old `keep_one`): the file's size and modification time (ms) as a stamp in a `Ref` (lost on
+  a restart, as `SEEN` was), a read outside the transaction, then one transaction that reads the latest version and
+  updates the open one or inserts the next; the end of a turn closes every open version of the task (a label taken off
+  mid-turn included); a change writes `document_at` and emits the task. Over 5 MiB isn't kept, and the turn's end says
+  so as a `warning` notice in the thread. One keep at a time (a semaphore), as the old synchronous ones were.
+  `keepFile(task, label, file, { endOfTurn, daily })` is the same for a file that isn't a label's: the assistant's brief
+  (6.7) with `daily` (one version a day in the host's time zone, `DateTime.zoneMakeLocal`).
+- **`tasks.document`** (`TaskDocumentRpcs`, a group of its own in `packages/contracts/src/rpc/taskDocuments.ts`, scope
+  `read`): `{ id, label?, version? }` → `TaskDocument { label, file, versions, version, content }`; `NotFound` for the
+  task, or a version (`what: "version"`). Its label is a `DocumentLabel`: the brief's (`brief`, with its `items`) is
+  6.7's to add.
+- **Deleting**: a `task_deleted` event removes the task's folder; a `project_deleted` one sweeps `documents/` of the
+  folders whose task is gone (a project's deletion emits no event per task).
+- **Demo**: the old demo's diagram, plan and artifact tasks, each with its file written and its turn ended.
+- **Already there before 6.2**: the prompts (`agents/Prompts`, `prompts/labels.ts`…), `/plan` (`runs/Runs`), writing the
+  own folder without asking (`Permissions`; the old case is now in `Permissions.test.ts`), the labels' checks
+  (`tasks/decide.ts`). Plan answers are the user's message (`tasks.send`), as before: nothing on the server.
+- **Tests**: `docs/TaskDocuments.test.ts` (the old `documents.test.ts` cases for versions, labels and the turn's end; the
+  5 MiB notice; `tasks.document`; the daily document; removal and the sweep), the Codex edit's case in
+  `runs/codex/output.test.ts`, a tool result's in `runs/claude/output.test.ts`, the demo's in `lifecycle/Demo.test.ts`.
+
 ### Assistant — [inventory 02](inventory/02-agent-support.md) (2.12)
 
 `Assistant` (one thread per profile, optionally on a host of its own), `Memory` (the workspace under git with the
