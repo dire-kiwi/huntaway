@@ -1,8 +1,7 @@
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Deferred, Effect, Fiber, FileSystem, Option, Path, Queue, Ref, Schema, Stream } from "effect"
+import { Deferred, Effect, Fiber, FileSystem, Option, Path, Schema, Stream } from "effect"
 import { RpcClient } from "effect/rpc"
-import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -10,6 +9,7 @@ import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { CliRpcs, httpRpcClientLayer } from "../../src/cli/rpc.ts"
 import { e2eDataDir, socketRpcClientLayer } from "./launch.ts"
+import { launcherUrl, launchServer } from "./supervised.ts"
 
 // A server updates itself from a release and rolls back from a broken one (plan task 8.2's whole-server test, after the
 // old scripts/release-update-e2e.mjs): a fake GitHub serves releases of this checkout; the server, started through the
@@ -18,7 +18,7 @@ import { e2eDataDir, socketRpcClientLayer } from "./launch.ts"
 // test is refused at staging. A release that passes it but never comes up exits; started again (as a service manager
 // would), the server marks it bad and runs the good one. Roll back goes back to the server the host was installed as.
 
-const launcher = new URL("../../bin/huntaway", import.meta.url)
+const launcher = launcherUrl
 const entry = new URL("../../src/bin.ts", import.meta.url)
 const PLATFORM = `${process.platform === "darwin" ? "mac" : process.platform}-${process.arch}`
 
@@ -101,55 +101,12 @@ const fakeGithub = Effect.acquireRelease(
   (github) => Effect.sync(github.close),
 )
 
-const ReadyLine = Schema.fromJsonString(Schema.Struct({ port: Schema.Int, token: Schema.NullOr(Schema.String) }))
-
-/**
- * `bin/huntaway serve` on `dataDir` with release updates from the fake GitHub, as a service manager starts it: every
- * `HUNTAWAY_READY` it prints (one per server it runs, through restarts), its log, and its exit code.
- */
+/** `bin/huntaway serve` on `dataDir` with release updates from the fake GitHub, as a service manager starts it. */
 const launch = (dataDir: string, api: string) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-    const path = yield* Path.Path
-    const bin = yield* path.fromFileUrl(launcher)
-    const handle = yield* spawner.spawn(
-      ChildProcess.make(bin, ["serve", "--port", "0", "--host", "127.0.0.1", "--data-dir", dataDir, "--no-agents", "--release-updates", "o/r"], {
-        env: { HUNTAWAY_RELEASE_API: api, HUNTAWAY_BUNDLED_SERVER: undefined, HUNTAWAY_DESKTOP_VERSION: undefined },
-        extendEnv: true,
-      }),
-    )
-    const ready = yield* Queue.unbounded<{ readonly port: number; readonly token: string }>()
-    const log = yield* Ref.make("")
-    yield* handle.stdout.pipe(
-      Stream.decodeText(),
-      Stream.splitLines,
-      Stream.runForEach((line) =>
-        line.startsWith("HUNTAWAY_READY ")
-          ? Schema.decodeEffect(ReadyLine)(line.slice("HUNTAWAY_READY ".length)).pipe(
-              Effect.flatMap(({ port, token }) => Queue.offer(ready, { port, token: token ?? "" })),
-            )
-          : Effect.void,
-      ),
-      Effect.forkScoped,
-    )
-    yield* handle.stderr.pipe(
-      Stream.decodeText(),
-      Stream.runForEach((text) => Ref.update(log, (all) => all + text)),
-      Effect.forkScoped,
-    )
-    const exited = yield* Deferred.make<number>()
-    yield* handle.exitCode.pipe(
-      Effect.flatMap((code) => Deferred.succeed(exited, Number(code))),
-      Effect.forkScoped,
-    )
-    /** The next server it runs is up (or it exited first, which fails the test with its log). */
-    const nextReady = Effect.raceFirst(
-      Queue.take(ready),
-      Deferred.await(exited).pipe(
-        Effect.andThen((code) => Ref.get(log).pipe(Effect.andThen((text) => Effect.die(`the server exited with ${code}:\n${text}`)))),
-      ),
-    )
-    return { pid: Number(handle.pid), nextReady, exited: Deferred.await(exited), log: Ref.get(log) }
+  launchServer(["serve", "--port", "0", "--host", "127.0.0.1", "--data-dir", dataDir, "--no-agents", "--release-updates", "o/r"], {
+    HUNTAWAY_RELEASE_API: api,
+    HUNTAWAY_BUNDLED_SERVER: undefined,
+    HUNTAWAY_DESKTOP_VERSION: undefined,
   })
 
 /** One typed call to the server on `port`. */
