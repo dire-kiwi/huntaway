@@ -4,11 +4,13 @@ import { CopyConfig } from "../hosts/CopyConfig.ts"
 import { Discovery } from "../hosts/Discovery.ts"
 import { Links } from "../hosts/Links.ts"
 import { Relay } from "../hosts/Relay.ts"
+import { HostUpdates } from "../update/HostUpdates.ts"
 
 export const HubHostHandlers = HubHostRpcs.toLayer(
   Effect.gen(function* () {
     const links = yield* Links
     const relay = yield* Relay
+    const hostUpdates = yield* HostUpdates
     const discovery = yield* Discovery
     const copyConfig = yield* CopyConfig
     return HubHostRpcs.of({
@@ -22,6 +24,7 @@ export const HubHostHandlers = HubHostRpcs.toLayer(
       "hub.hosts.update": ({ id, name, uplink }) => links.update(id, { name, uplink }),
       "hub.hosts.remove": ({ id }) => links.remove(id),
       "hub.hosts.copyConfig": (input) => copyConfig.copy(input),
+      "hub.hosts.pushUpdate": ({ id }) => hostUpdates.push(id),
       "hub.hosts.openRelay": ({ host_id, path }) =>
         Effect.gen(function* () {
           return { ticket: yield* relay.open(yield* Session, host_id, path ?? "/api/rpc") }

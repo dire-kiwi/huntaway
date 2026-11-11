@@ -39,14 +39,29 @@ function statusOf(host: Host): { label: string; dot: string } {
 
 /**
  * The version line: what the host runs, and whether it needs an update. A host on another protocol shows "needs an
- * update" and nothing else (docs/plan/05-protocol.md, Versions). The Update action (the hub pushing its code or its
- * release to the host) comes with the updater (docs/plan/13-milestones.md, 8.1), which adds its RPC.
+ * update" and nothing else (docs/plan/05-protocol.md, Versions). Update sends this board's code (or the release it
+ * runs) to the host, which rebuilds and restarts (`hub.hosts.pushUpdate`, the host's `admin.update`); it is over when
+ * the host comes back on the board's commit or version. Agents keep running meanwhile.
  */
 export function HostVersion({ host }: { host: Host }) {
   const local = useBoard((s) => s.hosts.find((h) => h.local))
+  const update = useAsyncAction()
+  const [sent, setSent] = useState<"updating" | "up to date" | null>(null)
   const outdated = host.status === "needs_update"
   const behind = !host.local && !!host.commit && !!local?.commit && host.commit !== local.commit
+  const release = host.updates_from === "releases"
+  const olderRelease = release && !!local?.version && !!host.version && local.version !== host.version
+  const live = host.status === "connected" || outdated
+  const canUpdate = !host.local && live && (outdated || behind || olderRelease)
+  // The host back on the board's code ends "updating".
+  const arrived = sent === "updating" && !canUpdate
   if (!host.version && !outdated) return null
+  const push = () =>
+    void update.run(async () => {
+      setSent(null)
+      const r = await hubRpc("hub.hosts.pushUpdate", { id: LinkId.make(host.id) })
+      setSent(r.up_to_date ? "up to date" : "updating")
+    })
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-faint">
       {host.version && (
@@ -62,6 +77,24 @@ export function HostVersion({ host }: { host: Host }) {
         </span>
       )}
       {behind && !outdated && <span className="text-muted">differs from this board ({short(local?.commit)})</span>}
+      {canUpdate && sent !== "updating" && (
+        <button
+          type="button"
+          className="text-accent hover:underline disabled:opacity-50"
+          disabled={update.busy}
+          onClick={push}
+          title={
+            release
+              ? "The host downloads this release and restarts onto it. Agents keep running."
+              : "Send this board's code to the host, which rebuilds and restarts. Agents keep running."
+          }
+        >
+          {update.busy ? "Updating…" : `Update to ${release ? `v${local?.version ?? "?"}` : (short(local?.commit) ?? "this board's code")}`}
+        </button>
+      )}
+      {sent === "updating" && !arrived && <span className="text-st-progress">updating…</span>}
+      {sent === "up to date" && <span className="text-muted">already up to date</span>}
+      {update.error && <span className="text-red-400">{update.error}</span>}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { Conflict, HostOffline, HostRefused, Invalid, NotFound, Unavailable } fr
 import { Host } from "../host.ts"
 import { HostId, LinkId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
+import { UpdateResult } from "../update.ts"
 
 // What a server adds as the board a client opened (docs/plan/05-protocol.md, `hub.hosts`): the directory of hosts,
 // linking, and the relay to the others.
@@ -76,6 +77,12 @@ export class HubHostRpcs extends RpcGroup.make(
     payload: CopyConfig,
     success: Schema.Struct({ ok: Schema.Boolean, files: Schema.NullOr(Schema.Int) }),
     error: Schema.Union([Invalid, NotFound, HostOffline, Unavailable]),
+  }).annotate(RequiredScope, "admin"),
+  /** Send this hub's code (or release) to a linked host, which updates and restarts (its `admin.update`). */
+  Rpc.make("hub.hosts.pushUpdate", {
+    payload: { id: LinkId },
+    success: UpdateResult,
+    error: Schema.Union([Invalid, Conflict, HostOffline, Unavailable]),
   }).annotate(RequiredScope, "admin"),
   /**
    * A single-use ticket, good for a minute, for `/api/relay/<ticket>`: a socket to that host's `path` (`/api/rpc`, the

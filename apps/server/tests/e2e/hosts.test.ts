@@ -293,4 +293,63 @@ describe("hosts, whole servers", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     60_000,
   )
+
+  // A hub's Update of a linked host (the old `update_host`): what the hub runs goes to the host's `admin.update`, which
+  // decides. Both run from git repositories of their own here (`--source-dir`), so nothing is ever rebuilt: a host on
+  // the hub's commit is up to date, one on another branch refuses before anything changes.
+  it.live(
+    "a hub pushes its code to a linked host, which says it is up to date or refuses another branch",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+        const git = (cwd: string, args: ReadonlyArray<string>) =>
+          spawner
+            .spawn(
+              ChildProcess.make("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main", ...args], {
+                cwd,
+                env: { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+                extendEnv: true,
+              }),
+            )
+            .pipe(
+              Effect.flatMap((child) => output(child)),
+              Effect.scoped,
+            )
+        const repos = yield* e2eDataDir
+        yield* git(repos, ["init", "-q", "hub"])
+        // What makes a folder a checkout this server could rebuild from.
+        const fs = yield* FileSystem.FileSystem
+        yield* fs.makeDirectory(`${repos}/hub/apps/web`, { recursive: true })
+        yield* fs.writeFileString(`${repos}/hub/Cargo.toml`, "")
+        yield* fs.writeFileString(`${repos}/hub/apps/web/package.json`, "{}")
+        yield* git(`${repos}/hub`, ["add", "-A"])
+        yield* git(`${repos}/hub`, ["commit", "-q", "-m", "one"])
+        yield* git(repos, ["clone", "-q", "hub", "host"])
+        yield* git(repos, ["clone", "-q", "hub", "other"])
+        yield* git(`${repos}/other`, ["checkout", "-q", "-b", "elsewhere"])
+
+        const hub = yield* startServer([...SERVE, "--source-dir", `${repos}/hub`])
+        const board = yield* boardClient(hub.port, hub.token)
+        const linkHost = (dir: string) =>
+          Effect.gen(function* () {
+            const host = yield* startServer([...SERVE, "--source-dir", dir])
+            const info = yield* (yield* boardClient(host.port, host.token))("host.info", undefined)
+            yield* board("hub.hosts.add", { url: `http://127.0.0.1:${host.port}`, token: host.token })
+            yield* until(board("hub.hosts.watch", undefined), (hosts) => hosts.some((h) => h.id === info.host_id && h.connected))
+            return LinkId.make(info.host_id)
+          })
+
+        const same = yield* linkHost(`${repos}/host`)
+        assert.deepStrictEqual(yield* board("hub.hosts.pushUpdate", { id: same }), { ok: true, up_to_date: true })
+
+        const other = yield* linkHost(`${repos}/other`)
+        const refused = yield* Effect.flip(board("hub.hosts.pushUpdate", { id: other }))
+        assert.strictEqual(refused._tag, "Unavailable")
+        assert.include(refused._tag === "Unavailable" ? refused.reason : "", "is on elsewhere, the hub's on main")
+
+        const own = (yield* board("hub.hosts.list", undefined))[0]?.id ?? ""
+        assert.strictEqual((yield* Effect.flip(board("hub.hosts.pushUpdate", { id: LinkId.make(own) })))._tag, "Invalid")
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    60_000,
+  )
 })

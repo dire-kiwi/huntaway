@@ -124,6 +124,7 @@ import { Restarts } from "./update/Restarts.ts"
 import { Service } from "./update/Service.ts"
 import { Supervisor } from "./update/Supervisor.ts"
 import { Systemd } from "./update/Systemd.ts"
+import { HostUpdates } from "./update/HostUpdates.ts"
 import { Updater } from "./update/Updater.ts"
 import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
@@ -287,6 +288,8 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // A hub's Update of a linked host: over the hosts' connections and the updater.
+    Layer.provideMerge(HostUpdates.layer),
     // Hosts: links, the relay, tools across hosts (M7).
     Layer.provideMerge(HostsLive),
     // Restarts, updates, releases and the service (8.1, 8.2): Recovery settles a release that has come up.
