@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { boardTools, classify, codexResponse, promptAnswer, requestId, toolAnswer } from "./requests.ts"
+import { INSTRUCTIONS } from "../../mcp/McpServers.ts"
+import { boardTools, classify, codexResponse, fitted, NAMESPACE_DESCRIPTION_MAX, promptAnswer, requestId, toolAnswer } from "./requests.ts"
 
 // What Codex's requests are to the board, and how they're answered (the old agent/codex/requests.test.ts's plain cases;
 // the ones that go through the prompts and the run's input are runs/codex/output.test.ts's).
@@ -100,6 +101,15 @@ describe("Codex's requests", () => {
       assert.deepStrictEqual([yield* requestId(7), yield* requestId("a")], ["codex:7", 'codex:"a"'])
     }),
   )
+
+  it("the namespace's description is the board's instructions in whole sentences that fit Codex's 1024 characters", () => {
+    const ns = boardTools({ initializeResult: { instructions: INSTRUCTIONS }, toolsListResult: { tools: [] } })
+    const description = typeof ns["description"] === "string" ? ns["description"] : ""
+    assert.isTrue(INSTRUCTIONS.length > NAMESPACE_DESCRIPTION_MAX && description.length <= NAMESPACE_DESCRIPTION_MAX, String(description.length))
+    assert.isTrue(INSTRUCTIONS.startsWith(description) && description.endsWith("."), description)
+    assert.strictEqual(fitted("Short.", 1024), "Short.")
+    assert.strictEqual(fitted("One two three.", 5), "One t")
+  })
 
   it("the board's tools as one namespace, without the helper's permission_prompt", () => {
     const ns = boardTools({

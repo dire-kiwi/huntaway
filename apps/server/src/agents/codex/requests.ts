@@ -220,5 +220,21 @@ export const boardTools = (manifest: BoardManifest): Readonly<Record<string, unk
     return [{ type: "function", name, description: strField(t, "description") ?? "", inputSchema: schema === null ? { type: "object" } : schema }]
   })
   const instructions = strField(manifest.initializeResult, "instructions") ?? ""
-  return { type: "namespace", name: BOARD_SERVER_NAMES[0] ?? "huntaway", description: instructions, tools }
+  return { type: "namespace", name: BOARD_SERVER_NAMES[0] ?? "huntaway", description: fitted(instructions, NAMESPACE_DESCRIPTION_MAX), tools }
+}
+
+/** The longest description Codex takes for a dynamic tool namespace (codex-cli 0.167 refuses `thread/start` with a longer one). */
+export const NAMESPACE_DESCRIPTION_MAX = 1024
+
+/**
+ * `text` cut to its whole sentences that fit in `max` characters (code points): at the last full stop in them that
+ * ends a sentence (one followed by a capital, not "e.g."'s); the first `max` of it if none does.
+ */
+export const fitted = (text: string, max: number): string => {
+  const chars = Array.from(text)
+  if (chars.length <= max) return text
+  const head = chars.slice(0, max + 1).join("")
+  let cut = -1
+  for (const m of head.matchAll(/[.!?](?=\s+\p{Lu})/gu)) if (m.index < head.length - 1) cut = m.index
+  return cut >= 0 ? head.slice(0, cut + 1) : chars.slice(0, max).join("")
 }

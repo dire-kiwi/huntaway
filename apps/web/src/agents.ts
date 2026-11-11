@@ -8,7 +8,7 @@ import { agentOf, configModelsAtom, EFFORTS, MODEL_ALIASES, type HostAgentConfig
 export interface AgentModel {
   readonly id: string
   readonly name: string
-  readonly description?: string
+  readonly description?: string | null
   readonly is_default: boolean
   readonly efforts: ReadonlyArray<string>
   readonly default_effort: string | null
