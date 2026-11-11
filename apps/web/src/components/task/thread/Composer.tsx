@@ -19,10 +19,13 @@ import { Cause } from "effect"
 import { ArrowUp, Clock, Loader2, Square, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTouch } from "../../../narrow"
+import type { RewindResult } from "@huntaway/contracts"
 import { composerDraftAtom, composerDraftKey, composerUnsavedAtom } from "../../../state/drafts"
+import { registry } from "../../../state/registry"
 import { rpc } from "../../../state/rpc"
 import { errorText } from "../../ui"
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments"
+import { RewindNote } from "../Rewind"
 import { RefChips, RefMenu, useRefCompletion, useRefMentions } from "../RefCompletion"
 import { SkillHint, SkillMenu, useSkillMenu } from "../SkillMenu"
 import { ModeSelect, useModeControl } from "./ModeSelect"
@@ -32,8 +35,7 @@ import { threadRef } from "./threadView"
 // Step 1 (docs/plan/09-frontend.md): what the old composer kept in module-level maps (the sends in flight and their
 // listeners, the drafts the browser couldn't keep, the composers to fill) is @huntaway/client's `sendMessage` and the
 // draft atom in state/drafts.ts, so a send outlives the composer that started it and takes only what it sent off the
-// draft. Cut until their areas come: the Changes tab's line comments that go with a message (M4, 4.2), and rewinding
-// (`RewindNote`, and a rewound message put back here: 4.3).
+// draft. Cut until its area comes: the Changes tab's line comments that go with a message (M4, 4.2).
 
 function QueuedMessage({ text, hostId }: { text: string; hostId: string }) {
   const { text: body, files } = splitAttachments(text)
@@ -55,6 +57,18 @@ function fitText(el: HTMLTextAreaElement | null) {
 /** The failure of a send or an unqueue, to show; null while there is none. */
 function failureOf(result: { readonly _tag: string; readonly cause?: Cause.Cause<unknown> }): string | null {
   return result._tag === "Failure" && result.cause ? errorText(Cause.squash(result.cause)) : null
+}
+
+/**
+ * After a rewind that took the conversation back: the message rewound to goes into the task's composer (ahead of what's
+ * there), to edit and send again. Not the board's own messages (a review's issues, say).
+ */
+export function rewound(task: Task, r: RewindResult, conversation: boolean) {
+  if (!conversation || r.message.auto || !r.message.text?.trim()) return
+  const { text, files } = splitAttachments(r.message.text.trim())
+  const atom = composerDraftAtom(composerDraftKey(task))
+  const d = registry.get(atom)
+  registry.set(atom, { text: d?.text.trim() ? `${text}\n\n${d.text}` : text, files: [...files, ...(d?.files ?? [])] })
 }
 
 /** `onSend` is called as a message starts to send: a tab other than the thread goes to the thread with it (HA-334). */
@@ -157,6 +171,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   return (
     <div className="shrink-0 px-5 pb-4 narrow:px-2 narrow:pb-2">
       <div className="mx-auto w-full max-w-3xl">
+        <RewindNote task={task} />
         {shownErr && <div className="mb-2 text-xs text-red-400">{shownErr}</div>}
         {unsaved && (
           <div className="mb-2 text-xs text-amber-400">
