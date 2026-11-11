@@ -4,20 +4,13 @@ import { useEffect, useState } from "react"
 import { profileNames, useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
 import { errorText } from "../../ui"
+import { rpc } from "../../../state/rpc"
+import type { GithubAccount, GithubAccounts } from "@huntaway/contracts"
 
-// Step 1 (docs/plan/09-frontend.md). gh's accounts (`profiles.githubAccounts`) are 6.11's: `githubAccounts` below is
-// the marked slot that lists them once they are on this server.
+// Step 1 (docs/plan/09-frontend.md). gh's accounts are 6.11's `profiles.githubAccounts`.
 
-/** A GitHub account gh is signed in to on a host (6.11's `GithubAccount`). */
-interface GithubAccount {
-  readonly account: string
-  readonly host: string
-  readonly active: boolean
-  readonly ok: boolean
-}
-
-/** The accounts gh is signed in to on a host: 6.11 (`rpc(hostId, "profiles.githubAccounts", undefined)`); none until then. */
-const githubAccounts = (_hostId: string): Promise<{ accounts: ReadonlyArray<GithubAccount>; error: string | null } | null> => Promise.resolve(null)
+/** The accounts gh is signed in to on a host. */
+const githubAccounts = (hostId: string): Promise<GithubAccounts> => rpc(hostId, "profiles.githubAccounts", undefined)
 
 const label = (c: ClaudeConfig | undefined): string => (c ? `${c.name}${agentOf(c) === "codex" ? " (Codex)" : ""}` : "")
 

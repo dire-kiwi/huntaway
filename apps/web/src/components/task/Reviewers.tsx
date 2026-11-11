@@ -1,5 +1,5 @@
 import { agentOf, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
-import { AgentConfigId, type Reviewer } from "@huntaway/contracts"
+import { AgentConfigId, ProjectId, type Reviewer } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
@@ -10,8 +10,7 @@ import { ModelPicker } from "../layout/newTask/ModelPicker"
 import { Button, IconButton, Input, Textarea } from "../ui"
 
 // Step 1 (docs/plan/09-frontend.md), for the profile form and the project settings' Review tab (6.12). The board's
-// skills a reviewer's own skills are picked from are the agent tools' (6.4): until they are on this server the field
-// takes names as typed, with nothing to pick from.
+// skills a reviewer's own skills are picked from are the agent tools' (6.4).
 
 /** `r` with its optional `key` set to `v`, or without it for undefined (the wire leaves an unset one out). */
 function withField<K extends "name" | "prompt" | "skills">(r: Reviewer, key: K, v: Reviewer[K] | undefined): Reviewer {
@@ -56,17 +55,20 @@ export function useReviewerExtras(hostId: string, projectId?: string, inherited?
   const [loaded, setLoaded] = useState<{ host: string; skills: string[]; defaults: string } | null>(null)
   useEffect(() => {
     const req = { live: true }
-    // The project's skills and the board's (the project's with `projectId`) come with the agent tools (6.4).
-    rpc(hostId, "host.defaultPrompts", undefined).then(
-      (defaults) => {
-        if (req.live) setLoaded({ host: hostId, skills: [], defaults: defaults.review_prompt })
+    // The project's skills and the board's enabled ones (6.4's agent tools); the board's only, for a profile's.
+    const skills = projectId
+      ? rpc(hostId, "agentTools.project", { project_id: ProjectId.make(projectId) }).then((t) => [...t.skills, ...t.global_skills.filter((x) => x.enabled)])
+      : rpc(hostId, "agentTools.get", undefined).then((t) => t.skills.filter((x) => x.enabled))
+    Promise.all([rpc(hostId, "host.defaultPrompts", undefined), skills]).then(
+      ([defaults, list]) => {
+        if (req.live) setLoaded({ host: hostId, skills: [...new Set(list.map((x) => x.name))].toSorted(), defaults: defaults.review_prompt })
       },
       () => {},
     )
     return () => {
       req.live = false
     }
-  }, [hostId])
+  }, [hostId, projectId])
   if (loaded?.host !== hostId) return null
   return { skills: loaded.skills, inherited: inherited?.trim() ? inherited : loaded.defaults }
 }

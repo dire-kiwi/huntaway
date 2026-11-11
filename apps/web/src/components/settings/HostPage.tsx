@@ -11,11 +11,13 @@ import { HostClaudeConfigs } from "./ClaudeConfigs"
 import { AgentDefaultsRow } from "./hosts/AgentDefaults"
 import { ProfileForm } from "./hosts/ProfileForm"
 import { ServerPanel } from "./Server"
+import { HostDesktop } from "./HostDesktop"
+import { TerminalToolsRow } from "./hosts/TerminalTools"
 
 // Step 1 (docs/plan/09-frontend.md) for the host page (route "host"). Its sections from other areas stand as marked
 // slots (`Slot` below) until they come: settings sync and the host's version (hosts/SettingsSync, hosts/HostRow's
-// HostVersion: M7, HE-6), terminal tools (hosts/TerminalTools, 6.1), telemetry (Telemetry's HostTelemetry, 6.9), the
-// desktop (HostDesktop, 6.10), a linked host's server and its systemd service (Server's RemoteServer and HostService:
+// HostVersion: M7, HE-6), telemetry (Telemetry's HostTelemetry, 6.9),
+// a linked host's server and its systemd service (Server's RemoteServer and HostService:
 // `admin.*`, HE-6) and taking a host off the board (`hub.hosts.remove`, HE-6). A profile has agent configs on every
 // host, so the old "Copy login" for a profile with a folder of its own is gone (logins are copied from configs: 6.11).
 
@@ -82,10 +84,10 @@ export function HostPage({ hostId }: { hostId: string }) {
               <Slot title="Settings sync" area="HE-6" />
               {agents && <HostClaudeConfigs hostId={host.id} canCopy={hostCount > 1} />}
               {agents && <HostProfiles hostId={host.id} />}
-              <Slot title="Terminal tools" area="6.1" />
+              <TerminalToolsRow host={host} />
               <Slot title="Telemetry" area="6.9" />
               {host.local ? <ServerPanel /> : <Slot title="Server" area="HE-6" />}
-              {agents && <Slot title="Desktop" area="6.10" />}
+              {agents && <HostDesktop hostId={host.id} />}
             </>
           )}
 

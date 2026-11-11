@@ -10,20 +10,16 @@ import { ConfigPicker } from "../ClaudeConfigs"
 import { DEFAULT_REVIEWER, ReviewerList, SummarizerList, useReviewerExtras } from "../../task/Reviewers"
 import { Button, Field, Input, ModalFooter, Toggle, useAsyncAction } from "../../ui"
 import { TintField } from "./TintField"
+import { AsanaAccount } from "../../task/ExternalLinks"
 import { AccessPicker, AssistantHostSelect, GithubAccountSelect, HostSelect, ThreadConfigSelect } from "./profileFields"
 
 // Step 1 (docs/plan/09-frontend.md). Every host takes every field, so the old API gates are gone, and a profile's
 // summarizers are always a list. A profile has agent configs, never a folder of its own: with none on the host yet, the
 // folder typed here is made its first config, named after the profile, as the old server did. Connecting Asana with a
-// token (task/ExternalLinks' `AsanaAccount`) is 6.11's: a marked slot below.
+// token is 6.11's `AsanaAccount` (task/ExternalLinks).
 
 /** Off: the board leaves Asana out of the profile's tasks (task/ExternalLinks' `usesAsana`). */
 export const usesAsana = (p: Pick<Profile, "asana_enabled"> | undefined): boolean => p?.asana_enabled !== false
-
-/** Connecting a profile's Asana account with a personal access token: 6.11's `AsanaAccount`, not on this server yet. */
-function AsanaAccount(_props: { hostId: string; profile: Profile }) {
-  return <div className="text-[12px] text-faint">Connecting an Asana account is not yet on this server.</div>
-}
 
 export function ProfileForm({
   hostId,
