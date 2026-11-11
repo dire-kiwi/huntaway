@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { NotFound, Session, TaskRpcs } from "@huntaway/contracts"
+import { NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
 import { TaskRefs } from "../tasks/TaskRefs.ts"
 import { Tasks } from "../tasks/Tasks.ts"
@@ -35,6 +35,10 @@ export const TaskHandlers = TaskRpcs.toLayer(
         Effect.flatMap(actor, (by) => tasks.delete(id, { deleteBranch: delete_branch ?? false }, by)).pipe(
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
+      // Served by `Runs` (2.5).
+      "tasks.send": () => Effect.fail(new Unavailable({ what: "agents", reason: "runs are not built yet" })),
+      "tasks.stop": () => Effect.succeed({ stopped: false }),
+      "tasks.dropQueued": ({ id }) => tasks.get(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
     })
   }),
 )
