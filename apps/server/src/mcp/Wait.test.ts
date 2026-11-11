@@ -1,7 +1,9 @@
+import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Fiber, FileSystem, Ref, Result, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { TestClock } from "effect/testing"
+import { SqlClient } from "effect/sql"
 import { TaskId, Timestamp } from "@huntaway/contracts"
 import type { WaitTask } from "@huntaway/contracts"
 import { decodeLine } from "../agents/claude/lines.ts"
@@ -13,7 +15,10 @@ import { Runs } from "../runs/Runs.ts"
 import { isActivity, isWaitTool, subagentEnd } from "../runs/RunWaits.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
-import { agentOn, at, call, ok, profile, project, task } from "./tools/tests/board.ts"
+import { fakeGitHub } from "@huntaway/testing"
+import type { FakeGitHubState } from "@huntaway/testing"
+import type { ServerConfigShape } from "../platform/ServerConfig.ts"
+import { agentOn, at, call, err, ok, profile, project, task } from "./tools/tests/board.ts"
 import { approvalOf, change, feed, reload, repoOf, WaitBoard, waitingOn } from "./tools/tests/wait.ts"
 import type { CommandInput } from "./wait/CommandApproval.ts"
 import { LAUNCH } from "./wait/command.ts"
@@ -25,7 +30,6 @@ import type { Ended } from "./wait/ended.ts"
 // waiting (its `task` event). The commands are real processes (`it.live` where time must pass for them). Dropped, with
 // why:
 // - the pull request cases (`ends_on_news_about_its_pull_request` and the six after it): plan task 4.5;
-// - `its_command_doesnt_run_as_another_github_account`: the task's GitHub account in its environment is plan task 4.4;
 // - `a_codex_agents_own_tool_calls_end_a_wait`: Codex is M5 (the wait tool's names are checked here);
 // - `a_subagents_permission_prompt_isnt_a_move`: the prompt is `Permissions`' (3.3); what it does to the task (the
 //   board's own move to Needs attention and back, without `moved_to`) is checked here;
@@ -463,5 +467,66 @@ describe("a wait's command", () => {
       const gone = yield* (yield* Proc).run("tail", ["-s", "0.01", "--pid", pid, "-f", "/dev/null"], { timeout: "10 seconds" })
       assert.strictEqual(gone.code, 0, "the command's background process is still running")
     }).pipe(Effect.scoped, Effect.provide(WaitBoard())),
+  )
+})
+
+/** The launcher, which a wait's gh shim runs (`huntaway gh-run`). */
+const BIN = decodeURIComponent(new URL("../../bin/huntaway", import.meta.url).pathname)
+
+/** `body` on a board whose wait commands are all allowed, with the fake GitHub of `state` as its gh, and `overrides`. */
+const allowedOnGitHub = <A, E, R>(state: FakeGitHubState, body: Effect.Effect<A, E, R>, overrides: Partial<ServerConfigShape> = {}) =>
+  Effect.gen(function* () {
+    const fake = yield* fakeGitHub(state)
+    const asked = yield* Ref.make<ReadonlyArray<CommandInput>>([])
+    const out = yield* body.pipe(Effect.scoped, Effect.provide(WaitBoard(approvalOf(asked), { ghBin: fake.bin, exe: BIN, ...overrides })))
+    return { out, calls: yield* fake.calls }
+  }).pipe(Effect.provide(NodeServices.layer))
+
+/** The profile's GitHub account, as its settings would set it. */
+const accountOf = (profileId: string, account: string) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) => sql`UPDATE profiles SET github_account = ${account} WHERE id = ${profileId}`).pipe(Effect.orDie)
+
+describe("a wait's command and GitHub", () => {
+  it.effect("its gh acts as the task's GitHub account, through gh-run", () =>
+    Effect.gen(function* () {
+      const { out, calls } = yield* allowedOnGitHub(
+        {
+          accounts: [
+            { host: "github.com", login: "me", token: "tok-me" },
+            { host: "github.com", login: "other", token: "tok-other", active: true },
+          ],
+          repos: { "o/r": { pulls: [{ number: 1, title: "The change", body: "", state: "OPEN", head: "x", base: "main" }] } },
+        },
+        Effect.gen(function* () {
+          const { planner, me } = yield* running()
+          yield* accountOf(planner.profile_id, "me")
+          return ok(yield* call(me, "wait", { reason: "r", command: "gh pr view 1 --repo o/r --json title --jq .title", seconds: 60 }))
+        }),
+      )
+      assert.deepStrictEqual(out["command"], { exit_code: 0, output: "The change\n" })
+      const view = calls.find((c) => c.args[0] === "pr" && !c.args.includes("--help"))
+      assert.strictEqual(view?.as, "me")
+      assert.isFalse(view?.envToken)
+    }),
+  )
+
+  it.effect("its command doesn't run as another GitHub account", () =>
+    Effect.gen(function* () {
+      // The profile picked an account gh isn't signed in to (or gh isn't there): the command would run as gh's active
+      // account, so it doesn't run at all.
+      const { out } = yield* allowedOnGitHub(
+        { accounts: [{ host: "github.com", login: "other", token: "tok-other", active: true }] },
+        Effect.gen(function* () {
+          const { kiw, planner, me } = yield* running()
+          yield* accountOf(planner.profile_id, "not-signed-in-ia123")
+          const why = err(yield* call(me, "wait", { reason: "r", command: "touch ran", seconds: 60 }))
+          const repo = yield* repoOf(kiw)
+          return { why, ran: yield* (yield* FileSystem.FileSystem).exists(`${repo}/ran`).pipe(Effect.orDie), wait: (yield* reload(planner.id)).agent_wait }
+        }),
+      )
+      assert.include(out.why, "not-signed-in-ia123")
+      assert.isFalse(out.ran)
+      assert.isNull(out.wait)
+    }),
   )
 })

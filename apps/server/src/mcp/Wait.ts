@@ -2,11 +2,14 @@ import { Cause, Clock, Context, DateTime, Duration, Effect, Exit, Fiber, FiberMa
 import { ChildProcessSpawner } from "effect/process"
 import { Timestamp } from "@huntaway/contracts"
 import type { AgentWait, BoardEvent, CallId, RunId, Task, TaskId, WaitTask } from "@huntaway/contracts"
+import { githubAccount } from "../agents/claude/access.ts"
+import { Gh } from "../github/Gh.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import type { Run } from "../runs/Run.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
@@ -93,6 +96,8 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
       const tasks = yield* TaskRepo
       const runs = yield* RunRepo
       const projects = yield* ProjectRepo
+      const profiles = yield* ProfileRepo
+      const gh = yield* Gh
       const events = yield* Events
       const runWaits = yield* RunWaits
       const tmp = yield* TaskTmp
@@ -178,10 +183,15 @@ export class Wait extends Context.Service<Wait, WaitShape>()("huntaway-server/mc
         if (wait.command !== undefined) {
           // In the agent's working directory, with the task's temp folder as its TMPDIR, as the agent's own commands
           // have: a command that looks for a file the agent put in $TMPDIR would otherwise look in the wrong place for
-          // as long as the wait lasts (HA-301). gh acting as the task's GitHub account is plan task 4.4's.
+          // as long as the wait lasts (HA-301). gh in it acts as the task's GitHub account, as the gh tools do (through
+          // `huntaway gh-run`), and it doesn't run as another one when that account isn't signed in.
           const cwd = yield* workDir(task)
           const dir = yield* tmp.ensure(task)
-          command = yield* startCommand(spawner, wait.command, cwd, { ...config.agentEnv, ...(dir === null ? {} : { TMPDIR: dir }) })
+          const project = task.project_id === null ? null : Option.getOrNull(yield* projects.get(task.project_id))
+          const profile = Option.getOrNull(yield* profiles.get(task.profile_id))
+          const account = profile === null ? null : githubAccount(project, profile)
+          const ghEnv = yield* gh.shellEnv(account).pipe(Effect.mapError((e) => ToolError.other(e.message)))
+          command = yield* startCommand(spawner, wait.command, cwd, { ...config.agentEnv, ...(dir === null ? {} : { TMPDIR: dir }), ...ghEnv })
         }
         const exited = command === null ? null : yield* Effect.forkScoped(command.exited)
         const soFar = command === null ? Effect.succeed(null) : command.soFar
