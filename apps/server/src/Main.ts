@@ -5,9 +5,10 @@ import { HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
-import { HostRpcGroup, PublicRpcs } from "@huntaway/contracts"
+import { ConfigRpcs, HostRpcGroup, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
 import { ApiNotFound, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
+import { Changes } from "./platform/Changes.ts"
 import { DataDir } from "./platform/DataDir.ts"
 import { Db } from "./platform/Db.ts"
 import { Events } from "./platform/Events.ts"
@@ -16,10 +17,28 @@ import { KeyedLock } from "./platform/KeyedLock.ts"
 import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
+import { Reactor } from "./lifecycle/Reactor.ts"
+import { RecoveryLive } from "./lifecycle/Recovery.ts"
+import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
+import { AgentConfigs } from "./profiles/AgentConfigs.ts"
+import { ProfileRepo } from "./profiles/ProfileRepo.ts"
+import { Profiles } from "./profiles/Profiles.ts"
+import { ProjectRepo } from "./projects/ProjectRepo.ts"
+import { Projects } from "./projects/Projects.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { HostHandlers } from "./rpc/host.ts"
+import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
+import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
+import { TaskHandlers } from "./rpc/tasks.ts"
 import { About } from "./settings/About.ts"
+import { Folders } from "./settings/Folders.ts"
+import { HostSettings } from "./settings/HostSettings.ts"
+import { SettingsRepo } from "./settings/SettingsRepo.ts"
+import { Dependencies } from "./tasks/Dependencies.ts"
+import { TaskRefs } from "./tasks/TaskRefs.ts"
+import { TaskRepo } from "./tasks/TaskRepo.ts"
+import { Tasks } from "./tasks/Tasks.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -27,7 +46,7 @@ import { About } from "./settings/About.ts"
 
 /** Steps 1 and 2: the data folder, identity, the database brought up to date. `db` is swapped for tests. */
 export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
-  Layer.mergeAll(Events.layer, KeyedLock.layer, Proc.layer, Migrations.layer).pipe(
+  Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer).pipe(
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),
@@ -38,18 +57,42 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
 export const PlatformLive = platformLayer(Db.layer)
 
 // Step 4: every area, bottom up. Each line provides the ones above it.
-const SettingsLive = Layer.mergeAll(About.layer)
-const ProfilesLive = Layer.mergeAll(Layer.empty).pipe(Layer.provideMerge(SettingsLive))
-const ProjectsLive = Layer.mergeAll(Layer.empty).pipe(Layer.provideMerge(ProfilesLive))
-const TasksLive = Layer.mergeAll(Layer.empty).pipe(Layer.provideMerge(ProjectsLive))
-const LifecycleLive = Layer.mergeAll(Layer.empty).pipe(Layer.provideMerge(TasksLive))
+const SettingsLive = Layer.mergeAll(About.layer, HostSettings.layer, Folders.layer).pipe(Layer.provideMerge(SettingsRepo.layer))
+const ProfilesLive = Profiles.ensureFromConfig.pipe(
+  Layer.provideMerge(Profiles.layer),
+  Layer.provideMerge(AgentConfigs.layer),
+  Layer.provideMerge(Layer.mergeAll(ProfileRepo.layer, AgentConfigRepo.layer)),
+  Layer.provideMerge(SettingsLive),
+)
+const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
+const TasksLive = Layer.mergeAll(Tasks.layer, TaskRefs.layer).pipe(Layer.provideMerge(TaskRepo.layer), Layer.provideMerge(ProjectsLive))
+const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive).pipe(Layer.provideMerge(Dependencies.layer), Layer.provideMerge(TasksLive))
 
 /** Every area's services. */
 export const AreasLive = LifecycleLive
 
-/** The groups served (`HostRpcs` once every area has its handlers), and their handlers. */
-export const Served = PublicRpcs.merge(HostRpcGroup)
-export const HandlersLive = Layer.mergeAll(PublicHandlers, HostHandlers).pipe(Layer.provideMerge(AuthLive))
+/** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
+export const Served = PublicRpcs.merge(
+  HostRpcGroup,
+  ProfileRpcs,
+  ConfigRpcs,
+  ProjectRpcs,
+  TaskRpcs,
+  // board (1.4)
+  // pens and attachments (1.7)
+)
+
+/** Their handlers. One line per area. */
+export const HandlersLive = Layer.mergeAll(
+  PublicHandlers,
+  HostHandlers,
+  ProfileHandlers,
+  ConfigHandlers,
+  ProjectHandlers,
+  TaskHandlers,
+  // board (1.4)
+  // pens and attachments (1.7)
+).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
 export const RpcLive = Layer.mergeAll(
