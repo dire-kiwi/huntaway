@@ -1,12 +1,13 @@
-import { Cause, Context, DateTime, Deferred, Effect, FiberSet, Layer, Option, Ref, Schedule, Schema } from "effect"
+import { Cause, Clock, Context, DateTime, Deferred, Effect, FiberSet, Layer, Option, Ref, Schedule, Schema } from "effect"
 import type { SqlError } from "effect/sql"
-import { CallId, Timestamp } from "@huntaway/contracts"
+import { CallId, TaskId, Timestamp } from "@huntaway/contracts"
 import type { PermissionMode, RunId, Task } from "@huntaway/contracts"
 import { blockedReason } from "@huntaway/shared"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { codexResponse, toolAnswer } from "../agents/codex/requests.ts"
 import { ASKS_ITSELF } from "../agents/rules.ts"
 import { toJson } from "../platform/columns.ts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { RunDir } from "../runs/RunDir.ts"
@@ -115,6 +116,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
     ToolCalls,
     Effect.gen(function* () {
       const repo = yield* McpCallRepo
+      const telemetry = yield* Telemetry
       const servers = yield* McpServers
       const hooks = yield* McpHooks
       const runs = yield* RunRepo
@@ -288,11 +290,24 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
             yield* answer(input, result)
             return
           }
+          const t0 = yield* Clock.currentTimeMillis
           const ran = yield* outcome(input, registered)
           result = ran
           // Answered, then recorded: a call recorded done has been answered.
           yield* answer(input, ran)
           yield* finish(record, ran)
+          // 6.9: telemetry's `board_tool` (not its arguments or answer, which can be anything a task says). A call that
+          // began before the host started sending is backfill's.
+          if (record.task_id !== "" && (yield* telemetry.beganSince(record.created_at))) {
+            const took = (yield* Clock.currentTimeMillis) - t0
+            yield* telemetry.taskEvent(TaskId.make(record.task_id), {
+              event: "board_tool",
+              run_id: input.run,
+              tool: input.tool,
+              status: ran._tag === "Ok" ? "ok" : "error",
+              duration_ms: took,
+            })
+          }
         }).pipe(
           Effect.ensuring(
             Effect.suspend(() =>

@@ -20,6 +20,9 @@ import {
   PublicRpcs,
   TaskRpcs,
   ThreadRpcs,
+  // 6.9
+  AnalyticsRpcs,
+  TelemetryRpcs,
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
@@ -54,6 +57,8 @@ import { StatusScripts } from "./git/StatusScripts.ts"
 import { TaskBase } from "./git/TaskBase.ts"
 import { Worktrees } from "./git/Worktrees.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
+// 6.9: the agents' own OpenTelemetry.
+import { OtlpRoute } from "./http/otlp.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
 import { DataDir } from "./platform/DataDir.ts"
@@ -63,6 +68,9 @@ import { Identity } from "./platform/Identity.ts"
 import { KeyedLock } from "./platform/KeyedLock.ts"
 import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
+// 6.9
+import { Lag } from "./platform/Lag.ts"
+import { Telemetry } from "./platform/Telemetry.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
 import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
@@ -148,6 +156,12 @@ import { Tasks } from "./tasks/Tasks.ts"
 import { ThreadReaders } from "./threads/ThreadReaders.ts"
 import { Threads } from "./threads/Threads.ts"
 import { ThreadStore } from "./threads/ThreadStore.ts"
+// 6.9: analytics and disk usage, and their handlers and telemetry's.
+import { Analytics } from "./analytics/Analytics.ts"
+import { AnalyticsRepo } from "./analytics/AnalyticsRepo.ts"
+import { Disk } from "./analytics/Disk.ts"
+import { AnalyticsHandlers } from "./rpc/analytics.ts"
+import { TelemetryHandlers } from "./rpc/telemetry.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -158,6 +172,10 @@ import { ThreadStore } from "./threads/ThreadStore.ts"
  * reads Anthropic's usage endpoint). `db` is swapped for tests.
  */
 export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
+  // 6.9: the logs tee over telemetry, over the event loop's measurements.
+  Telemetry.logs.pipe(Layer.provideMerge(Telemetry.layer), Layer.provideMerge(Lag.layer), Layer.provideMerge(PlatformBase(db)))
+
+const PlatformBase = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
   Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer).pipe(
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
@@ -303,6 +321,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // 6.9: a profile's analytics and disk usage.
+    Layer.provideMerge(Layer.mergeAll(Analytics.layer, Disk.layer).pipe(Layer.provideMerge(AnalyticsRepo.layer))),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
@@ -343,7 +363,10 @@ export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.
 export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
 
 /** Every area's services, and their loops. */
-export const AreasLive = Layer.mergeAll(RunLoops, PrLoops).pipe(
+/** 6.9: the telemetry exporter (with the minute's metrics) and the event loop's ticker. Not in tests, as `RunLoops`. */
+export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
+
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, PlatformLoops).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
 )
 
@@ -362,6 +385,9 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.9
+  TelemetryRpcs,
+  AnalyticsRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +406,9 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.9
+  TelemetryHandlers,
+  AnalyticsHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
@@ -389,7 +418,7 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
+export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, McpHttpRoute, OtlpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a

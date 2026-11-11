@@ -43,7 +43,22 @@ export interface TokenRepoShape {
   readonly runModel: (run: RunId) => Effect.Effect<string | null>
   /** The agent of a config (`claude`, `codex`), if it is there. */
   readonly configAgent: (config: AgentConfigId) => Effect.Effect<string | null>
+  /** 6.9: what telemetry's `run_end` says of a run. */
+  readonly runFacts: (run: RunId) => Effect.Effect<RunFacts | null>
 }
+
+/** 6.9: a run's kind, times and how it ended, for telemetry's `run_end`. */
+export const RunFacts = Schema.Struct({
+  kind: Schema.String,
+  created_at: Schema.String,
+  ended_at: Schema.NullOr(Schema.String),
+  result_error: Schema.NullOr(Schema.String),
+  saw_result: Schema.Int,
+  attention: Schema.NullOr(Schema.String),
+  stop: Schema.String,
+  finished: Schema.Int,
+})
+export type RunFacts = typeof RunFacts.Type
 
 export class TokenRepo extends Context.Service<TokenRepo, TokenRepoShape>()("huntaway-server/agents/TokenRepo") {
   static readonly layer = Layer.effect(
@@ -104,7 +119,17 @@ export class TokenRepo extends Context.Service<TokenRepo, TokenRepoShape>()("hun
           Effect.orDie,
         )
 
-      return TokenRepo.of({ pending, savedBefore, markCounted, save, runModel, configAgent })
+      const runFacts = (run: RunId) =>
+        SqlSchema.findAll({
+          Request: Schema.Void,
+          Result: RunFacts,
+          execute: () => sql`SELECT kind, created_at, ended_at, result_error, saw_result, attention, stop, finished FROM runs WHERE id = ${run}`,
+        })(undefined).pipe(
+          Effect.map((rows) => rows[0] ?? null),
+          Effect.orDie,
+        )
+
+      return TokenRepo.of({ pending, savedBefore, markCounted, save, runModel, configAgent, runFacts })
     }),
   )
 }

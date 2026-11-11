@@ -8,6 +8,7 @@ import { Actor } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { APPROVAL } from "../runs/finish.ts"
 import { Runs } from "../runs/Runs.ts"
@@ -84,6 +85,7 @@ export class Merges extends Context.Service<Merges, MergesShape>()("huntaway-ser
       const base = yield* TaskBase
       const locks = yield* KeyedLock
       const config = yield* ServerConfig
+      const telemetry = yield* Telemetry
 
       const board = Actor.board
       const say = (task: Task, level: "info" | "warning" | "error", text: string) => threads.notice(task.id, level, text).pipe(Effect.ignore)
@@ -114,7 +116,12 @@ export class Merges extends Context.Service<Merges, MergesShape>()("huntaway-ser
         if (Result.isFailure(text)) failed = text.failure
         else {
           const sent = yield* Effect.exit(runs.send(task.id, { text: text.success, source: "board", auto: true }))
-          if (Exit.isSuccess(sent)) return
+          // 6.9: telemetry's `merge`, requested.
+          if (Exit.isSuccess(sent)) {
+            const attrs = { base: task.base_branch ?? "", approved: task.merge_approval === "approved" }
+            yield* telemetry.taskEvent(task.id, { event: "merge", outcome: "requested", attrs })
+            return
+          }
           failed = why(sent.cause)
         }
         // Stays merging, so the lane waits for the user to sort it out.

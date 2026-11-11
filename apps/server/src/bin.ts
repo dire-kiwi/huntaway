@@ -4,6 +4,8 @@ import { Command, Flag } from "effect/cli"
 import { Mac, SecureRandom } from "effect/crypto"
 import { HttpServer } from "effect/http"
 import { rpcCommand } from "./cli/rpc.ts"
+// 6.9
+import { telemetryCommand } from "./cli/telemetry.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
@@ -69,7 +71,7 @@ const tokenCommand = Command.make(
 
 const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
   Command.withDescription("Huntaway: a kanban board for orchestrating Claude Code and Codex agents"),
-  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand]),
+  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand, telemetryCommand]),
 )
 
 const program =

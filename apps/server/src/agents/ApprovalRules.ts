@@ -18,6 +18,7 @@ import type { Rule, Rules } from "@huntaway/shared"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { nowTimestamp } from "../platform/columns.ts"
+import { elapsedMs, Telemetry } from "../platform/Telemetry.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProfileNotFound } from "../profiles/Profiles.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
@@ -115,6 +116,7 @@ export class ApprovalRules extends Context.Service<ApprovalRules, ApprovalRulesS
       const profiles = yield* ProfileRepo
       const tasks = yield* TaskRepo
       const db = yield* Db
+      const telemetry = yield* Telemetry
       const events = yield* Events
       const random = yield* SecureRandom.SecureRandom
 
@@ -153,6 +155,11 @@ export class ApprovalRules extends Context.Service<ApprovalRules, ApprovalRulesS
           decided_at: pending ? null : now,
         }
         yield* db.tx(Effect.andThen(repo.insert(entry.task.profile_id, action), emitAction(action, entry.task.profile_id)))
+        // 6.9: telemetry's `permission`, once it is decided (a prompt's when it is answered: `settle`).
+        if (!pending) {
+          const { tool_name: tool, decision: status, outcome, rule, answered_by } = action
+          yield* telemetry.taskEvent(entry.task.id, { ts: now, event: "permission", tool, status, outcome, attrs: { rule, by: answered_by ?? "" } })
+        }
         return action
       })
 
@@ -203,14 +210,31 @@ export class ApprovalRules extends Context.Service<ApprovalRules, ApprovalRulesS
 
         settle: Effect.fn("ApprovalRules.settle")(function* (request: RequestId, outcome: "allowed" | "denied" | "expired", by: AnsweredBy) {
           const now = yield* nowTimestamp
-          yield* db.tx(
-            Effect.gen(function* () {
-              const row = yield* repo.settle(request, outcome, by, now)
-              if (row === null) return
-              const { profile_id, ...action } = row
-              yield* emitAction(action, profile_id)
-            }),
-          )
+          yield* db
+            .tx(
+              Effect.gen(function* () {
+                const row = yield* repo.settle(request, outcome, by, now)
+                if (row === null) return null
+                const { profile_id, ...action } = row
+                yield* emitAction(action, profile_id)
+                return action
+              }),
+            )
+            .pipe(
+              // 6.9: telemetry's `permission`, with how long it waited.
+              Effect.tap((action) =>
+                action === null
+                  ? Effect.void
+                  : telemetry.taskEvent(action.task_id, {
+                      event: "permission",
+                      tool: action.tool_name,
+                      status: action.decision,
+                      outcome,
+                      wait_ms: elapsedMs(action.created_at, now),
+                      attrs: { rule: action.rule, by },
+                    }),
+              ),
+            )
         }),
 
         log: Effect.fn("ApprovalRules.log")(function* (filter: { readonly profile_id: ProfileId; readonly limit?: number | undefined }) {

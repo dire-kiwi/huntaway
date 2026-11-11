@@ -76,6 +76,12 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_AGENTS")),
     Flag.withDefault(false),
   ),
+  // 6.9: telemetry's ClickHouse when the host's settings have none.
+  telemetryUrl: Flag.String("telemetry-url").pipe(
+    Flag.withDescription("The ClickHouse telemetry goes to while the host's settings have none (http://USER:PASSWORD@HOST:8123/DATABASE)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_TELEMETRY_URL")),
+    Flag.optional,
+  ),
 }
 
 /**
@@ -133,6 +139,7 @@ export interface ServeArgs {
   readonly ghBin?: Option.Option<string>
   readonly codexBin?: Option.Option<string>
   readonly noAgents?: boolean
+  readonly telemetryUrl?: Option.Option<string>
 }
 
 export interface ServerConfigShape {
@@ -182,6 +189,15 @@ export interface ServerConfigShape {
   readonly tmpDir: string
   /** The root of the tasks' temp folders when it is not the usual one in `tmpDir`: tests put it in their data folder. */
   readonly taskTmpRoot: string | null
+  /** 6.9: `--telemetry-url`/`HUNTAWAY_TELEMETRY_URL`, used while the host's settings name no ClickHouse. */
+  readonly telemetryUrl: string | null
+  /** 6.9: the server's environment makes Claude Code export telemetry of its own (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`). */
+  readonly ownTelemetryEnv: boolean
+  /** 6.9: `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, the agents' default config folders when a config names none. */
+  readonly claudeConfigDir: string | null
+  readonly codexHome: string | null
+  /** 6.9: a stall of the event loop this long (ms) or longer is logged (`HUNTAWAY_LAG_LOG_MS`, default 250; 0: none). */
+  readonly lagLogMs: number
 }
 
 /** The version of this build. A release sets it when it packages the server. */
@@ -201,6 +217,10 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const tmpDir = yield* Config.String("TMPDIR").pipe(Config.withDefault("/tmp"))
         const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""))
         const cacheHome = yield* Config.String("XDG_CACHE_HOME").pipe(Config.withDefault(""))
+        // 6.9
+        const claudeConfigDir = yield* Config.String("CLAUDE_CONFIG_DIR").pipe(Config.option)
+        const codexHome = yield* Config.String("CODEX_HOME").pipe(Config.option)
+        const lagLogMs = yield* Config.Number("HUNTAWAY_LAG_LOG_MS").pipe(Config.withDefault(250))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -232,6 +252,14 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           agentEnv: AGENT_ENV,
           tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
           taskTmpRoot: null,
+          // 6.9
+          telemetryUrl: args.telemetryUrl === undefined ? null : Option.getOrNull(args.telemetryUrl),
+          ownTelemetryEnv: Object.entries(process.env).some(
+            ([k, v]) => (k === "CLAUDE_CODE_ENABLE_TELEMETRY" || k.startsWith("OTEL_")) && v !== undefined && v !== "",
+          ),
+          claudeConfigDir: Option.getOrNull(Option.map(claudeConfigDir, expand)),
+          codexHome: Option.getOrNull(Option.map(codexHome, expand)),
+          lagLogMs: Number.isFinite(lagLogMs) && lagLogMs >= 0 ? lagLogMs : 250,
         })
       }),
     )
@@ -267,6 +295,12 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         agentEnv: AGENT_ENV,
         tmpDir: config.dataDir,
         taskTmpRoot: `${config.dataDir}/task-tmp`,
+        // 6.9
+        telemetryUrl: null,
+        ownTelemetryEnv: false,
+        claudeConfigDir: null,
+        codexHome: null,
+        lagLogMs: 250,
         ...config,
       }),
     )
