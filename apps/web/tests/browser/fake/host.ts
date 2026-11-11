@@ -89,6 +89,7 @@ export function fakeHost(b: Board): FakeHost {
     pens: b.pens,
     settings: b.settings,
     usage: [],
+    approvals: [],
   })
 
   // `hello` and a snapshot of the board as it is now, then every event emitted.

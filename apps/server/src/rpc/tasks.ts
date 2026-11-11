@@ -31,7 +31,7 @@ const conflicts: { readonly [R in SendRefused["reason"]]: ConflictReason | null 
   no_conversation: null,
   no_agents: null,
 }
-const sendRefused = (e: SendRefused) => {
+export const sendRefused = (e: SendRefused) => {
   const conflict = conflicts[e.reason]
   if (conflict !== null) return Effect.fail(new Conflict({ reason: conflict, detail: e.detail }))
   if (e.reason === "no_agents") return Effect.fail(new Unavailable({ what: "agents", reason: e.detail }))

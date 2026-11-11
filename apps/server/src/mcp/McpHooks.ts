@@ -1,6 +1,8 @@
 import { Context, Effect, Layer } from "effect"
 import type { CallId } from "@huntaway/contracts"
 import type { Rule } from "@huntaway/shared"
+import { Permissions } from "../permissions/Permissions.ts"
+import type { PermissionsShape } from "../permissions/Permissions.ts"
 import type { Run } from "../runs/Run.ts"
 import { ToolError } from "./tool.ts"
 import type { McpCaller } from "./tool.ts"
@@ -37,4 +39,30 @@ export class McpHooks extends Context.Service<McpHooks, McpHooksShape>()("huntaw
       cancelled: () => Effect.void,
     }),
   )
+
+  /**
+   * `Permissions`' part (3.3): an ask rule asks the user (Don't ask denies it), and a call the agent gave up on has its
+   * prompt expire. `callMade` ends nothing yet: `Wait` (3.5) joins its own to `callMade` and `cancelled`.
+   */
+  static readonly layerPermissions = Layer.effect(
+    McpHooks,
+    Effect.gen(function* () {
+      const permissions = yield* Permissions
+      return McpHooks.of({ callMade: () => Effect.void, askRule: askRuleWith(permissions), cancelled: cancelledWith(permissions) })
+    }),
+  )
 }
+
+/** `McpHooks.askRule` by `Permissions`: the user's answer, or what the agent is told when it is denied. */
+export const askRuleWith =
+  (permissions: PermissionsShape): McpHooksShape["askRule"] =>
+  (caller, name, input, rule) =>
+    Effect.flatMap(permissions.askRule({ run: caller.run, call_id: caller.call_id }, name, input, rule), (decision) =>
+      decision.behavior === "allow" ? Effect.void : Effect.fail(ToolError.other(decision.message)),
+    )
+
+/** `McpHooks.cancelled` by `Permissions`: the prompt the call raised expires. */
+export const cancelledWith =
+  (permissions: PermissionsShape): McpHooksShape["cancelled"] =>
+  (_run, call) =>
+    permissions.expireFor({ _tag: "Call", call })

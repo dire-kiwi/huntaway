@@ -12,6 +12,7 @@ import {
   ConfigRpcs,
   HostRpcGroup,
   PenRpcs,
+  PermissionRpcs,
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
@@ -51,6 +52,8 @@ import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
+import { PermissionRepo } from "./permissions/PermissionRepo.ts"
+import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { DevServers } from "./runs/DevServers.ts"
@@ -77,6 +80,7 @@ import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
+import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
@@ -178,15 +182,21 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
+/** The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered) and questions. */
+const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer).pipe(
+  Layer.provideMerge(Permissions.layer),
+  Layer.provideMerge(PermissionRepo.layer),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
     Layer.provideMerge(Dependencies.layer),
-    // `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come.
-    Layer.provideMerge(mcpLayer(McpHooks.layerNone)),
-    Layer.provideMerge(Questions.layer),
+    // `Permissions`' hooks; `Wait` (3.5) joins its own to them.
+    Layer.provideMerge(mcpLayer(McpHooks.layerPermissions)),
+    Layer.provideMerge(PermissionsLive),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.scanner.pipe(Layer.provideMerge(DevServers.layer))),
     Layer.provideMerge(RunsArea),
@@ -208,6 +218,7 @@ export const Served = PublicRpcs.merge(
   AttachmentRpcs,
   ApprovalRulesRpcs,
   ThreadRpcs,
+  PermissionRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -223,6 +234,7 @@ export const HandlersLive = Layer.mergeAll(
   AttachmentHandlers,
   ApprovalRulesHandlers,
   ThreadHandlers,
+  PermissionHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

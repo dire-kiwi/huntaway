@@ -680,10 +680,10 @@ describe("a Claude run's output", () => {
     run(
       Effect.gen(function* () {
         const { agent } = yield* running()
-        yield* output(agent, [{ type: "control_request", request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" } } }])
+        yield* output(agent, [{ type: "control_request", request_id: "r1", request: { subtype: "elicitation" } }])
         yield* output(agent, [{ type: "control_request", request_id: "r2", request: { subtype: "hook_callback" } }])
         assert.deepStrictEqual(yield* agent.input, [
-          { type: "control_response", response: { subtype: "error", request_id: "r1", error: 'the board doesn\'t handle "can_use_tool" requests' } },
+          { type: "control_response", response: { subtype: "error", request_id: "r1", error: 'the board doesn\'t handle "elicitation" requests' } },
           { type: "control_response", response: { subtype: "error", request_id: "r2", error: 'the board doesn\'t handle "hook_callback" requests' } },
         ])
       }),
