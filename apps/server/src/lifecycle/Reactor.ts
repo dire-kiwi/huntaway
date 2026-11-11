@@ -3,6 +3,8 @@ import { Titles } from "../agents/Titles.ts"
 import { StatusScripts } from "../git/StatusScripts.ts"
 import { TaskBase } from "../git/TaskBase.ts"
 import { PullRequests } from "../github/PullRequests.ts"
+import { Merges } from "../merge/Merges.ts"
+import { Threads } from "../threads/Threads.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
@@ -36,6 +38,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const taskBase = yield* TaskBase
       const reviews = yield* Reviews
       const pullRequests = yield* PullRequests
+      const merges = yield* Merges
+      const threads = yield* Threads
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -64,10 +68,14 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         }
         const task = change.after ?? change.before
         if (task === null) return
+        // What the change tells its thread ("Nothing to merge…", "Stepped out of the merge queue…"), first.
+        if (change.after !== null) for (const n of change.notes ?? []) yield* threads.notice(change.after.id, n.level, n.text).pipe(Effect.ignore)
         const moved = change.before?.status !== change.after?.status
         const depsChanged = change.before?.depends_on !== change.after?.depends_on
         // A task that moved, was deleted or changed what it waits for may unblock tasks waiting on its project.
         if (moved || depsChanged || change.after === null) yield* runs.startUnblocked(task.project_id)
+        // 4.7: a replaced approval settled, the approval card once its summary run ended, and the merge queue moved on.
+        yield* merges.taskChanged(change)
         // A deleted task's temp folder goes (in the background), with what it left running; whoever waits on its
         // prompts is told they expired, and requests to delete it expire (it is deleted anyway).
         if (change.after === null) {

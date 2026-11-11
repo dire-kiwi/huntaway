@@ -21,6 +21,12 @@ export interface RunExitStatus {
   readonly error?: string | undefined
 }
 
+/** A notice a change leaves in its task's thread. */
+export interface ChangeNote {
+  readonly level: "info" | "warning"
+  readonly text: string
+}
+
 /**
  * What a service tells the reactor after its commit (docs/plan/06-server.md, How an area reaches upward). M1 has task
  * changes; runs, reviews, pull requests and workflows add theirs.
@@ -33,6 +39,8 @@ export type Change =
       /** null for a deleted task. */
       readonly after: Task | null
       readonly cause: Actor
+      /** What the change tells the task's thread (the reactor writes them first): "Nothing to merge…", "Stepped out…". */
+      readonly notes?: ReadonlyArray<ChangeNote> | undefined
     }
   | {
       /**

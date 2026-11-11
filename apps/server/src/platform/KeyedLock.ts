@@ -5,9 +5,14 @@ import { Context, Effect, Layer, Ref, Semaphore } from "effect"
  * wait for a person. `["worktree", task]` serialises a task's worktree setup, teardown and restack, which can take
  * minutes (a setup script), so its `["task", task]` lock is only taken for each write meanwhile. `["review", task]` and
  * `["summary", task]` (4.6) let one review and one summary start on a task at a time; they come before its task lock.
+ * `["merges", project]` (4.7) is a project's merge lanes: one look at its queue at a time, so two can't both give a lane's
+ * slot away; it comes after the project's and before any task's (a merge is asked for under it). `["restack", repo]`
+ * (4.8) runs a repository's restacks one at a time, in the order asked; it comes before the level's worktree lock.
  */
 export type LockKey =
   | readonly ["project", string]
+  | readonly ["merges", string]
+  | readonly ["restack", string]
   | readonly ["worktree", string]
   | readonly ["review", string]
   | readonly ["summary", string]

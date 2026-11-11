@@ -67,6 +67,7 @@ import { askRuleWith, cancelledWith, McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { MergeGate } from "./merge/MergeGate.ts"
 import { MergedWatcher } from "./merge/MergedWatcher.ts"
+import { Merges } from "./merge/Merges.ts"
 import { InReview } from "./review/InReview.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { Wait } from "./mcp/Wait.ts"
@@ -131,6 +132,7 @@ import { SettingsRepo } from "./settings/SettingsRepo.ts"
 import { Attachments } from "./tasks/Attachments.ts"
 import { Dependencies } from "./tasks/Dependencies.ts"
 import { Leftovers } from "./tasks/Leftovers.ts"
+import { MergeFacts } from "./tasks/MergeFacts.ts"
 import { PenRepo } from "./tasks/PenRepo.ts"
 import { Pens } from "./tasks/Pens.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
@@ -172,7 +174,7 @@ const ProfilesLive = Profiles.ensureFromConfig.pipe(
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
 const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
-  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer)),
   Layer.provideMerge(ProjectsLive),
 )
 const ThreadsLive = Threads.pruner.pipe(
@@ -293,7 +295,10 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
     // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
     Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
-    // The merge gate the gh tools ask before a merge (4.7 fills it).
+    // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
+    // the merge area reads `Tasks.update`'s git and GitHub facts (both registered below the areas they serve).
+    Layer.provideMerge(Layer.mergeAll(Merges.registered, MergeGate.registered)),
+    Layer.provideMerge(Merges.layer),
     Layer.provideMerge(MergeGate.layer),
     // Reviews and summaries (4.6), over the runs they start.
     Layer.provideMerge(ReviewLive),

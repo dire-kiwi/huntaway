@@ -20,6 +20,7 @@ export const ThreadHandlers = ThreadRpcs.toLayer(
             QuestionNotFound: (e) => Effect.fail(new NotFound({ what: "question", id: e.request_id })),
             QuestionClosed: (e) => Effect.fail(new Conflict({ reason: e.reason === "answered" ? "not_pending" : "moved_on", detail: e.detail })),
             AnswerInvalid: (e) => Effect.fail(new Invalid({ field: "answer", reason: e.reason })),
+            ApprovalRefused: (e) => Effect.fail(new Conflict({ reason: e.reason, detail: e.detail })),
             SendRefused: sendRefused,
           }),
         ),

@@ -127,7 +127,7 @@ export interface SendFacts {
   /** It is `/plan …` for a task. */
   readonly plan: boolean
   readonly project: { readonly name: string; readonly archived: boolean } | null
-  /** The task its merge lane is merging now, if another (merges are plan task 4.x: until then none). */
+  /** The task its merge lane is merging now, if another (`tasks/lanes.ts` `activeMerge`, 4.7). */
   readonly activeMerge: { readonly title: string } | null
   readonly live: LiveRun | null
   /** This server runs agents. */

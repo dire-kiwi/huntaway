@@ -3,11 +3,14 @@ import { SecureRandom } from "effect/crypto"
 import { Conflict, Invalid, NotFound, PenId, TaskId, Timestamp } from "@huntaway/contracts"
 import type { NewTask, Task, TaskFilter, TaskPatch } from "@huntaway/contracts"
 import { Changes } from "../platform/Changes.ts"
-import type { Actor } from "../platform/Changes.ts"
+import type { Actor, ChangeNote } from "../platform/Changes.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { decideCreate, decideDeleted, decideUpdate, deriveColumns } from "./decide.ts"
+import { MergeFacts, needsGitFacts } from "./MergeFacts.ts"
+import type { GitFacts } from "./MergeFacts.ts"
+import { ServerConfig } from "../platform/ServerConfig.ts"
 import { nextPenColor, penWanted } from "./penChecks.ts"
 import { PenRepo } from "./PenRepo.ts"
 import type { CreateFacts, TaskColumns, UpdateFacts } from "./decide.ts"
@@ -49,6 +52,10 @@ const namedBy = (fields: Pick<TaskPatch, "depends_on" | "merges_into" | "start_f
   ...(typeof fields.merges_into === "string" && fields.merges_into.trim() !== "" ? [fields.merges_into.trim()] : []),
 ]
 
+/** Whether `now` isn't the task `read` was, as far as what was read of git and GitHub for it goes. */
+const movedOn = (read: Task, now: Task) =>
+  now.status !== read.status || now.merging !== read.merging || now.merges_into !== read.merges_into || now.branch !== read.branch || now.pr_url !== read.pr_url
+
 /** What a change did, for the reactor. */
 interface Changed {
   readonly before: Task | null
@@ -70,6 +77,8 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
       const locks = yield* KeyedLock
       const random = yield* SecureRandom.SecureRandom
       const pens = yield* PenRepo
+      const mergeFacts = yield* MergeFacts
+      const config = yield* ServerConfig
 
       const now = Effect.map(DateTime.now, (t) => Timestamp.make(DateTime.formatIso(t)))
       const load = Effect.fnUntraced(function* (id: string) {
@@ -77,8 +86,8 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
         if (task === null) return yield* new TaskNotFound({ id })
         return task
       })
-      const offer = (cause: Actor, done: ReadonlyArray<Changed>) =>
-        Effect.forEach(done, ({ before, after }) => changes.offer({ _tag: "TaskChanged", before, after, cause }), { concurrency: 1, discard: true })
+      const offer = (cause: Actor, done: ReadonlyArray<Changed>, notes?: ReadonlyArray<ChangeNote>) =>
+        Effect.forEach(done, ({ before, after }) => changes.offer({ _tag: "TaskChanged", before, after, cause, notes }), { concurrency: 1, discard: true })
 
       /** The tasks a change may name: its project's, and those named by id that aren't. */
       const linkable = Effect.fnUntraced(function* (projectId: Task["project_id"], named: ReadonlyArray<string>) {
@@ -86,19 +95,16 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
         const others = named.filter((id) => !own.some((t) => t.id === id))
         return [...own, ...(yield* repo.getMany(others))]
       })
-      const updateFacts = Effect.fnUntraced(function* (before: Task, patch: TaskPatch) {
+      const updateFacts = Effect.fnUntraced(function* (before: Task, patch: TaskPatch, git: GitFacts) {
         const project: ProjectRef | null = before.project_id === null ? null : yield* repo.project(before.project_id)
         const links = patch.depends_on !== undefined || patch.merges_into !== undefined || patch.start_from !== undefined
         const merge = patch.status === "ready_for_merge"
         const facts: UpdateFacts = {
           project,
-          running: false,
+          running: before.running,
           configs: patch.claude_config_id === undefined ? [] : yield* repo.configs(before.profile_id, project),
           tasks: links || merge ? yield* linkable(before.project_id, namedBy(patch)) : [],
-          gitWork: false,
-          worktreeFolderExists: false,
-          startCommit: null,
-          prApproval: { _tag: "NotRequired" },
+          ...git,
           endOfMergeQueue: merge ? yield* repo.endPosition(before.project_id, "ready_for_merge") : 0,
         }
         return facts
@@ -185,21 +191,38 @@ export class Tasks extends Context.Service<Tasks, TasksShape>()("huntaway-server
       })
 
       const update = Effect.fn("Tasks.update")(function* (id: TaskId, patch: TaskPatch, by: Actor) {
+        // What git and GitHub say (work to merge, the pull request's approval, where its branch started: 4.7) is read
+        // before the lock, as it may take seconds; the change is refused if the task moved on meanwhile.
+        const read = yield* load(id)
+        const git = yield* mergeFacts.read(read, patch)
         return yield* locks.withLock(["task", id])(
           Effect.gen(function* () {
             const at = yield* now
             const done = yield* db.tx(
               Effect.gen(function* () {
                 const before = yield* load(id)
+                if (needsGitFacts(read, patch) && movedOn(read, before)) {
+                  return yield* new Conflict({
+                    reason: "changed_meanwhile",
+                    detail: "the task changed meanwhile (it was moved, started merging, or its branch was made); try again",
+                  })
+                }
                 const pen = yield* resolvePen(before, patch, at)
-                const decision = yield* Effect.fromResult(decideUpdate(before, patch, { ...(yield* updateFacts(before, patch)), pen }, by, at))
+                const decision = yield* Effect.fromResult(decideUpdate(before, patch, { ...(yield* updateFacts(before, patch, git)), pen }, by, at))
                 // Nothing to write: nothing changed, and nothing is told.
-                if (Object.keys(decision.columns).length === 0) return { before, after: null }
-                return { before, after: yield* commit(before, decision.columns, at) }
+                if (Object.keys(decision.columns).length === 0) return { before, after: null, notes: [] }
+                const notes: Array<ChangeNote> = decision.notes.map((text) => ({ level: "info", text }))
+                if (decision.columns.merging === true && !before.merging && config.noAgents) {
+                  notes.push({
+                    level: "warning",
+                    text: "Agents can't run on this host yet (no Claude Code or Codex found), so the task waits in the merge queue until they can",
+                  })
+                }
+                return { before, after: yield* commit(before, decision.columns, at), notes }
               }),
             )
             if (done.after === null) return done.before
-            yield* offer(by, [done])
+            yield* offer(by, [done], done.notes)
             return done.after
           }),
         )
