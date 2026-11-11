@@ -315,6 +315,26 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   branches stand behind their keys); and, with `--fake-claude`, the approval card after the summary run, Approve
   deciding the merge ("approved", "Merge approved: …", and the merge request sent).
 
+### As built in 6.4 (HE-7): web
+
+- **Came over.** `settings/agentTools/GlobalAgentToolsPanel.tsx` (Settings → Skills and MCP, in place of its
+  placeholder), `SkillsSection.tsx`, `McpSection.tsx`, `SkillSources.tsx`, and `parts.tsx` (the old `AgentTools.tsx`'s
+  `Section`, `OtherList`, `describe` and McpSection's `serverSummary`, apart so the files don't import each other);
+  `settings/AgentTools.tsx` exports `ProjectAgentTools`, which 6.12's project settings mount under their Skills and MCP
+  tab; `settings/AgentStepTools.tsx` (with `stepToolChoices`) for 6.6's workflow inspector; `task/SkillMenu.tsx` works
+  (`tasks.skills`, kept a minute per task and config as before; `/compact`, `/plan` for a task, `/new`). Calls are
+  `rpc(host, "agentTools.…")`, read again after a change, as the old ones were. The project settings' Agents tab had no
+  agent-tools part.
+- **Changed.** Every host has sources, subfolders, `/plan` and `/new`, so the API checks are gone; the host picker waits
+  for M7 (the page's own host); the menu's state is adjusted during render and its list keyed by task and config
+  instead of a ref the lint refuses.
+- **Checks.** `tests/ui/skillSources.test.mjs` (the old one, and a global skill and server added, switched, refused and
+  deleted), `tests/ui/agentTools.test.mjs` (fast switch clicks, with `agentTools.updateProject` held by `routeRpc`; it
+  opens `/p/<id>/settings/tools`, so it passes once 6.12 mounts `ProjectAgentTools` there: run against a temporary
+  mount), and `messageBox.test.mjs`'s two dropped cases back (`/` and `$`). Not ported: `forkedSkills.test.mjs`, which
+  checks a forked Skill's subagent in the thread through the Agents list (not on this server) with the old translator's
+  messages, nothing of agent tools.
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |
