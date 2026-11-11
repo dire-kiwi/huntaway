@@ -16,7 +16,7 @@ const skill = (name, description) => {
 }
 
 beforeAll(async () => {
-  server = startServer()
+  server = startServer("--fake-claude") // Settings → Skills and MCP shows for a host that runs agents.
   board = await seedBoard(server)
   repo = mkdtempSync(join(server.dataDir, "skill-source-"))
   git("init", "-q", "-b", "main")
