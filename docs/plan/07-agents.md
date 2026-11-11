@@ -400,6 +400,43 @@ export class ToolCalls extends Context.Service<ToolCalls, {
   into another area's internals. The old tools reused the HTTP handlers' inner functions.
 - The per-run secret for the HTTP transport stays `HMAC-SHA256(board token, "mcp:" + run id)`.
 
+### As built in 3.1 (HE-4)
+
+- **The frame is `mcp/tool.ts`.** A tool is a `Tool.make` value annotated with `Rerunnable`, `ForReviewers`,
+  `ReviewersOnly` (offered to reviewers only: `submit_review`), `ForPlanning` and `ApprovalKind` (the approval a tool
+  asks for before it changes anything, which makes a call cut short while it was pending safe to run again). An area
+  pairs each tool with its handler, `toolHandler(Tool, (params, caller: McpCaller) => Effect<Success, ToolError>)`, and
+  registers the list with `McpServers.register(server, list | Effect<list>)`, a layer that joins the first line of
+  `mcpLayer` in `Main.ts`; the list's order is `tools/list`'s. `McpServers` also answers `initialize`, `ping` and
+  `tools/list` (the reviewers' tools for a review run). `checkArgs` reads the tool's JSON Schema (`Tool.getJsonSchema`)
+  for the old messages; the handler's parameters are then decoded with the tool's schema (a wrong type is an error that
+  says so, which the old server did not check).
+- **`ToolCalls.call` runs every server's calls**, gh's, docs' and desktop's too (M4, M6), not only the board's: the old
+  server kept those answers in memory for 10 minutes and told a client that reconnected after a restart that the
+  output was lost; recorded in `mcp_calls`, a reconnect gets the answer, or "interrupted" as the board's calls do. The
+  reviewer, plan-mode, wait and rule gates are the board's server's only, as before. Calls run in fibers of
+  `ToolCalls`' own, so a client that goes away does not stop its call; stopping the server leaves it `executing`, and its
+  other deliveries are let go unanswered.
+- **The gates' order** is the old `execute_mcp`'s: the arguments (of a tool the server has), the run, its task and
+  profile, then an unknown tool, the reviewer gate, plan mode (the thread's mode at the call: its own, its project's,
+  the host's default), the wait, the rules. A never rule is logged `blocked` and refused here; an ask rule goes to
+  `McpHooks.askRule`.
+- **`McpHooks`** stands in for what is not built: `callMade` (ends the run's wait, `Wait` 3.5), `askRule` (the user's
+  answer, `Permissions`) and `cancelled` (a call the agent gave up on: its prompt expires, its wait ends).
+  `McpHooks.layerNone` ends nothing and refuses an ask, with the reason, until those pieces replace it.
+- **The control transport's interface is `runs/McpControl.ts`**, implemented by `mcp/transport/control.ts`
+  (`McpControlLive`): the MCP area is below the runs area, and a run's line handler (`RunOutput`) and its launch must
+  reach it. `handle(run, { request_id, server_name, message })` for an `mcp_message`, `cancel(run, requestId)` for a
+  `control_cancel_request`, `initializeLine(run, review)` for the first line of a Claude run's input, and
+  `isInitializeResponse(requestId)`. A board call on the output is `stdio:<run>:<request id>` with
+  `{ request_id, rpc_id, arguments }` recorded, so `ToolCalls.resume` (Recovery) takes it up again and answers it on
+  the input; the answer is written before the row is marked done.
+- **The run's secret is `Identity.runSecret(run)`** (and `isRunSecret`, constant time), on `effect/crypto`'s `Mac`: the
+  launch writing `mcp.json` is in `agents/`/`runs/`, above `mcp/`. The HTTP route is `mcp/transport/http.ts`
+  (`McpHttpRoute`), mounted in `RoutesLive`.
+- `mcp_calls` older than an hour whose run is gone or ended an hour ago are pruned when `ToolCalls` starts and hourly,
+  1000 at a time. The `board_tool` telemetry event is left for analytics.
+
 ### `wait`
 
 `Wait` owns the blocking tool: a wait is a fiber in a `FiberMap` keyed by run, racing a deadline, changes to watched
