@@ -1,49 +1,14 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Cause, Deferred, Effect, Layer, Option } from "effect"
-import { AsyncResult, type Atom, AtomRegistry } from "effect/reactivity"
+import { Cause, Deferred, Effect, Option } from "effect"
+import { AsyncResult, AtomRegistry } from "effect/reactivity"
 import { Conflict, PROTOCOL, type Task, TaskId, Timestamp } from "@huntaway/contracts"
-import {
-  boardAtom,
-  callRpc,
-  hostBoardAtom,
-  hostSessionAtom,
-  optimisticMove,
-  taskAtom,
-  type Transport,
-  transportAtom,
-  HostClient,
-  HostSession,
-} from "../src/index.ts"
-import { fakeHost, type FakeHost } from "./fakeHost.ts"
+import { boardAtom, callRpc, hostBoardAtom, hostSessionAtom, optimisticMove, taskAtom } from "../src/index.ts"
+import { fakeHost } from "./fakeHost.ts"
 import { info, snapshot, task } from "./fixtures.ts"
+import { registryFor, until } from "./registry.ts"
 
 const T1 = TaskId.make("task-1")
 const LATER = Timestamp.make("2026-11-02T09:00:00.000Z")
-
-/** A registry whose page's own server is `own`, and whose other hosts are `others`; disposed with the scope. */
-const registryFor = (own: FakeHost, ...others: ReadonlyArray<FakeHost>) => {
-  const transport: Transport = (host) => {
-    const found = host === null ? own : others.find((o) => o.id === host)
-    return found ? found.layer : Layer.effect(HostClient, Effect.die(new Error(`no fake host ${host}`))).pipe(Layer.provideMerge(HostSession.layer(true)))
-  }
-  return Effect.acquireRelease(
-    Effect.sync(() => AtomRegistry.make({ initialValues: [[transportAtom, transport]] })),
-    (registry) => Effect.sync(() => registry.dispose()),
-  )
-}
-
-/** Waits for `atom` to hold a value `pass` accepts: what the code produces, not a sleep. */
-const until = <A>(registry: AtomRegistry.AtomRegistry, atom: Atom.Atom<A>, pass: (a: A) => boolean): Effect.Effect<A> =>
-  Effect.callback<A>((resume) => {
-    const now = registry.get(atom)
-    if (pass(now)) return resume(Effect.succeed(now))
-    const cancel = registry.subscribe(atom, (a) => {
-      if (!pass(a)) return
-      cancel()
-      resume(Effect.succeed(a))
-    })
-    return Effect.sync(cancel)
-  })
 
 const titleOf = (id: string) => (b: { readonly tasks: Readonly<Record<string, { readonly title: string }>> }) => b.tasks[id]?.title
 
