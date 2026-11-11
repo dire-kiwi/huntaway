@@ -45,9 +45,11 @@ import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { McpCallRepo } from "./mcp/McpCallRepo.ts"
-import { McpHooks } from "./mcp/McpHooks.ts"
+import type { McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
+import { Wait } from "./mcp/Wait.ts"
+import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
@@ -63,6 +65,7 @@ import type { RunOutput } from "./runs/RunOutput.ts"
 import { RunInput } from "./runs/RunInput.ts"
 import { RunRepo } from "./runs/RunRepo.ts"
 import { Runs } from "./runs/Runs.ts"
+import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
@@ -162,7 +165,7 @@ const RunsArea = Layer.mergeAll(Runs.layer).pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
   Layer.provideMerge(ClaudeOutput),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
 )
@@ -184,8 +187,10 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
     Layer.provideMerge(Dependencies.layer),
-    // `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come.
-    Layer.provideMerge(mcpLayer(McpHooks.layerNone)),
+    // `Wait`'s hooks; an ask rule is refused until `Permissions` (3.3) is combined in.
+    Layer.provideMerge(mcpLayer(Wait.hooks)),
+    // The waits, and the approval of a wait's command (refused until `Permissions` asks the user).
+    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerNone)),
     Layer.provideMerge(Questions.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.scanner.pipe(Layer.provideMerge(DevServers.layer))),

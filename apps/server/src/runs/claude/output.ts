@@ -18,6 +18,7 @@ import { RunDir } from "../RunDir.ts"
 import { RunInput } from "../RunInput.ts"
 import { RunOutput } from "../RunOutput.ts"
 import { RunRepo } from "../RunRepo.ts"
+import { RunWaits } from "../RunWaits.ts"
 
 // A Claude run's output, line by line (docs/plan/07-agents.md, Following; inventory 01, sections 5 and 9; huntaway's
 // runner/output.ts `handle_line`): each line is decoded (`decodeLine`; a problem is logged and skipped), translated
@@ -89,6 +90,7 @@ export const ClaudeOutput = Layer.effect(
     const events = yield* Events
     const input = yield* RunInput
     const requests = yield* AgentRequests
+    const waits = yield* RunWaits
     const kept = yield* Ref.make<ReadonlyMap<TaskId, Kept>>(new Map())
 
     /** The thread's state as stored, for a run followed afresh. */
@@ -144,7 +146,7 @@ export const ClaudeOutput = Layer.effect(
       yield* writeTask(run.task_id, { cost_usd: task.cost_usd + cost, session_id: session })
       // The turn a stop interrupted: from here, a message it takes in starts a new one.
       yield* repo.update(run.id, { stop: stop === "requested" ? "interrupted" : undefined, saw_result: true, between_turns: true, result_error: error })
-      // Checkpoints (4.x), waits (3.5), documents (6.2), memory (6.7), the context meter (2.8) hear of the turn's end here.
+      // Checkpoints (4.x), documents (6.2), memory (6.7), the context meter (2.8) hear of the turn's end here.
     })
 
     /** What a line tells the run, in its transaction. */
@@ -240,6 +242,8 @@ export const ClaudeOutput = Layer.effect(
           } else made = translate(before.state, line, { writeNo: 0, at, turn })
           for (const warning of made.warnings) yield* Effect.logWarning(`run=${run.id} ${warning.code}: ${warning.text}`)
           const turnEnded = yield* apply(run, line, made.effects, cost, now.stop)
+          // The wait its agent is in (3.5): its own thread's other calls and its turn's end end it, a subagent's end is recorded.
+          yield* waits.line(run, line)
           if (line.type === "control_response") yield* initRefused(run, line)
           yield* repo.saveOffset(run.id, end)
           const after: After = { kept: { run: run.id, state: made.state, seq, awaited }, awaitedBefore: before.awaited, effects: made.effects, turnEnded }
