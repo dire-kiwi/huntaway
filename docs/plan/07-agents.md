@@ -825,7 +825,7 @@ As built in 3.4 (HE-4), `permissions/Approvals.ts`:
   `delete_task` (`tasks.ts`, `delete_task`), `create_pen`, `update_pen`, `delete_pen` (`pens.ts`, over `Pens`; a pen's
   own thread can't delete its pen), and the tracked work tools `track_work`, `untrack_work` (rerunnable),
   `list_tracked_work` (rerunnable, for planning) in `mcp/tools/tracking.ts`, with the list's rules where the old ones
-  were (`agent/assistant/tracked.ts` → `assistant/tracked.ts`: `owner`, `track`, `untrack`, `effectiveStatus`; each
+  were (`agent/assistant/tracked.ts` → `assistant/trackedList.ts` (renamed in 6.7 beside its service `Tracked.ts`): `owner`, `track`, `untrack`, `effectiveStatus`; each
   change one `Tasks.change` of the assistant's `tracked`). The board's `Tracked` service (the user's removal) is 6.7's.
   `update_project` keeps an explicit null `reviewers`/`summarizer`/`summarizers` (back to the profile's; `summarizer`
   is a list of one), and checks `status_scripts`' keys ("unknown status … in status_scripts"). Still missing of the old
