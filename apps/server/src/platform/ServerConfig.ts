@@ -155,6 +155,10 @@ export interface ServerConfigShape {
    * (`extendEnv: true`): `SERVE_ENV` removed.
    */
   readonly agentEnv: Readonly<Record<string, string | undefined>>
+  /** The system's temp folder (`TMPDIR`, else `/tmp`), where the tasks' temp folders' root goes (`tasks/TaskTmp`). */
+  readonly tmpDir: string
+  /** The root of the tasks' temp folders when it is not the usual one in `tmpDir`: tests put it in their data folder. */
+  readonly taskTmpRoot: string | null
 }
 
 /** The version of this build. A release sets it when it packages the server. */
@@ -171,6 +175,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const dataHome = yield* Config.String("XDG_DATA_HOME").pipe(Config.withDefault(`${home}/.local/share`))
         const commit = yield* Config.String("HUNTAWAY_COMMIT").pipe(Config.option)
         const exe = yield* Config.String("HUNTAWAY_EXE").pipe(Config.option)
+        const tmpDir = yield* Config.String("TMPDIR").pipe(Config.withDefault("/tmp"))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -195,11 +200,13 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           noAgents: args.noAgents ?? false,
           exe: Option.getOrNull(exe),
           agentEnv: AGENT_ENV,
+          tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
+          taskTmpRoot: null,
         })
       }),
     )
 
-  /** For tests: everything given. */
+  /** For tests: everything given. The tasks' temp folders are in the data folder (`task-tmp`), which goes with the test. */
   static readonly layerTest = (config: Partial<ServerConfigShape> & { readonly dataDir: string }) =>
     Layer.succeed(
       ServerConfig,
@@ -217,10 +224,13 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         commit: null,
         home: config.dataDir,
         shimBin: null,
-        claudeBin: "claude",
+        // Never the real Claude Code: a test that wants an agent gives the fake one.
+        claudeBin: `${config.dataDir}/no-claude-in-tests`,
         noAgents: false,
         exe: null,
         agentEnv: AGENT_ENV,
+        tmpDir: config.dataDir,
+        taskTmpRoot: `${config.dataDir}/task-tmp`,
         ...config,
       }),
     )

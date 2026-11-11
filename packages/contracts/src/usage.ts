@@ -13,7 +13,7 @@ export const UsageLimit = Schema.Struct({
   percent: Schema.Finite,
   resets_at: Schema.NullOr(Timestamp),
 })
-export interface UsageLimit extends Schema.Schema.Type<typeof UsageLimit> {}
+export type UsageLimit = typeof UsageLimit.Type
 
 /** One of a proxy's Claude accounts, with its own limits. */
 export const UsageAccount = Schema.Struct({
@@ -23,7 +23,7 @@ export const UsageAccount = Schema.Struct({
   /** Why its usage could not be read, or why the proxy is not using it. */
   error: Schema.NullOr(Schema.String),
 })
-export interface UsageAccount extends Schema.Schema.Type<typeof UsageAccount> {}
+export type UsageAccount = typeof UsageAccount.Type
 
 export const Usage = Schema.Struct({
   config_id: AgentConfigId,
@@ -39,4 +39,4 @@ export const Usage = Schema.Struct({
   /** For a config with a proxy: each of the proxy's accounts, which `limits` is picked from. null for other configs. */
   accounts: Schema.NullOr(Schema.Array(UsageAccount)),
 })
-export interface Usage extends Schema.Schema.Type<typeof Usage> {}
+export type Usage = typeof Usage.Type
