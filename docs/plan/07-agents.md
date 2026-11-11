@@ -175,6 +175,42 @@ before their call); they are now part of what a run's follower rebuilds by re-re
 `codex-run`, the adapter process between a run's files and `codex app-server`, is ported as its own entry point
 ([inventory 01](inventory/01-run-lifecycle.md), section 5, _Codex_).
 
+### As built in 2.3 (HE-4)
+
+- **Driver types live in `agents/AgentDriver.ts`, as types only**: `ProcessSpec` (program, args, env pairs, cwd),
+  `LaunchSpec` (that plus the config folder, prompt, whether it takes input, the awaited prompt id, the system prompt,
+  `mcp.json`'s servers, `mcp-run.json`'s `McpRunSettings`). `agents/` is above `runs/`, so a driver never sees `Run`,
+  `RunDir` or `RunRepo`: `RunDir.prepare(run, spec)` writes the folder (spec.json last) and `Shim.spawn(run, spec)`
+  starts it. The config folder's variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `~` expanded) is one of the spec's env
+  pairs, the driver's to add.
+- **The follower's line handler is `runs/RunOutput`** (`handle(run: Run, line): Effect<void>`), not
+  `AgentDriver.handleLine`: handling a line writes the run's progress columns (`RunRepo`), which `agents/` cannot
+  reach. The Claude and Codex pieces supply its layer, built from their pure `translate.ts`; until then
+  `RunOutput.layerLog` logs and drops. A defect in it is logged and the follower goes on with the next line.
+- **`RunExited { run, task, exit, errorTail }`** is what the follower offers on `Changes` once the exit file exists and
+  everything before it is applied (or the folder was removed, or the shim vanished, with the old error texts). The
+  reactor works the outcome out from it and the row (the `Outcome` type is in `runs/Run.ts`); until then it ignores it.
+- **`Run`** is a `Schema.Class` read straight from the row (`status AS phase`); `isLive` is "not exited", `acceptsInput`
+  "live and not a compaction" (whether the agent still reads input is `RunDir.acceptsInput`, from the files). The
+  `usage_*` columns are left to `Tokens`. `RunRepo.addCost` reads and writes in one transaction.
+- **`RunDir`** has every file of the table above but `codex.json` (the Codex piece's) and the `background*` files
+  (2.8). It reads the boot id once (`/proc/sys/kernel/random/boot_id`, else `sysctl -n kern.bootsessionuuid`) and
+  writes it in `run.json`; `rebooted(run)` guards every signal.
+- **`Shim`**: `binary` (`--shim-bin`/`HUNTAWAY_SHIM_BIN`, else the newer of the checkout's `target/{release,debug}`,
+  else beside `HUNTAWAY_EXE`), `spawn` (refuses a started run, a missing shim or cwd; the shim's first process is
+  spawned *not* detached, so that closing its scope never signals a process group the forked shim may not have left
+  yet; up to 5 s on a `Schedule` for `pid` or `exit`), `kill` (SIGTERM, SIGKILL 10 s later if no `exit`), `vanished`,
+  `stopOrphan`/`watchOrphan` (the old `stop_orphan`/`watch_orphan`, marker `orphan`). The old `reap` (a launch given
+  up on) belongs with `Runs`' launch and is not here yet.
+- **`ServerConfig`** gained `shimBin`, `claudeBin` (`--claude-bin`/`HUNTAWAY_CLAUDE_BIN`, default `claude`), `noAgents`
+  (`--no-agents`/`HUNTAWAY_NO_AGENTS`: `Runs` will refuse to start agents), `exe` (`HUNTAWAY_EXE`) and `agentEnv`, the
+  overlay that removes `SERVE_ENV` (the old list under `HUNTAWAY_*` names, plus `SKIP_DB_BACKUP`, `NO_AGENTS` and
+  `TASK_ID`) from a child's environment. It is there rather than `Proc.agentEnv()` because `ServerConfig` is the one
+  place the environment is read; `Proc`'s scripts take it from there too when they come.
+- **`fake-claude`** (`packages/testing/bin/fake-claude`) with stream-json input now waits for more after its result,
+  as Claude Code does: each further user message is echoed and answered by a turn, and it exits when its input ends.
+  The old one exited after its first result, which let a server that never closes the input pass.
+
 ### When a run ends<a id="when-a-run-ends"></a>
 
 `RunExited` goes to the reactor, which holds the task's lock and:
