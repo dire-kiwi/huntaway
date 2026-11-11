@@ -71,6 +71,7 @@ const shells = (...ids: ReadonlyArray<string>) => ({
   subtype: "background_tasks_changed",
   tasks: ids.map((id) => ({ task_id: id, task_type: "local_bash", description: `server ${id}` })),
 })
+const said = (text: string) => ({ type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } })
 const result = { type: "result", subtype: "success", is_error: false, total_cost_usd: 0, num_turns: 1, session_id: "s1" }
 const work = (id: TaskId) =>
   Effect.gen(function* () {
@@ -134,6 +135,44 @@ describe("background work", () => {
         yield* TestClock.adjust("120 seconds")
         yield* (yield* RunInput).settled(agent.run.id, "grace")
         assert.isTrue(yield* agent.inputClosed)
+      }),
+    ),
+  )
+
+  it.effect("a turn the agent takes on its own shows the task working from its first message; its later ones show nothing anew", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* running
+        yield* output(agent, [
+          {
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: { content: [{ type: "tool_use", id: "tu1", name: "Bash", input: { command: "make watch", run_in_background: true } }] },
+          },
+          shells("b1"),
+          { type: "system", subtype: "task_started", task_id: "b1", tool_use_id: "tu1", task_type: "local_bash", description: "server b1" },
+          result,
+        ])
+        assert.strictEqual((yield* work(task))?.idle, true)
+        // Claude Code takes a turn on its own (a shell's outcome, say): its first message finds the run between turns.
+        yield* output(agent, [said("The build finished.")])
+        assert.isFalse((yield* agent.row).between_turns)
+        assert.strictEqual((yield* work(task))?.idle, false)
+        // The list changes with no line the banner hears of; the turn's later messages start nothing, so it isn't shown
+        // again until the turn ends (the old `turn_started`, which showed it only when the run was between turns).
+        const background = yield* BackgroundWork
+        yield* background.setTasks(agent.run.id, [
+          ...(yield* background.tasks(agent.run.id)),
+          { id: "b2", type: "local_bash", description: "server b2", since: AT },
+        ])
+        yield* output(agent, [said("Starting it again.")])
+        assert.deepStrictEqual(
+          (yield* work(task))?.tasks.map((t) => t.id),
+          ["b1"],
+        )
+        yield* output(agent, [result])
+        const w = yield* work(task)
+        assert.deepStrictEqual([w?.idle, w?.tasks.map((t) => t.id)], [true, ["b1", "b2"]])
       }),
     ),
   )

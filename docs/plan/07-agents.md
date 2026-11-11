@@ -332,6 +332,38 @@ As built (HE-4, 2.4's line schemas and translator), in `agents/claude/`:
   agent unless it gives a shim and a fake `claude`; `Prompts.steer`; `RunDir.readOutput` gives each line's end
   (`ends`); `RunRepo.startTurn`, `sessionStartedBy`; `Shim.reap`, `watchReap`.
 
+### The follower after the M2 measurement (HE-4)
+
+The follower missed its limit by 10× ([10-testing.md](10-testing.md#measurements), As measured at M2). What changed,
+in the order it was tried:
+
+- **No per-line decoder or span** (2.5): row readers decode with a decoder made once per row schema
+  (`platform/columns.ts` `rowsOf`, synchronous: `Schema.decodeUnknownResult`), not `SqlSchema.findAll` built on each
+  call; `toJson` encodes synchronously; the per-line functions are `Effect.fnUntraced`; the follower's fiber runs with
+  the tracer off (`Effect.withTracerEnabled(false)`: nothing collects spans, and each statement and transaction made
+  several).
+- **No redundant work** (2.5, 2.8):
+  - `Threads.writeFromRun(task, make)` is `writeFromAgent` for the line handler: in the line's transaction, with no
+    check that the task is there (the line read the run's row, and a run goes with its task) and no savepoint. The
+    board's writes check with `TaskRepo.exists`, not by reading the whole task.
+  - Every top-level assistant message says `TurnStarted`; only one that finds the run between turns writes
+    `between_turns` (`RunRepo.startTurn` and `RunInput.turnStarted` return whether it was), and **`BackgroundWork.sync`
+    runs when a turn really starts, a turn ends or a message is echoed**, as the old `turn_started` did (`if
+    (r.changes) background.sync`), not on every message (it read the run twice, the steers and two files and wrote in
+    a second transaction).
+  - `agent_at` is written with the offset (`RunRepo.saveOffset(run, offset, columns)`); a thread write takes its
+    events' numbers in the statement that makes the thread (`… ON CONFLICT DO UPDATE SET seq = seq + n RETURNING`).
+- **Several lines to a transaction** (2.5): `RunOutput.handleChunk(run, lines)` (optional; the follower uses it for a
+  read of more than one line) applies up to `CHUNK_LINES` (64) lines in one transaction. A transaction ends after a
+  line that isn't `deferrable`: anything but a message or a part of one that starts and ends no turn, takes nothing in
+  and writes to the thread only its own items. So the lines it holds before its last left the run's row and the
+  thread's `seq` as they found them, and neither is read again; and what a line sets off (a turn's end closing the
+  input, a request answered, a steer taken in) follows the commit with nothing applied after it, as with a
+  transaction per line. What follows each line's commit follows the transaction's, line by line in order; the reply
+  being written is published from the transaction's `afterCommit`, in order with the items that end it. A transaction
+  that fails is rolled back whole and its first line handled on its own, as before. A line's items and the offset after
+  it are still committed together, so a power cut loses both or neither (`tests/e2e/restart.test.ts`).
+
 ### When a run ends<a id="when-a-run-ends"></a>
 
 `RunExited` goes to the reactor, which holds the task's lock and:

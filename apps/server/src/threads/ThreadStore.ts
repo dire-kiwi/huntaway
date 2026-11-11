@@ -1,9 +1,9 @@
 import { Context, DateTime, Effect, Layer, Schema } from "effect"
-import { SqlClient, SqlSchema } from "effect/sql"
+import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql"
 import { Item, patched, SavedEvent, TaskId, ThreadRequest, Timestamp, UnknownEvent } from "@huntaway/contracts"
 import type { ItemPage, ItemType, NewEvent, ProfileId, Snapshot } from "@huntaway/contracts"
-import { JsonColumn, toJson } from "../platform/columns.ts"
+import { JsonColumn, rowsOf, toJson } from "../platform/columns.ts"
 import { ItemMeta, WriteNo } from "./model.ts"
 import type { Entry, ItemMetas, StoredRequest } from "./model.ts"
 
@@ -130,13 +130,20 @@ const Pos = Schema.Struct({ pos: Schema.Int, parent_id: Schema.NullOr(Schema.Str
 const Id = Schema.Struct({ id: Schema.String })
 const N = Schema.Struct({ n: Schema.NullOr(Schema.Finite) })
 
-/** The rows a statement returns, decoded with `Result`. */
-const decoded = <S extends Schema.Constraint>(Result: S, statement: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) =>
-  SqlSchema.findAll({ Request: Schema.Void, Result, execute: () => statement })(undefined).pipe(Effect.orDie)
+// Each row schema's reader, its decoder made once.
+const itemRows = rowsOf(ItemRow)
+const requestRows = rowsOf(RequestRow)
+const eventRows = rowsOf(EventRow)
+const profileItemRows = rowsOf(ProfileItemRow)
+const posRows = rowsOf(Pos)
+const idRows = rowsOf(Id)
+const nRows = rowsOf(N)
+const createdAtRows = rowsOf(Schema.Struct({ created_at: Timestamp }))
+const seqRows = rowsOf(Schema.Struct({ seq: Schema.Int }))
 /** A statement run for what it does. */
 const run = (statement: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) => Effect.asVoid(statement).pipe(Effect.orDie)
 /** The `n` of a statement's first row; null for none or NULL. */
-const number = (statement: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) => Effect.map(decoded(N, statement), (rows) => rows[0]?.n ?? null)
+const number = (statement: Effect.Effect<ReadonlyArray<unknown>, SqlError.SqlError>) => Effect.map(nRows(statement), (rows) => rows[0]?.n ?? null)
 
 /** `at` less the days the log keeps: the time before which a thread's events are pruned. */
 export const keepFrom = (at: Timestamp): Timestamp => Timestamp.make(DateTime.formatIso(DateTime.subtract(DateTime.makeUnsafe(at), { days: KEEP_DAYS })))
@@ -157,12 +164,12 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
       const seq = (task: TaskId) => Effect.map(number(sql`SELECT seq AS n FROM threads WHERE task_id = ${task}`), (n) => n ?? 0)
 
       const item = (task: TaskId, id: string) =>
-        Effect.map(decoded(ItemRow, sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND id = ${id}`), (rows) => {
+        Effect.map(itemRows(sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND id = ${id}`), (rows) => {
           const row = rows[0]
           return row === undefined ? null : toEntry(row)
         })
       const request = (task: TaskId, id: string) =>
-        Effect.map(decoded(RequestRow, sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} AND id = ${id}`), (rows) => {
+        Effect.map(requestRows(sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} AND id = ${id}`), (rows) => {
           const row = rows[0]
           return row === undefined ? null : toStoredRequest(row)
         })
@@ -214,8 +221,14 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
         const { at } = options
         const writeNo = options.writeNo ?? null
         if (events.length === 0 && (options.metas === undefined || options.metas.size === 0)) return []
-        yield* run(sql`INSERT INTO threads (task_id, seq, created_at) VALUES (${task}, 0, ${at}) ON CONFLICT (task_id) DO NOTHING`)
-        let last = yield* seq(task)
+        // The thread, made with its first write, and the numbers of the events taken for them, in one statement: `last`
+        // is its last event's before them.
+        const n = events.length
+        let last =
+          (yield* number(
+            sql`INSERT INTO threads (task_id, seq, created_at) VALUES (${task}, ${n}, ${at})
+              ON CONFLICT (task_id) DO UPDATE SET seq = seq + ${n} RETURNING seq - ${n} AS n`,
+          )) ?? 0
         const saved: Array<SavedEvent> = []
         for (const e of events) {
           last += 1
@@ -230,24 +243,20 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
         for (const [id, meta] of options.metas ?? new Map()) {
           yield* run(sql`UPDATE thread_items SET meta = ${yield* toJson(meta)} WHERE task_id = ${task} AND id = ${id}`)
         }
-        yield* run(sql`UPDATE threads SET seq = ${last} WHERE task_id = ${task}`)
         // The thread's events from before the log's day, without reading its log if its oldest is not.
         const from = keepFrom(at)
-        const oldest = yield* decoded(
-          Schema.Struct({ created_at: Timestamp }),
-          sql`SELECT created_at FROM thread_events WHERE task_id = ${task} ORDER BY seq LIMIT 1`,
-        )
+        const oldest = yield* createdAtRows(sql`SELECT created_at FROM thread_events WHERE task_id = ${task} ORDER BY seq LIMIT 1`)
         const first = oldest[0]
         if (first !== undefined && first.created_at < from) yield* run(sql`DELETE FROM thread_events WHERE task_id = ${task} AND created_at < ${from}`)
         return saved
       })
 
       const entries = (task: TaskId) =>
-        Effect.map(decoded(ItemRow, sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} ORDER BY pos`), (rows) => rows.map(toEntry))
+        Effect.map(itemRows(sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} ORDER BY pos`), (rows) => rows.map(toEntry))
       const requests = (task: TaskId) =>
-        Effect.map(decoded(RequestRow, sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} ORDER BY pos`), (rows) => rows.map((r) => r.data))
+        Effect.map(requestRows(sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} ORDER BY pos`), (rows) => rows.map((r) => r.data))
       const openRequests = (task: TaskId) =>
-        Effect.map(decoded(RequestRow, sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} AND open = 1 ORDER BY pos`), (rows) =>
+        Effect.map(requestRows(sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} AND open = 1 ORDER BY pos`), (rows) =>
           rows.map((r) => r.data),
         )
 
@@ -256,9 +265,8 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
       const count = (task: TaskId) => Effect.map(number(sql`SELECT COUNT(*) AS n FROM thread_items WHERE task_id = ${task}`), (n) => n ?? 0)
       /** `n` items from index `start`. */
       const slice = (task: TaskId, start: number, n: number) =>
-        Effect.map(
-          decoded(ItemRow, sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} ORDER BY pos LIMIT ${n} OFFSET ${start}`),
-          (rows) => rows.map(toEntry),
+        Effect.map(itemRows(sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} ORDER BY pos LIMIT ${n} OFFSET ${start}`), (rows) =>
+          rows.map(toEntry),
         )
       /** The index of the item at `pos`: how many are before it. */
       const indexAt = (task: TaskId, pos: number) =>
@@ -275,10 +283,7 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
           let id: string | null = first
           while (id !== null && id !== "" && !seen.has(id)) {
             seen.add(id)
-            const found: ReadonlyArray<typeof Pos.Type> = yield* decoded(
-              Pos,
-              sql`SELECT pos, parent_id FROM thread_items WHERE task_id = ${task} AND id = ${id}`,
-            )
+            const found: ReadonlyArray<typeof Pos.Type> = yield* posRows(sql`SELECT pos, parent_id FROM thread_items WHERE task_id = ${task} AND id = ${id}`)
             const row = found[0]
             if (row === undefined) break
             if (row.pos < from) out.add(row.pos)
@@ -287,10 +292,7 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
         }
         const positions = [...out].toSorted((a, b) => a - b)
         if (positions.length === 0) return []
-        const rows = yield* decoded(
-          ItemRow,
-          sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND ${sql.in("pos", positions)} ORDER BY pos`,
-        )
+        const rows = yield* itemRows(sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND ${sql.in("pos", positions)} ORDER BY pos`)
         return rows.map(toEntry)
       })
       const indicesOf = (task: TaskId, context: ReadonlyArray<Entry>) => Effect.forEach(context, (e) => indexAt(task, e.pos), { concurrency: 1 })
@@ -320,11 +322,8 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
           if (r.tool_call_id !== undefined) need.add(r.tool_call_id)
         }
         // Every subagent's call (the contracts' `snapshotWindow`): a quiet one may go on, and a client lists them all.
-        const subagents = yield* decoded(
-          Id,
-          sql`SELECT id FROM thread_items WHERE task_id = ${task} AND +type = 'tool_call' AND pos < ${from}
-            AND json_extract(data, '$.kind') = 'subagent' ORDER BY pos`,
-        )
+        const subagents = yield* idRows(sql`SELECT id FROM thread_items WHERE task_id = ${task} AND +type = 'tool_call' AND pos < ${from}
+            AND json_extract(data, '$.kind') = 'subagent' ORDER BY pos`)
         for (const r of subagents) need.add(r.id)
         const context = yield* contextOf(task, need, from)
         const kept: Array<ThreadRequest> = []
@@ -381,22 +380,17 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
         if (after >= last) return []
         const first = (yield* number(sql`SELECT MIN(seq) AS n FROM thread_events WHERE task_id = ${task}`)) ?? last + 1
         if (after < first - 1) return null
-        const rows = yield* decoded(EventRow, sql`SELECT data FROM thread_events WHERE task_id = ${task} AND seq > ${after} ORDER BY seq`)
+        const rows = yield* eventRows(sql`SELECT data FROM thread_events WHERE task_id = ${task} AND seq > ${after} ORDER BY seq`)
         return rows.map((r): StoredEvent => r.data)
       })
 
-      const prune = (before: Timestamp) =>
-        Effect.map(
-          decoded(Schema.Struct({ seq: Schema.Int }), sql`DELETE FROM thread_events WHERE created_at < ${before} RETURNING seq`),
-          (rows) => rows.length,
-        )
+      const prune = (before: Timestamp) => Effect.map(seqRows(sql`DELETE FROM thread_events WHERE created_at < ${before} RETURNING seq`), (rows) => rows.length)
 
       // ---- the readers' scans ----
 
       const newest = (task: TaskId, scan: Scan) =>
         Effect.map(
-          decoded(
-            ItemRow,
+          itemRows(
             // `+type`: the task's items by position, not the board's user messages by time (thread_items_user_time).
             sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND ${sql.and([
               sql`+type IN ${sql.in(scan.types)}`,
@@ -412,8 +406,7 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
 
       const toolCallsSince = (task: TaskId, after: Timestamp | null) =>
         Effect.map(
-          decoded(
-            ItemRow,
+          itemRows(
             sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND +type = 'tool_call' AND created_at > ${after ?? ""} ORDER BY pos`,
           ),
           (rows) => rows.map(toEntry),
@@ -431,18 +424,15 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
 
       const userMessagesBetween = (profile: ProfileId, from: Timestamp, to: Timestamp) =>
         Effect.map(
-          decoded(
-            ProfileItemRow,
-            sql`SELECT i.task_id, i.pos, i.write_no, i.created_at, i.data, i.meta FROM thread_items i JOIN tasks t ON t.id = i.task_id
+          profileItemRows(sql`SELECT i.task_id, i.pos, i.write_no, i.created_at, i.data, i.meta FROM thread_items i JOIN tasks t ON t.id = i.task_id
               WHERE i.type = 'user_message' AND i.created_at >= ${from} AND i.created_at < ${to} AND t.profile_id = ${profile}
-              ORDER BY i.created_at, i.task_id, i.pos`,
-          ),
+              ORDER BY i.created_at, i.task_id, i.pos`),
           (rows) => rows.map((r): ProfileUserMessage => ({ task_id: r.task_id, entry: toEntry(r) })),
         )
 
       const openQuestions = (task: TaskId) =>
         Effect.map(
-          decoded(RequestRow, sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} AND +type = 'question' AND open = 1 ORDER BY pos`),
+          requestRows(sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} AND +type = 'question' AND open = 1 ORDER BY pos`),
           (rows) => rows.map(toStoredRequest),
         )
       const askedIn = (task: TaskId, callId: string) =>
@@ -452,11 +442,8 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
         )
       const unreadReports = (task: TaskId) =>
         Effect.map(
-          decoded(
-            ItemRow,
-            sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND +type = 'notice'
-              AND json_extract(data, '$.code') = 'routine_report' AND json_extract(data, '$.metadata.read') IS NOT 1 ORDER BY pos`,
-          ),
+          itemRows(sql`SELECT ${sql.literal(ITEM)} FROM thread_items WHERE task_id = ${task} AND +type = 'notice'
+              AND json_extract(data, '$.code') = 'routine_report' AND json_extract(data, '$.metadata.read') IS NOT 1 ORDER BY pos`),
           (rows) => rows.map(toEntry),
         )
 

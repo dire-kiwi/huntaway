@@ -63,8 +63,11 @@ export interface RunInputShape {
    * `finish_work`. Database statements only, for the caller's transaction. Returns whether it was a steer.
    */
   readonly steered: (run: Run, id: string) => Effect.Effect<boolean>
-  /** The agent is working on a turn of its own: it is no longer between turns. Database only. */
-  readonly turnStarted: (run: RunId) => Effect.Effect<void>
+  /**
+   * The agent is working on a turn of its own: it is no longer between turns. Database only. Returns whether it was
+   * between turns (the old `turn_started`'s `changes`), which is when its background work is shown again.
+   */
+  readonly turnStarted: (run: RunId) => Effect.Effect<boolean>
   /**
    * The agent ended a turn (after its end is recorded, or failed to be). Unless messages are waiting, which start its
    * next turn, its input is closed so that it exits and the run ends; with messages waiting, they get `STEER_GRACE`.

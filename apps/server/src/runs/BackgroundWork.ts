@@ -75,7 +75,7 @@ export class BackgroundWork extends Context.Service<BackgroundWork, BackgroundWo
         if (after.length !== before.length) yield* writeJson(run, "background-killed", after, false)
       })
 
-      const sync = Effect.fn("BackgroundWork.sync")(function* (id: RunId) {
+      const sync = Effect.fnUntraced(function* (id: RunId) {
         const found = yield* runs.get(id)
         if (Option.isNone(found)) return
         const run = found.value

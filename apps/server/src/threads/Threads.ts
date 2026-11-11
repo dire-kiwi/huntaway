@@ -92,6 +92,14 @@ export interface ThreadsShape {
     task: TaskId,
     make: (writeNo: WriteNo) => AgentWrite,
   ) => Effect.Effect<{ readonly writeNo: WriteNo; readonly saved: ReadonlyArray<SavedEvent> }, TaskNotFound>
+  /**
+   * `writeFromAgent` for a run's line handler, in the line's transaction, which has read the run's row (a run goes with
+   * its task, so the task is there): no check and no transaction of its own, which it paid on every line.
+   */
+  readonly writeFromRun: (
+    task: TaskId,
+    make: (writeNo: WriteNo) => AgentWrite,
+  ) => Effect.Effect<{ readonly writeNo: WriteNo; readonly saved: ReadonlyArray<SavedEvent> }>
   /** Streamed text for the reply being written. Never stored; the snapshot carries what has streamed so far. */
   readonly preview: (task: TaskId, text: string) => Effect.Effect<void>
   /** The reply being written ended (or another starts): the next text streams into a new preview. */
@@ -153,6 +161,8 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
         if (task === null) return yield* new TaskNotFound({ id })
         return task
       })
+      /** The task is there (a write to its thread checks no more than that). */
+      const check = (id: TaskId) => Effect.flatMap(tasks.exists(id), (found) => (found ? Effect.void : Effect.fail(new TaskNotFound({ id }))))
 
       // ---- live ----
 
@@ -223,17 +233,16 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
         return saved
       })
 
-      /** A write that takes the next write number, in one transaction: `make` turns it into the events. */
-      const numberedWrite = (task: TaskId, make: (writeNo: WriteNo, at: Timestamp) => AgentWrite) =>
-        db.tx(
-          Effect.gen(function* () {
-            yield* load(task)
-            const writeNo = yield* store.nextWriteNo
-            const at = yield* nowTimestamp
-            const saved = yield* commit(task, make(writeNo, at), at, writeNo)
-            return { writeNo, saved }
-          }),
-        )
+      /** A write that takes the next write number, in the caller's transaction: `make` turns it into the events. */
+      const numbered = Effect.fnUntraced(function* (task: TaskId, make: (writeNo: WriteNo, at: Timestamp) => AgentWrite) {
+        const writeNo = yield* store.nextWriteNo
+        const at = yield* nowTimestamp
+        const saved = yield* commit(task, make(writeNo, at), at, writeNo)
+        return { writeNo, saved }
+      })
+
+      /** A numbered write to a task that is there, in one transaction. */
+      const numberedWrite = (task: TaskId, make: (writeNo: WriteNo, at: Timestamp) => AgentWrite) => db.tx(Effect.andThen(check(task), numbered(task, make)))
 
       /** A board write: it returns its write number. */
       const boardWrite = (task: TaskId, make: (writeNo: WriteNo, at: Timestamp) => AgentWrite) => Effect.map(numberedWrite(task, make), (done) => done.writeNo)
@@ -278,7 +287,7 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
       const resolveRequest = Effect.fn("Threads.resolveRequest")(function* (task: TaskId, id: string, resolution: RequestResolution) {
         yield* db.tx(
           Effect.gen(function* () {
-            yield* load(task)
+            yield* check(task)
             // The compare and set: in the transaction, so of two answers the first one wins.
             const found = yield* store.request(task, id)
             if (found === null || found.request.resolution !== undefined) return yield* new RequestNotOpen({ task_id: task, request_id: id })
@@ -291,7 +300,7 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
       const appendFromAgent = Effect.fnUntraced(function* (task: TaskId, added: ReadonlyArray<NewEvent>, metas?: ItemMetas) {
         return yield* db.tx(
           Effect.gen(function* () {
-            yield* load(task)
+            yield* check(task)
             const at = yield* nowTimestamp
             return yield* commit(task, { events: added, metas }, at, undefined)
           }),
@@ -301,6 +310,7 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
       const writeFromAgent = Effect.fnUntraced(function* (task: TaskId, make: (writeNo: WriteNo) => AgentWrite) {
         return yield* numberedWrite(task, (writeNo) => make(writeNo))
       })
+      const writeFromRun = (task: TaskId, make: (writeNo: WriteNo) => AgentWrite) => numbered(task, (writeNo) => make(writeNo))
 
       // ---- the reply being written ----
 
@@ -413,13 +423,13 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
         )
 
       const page = Effect.fn("Threads.page")(function* (task: TaskId, before: number, limit: number) {
-        return yield* db.tx(Effect.andThen(load(task), store.page(task, before, limit)))
+        return yield* db.tx(Effect.andThen(check(task), store.page(task, before, limit)))
       })
 
       const stored = Effect.fn("Threads.stored")(function* (task: TaskId) {
         return yield* db.tx(
           Effect.gen(function* () {
-            yield* load(task)
+            yield* check(task)
             const result: StoredThread = { entries: yield* store.entries(task), requests: yield* store.requests(task), seq: yield* store.seq(task) }
             return result
           }),
@@ -438,6 +448,7 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
         resolveRequest,
         appendFromAgent,
         writeFromAgent,
+        writeFromRun,
         preview,
         endPreview,
         watch,

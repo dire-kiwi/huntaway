@@ -32,6 +32,7 @@ export interface RunColumns {
   readonly write_no?: number | null | undefined
   readonly turn_start_tokens?: number | null | undefined
   readonly turn_tokens?: number | null | undefined
+  readonly out_offset?: number | undefined
 }
 
 interface Found {
@@ -80,8 +81,8 @@ export interface RunRepoShape {
    * in a result that did not (Claude Code's own for a failed turn, with a total of 0) charges nothing.
    */
   readonly addCost: (run: RunId, session: string | null, total: number, counted: boolean) => Effect.Effect<number>
-  /** Bytes of `out.jsonl` applied; returns `offset`. */
-  readonly saveOffset: (run: RunId, offset: number) => Effect.Effect<number>
+  /** Bytes of `out.jsonl` applied, with the progress columns the line set (one statement); returns `offset`. */
+  readonly saveOffset: (run: RunId, offset: number, columns?: RunColumns) => Effect.Effect<number>
   readonly setPhase: (run: RunId, phase: RunPhase) => Effect.Effect<void>
   /** Set progress columns. */
   readonly update: (run: RunId, columns: RunColumns) => Effect.Effect<void>
@@ -93,8 +94,8 @@ export interface RunRepoShape {
   readonly idleSessions: (idleSince: Timestamp, notBefore: Timestamp) => Effect.Effect<ReadonlyArray<TaskId>>
   /** The tasks marked running with no run that hasn't exited (their last run ended as the server stopped). */
   readonly idleRunning: Effect.Effect<ReadonlyArray<TaskId>>
-  /** A live run between turns is in a turn again (`between_turns` 1 → 0). */
-  readonly startTurn: (run: RunId) => Effect.Effect<void>
+  /** A live run between turns is in a turn again (`between_turns` 1 → 0). False when it was not between turns. */
+  readonly startTurn: (run: RunId) => Effect.Effect<boolean>
   /** Record the run as exited at `at`. False when it had already ended. */
   readonly end: (run: RunId, at: Timestamp) => Effect.Effect<boolean>
 }
@@ -179,7 +180,10 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
         sessionBoardTools: (task, session) =>
           firstOfSession(task, session).pipe(Effect.map(Option.match({ onNone: () => false, onSome: (row) => row.board_tools === 1 }))),
         addCost,
-        saveOffset: (run, offset) => sql`UPDATE runs SET out_offset = ${offset} WHERE id = ${run}`.pipe(Effect.as(offset), Effect.orDie),
+        saveOffset: (run, offset, columns) =>
+          columns === undefined
+            ? sql`UPDATE runs SET out_offset = ${offset} WHERE id = ${run}`.pipe(Effect.as(offset), Effect.orDie)
+            : Effect.as(update(run, { ...columns, out_offset: offset }), offset),
         setPhase: (run, phase) => sql`UPDATE runs SET status = ${phase} WHERE id = ${run}`.pipe(Effect.asVoid, Effect.orDie),
         update,
         idleSessions: (idleSince, notBefore) =>
@@ -198,7 +202,10 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
           Effect.orDie,
         ),
         startTurn: (run) =>
-          sql`UPDATE runs SET between_turns = 0 WHERE id = ${run} AND between_turns = 1 AND status != 'exited'`.pipe(Effect.asVoid, Effect.orDie),
+          sql<{ readonly id: string }>`UPDATE runs SET between_turns = 0 WHERE id = ${run} AND between_turns = 1 AND status != 'exited' RETURNING id`.pipe(
+            Effect.map((rows) => rows.length > 0),
+            Effect.orDie,
+          ),
         end: (run, at) =>
           sql<{ readonly id: string }>`UPDATE runs SET status = 'exited', ended_at = ${at} WHERE id = ${run} AND status != 'exited' RETURNING id`.pipe(
             Effect.map((rows) => rows.length > 0),

@@ -5,7 +5,7 @@ import { INIT_PREFIX } from "../../agents/claude/launch.ts"
 import { ContextMeter } from "../../agents/ContextMeter.ts"
 import { Usage } from "../../profiles/Usage.ts"
 import { decodeLine } from "../../agents/claude/lines.ts"
-import type { ClaudeLine, ResultLine } from "../../agents/claude/lines.ts"
+import type { ClaudeLine, LineProblem, ResultLine } from "../../agents/claude/lines.ts"
 import { emptyState, isForeignResult, observe, stateFromItems, translate, turnCost } from "../../agents/claude/translate.ts"
 import type { LineEffect, Translated, TranslatorState } from "../../agents/claude/translate.ts"
 import { nowTimestamp, toJson } from "../../platform/columns.ts"
@@ -51,9 +51,30 @@ interface After {
   readonly awaitedBefore: string | null
   readonly effects: ReadonlyArray<LineEffect>
   readonly turnEnded: boolean
+  /** The line started a turn of a run that was between turns. */
+  readonly turnStarted: boolean
   /** What the turn the line ended cost (`RunRepo.addCost`). */
   readonly cost: number
+  /** The run's row as the line found it. */
+  readonly row: Run
 }
+
+/** The most lines one transaction applies, so that others wait for the database no longer than that many take. */
+export const CHUNK_LINES = 64
+
+/**
+ * Whether what follows a line's commit may wait until later lines of its chunk are applied: a message or a part of one
+ * that starts and ends no turn, takes nothing in and writes to the thread only its own items (so the run's row and the
+ * thread's `seq` are as the line left them). Any other line is the last of its transaction, so that what it sets off
+ * (the end of a turn closing the input, a request answered, a steer taken in) follows its commit with nothing applied
+ * after it, as with a transaction per line.
+ */
+const deferrable = (line: ClaudeLine, done: After): boolean =>
+  (line.type === "assistant" || line.type === "stream_event" || (line.type === "user" && line.isReplay !== true)) &&
+  !done.turnEnded &&
+  !done.turnStarted &&
+  done.awaitedBefore === done.kept.awaited &&
+  done.effects.every((e) => e._tag === "TurnStarted" || e._tag === "AgentAt" || e._tag === "PreviewReset" || e._tag === "PreviewText")
 
 /** The lines whose items take the board's write number (`legacy:<n>…` ids): the others make no items. */
 const numbered = (line: ClaudeLine): boolean =>
@@ -71,6 +92,8 @@ const isSaved = Schema.is(SavedEvent)
 /** Whether the line says Claude Code took in the message `id`: its echo, or a frame naming it. */
 const echoes = (line: ClaudeLine, raw: string, id: string): boolean => {
   if (line.type === "user" && line.isReplay === true && line.uuid === id) return true
+  // A line that names it has it in its text: the others aren't parsed again.
+  if (!raw.includes(id)) return false
   const uuids = Option.getOrUndefined(decodeUuids(raw))?.user_message_uuids
   return Array.isArray(uuids) && uuids.includes(id)
 }
@@ -157,9 +180,13 @@ export const ClaudeOutput = Layer.effect(
       // Checkpoints (4.x), documents (6.2), memory (6.7), the context meter (2.8) hear of the turn's end here.
     })
 
-    /** What a line tells the run, in its transaction. */
-    const apply = Effect.fnUntraced(function* (run: Run, line: ClaudeLine, effects: ReadonlyArray<LineEffect>, cost: number, stop: Run["stop"]) {
+    /** What a line tells the run, in its transaction, given its row as the line found it: whether it ended a turn, and started one. */
+    const apply = Effect.fnUntraced(function* (run: Run, line: ClaudeLine, effects: ReadonlyArray<LineEffect>, cost: number, now: Run) {
       let ended = false
+      let started = false
+      // The follower is the only writer of `between_turns`: what the line itself does to it is all that changes it.
+      let between = now.between_turns
+      let agentAt: string | undefined
       for (const effect of effects) {
         switch (effect._tag) {
           case "SessionStarted": {
@@ -169,20 +196,30 @@ export const ClaudeOutput = Layer.effect(
             break
           }
           case "TurnStarted":
-            // A turn starting, unless it's the one a message sent to the agent starts (it's echoed then).
-            if (effect.from !== "init" || (yield* tasks.steers(run.task_id, run.id)).length === 0) yield* input.turnStarted(run.id)
+            // A turn starting, unless it's the one a message sent to the agent starts (it's echoed then). Every
+            // top-level assistant message says so; only the first of a turn finds the run between turns, and the others
+            // write nothing.
+            if (!between) break
+            if (effect.from !== "init" || (yield* tasks.steers(run.task_id, run.id)).length === 0) {
+              started = yield* input.turnStarted(run.id)
+              between = false
+            }
             break
           case "TurnEnded":
-            if (line.type === "result") yield* recordTurn(run, line, effect.error, cost, stop)
+            if (line.type === "result") {
+              yield* recordTurn(run, line, effect.error, cost, now.stop)
+              between = true
+            }
             // usageLimit: the config is out of usage (`Usage.ranOut`, plan task 2.x usage limits).
             ended = true
             break
           case "Echoed":
             // A background task's notification taken in (`taskNotification`) is 2.8's (`BackgroundWork.tookIn`).
-            if (effect.uuid !== null) yield* input.steered(run, effect.uuid)
+            if (effect.uuid !== null && (yield* input.steered(run, effect.uuid))) between = false
             break
           case "AgentAt":
-            yield* repo.update(run.id, { agent_at: effect.uuid })
+            // Written with the offset.
+            agentAt = effect.uuid
             break
           // The reply being written is published after the commit; rate limits are `Usage`'s and compactions the
           // context meter's (plan task 2.8).
@@ -193,7 +230,7 @@ export const ClaudeOutput = Layer.effect(
             break
         }
       }
-      return ended
+      return { ended, started, agentAt }
     })
 
     /** Claude Code refused the `initialize` that gives it the board's tools: the agent goes on without them. */
@@ -209,55 +246,89 @@ export const ClaudeOutput = Layer.effect(
       // Background stops (`bgstop-`) and context reads (`context-`) are answered here too (plan task 2.8).
     })
 
-    /** The line's transaction: its events, what it tells the run, and the offset after it. */
-    const record = (run: Run, line: ClaudeLine, raw: string, end: number) =>
-      db.tx(
-        Effect.gen(function* () {
-          const row = yield* repo.get(run.id)
-          // A run that has ended (or is gone with its task) is not written to.
-          if (Option.isNone(row) || !row.value.isLive) {
-            yield* repo.saveOffset(run.id, end)
-            return null
-          }
-          const now = row.value
-          const before = yield* current(run)
-          // Claude Code has taken in the run's prompt: from here, its results end the run's turns.
-          const awaited = before.awaited !== null && echoes(line, raw, before.awaited) ? null : before.awaited
-          if (line.type === "result" && isForeignResult(line, { sawResult: now.saw_result, awaiting: awaited !== null })) {
-            yield* Effect.logInfo(`run=${run.id} a result of another turn than its prompt's, before it took the prompt in`)
-            yield* repo.saveOffset(run.id, end)
-            const skipped: After = { kept: { ...before, awaited }, awaitedBefore: before.awaited, effects: [], turnEnded: false, cost: 0 }
-            return skipped
-          }
-          const at = yield* nowTimestamp
-          // A running total for the session, which goes on over its turns and the runs that resume it.
-          const total = line.type === "result" ? turnCost(line) : null
-          const cost = total === null ? 0 : yield* repo.addCost(run.id, total.session, total.total, total.counted)
-          const turn = { cost, stopping: now.stop === "requested", compact: run.kind === "compact" }
-          let made: Translated
-          let seq = before.seq
-          if (numbered(line)) {
-            let translated: Translated | null = null
-            const written = yield* threads
-              .writeFromAgent(run.task_id, (writeNo) => {
-                translated = translate(before.state, line, { writeNo, at, turn })
-                return { events: translated.events, metas: translated.metas }
-              })
-              .pipe(Effect.orDie)
-            if (translated === null) return yield* Effect.die(`run=${run.id} the line was not translated`)
-            made = translated
-            seq = written.saved.at(-1)?.seq ?? seq
-          } else made = translate(before.state, line, { writeNo: 0, at, turn })
-          for (const warning of made.warnings) yield* Effect.logWarning(`run=${run.id} ${warning.code}: ${warning.text}`)
-          const turnEnded = yield* apply(run, line, made.effects, cost, now.stop)
-          // The wait its agent is in (3.5): its own thread's other calls and its turn's end end it, a subagent's end is recorded.
-          yield* waits.line(run, line)
-          if (line.type === "control_response") yield* initRefused(run, line)
+    /** A line's part of the reply being written (never stored). */
+    const previews = Effect.fnUntraced(function* (run: Run, effects: ReadonlyArray<LineEffect>) {
+      for (const effect of effects) {
+        if (effect._tag === "PreviewReset") yield* threads.endPreview(run.task_id)
+        else if (effect._tag === "PreviewText") yield* threads.preview(run.task_id, effect.text)
+      }
+    })
+
+    /**
+     * What a line writes, in its transaction: its events, what it tells the run, and the offset after it. `prev` is the
+     * line before it in the same transaction, a `deferrable` one: the run's row and the thread's state are as it left
+     * them, so neither is read again.
+     */
+    const recordIn = Effect.fnUntraced(function* (run: Run, line: ClaudeLine, raw: string, end: number, prev: After | null) {
+      let now: Run
+      if (prev !== null) now = prev.row
+      else {
+        const row = yield* repo.get(run.id)
+        // A run that has ended (or is gone with its task) is not written to.
+        if (Option.isNone(row) || !row.value.isLive) {
           yield* repo.saveOffset(run.id, end)
-          const after: After = { kept: { run: run.id, state: made.state, seq, awaited }, awaitedBefore: before.awaited, effects: made.effects, turnEnded, cost }
-          return after
-        }),
-      )
+          return null
+        }
+        now = row.value
+      }
+      const before = prev !== null ? prev.kept : yield* current(run)
+      // Claude Code has taken in the run's prompt: from here, its results end the run's turns.
+      const awaited = before.awaited !== null && echoes(line, raw, before.awaited) ? null : before.awaited
+      if (line.type === "result" && isForeignResult(line, { sawResult: now.saw_result, awaiting: awaited !== null })) {
+        yield* Effect.logInfo(`run=${run.id} a result of another turn than its prompt's, before it took the prompt in`)
+        yield* repo.saveOffset(run.id, end)
+        const skipped: After = {
+          kept: { ...before, awaited },
+          awaitedBefore: before.awaited,
+          effects: [],
+          turnEnded: false,
+          turnStarted: false,
+          cost: 0,
+          row: now,
+        }
+        return skipped
+      }
+      const at = yield* nowTimestamp
+      // A running total for the session, which goes on over its turns and the runs that resume it.
+      const total = line.type === "result" ? turnCost(line) : null
+      const cost = total === null ? 0 : yield* repo.addCost(run.id, total.session, total.total, total.counted)
+      const turn = { cost, stopping: now.stop === "requested", compact: run.kind === "compact" }
+      let made: Translated
+      let seq = before.seq
+      if (numbered(line)) {
+        let translated: Translated | null = null
+        // The run's row is there, so its task is.
+        const written = yield* threads.writeFromRun(run.task_id, (writeNo) => {
+          translated = translate(before.state, line, { writeNo, at, turn })
+          return { events: translated.events, metas: translated.metas }
+        })
+        if (translated === null) return yield* Effect.die(`run=${run.id} the line was not translated`)
+        made = translated
+        seq = written.saved.at(-1)?.seq ?? seq
+      } else made = translate(before.state, line, { writeNo: 0, at, turn })
+      for (const warning of made.warnings) yield* Effect.logWarning(`run=${run.id} ${warning.code}: ${warning.text}`)
+      const { ended: turnEnded, started: turnStarted, agentAt } = yield* apply(run, line, made.effects, cost, now)
+      // The wait its agent is in (3.5): its own thread's other calls and its turn's end end it, a subagent's end is recorded.
+      yield* waits.line(run, line)
+      if (line.type === "control_response") yield* initRefused(run, line)
+      yield* repo.saveOffset(run.id, end, agentAt === undefined ? undefined : { agent_at: agentAt })
+      // The reply being written, once the line is committed: in order with what the thread publishes then (an item that
+      // ends the preview), also when later lines share the transaction.
+      if (made.effects.some((e) => e._tag === "PreviewReset" || e._tag === "PreviewText")) yield* db.sql.afterCommit(previews(run, made.effects))
+      const after: After = {
+        kept: { run: run.id, state: made.state, seq, awaited },
+        awaitedBefore: before.awaited,
+        effects: made.effects,
+        turnEnded,
+        turnStarted,
+        cost,
+        row: now,
+      }
+      return after
+    })
+
+    /** A line in a transaction of its own. */
+    const record = (run: Run, line: ClaudeLine, raw: string, end: number) => db.tx(recordIn(run, line, raw, end, null))
 
     /** The config the run's task runs on, if it has one. */
     const configOf = Effect.fnUntraced(function* (run: Run) {
@@ -285,10 +356,8 @@ export const ClaudeOutput = Layer.effect(
         yield* dir.setAwaited(run.id, null).pipe(Effect.catch((e) => Effect.logWarning(`run=${run.id} forgetting its awaited prompt: ${e.reason}`)))
       }
       for (const effect of done.effects) {
-        if (effect._tag === "PreviewReset") yield* threads.endPreview(run.task_id)
-        else if (effect._tag === "PreviewText") yield* threads.preview(run.task_id, effect.text)
         // How much of a usage window is left: the config's usage (a `rate_limit_event`, or a turn refused for it).
-        else if (effect._tag === "RateLimit") yield* rateLimit(run, line.type === "rate_limit_event" ? line : effect.info)
+        if (effect._tag === "RateLimit") yield* rateLimit(run, line.type === "rate_limit_event" ? line : effect.info)
         else if (effect._tag === "Compacted") yield* meter.onCompacted(run, effect.metadata)
         // A background task's outcome given to the agent: no turn of its own after this one.
         else if (effect._tag === "Echoed" && effect.taskNotification !== null) yield* input.tookIn(run, effect.taskNotification)
@@ -298,7 +367,7 @@ export const ClaudeOutput = Layer.effect(
       if (line.type === "assistant") yield* background.onAssistant(run, line)
       if (line.type === "system" && line.subtype === "task_started") yield* background.started(run, line)
       if (line.type === "system" && line.subtype === "background_tasks_changed") yield* input.backgroundChanged(run, line.tasks ?? [])
-      if (done.effects.some((e) => e._tag === "TurnStarted" || e._tag === "TurnEnded" || e._tag === "Echoed")) yield* background.sync(run.id)
+      if (done.turnStarted || done.effects.some((e) => e._tag === "TurnEnded" || e._tag === "Echoed")) yield* background.sync(run.id)
       if (line.type === "control_response") yield* input.onStopResponse(run, line.response.request_id, line.response.subtype === "success")
       // The context meter: each request's context, and the breakdown asked for at a turn's end (before the input closes).
       if (line.type === "assistant") yield* meter.onAssistant(run, line)
@@ -315,15 +384,17 @@ export const ClaudeOutput = Layer.effect(
       else if (line.type === "control_cancel_request") yield* requests.cancel(run, line.request_id)
     })
 
+    /** A line that doesn't decode: logged (unless it is one the board ignores) and skipped. */
+    const skip = Effect.fnUntraced(function* (run: Run, problem: LineProblem, end: number) {
+      if (problem._tag === "Malformed" || problem._tag === "Unknown" || problem._tag === "NotJson") {
+        yield* Effect.logWarning(`run=${run.id} skipping a line of its output: ${problem._tag}${"type" in problem ? ` ${yield* toJson(problem.type)}` : ""}`)
+      }
+      return yield* repo.saveOffset(run.id, end)
+    })
+
     const handle = Effect.fnUntraced(function* (run: Run, raw: string, end: number) {
       const decoded = decodeLine(raw)
-      if (Result.isFailure(decoded)) {
-        const problem = decoded.failure
-        if (problem._tag === "Malformed" || problem._tag === "Unknown" || problem._tag === "NotJson") {
-          yield* Effect.logWarning(`run=${run.id} skipping a line of its output: ${problem._tag}${"type" in problem ? ` ${yield* toJson(problem.type)}` : ""}`)
-        }
-        return yield* repo.saveOffset(run.id, end)
-      }
+      if (Result.isFailure(decoded)) return yield* skip(run, decoded.failure, end)
       const line = decoded.success
       const exit = yield* Effect.exit(record(run, line, raw, end))
       if (Exit.isSuccess(exit)) {
@@ -336,14 +407,75 @@ export const ClaudeOutput = Layer.effect(
       return yield* Effect.failCause(exit.cause)
     })
 
+    const one = (run: Run, line: string, end: number) =>
+      handle(run, line, end).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) => Effect.logError(`run=${run.id} handling a line of output failed`, cause).pipe(Effect.andThen(repo.saveOffset(run.id, end))),
+        ),
+        Effect.asVoid,
+      )
+
+    /**
+     * A chunk's lines, up to `CHUNK_LINES` to a transaction, each transaction ending after a line that isn't
+     * `deferrable`; what follows each line's commit follows the transaction's, line by line in order. A transaction
+     * that fails is rolled back whole, and its first line is handled on its own, as any line was before.
+     */
+    const chunk = Effect.fnUntraced(function* (run: Run, lines: ReadonlyArray<readonly [line: string, end: number]>) {
+      let from = 0
+      while (from < lines.length) {
+        const start = from
+        // Null when it failed (and was rolled back); an interruption stops the follower.
+        const applied = yield* db
+          .tx(
+            Effect.gen(function* () {
+              const done: Array<readonly [ClaudeLine, After]> = []
+              let prev: After | null = null
+              let next = start
+              for (const [raw, end] of lines.slice(start, start + CHUNK_LINES)) {
+                next += 1
+                const decoded = decodeLine(raw)
+                if (Result.isFailure(decoded)) {
+                  yield* skip(run, decoded.failure, end)
+                  continue
+                }
+                const after: After | null = yield* recordIn(run, decoded.success, raw, end, prev)
+                if (after === null) break
+                done.push([decoded.success, after])
+                if (!deferrable(decoded.success, after)) break
+                prev = after
+              }
+              return { done, next }
+            }),
+          )
+          .pipe(
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              () => Effect.succeed(null),
+            ),
+          )
+        if (applied !== null) {
+          for (const [line, after] of applied.done) {
+            yield* follow(run, line, after)
+            if (after.turnEnded) yield* input.turnEnded(run)
+          }
+          from = applied.next
+        } else {
+          const [raw, end] = lines[start] ?? ["", 0]
+          yield* one(run, raw, end)
+          from = start + 1
+        }
+      }
+    })
+
     return RunOutput.of({
-      handle: (run, line, end) =>
-        handle(run, line, end).pipe(
+      handle: (run, line, end) => one(run, line, end).pipe(Effect.annotateLogs({ module: "runs" })),
+      handleChunk: (run, lines) =>
+        chunk(run, lines).pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
-            (cause) => Effect.logError(`run=${run.id} handling a line of output failed`, cause).pipe(Effect.andThen(repo.saveOffset(run.id, end))),
+            (cause) => Effect.logError(`run=${run.id} handling its output failed`, cause),
           ),
-          Effect.asVoid,
           Effect.annotateLogs({ module: "runs" }),
         ),
     })

@@ -12,6 +12,11 @@ export interface RunOutputShape {
    * the next line. `run` is the run as it was when following began: its progress columns are the row's.
    */
   readonly handle: (run: Run, line: string, end: number) => Effect.Effect<void>
+  /**
+   * The lines of a chunk read at once, in order, each with the offset after it: as `handle` would one by one, but
+   * several to a transaction (a handler that has it says how). The follower uses it when there is one.
+   */
+  readonly handleChunk?: (run: Run, lines: ReadonlyArray<readonly [line: string, end: number]>) => Effect.Effect<void>
 }
 
 /**

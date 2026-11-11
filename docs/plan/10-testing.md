@@ -95,3 +95,25 @@ Taken at the end of M2 and again before the switch, on a scrubbed copy of a live
 Schema decoding is the cost Effect adds on the hot path. If the follower misses its limit, its line schemas are
 decoded with precompiled decoders and the per-line span is dropped (`Effect.fnUntraced`), before anything else is
 tried.
+
+As measured at M2 (HE-4), the follower: 10,000 Claude `assistant` text lines (`flood-claude`) through the real
+ia-shim and the server's follower, from the first line written to the last item stored, on a test server seeded with
+2,848 tasks and left 20 s to settle; the old server measured the same way on the same day. The first M2 run had new
+9,216 ms against old 875 ms (10.5×) on a busier machine; the table is one day's machine, medians of 3 to 7 runs.
+"CPU / line" is the server's user and system time from the task's creation to the last item, over 10,000.
+
+| Server                                                                                      | 10,000 lines | CPU / line | SQL / line |
+| ------------------------------------------------------------------------------------------- | ------------ | ---------- | ---------- |
+| Before (HE-4 at 2b43633)                                                                    | 5,880 ms     | 0.64 ms    | 23.0       |
+| Precompiled row decoders, no per-line span                                                  | 5,450 ms     |            | 23.0       |
+| No task read per write, background synced on real turn starts only, no `startTurn` per line | ~2,000 ms¹   |            | 13.0       |
+| `agent_at` with the offset, one statement for a thread's numbers, tracer off                | 1,670 ms     | 0.20 ms    | 10.0       |
+| Up to 64 lines to a transaction, synchronous row decoding (now)                             | 770 ms       | 0.098 ms   | 6.1        |
+| Old server                                                                                  | 653 ms       | 0.072 ms   | 20         |
+
+¹ With the SQL statements counted, which slows it a little. The old server's statements are the first M2 run's count.
+
+1.18× the old server's time (limit 1.5×). Less the wait for the follower's first poll (up to `FOLLOW_POLL`, 200 ms,
+whichever server), 736 ms against 622 ms. The profile of what is left: the Effect runtime about a third, node:sqlite
+a fifth, schema decoding and encoding a tenth, GC 7%; the follower's design is in
+[07-agents.md](07-agents.md#the-follower-after-the-m2-measurement-he-4).

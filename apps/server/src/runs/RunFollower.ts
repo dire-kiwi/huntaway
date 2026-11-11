@@ -9,8 +9,9 @@ import { RunRepo } from "./RunRepo.ts"
 import { Shim } from "./Shim.ts"
 
 // Following a run (docs/plan/07-agents.md, Following; inventory 01, section 5): read its output from the saved offset,
-// hand each line to `RunOutput` with the offset after it (the handler saves it with what the line says; the follower
-// saves it after a line whose handling failed, and after the chunk), and once it has exited and everything is read,
+// hand each line to `RunOutput` with the offset after it, a chunk's lines together where the handler takes them so
+// (the handler saves it with what the line says; the follower saves it after a line whose handling failed, and after
+// the chunk), and once it has exited and everything is read,
 // tell the reactor (`RunExited`). One fiber per live run, in a `FiberMap` keyed by run id. Interrupting one never signals
 // the agent: agents outlive the server, and stopping one is `Runs.stop`'s.
 
@@ -61,7 +62,10 @@ export class RunFollower extends Context.Service<RunFollower, RunFollowerShape>(
           let idle = 0
           while (true) {
             const chunk = yield* dir.readOutput(run.id, offset)
-            for (const [i, line] of chunk.lines.entries()) yield* apply(run, line, chunk.ends[i] ?? chunk.end)
+            const lines = chunk.lines.map((line, i) => [line, chunk.ends[i] ?? chunk.end] as const)
+            if (output.handleChunk !== undefined && lines.length > 1) {
+              yield* output.handleChunk(run, lines).pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} handling its output failed`, cause)))
+            } else for (const [line, end] of lines) yield* apply(run, line, end)
             // Past the end of what was read (a file cut short), or nothing at all applied: as far as was read.
             if (chunk.end > offset) offset = yield* repo.saveOffset(run.id, chunk.end)
             if (chunk.exit !== null && chunk.drained) return yield* exited(run, chunk.exit, yield* dir.errorTail(run.id))
@@ -84,6 +88,8 @@ export class RunFollower extends Context.Service<RunFollower, RunFollowerShape>(
         }).pipe(
           Effect.onError((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logError(`run=${run.id} following its output failed`, cause))),
           Effect.annotateLogs({ module: "runs" }),
+          // No span per line and per statement: nothing collects them, and they were a good part of a line's cost.
+          Effect.withTracerEnabled(false),
         )
 
       return RunFollower.of({

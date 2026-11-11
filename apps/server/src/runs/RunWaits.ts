@@ -103,7 +103,7 @@ export class RunWaits extends Context.Service<RunWaits, RunWaitsShape>()("huntaw
         )
       })
 
-      const onLine = Effect.fn("RunWaits.line")(function* (run: Run, line: ClaudeLine) {
+      const onLine = Effect.fnUntraced(function* (run: Run, line: ClaudeLine) {
         if (line.type === "result" || isActivity(line)) yield* over(run.task_id, run.id)
         else if (line.type === "system" && (line.subtype === "task_notification" || line.subtype === "task_updated")) {
           const status = subagentEnd(line)
