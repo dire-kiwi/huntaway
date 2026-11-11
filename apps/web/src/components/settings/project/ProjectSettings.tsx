@@ -9,6 +9,7 @@ import { navigate } from "../../../state/route"
 import { rpc } from "../../../state/rpc"
 import { ArchiveProjectModal } from "../ArchivedProjects"
 import { ProjectAgentTools } from "../AgentTools"
+import { ProjectAutomations } from "../Automations"
 import { Button, ConfirmModal, errorText, MenuButton, NotYet } from "../../ui"
 import { toJson } from "../../ui/json"
 import { AgentsTab } from "./AgentsTab"
@@ -19,18 +20,13 @@ import { ProjectStatusScripts } from "./StatusScriptsTab"
 import { WorktreesTab } from "./WorktreesTab"
 
 // Step 1 (docs/plan/09-frontend.md). Every host has every tab, so the old API gates are gone. The tabs that are other
-// areas' are marked slots until they come: Automations
-// (Automations' ProjectAutomations, 6.5) and Workflows (Workflows' ProjectWorkflows, 6.6).
+// areas' are marked slots until they come: Workflows (Workflows' ProjectWorkflows, 6.6).
 
 /** A project's fields as the form edits them. */
 export type ProjectForm = { -readonly [K in keyof Project]: Project[K] }
 /** Changes one field of the form. */
 export type SetField = <K extends keyof Project>(k: K, v: Project[K]) => void
 
-/** The project's automations (6.5's `ProjectAutomations`). */
-function ProjectAutomations(_props: { project: Project }) {
-  return <NotYet what="Automations" />
-}
 /** The project's workflows (6.6's `ProjectWorkflows`). */
 function ProjectWorkflows(_props: { project: Project }) {
   return <NotYet what="Workflows" />

@@ -2,6 +2,8 @@
 import { AgentToolsRpcs } from "./agentTools.ts"
 import { ApprovalRulesRpcs } from "./approvalRules.ts"
 import { AttachmentRpcs } from "./attachments.ts"
+// 6.5
+import { AutomationRpcs } from "./automations.ts"
 import { BoardRpcs } from "./board.ts"
 import { CheckpointRpcs } from "./checkpoints.ts"
 // 6.10: computer use.
@@ -51,6 +53,8 @@ export const HostRpcs = HostRpcGroup.merge(
   AgentToolsRpcs,
   PushRpcs,
   TaskDocumentRpcs,
+  // 6.5
+  AutomationRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

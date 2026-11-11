@@ -184,7 +184,8 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
           // The message the next turn starts with (checkpoints).
           ...(newTurn ? { write_no: writeNo } : {}),
         })
-        // The automation runs it carried are this run's, for their cost: plan task 6.5 (`Routines.takenIn`).
+        // The automation runs it carried are this run's, for their cost (6.5).
+        if (steer.automation_run_id !== null) yield* repo.chargeAutomationRuns(run.id, [steer.automation_run_id])
         yield* publish(run.task_id)
         return true
       })

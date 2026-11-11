@@ -3,6 +3,8 @@ export * from "./agentConfig.ts"
 export * from "./agentTools.ts"
 export * from "./approval.ts"
 export * from "./attachment.ts"
+// 6.5
+export * from "./automation.ts"
 export * from "./capabilities.ts"
 // 6.10: computer use.
 export * from "./desktop.ts"
@@ -23,6 +25,8 @@ export * from "./rpc/configArchives.ts"
 export * from "./rpc/fanout.ts"
 export * from "./rpc/githubRepos.ts"
 export * from "./rpc/attachments.ts"
+// 6.5
+export * from "./rpc/automations.ts"
 export * from "./rpc/board.ts"
 export * from "./rpc/checkpoints.ts"
 // 6.10: computer use.

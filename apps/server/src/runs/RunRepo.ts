@@ -98,6 +98,11 @@ export interface RunRepoShape {
   readonly startTurn: (run: RunId) => Effect.Effect<boolean>
   /** Record the run as exited at `at`. False when it had already ended. */
   readonly end: (run: RunId, at: Timestamp) => Effect.Effect<boolean>
+  /**
+   * 6.5: the run took in the messages of these automation runs (a project automation's, a thread-mode routine's): they
+   * are its, for their cost (the old `routines.taken_in`), whether it started with them or was steered them.
+   */
+  readonly chargeAutomationRuns: (run: RunId, automationRuns: ReadonlyArray<string>) => Effect.Effect<void>
 }
 
 export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-server/runs/RunRepo") {
@@ -211,6 +216,10 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
             Effect.map((rows) => rows.length > 0),
             Effect.orDie,
           ),
+        chargeAutomationRuns: (run, automationRuns) =>
+          automationRuns.length === 0
+            ? Effect.void
+            : sql`UPDATE automation_runs SET agent_run_id = ${run} WHERE ${sql.in("id", automationRuns)}`.pipe(Effect.asVoid, Effect.orDie),
       })
     }),
   )

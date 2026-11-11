@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { AgentConfig } from "./agentConfig.ts"
 import { Approval, ApprovalAction, ApprovalRulesView } from "./approval.ts"
 import { HostSettings } from "./host.ts"
-import { HostId, ProfileId, ProjectId, RequestId, TaskId } from "./ids.ts"
+import { AutomationId, HostId, ProfileId, ProjectId, RequestId, TaskId } from "./ids.ts"
 import { Pen } from "./pen.ts"
 import { Profile } from "./profile.ts"
 import { Project } from "./project.ts"
@@ -80,6 +80,17 @@ export const RoutineReported = Schema.Struct({
   text: Schema.String,
   ...seq,
 })
+/**
+ * 6.5: an automation (or routine) was made, changed or deleted, or a run or delivery of it was recorded or its cost
+ * changed: its owner's list and its runs are read again. `project_id` is null for a profile's routine.
+ */
+export const AutomationsChanged = Schema.Struct({
+  type: Schema.Literal("automations_changed"),
+  project_id: Schema.NullOr(ProjectId),
+  profile_id: ProfileId,
+  automation_id: AutomationId,
+  ...seq,
+})
 
 export const BoardEvent = Schema.Union([
   Hello,
@@ -99,6 +110,8 @@ export const BoardEvent = Schema.Union([
   // 6.8
   AssistantReplied,
   RoutineReported,
+  // 6.5
+  AutomationsChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

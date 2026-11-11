@@ -1,6 +1,8 @@
 import { Effect } from "effect"
 import { McpServers } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
+// 6.5
+import { automationTools } from "./automations.ts"
 import { penTools } from "./pens.ts"
 import { projectTools } from "./projects.ts"
 import { questionTools } from "./questions.ts"
@@ -67,6 +69,8 @@ export const BoardTools = McpServers.register(
       ...Object.values(yield* taskTools),
       ...Object.values(yield* penTools),
       ...Object.values(yield* reviewTools),
+      // 6.5
+      ...Object.values(yield* automationTools),
     ]
     return all.toSorted((a, b) => rank(a) - rank(b))
   }),
