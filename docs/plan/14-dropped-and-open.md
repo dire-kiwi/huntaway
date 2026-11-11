@@ -111,7 +111,15 @@ read or reasoned, not run.
   100 MB for all of `effect`. Measured at M2 (HE-4) against the old server on the same synthetic data: within the limits
   of [10-testing.md](10-testing.md#measurements) (memory 1.13–1.33×, ready in ~0.55 s, event-loop p99 better), after
   the follower was brought within 1.5×; not yet on a scrubbed copy of a live board (that needs the importer, M9).
-- `tsrs` compiling the whole server for a release; the size of a release package.
+- ~~`tsrs` compiling the whole server for a release; the size of a release package~~: checked in M8 (HE-6), with
+  TypeScript 7's own `tsc` instead of `tsrs` (it emits, and the workspace has it): the whole server and the two
+  workspace packages it runs compile in under a second with the type check, and the package starts, migrates a new
+  board, answers `/api/health` and runs its hooks in 23–36 ms. 173 MB unpacked (Node 144 MB, `server/` 25 MB), a 53 MB
+  tarball, built in 8 s: [02-repository.md](02-repository.md#releases). As of that check the packaged server served
+  its `ui/` only when given `--ui-dir` (it looked for `web/dist` beside `server/`), and reported the constant version
+  and no commit (it did not read `build.json` yet): `scripts/release-check.sh` fails until both are fixed (with
+  `HUNTAWAY_UI_DIR` and the commit check set aside, the rest passed). The macOS
+  build, the desktop packages and the release workflow itself have not run (nothing is published from a branch).
 - ~~Three names in the lint configuration~~: checked in M0 (HE-3): `import/no-cycle` (with the `import` plugin listed),
   `no-restricted-imports` with `{ patterns: [{ group, message }] }`, and `react/rules-of-hooks`/`react/exhaustive-deps`.
   The old line said: `import/no-cycle`, the `react/*` rules and the options of
