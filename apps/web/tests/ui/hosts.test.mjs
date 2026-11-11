@@ -97,7 +97,10 @@ test("a host linked in Settings shows its projects and tasks on the board; its t
     host.kill()
     await ui.run(["wait css=aside >> text=/Build box · offline/", "wait css=[data-task] >> text=Renamed on the host"])
     host.restart()
-    await ui.run(["gone css=aside >> text=/Build box · offline/"])
+    // The hub dials it again on its back-off (doubling to 30 s while it was away), then the page's relayed session
+    // reconnects on its own: each may take longer than a step's 5 seconds on a slow runner.
+    await eventually(async () => assert.ok((await hub.rpc("hub.hosts.list")).find((h) => h.id === linked.host_id)?.connected), 45000)
+    await eventually(() => ui.run(["gone css=aside >> text=/Build box · offline/"]), 20000)
     await host.rpc("tasks.update", { id: remoteTask.id, patch: { title: "Back again" } })
     await ui.run(["wait css=[data-task] >> text=Back again"])
 
