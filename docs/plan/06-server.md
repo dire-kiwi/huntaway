@@ -668,6 +668,43 @@ shim (`ia-pty`) if Python proves a burden on a release host. Flow control by ack
 from a hub), `Releases` (check GitHub, download, verify, stage, try, settle, roll back; `app/state.json` shared with
 the desktop shell), `Service` (the systemd user unit with `KillMode=process`). `Analytics`, `Disk`.
 
+#### As built in 6.10 (HE-7): computer use
+
+- **`desktop/`** (below `mcp/`): `CuaDriver` (the one `cua-driver mcp`: found from `HUNTAWAY_CUA_DRIVER`, the newest
+  `<data>/cua-driver/<v>/cua-driver`, or PATH; started by the first call that needs it, under a semaphore; stopped after
+  10 minutes idle by a `FiberHandle` sleep, on the test clock; stopping closes stdin, then the process's scope (a child of
+  the layer's, so a server that stops kills it) after 5 s; the stdio client is `driverProcess.ts`, shaped as
+  `agents/codex/rpc.ts`; the session's variables come from the server's `Config`, else `systemctl --user
+  show-environment`, else a `wayland-N` socket; the lock from logind and `pgrep`, kept 2 s), `DesktopClaims` (holder
+  and viewer targets in `Ref`s, lease 120 s), `DesktopOpRepo` (the journal; `boot` is `Events.boot`; **decided**: a
+  second call with an `op_id` already there is found in the insert's transaction, not by matching SQLite's UNIQUE
+  message), `CuaInstall` (download through `HttpClient`, size refused as it passes, SHA-256 with `effect/crypto`'s
+  `Digest` over the whole archive in memory, `tar -t` checked before `tar -x`, unpacked aside then renamed, older versions
+  removed, the driver stopped; `settled` waits for the install going), `Desktop` (the page's and the viewer's: status,
+  on/off, install, uninstall, stop, check, `frame` with a 400 ms cache, `ops`), `DesktopTools` and `tools.ts` (the
+  server's 11 tools, word for word, through `ToolCalls`; refusals and the driver's failures are error results with the
+  old words, not `ToolError`'s `Error: …`). Pure parts in `cua.ts` (the pinned 0.41.3 archives, `sessionEnv`,
+  `forAgent`, `actSummary`).
+- **How runs get the server**: `McpServers` has `serveWhen(server, gate)` and `serves(server)`; `DesktopTools`
+  registers its tools and the gate (computer use on and a driver found), and `mcp/transport/control.ts`'s
+  `served.desktop` asks it at each launch. `LaunchFacts` reads `served` once and gives the system prompt `desktopHost`
+  (`RunTold.desktopHost`), so the desktop note appears exactly when `mcp.json` has the server.
+- **Configuration** (`ServerConfig`, all three in `SERVE_ENV`): `HUNTAWAY_CUA_DRIVER` (`cuaDriver`),
+  `HUNTAWAY_CUA_DRIVER_RELEASE` (JSON `cuaRelease`, a fake download), `HUNTAWAY_DESKTOP_LOCKED` (`desktopLocked`; when
+  set, the session and the lock aren't asked of the machine). `layerTest` names a driver that isn't there, a release on
+  an unreachable port and an unlocked screen, so no test reaches this machine's desktop or GitHub.
+  `scripts/test-server.sh --fake-desktop` runs `packages/testing/bin/fake-cua-driver` (logging to
+  `<data>/fake-cua.log`); tests use `fakeCuaDriver` (a folder with the call log and a `fail` file).
+- **RPCs**: the `desktop` group (05-protocol.md): `status`, `frame`, `ops` are `terminal`; `setEnabled`, `install`
+  (`Unavailable` with no release for the platform), `uninstall` (`Conflict` `in_use` while installing), `stop`, `check`
+  are `admin`. No events: the page and the viewer poll, as before.
+- **Changed**: an argument a desktop tool doesn't have is refused (`ToolCalls`' argument check), where the old server
+  dropped it; `act` loses `destructiveHint` and `initialize` its `title` (`McpServers` gives `readOnlyHint` only); the
+  answers kept 10 minutes for a reconnect are `mcp_calls`' (07-agents.md).
+- **Not here**: no host capability names computer use (the task view asks `desktop.status`; capabilities come with M7's
+  hosts). Not run: a real Cua Driver, a real screen lock, a real download from GitHub, Claude Code or Codex taking the
+  server's schemas.
+
 ## Hook commands<a id="hook-commands"></a>
 
 `huntaway approval-hook`, `gh-hook` and `gh-run` are started by an agent CLI for a tool call, the first two for

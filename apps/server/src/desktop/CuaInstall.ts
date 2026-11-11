@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect"
+import { Clock, Context, Deferred, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect"
 import { Digest } from "effect/crypto"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import type { DesktopInstall } from "@huntaway/contracts"
@@ -22,6 +22,8 @@ export class InstallError extends Schema.TaggedError<InstallError, { readonly br
 export interface CuaInstallShape {
   /** The latest install, which the host's page shows until the next. */
   readonly current: Effect.Effect<DesktopInstall | null>
+  /** Waits until the install going (if any) has ended, and says how it went. */
+  readonly settled: Effect.Effect<DesktopInstall | null>
   /** Start installing `release` in the background (or keep the install that's going), and say how it's going. */
   readonly start: (release: CuaRelease) => Effect.Effect<DesktopInstall>
   /** Download, check and unpack `release` into `<root>/<version>`, now (`start` runs this). */
@@ -46,6 +48,8 @@ export class CuaInstall extends Context.Service<CuaInstall, CuaInstallShape>()("
       const digest = yield* Digest.Digest
       const scope = yield* Effect.scope
       const job = yield* Ref.make<DesktopInstall | null>(null)
+      /** Done when the latest install has ended. */
+      const ended = yield* Ref.make(yield* Deferred.make<void>())
       const root = driver.installRoot
 
       const progress = (change: Partial<DesktopInstall>) => Ref.update(job, (j): DesktopInstall | null => (j === null ? j : Object.assign({}, j, change)))
@@ -128,6 +132,8 @@ export class CuaInstall extends Context.Service<CuaInstall, CuaInstallShape>()("
           going(j) ? [[false, j], j] : [[true, fresh], fresh],
         )
         if (!began) return current
+        const done = yield* Deferred.make<void>()
+        yield* Ref.set(ended, done)
         yield* install(release).pipe(
           // The new version takes over from the next call.
           Effect.andThen(Effect.flatMap(nowTimestamp, (at) => progress({ phase: "done", finished_at: at }))),
@@ -137,6 +143,7 @@ export class CuaInstall extends Context.Service<CuaInstall, CuaInstallShape>()("
               Effect.andThen(Effect.logError(`installing Cua Driver ${release.version} failed: ${e.reason}`)),
             ),
           ),
+          Effect.ensuring(Deferred.succeed(done, undefined)),
           Effect.forkIn(scope),
         )
         return current
@@ -144,6 +151,11 @@ export class CuaInstall extends Context.Service<CuaInstall, CuaInstallShape>()("
 
       return CuaInstall.of({
         current: Ref.get(job),
+        settled: Effect.gen(function* () {
+          if (!going(yield* Ref.get(job))) return yield* Ref.get(job)
+          yield* Deferred.await(yield* Ref.get(ended))
+          return yield* Ref.get(job)
+        }),
         start,
         install,
         uninstall: fs.remove(root, { recursive: true, force: true }).pipe(Effect.ignore, Effect.andThen(Ref.set(job, null))),

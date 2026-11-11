@@ -234,7 +234,8 @@ export class CuaDriver extends Context.Service<CuaDriver, CuaDriverShape>()("hun
         const at = yield* nowTimestamp
         yield* setStatus((s) => ({ ...s, state: "starting", error: null, started_at: at }))
         const driverEnv = yield* freshEnv
-        const scope = yield* Scope.make()
+        // A child of the layer's: the server stopping kills a driver still running.
+        const scope = yield* Scope.fork(layerScope)
         const p = yield* startDriver(found.path, driverEnv).pipe(Scope.provide(scope), Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner))
         const handshake = Effect.gen(function* () {
           const init = yield* p.request(
