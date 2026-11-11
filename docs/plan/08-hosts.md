@@ -130,6 +130,12 @@ Push notifications and settings sync on a hub need other hosts' events. `LinkCon
 subscription per connected link for the server's own use and offers the merged stream to those two services. The
 UI does not use it.
 
+As built (7.5): `LinkConnections` does not offer that stream yet, so `SettingsSyncExchange` opens its own
+`board.watch` on each connected link's client that takes part (a `FiberMap` keyed by link, opened again a second after
+it ends, replaced when the link's connection is), and keeps only `settings_changed`, `profiles_changed` and
+`approval_rules`. Each such subscription starts with the host's whole snapshot; when push needs the events too, the
+one shared stream should replace it.
+
 ### Discovery, SSH, settings sync
 
 Ported as they are, on Effect's primitives:
@@ -141,6 +147,39 @@ Ported as they are, on Effect's primitives:
   with the server.
 - `SettingsSync`: the merge is a pure function (idempotent, commutative, associative) taken with its property
   tests; the exchange loop is a debounced fiber on the hub. Subtle and already right: port it, do not redesign it.
+
+As built (7.5):
+
+- **Discovery** (`hosts/Discovery.ts`, `hosts/discovery/`): the DNS encoding and parsing are plain functions
+  (`dns.ts`); the responder and the browser (`mdns.ts`) are on a small `Udp` service over Node's `dgram`, not on
+  `DatagramSocket`. Effect's `DatagramSocket` joins a group, but sets the interface multicast goes out of once, when the
+  socket opens, and the responder answers out of every LAN interface in turn from its one socket on 5353; nor has Effect
+  a service for the machine's interfaces. `Udp.layerNode` takes Node's `createSocket` and `networkInterfaces` from
+  `Main.ts`, as Node's HTTP server is, so no other file imports Node. Each socket's datagrams are handled by one fiber,
+  so two answers never interleave their interfaces (the old `serial_sender`). The TXT record carries `proto` (the RPC
+  protocol) where it had `api`; `FoundHost` gained `protocol`. Tailscale peers are asked by `tailscale status --json`
+  (a `Tailscale` layer, 3 s) and tried on the HTTP port this hub listens on (7879 when it took a free one), since a
+  fleet runs one port. The mesh reads each connected link's `hub.hosts.list`, so `PeerRpcs` includes `HubHostRpcs`; a
+  host found that way must answer `/api/health` with its own id (the loopback fallback for hosts too old to give one is
+  gone with the probes for old hosts). The responder starts once the server listens (`serverLayer`), and not with
+  `--no-discovery`, on a loopback-only host, or on a test board; `--no-discovery` also keeps `hub.hosts.discover` to
+  the mesh.
+- **Settings sync** (`hosts/SettingsSync.ts`, `SettingsSyncRepo.ts`, `SettingsSyncExchange.ts`, `hosts/settingsSync/`):
+  `observe` runs right after a change, on the `settings_changed`, `profiles_changed` and `approval_rules` events
+  (`SettingsSync.observer`), and at the start of every read, merge and resolve, in a transaction of its own, rather
+  than inside the transactions that make the changes: `HostSettings`, `Profiles` and `ApprovalRules` need not know about
+  sync, and a write that announces nothing is still caught at the next look, as before. Writes go through the
+  repositories with the old checks (`settingsSync/fields.ts`), and the events a pass announces carry what the board
+  needs (`settings_changed` with the settings, `profiles_changed` through `AgentConfigs.emitChanged`, `approval_rules`
+  with the view). Sync off is `Unavailable` (was 409). The exchange is `coalesced`: a dropping queue of one, so triggers
+  during the 200 ms wait or a run make one more run after it. Only links on this protocol with `settings_sync` in their
+  hello take part (`takesPart`). Property tests found one gap in the old merge: it is associative for changes made
+  apart, but when an entry another covers also lost to a third, hosts that merged in different orders agree on the
+  value and vector and can keep different `lost` lists, which equal vectors then never reconcile. Ported as it is.
+- **Copying a config** (`hosts/CopyConfig.ts`): through each host's RPCs (this host's services directly); the config
+  is matched by name and made on the target if missing. The login travels as the config's archive, which comes with
+  6.11: until then the copy fails `Unavailable` after finding the source, before anything is made on the target.
+  `profile` (copying a profile's login, hosts before API 20) is refused.
 
 Paired devices (codes, device tokens, revocation) wait for the phone app. The session and scope design already has
 their place: a device's session carries `read` and `operate`, checked by the host that serves each call, which

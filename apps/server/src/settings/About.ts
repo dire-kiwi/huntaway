@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import { PROTOCOL } from "@huntaway/contracts"
+import { Capability, PROTOCOL } from "@huntaway/contracts"
 import type { Health, HostInfo } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
@@ -20,7 +20,7 @@ export class About extends Context.Service<About, AboutShape>()("huntaway-server
       const identity = yield* Identity
       const config = yield* ServerConfig
       const dataDir = yield* DataDir
-      const capabilities: ReadonlyArray<string> = []
+      const capabilities: ReadonlyArray<string> = [Capability.settingsSync]
       const health: Health = { ok: true, host_id: identity.hostId, version: config.version, protocol: PROTOCOL, capabilities, commit: config.commit }
       const info: HostInfo = {
         host_id: identity.hostId,

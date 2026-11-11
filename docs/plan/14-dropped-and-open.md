@@ -19,7 +19,7 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | Legacy shapes: `kind: "scratch"`, document names as `task_type`, workflow nodes `set_status` and `trigger` on a status | Old rows                                  | Converted                                                 |
 | Run folder formats 1 to 4; reading sessions "from before runs kept their folder"                 | Runs from older builds                                          | No run is live at the switch                              |
 | The `issue-agent` command, the `issue_agent` MCP server name, the `IA_*` server variables        | The former name                                                 | Old threads still show their old tool names               |
-| `--broker*` flags, `ssh-host --name/--no-start`, `/profiles/{id}/scratch`, `/profiles/{id}/claude-config` | Removed features kept as no-ops                        | —                                                         |
+| `--broker*` flags, `ssh-host --name/--no-start`, `/profiles/{id}/scratch`, `/profiles/{id}/claude-config` (and with it `profile` in `hub.hosts.copyConfig`) | Removed features kept as no-ops                        | —                                                         |
 | The serde emulation: `_from_json` readers that reproduce Rust's error texts, sorted-key JSON, `hidden()` fields, 422 texts | The Rust port                         | —                                                         |
 | The test seams: `IN_TEST`, `when`/`reached`, `*_BIN` variables read by the code, shortened constants | Tests without layers or a test clock                       | —                                                         |
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
@@ -131,6 +131,10 @@ read or reasoned, not run.
 - Whether any host has threads still on messages. Only one board's database was looked at; the importer checks each.
 - That every thread resumes its agent session after an import, with stored paths made absolute (reasoned from how
   the old server pins a session to its folder; M9 tests it on a copy).
+- Discovery on a real network (7.5, HE-6): the responder and browser were run on loopback with sockets of their own
+  and on a fake socket, never on UDP 5353 or the multicast group of a machine with a live board; multicast out of each
+  LAN interface, renewal against `igmp_max_memberships`, and `tailscale status --json` against a real Tailscale were
+  not run.
 - The task count and sizes: an estimate from line counts.
 - The inventory itself: eleven notes written by agents reading the old source, without running it. One note's
   section on the docs server is second-hand (it says so). Where a note and the old source disagree, the source is

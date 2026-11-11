@@ -3,10 +3,12 @@ import { LinkRpcs } from "./link.ts"
 import { AttachmentRpcs } from "./attachments.ts"
 import { BoardRpcs } from "./board.ts"
 import { HostRpcGroup } from "./host.ts"
+import { HubHostRpcs } from "./hub.ts"
 import { PenRpcs } from "./pens.ts"
 import { PermissionRpcs } from "./permissions.ts"
 import { ConfigRpcs, ProfileRpcs } from "./profiles.ts"
 import { ProjectRpcs } from "./projects.ts"
+import { SettingsSyncRpcs } from "./settingsSync.ts"
 import { TaskRpcs } from "./tasks.ts"
 import { ThreadRpcs } from "./threads.ts"
 
@@ -22,12 +24,16 @@ export const HostRpcs = HostRpcGroup.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
+  SettingsSyncRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 
 /** What a client of its own board can call: `HostRpcs` and `PublicRpcs` (`HubRpcs` joins with the hosts, M7). */
 export { PublicRpcs } from "./public.ts"
 
-/** What a hub calls on a host it links: the host's own groups and `link.*` (docs/plan/08-hosts.md). */
-export const PeerRpcs = HostRpcs.merge(LinkRpcs)
+/**
+ * What a hub calls on a host it links: the host's own groups, `link.*` (docs/plan/08-hosts.md), and the host's own
+ * directory of hosts (`hub.hosts.list`), which discovery reads for the hosts a linked host links.
+ */
+export const PeerRpcs = HostRpcs.merge(LinkRpcs, HubHostRpcs)
 export type PeerRpcs = typeof PeerRpcs

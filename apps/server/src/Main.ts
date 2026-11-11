@@ -4,7 +4,9 @@ import { Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
+import { createSocket } from "node:dgram"
 import { createServer } from "node:http"
+import { networkInterfaces } from "node:os"
 import {
   ApprovalRulesRpcs,
   AttachmentRpcs,
@@ -18,6 +20,7 @@ import {
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
+  SettingsSyncRpcs,
   TaskRpcs,
   ThreadRpcs,
 } from "@huntaway/contracts"
@@ -33,12 +36,19 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { CopyConfig } from "./hosts/CopyConfig.ts"
+import { Discovery } from "./hosts/Discovery.ts"
+import { Tailscale } from "./hosts/discovery/Tailscale.ts"
+import { Udp } from "./hosts/discovery/Udp.ts"
 import { Hubs } from "./hosts/Hubs.ts"
 import { LinkConnections } from "./hosts/LinkConnections.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
 import { Links } from "./hosts/Links.ts"
 import { Relay } from "./hosts/Relay.ts"
 import { SessionSeal } from "./hosts/SessionSeal.ts"
+import { SettingsSync } from "./hosts/SettingsSync.ts"
+import { SettingsSyncExchange } from "./hosts/SettingsSyncExchange.ts"
+import { SettingsSyncRepo } from "./hosts/SettingsSyncRepo.ts"
 import { Ssh } from "./hosts/Ssh.ts"
 import { LinkStreamRoute } from "./http/linkStream.ts"
 import { RelayRoute } from "./http/relay.ts"
@@ -104,6 +114,7 @@ import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
+import { SettingsSyncHandlers } from "./rpc/settingsSync.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
 import { About } from "./settings/About.ts"
@@ -203,10 +214,24 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
-/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay. */
-const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, Hubs.layer).pipe(
-  Layer.provideMerge(LinkConnections.layer),
-  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer)),
+/**
+ * Node's UDP sockets and network interfaces, for mDNS: Effect's `DatagramSocket` can't pick the interface each datagram
+ * goes out of, nor list them (`hosts/discovery/Udp.ts`). Named here, as Node's HTTP server is.
+ */
+const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
+
+/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay, settings sync, discovery. */
+const HostsLive = Layer.mergeAll(
+  Links.layer,
+  Relay.layer,
+  Hubs.layer,
+  SettingsSyncExchange.layer,
+  SettingsSync.observer,
+  Discovery.layer,
+  CopyConfig.layer,
+).pipe(
+  Layer.provideMerge(Layer.mergeAll(LinkConnections.layer, SettingsSync.layer)),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer, SettingsSyncRepo.layer, UdpLive, Tailscale.layer)),
 )
 
 /**
@@ -283,6 +308,7 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   HubHostRpcs,
   LinkRpcs,
+  SettingsSyncRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -301,6 +327,7 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   HubHostHandlers,
   LinkHandlers,
+  SettingsSyncHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
@@ -327,8 +354,8 @@ export const RoutesLive = Layer.mergeAll(
  * server that is still starting (the old server bound first and held requests at a gate instead).
  */
 export const serverLayer = (config: ServerConfig["Service"]) =>
-  // Once it listens, this host dials the hubs it is a host of (step 6: links dial).
-  Layer.merge(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Hubs.dialIn).pipe(
+  // Once it listens, this host dials the hubs it is a host of and discovery answers on the port it got (step 6).
+  Layer.mergeAll(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Hubs.dialIn, Discovery.responder).pipe(
     Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
     Layer.provideMerge(AreasLive),
     Layer.provideMerge(PlatformLive),
