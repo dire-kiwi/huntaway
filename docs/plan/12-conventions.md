@@ -289,5 +289,7 @@ type checker or a pattern and fails with the file and line:
    area imports the platform and the areas above it, never one below.
 10. A repository (`*Repo.ts`, `*Store.ts`) imports no process, network or file-system service, so a transaction
     cannot contain a wait.
+11. `ReadOnlyMain`'s import graph reaches nothing under `lifecycle/` and no loop's layer
+    ([06-server.md](06-server.md#a-read-only-server)).
 
 These cover what a lint rule cannot see. Everything a rule can see is in [Linting](#linting).

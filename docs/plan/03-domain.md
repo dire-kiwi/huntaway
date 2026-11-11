@@ -200,7 +200,7 @@ Each keeps its old fields. What changes:
 | `Automation`, `Trigger`, `Action`, `AutomationRun` | `automations.ts` | `Action.task_type` no longer takes document names                                              |
 | `Workflow`, `Graph`, `Node`, `Edge`, `WorkflowRun` | `workflows.ts`   | Without the legacy node kinds (`set_status`, `trigger` on `status`/`finished`)                  |
 | `Doc`, `DocVersion`, `DocComment`… | `docs.ts`                       | Same                                                                                             |
-| `Host`, `HostInfo`, `HostSettings`, `ServerStatus`, `ReleaseStatus` | `server.ts` | `api_version`/`api_compat` replaced by `protocol` and `version`; `capabilities` stays. `HostSettings` without `thread_items` |
+| `Host`, `HostInfo`, `HostSettings`, `ServerStatus`, `ReleaseStatus` | `server.ts` | `api_version`/`api_compat` replaced by `protocol` and `version`; `capabilities` stays. `HostInfo` gains `read_only` (a [rehearsal](11-migration.md#rehearsal)). `HostSettings` without `thread_items` |
 | `Usage`, `UsageLimit`   | `usage.ts`                                 | Same                                                                                             |
 | `PendingPermission`, `Approval` | `permissions.ts`, `approvals.ts`   | `kind` is `tool \| project \| delete_task \| automation \| workflow`, each with its own input    |
 | `ApprovalRules`, `ApprovalAction` | `approval_rules.ts`              | Same                                                                                             |

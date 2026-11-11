@@ -62,7 +62,9 @@ export class Auth extends RpcMiddleware.Service<Auth, { provides: Session }>()("
   session and fails with `Forbidden` when the scope is missing. A structural test fails on an RPC without one.
 - **Who gets what.** The board token: every scope but `link`. A link: `link`, and, when it relays for a client, that
   client's scopes and no more. A paired device (`read` and `operate` only) is the third kind of session; it is in
-  the contract so that scopes are designed for it, and is implemented with the phone app, later.
+  the contract so that scopes are designed for it, and is implemented with the phone app, later. On a
+  [read-only server](06-server.md#a-read-only-server) (a rehearsal of an import) every session has `read` and no
+  more, whatever it presents, and `host.info` says `read_only: true`.
 - **What each scope covers.** `read`: lists, gets, subscriptions, thread pages. `operate`: create and change tasks,
   send messages, answer prompts and questions, stop runs, start reviews, attachments. `git`: the Changes tab's writes,
   worktree setup and teardown, rewind. `terminal`: terminals and the desktop viewer. `settings`: profiles, projects,
