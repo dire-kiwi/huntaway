@@ -21,8 +21,9 @@ import { resetsIn, resetTime } from "../../../ui/usageConfigs"
 import { saveMarks } from "../../Reminders"
 import { useThreadConfig } from "../hooks"
 import { Section } from "./Section"
+import { MoreFixRounds } from "../../Review"
 
-// Cut until their areas come: the review's "more fix rounds" (Review's MoreFixRounds, 4.6), and "Carry on then" for a
+// Cut until its area comes: "Carry on then" for a
 // task out of usage (`waitForLimit`, with Usage in 2.8).
 
 /** When a usage limit resets, as a phrase: "resets in 2h 5m", "resets Sun 2 Nov", "has reset". */
@@ -128,6 +129,7 @@ export function StatusSection({
         </div>
       )}
       {task.attention_reason && <div className="mt-2 rounded-md bg-st-attention/[0.08] px-2.5 py-2 text-[12px] text-amber-200/90">{task.attention_reason}</div>}
+      {task.status === "needs_attention" && <MoreFixRounds task={task} className="mt-2" />}
       <UsageLimitNote task={task} />
       {task.remind_at && (
         <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">

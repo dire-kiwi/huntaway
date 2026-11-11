@@ -47,6 +47,7 @@ import {
 import { useNarrow, useTouch } from "../../narrow"
 import { resetsIn, resetTime } from "../ui/usageConfigs"
 import { useBoard } from "../../state/board"
+import { ReviewBadge } from "../task/Review"
 
 /** How many of the tasks a group task or a plan created are done. */
 export type Progress = { done: number; total: number }
@@ -176,7 +177,7 @@ function TaskBadges({
       <StackedOnBadge task={task} project={project} compact={compact} />
       <LevelsBadge task={task} project={project} compact={compact} />
       {task.fanout_id && <FanoutBadge task={task} />}
-      {/* Its review (task/Review) comes with reviews on this server. */}
+      <ReviewBadge task={task} compact={compact} />
     </>
   )
 }

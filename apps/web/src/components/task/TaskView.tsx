@@ -34,10 +34,12 @@ import { Details } from "./view/details/Details"
 import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout"
 import { TabContent } from "./view/TabContent"
 import { TitleEditor } from "./view/Title"
+import { ReviewDot } from "./Review"
+import { ReviewThreadView } from "./view/ReviewThreadView"
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
-// left out here, each with a note: the terminal and its tools (M6), the browser pane and the desktop view (M6), the
-// review and summary tabs and the review's dot (M4), workflows' tabs (6.6), the assistant's brief, memory, routines and
+// left out here, each with a note: the terminal and its tools (M6), the browser pane and the desktop view (M6),
+// workflows' tabs (6.6), the assistant's brief, memory, routines and
 // action log (M6), finding a routine's thread on other hosts (M6), and the Agents pill (layout/AgentsPill, with the
 // assistant's and the layout's later pieces). Subprojects are a legacy branch, deleted.
 
@@ -177,18 +179,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         <div className="p-8 text-muted">{loaded ? "Task not found." : "Loading task…"}</div>
       </div>
     )
-  // A review thread's own view (view/ReviewThreadView) comes with reviews (M4).
-  if (task.kind === "review")
-    return (
-      <div className="flex h-full flex-col">
-        {mode !== "page" && (
-          <div className="flex h-12 shrink-0 items-center justify-end px-3">
-            <PanelButtons mode={mode} />
-          </div>
-        )}
-        <div className="p-8 text-muted">A review's thread is not yet on this server.</div>
-      </div>
-    )
+  // A reviewer's, summarizer's or workflow step's thread has a view of its own, beside the review it's working on.
+  if (task.kind === "review") return <ReviewThreadView thread={task} mode={mode} />
   // A group or scratch task works in no repository, so it has no changes of its own; nor does one
   // that makes only its documents. Each of a task's labels has a tab for its document, first.
   const group = isGroupTask(task) ? (task.group_name ?? undefined) : undefined
@@ -204,9 +196,17 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task)
   const docsOnly = documentsOnly(task)
   const tabs: Tab[] = [...labels, ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])]
+  // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (6.6).
+  // Unless one of the board's is still running, from before it switched.
+  const boardReviews = !project?.use_workflows || task.review?.state === "running"
+  const reviews = task.kind === "task" && group === undefined && !docsOnly && !scratch && !assistant && !routine && !pensThread && boardReviews
+  if (reviews) tabs.push("review")
+  // Once there's a summary, or a review that passed to summarise: the tabs fit a phone's width until then.
+  const summaries = reviews && (task.summaries.length > 0 || task.review?.state === "passed")
+  if (summaries) tabs.push("summary")
   if (!wide) tabs.push("details")
   // Until the render above drops it, a details tab while wide shows the thread beside the column.
-  // A label taken off shows the thread instead; so does a tab this server hasn't got (review, summary, a workflow's).
+  // A label taken off shows the thread instead; so does a tab this task hasn't got (review, summary, a workflow's).
   const shown = (wide && tab === "details") || (isLabel(tab) && !labels.includes(tab)) || !tabs.includes(tab) ? "thread" : tab
   const docShown = labels.find((l) => l === shown)
   const key = `${keyPrefix(task, project)}-${task.number}`
@@ -227,42 +227,47 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   }
 
   // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
-  // (Stopping also stops the task's review and workflows: they come with M4 and 6.6.)
-  const run = task.running ? (
-    <Button
-      size="sm"
-      onClick={stop}
-      title={
-        backgroundIdle(task)
-          ? "Stop the agent's run, and the background work it left going with it (the banner above the message field stops just that). The agent is told what stopped with your next message."
-          : stopTitle(task, runningAgentSteers(task))
-      }
-    >
-      <Square size={11} fill="currentColor" /> {backgroundIdle(task) ? "Stop all" : "Stop"}
-    </Button>
-  ) : dependencyQueued(task) ? (
-    <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
-      <Clock size={12} /> Queued
-    </span>
-  ) : (
-    !task.session_id &&
-    agents &&
-    !assistant &&
-    !routine &&
-    !pensThread && (
+  // Stopping the task also stops its review and summaries, so it can be stopped while only those run (and its
+  // workflows, with 6.6).
+  const reviewing = task.review?.state === "running" || task.summaries.some((s) => s.state === "running")
+  const run =
+    task.running || reviewing ? (
       <Button
         size="sm"
-        variant="primary"
-        onClick={() => {
-          setMarkErr(null)
-          rpc(task.host_id, "tasks.send", { id: task.id, text: "" }).catch((e: unknown) => setMarkErr(`Couldn't start the agent: ${errorText(e)}`))
-          setTab("thread")
-        }}
+        onClick={stop}
+        title={
+          backgroundIdle(task)
+            ? "Stop the agent's run, and the background work it left going with it (the banner above the message field stops just that). The agent is told what stopped with your next message."
+            : task.running
+              ? stopTitle(task, runningAgentSteers(task))
+              : "Stop the review and the summaries"
+        }
       >
-        <Play size={12} fill="currentColor" /> Start
+        <Square size={11} fill="currentColor" /> {backgroundIdle(task) ? "Stop all" : "Stop"}
       </Button>
+    ) : dependencyQueued(task) ? (
+      <span className="flex items-center gap-1 text-[12px] text-muted" title="Its agent starts once the tasks it depends on are merged">
+        <Clock size={12} /> Queued
+      </span>
+    ) : (
+      !task.session_id &&
+      agents &&
+      !assistant &&
+      !routine &&
+      !pensThread && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setMarkErr(null)
+            rpc(task.host_id, "tasks.send", { id: task.id, text: "" }).catch((e: unknown) => setMarkErr(`Couldn't start the agent: ${errorText(e)}`))
+            setTab("thread")
+          }}
+        >
+          <Play size={12} fill="currentColor" /> Start
+        </Button>
+      )
     )
-  )
 
   const controls = (
     <>
@@ -278,6 +283,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
               shown === t ? "bg-raised text-fg" : "text-muted hover:text-fg",
             )}
           >
+            {t === "review" && <ReviewDot task={task} />}
             {t}
           </button>
         ))}

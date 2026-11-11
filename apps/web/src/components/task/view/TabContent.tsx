@@ -4,6 +4,7 @@ import { Thread } from "../Thread"
 import { Composer } from "../thread/Composer"
 import { WithHeldChoice } from "../../board/MergesInto"
 import { Details } from "./details/Details"
+import { ChangeSummaryView, ReviewSummary } from "../Review"
 import type { Mode, Tab } from "./layout"
 
 // What empty threads show. The same elements every time, so the (memoized) thread doesn't redraw for them.
@@ -96,8 +97,8 @@ export function TabContent({
 }
 
 /**
- * What a tab other than the thread or a document shows above the composer. Changes, the review and the summary come
- * with M4 (changes/Changes.tsx, task/Review.tsx); a workflow's tabs with workflows (6.6); the assistant's memory, brief,
+ * What a tab other than the thread or a document shows above the composer. Changes come with 4.2 (changes/Changes.tsx);
+ * a workflow's tabs with workflows (6.6); the assistant's memory, brief,
  * routines and action log with the assistant (M6).
  */
 function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab): ReactNode {
@@ -106,9 +107,13 @@ function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab): ReactNode {
   ) : tab === "changes" ? (
     <NotYet what="Changes are" />
   ) : shown === "review" ? (
-    <NotYet what="Reviews are" />
+    <div className="h-full overflow-y-auto p-4">
+      <ReviewSummary task={task} />
+    </div>
   ) : shown === "summary" ? (
-    <NotYet what="Summaries are" />
+    <div className="h-full overflow-y-auto p-4">
+      <ChangeSummaryView task={task} />
+    </div>
   ) : shown.startsWith("wf:") ? (
     <NotYet what="Workflows are" />
   ) : shown === "actions" ? (
