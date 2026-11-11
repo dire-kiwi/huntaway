@@ -13,14 +13,17 @@ import {
   keyPrefix,
   mergeAwaitsApproval,
   mergeQueued,
+  mutations,
   STATUSES,
   type HostProject as Project,
   type HostTask as Task,
 } from "@huntaway/client"
+import { useAtomSet } from "@effect/atom-react"
+import { TaskId } from "@huntaway/contracts"
 import { useNarrow, useTouch } from "../../narrow"
 import { openTask, usePanel } from "../../state/route"
 
-import { Button, Input, Modal, ModalFooter, RunningDot, STATUS_COLOR, Textarea } from "../ui"
+import { Button, errorText, Input, Modal, ModalFooter, RunningDot, STATUS_COLOR, Textarea } from "../ui"
 import { landsNext, named, namesOf, openMain, stackColumn, stackedBelowId, stackRun, type MergeCheck, type Stack } from "./stacks"
 import { useBoard } from "../../state/board"
 
@@ -441,10 +444,18 @@ export function StackEditModal({ stack, onClose }: { stack: Stack; onClose: () =
   const [description, setDescription] = useState(b.stack_description ?? "")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  // `tasks.updateStack` is not yet on this server (it comes with stacks, M4).
-  const send = async (_body: { title?: string | undefined; description?: string | undefined; regenerate?: boolean | undefined }) => {
-    setBusy(false)
-    setErr("Couldn't change the stack: not yet on this server.")
+  const updateStack = useAtomSet(mutations.tasks.updateStack, { mode: "promise" })
+  const send = async (body: { title?: string | undefined; description?: string | undefined; regenerate?: boolean | undefined }) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      // The bottom task comes back as an event too.
+      await updateStack({ host: b.host_id, payload: { id: TaskId.make(b.id), ...body } })
+      onClose()
+    } catch (e) {
+      setErr(`Couldn't change the stack: ${errorText(e)}`)
+      setBusy(false)
+    }
   }
   const save = (e?: FormEvent) => {
     e?.preventDefault()

@@ -9,7 +9,8 @@ import { isGroupTask, useProject } from "../../../boardHelpers"
 import { Dependencies } from "../../../board/Dependencies"
 import { useConfirmDone } from "../../../board/ConfirmDone"
 import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/MergesInto"
-import { stackedBelowId } from "../../../board/StackedOn"
+import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
+import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
 import { Button, errorText, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
 import { TitleSection } from "../Title"
 import type { Mode } from "../layout"
@@ -26,8 +27,8 @@ import { TrackedWork } from "./TrackedWork"
 
 // Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the Asana links
 // (ExternalLinks, 6.11), the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12), the task's workflows
-// (Workflows, 6.6), and the stack sections "Stacked on" and "Landing after this" (stacks, 4.8). Subprojects were a legacy
-// branch and are gone.
+// (Workflows, 6.6). Subprojects were a legacy branch and are gone. The stack sections "Stacked on" and "Landing after
+// this" are back (stacks, 4.8).
 
 export function Details({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
   const project = useProject(task.project_id)
@@ -73,6 +74,8 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   const { confirmDone, dialog: doneDialog } = useConfirmDone()
   // What its work merges into (API 128): a code task in a project, which merge as they did.
   const incoming = useIncoming(task.id)
+  // The stack levels on it, and the one it's stacked on (API 142), apart from what it merges into.
+  const levels = useLevels(task.id)
   const mergeable = task.kind === "task" && !!task.project_id && !groupTask && !docsOnly && !scratch && !lasting && !task.parent_id
   // It needs a worktree; once it's done, only to show where it went.
   const showMergesInto = mergeable && (task.use_worktree || !!task.branch || !!task.merges_into) && (task.status !== "done" || !!task.merges_into)
@@ -177,6 +180,18 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
       {incoming.length > 0 && (
         <Section title="Merging into this">
           <IncomingSection task={task} project={project} />
+        </Section>
+      )}
+
+      {stackedBelowId(task) && (
+        <Section title={stackedOnTitle(task)}>
+          <StackedOnSection task={task} project={project} />
+        </Section>
+      )}
+
+      {levels.length > 0 && (
+        <Section title={levelsTitle(levels)}>
+          <LevelsSection task={task} project={project} />
         </Section>
       )}
 

@@ -300,7 +300,10 @@ export class Restack extends Context.Service<Restack, RestackShape>()("huntaway-
       const reconcileDependants = Effect.fn("Restack.reconcileDependants")(function* (merged: Task) {
         if (merged.project_id === null) return
         const project = yield* projectOf(merged)
-        for (const t of stackedLevels(yield* repo.projectTasks(merged.project_id), merged.id)) {
+        const levels = stackedLevels(yield* repo.projectTasks(merged.project_id), merged.id).filter((t) => t.branch !== null)
+        // Their start refs first take in what they took of its branch since they last did, as their own work starts there.
+        if (levels.length > 0) yield* base.keepStarts(merged.id)
+        for (const t of levels) {
           if (t.branch === null) continue
           const u = yield* write(t.id, { restack: "due" })
           if (u === null) continue

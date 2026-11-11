@@ -5,7 +5,9 @@ import { clsx } from "clsx"
 import { GitMerge } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { useShallow, type State } from "../boardHelpers"
-import { documentsOnly, isMerged, isScratch, keyPrefix, STATUSES, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
+import { documentsOnly, isMerged, isScratch, keyPrefix, mutations, STATUSES, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
+import { useAtomSet } from "@effect/atom-react"
+import { TaskId } from "@huntaway/contracts"
 import { openTask } from "../../state/route"
 
 import { Button, CARD_BADGE, errorText, ProgressCount, Wide } from "../ui"
@@ -383,6 +385,7 @@ export function HeldChoice({
   const [heir, setHeir] = useState("")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const mergeTarget = useAtomSet(mutations.tasks.mergeTarget, { mode: "promise" })
   if (!siblings.length) return null
   const goneKey = gone ? keyOf(gone, project) : null
   const base = project?.base_branch || "the base branch"
@@ -392,8 +395,9 @@ export function HeldChoice({
     setBusy(true)
     setErr(null)
     try {
-      // `tasks.setMergeTarget` is not yet on this server (it comes with merging, M4).
-      throw new Error(`Not yet on this server: choosing where ${hostId ? "they" : "it"} merge${to ? "" : ""} now comes with merging.`)
+      // The tasks it changed come back as events.
+      const first = siblings[0]
+      if (first) await mergeTarget({ host: hostId, payload: { id: TaskId.make(first.id), to } })
     } catch (e) {
       setErr(errorText(e))
     } finally {
