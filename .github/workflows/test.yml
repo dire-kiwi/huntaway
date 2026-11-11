@@ -165,9 +165,14 @@ jobs:
       - uses: *setup-vp
         with: *setup-vp-with
 
+      # The runner image has the libraries Chromium needs; `--with-deps` adds fonts from Ubuntu's mirrors, which some
+      # runners could not resolve (HE-4: three runs in a row). Then the browser alone, and the checks go on without them.
       - name: Chromium
         working-directory: apps/web
-        run: pnpm exec playwright-core install --with-deps chromium
+        run: |
+          pnpm exec playwright-core install --with-deps chromium && exit 0
+          echo "::warning::installing Chromium's system packages failed; installing the browser alone"
+          pnpm exec playwright-core install chromium
 
       - name: pnpm test:ui
         run: pnpm test:ui
