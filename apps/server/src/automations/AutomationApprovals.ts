@@ -106,7 +106,7 @@ const sortedObject = (v: Record<string, unknown>): Record<string, unknown> =>
 /** What an approval of `tool` is about, for the agent: `creating the automation "Triage"`. */
 const what = (tool: string, v: unknown) => {
   const verb = tool.startsWith("create") ? "creating" : tool.startsWith("update") ? "changing" : "deleting"
-  return `${verb} the ${field(v, "profile") !== undefined ? "routine" : "automation"} "${text(v, "automation", "name")}"`
+  return `${verb} the ${isRecord(field(v, "profile")) ? "routine" : "automation"} "${text(v, "automation", "name")}"`
 }
 
 const fromResult = <A>(r: Result.Result<A, Invalid>) => Effect.fromResult(r)
@@ -147,10 +147,19 @@ export class AutomationApprovals extends Context.Service<AutomationApprovals, Au
 
       /** An automation as its approval shows it: what it is, and the task its message goes to and the config its tasks use, by name. */
       const view = Effect.fnUntraced(function* (id: string, name: string, enabled: boolean, trigger: Trigger, action: Action, signed: boolean, guards: Guards) {
-        const v: Record<string, unknown> = { id, name, enabled, trigger, action, signed }
-        if (guards.active_hours !== null) v["active_hours"] = guards.active_hours
-        if (guards.precheck !== null) v["precheck"] = guards.precheck
-        if (guards.budget_usd !== null) v["budget_usd"] = guards.budget_usd
+        const v: Record<string, unknown> = {
+          id,
+          name,
+          enabled,
+          trigger,
+          action,
+          signed,
+          target: null,
+          config: null,
+          active_hours: guards.active_hours,
+          precheck: guards.precheck,
+          budget_usd: guards.budget_usd,
+        }
         if (action.kind === "send_to_task") {
           const t = yield* taskRepo.get(action.task_id)
           if (t !== null) v["target"] = { id: t.id, key: t.key, title: t.title, status: t.status }
@@ -163,9 +172,17 @@ export class AutomationApprovals extends Context.Service<AutomationApprovals, Au
 
       /** What an automation approval asks: `op` on `automation` of `owner`, asked by the calling agent, with the time zone. */
       const input = Effect.fnUntraced(function* (asker: Asker, op: string, owner: CreationRequest["owner"], automation: Record<string, unknown>) {
-        const v: Record<string, unknown> = { op, task: yield* askedBy(asker), automation, time_zone: timeZoneOf(zone, yield* Clock.currentTimeMillis) }
-        if (owner._tag === "Project") v["project"] = { id: owner.project.id, key: owner.project.key, name: owner.project.name, host: hostName }
-        else v["profile"] = { id: owner.profile.id, name: owner.profile.name, host: hostName }
+        const v: Record<string, unknown> = {
+          op,
+          task: yield* askedBy(asker),
+          automation,
+          before: null,
+          changes: null,
+          time_zone: timeZoneOf(zone, yield* Clock.currentTimeMillis),
+          reason: null,
+          project: owner._tag === "Project" ? { id: owner.project.id, key: owner.project.key, name: owner.project.name, host: hostName } : null,
+          profile: owner._tag === "Profile" ? { id: owner.profile.id, name: owner.profile.name, host: hostName } : null,
+        }
         return v
       })
 

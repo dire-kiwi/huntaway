@@ -124,14 +124,19 @@ export class Scheduler extends Context.Service<Scheduler, SchedulerShape>()("hun
         )
 
       /** The schedules due at `now`, claimed. One whose last run is still under way stays due. */
-      const claimDue = Effect.fnUntraced(function* (now: number) {
+      const claimDue = (now: number) => {
         const out: Array<readonly [StoredAutomation, StoredRun]> = []
-        for (const { automation, archived } of yield* repo.scheduled) {
-          const r = yield* claimOne(automation, archived, now)
-          if (r !== null) out.push([automation, r])
-        }
-        return out
-      })
+        return Effect.gen(function* () {
+          for (const { automation, archived } of yield* repo.scheduled) {
+            const r = yield* claimOne(automation, archived, now)
+            if (r !== null) out.push([automation, r])
+          }
+          return out
+        }).pipe(
+          // An error part way gives up the places of those claimed before it, so they aren't held back for good.
+          Effect.tapCause(() => Effect.forEach(out, ([a]) => drop(a.id), { concurrency: 1, discard: true })),
+        )
+      }
 
       /** The coalesced runs whose window has closed, by automation. One whose automation's last run is under way waits. */
       const claimBatches = Effect.fnUntraced(function* (now: number) {
