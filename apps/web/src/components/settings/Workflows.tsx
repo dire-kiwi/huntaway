@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react"
+import { GuideLink } from "./Guide"
 import { mutations, workflowsAtom, type HostProject as Project } from "@huntaway/client"
 import { ProjectId, type Workflow, type WorkflowGraph } from "@huntaway/contracts"
 import { clsx } from "clsx"
@@ -6,8 +7,6 @@ import { Plus, Trash2, Workflow as WorkflowIcon } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { Button, errorText, Toggle, useConfirm } from "../ui"
-import { href } from "../../router"
-import { navigate } from "../../state/route"
 import { PRESETS, type Preset, type PresetSource } from "./workflows/presets"
 import { graphText } from "./workflows/text"
 import { WorkflowEditor } from "./workflows/WorkflowEditor"
@@ -15,25 +14,6 @@ import { WorkflowEditor } from "./workflows/WorkflowEditor"
 // Step 1 (docs/plan/09-frontend.md): the project's workflows are `workflowsAtom`, read again on `workflows_changed`, so
 // nothing here reloads them after a change. Every host has column nodes and keeps the Review tab's reviews out of
 // projects that use workflows, so the old version checks and the graphs for hosts before column nodes are gone.
-
-const GUIDE = href({ name: "guide", page: "workflows" })
-
-/** The guide's Workflows page (the guide's own `GuideLink` comes with 6.12). */
-function GuideLink() {
-  return (
-    <a
-      href={GUIDE}
-      onClick={(e) => {
-        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return
-        e.preventDefault()
-        navigate(GUIDE)
-      }}
-      className="text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid"
-    >
-      Workflows
-    </a>
-  )
-}
 
 /** The project settings' Workflows tab: the project's workflows, each a graph of steps that runs on its tasks. */
 export function ProjectWorkflows({ project }: { project: Project }) {
@@ -78,8 +58,8 @@ export function ProjectWorkflows({ project }: { project: Project }) {
         progress, that's what the agent starts with), and once that work is done the steps after it run. Those can be checks, agents that read the work in
         threads of their own (or process what the steps before them wrote, with a skill, in a fresh context), pull requests, messages to the task's agent, and
         the next column, which moves the task there. The prompt tells the agent what the board does when it's done. <i>Board's default</i> is what the board
-        does without workflows (its prompts, and the Review tab's reviews and summaries), as one to change. <GuideLink /> in the guide explains each node, its
-        inputs and outputs.
+        does without workflows (its prompts, and the Review tab's reviews and summaries), as one to change. <GuideLink page="workflows">Workflows</GuideLink> in
+        the guide explains each node, its inputs and outputs.
       </p>
       <div className="space-y-1.5 rounded-md border border-line/70 bg-raised/40 p-2.5" data-testid="use-workflows">
         <Toggle checked={project.use_workflows} onChange={(on) => void switchToWorkflows(on)} label="Use workflows instead of the board's default" />

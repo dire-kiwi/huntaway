@@ -1,5 +1,6 @@
-import type { HostAgentConfig as ClaudeConfig } from "@huntaway/client"
-import { WatchPullRequests, type Reviewer } from "@huntaway/contracts"
+import { useAtomValue } from "@effect/atom-react"
+import { workflowsAtom, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
+import { WatchPullRequests, type Reviewer, type Workflow } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
@@ -8,8 +9,8 @@ import { Field, Input, Toggle } from "../../ui"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 // Step 1 (docs/plan/09-frontend.md). Every host has every setting here, so the old API gates and the single summarizer
-// are gone, and subprojects' pull requests with subprojects. What the project's workflows do in In review (the old
-// `WorkflowsNote`'s list of them) is 6.6's: the note says only what using workflows means until then. The skills a
+// are gone, and subprojects' pull requests with subprojects. The project's workflows (6.6) are named in
+// `WorkflowsNote`. The skills a
 // summarizer picks from are the agent tools' (6.4).
 
 const isWatch = Schema.is(WatchPullRequests)
@@ -219,22 +220,58 @@ function summarizerLabel(r: Reviewer, configs: ReadonlyArray<ClaudeConfig>): str
   return [r.name, reviewerLabel(r, configs), r.skills?.length ? `skills ${r.skills.join(", ")}` : "", r.prompt ? "own prompt" : ""].filter(Boolean).join(" · ")
 }
 
+/** Whether a workflow has an agent step after its In review column (before another column): its tasks are reviewed there. */
+function agentsInReview(w: Workflow): boolean {
+  const g = w.graph
+  const start = g.nodes.find((n) => n.kind === "column" && n.status === "in_review")
+  const seen = new Set<string>(start ? [start.id] : [])
+  const todo = [...seen]
+  for (let id = todo.pop(); id !== undefined; id = todo.pop()) {
+    for (const e of g.edges) {
+      if (e.from !== id || e.input != null || seen.has(e.to)) continue
+      const n = g.nodes.find((x) => x.id === e.to)
+      if (!n || n.kind === "column") continue
+      if (n.kind === "agent") return true
+      seen.add(n.id)
+      todo.push(n.id)
+    }
+  }
+  return false
+}
+
 /**
- * Which of the project's workflows (HA-276) take over from these settings. The list of them (the old note named the
- * workflows with an In review step, or with agent steps there) is 6.6's (`workflows.list`); until then this says what
- * using workflows means.
+ * Which of the project's workflows (HA-276) take over from these settings: with the project using workflows, those with
+ * agent steps in In review review and summarise its tasks (HA-277); without, the ones that are on only run by hand.
  */
 function WorkflowsNote({ project }: { project: ProjectForm }) {
-  if (!project.use_workflows) return null
+  const list = useAtomValue(workflowsAtom({ host_id: project.host_id, project_id: project.id })).data ?? []
+  const box = "space-y-1 rounded-md border border-line/70 bg-raised/40 p-2.5 text-[12px] text-muted"
+  if (project.use_workflows) {
+    const reviewing = list.filter((w) => w.enabled && agentsInReview(w))
+    return (
+      <div className={box} data-testid="review-workflows-note">
+        <p>
+          This project uses workflows instead of the board&apos;s own handling, so its tasks are reviewed and summarised by its workflows&apos; steps (see its
+          Workflows tab), not by settings here.{" "}
+          {reviewing.length
+            ? `${reviewing.map((w) => `"${w.name}"`).join(", ")} ${reviewing.length === 1 ? "has" : "have"} agent steps in In review.`
+            : "None of its workflows that's on has agent steps in In review: start one from Review and summarise, or From the Review tab."}
+        </p>
+        <p>
+          Its tasks don&apos;t have the board&apos;s own Review and Summary tabs either: a workflow&apos;s agent steps show their output in tabs of their own (a
+          step with the tab Review gives tasks a Review tab). They all come back if the project stops using workflows.
+        </p>
+      </div>
+    )
+  }
+  const on = list.filter((w) => w.enabled)
+  if (!on.length) return null
   return (
-    <div className="space-y-1 rounded-md border border-line/70 bg-raised/40 p-2.5 text-[12px] text-muted" data-testid="review-workflows-note">
+    <div className={box} data-testid="review-workflows-note">
       <p>
-        This project uses workflows instead of the board&apos;s own handling, so its tasks are reviewed and summarised by its workflows&apos; steps (see its
-        Workflows tab), not by settings here.
-      </p>
-      <p>
-        Its tasks don&apos;t have the board&apos;s own Review and Summary tabs either: a workflow&apos;s agent steps show their output in tabs of their own (a
-        step with the tab Review gives tasks a Review tab). They all come back if the project stops using workflows.
+        {on.length === 1 ? "The workflow" : "The workflows"} {on.map((w) => `"${w.name}"`).join(", ")} only run{on.length === 1 ? "s" : ""} when it&apos;s run
+        from a task: turn on <i>Use workflows instead of the board&apos;s default</i> in the Workflows tab for tasks moving across the board to start{" "}
+        {on.length === 1 ? "it" : "them"}, in place of these settings.
       </p>
     </div>
   )
