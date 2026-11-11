@@ -1,7 +1,7 @@
 import { Context, Duration, Effect, FiberMap, Layer, Queue, Ref, Schema, Stream } from "effect"
 import type { Cause, Scope } from "effect"
 import { Capability, PROTOCOL } from "@huntaway/contracts"
-import type { Invalid, LinkId, SettingsSyncStatus, SyncEntry, Unavailable } from "@huntaway/contracts"
+import type { Invalid, LinkHello, LinkId, SettingsSyncStatus, SyncEntry, Unavailable } from "@huntaway/contracts"
 import { Events } from "../platform/Events.ts"
 import { LinkConnections } from "./LinkConnections.ts"
 import type { Live } from "./LinkConnections.ts"
@@ -39,9 +39,12 @@ export interface SyncPeer {
 
 const failed = (e: { readonly _tag: string; readonly message: string }) => new PeerFailed({ reason: e.message === "" ? e._tag : e.message })
 
+/** Whether a host that said `hello` can take part: it speaks this protocol and has the capability. */
+export const takesPart = (hello: LinkHello): boolean => hello.protocol === PROTOCOL && hello.capabilities.includes(Capability.settingsSync)
+
 /** A connected link as a peer, if it takes part: it speaks this protocol and has the capability. */
 export const peerOf = (live: Live): SyncPeer | null =>
-  live.hello.protocol === PROTOCOL && live.hello.capabilities.includes(Capability.settingsSync)
+  takesPart(live.hello)
     ? {
         id: live.id,
         name: live.hello.name,
