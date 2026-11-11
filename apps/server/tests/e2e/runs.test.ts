@@ -82,7 +82,7 @@ describe.skipIf(shim === null)("a Claude run on a whole server", () => {
         }>`SELECT stop, saw_result, kind, id FROM runs WHERE task_id = ${task.id}`
       }).pipe(Effect.provide(SqliteClient.layer({ filename: `${dataDir}/board.db`, busyTimeout: "5 seconds", readonly: true })))
       assert.deepStrictEqual(
-        run.map(({ id: _, ...rest }) => rest),
+        run.map((r) => ({ stop: r.stop, saw_result: r.saw_result, kind: r.kind })),
         [{ stop: "interrupted", saw_result: 1, kind: "prompt" }],
       )
       // The run reaches the board's MCP servers on the port the server listens on, not `--port 0` (HE-7).
