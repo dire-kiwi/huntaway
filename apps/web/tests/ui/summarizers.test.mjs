@@ -40,7 +40,7 @@ test("edits a project's several summarizers, and keeps each one's text when anot
     await ui.run(["click Save changes"])
     const saved = await eventually(async () => {
       const p = await server.rpc("projects.get", { id: project.id })
-      assert.equal(p.summarizers.length, 2)
+      assert.equal(p.summarizers[1]?.name, "Three")
       return p
     })
     assert.deepEqual(
