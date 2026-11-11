@@ -62,6 +62,7 @@ import { RunFollower } from "./runs/RunFollower.ts"
 import type { RunOutput } from "./runs/RunOutput.ts"
 import { RunInput } from "./runs/RunInput.ts"
 import { RunRepo } from "./runs/RunRepo.ts"
+import { RunEnds } from "./runs/RunEnds.ts"
 import { Runs } from "./runs/Runs.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
@@ -130,7 +131,7 @@ const ProfilesLive = Profiles.ensureFromConfig.pipe(
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
 const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
-  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer)),
   Layer.provideMerge(ProjectsLive),
 )
 const ThreadsLive = Threads.pruner.pipe(
@@ -183,10 +184,11 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
-    Layer.provideMerge(Dependencies.layer),
     // `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come.
     Layer.provideMerge(mcpLayer(McpHooks.layerNone)),
     Layer.provideMerge(Questions.layer),
+    // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
+    Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
     Layer.provideMerge(DevServers.scanner.pipe(Layer.provideMerge(DevServers.layer))),
     Layer.provideMerge(RunsArea),

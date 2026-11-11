@@ -85,6 +85,8 @@ export interface RunRepoShape {
   readonly setPhase: (run: RunId, phase: RunPhase) => Effect.Effect<void>
   /** Set progress columns. */
   readonly update: (run: RunId, columns: RunColumns) => Effect.Effect<void>
+  /** The tasks marked running with no run that hasn't exited (their last run ended as the server stopped). */
+  readonly idleRunning: Effect.Effect<ReadonlyArray<TaskId>>
   /** A live run between turns is in a turn again (`between_turns` 1 → 0). */
   readonly startTurn: (run: RunId) => Effect.Effect<void>
   /** Record the run as exited at `at`. False when it had already ended. */
@@ -174,6 +176,11 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
         saveOffset: (run, offset) => sql`UPDATE runs SET out_offset = ${offset} WHERE id = ${run}`.pipe(Effect.as(offset), Effect.orDie),
         setPhase: (run, phase) => sql`UPDATE runs SET status = ${phase} WHERE id = ${run}`.pipe(Effect.asVoid, Effect.orDie),
         update,
+        idleRunning: sql<{ readonly id: TaskId }>`SELECT t.id FROM tasks t WHERE t.running = 1
+          AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.task_id = t.id AND r.status != 'exited') ORDER BY t.created_at`.pipe(
+          Effect.map((rows) => rows.map((r) => r.id)),
+          Effect.orDie,
+        ),
         startTurn: (run) =>
           sql`UPDATE runs SET between_turns = 0 WHERE id = ${run} AND between_turns = 1 AND status != 'exited'`.pipe(Effect.asVoid, Effect.orDie),
         end: (run, at) =>

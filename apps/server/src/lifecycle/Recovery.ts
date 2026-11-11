@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import { Tokens } from "../agents/Tokens.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
-import { Dependencies } from "../tasks/Dependencies.ts"
+import { Runs } from "../runs/Runs.ts"
 
 /**
  * Startup step 5 (docs/plan/06-server.md, Startup): call every reconciler once, which is how the server recovers from
@@ -13,10 +13,12 @@ import { Dependencies } from "../tasks/Dependencies.ts"
  */
 export const RecoveryLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const dependencies = yield* Dependencies
+    const runs = yield* Runs
     const toolCalls = yield* ToolCalls
     const tokens = yield* Tokens
-    yield* dependencies.reconcile(null)
+    // The runs that had not exited are adopted (or ended), then the waiting tasks whose dependencies merged start.
+    yield* runs.reattach
+    yield* runs.startUnblocked(null)
     yield* toolCalls.resume
     yield* tokens.countPending(null)
   }).pipe(Effect.withSpan("Recovery"), Effect.annotateLogs({ module: "recovery" })),
