@@ -1,40 +1,25 @@
 import { isAssistant, isGroupTask, isRoutine } from "@huntaway/client"
 import { clsx } from "clsx"
-import { useEffect, type ReactNode } from "react"
+import { useEffect } from "react"
 import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
 import { Sidebar } from "./components/layout/Sidebar"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
+import { DocsPage } from "./components/docs/DocsPage"
+import { Analytics } from "./components/settings/Analytics"
+import { Guide } from "./components/settings/Guide"
+import { HostPage } from "./components/settings/HostPage"
+import { ProjectSettings } from "./components/settings/project/ProjectSettings"
+import { Settings } from "./components/settings/Settings"
 import { TokenScreen } from "./components/settings/TokenScreen"
+import { AssistantPage } from "./components/task/AssistantPage"
 import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
-import { MenuButton } from "./components/ui"
+import { NotYet } from "./components/ui"
 import { useDrawer, useNarrow } from "./narrow"
-import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl, type Route } from "./router"
+import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
 import { navigate, usePanel, useRoute, useTaskModal } from "./state/route"
-
-/** What a page or panel of a later milestone shows on this server until its components come over. */
-function NotYet({ what, children }: { what: string; children?: ReactNode }) {
-  return (
-    <div className="p-8 text-[13px] text-muted">
-      <div className="mb-1 text-[14px] font-semibold text-fg">{what}</div>
-      Not yet on this server.
-      {children}
-    </div>
-  )
-}
-
-/** Pages whose components come over in later steps (docs/plan/13-milestones.md). */
-const LATER: Partial<Record<Route["name"], string>> = {
-  assistant: "The assistant",
-  docs: "Documents",
-  projectSettings: "Project settings",
-  settings: "Settings",
-  analytics: "Analytics",
-  guide: "The guide",
-  host: "Hosts",
-}
 
 export function App() {
   const authed = useBoard((s) => s.authed)
@@ -92,7 +77,6 @@ export function App() {
   // The old board's onboarding (settings/Onboarding) comes with settings/; until then a board with no profile says so.
   if (profiles.length === 0) return loaded ? <NotYet what="This board has no profiles yet">{" Add one with the settings, once they're here."}</NotYet> : null
 
-  const later = LATER[route.name]
   return (
     <div className="relative flex h-full">
       {narrow ? (
@@ -119,14 +103,13 @@ export function App() {
           {route.name === "board" && <Board projectId={route.projectId} />}
           {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
           {route.name === "task" && <TaskView taskId={route.taskId} />}
-          {later !== undefined && (
-            <>
-              <div className="flex h-12 items-center border-b border-line px-3">
-                <MenuButton />
-              </div>
-              <NotYet what={later} />
-            </>
-          )}
+          {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
+          {route.name === "docs" && <DocsPage key={route.profile} route={route} />}
+          {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
+          {route.name === "settings" && <Settings tab={route.tab} />}
+          {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
+          {route.name === "guide" && <Guide page={route.page} />}
+          {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
         </div>
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
