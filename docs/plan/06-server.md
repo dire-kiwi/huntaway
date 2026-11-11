@@ -339,6 +339,58 @@ verdicts; rounds of fixes against the project's limit; extend; supersede. `Summa
 (comparing and picking among tasks made from one prompt). `Reviews.reconcile(task)` starts a review that is due and
 is safe to call at any time.
 
+#### As built in 4.6 (HE-5)
+
+- **Files.** `review/Reviews.ts` (start, `submit`, a part's end, acting on the combined review, supersede, the user's
+  Stop, extend, Recovery's `reconcileAll`), `review/Summaries.ts`, `review/ReviewStats.ts` (the `review_stats` rows),
+  `review/ReviewRepo.ts` (review and summary threads' rows, a thread's skills in `thread_tools`, the stats rows and the
+  effort the work was done at, the order of a thread's runs), `review/model.ts` (the pure rules: who reviews and
+  summarises, a part's end, `combine`, what a submission records, `decideIssues`, `decideExtend`, `mentionsMinor`,
+  `variantKey`, stopping; and `ReviewRefused { reason, invalid }`), `review/work.ts` (HEAD, `TaskBase.workScope`, "no
+  commits of its own"), `review/taskWrites.ts` (a task's write under its lock with what decides it read in the same
+  transaction, the `task` event and a `TaskChanged`), `review/changesCode.ts` (the old `changes_code`: here, not in
+  `git/`, because it reads the permissions area's `DONT_ASK_DENIAL`, which is below git), `mcp/tools/review.ts`
+  (`submit_review`: `ForReviewers`, `ReviewersOnly`, `ForPlanning`, `Rerunnable`; a list given as one string is a list of
+  one, as the old tool took it). The prompts are `prompts/{review,reviewFixes,summary,reviewThread}.ts` as 2.5 copied them.
+- **Changes and the reactor.** Two new members of `Changes`: `ReviewFinished { thread, run, outcome, attention }`, which
+  `RunEnds` offers for a `review` run once its end is recorded (a review thread's run only stops running there), and
+  `PromptStarted { task, run }`, which `Runs.start` offers after registering a `prompt` run of a `kind=task` (the old
+  `supersede` call in `send_message`; workflows' supersede joins it in 6.6). The reactor hands the first to
+  `Reviews.finished` (a summary thread's to `Summaries.finished`; a workflow step's is left for 6.6), the second to
+  `Reviews.supersede` (the review and the summaries stop), and on a `TaskChanged` of a task that entered In review, or
+  whose run ended there (`running` true → false, as the old run end called `on_in_review` whatever the column was
+  before), `Reviews.reconcile`, inline (its git reads are short; the reviewers' runs are registered and launched in the
+  background as any run). A passed review starts the summaries from `Reviews` (`Summaries.reviewPassed`), not from the
+  reactor: the same path serves a reviewer that fails to start after the others have finished.
+- **Locks.** `KeyedLock` has `["review", task]` and `["summary", task]` (before the task's lock): one review and one
+  summary start per task at a time, in place of the old global `STARTING` mutexes. `supersede` and Stop don't take them:
+  a reviewer that starts as its review is stopped is stopped after its send (the start reads the review again then), so
+  the old "no await between check and send" holds without them. The later-run check and the recording of a review (or
+  the summaries) are one transaction under the task's lock, so a run registered meanwhile is either seen there or finds
+  the review to stop. The old race hooks (`review:last-run`, `review:recording`, `review:reviewer-started`) have no
+  counterpart.
+- **Recovery** (`Reviews.reconcileAll`, after `Runs.reattach`): a review or summary left `running` whose thread has no
+  run going ends as its latest run since the round started did (its row: stopped, failed, a turn ended), or as "Couldn't
+  start the review: the server stopped first" when the round's run never started. A run still live has its end come
+  through `RunEnds` as usual. Reviews that were due but never started (the server stopped between the move to In
+  review and the reactor) are not started at startup, as the old server didn't: Review now covers it.
+- **RPCs** (`tasks`): `tasks.review` (Review now / Review again; the task after), `tasks.extendReview`, `tasks.summarize`,
+  all `operate`, failing `Conflict` (`changed_meanwhile`, with the old "Can't review: …" text as its detail),
+  `Invalid` (HEAD unreadable), the send's errors (`Unavailable` with no agents); `tasks.stop` is `Reviews.stopTask`: the
+  agent, the review ("Review stopped") and the summaries.
+- **Decided.** An `after_run` of `""` (the thread had no run before the round) accepts any run of that thread; a part or
+  summary with no `after_run` at all (from before it was kept) accepts any run, as the old `reviewed_by`. A review with no
+  `started_at` (from before rounds were kept) has its `updated_at` as its round in the stats, not the old backfill's
+  worked-out round (`run_round`: the importer brings the old rows, which migrations 79 and 82 had already filled). The
+  telemetry event `review` waits for `Telemetry`. A thread's skills are written to `thread_tools.skills`; 6.4's
+  `AgentTools` turns them on.
+- **Web (step 1).** `components/task/Review.tsx` (the card's badge, the Review tab's dot, the Review and Summary tabs,
+  More rounds of fixes, what each round of fixes changed from `checkpoints.turnDiff`, shown as a plain patch until 4.2's
+  `PatchBox`), `components/task/view/ReviewThreadView.tsx`, and their places in `TaskView`, `TabContent`,
+  `StatusSection` and `TaskCard`. Not ported: `ReviewVerdict` (only the fan-out compare view used it, 2.18 `Fanout`).
+- **Not here.** `Fanout` (2.18) and the merge gate's approval summary (4.7); a workflow's verdict step (`submit_review`
+  from a `task_type=workflow` thread, 6.6); the analytics report of `review_stats` (6.x).
+
 ### Merge — [inventory 04](inventory/04-git-review.md) (2.14–2.17)
 
 `Merges`: the agent merges, the server queues, gates and observes. Lanes and slots are worked out from task rows,
