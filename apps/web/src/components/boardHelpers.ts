@@ -15,6 +15,7 @@ import { Cause } from "effect"
 import { useMemo, useRef } from "react"
 import { board, useBoard } from "../state/board"
 import { registry } from "../state/registry"
+import { noteMove } from "../state/notify"
 
 /** The board as the components read it (the old store's `State`). */
 export type State = Board
@@ -50,6 +51,8 @@ function shallow(a: unknown, b: unknown): boolean {
  * old components' `upsertTask` before a request and again after its failure. Rejects with the call's tagged error.
  */
 export function moveTask(task: { readonly host_id: string; readonly id: string }, patch: TaskPatch): Promise<WireTask> {
+  // A move of the user's own doesn't notify them (6.8): noted before the request, as its event reaches every tab first.
+  if (patch.status) noteMove(task.host_id, task.id, patch.status)
   const fn = optimisticMove({ host_id: task.host_id, id: task.id })
   const { promise, resolve, reject } = Promise.withResolvers<WireTask>()
   const unmount = registry.mount(fn)

@@ -5,6 +5,7 @@ import { HostClient } from "../session/HostClient.ts"
 import { HostSession, setOffline, setState } from "../session/HostSession.ts"
 import { hostRuntime } from "../session/sessions.ts"
 import { applyBoardEvent, emptyHostBoard, type HostBoard } from "./hostBoard.ts"
+import { liveTaskChanged } from "./live.ts"
 
 /** The host speaks another protocol: the session stops until the page is reloaded (or the host updated). */
 class NeedsUpdate extends Schema.TaggedError<NeedsUpdate, { readonly brand: unique symbol }>()("NeedsUpdate", { protocol: Schema.Int }) {}
@@ -35,6 +36,8 @@ export const watchBoard = (host: HostId, initial: HostBoard | undefined): Stream
         let board = initial ?? emptyHostBoard(host)
         let loaded = initial !== undefined
         let fresh = false
+        // The number `hello` continues from: events after it are live, those up to it a replay (6.8).
+        let liveFrom = Number.POSITIVE_INFINITY
         // What the host says of itself, on every connection: its name and capabilities may have changed.
         const greet = Effect.fn("watchBoard.greet")(function* () {
           const info = yield* client("host.info", undefined)
@@ -42,13 +45,22 @@ export const watchBoard = (host: HostId, initial: HostBoard | undefined): Stream
           return yield* SubscriptionRef.set(session.view, { state: { _tag: "live" }, info })
         })
         const apply = Effect.fn("watchBoard.apply")(function* (message: Parameters<typeof applyBoardEvent>[1]) {
-          if (message.type === "hello") yield* greet()
+          if (message.type === "hello") {
+            liveFrom = message.seq
+            yield* greet()
+          }
           if (message.type === "resync") fresh = true
           if (message.type === "snapshot") loaded = true
           const next = applyBoardEvent(board, message)
           if (next !== board || message.type === "snapshot") {
+            const prev = board
             board = next
             if (loaded) yield* Queue.offer(queue, board)
+            if (message.type === "task" && loaded && message.seq > liveFrom) {
+              const was = prev.tasks.get(message.task.id)
+              const now = next.tasks.get(message.task.id)
+              if (now !== undefined && now !== was) liveTaskChanged(was, now)
+            }
           }
         })
         // Subscribe after the atom that runs this has been built, not while it is: an answer that comes at once

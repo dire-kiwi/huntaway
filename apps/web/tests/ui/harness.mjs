@@ -137,14 +137,16 @@ export const DEMO_TASKS = [
 let failures = 0
 
 // One browser for the file's checks, each in a context of its own (as fresh as a new browser's): launching one for each
-// took longer than most checks. Launched again if it went away (a crash).
-let shared = null
-const sharedBrowser = async () => {
-  if (!(await shared)?.isConnected()) shared = launch(undefined, { shell: true })
-  return shared
+// took longer than most checks. Launched again if it went away (a crash). It's Playwright's headless shell where that's
+// installed, which is lighter, and the full Chromium for the checks that ask for it (`fullBrowser`, 6.8): notifications
+// and push.
+const browsers = new Map()
+const sharedBrowser = async (full = false) => {
+  if (!(await browsers.get(full))?.isConnected()) browsers.set(full, launch(undefined, { shell: !full }))
+  return browsers.get(full)
 }
 afterAll(async () => {
-  await (await shared)?.close()
+  for (const b of browsers.values()) await (await b)?.close()
 })
 
 /**
@@ -164,10 +166,11 @@ function noMotion() {
 /**
  * Run `fn` with a browser on the server (see `open` in scripts/ui-check.mjs), then close it. Page and console errors that
  * weren't allowed fail the check; if `fn` failed as well, they're added to its error, and a screenshot of the page is
- * saved to <tmp>/ui-check-<pid>-<n>-failed.png.
+ * saved to <tmp>/ui-check-<pid>-<n>-failed.png. `fullBrowser`: in the full Chromium rather than the headless shell, for
+ * notifications and push.
  */
-export async function withBrowser(server, opts, fn) {
-  const ui = await open({ url: server.url, token: server.token, log: () => {}, ...opts, browser: opts.browser ?? (await sharedBrowser()) })
+export async function withBrowser(server, { fullBrowser = false, ...opts }, fn) {
+  const ui = await open({ url: server.url, token: server.token, log: () => {}, ...opts, browser: opts.browser ?? (await sharedBrowser(fullBrowser)) })
   await ui.context.addInitScript(noMotion)
   try {
     await fn(ui)

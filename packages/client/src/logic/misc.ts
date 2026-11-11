@@ -135,3 +135,16 @@ export const NOTIFY_EVENTS: ReadonlyArray<{ readonly id: NotifyEvent; readonly l
   { id: "merge", label: "Ready for merge", hint: "Moved to Ready for merge" },
   { id: "done", label: "Done", hint: "Merged, or moved to Done" },
 ]
+
+/** Whose permission prompts a device gets by push: the assistant's by default (6.8). */
+export const PUSH_PROMPTS: ReadonlyArray<{ readonly id: "off" | "assistant" | "all"; readonly label: string }> = [
+  { id: "off", label: "None" },
+  { id: "assistant", label: "The assistant's" },
+  { id: "all", label: "Every task's" },
+]
+
+/** The assistant's events a device can be pushed, besides the board's (`NOTIFY_EVENTS`). */
+export const ASSISTANT_PUSH_EVENTS: ReadonlyArray<{ readonly id: "replies" | "reports"; readonly label: string; readonly hint: string }> = [
+  { id: "replies", label: "Assistant's replies", hint: "It finished a reply" },
+  { id: "reports", label: "Routine reports", hint: "What its routines post: its first line" },
+]
