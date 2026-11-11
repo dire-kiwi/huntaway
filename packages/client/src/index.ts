@@ -1,2 +1,13 @@
-/** Filled in by M0 (docs/plan/13-milestones.md). */
-export const name = "huntaway"
+// Everything the web app knows about servers (docs/plan/09-frontend.md, packages/client). No DOM, Node or React
+// Native APIs: the app gives the websocket and storage. Components import this root only.
+export * from "./board/board.ts"
+export * from "./board/hostBoard.ts"
+export * from "./board/tasks.ts"
+export * from "./board/watch.ts"
+export * from "./logic/index.ts"
+export * from "./mutations.ts"
+export * from "./rpc.ts"
+export * from "./session/HostClient.ts"
+export * from "./session/HostSession.ts"
+export * from "./session/sessions.ts"
+export * from "./session/transport.ts"
