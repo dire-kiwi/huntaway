@@ -48,7 +48,7 @@ export function HostProjects({
         >
           <span className={clsx("h-1.5 w-1.5 rounded-full", host.connected ? "bg-emerald-400/70" : "bg-red-400")} />
           {host.name}
-          {!host.connected && " · offline"}
+          {!host.connected && (host.status === "needs_update" ? " · needs update" : " · offline")}
         </button>
       )}
       {entries.map((entry) =>

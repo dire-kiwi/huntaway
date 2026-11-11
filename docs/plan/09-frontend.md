@@ -32,8 +32,9 @@ later.
 ```
 packages/client/src/
   session/     HostSession.ts   one RPC connection to one host: its protocol layer, its auth, its state
-               Sessions.ts      which hosts there are (from the hub) and a runtime for each
+               sessions.ts      which hosts there are (from the hub) and a runtime for each
                relay.ts         a relayed session: ticket, then the socket through the hub
+               hub.ts           the hub's own queries (its SSH key, the dial-in command, hosts nearby)
   board/       hostBoard.ts     one host's board, folded from board.watch
                board.ts         every host's, merged: the read surface the components use
                tasks.ts         taskAtom(ref), tasks of a project, of a profile, optimistic moves
@@ -261,6 +262,32 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   its metadata keeps only the card. The snapshot's `approvals` and `approval` events fold into `HostBoard.approvals`.
   Checks: `tests/ui/permissions.test.mjs`, on a test server with `--fake-claude`; the harness starts every other server
   with `--no-agents`.
+
+### Step 1 as done for linked hosts and Settings → Hosts (M7, HE-6, 7.2)
+
+- **The client**: `hubHostsAtom` folds `hub.hosts.watch` on the hub's runtime (subscribed again when the hub's
+  connection comes back), and `hubHostListAtom` is its list. `boardHostIdsAtom` is the page's own host and every host the
+  hub lists, offline ones too: their `hostBoardAtom` keeps its last board, and their session's state marks them. A linked
+  host's runtime is `relayTransport` (relay.ts, see [08-hosts.md](08-hosts.md#relay)); the page's own stays the hub's.
+  `Board.hosts` takes a linked host from the hub's entry (its link's name, mode, URL, uplink, `status` and
+  `status_reason`), `connected` while its own session is live. A linked host whose `protocol` is not this client's, or
+  that the hub says `needs_update`, has the `needs_update` session state without a runtime and is not subscribed to; the
+  sidebar says "needs update" beside it. The hub's own reads (`hubSshKeyAtom`, `hubJoinAtom(url)`, `nearbyHostsAtom`)
+  are query atoms in `session/hub.ts`; linking, renaming, the uplink switch and forgetting are plain calls on the hub.
+- **The web app**: `components/settings/Settings.tsx` is the page at `/settings/<tab>`, with the old tab list's
+  structure and only Hosts in it; 6.12 adds the other sections as siblings. A board with no profiles of its own still
+  opens Settings, to link a host that has some. `settings/Hosts.tsx`, `hosts/AddHost.tsx` (over SSH, by URL and token,
+  and "Connect from elsewhere"), `hosts/HostRow.tsx` and `hosts/NearbyHosts.tsx` (with the scratch-host picker) are the
+  old ones on `hubRpc` (`settings/hosts/hub.ts`) and the query atoms; they load nothing in effects. Over SSH, the hub's
+  key and nearby hosts answer `Unavailable` until 7.3 and 7.5, and say so.
+- **Cut with a note**: the row's Update (the hub pushing its code or release to a host) needs `hub.hosts.pushUpdate`,
+  which is not in the contract yet, and the host's restart state (`admin.status`): 8.1. A row's version line shows
+  `protocol` where it showed the API number. Copying a login between hosts is on the host page and Agent configs, which
+  are 6.12's (its RPC, `hub.hosts.copyConfig`, is 7.5's).
+- **Checks**: `packages/client/test/hosts.test.ts` (an in-memory hub with two hosts; the relay socket's new ticket per
+  connection), and `tests/ui/hosts.test.mjs`: the Hosts page on one server, and two test servers linked through the
+  page, the linked host's projects and tasks on the board, one opened and moved, the host stopped (its board stays,
+  marked offline) and started again, and forgotten. The harness's servers have `kill()` and `restart()` for it.
 
 ### Step 2: by hand, a feature folder at a time
 
