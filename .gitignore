@@ -12,3 +12,8 @@ coverage/
 /apps/web/.vitest
 /.vitest
 *.tsbuildinfo
+# Release packages (scripts/package-server.sh, .github/workflows/release.yml), and install.sh's prebuilt ia-shim.
+/release-server
+/release/
+/huntaway-server-*
+/apps/server/bin/ia-shim
