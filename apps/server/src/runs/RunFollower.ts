@@ -44,8 +44,15 @@ export class RunFollower extends Context.Service<RunFollower, RunFollowerShape>(
 
       const exited = (run: Run, exit: RunExitStatus, errorTail: string) => changes.offer({ _tag: "RunExited", run: run.id, task: run.task_id, exit, errorTail })
 
-      const apply = (run: Run, line: string) =>
-        output.handle(run, line).pipe(Effect.catchCause((cause) => Effect.logError(`run=${run.id} handling a line of output failed`, cause)))
+      // The handler saves the offset with what the line says; one that failed is skipped.
+      const apply = (run: Run, line: string, end: number) =>
+        output
+          .handle(run, line, end)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError(`run=${run.id} handling a line of output failed`, cause).pipe(Effect.andThen(repo.saveOffset(run.id, end))),
+            ),
+          )
 
       const loop = (run: Run) =>
         Effect.gen(function* () {
@@ -53,7 +60,8 @@ export class RunFollower extends Context.Service<RunFollower, RunFollowerShape>(
           let idle = 0
           while (true) {
             const chunk = yield* dir.readOutput(run.id, offset)
-            for (const line of chunk.lines) yield* apply(run, line)
+            for (const [i, line] of chunk.lines.entries()) yield* apply(run, line, chunk.ends[i] ?? chunk.end)
+            // Past the end of what was read (a file cut short), or nothing at all applied: as far as was read.
             if (chunk.end > offset) offset = yield* repo.saveOffset(run.id, chunk.end)
             if (chunk.exit !== null && chunk.drained) return yield* exited(run, chunk.exit, yield* dir.errorTail(run.id))
             if (chunk.lines.length > 0) continue

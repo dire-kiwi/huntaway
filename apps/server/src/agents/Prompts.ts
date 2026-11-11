@@ -18,7 +18,8 @@ import type { TaskNotFound } from "../tasks/Tasks.ts"
 import type { PromptContext, PromptProject, PromptTask } from "./prompts/context.ts"
 import { mentionKeys, mentionsNote } from "./prompts/mentions.ts"
 import type { MentionTask } from "./prompts/mentions.ts"
-import { mentionsScanned, runPrompt } from "./prompts/start.ts"
+import { mentionsScanned, planRest, runPrompt } from "./prompts/start.ts"
+import { planCommand } from "../prompts/planCommand.ts"
 import { systemPrompt } from "./prompts/system.ts"
 
 // What a run is told (docs/plan/07-agents.md, Prompts): the facts the prompt builders read (`PromptContext`), gathered
@@ -58,6 +59,12 @@ export interface PromptsShape {
    * session yet, `/plan` rewritten (once the task has the plan label), and the note on what the keys in it name.
    */
   readonly start: (task: TaskId, text: string) => Effect.Effect<string, TaskNotFound>
+  /**
+   * What a message steered into `task`'s running agent is sent as (huntaway's write_steers): a `/plan` says how to write
+   * the plan (the run may have started without the plan label, so its system prompt may not), and the note on what the
+   * keys in it name follows.
+   */
+  readonly steer: (task: TaskId, text: string) => Effect.Effect<string, TaskNotFound>
   /**
    * What the agent of a new thread in `project` would be told, for the project's settings: a task numbered as the
    * project's next, with the options given and the project's settings as they are now. Its title and id are
@@ -197,6 +204,16 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         return runPrompt(kind, c, { text, lost: [], mentions: (scanned) => mentionsNote(task, scanned, board) })
       })
 
+      const steer = Effect.fn("Prompts.steer")(function* (id: TaskId, text: string) {
+        const task = yield* tasks.get(id)
+        const planFile = documentsOf(dataDir.documents(task.id), task).find(([label]) => label === "plan")
+        const plan = task.kind === "task" ? planRest(text) : null
+        const sent = plan !== null && planFile !== undefined ? planCommand(planFile[1], plan, false) : text
+        if (task.kind !== "task") return sent
+        const note = mentionsNote(task, text, yield* mentionBoard(text))
+        return note === "" ? sent : sent.trimEnd() + note
+      })
+
       /** What a new task in `project` runs on: the first of its configs (or its profile's), else Claude's default. */
       const runtimeOf = Effect.fnUntraced(function* (
         project: PromptProject & { readonly claude_config_ids: ReadonlyArray<string> | null },
@@ -248,7 +265,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         return { text: systemPrompt(kind, context), runtime, permission_mode }
       })
 
-      return Prompts.of({ system, start, preview })
+      return Prompts.of({ system, start, steer, preview })
     }),
   )
 }

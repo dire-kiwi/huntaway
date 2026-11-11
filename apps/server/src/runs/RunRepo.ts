@@ -68,6 +68,8 @@ export interface RunRepoShape {
    * default). None when that is not known (a session from before runs kept their folder).
    */
   readonly sessionConfigDir: (task: TaskId, session: string) => Effect.Effect<Option.Option<string>>
+  /** The first run of the task's conversation `session` (the one that started it). */
+  readonly sessionStartedBy: (task: TaskId, session: string) => Effect.Effect<Option.Option<RunId>>
   /** Codex: whether the task's session `session` has the board's tools as dynamic tools (its first run gave them). */
   readonly sessionBoardTools: (task: TaskId, session: string) => Effect.Effect<boolean>
   /**
@@ -83,6 +85,8 @@ export interface RunRepoShape {
   readonly setPhase: (run: RunId, phase: RunPhase) => Effect.Effect<void>
   /** Set progress columns. */
   readonly update: (run: RunId, columns: RunColumns) => Effect.Effect<void>
+  /** A live run between turns is in a turn again (`between_turns` 1 → 0). */
+  readonly startTurn: (run: RunId) => Effect.Effect<void>
   /** Record the run as exited at `at`. False when it had already ended. */
   readonly end: (run: RunId, at: Timestamp) => Effect.Effect<boolean>
 }
@@ -159,12 +163,19 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
         laterThan: (run) =>
           sql<Found>`SELECT EXISTS(SELECT 1 FROM runs WHERE task_id = ${run.task_id} AND seq > ${run.seq}) AS found`.pipe(Effect.map(found), Effect.orDie),
         sessionConfigDir: (task, session) => firstOfSession(task, session).pipe(Effect.map(Option.flatMap((row) => Option.fromNullishOr(row.config_dir)))),
+        sessionStartedBy: (task, session) =>
+          sql<{ readonly id: RunId }>`SELECT id FROM runs WHERE task_id = ${task} AND session_id = ${session} ORDER BY seq LIMIT 1`.pipe(
+            Effect.map((rows) => Option.fromNullishOr(rows[0]?.id)),
+            Effect.orDie,
+          ),
         sessionBoardTools: (task, session) =>
           firstOfSession(task, session).pipe(Effect.map(Option.match({ onNone: () => false, onSome: (row) => row.board_tools === 1 }))),
         addCost,
         saveOffset: (run, offset) => sql`UPDATE runs SET out_offset = ${offset} WHERE id = ${run}`.pipe(Effect.as(offset), Effect.orDie),
         setPhase: (run, phase) => sql`UPDATE runs SET status = ${phase} WHERE id = ${run}`.pipe(Effect.asVoid, Effect.orDie),
         update,
+        startTurn: (run) =>
+          sql`UPDATE runs SET between_turns = 0 WHERE id = ${run} AND between_turns = 1 AND status != 'exited'`.pipe(Effect.asVoid, Effect.orDie),
         end: (run, at) =>
           sql<{ readonly id: string }>`UPDATE runs SET status = 'exited', ended_at = ${at} WHERE id = ${run} AND status != 'exited' RETURNING id`.pipe(
             Effect.map((rows) => rows.length > 0),

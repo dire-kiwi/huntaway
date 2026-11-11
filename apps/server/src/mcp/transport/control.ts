@@ -1,6 +1,9 @@
 import { Effect, FiberSet, Layer, Option, Schema } from "effect"
 import type { RunId } from "@huntaway/contracts"
+import { INIT_PREFIX as INIT_PREFIX_, initializeLine, MCP_PROTOCOL } from "../../agents/claude/launch.ts"
+import type { BoardManifest } from "../../agents/claude/launch.ts"
 import { toJson } from "../../platform/columns.ts"
+import { AgentRequests } from "../../runs/AgentRequests.ts"
 import { McpControl } from "../../runs/McpControl.ts"
 import type { McpMessage } from "../../runs/McpControl.ts"
 import type { Run } from "../../runs/Run.ts"
@@ -21,18 +24,9 @@ import { controlCallId, ToolCalls } from "../ToolCalls.ts"
 // the same call and a restart takes it up again (`ToolCalls.resume`). Claude Code gives up on a call with a
 // `notifications/cancelled` naming its JSON-RPC id, and on a prompt with a `control_cancel_request`.
 
-/** The MCP version whose handshake the `initialize` request gives Claude Code up front. */
-export const MANIFEST_PROTOCOL = "2025-11-25"
-
-/** The request id prefix of a run's `initialize`. */
-export const INIT_PREFIX = "huntaway-init-"
-
-/**
- * Claude Code's per-server time limit for the board's calls (ms), in the `initialize` request and the HTTP server's
- * `mcp.json` entry: without one it gives up on a call after 5 minutes without news, and a call may wait on the user.
- * gh's entry has 900 000, desktop's 300 000, docs' none.
- */
-export const BOARD_TIMEOUT_MS = 86_400_000
+// The `initialize` line, its protocol version, request id and the board's time limit are the launch's
+// (`agents/claude/launch.ts`).
+export { BOARD_TIMEOUT_MS, INIT_PREFIX, MCP_PROTOCOL as MANIFEST_PROTOCOL } from "../../agents/claude/launch.ts"
 
 const SavedJson = Schema.fromJsonString(SavedControlCall)
 
@@ -98,6 +92,12 @@ export const McpControlLive = Layer.effect(
       return yield* answer(run, request.request_id, yield* servers.answer(BOARD_SERVER, yield* reviews(run), message))
     })
 
+    const manifest = Effect.fnUntraced(function* (review: boolean) {
+      const tools = yield* servers.tools(BOARD_SERVER, review)
+      const made: BoardManifest = { initializeResult: servers.initializeResult(BOARD_SERVER, MCP_PROTOCOL), toolsListResult: { tools } }
+      return made
+    })
+
     return McpControl.of({
       handle: (run, request) =>
         handle(run, request).pipe(
@@ -105,22 +105,31 @@ export const McpControlLive = Layer.effect(
           Effect.annotateLogs({ module: "mcp" }),
         ),
       cancel: (run, requestId) => toolCalls.cancel(run.id, controlCallId(run.id, requestId)),
+      manifest,
       initializeLine: Effect.fn("McpControl.initializeLine")(function* (run: RunId, review: boolean) {
-        const tools = yield* servers.tools(BOARD_SERVER, review)
-        return yield* toJson({
-          type: "control_request",
-          request_id: `${INIT_PREFIX}${run}`,
-          request: {
-            subtype: "initialize",
-            sdkMcpServers: [BOARD_SERVER],
-            sdkMcpServerConfigs: { [BOARD_SERVER]: { timeout: BOARD_TIMEOUT_MS, disableAutoBackground: true } },
-            sdkMcpServerManifests: {
-              [BOARD_SERVER]: { initializeResult: servers.initializeResult(BOARD_SERVER, MANIFEST_PROTOCOL), toolsListResult: { tools } },
-            },
-          },
-        })
+        return yield* initializeLine(run, yield* manifest(review))
       }),
-      isInitializeResponse: (requestId) => requestId.startsWith(INIT_PREFIX),
+      isInitializeResponse: (requestId) => requestId.startsWith(INIT_PREFIX_),
     })
+  }),
+)
+
+/**
+ * `McpControl` registered with the runs area (`AgentRequests`): `mcp_message` requests on a run's output and their
+ * cancellations come to it, and the launch puts its manifest in the `initialize` line. Which of the board's HTTP servers
+ * (gh, docs, desktop) this server serves is told here too, as their areas come.
+ */
+export const McpControlRegistered = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const control = yield* McpControl
+    const requests = yield* AgentRequests
+    yield* requests.register("mcp_message", {
+      handle: (run, line) =>
+        line.request.subtype === "mcp_message" && "message" in line.request
+          ? control.handle(run, { request_id: line.request_id, server_name: line.request.server_name, message: line.request.message })
+          : Effect.void,
+      cancel: (run, requestId) => control.cancel(run, requestId),
+    })
+    yield* requests.provideServers({ manifest: control.manifest, served: Effect.succeed({ gh: false, docs: false, desktop: false }) })
   }),
 )

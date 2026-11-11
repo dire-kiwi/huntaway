@@ -78,6 +78,8 @@ export type RunMarker = "reap" | "orphan"
 export interface OutputChunk {
   /** Whole lines (and, once the run has exited, a last line without its newline), without their newlines. */
   readonly lines: ReadonlyArray<string>
+  /** The byte offset after each line (its newline included): what is applied once that line is. */
+  readonly ends: ReadonlyArray<number>
   /** The byte offset after them. */
   readonly end: number
   /** The `exit` file, if it existed before the output was read. */
@@ -93,11 +95,25 @@ export class RunFileError extends Schema.TaggedError<RunFileError, { readonly br
   reason: Schema.String,
 }) {}
 
-/** Lines of output, as the old server split them. */
-const splitLines = (text: string): ReadonlyArray<string> => {
-  const out = text.split("\n")
-  if (out.at(-1) === "") out.pop()
-  return out.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
+const textDecoder = new TextDecoder()
+
+/**
+ * Lines of output, as the old server split them (a `\r` before a newline dropped), each with the offset after it:
+ * `bytes` were read from `offset`.
+ */
+const splitLines = (bytes: Uint8Array, offset: number): { readonly lines: ReadonlyArray<string>; readonly ends: ReadonlyArray<number> } => {
+  const lines: Array<string> = []
+  const ends: Array<number> = []
+  let start = 0
+  while (start < bytes.length) {
+    const newline = bytes.indexOf(0x0a, start)
+    const stop = newline < 0 ? bytes.length : newline
+    const line = textDecoder.decode(bytes.subarray(start, stop))
+    lines.push(line.endsWith("\r") ? line.slice(0, -1) : line)
+    start = newline < 0 ? bytes.length : newline + 1
+    ends.push(offset + start)
+  }
+  return { lines, ends }
 }
 
 /** `value` with its objects' keys sorted, as `mcp.json` is written. */
@@ -315,7 +331,7 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
             }
             const take = newline >= 0 ? newline + 1 : exited !== null ? bytes.length : 0
             return {
-              lines: take > 0 ? splitLines(decoder.decode(bytes.subarray(0, take))) : [],
+              ...splitLines(bytes.subarray(0, take), offset),
               end: offset + take,
               exit: exited,
               drained: exited !== null && offset + take >= size,

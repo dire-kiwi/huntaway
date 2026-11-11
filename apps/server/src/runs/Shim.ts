@@ -73,7 +73,21 @@ export interface ShimShape {
   readonly stopOrphan: (run: RunId) => Effect.Effect<void>
   /** Carry on stopping a run marked `orphan`: SIGTERM, SIGKILL after 10 seconds, until its process group is gone. */
   readonly watchOrphan: (run: RunId) => Effect.Effect<void>
+  /**
+   * Make sure nothing goes on of a run whose launch failed or was stopped (the old `reap`): its input is closed, and an
+   * agent the shim starts after this (it was slow, or the launch gave up waiting, or was stopped while it waited) is
+   * stopped. The shim may start once `spec.json` is written; the run is marked `reap` while it is watched, so that a
+   * restart carries on (`watchReap`). Returns at once: the watch is the server's.
+   */
+  readonly reap: (run: RunId) => Effect.Effect<void>
+  /** Watch a run marked `reap` until its agent has exited or can no longer start (`REAP_WAIT`), stopping it if it starts. */
+  readonly watchReap: (run: RunId) => Effect.Effect<void>
 }
+
+/** How long the shim of a launch given up on may still start its agent. */
+export const REAP_WAIT_MS = 60_000
+/** How long a reaped agent has after SIGTERM before SIGKILL. */
+export const REAP_GRACE_MS = 10_000
 
 export class Shim extends Context.Service<Shim, ShimShape>()("huntaway-server/runs/Shim") {
   static readonly layer = Layer.effect(
@@ -210,7 +224,39 @@ export class Shim extends Context.Service<Shim, ShimShape>()("huntaway-server/ru
         yield* watchOrphan(run)
       })
 
-      return Shim.of({ binary, spawn, kill, isAlive: alive, vanished, stopOrphan, watchOrphan })
+      const closeInput = (run: RunId) => dir.closeInput(run).pipe(Effect.catch((e) => Effect.logError(`run=${run} closing the agent's input: ${e.reason}`)))
+
+      const watchReap = Effect.fn("Shim.watchReap")(function* (run: RunId) {
+        const since = yield* Clock.currentTimeMillis
+        let stopping: number | null = null
+        while ((yield* dir.exit(run)) === null) {
+          const now = yield* Clock.currentTimeMillis
+          const { agent } = yield* dir.pids(run)
+          if (agent === null) {
+            if (now - since >= REAP_WAIT_MS) break
+            // One gone without its exit recorded went with a reboot, say, and another process may have its pid since.
+          } else if (!(yield* alive(agent)) || (yield* dir.rebooted(run))) break
+          else if (stopping === null) {
+            yield* Effect.logWarning(`run=${run} stopping an agent that started after its launch was given up on`)
+            yield* closeInput(run)
+            yield* signal(-agent, "SIGTERM")
+            stopping = now
+          } else if (now - stopping >= REAP_GRACE_MS) yield* signal(-agent, "SIGKILL")
+          yield* Effect.sleep(stopping !== null ? "100 millis" : "20 millis")
+        }
+        yield* dir.setMarker(run, "reap", false).pipe(Effect.catch((e) => Effect.logWarning(`run=${run} unmarking a reap: ${e.reason}`)))
+      })
+
+      const reap = Effect.fn("Shim.reap")(function* (run: RunId) {
+        yield* closeInput(run)
+        // The shim is started once spec.json is written.
+        const specWritten = yield* fs.exists(`${dir.path(run)}/spec.json`).pipe(Effect.orElseSucceed(() => false))
+        if (!specWritten || (yield* dir.exit(run)) !== null) return
+        yield* dir.setMarker(run, "reap", true).pipe(Effect.catch((e) => Effect.logError(`run=${run} marking a run to stop: ${e.reason}`)))
+        yield* FiberSet.run(escalations, watchReap(run))
+      })
+
+      return Shim.of({ binary, spawn, kill, isAlive: alive, vanished, stopOrphan, watchOrphan, reap, watchReap })
     }),
   )
 }

@@ -39,13 +39,18 @@ import { McpCallRepo } from "./mcp/McpCallRepo.ts"
 import { McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
-import { McpControlLive } from "./mcp/transport/control.ts"
+import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
+import { AgentRequests } from "./runs/AgentRequests.ts"
+import { ClaudeOutput } from "./runs/claude/output.ts"
+import { LaunchFacts } from "./runs/LaunchFacts.ts"
 import { RunDir } from "./runs/RunDir.ts"
 import { RunFollower } from "./runs/RunFollower.ts"
-import { RunOutput } from "./runs/RunOutput.ts"
+import type { RunOutput } from "./runs/RunOutput.ts"
+import { RunInput } from "./runs/RunInput.ts"
 import { RunRepo } from "./runs/RunRepo.ts"
+import { Runs } from "./runs/Runs.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
@@ -119,14 +124,27 @@ const AgentsLive = Layer.mergeAll(ApprovalRules.layer, Prompts.layer).pipe(Layer
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
 export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
   RunFollower.layer.pipe(Layer.provideMerge(output), Layer.provideMerge(Shim.layer), Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)))
-const RunsLive = runsLayer(RunOutput.layerLog).pipe(Layer.provideMerge(AgentsLive))
+/**
+ * The runs area: the commands (`Runs`) and what a launch is made of, the follower with the Claude line handler, what
+ * the server writes to a run's input, and the registry the areas below answer agents' requests through.
+ */
+const RunsLive = Layer.mergeAll(Runs.layer).pipe(
+  Layer.provideMerge(LaunchFacts.layer),
+  Layer.provideMerge(RunFollower.layer),
+  Layer.provideMerge(ClaudeOutput),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer)),
+  Layer.provideMerge(Shim.layer),
+  Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
+  Layer.provideMerge(AgentsLive),
+)
 /**
  * The board's MCP servers over what is above them, with `hooks` (tests give their own): the calls, the server on Claude
  * runs' files, and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
  * test's own, built over the whole board's services, is not the one those already have.
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
-  Layer.mergeAll(Layer.fresh(McpControlLive)).pipe(
+  McpControlRegistered.pipe(
+    Layer.provideMerge(Layer.fresh(McpControlLive)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )

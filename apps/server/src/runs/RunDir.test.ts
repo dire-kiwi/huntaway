@@ -101,22 +101,30 @@ describe("RunDir", () => {
         const id = yield* folder("r1", { "out.jsonl": out })
         const first = yield* dir.readOutput(id, 0)
         assert.deepStrictEqual(first.lines, [said("one"), said("two")])
+        assert.deepStrictEqual(first.ends, [Buffer.byteLength(`${said("one")}\n`), Buffer.byteLength(`${said("one")}\n${said("two")}\r\n`)])
         const whole = Buffer.byteLength(`${said("one")}\n${said("two")}\r\n`)
         assert.deepStrictEqual([first.end, first.exit, first.drained], [whole, null, false])
-        assert.deepStrictEqual(yield* dir.readOutput(id, whole), { lines: [], end: whole, exit: null, drained: false })
+        assert.deepStrictEqual(yield* dir.readOutput(id, whole), { lines: [], ends: [], end: whole, exit: null, drained: false })
         // The agent was killed while writing: its last line is taken as it is.
         yield* fs.writeFileString(`${dir.path(id)}/exit`, '{"code":null,"signal":9}')
         const last = yield* dir.readOutput(id, whole)
-        assert.deepStrictEqual(last, { lines: [partial], end: Buffer.byteLength(out), exit: { code: null, signal: 9 }, drained: true })
+        assert.deepStrictEqual(last, {
+          lines: [partial],
+          ends: [Buffer.byteLength(out)],
+          end: Buffer.byteLength(out),
+          exit: { code: null, signal: 9 },
+          drained: true,
+        })
         // A saved offset past what the file has (it was cut short) reads as nothing new.
         assert.deepStrictEqual(yield* dir.readOutput(id, Buffer.byteLength(out) + 10), {
           lines: [],
+          ends: [],
           end: Buffer.byteLength(out) + 10,
           exit: { code: null, signal: 9 },
           drained: true,
         })
         // A run with no output yet.
-        assert.deepStrictEqual(yield* dir.readOutput(yield* folder("r2"), 0), { lines: [], end: 0, exit: null, drained: false })
+        assert.deepStrictEqual(yield* dir.readOutput(yield* folder("r2"), 0), { lines: [], ends: [], end: 0, exit: null, drained: false })
       }),
     ),
   )
