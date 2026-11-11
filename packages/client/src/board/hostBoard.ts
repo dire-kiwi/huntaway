@@ -10,6 +10,7 @@ import type {
   Profile,
   Project,
   ProfileId,
+  ProjectId,
   Task,
   TaskId,
   Usage,
@@ -61,6 +62,10 @@ export interface HostBoard {
    * which what shows its turns reads them again on.
    */
   readonly checkpoints: ReadonlyMap<TaskId, number>
+  /** 6.6: by project, the number of the latest `workflows_changed` about it, which its workflows are read again on. */
+  readonly workflows: ReadonlyMap<ProjectId, number>
+  /** 6.6: by task, the number of the latest `workflow_runs_changed` about it, which its workflow runs are read again on. */
+  readonly workflowRuns: ReadonlyMap<TaskId, number>
 }
 
 const noSettings: HostSettings = {
@@ -90,6 +95,8 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   approvals: [],
   restart: null,
   checkpoints: new Map(),
+  workflows: new Map(),
+  workflowRuns: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -233,6 +240,11 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
     }
     case "checkpoints":
       return { ...next, checkpoints: new Map(board.checkpoints).set(message.task_id, message.seq) }
+    // 6.6
+    case "workflows_changed":
+      return { ...next, workflows: new Map(board.workflows).set(message.project_id, message.seq) }
+    case "workflow_runs_changed":
+      return { ...next, workflowRuns: new Map(board.workflowRuns).set(message.task_id, message.seq) }
     case "approval_rules":
     case "approval_log":
       // A profile's approval rules and action log are read where Settings shows them, not kept in the board.

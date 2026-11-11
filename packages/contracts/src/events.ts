@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { AgentConfig } from "./agentConfig.ts"
 import { Approval, ApprovalAction, ApprovalRulesView } from "./approval.ts"
 import { HostSettings } from "./host.ts"
-import { HostId, ProfileId, ProjectId, RequestId, TaskId } from "./ids.ts"
+import { HostId, ProfileId, ProjectId, RequestId, TaskId, WorkflowId } from "./ids.ts"
 import { Pen } from "./pen.ts"
 import { Profile } from "./profile.ts"
 import { Project } from "./project.ts"
@@ -59,6 +59,11 @@ export const ApprovalChanged = Schema.Struct({ type: Schema.Literal("approval"),
 /** A task's checkpoints changed (a turn's was taken, or it was rewound): its turns are read again (`checkpoints.turns`). */
 export const CheckpointsChanged = Schema.Struct({ type: Schema.Literal("checkpoints"), task_id: TaskId, ...seq })
 
+/** 6.6: a project's workflow was made, changed or deleted: its workflows are read again (`workflows.list`). */
+export const WorkflowsChanged = Schema.Struct({ type: Schema.Literal("workflows_changed"), project_id: ProjectId, workflow_id: WorkflowId, ...seq })
+/** 6.6: a task's workflow runs changed: they are read again (`workflows.runsOfTask`). */
+export const WorkflowRunsChanged = Schema.Struct({ type: Schema.Literal("workflow_runs_changed"), task_id: TaskId, ...seq })
+
 export const BoardEvent = Schema.Union([
   Hello,
   Resync,
@@ -74,6 +79,9 @@ export const BoardEvent = Schema.Union([
   ApprovalLogChanged,
   ApprovalChanged,
   CheckpointsChanged,
+  // 6.6
+  WorkflowsChanged,
+  WorkflowRunsChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

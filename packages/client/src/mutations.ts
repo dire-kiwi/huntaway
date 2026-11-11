@@ -44,4 +44,12 @@ export const mutations = {
   // Rewinding a task to before a turn, and keeping its conversation as it is: the task and its turns change with the
   // events that follow.
   checkpoints: { rewind: mutation("checkpoints.rewind"), cancelRewind: mutation("checkpoints.cancelRewind") },
+  // 6.6: a project's workflows, and running and stopping them on a task: the lists change with the events that follow.
+  workflows: {
+    create: mutation("workflows.create"),
+    update: mutation("workflows.update"),
+    delete: mutation("workflows.delete"),
+    run: mutation("workflows.run"),
+    stopRun: mutation("workflows.stopRun"),
+  },
 } as const
