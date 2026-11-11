@@ -218,9 +218,10 @@ As built (7.5):
   apart, but when an entry another covers also lost to a third, hosts that merged in different orders agree on the
   value and vector and can keep different `lost` lists, which equal vectors then never reconcile. Ported as it is.
 - **Copying a config** (`hosts/CopyConfig.ts`): through each host's RPCs (this host's services directly); the config
-  is matched by name and made on the target if missing. The login travels as the config's archive, which comes with
-  6.11: until then the copy fails `Unavailable` after finding the source, before anything is made on the target.
-  `profile` (copying a profile's login, hosts before API 20) is refused.
+  is matched by name and made on the target if missing. The login travels as the config's archive (6.11's
+  `configs.exportArchive`, then `importArchive`), exported before anything is made on the target; the answer's `files`
+  are the archive's entries, as the old one's were (6.12, HE-7: it was a count). A login already there without
+  `overwrite` is `Invalid` (`overwrite`). `profile` (copying a profile's login, hosts before API 20) is refused.
 
 Paired devices (codes, device tokens, revocation) wait for the phone app. The session and scope design already has
 their place: a device's session carries `read` and `operate`, checked by the host that serves each call, which

@@ -1,27 +1,39 @@
 import { AGENTS, agentInfo, agentOf, canRunAgents, usageKey, type Board, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
-import type { Agent, AgentConfig, AgentConfigPatch } from "@huntaway/contracts"
+import { HostId, type Agent, type AgentConfig, type AgentConfigPatch } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Copy, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useShallow } from "../boardHelpers"
 import { useBoard } from "../../state/board"
 import { rpc } from "../../state/rpc"
-import { Button, errorText, Field, Input, Modal, ModalFooter, NotYet, useAsyncAction, useConfirm } from "../ui"
+import { Button, errorText, Field, Input, Modal, ModalFooter, useAsyncAction, useConfirm } from "../ui"
 import { usageAlert } from "../ui/usageConfigs"
+import { CopyLoginModal, type CopyRequest } from "./hosts/CopyLoginModal"
+import { hubRpc } from "./hosts/hub"
 
-// Step 1 (docs/plan/09-frontend.md). Exporting and importing a config's archive and copying a login to another host
-// (hosts/CopyLoginModal) are 6.11's: `CopyLoginModal` below is a marked slot until then.
+// Step 1 (docs/plan/09-frontend.md). Copying a config's login to another host is 6.11's hosts/CopyLoginModal, given the
+// board's hosts that run agents and the hub's `hub.hosts.copyConfig` (`CopyLogin` below).
 
 /** The proxy fields a config's change sends. */
 type ProxyFields = Pick<AgentConfigPatch, "api_url" | "api_key" | "management_key">
 
-/** Copying a config's login and settings to another host: 6.11's `hosts/CopyLoginModal`, not on this server yet. */
-function CopyLoginModal({ from, onClose }: { from: ClaudeConfig; onClose: () => void }) {
-  return (
-    <Modal title={`Copy ${from.name}'s login`} onClose={onClose}>
-      <NotYet what="Copying a login to another host" />
-    </Modal>
-  )
+/** Copies a config's login through the hub (`hub.hosts.copyConfig`), giving the entries copied. */
+const copyLogin = async (r: CopyRequest) => {
+  const done = await hubRpc("hub.hosts.copyConfig", {
+    config: r.config,
+    from_host: HostId.make(r.from_host),
+    to_host: HostId.make(r.to_host),
+    overwrite: r.overwrite,
+    ...(r.config_dir === undefined ? {} : { config_dir: r.config_dir }),
+  })
+  return { files: done.files ?? [] }
+}
+
+/** Copying a config's login and settings to another host that runs agents and is connected, through the hub. */
+function CopyLogin({ from, onClose }: { from: ClaudeConfig; onClose: () => void }) {
+  const hosts = useBoard((s) => s.hosts)
+  const targets = useMemo(() => configHosts(hosts).filter((h) => h.id !== from.host_id && h.connected), [hosts, from.host_id])
+  return <CopyLoginModal from={from} hosts={targets} copy={copyLogin} onClose={onClose} />
 }
 
 /** Hosts that can run agents, which keep agent configs of their own. */
@@ -210,7 +222,7 @@ export function ClaudeConfigsPanel() {
         {names.length === 0 && <div className="rounded-xl border border-line px-4 py-3 text-[12.5px] text-faint">No agent configs yet.</div>}
       </div>
       {editing && <ConfigModal {...editing} onClose={() => setEditing(null)} />}
-      {copying && <CopyLoginModal from={copying} onClose={() => setCopying(null)} />}
+      {copying && <CopyLogin from={copying} onClose={() => setCopying(null)} />}
     </section>
   )
 }
@@ -243,7 +255,7 @@ export function HostClaudeConfigs({ hostId, canCopy }: { hostId: string; canCopy
         {configs.length === 0 && <div className="px-4 py-3 text-[12.5px] text-faint">No agent configs yet.</div>}
       </div>
       {editing && <ConfigModal {...editing} onClose={() => setEditing(null)} />}
-      {copying && <CopyLoginModal from={copying} onClose={() => setCopying(null)} />}
+      {copying && <CopyLogin from={copying} onClose={() => setCopying(null)} />}
     </section>
   )
 }

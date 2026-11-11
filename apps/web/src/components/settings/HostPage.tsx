@@ -1,4 +1,5 @@
-import { canRunAgents, type HostProfile as Profile } from "@huntaway/client"
+import { canRunAgents, hostHas, type HostProfile as Profile } from "@huntaway/client"
+import { LinkId } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { ChevronLeft, Plus, Server, Trash2 } from "lucide-react"
 import { useState } from "react"
@@ -13,13 +14,17 @@ import { ProfileForm } from "./hosts/ProfileForm"
 import { ServerPanel } from "./Server"
 import { HostDesktop } from "./HostDesktop"
 import { TerminalToolsRow } from "./hosts/TerminalTools"
+import { HostVersion } from "./hosts/HostRow"
+import { hubRpc } from "./hosts/hub"
+import { SettingsSyncRow } from "./hosts/SettingsSync"
+import { HostService, RemoteServer } from "./server/RemoteServer"
 
-// Step 1 (docs/plan/09-frontend.md) for the host page (route "host"). Its sections from other areas stand as marked
-// slots (`Slot` below) until they come: settings sync and the host's version (hosts/SettingsSync, hosts/HostRow's
-// HostVersion: M7, HE-6), telemetry (Telemetry's HostTelemetry, 6.9),
-// a linked host's server and its systemd service (Server's RemoteServer and HostService:
-// `admin.*`, HE-6) and taking a host off the board (`hub.hosts.remove`, HE-6). A profile has agent configs on every
-// host, so the old "Copy login" for a profile with a folder of its own is gone (logins are copied from configs: 6.11).
+// Step 1 (docs/plan/09-frontend.md) for the host page (route "host"): its version and Update (hosts/HostRow's
+// HostVersion), settings sync, agent configs (with Copy login, `hub.hosts.copyConfig`), profiles, terminal tools, this
+// host's Server or a linked host's (server/RemoteServer, over that host's `admin.*`), its systemd service, Desktop, and
+// taking a linked host off the board (`hub.hosts.remove`). Telemetry (Telemetry's HostTelemetry, 6.9) stands as a
+// marked slot (`Slot` below) until it comes. A profile has agent configs on every host, so the old "Copy login" for a
+// profile with a folder of its own is gone (logins are copied from configs: 6.11).
 
 const MODE: Record<string, string> = { local: "this hub's own host", outbound: "linked by URL", inbound: "dials in", ssh: "over SSH" }
 
@@ -37,6 +42,7 @@ function Slot({ title, area }: { title: string; area: string }) {
 export function HostPage({ hostId }: { hostId: string }) {
   const host = useBoard((s) => s.hosts.find((h) => h.id === hostId))
   const hostCount = useBoard((s) => s.hosts.length)
+  const confirm = useConfirm()
   if (!host) return <div className="p-8 text-muted">Host not found.</div>
   const agents = canRunAgents(host)
   return (
@@ -62,8 +68,7 @@ export function HostPage({ hostId }: { hostId: string }) {
               {host.url ? ` · ${host.url}` : ""}
               {!host.connected && host.last_seen ? ` · offline, last seen ${timeAgo(host.last_seen)}` : ""}
             </div>
-            {/* HE-6: HostVersion (hosts/HostRow): its version and commit, and whether it needs an update. */}
-            {host.version && <div>v{host.version}</div>}
+            <HostVersion host={host} />
             {host.connected && !agents && <div>Board only: this host can&apos;t run agents (no claude or ia-shim). New projects go on hosts that can.</div>}
           </section>
 
@@ -81,17 +86,60 @@ export function HostPage({ hostId }: { hostId: string }) {
                   <AgentDefaultsRow host={host} showName={false} />
                 </section>
               )}
-              <Slot title="Settings sync" area="HE-6" />
+              {hostHas(host, "settings_sync") && (
+                <section>
+                  <h2 className="mb-1 text-[13px] font-semibold">Settings sync</h2>
+                  <p className="mb-3 text-[12.5px] text-muted">
+                    Keeps the agent defaults, terminal tools, and each profile&apos;s model, limits, approvals and board access the same on every host of this
+                    board that has this on (profiles are matched by name). Folders, agent configs, logins and tokens stay each host&apos;s own.
+                  </p>
+                  <SettingsSyncRow host={host} />
+                </section>
+              )}
               {agents && <HostClaudeConfigs hostId={host.id} canCopy={hostCount > 1} />}
               {agents && <HostProfiles hostId={host.id} />}
-              <TerminalToolsRow host={host} />
+              <section>
+                <h2 className="mb-1 text-[13px] font-semibold">Terminal tools</h2>
+                <p className="mb-3 text-[12.5px] text-muted">
+                  TUI programs or scripts to open from a task, next to its Terminal tab. Each runs in its own tmux session in the task&apos;s worktree, through
+                  your login shell, and keeps running while the board is open; a couple of minutes after the last board showing it closes, it ends.
+                </p>
+                <TerminalToolsRow host={host} />
+              </section>
               <Slot title="Telemetry" area="6.9" />
-              {host.local ? <ServerPanel /> : <Slot title="Server" area="HE-6" />}
+              {host.local ? <ServerPanel /> : <RemoteServer hostId={host.id} />}
+              <HostService hostId={host.id} />
               {agents && <HostDesktop hostId={host.id} />}
             </>
           )}
 
-          {!host.local && <Slot title="Remove" area="HE-6" />}
+          {!host.local && (
+            <section>
+              <h2 className="mb-3 text-[13px] font-semibold">Remove</h2>
+              <div className="flex items-center gap-3 rounded-xl border border-line px-4 py-3 text-[12.5px] text-muted">
+                <span className="flex-1">Take this host off the board. Its projects, threads and agents stay on the host.</span>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() =>
+                    confirm.ask({
+                      title: `Remove ${host.name}`,
+                      body: `Remove ${host.name} from this board? Its projects, threads and agents stay on that host.`,
+                      action: "Remove from board",
+                      danger: true,
+                      onConfirm: async () => {
+                        await hubRpc("hub.hosts.remove", { id: LinkId.make(host.id) })
+                        navigate({ name: "settings", tab: "hosts" }, true)
+                      },
+                    })
+                  }
+                >
+                  <Trash2 size={12} /> Remove from board
+                </Button>
+              </div>
+            </section>
+          )}
+          {confirm.dialog}
         </div>
       </div>
     </div>

@@ -79,6 +79,10 @@ Each could have gone another way. They are listed so that a different answer is 
 4. **Who writes prompts.** The plan copies every prompt word for word. Prompt changes wait until after the switch.
 5. **Moving worktrees out of the old folder.** After the switch they stay where they are. A command to move a
    project's worktrees into the new folder is possible and is not planned.
+6. **Reconnecting when the network comes back.** The old page's events socket reconnected at once on the browser's
+   `online` event (HA-38) rather than waiting out its back-off (up to 32 s). The client's sessions retry on their own
+   schedule and do not listen for it; its check (the old hostUpdate's third case) is not ported (6.12, HE-7). It
+   belongs to `packages/client`'s sessions if it is wanted.
 
 ## Risks
 
