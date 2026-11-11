@@ -74,10 +74,15 @@ export interface MergeRequestInput {
   readonly project: Pick<Project, "merge_prompt"> | null
   /** Where its work goes (`TaskBase.taskBase`). */
   readonly base: string | null
+  /**
+   * 6.6: its project's workflow's Ready for merge prompt, in place of the project's merge prompt, and how the agent says
+   * it's merged when the workflow moves it to Done (`WorkflowFacts`); null for none.
+   */
+  readonly workflow?: { readonly instructions: string | null; readonly finish: string | null } | undefined
 }
 
 /** The merge request (`mergeRequest` and what follows it), or why it can't be made. */
-export const mergeRequestText = (rows: Rows, { task, project, base }: MergeRequestInput): Result.Result<string, string> =>
+export const mergeRequestText = (rows: Rows, { task, project, base, workflow }: MergeRequestInput): Result.Result<string, string> =>
   Result.gen(function* () {
     const stacked = task.merges_into !== null ? yield* intoMerge(rows, task, base) : yield* stackedMerge(rows, task, base)
     // A project's workflow that moves a merged task to Done has its own prompt and finish (6.6).
@@ -85,8 +90,8 @@ export const mergeRequestText = (rows: Rows, { task, project, base }: MergeReque
       approved: task.merge_approval === "approved",
       what: mergeWhatInto(task.branch, base),
       stacked,
-      instructions: projectMerge(project),
-      merged: MERGE_DONE,
+      instructions: workflow?.instructions ?? projectMerge(project),
+      merged: workflow?.finish ?? MERGE_DONE,
     })
     // A level of a stack merging as one run: the lane is the stack's until its last level.
     if (task.stack_run !== null) {
