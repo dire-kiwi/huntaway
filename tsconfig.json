@@ -1,0 +1,6 @@
+{
+  // The workspace's own files: configs and scripts. Each package has a tsconfig.json of its own.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["vite.config.ts", "scripts/**/*.ts"]
+}

@@ -103,7 +103,9 @@ read or reasoned, not run.
 - Memory, start-up time and event-loop delay of a whole server on Effect. HA-408 measured a bare import: 104 ms and
   100 MB for all of `effect`.
 - `tsrs` compiling the whole server for a release; the size of a release package.
-- Three names in the lint configuration: `import/no-cycle`, the `react/*` rules and the options of
+- ~~Three names in the lint configuration~~: checked in M0 (HE-3): `import/no-cycle` (with the `import` plugin listed),
+  `no-restricted-imports` with `{ patterns: [{ group, message }] }`, and `react/rules-of-hooks`/`react/exhaustive-deps`.
+  The old line said: `import/no-cycle`, the `react/*` rules and the options of
   `eslint/no-restricted-imports` under Vite+ 1.5.0.
 - The `STRICT` tables against every value the importer will write.
 - The read-only server: that the listed git subcommands under `GIT_OPTIONAL_LOCKS=0` leave a repository byte for

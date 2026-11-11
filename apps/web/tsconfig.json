@@ -1,0 +1,13 @@
+{
+  // The web app: bundled by Vite, so imports resolve as a bundler's do and the kept components keep their extensionless
+  // imports (docs/plan/09-frontend.md, Moving the components). DOM types; no Node types in src.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "DOM", "DOM.Iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite-plus/client"]
+  },
+  "include": ["src", "tests/browser", "tests/unit"]
+}

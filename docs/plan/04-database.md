@@ -221,6 +221,17 @@ CREATE INDEX thread_items_user_time ON thread_items(type, created_at) WHERE type
 `thread_requests` and `thread_events` follow the old shape the same way (`write_no` on requests). Events are kept
 for 24 hours, as now.
 
+### As built in M0 (HE-3)
+
+The first migration is `apps/server/migrations/2026-11-12-initial.ts`: 63 `STRICT` tables, checked by diffing the old
+server's final schema (built by its own migrations in memory) against it. Beyond the changes above:
+`tasks.summaries` is `NOT NULL DEFAULT '[]'`; `thread_requests` has `PRIMARY KEY (task_id, id)`, `WITHOUT ROWID`, as
+`thread_items`; `task_steers` has an index on `(task_id, seq)`; `permission_requests.write_no` is `NOT NULL` and the
+other `write_no` columns are nullable; no `CHECK` constraints. JSON inside `tasks.rewind` and request `metadata` still
+names `message_id`. The row column schemas (`Bit`, `JsonColumn`…) are in `apps/server/src/platform/columns.ts`; a
+JSON column that fails its schema reads as its fallback but is not yet logged once per column. The backup before
+migrating runs `VACUUM INTO` on the main connection, not in a worker (a worker comes with the slow reads).
+
 ## What is not in the database
 
 - A run's output, input and markers: its folder under `runs/` ([07-agents.md](07-agents.md#the-run-folder)).

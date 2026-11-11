@@ -1,0 +1,54 @@
+{
+  "name": "huntaway-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Huntaway web app, served by the server from apps/web/dist",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "test:ui": "pnpm run build && vp test --config tests/ui/vitest.config.ts"
+  },
+  "dependencies": {
+    "@dire-kiwi/docs-render": "https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz",
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-browser": "catalog:",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@huntaway/client": "workspace:*",
+    "@huntaway/contracts": "workspace:*",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-web-links": "0.12.0",
+    "@xterm/xterm": "5.5.0",
+    "clsx": "2.1.1",
+    "effect": "catalog:",
+    "lucide-react": "1.61.0",
+    "mdast-util-from-markdown": "2.1.0",
+    "mermaid": "12.2.0",
+    "qrcode-generator": "2.0.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "shiki": "4.5.0"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@tailwindcss/typography": "0.5.20",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/mdast": "4.0.4",
+    "@types/node": "catalog:",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "@vitest/browser-playwright": "5.1.0",
+    "playwright": "catalog:",
+    "playwright-core": "catalog:",
+    "tailwindcss": "4.3.3",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

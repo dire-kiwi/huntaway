@@ -1,0 +1,17 @@
+{
+  "name": "@huntaway/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plain functions with no effect import, used by the hooks, the server and the clients",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -1,9 +1,14 @@
 node_modules/
 dist/
-build/
+/build/
 coverage/
 *.log
 .env
 .env.*
 !.env.example
 .DS_Store
+/target
+/.huntaway-test-env
+/apps/web/.vitest
+/.vitest
+*.tsbuildinfo

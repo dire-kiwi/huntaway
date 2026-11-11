@@ -1,0 +1,33 @@
+{
+  "name": "huntaway-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The huntaway server: one Effect program, run by Node 24+ from its sources",
+  "license": "MIT",
+  "bin": {
+    "huntaway": "./bin/huntaway"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "bin/huntaway serve",
+    "test": "vp test",
+    "test:e2e": "vp test --config tests/e2e/vitest.config.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
+    "@huntaway/contracts": "workspace:*",
+    "@huntaway/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@huntaway/testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

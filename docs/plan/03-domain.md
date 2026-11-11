@@ -145,6 +145,9 @@ export const Task = Schema.Struct({
 export interface Task extends Schema.Schema.Type<typeof Task> {}
 ```
 
+The task's `external_links`, `todos`, `tracked` and `servers` are plain arrays, always sent (the old row builder
+always sent arrays; HE-3), not `NullOr` as above.
+
 Changes from the old `Task`:
 
 | Field                                              | Change                                                                                             |
@@ -259,6 +262,10 @@ export const BoardEvent = Schema.Union([
 ])
 ```
 
+Where the old event said "read them again" (`profiles_changed`, `settings_changed`, `pens`), the new one carries
+what to read (all profiles and configs, the settings, the profile's pens), so a client never loads lists beside the
+stream (HE-3).
+
 Gone: `message`, `message_updated`, `delta`, `delta_reset` (legacy), `thread_event` and `thread_resync` (a thread
 is its own subscription, [05-protocol.md](05-protocol.md#a-thread)), `telegram`, `tick` (the RPC client pings).
 `hosts_changed` moves to the hub's own stream.
@@ -275,7 +282,7 @@ A small closed set, so a client can handle any call the same way. Each is a `Sch
 | `Conflict`       | `reason` (a literal), `detail`           | 409                       | The detail; the reason lets the UI offer the fix (`todos_unfinished` offers "move anyway") |
 | `Forbidden`      | `scope`                                  | 403                       | "this device can't …"                           |
 | `Unauthorized`   | none                                     | 401                       | The token screen                                |
-| `HostOffline`    | `host_id`, `name`                        | 503 from the proxy        | The host's offline state                        |
+| `HostOffline`    | `host_id`, `host_name`                      | 503 from the proxy        | The host's offline state                        |
 | `HostRefused`    | `host_id`, `reason`                      | 502 from the proxy        | "link it again"                                 |
 | `Unavailable`    | `what`, `reason`                         | 503 (no tmux, no gh, agents can't run here) | The reason                    |
 | `External`       | `service`, `reason`                      | 502 (Asana, GitHub, docs site) | The reason                                 |

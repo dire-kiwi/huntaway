@@ -1,0 +1,6 @@
+# The Rust that stays beside the TypeScript server (apps/server): ia-shim (rust/shim), the per-run supervisor the server
+# runs agents under. The Rust server (server/src/) was removed in HA-179, and the connection broker (rust/broker) in
+# HA-339; see apps/server/PORTING.md.
+[workspace]
+members = ["rust/shim"]
+resolver = "3"
