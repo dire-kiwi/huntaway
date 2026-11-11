@@ -38,9 +38,15 @@ terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
 update        Supervisor · Updater · Releases · Service
 analytics     Analytics · Disk
-lifecycle     Reactor · Recovery
+lifecycle     Reactor · Recovery · Board · Demo
 transports    rpc/* · http/* · mcp/transport/*
 ```
+
+As built in M1 (HE-3): `hooks/` sits below everything and `prompts/` right after `platform/` (the structural test
+needs every folder placed). `lifecycle/Board` (the board snapshot and `board.watch`) reads every area, so it is in
+`lifecycle/`. `Pens` uses `Tasks` (a pen's thread is deleted with it) and `Tasks` uses `PenRepo`. `Profiles` and
+`Projects` delete what hangs off them with SQL in their repositories, because they sit above `Tasks`; when runs,
+worktrees and terminals exist (M2 on), those deletes move up to `lifecycle/` or go through the reactor.
 
 ### How an area reaches upward: `Changes` and the `Reactor`
 
@@ -59,6 +65,11 @@ written in one file:
 | `PrNews`                       | wake an idle agent in review, per the project's setting                                                               |
 | `PromptSettled`                | clear attention and restore the working status when none is pending                                                   |
 | `WorkflowRunSettled`           | release a task the run was holding in its column                                                                      |
+
+In M1 the reactor handles changes one at a time, in commit order (which also keeps one task's in order); handling
+different tasks in parallel, each under its lock, comes with the slow reconcilers. `Dependencies.reconcile` finds the
+waiting tasks whose dependencies are merged and, until runs exist (M2), leaves them waiting, as the old server did
+when it could not run agents.
 
 Changes about one task are handled in order, under that task's lock; different tasks proceed in parallel. A step
 that starts something slow (a run, a worktree) registers it and returns; the slow part is a fiber in that area's
@@ -242,7 +253,9 @@ the one-off moves removed:
 1. `Supervisor.take` (restart file and parent PID out of the environment) · data folder · `ImportGuard` (below) ·
    `Releases.execInstalled` (hand over to a newer staged release) · `Identity`.
 2. `Backup.beforeStart` · `Db` · `Migrations`.
-3. The HTTP listener binds; requests wait until step 6.
+3. (Moved to step 6, HE-3: the listener binds once every area is built and recovery has run, so no request can
+   reach a server that is still starting, and no gate is needed. A client sees "connection refused" until then,
+   which it already treats as "not up yet".)
 4. Every area's layer, bottom up. Loops that start here: telemetry exporter, usage, window restarts, PR watcher,
    terminal reaper, attachment pruner, run pruner, dev-server scan, temp-folder sweeper, permission sweeper,
    scheduler, merged watcher, relocation recorder, update and release checks, push, settings sync.

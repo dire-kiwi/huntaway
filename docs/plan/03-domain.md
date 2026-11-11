@@ -145,6 +145,9 @@ export const Task = Schema.Struct({
 export interface Task extends Schema.Schema.Type<typeof Task> {}
 ```
 
+The task's `external_links`, `todos`, `tracked` and `servers` are plain arrays, always sent (the old row builder
+always sent arrays; HE-3), not `NullOr` as above.
+
 Changes from the old `Task`:
 
 | Field                                              | Change                                                                                             |
@@ -258,6 +261,10 @@ export const BoardEvent = Schema.Union([
   ReleaseChecked, ReleaseDownload, Restart, RestartLog
 ])
 ```
+
+Where the old event said "read them again" (`profiles_changed`, `settings_changed`, `pens`), the new one carries
+what to read (all profiles and configs, the settings, the profile's pens), so a client never loads lists beside the
+stream (HE-3).
 
 Gone: `message`, `message_updated`, `delta`, `delta_reset` (legacy), `thread_event` and `thread_resync` (a thread
 is its own subscription, [05-protocol.md](05-protocol.md#a-thread)), `telegram`, `tick` (the RPC client pings).

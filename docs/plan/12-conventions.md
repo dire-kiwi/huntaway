@@ -262,7 +262,7 @@ Rules for living with it:
   quick fix writes them). The examples in this plan write `"huntaway/tasks/Tasks"` for short.
 - **A rule is never lowered to `warn`.** If a rule is wrong for this code base it is turned off in the config, in a
   change that says why.
-- **The three unverified names** in the config above (`import/no-cycle`, the `react/*` rules and
+- **The three names once unverified** (checked in M0; `docs/effect.md` has the result) (`import/no-cycle`, the `react/*` rules and
   `eslint/no-restricted-imports`' option shape under Vite+ 1.5.0) are checked in M0; the Effect rules, `typeAware`,
   `denyWarnings` and `allowedUnstableApis` were checked in the spike.
 - **`@effect/tsgo` supports listed versions** of Oxlint and tsgolint (0.67.7: Oxlint 1.89 to 1.93; Vite+ 1.5.0 bundles

@@ -172,7 +172,8 @@ So a client never loads lists beside the stream, and the old rules for it (conne
 events beat stale loads, a deleted task stays deleted) have nothing left to guard. The old client made one request
 per project and kind on every reconnect.
 
-The snapshot holds every task of the host, as the store does today. Its size is measured at M2
+The snapshot holds every task of the host but routine threads, archived projects' tasks included (the client keeps
+them off the board, and unarchiving a project then shows them with no load beside it; HE-3). Its size is measured at M2
 ([10-testing.md](10-testing.md#measurements)); if it proves too large, the payload gains a filter (`profile_id`,
 "not archived").
 
@@ -214,6 +215,11 @@ Rpc.make("threads.watch", {
 | `POST /api/mcp/<run id>/<server>`, `GET` with `Last-Event-ID` | MCP for a run                                                          | the run's secret             |
 | `POST /api/otlp/<run id>/v1/logs` (and `metrics`, `traces`) | Telemetry from an agent CLI                                              | the run's secret             |
 | `GET /*`                                   | The built UI, with the single-page fallback and the cache headers it has now              | none                         |
+
+A request body over 16 MiB is answered 413 without being kept in memory (an attachment is at most 10 MiB, sent as
+base64 in one RPC). "Auth before the body" applies to the plain HTTP routes; an RPC's token is in the request it
+frames, so over HTTP the body is read (up to the limit) before `Auth` sees it (HE-3). An RPC with no payload is sent
+`"payload": null` by a hand-written client.
 
 Rules at this edge, each from a past bug ([inventory](inventory/07-server-root-api.md), section 9): requests that
 arrive while the server starts wait for it; a route's auth is checked before its body is read; a body over its limit
