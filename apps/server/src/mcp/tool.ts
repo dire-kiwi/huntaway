@@ -98,6 +98,8 @@ export interface ListedTool {
   readonly name: string
   readonly description?: string
   readonly inputSchema: Readonly<Record<string, unknown>>
+  /** MCP's hints (`readOnlyHint`), on the servers that give them. */
+  readonly annotations?: Readonly<Record<string, unknown>>
 }
 
 /** The parts of a tool's JSON Schema the argument check reads. */

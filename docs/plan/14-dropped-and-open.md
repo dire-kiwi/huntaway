@@ -102,6 +102,11 @@ read or reasoned, not run.
   M3 (HE-4): the board server's 22 tools served so far are accepted by a real Claude Code once every input schema is an
   object with `"type": "object"` (a struct of no fields came out as `{ not: { type: "null" } }`, and Claude Code then
   dropped the whole list; `mcp/tool.ts` now fixes the shape). Codex, and the `gh`, `docs` and `desktop` servers, are not.
+- The gh server and `gh-run` against the real gh and GitHub (4.4, HE-5): every test runs the fake gh. Not run: the real
+  gh's `--help` read by `parseHelp` (the old test's texts are gh 2.102's), the token's host-only reach with the real gh
+  (the old `gh_sends_the_token_to_the_accounts_host_only`), a push or fetch over HTTPS to GitHub with the account's
+  token, a stacked merge with GitHub's merge-async, and a real Claude Code (or Codex) taking the gh server's tool list and
+  JSON Schemas over HTTP. `ssh -G` was run with a test config only.
 - The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows. Measured at M2 (HE-4) on
   synthetic data of that size, not a real board: 5.5 MB in 154 ms (the old client's 15 loads: 5.7 MB, 65 ms);
   [10-testing.md](10-testing.md#measurements).

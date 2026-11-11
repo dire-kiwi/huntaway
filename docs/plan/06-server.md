@@ -221,6 +221,55 @@ two tool-call test cases.
 `PrWatch` (one GraphQL read, comparing with what the agent has been told, the in-review watcher, failed-check logs),
 `GithubRepos` (list, search, clone, create), `GhStacks`.
 
+As built in 4.4 (HE-5):
+
+- **What the board and `gh-run` share is plain TypeScript in `packages/shared`**: `gh.ts` (`refuse`, `GhAccount` with
+  `parseAccount`/`accountName`/`ownsHost`, `checkTargets`, `checkGitUrls`, `gitCredentialConfig`, `UNSANDBOXED_GIT` and
+  `noRepoCommands` as `GIT_CONFIG_*` variables, `REPO_COMMANDS`/`repoCommands`, `extraHeaderResets`, `hostsYml`,
+  `accountEnv`, `notSignedIn`, `shimScript`) and `ghTargets.ts` (`parseHelp`, `helpTargets`, `helpCommand`,
+  `fallbackTargets`, `positionalHost`, `urlHost`, `repoHost`), the old modules' rules unchanged. Failures are returned as
+  messages, not thrown.
+- **`github/Gh.ts`** (`Gh`): `run(tool, args, { cwd, account, mergeGate })` is the old `run` (the merge gate first, then
+  `pr_merge`'s resolve to number and repository, the stacked merge, then the command; `GhRefused { message }` for what the
+  old code threw), `gh(args, { cwd, account, repo, timeout })` for the board's own gh calls (4.5, 4.7, 4.8), `token`,
+  `shellEnv(account)` (a wait's), `fetchEnv` (`GitHubAccess`'s). The pure part (`command`, `merges`, `branchName`,
+  `prFromUrl`, `clip`, `exitStatus`) is `github/gh/commands.ts`. gh runs through `ChildProcessSpawner` over the agents'
+  environment, 600 s for a tool call; gh's help is cached per `command sub` in a `Ref`; the private config folder is a
+  scoped resource under `<cache>/huntaway/gh-account/<uuid>` (made 0700, `hosts.yml` 0600 with `wx`, removed when the
+  call ends; folders over a day old swept first). The stacked merge's poll is `MergePoll` (a `Context.Reference`, 2 s
+  for 10 min; tests shorten it), on the clock.
+- **Decided**: an account the profile or project names that isn't one (`parseAccount` fails) is refused ("the GitHub
+  account X isn't one gh can use") rather than run as gh's active account, as the old tools did. `GitHubAccess.fetchEnv`
+  has no error channel (the seam's signature), so a missing login gives the fetch no helper at all (`credential.<url>.helper`
+  emptied), which fails it rather than letting another login fetch; it is logged.
+- **Names**: the old `IA_GH_*` variables are `HUNTAWAY_GH_ACCOUNT`, `HUNTAWAY_GH_BIN` (the real gh, which is also the
+  `--gh-bin` fallback and so in `SERVE_ENV`), `HUNTAWAY_GH_GIT_TOKEN` (the credential helper's), and
+  `HUNTAWAY_GH_CONFIG_ROOT` (new: where `gh-run` makes its config folders, the server's root, so one sweep covers both).
+- **`github/GithubRemote.ts`** is the old `remote.ts`: `github(repo, base)`, `pushRepo`, `pushRemote`, with
+  `remoteRepo` and `isGithubCom`; `ssh -G` with 5 s and `ServerConfig.sshConfig` (`-F`; `/dev/null` in tests).
+  `Prompts` fills the prompt context's `github` with it (a task with its own branch in a project; its base is the task's
+  `base_branch`, else the project's, until 4.1's `TaskBase` gives the old `remote_base`) and `ghTools` true (6.4 adds the
+  project's switch).
+- **`git/GitHubAccess.ts`** was written here as the seams file specifies (4.1's interface, not on this branch's base);
+  its live layer is `github/GitHubAccessLive.ts`. **`merge/MergeGate.ts`** is the stub (nothing blocked) 4.7 fills.
+- **`ServerConfig`**: `ghBin` (`--gh-bin`/`HUNTAWAY_GH_BIN`, default `gh`; tests `<data dir>/no-gh-in-tests`, so no
+  test runs the real gh), `path`, `cacheDir`, `sshConfig`.
+- **Main**: `GithubLive` (`GitHubAccessLive` over `Gh` and `GithubRemote`) under the git line, the agents' line built
+  over it; `MergeGate.layer` above the permissions' line; `GhTools` on `mcpLayer`'s first line. When 4.1's `Worktrees`
+  needs `GitHubAccess`, `GitHubAccessLive`'s line moves under it (it needs only `Gh`, which needs only `Git`).
+- **`gh-run`** is `hooks/gh-run.ts` (the entry, failing with exit 1 and its reason) and `hooks/ghRun.ts` (plain Node:
+  the refusals, gh's help read with `spawnSync`, the host check, the token, the config folder, gh with `stdio:
+  inherit` and its exit code). The launcher already dispatched it. A wait's command gets `Gh.shellEnv`: the shim
+  `<data dir>/gh-shim/gh` (written aside and renamed when it differs; it runs `HUNTAWAY_EXE gh-run`) first on `PATH`,
+  the account, the real gh and the config root; the token is checked first so the command doesn't run at all when the
+  account isn't signed in. No `HUNTAWAY_EXE` (a server not started by `bin/huntaway`): the wait is refused.
+- **The fake gh** (`packages/testing/bin/fake-gh.ts`, its state's schema and `fakeGitHub`/`fakePull` in
+  `src/fakeGitHub.ts`; `scripts/test-server.sh --fake-gh`) answers the board's and agents' gh calls from a JSON file:
+  accounts and tokens, repositories with pull requests (checks, reviews, comments, stacks, merge-async), issues, runs,
+  gh's help texts, exact-argument routes, and a log of every call (the account it acted as, whether a token was in its
+  environment, its config folder's modes). Its `graphql` answers a pull request by `owner`/`name`/`number`; 4.5 shapes it
+  to `PrWatch`'s query.
+
 ### Agents, runs, permissions, board tools — [07-agents.md](07-agents.md)
 
 ### Review — [inventory 04](inventory/04-git-review.md) (2.12–2.13, 2.18–2.19)

@@ -603,6 +603,17 @@ export class ToolCalls extends Context.Service<ToolCalls, {
 - `mcp_calls` older than an hour whose run is gone or ended an hour ago are pruned when `ToolCalls` starts and hourly,
   1000 at a time. The `board_tool` telemetry event is left for analytics.
 
+### As built in 4.4 (HE-5): the `gh` server
+
+The `gh` server's 17 tools are `mcp/tools/gh.ts` (`GhTools`, `McpServers.register("gh", …)`,
+through `ToolCalls` like every call, over `Gh.run`; null arguments dropped as the board's). Their result is MCP content
+(gh's output, `isError` when gh failed), which `callResult(result, server)` passes through for every server but the
+board's; `GhRefused` is the tool's `Error: …`. The servers other than the board's offer a reviewer every tool (the
+reviewer and plan gates were the board's only already) and list `readOnlyHint` (`Tool.Readonly`; those tools are also
+`Rerunnable`). `initialize` on gh says the run's account (`initializeResult(server, protocol, account)`, from
+`mcp-run.json`). `McpControlRegistered` now tells the launch gh is served, so Claude runs get gh in `mcp.json` and the
+gh hook. 3.1's test of an ended run gives gh's call arguments it takes, since an unknown argument is refused first.
+
 ### As built in 3.2 (HE-4)
 
 - **`mcp/tools/<area>.ts`** declare and handle the board's tools: `questions.ts` (`request_user_input`, `finish_work`),

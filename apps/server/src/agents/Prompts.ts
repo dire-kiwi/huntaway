@@ -2,7 +2,9 @@ import { Context, Effect, Layer, Option } from "effect"
 import { DocumentLabel, threadKindOf } from "@huntaway/contracts"
 import { TaskId } from "@huntaway/contracts"
 import type { Agent, PermissionMode, ProjectId, Task, ThreadKind, ThreadKindFields } from "@huntaway/contracts"
+import { GithubRemote } from "../github/GithubRemote.ts"
 import { DataDir } from "../platform/DataDir.ts"
+import { ServerConfig } from "../platform/ServerConfig.ts"
 import type { DocumentFile } from "../prompts/documentGuide.ts"
 import type { LostWork } from "../prompts/lostBackground.ts"
 import { penBrief } from "../prompts/penBrief.ts"
@@ -107,6 +109,20 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
       const settings = yield* HostSettings
       const penRepo = yield* PenRepo
       const dataDir = yield* DataDir
+      const remote = yield* GithubRemote
+      const config = yield* ServerConfig
+
+      const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
+
+      /**
+       * Where a task with its own branch opens its pull request, if its repository is on GitHub (huntaway's
+       * runner/launch.ts): the remote a branch from its base is pushed to. 4.1's `TaskBase` gives the base a stacked
+       * task's branch is pushed from (the old `remote_base`); until then the task's own base, else its project's.
+       */
+      const githubOf = (task: ContextTask, project: PromptProject | null) =>
+        task.kind === "task" && project !== null && task.branch !== null
+          ? remote.github(expand(project.repo_path), task.base_branch ?? set(project.base_branch))
+          : Effect.succeed(null)
 
       const projectOf = (id: ProjectId | null) => (id === null ? Effect.succeed(null) : projectRepo.get(id).pipe(Effect.map(Option.getOrNull)))
 
@@ -165,6 +181,9 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           profiles: yield* profiles.list,
           githubAccount: set(project?.github_account) ?? set(profile.github_account),
           pen: kind._tag === "Pen" ? yield* penOf(task, kind) : "",
+          github: yield* githubOf(task, project),
+          // The board serves gh (4.4); a project that has its own `gh` server or turns it off is 6.4's (`AgentTools`).
+          ghTools: true,
         }
         return context
       })
