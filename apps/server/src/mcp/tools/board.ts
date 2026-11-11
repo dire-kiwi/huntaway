@@ -5,11 +5,13 @@ import { penTools } from "./pens.ts"
 import { projectTools } from "./projects.ts"
 import { questionTools } from "./questions.ts"
 import { taskTools } from "./tasks.ts"
+import { trackingTools } from "./tracking.ts"
 import { waitTools } from "./wait.ts"
 
 // The board's own server, `huntaway` (docs/plan/07-agents.md, Board tools): every area's tools, registered in the
 // order the old server listed them (mcp.ts `board_tools`), which is the order runs are shown them. An area that adds
-// tools (3.4's changes that ask, 3.5's waits) adds its list here; `BOARD_TOOLS` places each.
+// tools adds its list here; `BOARD_TOOLS` places each. Still to come: the automations (6.5), the workflows (6.6) and
+// `submit_review` (4.6).
 
 /** Every tool of the board's server, in `tools/list`'s order. */
 export const BOARD_TOOLS: ReadonlyArray<string> = [
@@ -59,6 +61,7 @@ export const BoardTools = McpServers.register(
   Effect.gen(function* () {
     const all: ReadonlyArray<RegisteredTool> = [
       ...Object.values(yield* questionTools),
+      ...Object.values(yield* trackingTools),
       ...Object.values(yield* waitTools),
       ...Object.values(yield* projectTools),
       ...Object.values(yield* taskTools),

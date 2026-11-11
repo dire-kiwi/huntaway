@@ -1,7 +1,7 @@
 import { Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { Invalid, ProjectId } from "@huntaway/contracts"
-import type { Conflict, NewProject, ProfileId, Project, ProjectPatch, Timestamp } from "@huntaway/contracts"
+import { Invalid, Project, ProjectId } from "@huntaway/contracts"
+import type { Conflict, NewProject, ProfileId, ProjectPatch, Timestamp } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
@@ -27,6 +27,9 @@ const text = (v: string | null | undefined) => (v === undefined ? undefined : bl
 
 export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound, { readonly brand: unique symbol }>()("ProjectNotFound", { id: Schema.String }) {}
 
+/** A preview's way out of its transaction, which rolls it back. */
+class Previewed extends Schema.TaggedError<Previewed, { readonly brand: unique symbol }>()("Previewed", { after: Project }) {}
+
 /** What git says of a project's folder: cached on the row, refreshed on create and update. */
 interface GitFacts {
   /** The folder is a repository's top (it has `.git`). */
@@ -47,6 +50,11 @@ export interface ProjectsShape {
   /** Changes its settings under its lock. `archived` archives it (refused while one of its agents runs) or brings it back. Emits `project`. */
   readonly update: (id: ProjectId, patch: ProjectPatch) => Effect.Effect<Project, ProjectNotFound | Invalid | Conflict>
   /** Deletes it with its tasks and its folders in the data folder; never its repository. Emits `project_deleted`. */
+  /**
+   * What `update` would make of it, checked as `update` checks it, without changing it (written and rolled back): how
+   * each setting would be stored. What an agent's `update_project` shows the user (`Approvals`).
+   */
+  readonly preview: (id: ProjectId, patch: ProjectPatch) => Effect.Effect<Project, ProjectNotFound | Invalid | Conflict>
   readonly delete: (id: ProjectId) => Effect.Effect<void, ProjectNotFound | Conflict>
   /** Read `is_git` and `has_commits` from its folder again; emits `project` when they changed. */
   readonly refreshGit: (id: ProjectId) => Effect.Effect<Project, ProjectNotFound>
@@ -192,84 +200,93 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
           return columns
         })
 
+      /** The patch checked and written: the project after it. Emits `project`. Not `keep`, it is rolled back (a preview). */
+      const write = (id: ProjectId, patch: ProjectPatch, keep: boolean) =>
+        Effect.gen(function* () {
+          const outside = yield* checkOutside(yield* getProject(id), patch)
+          const facts = yield* gitFacts((yield* getProject(id)).repo_path)
+          return yield* db.tx(
+            Effect.gen(function* () {
+              const before = yield* getProject(id)
+              const profile = yield* profiles.get(before.profile_id)
+              // Configs deleted since they were saved, here or in the profile's (which a project's own start from), are kept.
+              const saved = [
+                ...before.reviewers,
+                ...before.summarizers,
+                ...Option.match(profile, { onNone: () => [], onSome: (p) => [...p.reviewers, ...p.summarizers] }),
+              ]
+              const known = yield* configIds
+              const reviewers = { saved, configs: known, defaultsToo: false }
+              const key = yield* ifGiven(patch.key, (k) => {
+                const wanted = normalizeKey(k)
+                return wanted === before.key ? Effect.succeed(wanted) : Effect.flatMap(repo.list(before.profile_id), (others) => checkKey(others, id, wanted))
+              })
+              let archivedAt: Timestamp | null | undefined
+              if (patch.archived === true && before.archived_at === null) {
+                // Not while one of its agents runs: their tasks would be off the board.
+                yield* refuseWhileRunning(
+                  yield* repo.running(id),
+                  (n) => `${n} of the project's agents ${n === 1 ? "is" : "are"} running; stop ${n === 1 ? "it" : "them"} before archiving it`,
+                )
+                archivedAt = yield* nowTimestamp
+              } else if (patch.archived === false) archivedAt = null
+              const columns: ProjectColumns = {
+                name: yield* ifGiven(patch.name, checkName),
+                key,
+                // The old key keeps naming the project's tasks (OS-2 after OS became OMS).
+                former_keys: key === undefined || key === before.key ? undefined : formerKeysAfter(before, key),
+                base_branch: outside.base_branch,
+                worktrees_root: outside.worktrees_root,
+                setup_script: script(patch.setup_script),
+                teardown_script: script(patch.teardown_script),
+                status_script: script(patch.status_script),
+                status_scripts: patch.status_scripts === undefined ? undefined : tidyStatusScripts(patch.status_scripts),
+                use_worktrees: patch.use_worktrees,
+                permission_mode: patch.permission_mode,
+                model: text(patch.model),
+                auto_review: patch.auto_review,
+                review_rounds: yield* ifGiven(patch.review_rounds, checkReviewRounds),
+                reviewers: yield* ifGiven(patch.reviewers, (v) => reviewersValue(v, { ...reviewers, summarizers: false })),
+                auto_summary: patch.auto_summary,
+                summarizers: yield* ifGiven(patch.summarizers, (v) => reviewersValue(v, { ...reviewers, summarizers: true })),
+                claude_config_ids: yield* ifGiven(patch.claude_config_ids, (v) =>
+                  v === null ? Effect.succeed(null) : Effect.map(checkConfigIds(v, known), (ids) => (ids.length === 0 ? null : ids)),
+                ),
+                start_prompt: text(patch.start_prompt),
+                review_prompt: text(patch.review_prompt),
+                merge_prompt: text(patch.merge_prompt),
+                group_name: yield* ifGiven(patch.group_name, checkGroupName),
+                archived_at: archivedAt,
+                merge_approval: patch.merge_approval,
+                require_pr_approval: patch.require_pr_approval,
+                github_account: yield* ifGiven(patch.github_account, checkGithubAccount),
+                done_when_merged: patch.done_when_merged,
+                use_workflows: patch.use_workflows,
+                pull_requests: patch.pull_requests,
+                watch_pull_requests: patch.watch_pull_requests,
+                pr_preview_url: yield* ifGiven(patch.pr_preview_url, checkPreviewUrl),
+                copy_files: yield* ifGiven(patch.copy_files, (v) => checkFileList("copy_files", v)),
+                link_folders: yield* ifGiven(patch.link_folders, (v) => checkFileList("link_folders", v)),
+                is_git: facts.is_git,
+                has_commits: facts.has_commits,
+              }
+              yield* repo.update(id, columns)
+              const project = yield* getProject(id)
+              yield* events.emit({ type: "project", project })
+              // A preview fails its transaction, which rolls it back with its event.
+              if (!keep) return yield* new Previewed({ after: project })
+              return project
+            }),
+          )
+        }).pipe(Effect.catchTag("Previewed", (e) => Effect.succeed(e.after)))
+
       const update = Effect.fn("Projects.update")(function* (id: ProjectId, patch: ProjectPatch) {
-        return yield* locks.withLock(["project", id])(
-          Effect.gen(function* () {
-            const outside = yield* checkOutside(yield* getProject(id), patch)
-            const facts = yield* gitFacts((yield* getProject(id)).repo_path)
-            return yield* db.tx(
-              Effect.gen(function* () {
-                const before = yield* getProject(id)
-                const profile = yield* profiles.get(before.profile_id)
-                // Configs deleted since they were saved, here or in the profile's (which a project's own start from), are kept.
-                const saved = [
-                  ...before.reviewers,
-                  ...before.summarizers,
-                  ...Option.match(profile, { onNone: () => [], onSome: (p) => [...p.reviewers, ...p.summarizers] }),
-                ]
-                const known = yield* configIds
-                const reviewers = { saved, configs: known, defaultsToo: false }
-                const key = yield* ifGiven(patch.key, (k) => {
-                  const wanted = normalizeKey(k)
-                  return wanted === before.key ? Effect.succeed(wanted) : Effect.flatMap(repo.list(before.profile_id), (others) => checkKey(others, id, wanted))
-                })
-                let archivedAt: Timestamp | null | undefined
-                if (patch.archived === true && before.archived_at === null) {
-                  // Not while one of its agents runs: their tasks would be off the board.
-                  yield* refuseWhileRunning(
-                    yield* repo.running(id),
-                    (n) => `${n} of the project's agents ${n === 1 ? "is" : "are"} running; stop ${n === 1 ? "it" : "them"} before archiving it`,
-                  )
-                  archivedAt = yield* nowTimestamp
-                } else if (patch.archived === false) archivedAt = null
-                const columns: ProjectColumns = {
-                  name: yield* ifGiven(patch.name, checkName),
-                  key,
-                  // The old key keeps naming the project's tasks (OS-2 after OS became OMS).
-                  former_keys: key === undefined || key === before.key ? undefined : formerKeysAfter(before, key),
-                  base_branch: outside.base_branch,
-                  worktrees_root: outside.worktrees_root,
-                  setup_script: script(patch.setup_script),
-                  teardown_script: script(patch.teardown_script),
-                  status_script: script(patch.status_script),
-                  status_scripts: patch.status_scripts === undefined ? undefined : tidyStatusScripts(patch.status_scripts),
-                  use_worktrees: patch.use_worktrees,
-                  permission_mode: patch.permission_mode,
-                  model: text(patch.model),
-                  auto_review: patch.auto_review,
-                  review_rounds: yield* ifGiven(patch.review_rounds, checkReviewRounds),
-                  reviewers: yield* ifGiven(patch.reviewers, (v) => reviewersValue(v, { ...reviewers, summarizers: false })),
-                  auto_summary: patch.auto_summary,
-                  summarizers: yield* ifGiven(patch.summarizers, (v) => reviewersValue(v, { ...reviewers, summarizers: true })),
-                  claude_config_ids: yield* ifGiven(patch.claude_config_ids, (v) =>
-                    v === null ? Effect.succeed(null) : Effect.map(checkConfigIds(v, known), (ids) => (ids.length === 0 ? null : ids)),
-                  ),
-                  start_prompt: text(patch.start_prompt),
-                  review_prompt: text(patch.review_prompt),
-                  merge_prompt: text(patch.merge_prompt),
-                  group_name: yield* ifGiven(patch.group_name, checkGroupName),
-                  archived_at: archivedAt,
-                  merge_approval: patch.merge_approval,
-                  require_pr_approval: patch.require_pr_approval,
-                  github_account: yield* ifGiven(patch.github_account, checkGithubAccount),
-                  done_when_merged: patch.done_when_merged,
-                  use_workflows: patch.use_workflows,
-                  pull_requests: patch.pull_requests,
-                  watch_pull_requests: patch.watch_pull_requests,
-                  pr_preview_url: yield* ifGiven(patch.pr_preview_url, checkPreviewUrl),
-                  copy_files: yield* ifGiven(patch.copy_files, (v) => checkFileList("copy_files", v)),
-                  link_folders: yield* ifGiven(patch.link_folders, (v) => checkFileList("link_folders", v)),
-                  is_git: facts.is_git,
-                  has_commits: facts.has_commits,
-                }
-                yield* repo.update(id, columns)
-                const project = yield* getProject(id)
-                yield* events.emit({ type: "project", project })
-                return project
-              }),
-            )
-          }),
-        )
+        return yield* locks.withLock(["project", id])(write(id, patch, true))
+      })
+
+      // The project as the change would leave it, however each setting is stored.
+      const preview = Effect.fn("Projects.preview")(function* (id: ProjectId, patch: ProjectPatch) {
+        return yield* write(id, patch, false)
       })
 
       const remove = Effect.fn("Projects.delete")(function* (id: ProjectId) {
@@ -304,7 +321,7 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
         )
       })
 
-      return Projects.of({ list, get: getProject, create, update, delete: remove, refreshGit })
+      return Projects.of({ list, get: getProject, create, update, preview, delete: remove, refreshGit })
     }),
   )
 }
