@@ -167,7 +167,8 @@ that `@effect/tsgo` adds to Oxlint as the `effecttsgo` plugin. The configuration
 rules it leaves off (time, timers, randomness, the environment, logging, JSON, `fetch`, Node's modules, promises), the
 TypeScript rules above, `import/no-cycle`, and the package boundaries as `no-restricted-imports` per folder.
 `denyWarnings` makes any warning fail. The overrides: the Effect-native rules are off for plain TypeScript
-(`packages/shared`, `apps/server/src/hooks`) and for config files; `strict-effect-provide` and `process-env` are off for
+(`packages/shared`, `apps/server/src/hooks`, and the desktop shell's frame, preload and shared decisions in
+`apps/desktop/src/{boot,preload,shared}`) and for config files; `strict-effect-provide` and `process-env` are off for
 entry points, tests and `packages/testing`; the kept components get the React hook rules and leave async handlers,
 `Date` and DOM timers alone.
 
