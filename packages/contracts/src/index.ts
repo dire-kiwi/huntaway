@@ -2,6 +2,8 @@ export * from "./agentConfig.ts"
 // 6.4: skills and MCP servers.
 export * from "./agentTools.ts"
 export * from "./approval.ts"
+// 6.7: the assistant.
+export * from "./assistant.ts"
 export * from "./attachment.ts"
 // 6.5
 export * from "./automation.ts"
@@ -19,6 +21,8 @@ export * from "./pen.ts"
 export * from "./profile.ts"
 export * from "./project.ts"
 export * from "./rpc/agentTools.ts"
+// 6.7
+export * from "./rpc/assistant.ts"
 export * from "./push.ts"
 export * from "./rpc/admin.ts"
 export * from "./rpc/approvalRules.ts"

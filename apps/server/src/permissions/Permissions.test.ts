@@ -444,6 +444,27 @@ describe("Permissions: the thread's own documents folder (6.2)", () => {
   )
 })
 
+describe("Permissions: the assistant's workspace (6.7)", () => {
+  // The old agent/assistant/tests.test.ts the_assistant_writes_its_workspace_without_asking.
+  it.effect("the assistant writes its workspace without asking, and only it", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* runningTask({ mode: "default", task_type: "assistant" })
+        yield* (yield* TaskRepo).write(task, { work_dir: `assistants/${task}` }, AT)
+        const dataDir = yield* DataDir
+        const ws = `${dataDir.root}/assistants/${task}`
+        mkdirSync(ws, { recursive: true })
+        const allowed = (n: string, file: string) => Effect.map(decided(agent, n, "Write", { file_path: file }), (r) => r.behavior === "allow")
+        assert.isTrue(yield* allowed("c1", `${ws}/MEMORY.md`))
+        assert.isTrue(yield* allowed("c2", `${ws}/memory/2026-11-04.md`))
+        // Not another assistant's, nor the folder of all of them.
+        yield* asked(agent, "c3", "Write", { file_path: `${dataDir.root}/assistants/other/MEMORY.md` })
+        yield* asked(agent, "c4", "Write", { file_path: `${ws}/../x.md` })
+      }),
+    ),
+  )
+})
+
 // ---------- approval rules and expiry ----------
 
 /** A running assistant (where the rules hold) with `rules`. */

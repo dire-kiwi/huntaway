@@ -25,9 +25,11 @@ import { StartFromRow } from "./StartFromRow"
 import { StatusSection } from "./StatusSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
 import { TrackedWork } from "./TrackedWork"
+// 6.7
+import { RulesSection } from "../../ApprovalRules"
 
-// Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12), the task's workflows
-// (Workflows, 6.6). Subprojects were a legacy branch and are gone. The stack sections "Stacked on" and "Landing after
+// Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the task's workflows
+// (Workflows, 6.6); the assistant's approval rules are back (6.7). Subprojects were a legacy branch and are gone. The stack sections "Stacked on" and "Landing after
 // this" are back (stacks, 4.8), and the Asana links (6.11).
 
 export function Details({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
@@ -137,6 +139,12 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             {pen ? `The ${pen.name} pen's own thread` : "The thread of a pen that's gone"}: one lasting conversation about the pen's tasks. Its agent is told
             which tasks are in the pen, puts the tasks it creates there, and keeps notes on what the pen is for. It's renamed with the pen, and deleted with it.
           </div>
+        </Section>
+      )}
+
+      {assistant && (
+        <Section title="Rules" collapsible="rules">
+          <RulesSection task={task} />
         </Section>
       )}
 

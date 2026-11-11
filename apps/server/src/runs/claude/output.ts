@@ -405,7 +405,7 @@ export const ClaudeOutput = Layer.effect(
       if (line.type === "user" && typeof line.message.content !== "string" && line.message.content.some((b) => b.type === "tool_result")) {
         yield* turnHooks.toolDone(run.task_id)
       }
-      if (line.type === "result" && done.turnEnded) yield* turnHooks.turnEnded(run.task_id)
+      if (line.type === "result" && done.turnEnded) yield* turnHooks.turnEnded(run.task_id, { compact: run.kind === "compact" })
       if (line.type === "control_request") yield* requests.handle(run, line)
       else if (line.type === "control_cancel_request") yield* requests.cancel(run, line.request_id)
     })

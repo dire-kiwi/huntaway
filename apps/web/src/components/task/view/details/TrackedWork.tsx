@@ -1,15 +1,15 @@
 // An assistant's tracked work (HA-326, API 146) in its details: what it's doing or following for the user, as its MCP
 // `track_work` tool keeps it on its task (`Task.tracked`), so task events keep it live. An item that follows a board task
-// shows that task's key and status, and shows as done once it is. Taking items off the list (the old `untrackWork`)
-// comes with the assistant's tracked work (6.7).
+// shows that task's key and status, and shows as done once it is. Items come off the list with `tasks.removeTracked` (6.7).
 import { isMerged, STATUSES, trackedStatus, type HostTask as Task, type TrackedStatus } from "@huntaway/client"
 import type { TrackedItem } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { CircleCheck, CircleDot, CircleX, Hourglass, MessageCircleQuestion, type LucideIcon } from "lucide-react"
 import { useState, type MouseEvent } from "react"
 import { useBoard } from "../../../../state/board"
+import { useRpc } from "../../../../state/rpc"
 import { openTaskModal, useTaskModal } from "../../../../state/route"
-import { ContextMenu, StatusIcon, type MenuItem } from "../../../ui"
+import { ContextMenu, errorText, StatusIcon, type MenuItem } from "../../../ui"
 import { Section } from "./Section"
 
 const LOOK: Record<TrackedStatus, { icon: LucideIcon; tone: string; label: string }> = {
@@ -44,6 +44,8 @@ export function TrackedWork({ task }: { task: Task }) {
   const modalTask = useTaskModal()
   const [hideDone, setHideDoneState] = useState(loadHideDone)
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; title: string } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const rpc = useRpc()
   const items = task.tracked
 
   const setHideDone = (on: boolean) => {
@@ -61,15 +63,24 @@ export function TrackedWork({ task }: { task: Task }) {
   const done = rows.filter((r) => r.status === "done")
   const waiting = rows.filter((r) => r.status === "waiting_user").length
   const shown = hideDone ? rows.filter((r) => r.status !== "done") : rows
+  // What comes back arrives as the task's event.
+  const remove = (ids: string[]) => {
+    setErr(null)
+    rpc(task.host_id, "tasks.removeTracked", { id: task.id, ids }).catch((e: unknown) => setErr(errorText(e)))
+  }
   const itemMenu = (e: MouseEvent, item: TrackedItem, linked: Task | undefined) => {
     e.preventDefault()
     const url = item.url
-    const entries: MenuItem[] = [
-      ...(linked ? [{ label: `Open ${item.task_key ?? "the task"}`, onSelect: () => openTaskModal(linked.id) }] : []),
-      ...(url ? [{ label: "Open link", onSelect: () => void window.open(url, "_blank", "noopener") }] : []),
-    ]
-    if (!entries.length) return
-    setMenu({ x: e.clientX, y: e.clientY, title: item.title, items: entries })
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      title: item.title,
+      items: [
+        ...(linked ? [{ label: `Open ${item.task_key ?? "the task"}`, onSelect: () => openTaskModal(linked.id) }] : []),
+        ...(url ? [{ label: "Open link", onSelect: () => void window.open(url, "_blank", "noopener") }] : []),
+        { label: "Remove from the list", divider: !!(linked || url), onSelect: () => remove([item.id]) },
+      ],
+    })
   }
 
   return (
@@ -136,9 +147,14 @@ export function TrackedWork({ task }: { task: Task }) {
             <button className="hover:text-muted" onClick={() => setHideDone(!hideDone)}>
               {hideDone ? `Show ${done.length} done` : `Hide ${done.length} done`}
             </button>
+            <span>·</span>
+            <button className="hover:text-muted" onClick={() => remove(done.map((r) => r.item.id))} title="Take the done items off the assistant's list">
+              Clear done
+            </button>
           </div>
         )}
       </div>
+      {err && <div className="pt-1 text-[11.5px] text-red-400">{err}</div>}
       {menu && <ContextMenu x={menu.x} y={menu.y} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
     </Section>
   )

@@ -875,6 +875,45 @@ As built in 6.3 (HE-7), published documents:
 git folder outside it, no symlinks, a lock per workspace), `Tracked`, `Brief`. Google stays a set-up helper around
 an MCP server.
 
+#### As built in 6.7 (HE-7)
+
+- **Files** (`assistant/`): `Assistant.ts` (get or make the profile's assistant in one transaction that looks first;
+  `send` settles open questions; `open` = refused elsewhere, checked, seeded, with history; the memory API's methods;
+  `whoseWorkspace`), `Memory.ts` (`checked`, `ensure`, `forRun`, `turnEnded` in a `FiberSet` with `idle` for tests, the
+  API's reads and writes) over `memory/workspace.ts` (git with the old environment and `-c` options, gitlinks dropped,
+  `O_NOFOLLOW` opens, the list) and `memory/text.ts` (seeds, `cap`, paths, days on `DateTime`, git's output, the import
+  message), `Brief.ts` (`add`, `feedback`, `document`, `keep`) over `briefText.ts`, `Google.ts` (`status`, `setup`,
+  `line`, the refresh-token check over `HttpClient`) over `googleText.ts`, `Tracked.ts` (`remove`; the list's rules were
+  `tracked.ts`, now `trackedList.ts`), `AssistantHooks.ts` (what it registers). `cli/googleAuth.ts` is `huntaway
+  google-auth`: Node's HTTP server on the loopback is given by `bin.ts`, which also provides `FetchHttpClient`,
+  `SecureRandom` and `Digest`.
+- **Reaching up.** `runs/AssistantLaunch` (new, as `TurnHooks`): `workspace(task)` gives the assistant's and its routine
+  threads' cwd (refused, `WorkspaceRefused`, when it isn't its own) and memory, which `LaunchFacts` passes to
+  `Prompts.system` (`RunTold.memory`, last) for both agents and to a task's terminal (`workEnv`); `reports(task)` is the
+  routines' unread reports in front of a prompt run's text, marked read by `Prepared.started` once the agent is spawned
+  (`Runs.launch`). `TurnHooks.turnEnded(task, end?)` gained `end` (`{ compact }`, from the line handlers; none from a
+  run's end): a turn of the assistant or a routine thread keeps the brief (also after each tool call) and commits the
+  workspace; the assistant's own non-compaction turn emits `assistant_reply`. `RoutineHost.register` gets the assistant
+  (made if need be), its checked workspace and `Google.line`. `Routines.finished` emits `routine_report` after posting.
+  `Permissions` lets the assistant and its routine threads write its workspace without asking.
+- **The wire.** The `assistant` group (`contracts/rpc/assistant.ts`): `get`, `send`, `memory`, `memoryFile`,
+  `writeMemoryFile`, `memoryHistory`, `memoryDiff`, `restoreMemory`, `importMemory`, `google`, `setupGoogle`,
+  `addBrief`, `briefFeedback`, and `tasks.removeTracked`; types in `contracts/assistant.ts`. `tasks.document` takes
+  `TaskDocumentLabel` (`brief` too) and gives the brief's `items`. Errors: `NotFound`, `Invalid`, `Conflict` (`in_use`
+  for an assistant elsewhere, `changed_meanwhile` for a stale save), `Unavailable` (a workspace that isn't its own, git
+  failing, an assistant host before M7).
+- **Decided.** A new assistant's `work_dir` is `assistants/<id>` (relative, as before); `checked` takes that or the
+  importer's absolute form. Its config is the profile's `assistant_config_id` if it still has it, else its first.
+  A routine thread's turn commits the workspace too (the old server waited for the assistant's next turn). The brief's
+  document is refused (`NotFound`) for any task but the assistant.
+- **Left out.** The assistant on a host of its own (`on_its_host`, `check_host`, the hub's proxying): 7.4; until then
+  `get`/`send` for a profile that names another host is `Unavailable` ("offline"), and its memory, Google and brief are
+  `Conflict` unless this host has its assistant. Moving a workspace's own `.git` (HA-160): dropped
+  (14-dropped-and-open.md).
+- **Tests**: `assistant/Memory.test.ts` (real git in temp folders), `memory/text.test.ts`, `Assistant.test.ts`,
+  `Brief.test.ts`, `briefText.test.ts`, `Google.test.ts` (a token endpoint of the test's own), `googleText.test.ts`,
+  `cli/googleAuth.test.ts` (the flow with the test as the browser), the workspace's case in `Permissions.test.ts`.
+
 ### Push — [inventory 06](inventory/06-integrations.md) (2.4)
 
 `Push` subscribes to `Events` and decides, per event and per subscription, what notifies (the seven rules), and

@@ -21,6 +21,8 @@ import {
   AttachmentRpcs,
   // 6.5
   AutomationRpcs,
+  // 6.7
+  AssistantRpcs,
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
@@ -61,6 +63,15 @@ import { Scheduler } from "./automations/Scheduler.ts"
 import { Webhooks } from "./automations/Webhooks.ts"
 import { WebhookRoute } from "./http/webhooks.ts"
 import { AutomationHandlers } from "./rpc/automations.ts"
+// 6.7: the assistant.
+import { Assistant } from "./assistant/Assistant.ts"
+import { AssistantHooks } from "./assistant/AssistantHooks.ts"
+import { Brief } from "./assistant/Brief.ts"
+import { Google } from "./assistant/Google.ts"
+import { Memory } from "./assistant/Memory.ts"
+import { Tracked } from "./assistant/Tracked.ts"
+import { AssistantHandlers } from "./rpc/assistant.ts"
+import { AssistantLaunch } from "./runs/AssistantLaunch.ts"
 import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
 import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
@@ -380,7 +391,7 @@ const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(RunFollower.layer),
   // The line handler: Codex runs' lines to the Codex handler (5.2), the others to Claude's.
   Layer.provideMerge(CodexOutput.pipe(Layer.provide(ClaudeOutput))),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer, TurnHooks.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer, TurnHooks.layer, AssistantLaunch.layer /* 6.7 */)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
@@ -525,6 +536,16 @@ const UpdateLive = Updater.layer.pipe(
 /** 6.8: push, watching the board's events for what devices want. */
 const PushLive = Push.watcher.pipe(Layer.provideMerge(Push.layer), Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)))
 
+/**
+ * 6.7: the profile's assistant: its memory (the workspace and its history), the brief, Google and tracked work, and what
+ * it registers with the areas above it (routines, launches, turns' ends).
+ */
+const AssistantLive = AssistantHooks.pipe(
+  Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer)),
+  Layer.provideMerge(Assistant.layer),
+  Layer.provideMerge(Memory.layer),
+)
+
 /** 6.3: the docs area: published documents, their images, and publishing them to a hosted docs site. */
 const DocsLive = Docs.layer.pipe(
   Layer.provideMerge(HostedDocs.layer),
@@ -554,6 +575,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(HostLinksLive),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.7: the assistant, over documents (its brief) and automations (its routines).
+    Layer.provideMerge(AssistantLive),
     // 6.3: documents, which the docs server's tools call.
     Layer.provideMerge(DocsLive),
     // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
@@ -624,6 +647,8 @@ export const Served = PublicRpcs.merge(
   TaskDocumentRpcs,
   // 6.5
   AutomationRpcs,
+  // 6.7
+  AssistantRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -664,6 +689,8 @@ export const HandlersLive = Layer.mergeAll(
   TaskDocumentHandlers,
   // 6.5
   AutomationHandlers,
+  // 6.7
+  AssistantHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

@@ -684,3 +684,30 @@ thing to prove (T3 Code ships an Expo 58 app on Effect 4, which is good evidence
 - Where it mounts is 6.12's: project settings' `automations` tab renders `<ProjectAutomations project={project} />`.
   `tests/ui/automations.test.mjs` (the old three cases) passes with it mounted there, and is skipped (`MOUNTED`) until it is.
   `task/Routines.tsx` is 6.7's: the editor and row take the owner (no project: a routine) as props.
+
+### Step 1 as done for the assistant (6.7, HE-7)
+
+- **What came over.** `task/AssistantPage.tsx` (`assistant.get`, then the task view of the task its event puts on the
+  board), `task/Memory.tsx`, `Brief.tsx`, `Routines.tsx`, `ActionLog.tsx`, `ApprovalRules.tsx` (the Rules section of the
+  assistant's details), `GoogleCard.tsx`, `settings/Assistants.tsx` (Google per profile; Telegram dropped, 14), the
+  sidebar's `layout/sidebar/AssistantEntry.tsx` (the old `ProfileEntries.tsx`'s other half), the `a` shortcut, the
+  Brief, Memory, Routines and Actions tabs (Memory, Brief and Routines as `preloadable` chunks), and tracked work's
+  "Remove from the list" and "Clear done" (`tasks.removeTracked`). The old `src/assistant.ts` hooks are
+  `task/assistant.ts`. Calls are `rpc(host, "assistant.…" | "approvalRules.…" | "automations.…")`; the brief is
+  `tasks.document` with label `brief` (its `items` beside it); routines are 6.5's `automationsAtom` for the profile.
+- **Client.** `HostBoard.approvalRules` keeps the latest `approval_rules`/`approval_log` event per profile and
+  `approvalSeqAtom(host, "rules" | "log", profile)` reads it, which the rules and the action log read again on (as
+  `docsSeqAtom`); `ruleFor` and `RULE_DECISIONS` (over `@huntaway/shared`'s `decide`) are in `logic/assistant.ts`.
+- **A routine's thread**, which the board's snapshot leaves out, is asked for with `tasks.get` from the connected hosts
+  when its page or dialog opens and it isn't on the board (`task/view/useSoughtTask.ts`), until an event puts it there.
+- **What the lint asked for.** Reads that follow an event or a time (the log, the rules, the brief, a file's history)
+  go through `changes/git/useLoaded` with the trigger in the key; a memory file is read again through its `fetchFile`,
+  which changes with the file's modified time; the Ctrl+S handler's ref is written in a layout effect; the rules
+  dialog's rows have ids of their own, and a diff's lines are keyed by their text and its occurrence.
+- **Left for M7 (7.4).** A profile's assistant on another host: `assistantHome`'s offline and no-profile notes stay,
+  but the uplink note, the old `{ here: true }` and the Routines tab's "left behind" routines (`LeftBehind`) are gone.
+- **Checks.** `tests/ui/assistant.test.mjs` (every old case; the held save is `assistant.writeMemoryFile` held with
+  `routeRpc`, and "Ctrl+S on today's empty log saves nothing" counts the page's calls), `brief.test.mjs` (every old
+  case; the brief and the ratings answered with `routeRpc`) and `routines.test.mjs` (both old cases, on
+  `--fake-claude`: a run makes its thread only where agents run, so the report is the fake agent's, not a failure).
+  Not ported: `assistantHost.test.mjs` (M7) and `reminders.test.mjs` (a task's reminders, not the assistant's).

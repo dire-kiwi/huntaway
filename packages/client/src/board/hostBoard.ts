@@ -71,6 +71,11 @@ export interface HostBoard {
    * (`comments <profile> <slug>`) and a profile's docs site (`site <profile>`), which the Docs page reads them again on.
    */
   readonly docs: ReadonlyMap<string, number>
+  /**
+   * 6.7: the number of the latest `approval_rules` and `approval_log` event about a profile (`rules <profile>`,
+   * `log <profile>`), which the assistant's rules and action log read them again on.
+   */
+  readonly approvalRules: ReadonlyMap<string, number>
 }
 
 const noSettings: HostSettings = {
@@ -102,6 +107,7 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   checkpoints: new Map(),
   automations: new Map(),
   docs: new Map(),
+  approvalRules: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -275,12 +281,14 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       return { ...next, docs: new Map(board.docs).set(docsKey("comments", message.profile_id, message.slug), message.seq) }
     case "docs_site":
       return { ...next, docs: new Map(board.docs).set(docsKey("site", message.profile_id), message.seq) }
+    // 6.7
     case "approval_rules":
+      return { ...next, approvalRules: new Map(board.approvalRules).set(`rules ${message.profile_id}`, message.seq) }
     case "approval_log":
+      return { ...next, approvalRules: new Map(board.approvalRules).set(`log ${message.profile_id}`, message.seq) }
     // 6.8: for push; the board has nothing of them.
     case "assistant_reply":
     case "routine_report":
-      // A profile's approval rules and action log are read where Settings shows them, not kept in the board.
       return next
     default:
       // A kind this version does not know (a newer host's): its number is taken, as nothing in it applies.

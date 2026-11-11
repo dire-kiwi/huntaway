@@ -41,6 +41,8 @@ export interface RunTold {
   readonly tmp?: string | null | undefined
   /** 6.10: it has the desktop server: the host's name, whose desktop it is; none by default. */
   readonly desktopHost?: string | null | undefined
+  /** 6.7: the assistant's (or a routine thread's) memory as its files say now; none by default. */
+  readonly memory?: string | undefined
 }
 
 /** The options of a new thread that change what it is told (the old `GET /projects/{id}/system-prompt`'s query). */
@@ -173,6 +175,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           tmp: run.tmp ?? null,
           // 6.10: computer use.
           desktopHost: run.desktopHost ?? null,
+          // 6.7: the assistant's memory.
+          memory: run.memory ?? "",
           task,
           project,
           parent:

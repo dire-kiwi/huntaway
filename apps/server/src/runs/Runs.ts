@@ -237,6 +237,8 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           yield* runs.setPhase(run.id, "running")
           // 4.3: the conversation rollback a rewind asked for is done with (made, or for another session).
           yield* checkpoints.rewound(run.task_id, prepared.rewind ?? null)
+          // 6.7: the assistant's routines' reports it started with are read.
+          if (prepared.started !== undefined) yield* prepared.started
           // Preparing is over: from here a stop goes to the agent, and messages sent meanwhile go to it now.
           yield* input.writeSteers(run.task_id)
           const started = yield* runs.get(run.id)
