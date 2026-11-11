@@ -421,8 +421,7 @@ const statements: ReadonlyArray<string> = [
   ) STRICT`,
   `CREATE UNIQUE INDEX documents_task ON documents(task_id, label, version)`,
 
-  // Permissions, board-tool calls and the approval log (mcp area). A prompt's `run_id` is the run whose call asked (null
-  // for none); `control_id` a can_use_tool prompt's control request, and `answered` whether its answer is on the input.
+  // Permissions, board-tool calls and the approval log (mcp area)
   `CREATE TABLE permission_requests (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -435,12 +434,8 @@ const statements: ReadonlyArray<string> = [
     note TEXT,
     expires_at TEXT,
     rule TEXT,
-    created_at TEXT NOT NULL,
-    run_id TEXT,
-    control_id TEXT,
-    answered INTEGER NOT NULL DEFAULT 0
+    created_at TEXT NOT NULL
   ) STRICT`,
-  `CREATE INDEX permission_requests_run ON permission_requests(run_id) WHERE run_id IS NOT NULL`,
   `CREATE INDEX permission_requests_call ON permission_requests(call_id)`,
   `CREATE INDEX permission_requests_task ON permission_requests(task_id, status)`,
   `CREATE INDEX permission_requests_expiry ON permission_requests(expires_at) WHERE status = 'pending' AND expires_at IS NOT NULL`,
