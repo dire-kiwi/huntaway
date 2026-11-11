@@ -1,0 +1,176 @@
+#!/bin/sh
+# The huntaway server's launcher: `huntaway serve …` and its other subcommands. Carried over from dire-kiwi/huntaway
+# (apps/server/bin/huntaway at f2298f0c) with the entry file renamed (src/bin.ts), the hooks as entry files of their own
+# (src/hooks/), and its variables under HUNTAWAY_* (docs/plan/02-repository.md). It keeps the server's PID stable across
+# restarts, restarts a crashed server with backoff, and execs what the server asks for on exit code 75.
+# A server started from a test is not a test process itself.
+unset VITEST NODE_TEST_CONTEXT
+# Its own path, through symbolic links to it (`readlink -f`, which macOS has since 12.3), else the path `$0` names.
+self=$(readlink -f "$0" 2>/dev/null)
+[ -n "$self" ] && [ -f "$self" ] || self=$(cd -P "$(dirname "$0")" && pwd)/$(basename "$0")
+here=$(dirname "$self")
+# A release's package has this script as its `huntaway`, with the server in server/ and Node in node/ beside it; a
+# checkout has it in apps/server/bin/. A package's server is precompiled to .js, so Node doesn't load its TypeScript
+# compiler for it; a checkout runs the .ts.
+if [ -f "$here/server/src/bin.js" ]; then src=$here/server/src ext=js
+elif [ -f "$here/server/src/bin.ts" ]; then src=$here/server/src ext=ts
+else src=$here/../src ext=ts; fi
+# The server goes by it for what runs it (agents' MCP helpers, and which installed release it is).
+HUNTAWAY_EXE=$self
+export HUNTAWAY_EXE
+# Node: $HUNTAWAY_NODE, else the package's own, else on PATH, else where installers put it (an SSH host's forced command runs with sshd's short PATH).
+node=${HUNTAWAY_NODE:-}
+[ -z "$node" ] && [ -x "$here/node/bin/node" ] && node=$here/node/bin/node
+if [ -z "$node" ]; then
+  node=$(command -v node 2>/dev/null) || node=
+  for n in /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node "$HOME/.volta/bin/node" "$HOME/.local/share/mise/shims/node" \
+    "$HOME/.local/bin/node" $(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1); do
+    [ -n "$node" ] && break
+    [ -x "$n" ] && node=$n
+  done
+  node=${node:-node}
+fi
+# Memory (HA-181 in the old repository). V8 lets its young generation grow to two 16 MB semi-spaces, which
+# a server that then goes idle keeps, with whatever garbage is in them (an idle server allocates too little to collect
+# it): 2 MB ones keep an idle server about 20 MB smaller and its heap collected. Under a lower old-space limit V8 grows
+# the heap less eagerly, which roughly halves what's left after a burst of load (loading every thread) at about 10% of
+# its speed. Either is left out when NODE_OPTIONS sets it (the command line would win over NODE_OPTIONS). --expose-gc
+# lets the server have a full GC after a burst of work.
+flags="--disable-warning=ExperimentalWarning --expose-gc"
+case " ${NODE_OPTIONS:-} " in *semi-space-size*) ;; *) flags="$flags --max-semi-space-size=2" ;; esac
+case " ${NODE_OPTIONS:-} " in *old-space-size* | *max-heap-size*) ;; *) flags="$flags --max-old-space-size=1024" ;; esac
+# glibc's malloc serves blocks above its mmap threshold with their own mappings, which go back to the system when
+# freed, but raises the threshold (to up to 32 MB) as they're freed, so the response bodies and query results that
+# follow come from its heap, which keeps what's freed: a fixed threshold gives back 50 to 100 MB after a burst of load.
+# Only node gets it: the server takes it out of what its children inherit, unless it was set already.
+if [ -z "${MALLOC_MMAP_THRESHOLD_+x}" ]; then
+  MALLOC_MMAP_THRESHOLD_=131072 HUNTAWAY_MALLOC_MMAP=1
+  export MALLOC_MMAP_THRESHOLD_ HUNTAWAY_MALLOC_MMAP
+fi
+# The hooks an agent CLI runs for a tool call (docs/plan/06-server.md, Hook commands): each is an entry file of its own
+# that imports nothing from effect, so it starts in tens of milliseconds, without loading bin.ts.
+case "$1" in
+  approval-hook | gh-hook | gh-run)
+    hook=$1
+    shift
+    exec "$node" $flags "$src/hooks/$hook.$ext" "$@"
+    ;;
+  "" | serve) ;;
+  *) exec "$node" $flags "$src/bin.$ext" "$@" ;;
+esac
+
+# `serve` runs node as this shell's child, so the server keeps this process's id when it restarts, as the Rust server
+# keeps its own when it execs (scripts/test-server.sh, the desktop app and service managers go by it). To restart (or
+# restart onto a release), the server writes what to exec to $HUNTAWAY_RESTART_FILE and exits with 75,
+# and this shell execs that: this script again, with the same arguments, or a release's server. TERM, INT and HUP
+# stop node, and so this shell; node stops by itself if this shell is killed (the Supervisor service). Agents run under
+# ia-shim, so they carry on through a restart either way. While it waits, the shell reaps any child it has: those it
+# inherits from a server that exec'd it as well.
+#
+# A server that crashes once it's up (HA-182) is started again, as the same process again: one that exits with an error
+# other than 75, or is ended by a fault of its own (SIGABRT, as running out of memory ends node, or SIGSEGV and the
+# like), after it wrote `started` beside its restart file. Not a server that never got that
+# far (a port in use, a bad argument), which whatever started it hears of at once, nor one stopped from outside (another
+# signal, or this shell's TERM, INT or HUP). It waits 1, 2, 4, 8 and then 16 seconds before each of the first five
+# times in a row, then gives up and exits with the server's code; a server that stayed up for ten minutes starts the
+# count again. $HUNTAWAY_CRASH_BACKOFF (seconds, for tests) replaces the first wait's second.
+
+# A shell can't trap a signal it was started with ignored, as a non-interactive shell's `… &` starts it with INT, which
+# the server would still stop on: so start again with INT at its default, where env (GNU) or perl can do that.
+if [ -n "$HUNTAWAY_SERVE_SIGNALS" ]; then
+  unset HUNTAWAY_SERVE_SIGNALS
+else
+  HUNTAWAY_SERVE_SIGNALS=1
+  export HUNTAWAY_SERVE_SIGNALS
+  if env --default-signal=INT true 2>/dev/null; then
+    exec env --default-signal=INT "$0" "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    exec perl -e '$SIG{INT} = "DEFAULT"; exec { $ARGV[0] } @ARGV or die "$ARGV[0]: $!\n"' "$0" "$@"
+  fi
+  unset HUNTAWAY_SERVE_SIGNALS
+fi
+# The desktop app's "Start without a backup" is for the node this shell starts first, not for one it
+# starts again after a crash, nor for what it execs on a restart or an Update, which back the database up as usual.
+skip_backup_once=${HUNTAWAY_SKIP_DB_BACKUP_ONCE:-}
+unset HUNTAWAY_SKIP_DB_BACKUP_ONCE
+dir=$(mktemp -d "${TMPDIR:-/tmp}/huntaway-serve.XXXXXX") || exit 1
+HUNTAWAY_RESTART_FILE=$dir/next
+HUNTAWAY_SUPERVISOR_PID=$$
+export HUNTAWAY_RESTART_FILE HUNTAWAY_SUPERVISOR_PID
+child=
+stopping=
+quitting=
+sleeper=
+# Node handles TERM; a background job starts with INT ignored, so it gets TERM for each.
+stop() {
+  stopping=1
+  quitting=1
+  if [ -n "$child" ]; then
+    kill -TERM "$child" 2>/dev/null
+  else
+    [ -n "$sleeper" ] && kill "$sleeper" 2>/dev/null
+    rm -rf "$dir"
+    exit 143
+  fi
+}
+trap stop TERM INT HUP
+# A background job's stdin would be /dev/null: node gets this shell's (when it has one).
+if [ -r /dev/stdin ]; then exec 3<&0; else exec 3</dev/null; fi
+crashes=0
+while :; do
+  rm -f "$dir/started"
+  began=$(date +%s)
+  if [ -n "$skip_backup_once" ]; then
+    HUNTAWAY_SKIP_DB_BACKUP_ONCE=$skip_backup_once "$node" $flags "$src/bin.$ext" "$@" <&3 3<&- &
+    skip_backup_once=
+  else
+    "$node" $flags "$src/bin.$ext" "$@" <&3 3<&- &
+  fi
+  child=$!
+  while :; do
+    stopping=
+    wait "$child"
+    code=$?
+    # A signal cut the wait short: wait for node to stop.
+    [ -n "$stopping" ] && kill -0 "$child" 2>/dev/null || break
+  done
+  child=
+  [ -z "$quitting" ] && [ -f "$dir/started" ] || break
+  case $code in
+    0 | 75) break ;;
+  esac
+  if [ "$code" -gt 128 ]; then
+    case $(kill -l "$code" 2>/dev/null) in
+      ABRT | SEGV | BUS | ILL | FPE | TRAP | SYS) ;;
+      *) break ;;
+    esac
+  fi
+  [ $(($(date +%s) - began)) -ge 600 ] && crashes=0
+  if [ "$crashes" -ge 5 ]; then
+    echo "huntaway: the server stopped with $code, after starting it again $crashes times in a row; giving up" >&2
+    break
+  fi
+  crashes=$((crashes + 1))
+  delay=$((${HUNTAWAY_CRASH_BACKOFF:-1} << (crashes - 1)))
+  echo "huntaway: the server stopped with $code; starting it again in ${delay}s ($crashes of 5)" >&2
+  # In the background, so that TERM stops this shell at once rather than after the wait.
+  sleep "$delay" &
+  sleeper=$!
+  wait "$sleeper"
+  sleeper=
+done
+exec 3<&-
+if [ "$code" = 75 ] && [ -f "$HUNTAWAY_RESTART_FILE" ] && [ -O "$HUNTAWAY_RESTART_FILE" ]; then
+  next=
+  . "$HUNTAWAY_RESTART_FILE"
+  rm -rf "$dir"
+  unset HUNTAWAY_RESTART_FILE HUNTAWAY_SUPERVISOR_PID
+  [ -n "${HUNTAWAY_MALLOC_MMAP:-}" ] && unset MALLOC_MMAP_THRESHOLD_ HUNTAWAY_MALLOC_MMAP
+  if [ -n "$next" ] && [ -x "$next" ]; then
+    exec "$next" "$@"
+  fi
+  echo "huntaway: can't run ${next:-what the server asked for}" >&2
+  exit 1
+fi
+rm -rf "$dir"
+exit "$code"

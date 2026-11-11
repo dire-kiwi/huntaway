@@ -1,0 +1,27 @@
+{
+  "name": "huntaway-effect",
+  "private": true,
+  "description": "Huntaway, a kanban board for orchestrating Claude Code and Codex agents, written on Effect",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "check": "effect-tsgo vp check",
+    "fix": "effect-tsgo vp check --fix",
+    "typecheck": "effect-tsgo vp check --no-fmt --no-lint",
+    "test": "vp test",
+    "test:e2e": "pnpm --filter huntaway-server test:e2e",
+    "test:ui": "pnpm --filter huntaway-web test:ui",
+    "dev": "pnpm --filter huntaway-web dev",
+    "build": "pnpm --filter huntaway-web build"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.34.9"
+}

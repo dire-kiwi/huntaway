@@ -1,0 +1,155 @@
+# Runs the checks and tests on each pull request: `pnpm check` (format, lint, type check and Effect's rules over the
+# workspace), `pnpm test` (the server's and the packages' tests), the server's whole-process tests (`pnpm test:e2e`),
+# the browser checks in apps/web/tests/ui against a test server, and `cargo test` for ia-shim (rust/shim).
+# It needs no secrets, so pull requests from forks run it too.
+#
+# A run tests a tree (the files of the commit it checks out), and a tree that a run has passed isn't tested again: the
+# `tree` job finds the earlier run and the other jobs are skipped, which GitHub and the board count as passed. To test a
+# tree again whatever passed before, run the workflow by hand (workflow_dispatch) or use "Re-run all jobs". The shape is
+# the old repository's (dire-kiwi/huntaway, .github/workflows/test.yml), which explains each part at length.
+#
+# The owner's own jobs can run on self-hosted runners (labels self-hosted and huntaway): set the repository variable
+# SELF_HOSTED_USER to the owner's login. Everything else, and every job while the variable isn't set, runs on
+# GitHub-hosted runners.
+name: Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Which tree this run tests, and whether a run has passed on it already (`skip`, which skips every other job).
+  tree:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tree: ${{ steps.tree.outputs.tree }}
+      skip: ${{ steps.tree.outputs.skip }}
+    steps:
+      - id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_ID: ${{ github.repository_id }}
+        run: |
+          tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha) || tree=
+          case "$tree" in *[!0-9a-f]*) tree= ;; esac
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          skip=false
+          if [ -n "$tree" ] && [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=green-tree-$tree&per_page=100" \
+              --jq ".artifacts[] | select(.workflow_run.head_repository_id == $REPO_ID) | .workflow_run.id" | sort -u) || runs=
+            for run in $runs; do
+              conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .conclusion) || conclusion=
+              if [ "$conclusion" = success ]; then
+                skip=true
+                echo "Tree $tree passed in run $run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" | tee -a "$GITHUB_STEP_SUMMARY"
+                break
+              fi
+            done
+          fi
+          [ "$skip" = true ] || echo "Tree ${tree:-(unknown)} has no passed run yet: running in full" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+  # The Rust workspace (the root's Cargo.toml): ia-shim, which the server runs agents under.
+  rust:
+    needs: tree
+    if: needs.tree.outputs.skip != 'true'
+    runs-on: &runs-on >-
+      ${{ (vars.SELF_HOSTED_USER != '' && github.actor == vars.SELF_HOSTED_USER && github.triggering_actor == vars.SELF_HOSTED_USER
+      && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == vars.SELF_HOSTED_USER
+      && github.event.pull_request.head.repo.full_name == github.repository)))
+      && fromJSON('["self-hosted", "huntaway"]') || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    env:
+      # Incremental state only helps rebuilds of the same code, and is about half the size of a debug build.
+      CARGO_INCREMENTAL: "0"
+      # sccache isn't installed here; .cargo/rustc-wrapper runs rustc directly without it.
+      SCCACHE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A self-hosted runner's checkout keeps the ignored build output (target/, node_modules) of earlier jobs, so
+          # builds are incremental; the next step removes untracked files, as clean does.
+          clean: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Tidy the checkout
+        if: runner.environment == 'self-hosted'
+        run: &tidy |
+          git clean -ffd
+          # Builds of many branches pile up in the target directory: start again once it's over 20G.
+          if [ -d target ] && [ "$(du -sm target | cut -f1)" -gt 20480 ]; then rm -rf target; fi
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # Self-hosted runners keep their target directory instead.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: runner.environment == 'github-hosted'
+
+      # Each test binary runs in a TMPDIR of its own and fails if it leaves anything in it (.cargo/test-runner).
+      - name: cargo test
+        run: cargo test --locked
+
+  # `pnpm check`: format, lint, type check and Effect's rules over the whole workspace, with the lockfile checked
+  # against the manifests (pnpm install in CI won't change it).
+  check:
+    needs: tree
+    if: needs.tree.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Vite+ (the version in pnpm-workspace.yaml's catalog), Node 24 and pnpm, and `vp install`.
+      - uses: &setup-vp voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with: &setup-vp-with
+          node-version: 24
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - name: pnpm check
+        run: pnpm check
+
+  # `pnpm test`: the server's tests (pure, service and structural tiers) and the packages'.
+  test:
+    needs: tree
+    if: needs.tree.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: *setup-vp
+        with: *setup-vp-with
+
+      - name: pnpm test
+        run: pnpm test
+
+  # Records that this run's tree passed, for `tree` in later runs: it runs only when every job above succeeded.
+  green:
+    needs: [tree, rust, check, test]
+    if: needs.tree.outputs.skip != 'true' && needs.tree.outputs.tree != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record the tree
+        run: echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > green-tree.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: green-tree-${{ needs.tree.outputs.tree }}
+          path: green-tree.txt
+          retention-days: 30
+          overwrite: true

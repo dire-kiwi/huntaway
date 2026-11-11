@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": false,
+        "allowedUnstableApis": [
+          "effect/http",
+          "effect/http-api",
+          "effect/rpc",
+          "effect/sql",
+          "effect/process",
+          "effect/socket",
+          "effect/cli",
+          "effect/reactivity",
+          "effect/ai",
+          "effect/schema",
+          "effect/testing",
+          "effect/workers",
+          "effect/crypto"
+        ],
+        "keyPatterns": [{ "target": "service", "pattern": "default", "skipLeadingPath": ["src/"] }]
+      }
+    ]
+  }
+}

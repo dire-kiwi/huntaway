@@ -1,0 +1,23 @@
+{
+  "name": "@huntaway/testing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fakes, fixtures and test layers: imported by tests only",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@huntaway/contracts": "workspace:*",
+    "effect": "catalog:",
+    "huntaway-server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  // No DOM and no Node types: this package must run anywhere (docs/plan/02-repository.md).
+  "extends": "../../tsconfig.base.json",
+  "include": ["src", "test"]
+}

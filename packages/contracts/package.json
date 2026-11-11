@@ -1,0 +1,19 @@
+{
+  "name": "@huntaway/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Schemas, errors, RPC groups, HTTP endpoints and events: everything a client can do",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@huntaway/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
