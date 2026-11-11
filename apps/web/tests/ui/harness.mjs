@@ -27,11 +27,12 @@ export class RpcError extends Error {
 let requestId = 0
 
 /**
- * Start a test server (agents off, no open token, so a browser without the token sees the token screen). Returns
- * { url, token, dataDir, rpc, stop }.
+ * Start a test server (agents off unless `--fake-claude` is given: never a real `claude`; no open token, so a browser
+ * without the token sees the token screen). Returns { url, token, dataDir, rpc, stop }.
  */
 export function startServer(...args) {
-  const out = execFileSync(script, ["start", ...args], {
+  const agents = args.includes("--fake-claude") || args.includes("--no-agents") ? [] : ["--no-agents"]
+  const out = execFileSync(script, ["start", ...agents, ...args], {
     encoding: "utf8",
     env: { ...process.env, HUNTAWAY_TEST_OPEN_TOKEN: "0" },
   })

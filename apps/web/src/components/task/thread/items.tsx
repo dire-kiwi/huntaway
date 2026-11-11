@@ -1,8 +1,10 @@
 import { clsx } from "clsx"
-import { Bot, Brain, ChevronRight, CircleAlert, Clock, Layers, ShieldQuestion } from "lucide-react"
+import { Bot, Brain, Check, ChevronRight, CircleAlert, Clock, Layers, ShieldQuestion } from "lucide-react"
 import { memo, useState, type ReactNode } from "react"
 import { QUESTION_TOOLS } from "@huntaway/client"
+import { Button, useAsyncAction } from "../../ui"
 import { useSubagentView, subagentTitle } from "./subagentView"
+import { usePromptAnswers } from "./promptAnswers"
 import { AskCard, BoardQuestionCard, PlanCard, questionsOf } from "./requestCards"
 import { useThread } from "./context"
 import { Markdown } from "./Markdown"
@@ -84,9 +86,12 @@ export function PromptCard({ id, data, hostId }: { id: number; data: Any; hostId
   return <PermissionCard data={data} hostId={hostId} />
 }
 
-// Its Allow, Always allow and Deny (the thread's `respond` command) come with answering prompts, plan task 3.3.
-const PermissionCard = memo(function PermissionCard({ data }: { data: Any; hostId: string }) {
+/** A tool call the agent asks to make: Allow, Always allow (in this thread) and Deny while it waits. */
+const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: Any; hostId: string }) {
   const pending = data.status === "pending"
+  const answer = usePromptAnswers(hostId)
+  const { busy, error, run } = useAsyncAction()
+  const decide = (decision: "allow" | "allow_always" | "deny") => void run(() => answer(data.request_id, { decision }))
   const m = toolMeta(data.tool_name, data.input)
   return (
     <div className={clsx("rounded-lg border p-3", pending ? "border-st-attention/50 bg-st-attention/[0.06]" : "border-line bg-panel/60")}>
@@ -114,6 +119,28 @@ const PermissionCard = memo(function PermissionCard({ data }: { data: Any; hostI
       </div>
       {pending ? <ToolInput name={data.tool_name} input={data.input} /> : <div className="truncate font-mono text-[12px] text-faint">{m.summary}</div>}
       <PromptRule data={data} pending={pending} />
+      {pending && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")} className="narrow:px-4">
+            <Check size={13} /> Allow
+          </Button>
+          {/* What an approval rule asks about is asked each time. */}
+          {!data.rule && (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => decide("allow_always")}
+              className="narrow:order-last narrow:h-auto narrow:min-h-9 narrow:py-1.5 narrow:break-all narrow:whitespace-normal"
+            >
+              Always allow {data.tool_name} for this thread
+            </Button>
+          )}
+          <Button size="sm" variant="danger" disabled={busy} onClick={() => decide("deny")} className="narrow:px-4">
+            Deny
+          </Button>
+          {error && <span className="self-center text-xs text-red-400">{error}</span>}
+        </div>
+      )}
     </div>
   )
 })

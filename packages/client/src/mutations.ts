@@ -33,4 +33,6 @@ export const mutations = {
   configs: { create: mutation("configs.create"), update: mutation("configs.update"), delete: mutation("configs.delete") },
   pens: { create: mutation("pens.create"), update: mutation("pens.update"), delete: mutation("pens.delete") },
   host: { updateSettings: mutation("host.updateSettings") },
+  // A prompt's answer: the request and the thread's card change with the events that follow.
+  permissions: { answer: mutation("permissions.answer") },
 } as const
