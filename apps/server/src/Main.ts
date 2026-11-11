@@ -87,6 +87,7 @@ import { Db } from "./platform/Db.ts"
 import { Events } from "./platform/Events.ts"
 import { Identity } from "./platform/Identity.ts"
 import { KeyedLock } from "./platform/KeyedLock.ts"
+import { Listening } from "./platform/Listening.ts"
 import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
@@ -204,7 +205,7 @@ import { Terminals } from "./terminal/Terminals.ts"
  * reads Anthropic's usage endpoint). `db` is swapped for tests.
  */
 export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
-  Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer).pipe(
+  Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer, Listening.layer).pipe(
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),

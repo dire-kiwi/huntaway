@@ -7,6 +7,7 @@ import { rpcCommand } from "./cli/rpc.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
+import { Listening } from "./platform/Listening.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
 import { ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
 import type { ServeArgs } from "./platform/ServerConfig.ts"
@@ -28,6 +29,8 @@ const serve = (args: ServeArgs) =>
     const server = Context.get(context, HttpServer.HttpServer)
     const identity = Context.get(context, Identity)
     const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
+    // What runs are told to reach the server on: the port the listener got (`--port 0` asks for a free one).
+    yield* Context.get(context, Listening).bound(port)
     yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
     const line = yield* Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) })
     yield* Console.log(`HUNTAWAY_READY ${line}`)

@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, Schema, Stream } from "effect"
+import { Effect, FileSystem, Fiber, Schema, Stream } from "effect"
 import { RpcClient } from "effect/rpc"
 import { SqlClient } from "effect/sql"
 import { ItemAdded, TaskChanged, ThreadSnapshot } from "@huntaway/contracts"
@@ -78,9 +78,16 @@ describe.skipIf(shim === null)("a Claude run on a whole server", () => {
           readonly stop: string
           readonly saw_result: number
           readonly kind: string
-        }>`SELECT stop, saw_result, kind FROM runs WHERE task_id = ${task.id}`
+          readonly id: string
+        }>`SELECT stop, saw_result, kind, id FROM runs WHERE task_id = ${task.id}`
       }).pipe(Effect.provide(SqliteClient.layer({ filename: `${dataDir}/board.db`, busyTimeout: "5 seconds", readonly: true })))
-      assert.deepStrictEqual(run, [{ stop: "interrupted", saw_result: 1, kind: "prompt" }])
+      assert.deepStrictEqual(
+        run.map(({ id: _, ...rest }) => rest),
+        [{ stop: "interrupted", saw_result: 1, kind: "prompt" }],
+      )
+      // The run reaches the board's MCP servers on the port the server listens on, not `--port 0` (HE-7).
+      const mcp = yield* FileSystem.FileSystem.pipe(Effect.flatMap((fs) => fs.readFileString(`${dataDir}/runs/${run[0]?.id ?? ""}/mcp.json`)))
+      assert.include(mcp, `"http://127.0.0.1:${port}/api/mcp/`)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

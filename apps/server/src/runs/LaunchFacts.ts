@@ -20,6 +20,7 @@ import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
 import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { Listening } from "../platform/Listening.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
@@ -101,6 +102,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const prompts = yield* Prompts
       const dataDir = yield* DataDir
       const config = yield* ServerConfig
+      const listening = yield* Listening
       const identity = yield* Identity
       const requests = yield* AgentRequests
       const runs = yield* RunRepo
@@ -286,7 +288,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           promptId: yield* random.uuidV4(),
           systemPrompt,
           mcp: {
-            url: `http://127.0.0.1:${config.port}/api/mcp/${encodeURIComponent(run.id)}/`,
+            url: `http://127.0.0.1:${yield* listening.port}/api/mcp/${encodeURIComponent(run.id)}/`,
             secret: yield* identity.runSecret(run.id),
             manifest: yield* requests.manifest(review),
           },
@@ -412,7 +414,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           revertBeforeTurn: rewind,
           configOverrides: [],
           mcp: {
-            url: `http://127.0.0.1:${config.port}/api/mcp/${encodeURIComponent(run.id)}/`,
+            url: `http://127.0.0.1:${yield* listening.port}/api/mcp/${encodeURIComponent(run.id)}/`,
             secret: yield* identity.runSecret(run.id),
             manifest: yield* requests.manifest(review),
           },
