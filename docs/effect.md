@@ -229,6 +229,6 @@ These cover what a lint rule cannot see. Everything a rule can see is in [Lintin
 Every lint suppression in the code base, with its reason. The structural test `suppressions.test.ts` counts the
 suppressions in the sources and fails when the count differs from the number of rows here.
 
-| File | Rule | Why |
-| ---- | ---- | --- |
+| File                                                                    | Rule                         | Why                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `apps/web/src/components/task/thread/threadModel.ts` (`type Any = any`) | `typescript/no-explicit-any` | The thread's rows read an agent's tool input and the board's metadata as the old components did (both are `Schema.Unknown` on the wire by design): every row file uses this one alias, until step 2 gives the rows their types (docs/plan/09-frontend.md, Step 1 as done for task/). |
