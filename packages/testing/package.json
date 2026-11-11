@@ -17,7 +17,9 @@
     "huntaway-server": "workspace:*"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "vite": "catalog:",
     "vite-plus": "catalog:"
   }
 }
