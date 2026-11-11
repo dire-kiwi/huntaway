@@ -12,6 +12,9 @@ import { createServer } from "node:http"
 import {
   // 6.4
   AgentToolsRpcs,
+  // 6.9
+  AnalyticsRpcs,
+  TelemetryRpcs,
   ApprovalRulesRpcs,
   // 6.11
   AsanaRpcs,
@@ -274,6 +277,15 @@ import { Tasks } from "./tasks/Tasks.ts"
 import { ThreadReaders } from "./threads/ThreadReaders.ts"
 import { Threads } from "./threads/Threads.ts"
 import { ThreadStore } from "./threads/ThreadStore.ts"
+// 6.9: the agents' own OpenTelemetry, telemetry and the event loop, analytics and disk usage.
+import { OtlpRoute } from "./http/otlp.ts"
+import { Lag } from "./platform/Lag.ts"
+import { Telemetry } from "./platform/Telemetry.ts"
+import { Analytics } from "./analytics/Analytics.ts"
+import { AnalyticsRepo } from "./analytics/AnalyticsRepo.ts"
+import { Disk } from "./analytics/Disk.ts"
+import { AnalyticsHandlers } from "./rpc/analytics.ts"
+import { TelemetryHandlers } from "./rpc/telemetry.ts"
 // 6.1: terminals.
 import { TerminalRoute } from "./http/terminal.ts"
 import { TerminalHandlers } from "./rpc/terminal.ts"
@@ -296,6 +308,10 @@ import { WorkflowStore } from "./workflows/WorkflowStore.ts"
  * reads Anthropic's usage endpoint). `db` is swapped for tests.
  */
 export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
+  // 6.9: the logs tee over telemetry, over the event loop's measurements.
+  Telemetry.logs.pipe(Layer.provideMerge(Telemetry.layer), Layer.provideMerge(Lag.layer), Layer.provideMerge(PlatformBase(db)))
+
+const PlatformBase = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
   Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer, Listening.layer, Secrets.layer).pipe(
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
@@ -574,6 +590,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // 6.9: a profile's analytics and disk usage.
+    Layer.provideMerge(Layer.mergeAll(Analytics.layer, Disk.layer).pipe(Layer.provideMerge(AnalyticsRepo.layer))),
     // A hub's Update of a linked host: over the hosts' connections and the updater.
     Layer.provideMerge(HostUpdates.layer),
     // Hosts: links, the relay, tools across hosts (M7).
@@ -621,11 +639,14 @@ export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
 /** 6.5: the automations' scheduler (a pass every 5 s, pruning every hour). Not in `areasLayer`: tests run `Scheduler.tick`. */
 export const AutomationLoops = Scheduler.loop
 
+/** 6.9: the telemetry exporter (with the minute's metrics) and the event loop's ticker. Not in tests, as `RunLoops`. */
+export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
+
 /** Every area's services, and their loops. */
 /** 6.11: the fingerprint recorder: what each project's folder is, until its history is known (now, then hourly). */
 export const ProjectLoops = Projects.recorder
 
-export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, Terminals.reaper /* 6.1 */).pipe(
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, PlatformLoops, Terminals.reaper /* 6.1 */).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
 )
 
@@ -662,6 +683,9 @@ export const Served = PublicRpcs.merge(
   DesktopRpcs,
   // 6.4
   AgentToolsRpcs,
+  // 6.9
+  TelemetryRpcs,
+  AnalyticsRpcs,
   PushRpcs,
   TaskDocumentRpcs,
   // 6.5
@@ -706,6 +730,9 @@ export const HandlersLive = Layer.mergeAll(
   DesktopHandlers,
   // 6.4
   AgentToolsHandlers,
+  // 6.9
+  TelemetryHandlers,
+  AnalyticsHandlers,
   PushHandlers,
   TaskDocumentHandlers,
   // 6.5
@@ -729,6 +756,7 @@ export const RoutesLive = Layer.mergeAll(
   RelayRoute,
   LinkStreamRoute,
   McpHttpRoute,
+  OtlpRoute /* 6.9 */,
   TerminalRoute /* 6.1 */,
   // 6.5: automations' webhooks.
   WebhookRoute,

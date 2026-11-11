@@ -573,6 +573,25 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   new harness, through `workflows.*`). Not ported: `graphPicks.test.mjs` (subprojects), the `/settings/review` and
   `/guide/workflows` assertions (6.12's pages), the agent-tools picks of the skills case (6.4).
 
+### Step 1 as done for Analytics and Telemetry (6.9, HE-7)
+
+- **Files.** `components/settings/Analytics.tsx` (the page, in place of the scaffold's placeholder, same props),
+  `analytics/*` (Report, Calendar, DayTimeline, range, the hooks), `TokenStats.tsx`, `DiskUsage.tsx`, `disk.ts`,
+  `chart.tsx`, `Telemetry.tsx` (`HostTelemetry`), and `components/task/ContextStats.tsx` (the Context tab). The old
+  `src/analytics.ts`, `src/tokenStats.ts` and `src/contextStats.ts` moved under the components' lint override as
+  `components/settings/analytics/analytics.ts`, `components/settings/tokenStatsData.ts` and
+  `components/task/contextStatsData.ts` (names that differ from the components' only in case are avoided).
+- **Calls.** The fetching halves stay hand-written fan-outs over `rpc(host, "analytics.…", { profile_id, from, to })`
+  to every connected host, one profile at a time, as the old ones were (09's "one query per host, combined by a derived
+  atom" is step 2's); a host that fails is named in the page's warnings. The host-version gates are gone. Reclaiming
+  disk space is `projects.removeMergedWorktrees`. `HostTelemetry` polls `admin.telemetry` every 15 s and saves with
+  `admin.updateTelemetry`; until 6.12 brings the host page over, the scaffold's `HostPage` placeholder shows it.
+- **Not changed.** The reports still carry `subproject` (always false now), so the token tables' subproject grouping
+  stays as code that never runs; step 2 deletes it.
+- **Checks.** `tests/ui/telemetry.test.mjs` (a fake ClickHouse in the check, as before) and `tokenStats.test.mjs`
+  (the reports given on the RPC websocket with `routeRpc`; its subproject case is a task with its review thread);
+  `tests/unit/tokenStats.test.ts` and `contextStats.test.ts`, the old unit tests unchanged.
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |

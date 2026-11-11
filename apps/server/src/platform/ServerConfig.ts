@@ -110,6 +110,12 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.String("HUNTAWAY_RELEASE_UPDATES")),
     Flag.optional,
   ),
+  // 6.9: telemetry's ClickHouse when the host's settings have none.
+  telemetryUrl: Flag.String("telemetry-url").pipe(
+    Flag.withDescription("The ClickHouse telemetry goes to while the host's settings have none (http://USER:PASSWORD@HOST:8123/DATABASE)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_TELEMETRY_URL")),
+    Flag.optional,
+  ),
 }
 
 /**
@@ -181,6 +187,7 @@ export interface ServeArgs {
   readonly sourceDir?: Option.Option<string>
   readonly updateFrom?: Option.Option<string>
   readonly releaseUpdates?: Option.Option<string>
+  readonly telemetryUrl?: Option.Option<string>
 }
 
 export interface ServerConfigShape {
@@ -279,6 +286,15 @@ export interface ServerConfigShape {
   readonly cuaRelease: CuaReleaseConfig | null
   /** 6.10: `HUNTAWAY_DESKTOP_LOCKED` (`1` or `0`), whether the screen is locked, instead of asking the session (tests). */
   readonly desktopLocked: boolean | null
+  /** 6.9: `--telemetry-url`/`HUNTAWAY_TELEMETRY_URL`, used while the host's settings name no ClickHouse. */
+  readonly telemetryUrl: string | null
+  /** 6.9: the server's environment makes Claude Code export telemetry of its own (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`). */
+  readonly ownTelemetryEnv: boolean
+  /** 6.9: `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, the agents' default config folders when a config names none. */
+  readonly claudeConfigDir: string | null
+  readonly codexHome: string | null
+  /** 6.9: a stall of the event loop this long (ms) or longer is logged (`HUNTAWAY_LAG_LOG_MS`, default 250; 0: none). */
+  readonly lagLogMs: number
 }
 
 /** 6.10: a Cua Driver release archive: where it is, and what it must be. */
@@ -421,6 +437,10 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const cuaDriver = yield* Config.String("HUNTAWAY_CUA_DRIVER").pipe(Config.option)
         const cuaRelease = yield* Config.schema(Schema.fromJsonString(CuaReleaseConfig), "HUNTAWAY_CUA_DRIVER_RELEASE").pipe(Config.option)
         const desktopLocked = yield* Config.String("HUNTAWAY_DESKTOP_LOCKED").pipe(Config.option)
+        // 6.9
+        const claudeConfigDir = yield* Config.String("CLAUDE_CONFIG_DIR").pipe(Config.option)
+        const codexHome = yield* Config.String("CODEX_HOME").pipe(Config.option)
+        const lagLogMs = yield* Config.Number("HUNTAWAY_LAG_LOG_MS").pipe(Config.withDefault(250))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -477,6 +497,14 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           noDiscovery: args.noDiscovery ?? false,
           sshBin: Option.getOrElse(sshBin, () => "ssh"),
           ...(yield* updateConfig(args, home, Option.getOrNull(exe), expand)),
+          // 6.9
+          telemetryUrl: args.telemetryUrl === undefined ? null : Option.getOrNull(args.telemetryUrl),
+          ownTelemetryEnv: Object.entries(process.env).some(
+            ([k, v]) => (k === "CLAUDE_CODE_ENABLE_TELEMETRY" || k.startsWith("OTEL_")) && v !== undefined && v !== "",
+          ),
+          claudeConfigDir: Option.getOrNull(Option.map(claudeConfigDir, expand)),
+          codexHome: Option.getOrNull(Option.map(codexHome, expand)),
+          lagLogMs: Number.isFinite(lagLogMs) && lagLogMs >= 0 ? lagLogMs : 250,
         })
       }),
     )
@@ -541,6 +569,12 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         cwd: config.dataDir,
         configHome: `${config.dataDir}/config`,
         runtimeDir: null,
+        // 6.9
+        telemetryUrl: null,
+        ownTelemetryEnv: false,
+        claudeConfigDir: null,
+        codexHome: null,
+        lagLogMs: 250,
         ...config,
       }),
     )

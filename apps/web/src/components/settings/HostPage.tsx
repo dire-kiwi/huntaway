@@ -18,25 +18,15 @@ import { HostVersion } from "./hosts/HostRow"
 import { hubRpc } from "./hosts/hub"
 import { SettingsSyncRow } from "./hosts/SettingsSync"
 import { HostService, RemoteServer } from "./server/RemoteServer"
+import { HostTelemetry } from "./Telemetry"
 
 // Step 1 (docs/plan/09-frontend.md) for the host page (route "host"): its version and Update (hosts/HostRow's
 // HostVersion), settings sync, agent configs (with Copy login, `hub.hosts.copyConfig`), profiles, terminal tools, this
 // host's Server or a linked host's (server/RemoteServer, over that host's `admin.*`), its systemd service, Desktop, and
-// taking a linked host off the board (`hub.hosts.remove`). Telemetry (Telemetry's HostTelemetry, 6.9) stands as a
-// marked slot (`Slot` below) until it comes. A profile has agent configs on every host, so the old "Copy login" for a
-// profile with a folder of its own is gone (logins are copied from configs: 6.11).
+// taking a linked host off the board (`hub.hosts.remove`), and its telemetry (6.9). A profile has agent configs on every
+// host, so the old "Copy login" for a profile with a folder of its own is gone (logins are copied from configs: 6.11).
 
 const MODE: Record<string, string> = { local: "this hub's own host", outbound: "linked by URL", inbound: "dials in", ssh: "over SSH" }
-
-/** A section another area brings: its heading, and that it is not on this server yet. */
-function Slot({ title, area }: { title: string; area: string }) {
-  return (
-    <section data-not-yet={area}>
-      <h2 className="mb-1 text-[13px] font-semibold">{title}</h2>
-      <p className="text-[12.5px] text-faint">Not yet on this server.</p>
-    </section>
-  )
-}
 
 /** Everything about one host, configured from this board. */
 export function HostPage({ hostId }: { hostId: string }) {
@@ -106,7 +96,7 @@ export function HostPage({ hostId }: { hostId: string }) {
                 </p>
                 <TerminalToolsRow host={host} />
               </section>
-              <Slot title="Telemetry" area="6.9" />
+              <HostTelemetry hostId={host.id} />
               {host.local ? <ServerPanel /> : <RemoteServer hostId={host.id} />}
               <HostService hostId={host.id} />
               {agents && <HostDesktop hostId={host.id} />}

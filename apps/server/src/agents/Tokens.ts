@@ -4,6 +4,7 @@ import type { TaskId } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { elapsedMs, Telemetry } from "../platform/Telemetry.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { savedFor, TokenRepo } from "./TokenRepo.ts"
 import type { PendingRun, Saved } from "./TokenRepo.ts"
@@ -50,6 +51,10 @@ export const beforeOf = (saved: Saved): Before | null => {
 const pad = (n: number) => String(n).padStart(2, "0")
 
 const CodexSpec = Schema.fromJsonString(Schema.Struct({ model: Schema.optional(Schema.Unknown), thread_id: Schema.optional(Schema.Unknown) }))
+/** 6.9: a run's `exit` file, leniently. */
+const ExitFile = Schema.fromJsonString(
+  Schema.Struct({ code: Schema.optional(Schema.Unknown), signal: Schema.optional(Schema.Unknown), error: Schema.optional(Schema.Unknown) }),
+)
 const LaunchSpec = Schema.fromJsonString(Schema.Struct({ config_dir: Schema.optional(Schema.Unknown) }))
 
 export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-server/agents/Tokens") {
@@ -58,6 +63,8 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
     Effect.gen(function* () {
       const repo = yield* TokenRepo
       const tasks = yield* TaskRepo
+      // 6.9
+      const telemetry = yield* Telemetry
       const db = yield* Db
       const dataDir = yield* DataDir
       const fs = yield* FileSystem.FileSystem
@@ -165,8 +172,60 @@ export class Tokens extends Context.Service<Tokens, TokensShape>()("huntaway-ser
           }
         }
         const at = yield* now
-        yield* db.tx(repo.save(run.id, result, at))
+        if (yield* db.tx(repo.save(run.id, result, at))) yield* report(run, result, dir)
       })
+
+      /**
+       * 6.9: telemetry's `run_usage` (one for each model) and `run_end` for a run just counted: the run's own share of its
+       * session's cost, as `token_usage` has it, not its `result`'s totals.
+       */
+      const report = (run: PendingRun, c: Counted, dir: string) =>
+        Effect.gen(function* () {
+          if (!(yield* telemetry.on)) return
+          const r = yield* repo.runFacts(run.id)
+          if (r === null) return
+          const ts = r.ended_at ?? (yield* now)
+          const claude = c.runtime === "claude"
+          let cost = 0
+          let main: readonly [string, number] | null = null
+          for (const [model, n] of Object.entries(c.models)) {
+            cost += claude ? n.cost : 0
+            if (main === null || n.output > main[1]) main = [model, n.output]
+            yield* telemetry.runEvent(run.id, {
+              ts,
+              event: "run_usage",
+              kind: r.kind,
+              runtime: c.runtime,
+              model,
+              session_id: c.session ?? "",
+              input_tokens: n.input,
+              output_tokens: n.output,
+              cache_read_tokens: n.cache_read,
+              cache_write_tokens: n.cache_write,
+              reasoning_tokens: n.reasoning,
+              // Codex's aren't known: token_usage has none either.
+              cost_usd: claude ? n.cost : 0,
+              estimated: c.estimated,
+            })
+          }
+          const exit = Option.getOrUndefined(yield* readJson(`${dir}/exit`, ExitFile))
+          yield* telemetry.runEvent(run.id, {
+            ts,
+            event: "run_end",
+            kind: r.kind,
+            runtime: c.runtime,
+            model: main?.[0] ?? "",
+            session_id: c.session ?? "",
+            status: r.result_error !== null ? "error" : r.saw_result !== 0 ? "success" : "no_result",
+            outcome: r.attention ?? "",
+            exit_code: typeof exit?.code === "number" ? exit.code : -1,
+            duration_ms: elapsedMs(r.created_at, ts),
+            cost_usd: cost,
+            estimated: c.estimated,
+            error: r.result_error ?? (typeof exit?.error === "string" ? exit.error : ""),
+            attrs: { signal: typeof exit?.signal === "number" ? exit.signal : "", stopped: r.stop, finished: r.finished },
+          })
+        }).pipe(Effect.ignoreCause)
 
       const countPending = Effect.fn("Tokens.countPending")(function* (task: TaskId | null) {
         return yield* Semaphore.withPermits(

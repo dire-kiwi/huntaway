@@ -26,6 +26,8 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
 | Moving an assistant workspace's own `.git` beside it (HA-160), on its first open (6.7)          | Workspaces from before HA-160                                   | The old server moved each one it opened; one never opened since keeps its `.git` in the workspace, which the board leaves alone (its history starts again beside it) |
 | The one-time startup move of the Review tab's reviews into a workflow for projects that used workflows before HA-277 (`move_all_review_settings`, setting `workflows_reviews_moved`) (6.6) | Boards from before HA-277 | Ran on the old board before its import |
+| `Lag`'s time on the thread per HTTP route (`lag.record`, `busy_with`), a stall's "busy" label and telemetry's `route_ms` metric (6.9) | Finding the route that held the one thread | Requests are fibers that interleave here, so a route's share of the thread can't be measured; the stall log and the delay histogram stay |
+| `huntaway telemetry` asking for a password on a terminal (6.9)                                   | Typing an admin's password                                      | `HUNTAWAY_TELEMETRY_PASSWORD` or the URL give it; a script never waits on a prompt |
 
 What is **not** dropped, although it carries an old name: `ia-shim`, branches `ia/…`, `refs/huntaway/…`, the script
 variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names `ia-…`, and the item id prefix

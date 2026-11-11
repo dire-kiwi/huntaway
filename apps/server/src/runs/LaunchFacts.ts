@@ -21,6 +21,7 @@ import { Identity } from "../platform/Identity.ts"
 import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { Listening } from "../platform/Listening.ts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
@@ -52,6 +53,8 @@ export interface Prepared {
   readonly rewind?: Rewind | null
   /** 6.7: what's done once its agent has started (the assistant's routines' reports it starts with are read). */
   readonly started?: Effect.Effect<void> | undefined
+  /** 6.9: what telemetry's `run_start` says of it: its agent, model, effort and mode, and whether it resumes a session. */
+  readonly runStart?: { readonly runtime: string; readonly model: string; readonly effort: string; readonly permission_mode: string; readonly resume: boolean }
 }
 
 /** Trimmed, or null when blank. */
@@ -127,6 +130,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const agentTools = yield* AgentTools
       // 6.7
       const assistantLaunch = yield* AssistantLaunch
+      // 6.9
+      const telemetry = yield* Telemetry
       // Where the package managers' caches are, when the environment says (Codex's sandbox would keep them read-only).
       const cacheEnv: Readonly<Record<string, string | null>> = Object.fromEntries(
         yield* Effect.forEach(
@@ -284,7 +289,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           home: config.home,
           configDir,
           apiEnv: yield* apiEnv(cfg),
-          telemetryEnv: [],
+          // 6.9: the agent's own events, to this server, when its profile sends.
+          telemetryEnv: yield* telemetry.claudeEnv(task.id, run.id, configDir),
           tmp,
           resumeAt: rewind?.resume_at ?? null,
           model,
@@ -307,7 +313,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         })
         // Where its conversation is kept, if it starts one, and the effort it was given (review statistics).
         yield* runs.update(run.id, { config_dir: configDir ?? "", effort: recordedEffort(effort) })
-        const prepared: Prepared = { spec, writesDocuments: docs !== null, rewind, started: reports?.started }
+        const runStart = { runtime: "claude", model: model ?? "", effort: effort ?? "", permission_mode: permissionMode, resume: task.session_id !== null }
+        const prepared: Prepared = { spec, writesDocuments: docs !== null, rewind, started: reports?.started, runStart }
         return prepared
       })
 
@@ -428,7 +435,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           reviewFilesystem: reviewFs,
           sessionBoardTools: task.session_id === null ? false : yield* runs.sessionBoardTools(task.id, task.session_id),
           revertBeforeTurn: rewind,
-          configOverrides: [],
+          // 6.9
+          configOverrides: yield* telemetry.codexOverrides(task.id, run.id, configDir),
           mcp: {
             url: `http://127.0.0.1:${yield* listening.port}/api/mcp/${encodeURIComponent(run.id)}/`,
             secret: yield* identity.runSecret(run.id),
@@ -436,7 +444,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           },
         })
         yield* runs.update(run.id, { config_dir: configDir ?? "", effort: effort?.trim() ?? "", board_tools: launched.boardTools })
-        const prepared: Prepared = { spec: launched.spec, writesDocuments: docs !== null, rewind: pending, started: reports?.started }
+        const runStart = { runtime: "codex", model: model ?? "", effort: effort ?? "", permission_mode: permissionMode, resume: task.session_id !== null }
+        const prepared: Prepared = { spec: launched.spec, writesDocuments: docs !== null, rewind: pending, started: reports?.started, runStart }
         return prepared
       })
 

@@ -27,6 +27,9 @@ import { TaskRpcs } from "./tasks.ts"
 // 6.1: terminals.
 import { TerminalRpcs } from "./terminal.ts"
 import { TaskDocumentRpcs } from "./taskDocuments.ts"
+// 6.9: telemetry and analytics.
+import { AnalyticsRpcs } from "./analytics.ts"
+import { TelemetryRpcs } from "./telemetry.ts"
 import { ThreadRpcs } from "./threads.ts"
 // 6.11: Asana, config archives, fan-outs, adding a project from GitHub.
 import { AsanaRpcs } from "./asana.ts"
@@ -73,6 +76,9 @@ export const HostRpcs = HostRpcGroup.merge(
   AssistantRpcs,
   // 6.6
   WorkflowRpcs,
+  // 6.9
+  TelemetryRpcs,
+  AnalyticsRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

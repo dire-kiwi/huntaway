@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import type { Timestamp } from "@huntaway/contracts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import { minorNoted } from "./model.ts"
 import { ReviewRepo } from "./ReviewRepo.ts"
 import type { StatRow } from "./ReviewRepo.ts"
@@ -15,7 +16,7 @@ import type { StatRow } from "./ReviewRepo.ts"
 export type Submission = Omit<StatRow, "minor_noted"> & { readonly summary: string | null }
 
 export interface ReviewStatsShape {
-  /** Keep a submission made at `at` (its run's earlier one replaced). The `review` telemetry event joins with telemetry. */
+  /** Keep a submission made at `at` (its run's earlier one replaced). It goes to telemetry as a `review` (6.9). */
   readonly record: (s: Submission, at: Timestamp) => Effect.Effect<void>
 }
 
@@ -24,10 +25,20 @@ export class ReviewStats extends Context.Service<ReviewStats, ReviewStatsShape>(
     ReviewStats,
     Effect.gen(function* () {
       const repo = yield* ReviewRepo
+      const telemetry = yield* Telemetry
       return ReviewStats.of({
         record: Effect.fn("ReviewStats.record")(function* (s: Submission, at: Timestamp) {
           const { summary, ...row } = s
-          yield* repo.addStat({ ...row, minor_noted: minorNoted(s.minor, summary) }, at)
+          const effort = yield* repo.addStat({ ...row, minor_noted: minorNoted(s.minor, summary) }, at)
+          // 6.9: telemetry's `review`.
+          yield* telemetry.taskEvent(s.task_id, {
+            ts: at,
+            event: "review",
+            run_id: s.run_id,
+            status: s.verdict,
+            effort: effort ?? "",
+            attrs: { round: s.round, serious: s.serious, minor: s.minor ?? "", reviewer: s.label ?? "", thread_id: s.thread_id },
+          })
         }),
       })
     }),

@@ -11,6 +11,8 @@ import { rpcCommand } from "./cli/rpc.ts"
 import { sshHostCommand } from "./cli/sshHost.ts"
 import { Releases } from "./update/Releases.ts"
 import { Supervisor } from "./update/Supervisor.ts"
+// 6.9
+import { telemetryCommand } from "./cli/telemetry.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
@@ -91,6 +93,8 @@ const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
     rpcCommand,
     sshHostCommand,
     installServiceCommand,
+    // 6.9
+    telemetryCommand,
     // 6.7: Node's HTTP server on the loopback, for the browser's way back.
     googleAuthCommand((port) => NodeHttpServer.layer(createServer, { port, host: "127.0.0.1" })),
   ]),

@@ -12,6 +12,7 @@ import { isMerged } from "../tasks/checks.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import type { Change } from "../platform/Changes.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { RunEnds } from "../runs/RunEnds.ts"
@@ -60,6 +61,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       // 6.6
       const engine = yield* WorkflowEngine
       const workflows = yield* Workflows
+      // 6.9
+      const telemetry = yield* Telemetry
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -149,6 +152,17 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           if (change.after.pr_url !== null && change.before?.pr_url !== change.after.pr_url) yield* ghStacks.link(change.after.id)
           // The project's status scripts for the move, in the background, one task's in order (4.1).
           if (moved && change.before !== null) yield* statusScripts.changed(change.after, change.before.status)
+          // 6.9: telemetry's `task_status`.
+          if (moved && change.before !== null) {
+            const { kind, status, resolution } = change.after
+            yield* telemetry.taskEvent(change.after.id, {
+              event: "task_status",
+              kind,
+              status,
+              outcome: resolution ?? "",
+              attrs: { from: change.before.status },
+            })
+          }
           // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.
           if (moved || change.before?.running !== change.after.running) yield* taskTmp.changed(change.after)
           // 4.6: a task that entered In review (or whose run ended there) is reviewed, if a review is due.
