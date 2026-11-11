@@ -53,6 +53,7 @@ import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { Wait } from "./mcp/Wait.ts"
 import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
+import { McpCodexRegistered } from "./mcp/transport/codex.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
@@ -186,11 +187,11 @@ const RunsArea = Runs.layer.pipe(
 )
 /**
  * The board's MCP servers over what is above them, with `hooks` (tests give their own): the calls, the server on Claude
- * runs' files, and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
+ * runs' files and Codex runs' dynamic tools (5.2), and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
  * test's own, built over the whole board's services, is not the one those already have.
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
-  McpControlRegistered.pipe(
+  Layer.mergeAll(McpControlRegistered, McpCodexRegistered).pipe(
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
