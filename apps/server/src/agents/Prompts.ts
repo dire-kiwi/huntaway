@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Option } from "effect"
 import { DocumentLabel, threadKindOf } from "@huntaway/contracts"
 import { TaskId } from "@huntaway/contracts"
 import type { Agent, PermissionMode, ProjectId, Task, ThreadKind, ThreadKindFields } from "@huntaway/contracts"
+import { Git } from "../git/Git.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import type { DocumentFile } from "../prompts/documentGuide.ts"
 import type { LostWork } from "../prompts/lostBackground.ts"
@@ -107,6 +108,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
       const settings = yield* HostSettings
       const penRepo = yield* PenRepo
       const dataDir = yield* DataDir
+      const git = yield* Git
 
       const projectOf = (id: ProjectId | null) => (id === null ? Effect.succeed(null) : projectRepo.get(id).pipe(Effect.map(Option.getOrNull)))
 
@@ -235,9 +237,10 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         const scratchTask = o.type === "scratch"
         const number = yield* projectRepo.nextNumber(project.id)
         const useWorktree = (scratchTask ? false : (o.worktree ?? project.use_worktrees)) && project.is_git
-        // Where worktree setup would put it (its folder is `<number>-<the title's slug>`). The branch it is made from when
-        // the project names none is read from git by plan task 4.1 (`Worktrees`).
+        // Where worktree setup would put it (its folder is `<number>-<the title's slug>`), from the branch the project
+        // names, else the one checked out in its repository, as setup does (`Worktrees`).
         const name = `${number}-task-title`
+        const baseBranch = useWorktree ? (set(project.base_branch) ?? (yield* git.currentBranch(project.repo_path))) : null
         const task: ContextTask = {
           id: TaskId.make("<task id>"),
           profile_id: profile.id,
@@ -257,7 +260,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           use_worktree: useWorktree,
           worktree_path: useWorktree ? `${project.worktrees_root}/${name}` : null,
           branch: useWorktree ? `ia/${project.key.toLowerCase()}-${name}` : null,
-          base_branch: useWorktree ? set(project.base_branch) : null,
+          base_branch: baseBranch,
           start_from: null,
           merges_into: null,
           github_stack: null,
