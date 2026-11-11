@@ -21,6 +21,12 @@
 //                             namespace "huntaway"); it waits for the answer, and the reply says "board <tool>: <text>"
 //   fake-until-interrupted    the turn goes on until `turn/interrupt`
 //   fake-usage-limit          the turn fails for the usage limit (`codexErrorInfo: "usageLimitExceeded"`)
+//   fake-commit               (or a turn asked to fix a review's issues, "Fix them, then commit") an empty commit
+//                             ("fake work") in its working directory, as fake-claude makes
+// Merges, as fake-claude's (plan task 4.7): with FAKE_CODEX_MERGE=pr and FAKE_CODEX_GH the fake gh, a turn asked to merge
+// (the merge request, 'The user moved this task to "Ready for merge". … Merge branch `<branch>` into `<base>`', not the
+// summary an approval asks for, which says "Do not merge yet") runs `<FAKE_CODEX_GH> pr merge <branch> --squash`, then
+// calls the board's `update_task` with `status: "done"` for its task ($HUNTAWAY_TASK_ID). It never runs another gh.
 // A `turn/interrupt` while it waits for an answer, or sleeps, ends the turn as interrupted.
 //
 // Knobs (environment):
@@ -30,6 +36,7 @@
 //   FAKE_CODEX_MODELS              a JSON file with `model/list`'s `data` (default: two models, one of them cheap)
 //   FAKE_CODEX_SLEEP               seconds to wait before a turn's reply (to catch a run while it runs)
 //   FAKE_CODEX_NO_DYNAMIC_TOOLS    "1": a `thread/start` with dynamic tools is refused, as an older Codex refuses it
+import { spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { appendFileSync, readFileSync } from "node:fs"
 import { createInterface } from "node:readline"
@@ -151,6 +158,33 @@ const runTurn = async (id: string, text: string) => {
     const out = Array.isArray(content) ? content.map((c) => str(field(c, "text"))).join("\n") : ""
     said.push(`board ${tool}: ${out}`)
     if (!t.interrupted) item("item/completed", { ...call, status: "completed", contentItems: content ?? [], success: field(result, "success") !== false })
+  }
+  if ((text.includes("fake-commit") || text.includes("Fix them, then commit")) && !t.interrupted) {
+    const made = spawnSync(
+      "git",
+      ["-c", "user.name=fake", "-c", "user.email=fake@example.com", "commit", "-q", "--allow-empty", "--no-verify", "-m", "fake work"],
+      { encoding: "utf8" },
+    )
+    said.push(made.status === 0 ? "committed fake work" : `couldn't commit: ${(made.stderr ?? "").trim().slice(0, 200)}`)
+  }
+  const merging = /Merge branch `([^`]+)` into/u.exec(text)
+  if (
+    env.FAKE_CODEX_MERGE === "pr" &&
+    merging !== null &&
+    text.includes('The user moved this task to "Ready for merge".') &&
+    !text.includes("Do not merge yet")
+  ) {
+    const gh = env.FAKE_CODEX_GH
+    const merged = gh === undefined || gh === "" ? null : spawnSync(gh, ["pr", "merge", merging[1] ?? "", "--squash"], { encoding: "utf8" })
+    said.push(merged === null ? "couldn't merge: no fake gh" : merged.status === 0 ? `merged ${merging[1]}` : `couldn't merge: ${merged.stderr}`)
+    const task = env.HUNTAWAY_TASK_ID
+    if (merged?.status === 0 && task !== undefined && !t.interrupted) {
+      const args = { task_id: task, status: "done" }
+      const call = { type: "dynamicToolCall", id: `call-${hex()}`, namespace: "huntaway", tool: "update_task", arguments: args, status: "inProgress" }
+      item("item/started", call)
+      const a = await ask("item/tool/call", { ...p, turnId: id, callId: call.id, namespace: "huntaway", tool: "update_task", arguments: args })
+      if (!t.interrupted) item("item/completed", { ...call, status: "completed", contentItems: field(field(a, "result"), "contentItems") ?? [], success: true })
+    }
   }
   if (text.includes("fake-until-interrupted")) while (!t.interrupted) await pause(3600)
   const sleep = Number(env.FAKE_CODEX_SLEEP ?? "0")
