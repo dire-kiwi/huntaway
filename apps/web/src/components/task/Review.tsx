@@ -193,6 +193,32 @@ function ReviewerPart({ part, thread, current }: { part: ReviewerRun; thread: Ta
   )
 }
 
+/** A task's review in the compare view (6.11, changes/Compare): its headline, which opens its thread, and what it found. */
+export function ReviewVerdict({ task }: { task: Task }) {
+  const r = task.review
+  const threads = useThreads(r)
+  if (!r) return <div className="text-faint">Not reviewed yet</div>
+  const d = describeReview(r, threads)
+  const parts = reviewParts(r)
+  return (
+    <div className="space-y-1.5">
+      <button
+        className={clsx("flex items-center gap-1.5 hover:underline", TONE_TEXT[d.tone])}
+        title={`${d.title}\n\nClick to open the review thread.`}
+        onClick={() => openTask(threadToOpen(r))}
+      >
+        {r.state === "running" ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />}
+        {d.headline}
+      </button>
+      {parts.length > 1 ? (
+        parts.map((p, i) => <ReviewerPart key={p.thread_id} part={p} thread={threads[i]} current={false} />)
+      ) : (
+        <Findings summary={r.summary} issues={r.issues} running={r.state === "running"} />
+      )}
+    </div>
+  )
+}
+
 /** Rounds of fixes a task's review gets: the project's, and any added. */
 const roundsOf = (r: Review, rounds: number) => rounds + r.extra_rounds
 

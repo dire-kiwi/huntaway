@@ -108,6 +108,8 @@ export const SERVE_ENV = [
   "HUNTAWAY_SKIP_DB_BACKUP",
   "HUNTAWAY_NO_AGENTS",
   "HUNTAWAY_GH_BIN",
+  // 6.11: where Asana's API is (a fake one for a test server).
+  "HUNTAWAY_ASANA_URL",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -182,6 +184,8 @@ export interface ServerConfigShape {
   readonly tmpDir: string
   /** The root of the tasks' temp folders when it is not the usual one in `tmpDir`: tests put it in their data folder. */
   readonly taskTmpRoot: string | null
+  /** 6.11: Asana's API (`HUNTAWAY_ASANA_URL`, default Asana's own); a test points it at a fake. Tests have none by default. */
+  readonly asanaUrl: string
 }
 
 /** The version of this build. A release sets it when it packages the server. */
@@ -201,6 +205,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const tmpDir = yield* Config.String("TMPDIR").pipe(Config.withDefault("/tmp"))
         const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""))
         const cacheHome = yield* Config.String("XDG_CACHE_HOME").pipe(Config.withDefault(""))
+        const asanaUrl = yield* Config.String("HUNTAWAY_ASANA_URL").pipe(Config.withDefault("https://app.asana.com/api/1.0"))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -232,6 +237,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           agentEnv: AGENT_ENV,
           tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
           taskTmpRoot: null,
+          asanaUrl,
         })
       }),
     )
@@ -267,6 +273,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         agentEnv: AGENT_ENV,
         tmpDir: config.dataDir,
         taskTmpRoot: `${config.dataDir}/task-tmp`,
+        // Never Asana's own: a test gives its fake's.
+        asanaUrl: "http://127.0.0.1:9/no-asana-in-tests",
         ...config,
       }),
     )

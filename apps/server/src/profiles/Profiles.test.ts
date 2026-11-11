@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Option, Schema, Stream } from "effect"
+import { Effect, FileSystem, Option, Stream } from "effect"
 import { AgentConfigId, LinkId, ProfileId, Timestamp } from "@huntaway/contracts"
 import type { Reviewer } from "@huntaway/contracts"
 import { TestBoard } from "@huntaway/testing"
@@ -15,8 +15,6 @@ import { Profiles } from "./Profiles.ts"
 const tag = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) => Effect.map(Effect.flip(effect), (e) => e._tag)
 /** A reviewer with every field default but those given. */
 const reviewer = (fields: Partial<Reviewer> = {}): Reviewer => Object.assign({ claude_config_id: null, model: null, effort: null }, fields)
-/** A value as JSON text, to look for what must not be in it. */
-const json = (value: unknown) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(Effect.orDie)
 
 /** A profile row made directly, as an older board might have it (two names in different cases). */
 const insertProfile = (id: string, name: string) =>
@@ -190,23 +188,7 @@ describe("Profiles", () => {
     }).pipe(Effect.provide(TestBoard())),
   )
 
-  // profiles_connect_to_asana_and_search_it: connecting needs Asana (a later milestone); disconnecting and the switch work.
-  it.effect("refuses an Asana token for now, disconnects, and keeps the Asana switch", () =>
-    Effect.gen(function* () {
-      const profiles = yield* Profiles
-      const repo = yield* ProfileRepo
-      const p = yield* profiles.create({ name: "work" })
-      assert.strictEqual(yield* tag(profiles.update(p.id, { asana_token: "tok" })), "Invalid")
-      yield* repo.update(p.id, { asana_token: "tok", asana_user: "Ivy" })
-      assert.isFalse((yield* json(yield* profiles.list)).includes("tok"))
-      assert.strictEqual((yield* profiles.update(p.id, { name: "job" })).asana_user, "Ivy", "kept when other fields change")
-      const off = yield* profiles.update(p.id, { asana_enabled: false })
-      assert.deepStrictEqual([off.asana_enabled, off.asana_user], [false, "Ivy"])
-      const cleared = yield* profiles.update(p.id, { asana_token: null })
-      assert.strictEqual(cleared.asana_user, null)
-      assert.strictEqual(yield* repo.asanaToken(p.id), null)
-    }).pipe(Effect.provide(TestBoard())),
-  )
+  // profiles_connect_to_asana_and_search_it: in Asana.test.ts (6.11).
 
   // profile_names_are_required_and_unique (HA-37)
   it.effect("names are required and unique whatever their case", () =>

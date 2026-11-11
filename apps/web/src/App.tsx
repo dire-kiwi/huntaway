@@ -1,6 +1,6 @@
 import { isAssistant, isGroupTask, isRoutine } from "@huntaway/client"
 import { clsx } from "clsx"
-import { useEffect } from "react"
+import { lazy, Suspense, useEffect } from "react"
 import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
@@ -22,6 +22,9 @@ import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
 import { navigate, usePanel, useRoute, useTaskModal } from "./state/route"
+
+// 6.11: the compare view of the tasks made from one prompt, in a chunk of its own.
+const CompareView = lazy(() => import("./components/changes/Compare").then((m) => ({ default: m.CompareView })))
 
 export function App() {
   const authed = useBoard((s) => s.authed)
@@ -119,6 +122,11 @@ export function App() {
         </div>
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
+      {panel?.compare === true && hasPanel(route) && (
+        <Suspense fallback={null}>
+          <CompareView taskId={panel.taskId} />
+        </Suspense>
+      )}
       {modal !== null && <TaskModal key={modal} taskId={modal} />}
       <UnhandledErrors />
     </div>

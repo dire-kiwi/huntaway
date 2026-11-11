@@ -1,3 +1,4 @@
+import { AsanaIcon, LinkList } from "../../task/ExternalLinks"
 import { Toggle } from "../../ui"
 import type { AgentChoice } from "./useAgentChoice"
 import type { DraftExtras } from "./useDraft"
@@ -10,6 +11,7 @@ export function OptionsRow({
   where: { inProject },
   tok: { codeTask, fanout, startFrom, mergesInto },
   options: { worktree, setWorktree, agents, start, setStart },
+  kept: { linking, setPickingLink, links, setLinks },
 }: {
   where: Where
   tok: Tokens
@@ -24,9 +26,22 @@ export function OptionsRow({
           <Toggle checked={worktree} onChange={setWorktree} label="Own git worktree" />
         )}
         {agents && <Toggle checked={start} onChange={setStart} label="Start agent now" />}
-        {/* The config picker and its usage note (settings/ClaudeConfigs) come with the settings on this server; linking
-            an Asana task (task/ExternalLinks) and attaching files (task/Attachments) come later too. */}
+        {/* The config picker and its usage note (settings/ClaudeConfigs) come with the settings on this server;
+            attaching files (task/Attachments) later too. */}
+        <div className="-my-1 ml-auto flex items-center gap-1">
+          {linking && (
+            <button
+              type="button"
+              onClick={() => setPickingLink(true)}
+              title="Link the Asana task this is for"
+              className="flex h-7 items-center justify-center gap-1.5 rounded-md px-2 text-[12px] text-faint hover:bg-white/5 hover:text-fg"
+            >
+              <AsanaIcon size={13} /> Link Asana task
+            </button>
+          )}
+        </div>
       </div>
+      {linking && links.length > 0 && <LinkList chips links={links} onRemove={(l) => setLinks((ls) => ls.filter((x) => x !== l))} />}
     </>
   )
 }

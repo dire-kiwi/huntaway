@@ -1,11 +1,12 @@
 import { clsx } from "clsx"
-import { Settings, Star, X } from "lucide-react"
-import { useMemo } from "react"
+import { Plus, Settings, Star, X } from "lucide-react"
+import { useMemo, useState } from "react"
 import { useDrawer } from "../../narrow"
 import { type Route } from "../../router"
 import { navigate } from "../../state/route"
 import { profileNames } from "../boardHelpers"
 import { ArchiveProjectModal } from "../settings/ArchivedProjects"
+import { NewProjectModal } from "../settings/NewProjectModal"
 import { ContextMenu, IconButton } from "../ui"
 import { GroupNameModal } from "./sidebar/GroupNameModal"
 import { HostProjects } from "./sidebar/HostProjects"
@@ -53,6 +54,8 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
     leaveGroup,
     setNaming,
   })
+  // Add project (6.11).
+  const [adding, setAdding] = useState(false)
   const row: RowProps = { stats: stats.by, hosts, grouped, active, activeProject, profileOf, isPinned, isFavorite, projectMenu }
 
   return (
@@ -101,7 +104,9 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
               </span>
             )}
           </span>
-          {/* Add project (settings/NewProjectModal) comes with the settings on this server. */}
+          <IconButton className="ml-auto h-6 w-6" title="Add project" onClick={() => setAdding(true)}>
+            <Plus size={14} />
+          </IconButton>
         </div>
         <div className="space-y-0.5">
           {groups.map((group) => (
@@ -142,6 +147,7 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
       {archiving && <ArchiveProjectModal project={archiving} onClose={() => setArchiving(null)} />}
+      {adding && <NewProjectModal profile={active} onClose={() => setAdding(false)} />}
       {naming && <GroupNameModal title={naming.title} initial={naming.initial} onClose={() => setNaming(null)} onSave={saveName} />}
     </aside>
   )

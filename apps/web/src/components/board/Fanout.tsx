@@ -41,8 +41,6 @@ export function harnessLabels(tasks: Task[], configs: (ClaudeConfig | undefined)
 export function FanoutBadge({ task }: { task: Task }) {
   const tasks = useFanout(task)
   const configs = useConfigsOf(tasks)
-  // Comparing them (changes/Compare.tsx) is not yet on this server.
-  const compares = false
   if (tasks.length < 2) return null
   const labels = harnessLabels(tasks, configs)
   const i = tasks.findIndex((t) => t.id === task.id)
@@ -53,12 +51,6 @@ export function FanoutBadge({ task }: { task: Task }) {
       <Cpu size={11} className="shrink-0" /> <span className="truncate">{labels[i]}</span>
     </>
   )
-  if (!compares)
-    return (
-      <span className={clsx(CARD_BADGE, "min-w-0 text-muted")} title={title}>
-        {inner}
-      </span>
-    )
   return (
     <button
       className={clsx(CARD_BADGE, "min-w-0 text-muted hover:text-fg hover:underline")}

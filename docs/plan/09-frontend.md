@@ -330,6 +330,35 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `terminal_tools` with `host.updateSettings`; the settings come with the board, so there is nothing to load. It is
   mounted by the host page (6.12); it was checked by mounting it there for a moment.
 - **Checks**: `tests/ui/terminal.test.mjs` (the old checks, the status and ticket held with `routeRpc`, and a real tmux).
+### Step 1 as done for 6.11 (HE-7)
+
+- **Add project** is back in the sidebar (`layout/Sidebar.tsx`, "+"), opening `settings/NewProjectModal.tsx`: a folder
+  (`projects.create`, with the folder browser `settings/DirPicker.tsx` over `host.listDirs`, ported here though it is
+  6.12's), "Create a GitHub repository for it" (`projects.createOnGithub`; a repository made but not pushed says so and
+  waits for "Open project"), or the GitHub tab (`settings/GithubRepos.tsx`'s picker over `profiles.githubRepos`, then
+  `projects.clone`). `settings/repoSource.ts` keeps the old helpers and the `ia.newProjectSource` key. The old modal's
+  host picker and making the profile on another host are M7's: the project goes on the page's own host, in one of its
+  profiles.
+- **The compare view** (`changes/Compare.tsx`) mounts over the page from `App.tsx` on `?task=…&compare`, from a card's
+  model badge (`board/Fanout.tsx`), a card's menu ("Compare all N from its prompt") and the Details panel's Same prompt
+  section. Facts and the pick are `tasks.fanout` and `tasks.pickFanout`, each one's diff `git.taskDiff`; the facts go
+  through `changes/git/useLoaded`. `ReviewVerdict` is back in `task/Review.tsx` for it.
+- **Asana** (`task/ExternalLinks.tsx`): the Details panel's Asana section, the cards' link icons, and the New task
+  dialog's "Link Asana task" (`layout/newTask/OptionsRow.tsx`, `useDraft.ts`, `NewTaskModal.tsx`). The search is
+  `profiles.asanaTasks`; connecting is `profiles.update`'s `asana_token`. A search failing `Unavailable` (off, not
+  connected) or `External` "didn't accept the token" asks to connect again. `AsanaAccount` (connected as…, disconnect)
+  is exported for 6.12's profile form.
+- **`settings/hosts/CopyLoginModal.tsx`** is a component taking `hosts` (where a login can go) and `copy` (the hub's
+  `hosts.copyConfig`, 7.5, over `configs.exportArchive`/`importArchive`): 6.12's ClaudeConfigs and HostPage mount it
+  once those exist. A profile's own config folder is gone with `claude_config_dir`, so only a config is copied.
+- **Checks**: `tests/ui/{githubClone,githubCreate,compare,fanout,fanoutCodex,fanoutConfigs,asanaLinks}.test.mjs` and
+  `tests/unit/repoSource.test.ts`. The old `page.route` answers are `routeRpc` ones (`profiles.githubRepos`,
+  `projects.createOnGithub`, `configs.models`, a failing `tasks.create`), a held models call is checked with the calls
+  the page made rather than a sleep, and githubClone adds a list and clone through the fake gh. A set of configs' models
+  is asked for together (5.3's `configModelsAtom`), so the old "another config's come in first" can only be shown as
+  both loading. Dropped: asanaLinks' "moves between hosts before and after Asana links" (a second host, M7, and hosts
+  before API 57). `scripts/test-server.sh` gives the server `$HUNTAWAY_ASANA_URL` (a test's fake Asana), else an
+  address with nothing on it, so a test server never reaches Asana.
 
 ### Step 2: by hand, a feature folder at a time
 

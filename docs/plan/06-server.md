@@ -17,10 +17,10 @@ platform      ServerConfig · DataDir · Identity · Db · Migrations · Backup 
               Secrets · Telemetry · Lag
 settings      HostSettings
 profiles      Profiles · AgentConfigs · Usage
-projects      Projects · Relocation
+projects      Projects
 tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp · Leftovers
 threads       ThreadStore · Threads · ThreadReaders
-git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts
+git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts · Relocation
 github        Gh · PullRequests · PrWatch · GithubRepos · GhStacks
 agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · SideCalls · Titles · UsageWindow
 runs          RunRepo · RunDir · Shim · RunFollower · Runs · BackgroundWork · DevServers · Compaction
@@ -110,11 +110,64 @@ tail and publishes it. A subscriber that cannot keep up is cut off with `resync`
 | `Usage`         | Plan limits per config (Anthropic's usage endpoint, Codex's rate limits, a proxy's accounts), "out until", tasks waiting for a reset. In memory, with the durable part on the task |
 | `UsageWindow`   | Restarting a 5-hour window with a throwaway prompt. In `agents/` (2.8): it runs `claude` and records a side call, as `Titles` does         |
 
+#### As built in 6.11 (HE-7): Asana and config archives
+
+- **Asana** is `profiles/Asana.ts` (`me`, `task`, `search`; `taskGid` and `asanaLabel` pure), the old `integrations/asana.ts`
+  over `HttpClient` (15 s), its address `ServerConfig.asanaUrl` (`HUNTAWAY_ASANA_URL`, in `SERVE_ENV`; tests have none
+  unless they give the fake's). `Profiles.update` checks an `asana_token` with Asana (`Invalid` `asana_token` with Asana's
+  words when it's turned down) and stores `asana_user` ("Name (email)"); `Profiles.asanaTasks` is the search
+  (`profiles.asanaTasks`, `AsanaRpcs`, `read`): `Unavailable` (`asana`) when it's off or not connected (the old 409s),
+  `External` (`Asana`) for Asana's failures (the old 502), and none for a task URL the token can't see. The fake is
+  `packages/testing/bin/fake-asana.ts` (`fakeAsana` in `src/`); `scripts/test-server.sh` gives a test server
+  `$HUNTAWAY_ASANA_URL` or an address that answers nothing.
+- **Config archives** are `profiles/ConfigArchives.ts`: `exportArchive(id)` and `importArchive(id, archive, overwrite)`
+  (`configs.exportArchive`, `configs.importArchive`, `ConfigArchiveRpcs`, scope `admin`, the old board-only), `tar czf -`/`xzf
+  -` through `ChildProcessSpawner` with the old entry lists, strict base64 (`decodeArchive`), the folder made 0700, a login
+  there `Conflict` `in_use` unless `overwrite`. Plain calls of one host: copying a config between hosts (7.5, HE-6's
+  `copyConfig`) exports on one and imports on the other. **Decided**: an archive is bounded by the RPC's 16 MiB message
+  (about 12 MiB of tar), not the old route's 256 MiB; the old profile archive (`/profiles/{id}/claude-config`, a
+  profile's own `claude_config_dir`) is gone with that column (configs have it).
+
 ### Projects — [inventory 07](inventory/07-server-root-api.md), [04](inventory/04-git-review.md)
 
 `Projects`: create (a folder, a clone, a new GitHub repository), keys and former keys, settings, archive, delete.
 Changes to one project are serialised by its lock. `Relocation`: recognising a moved repository by its fingerprint
 and moving worktrees and sessions with it.
+
+#### As built in 6.11 (HE-7): Relocation
+
+- **Where.** `git/Relocation.ts` (`Relocation`), not `projects/`: it needs the tasks' rows, git, the worktrees' linked
+  folders (`git/worktree/files.ts` `relink`) and `folderName` (moved to `git/worktree/folder.ts`, re-exported by
+  `Worktrees.ts`), and `Worktrees` holds the folder through it. Its rows besides the projects' are `git/RelocationRepo.ts`
+  (a project's tasks and review threads, the tasks working in a folder, the config folder a conversation started in
+  from `runs`). `Projects` keeps what is the project's: `relocate(id, patch, move)` (under the project's lock: the rest of
+  the patch written and rolled back first, then `move`, then the change stored with the new paths, which are stored
+  alone if the change then fails), `fingerprint`, `repoRoot`, `recordFingerprint(s)` and the `recorder` loop; a plain
+  `update` still refuses a new folder. `ProjectRepo` gained `repoRoot`, `folders`, `unrecorded`, `recordRoot` (only
+  where `repo_path` is still the one looked at).
+- **What it does** is the old `relocate.ts` step for step: `update(id, patch)` (`projects.update`'s handler and an
+  agent's approved `update_project`) checks the folder (`check`: absolute; with `move_repo` the old refusals, `Conflict`
+  `in_use` for another project on it or a setup holding it, `agent_running` for a running agent; else the same
+  repository by its worktrees, its root commits with the shallow-clone ancestor check, or its tasks' branches, all
+  `Invalid` `repo_path` with the old texts), moves it (`rename`, the EXDEV hint), rewrites tasks' `worktree_path` and
+  scratch chats' `work_dir` through `Tasks.change`, runs `git worktree repair`, fixes `.git`/`gitdir` and submodule links
+  by hand, relinks linked folders, copies Claude transcripts newer-only keeping their times (Codex threads skipped), and
+  returns the paths that moved with it and the new fingerprint. `Approvals` checks a new `repo_path` with
+  `Relocation.check` before asking (`Projects.preview` now shows the path as given).
+- **Moving and holding** are a `Ref` in the service: a move marks the project moving (a `Deferred` its waiters await)
+  and is refused while a setup holds the folder; `hold(project)` (around `Worktrees.setup`'s lock, nested setups
+  included) waits for a move under way, then counts itself in; `settled(project)` is what both launches
+  (`LaunchFacts.claude`/`codex`, before the project is read) wait on. No polling. `isMoving` is for tests.
+- **Fingerprints.** `Worktrees.setup` records the project's fingerprint once its folder is a repository (the old
+  `record_fingerprint`). `Projects.recorder` (Main's `ProjectLoops`, beside `RunLoops`/`PrLoops`, so tests run a pass
+  themselves) records them at start and hourly.
+- **Tests.** `git/Relocation.test.ts` has every case of the old `git/relocate/tests.test.ts` and the old
+  `worktree_files.test.ts` case that moved a repository with its links. Changed: the two key races can't be interleaved
+  as the old ones were (the key is checked where it's stored): one key goes to one project whichever commits first, and
+  a rename meanwhile waits for the move under the project's lock; "a change that can't be stored" uses `review_rounds: 99`
+  (`use_worktrees: null` doesn't decode); the setup hold uses named pipes, not a polling script. The recorder's hourly
+  timing isn't tested (its pass is). The 4.1 note "Not here: relocation's hold on the project's folder during a setup"
+  above is done by this.
 
 ### Tasks — [inventory 07](inventory/07-server-root-api.md) (7.7–7.9), [09](inventory/09-data-model.md)
 
@@ -412,6 +465,35 @@ As built in 4.5 (HE-5):
   `hasWorkToMerge`, read before the task's lock) are 4.7's, with the other merge facts; linking GitHub stacks when
   `pr_url` is set is 4.8's (`GhStacks`).
 
+#### As built in 6.11 (HE-7): `GithubRepos`
+
+- **Files.** `github/GithubRepos.ts` (the old `integrations/github.ts` and `api/projects.ts`' clone and create) and
+  `github/repos/model.ts` (pure: `checkRepo`, `checkName`, `searchQuery`, `restRepo`/`graphqlRepo`, `latestFirst`, `ghError`,
+  `accountsFromStatus`). The wire is `packages/contracts/src/rpc/githubRepos.ts` (`GithubRepoRpcs`): `profiles.githubAccounts`
+  and `profiles.githubRepos {account?, q?}` (`read`; gh's failures are the list's `error`, as before), `projects.clone
+  {clone}` and `projects.createOnGithub {project}` (`settings`; the latter answers `{project, github}` rather than the
+  project with `github` in it). gh's failures are `External` (`GitHub`); a folder that is the profile's project already is
+  `Conflict` `in_use`.
+- **How gh runs.** Through `Gh.gh` as the profile's account (gh's active one without), which gains `plain` (no
+  `UNSANDBOXED_GIT`: the board's own clone and push are the user's git, hooks and all, as the old `gh_vars`) and `env`.
+  Lists: `api user`, three pages of `user/repos`, the `repositoriesContributedTo` query, a search among the login and its
+  organizations (kept 5 minutes in a `Ref`, on the clock). Clone 60 min, create 15 min, `config get git_protocol` 10 s;
+  gh's process group goes when it's over its time (the spawner's default).
+- **Folders.** The old `FOLDERS` is a `KeyedLock` key, `["folder", <folder>]` (the folder however it's written: each part
+  resolved as it would be once made). The clone or creation and the project's adding run in the service's `FiberSet`
+  under it, so they carry on when the caller goes, and a second request for the folder waits and finds the project. The
+  key is checked before anything is made, and again as the project is added. A failed clone or creation takes away only
+  what it made (the old rollback rules).
+- **The fake gh** (`packages/testing/bin/fake-gh-repos.ts`): `api user/repos`, `user/orgs`, `search/repositories`, the
+  contributed query, `repo clone` (from a repository's `source` folder; `cloneFails`, `cloneBreaks: checkout | after`),
+  `repo create` (adds the repository, `created`/`private`/`pushed`; `createFails`, `pushFails`), `config get git_protocol`
+  (`gitProtocol` by host). Repositories have `description`, `private`, `fork`, `archived`, `pushed_at`, `collaborators`,
+  `contributors`; the state has `orgs`.
+- **Tests.** `github/repos/model.test.ts` and `github/GithubRepos.test.ts` (the old `integrations/github.test.ts` and the
+  GitHub cases of `api/projects.test.ts`, on the fake). Not ported: two creations interleaved in one new folder (the old
+  `slow-fails`, which needs a gh paused mid-call; the rule it checks, parents taken away only while empty, is in the
+  folders-above case) and the old `fake_gh_create`'s real push to a bare repository (the fake records the push).
+
 ### Agents, runs, permissions, board tools — [07-agents.md](07-agents.md)
 
 ### Review — [inventory 04](inventory/04-git-review.md) (2.12–2.13, 2.18–2.19)
@@ -472,6 +554,23 @@ is safe to call at any time.
   `StatusSection` and `TaskCard`. Not ported: `ReviewVerdict` (only the fan-out compare view used it, 2.18 `Fanout`).
 - **Not here.** `Fanout` (2.18) and the merge gate's approval summary (4.7); a workflow's verdict step (`submit_review`
   from a `task_type=workflow` thread, 6.6); the analytics report of `review_stats` (6.x).
+
+#### As built in 6.11 (HE-7): `Fanout`
+
+- `review/Fanout.ts` (`facts`, `pick`; the old `review/fanout.ts`) and `review/FanoutRepo.ts` (siblings by profile and
+  `fanout_id`, run time). The wire is `packages/contracts/src/rpc/fanout.ts` (`FanoutRpcs`): `tasks.fanout {id}` (`read`;
+  the facts as an array, not the old `{tasks}`) and `tasks.pickFanout {id, pick}` (`git`); a task not made from one prompt
+  with others, or with none, is `Invalid` `fanout_id`; picking one completed as not done is `Conflict` `changed_meanwhile`.
+- A pick is one at a time (a `Semaphore`). The others' runs and their reviewers' are aborted (`Runs.abort`), their
+  prompts expired, and waited for by polling (`FanoutStopWait`, a `Context.Reference`: 20 s every 200 ms; tests shorten
+  it) until neither a run is live nor the task is marked `running` (the run's end is written to the task after it exits,
+  HA-51). Then `Tasks.update` to Done/not done as the board, `gh pr close` as the task's account through `Gh.gh`,
+  `Worktrees.teardown` (forced only with `discard_uncommitted`; kept with commits on no branch), the pushed copy deleted
+  (only under its own name, HA-341) and the branch, cleared on the task through `Tasks.change`. Notes go to the threads.
+- **Tests.** `review/Fanout.test.ts` (the old `review/fanout.test.ts`). Not ported: `an_agent_at_work_is_stopped_…`
+  (a live run; `Runs.abort` is the runs area's, and the wait is the case of one that doesn't stop) and
+  `a_task_is_completed_only_once_the_runner_has_written_its_runs_end` (a hook between the run's exit and its end on the
+  task; here the pick waits on the task's `running` too, which the run's end clears).
 
 ### Merge — [inventory 04](inventory/04-git-review.md) (2.14–2.17)
 

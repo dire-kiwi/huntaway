@@ -309,7 +309,7 @@ describe("Projects", () => {
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 
-  it.live("leaves relocation for later: a new folder for a project is refused", () =>
+  it.live("leaves a new folder to Relocation: a plain update refuses it", () =>
     Effect.gen(function* () {
       const { projects, dir, make } = yield* setup
       const p = yield* make("x")

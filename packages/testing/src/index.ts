@@ -6,3 +6,5 @@ export * from "./mcpTools.ts"
 export * from "./fakeGitHub.ts"
 // 6.1: a websocket in memory, for terminals.
 export * from "./fakeSocket.ts"
+// 6.11: a fake Asana.
+export * from "./fakeAsana.ts"

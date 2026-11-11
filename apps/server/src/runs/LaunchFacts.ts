@@ -13,6 +13,8 @@ import { Prompts } from "../agents/Prompts.ts"
 import { Checkpoints, pendingRewind } from "../git/Checkpoints.ts"
 import { Worktrees, WorktreeFailed } from "../git/Worktrees.ts"
 import { Restack } from "../git/Restack.ts"
+// 6.11: a launch waits for its project's folder to move.
+import { Relocation } from "../git/Relocation.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
 import { Proc } from "../platform/Proc.ts"
@@ -109,6 +111,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const checkpoints = yield* Checkpoints
       const worktrees = yield* Worktrees
       const restack = yield* Restack
+      const relocation = yield* Relocation
       const threads = yield* Threads
       const queries = yield* CodexQueries
       const proc = yield* Proc
@@ -190,7 +193,6 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const prepareWork = Effect.fnUntraced(function* (run: Run, start: Task, project: Project | null) {
         let task = start
         // 4.8: a run doesn't launch in the middle of a restack of the task's branch (or its task's, for a review thread).
-        // The project's relocation's wait goes here too (6.x, `Relocation`).
         yield* restack.settled(task.kind === "review" && task.parent_id !== null ? task.parent_id : task.id)
         // ---- 4.1: the worktree it works in (the old launch's). A review thread works in its task's, once that's set up;
         // a task with a worktree of its own has it set up first, and a setup that fails fails the launch.
@@ -213,6 +215,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
 
       const claude = Effect.fn("LaunchFacts.claude")(function* (run: Run, text: string) {
         let task = yield* load(run.task_id)
+        // 6.11: not while its project's folder moves, so what's read of the project says where it is now.
+        if (task.project_id !== null) yield* relocation.settled(task.project_id)
         const project = task.project_id === null ? null : Option.getOrNull(yield* projects.get(task.project_id))
         const profile = Option.getOrNull(yield* profiles.get(task.profile_id))
         const host = yield* settings.get
@@ -330,6 +334,8 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
 
       const codex = Effect.fn("LaunchFacts.codex")(function* (run: Run, text: string, cfg: AgentConfigRow) {
         const before = yield* load(run.task_id)
+        // 6.11: as Claude's launch.
+        if (before.project_id !== null) yield* relocation.settled(before.project_id)
         const project = before.project_id === null ? null : Option.getOrNull(yield* projects.get(before.project_id))
         const task = yield* prepareWork(run, before, project)
         const profile = Option.getOrNull(yield* profiles.get(task.profile_id))
