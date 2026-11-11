@@ -1,6 +1,7 @@
 import { DateTime, Effect, FileSystem, Layer, Option } from "effect"
 import { Timestamp } from "@huntaway/contracts"
 import type { Status, Todo } from "@huntaway/contracts"
+import { Docs } from "../docs/Docs.ts"
 import { Actor } from "../platform/Changes.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
@@ -10,8 +11,8 @@ import { Tasks } from "../tasks/Tasks.ts"
 
 // The demo board (huntaway's demo.ts): sample data for a fresh deployment started with `--demo` (PR previews and test
 // servers), so the board can be tried without setting anything up. It is seeded through the areas' own methods, as a
-// user would make it. The plan, artifact and diagram tasks with their documents, and the published document, are left
-// for the documents and docs areas (M6).
+// user would make it. The plan, artifact and diagram tasks with their documents are left for the documents area (M6);
+// the published document is the docs area's (6.3, `Docs.seedDemo`).
 
 export const DEMO_README = "# Demo\n\nA scratch folder for the demo project that this preview creates on its first start.\n"
 
@@ -61,6 +62,9 @@ export const seedDemo = Effect.gen(function* () {
     ([title, description, status]) => tasks.create({ project_id: project.id, title, description, status }, Actor.board),
     { concurrency: 1 },
   )
+  // 6.3: the published document, by the task in review, in its project's folder.
+  const reviewed = created.find((t) => t.status === "in_review")
+  if (reviewed !== undefined) yield* (yield* Docs).seedDemo(profile.id, reviewed, project.name)
   const working = created.find((t) => t.status === "in_progress")
   if (working !== undefined) yield* tasks.change(working.id, () => ({ todos: DEMO_TODOS }), Actor.board)
   // Done for longer than the board keeps it in Done, so it's archived.

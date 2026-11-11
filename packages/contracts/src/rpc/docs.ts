@@ -14,7 +14,7 @@ import {
   NewDocComment,
   RenderedDocVersion,
 } from "../docs.ts"
-import { Conflict, External, Invalid, NotFound } from "../errors.ts"
+import { Conflict, External, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { ProfileId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
 
@@ -96,7 +96,7 @@ export class DocRpcs extends RpcGroup.make(
   Rpc.make("docs.sendComments", {
     payload: doc,
     success: Schema.Struct({ sent: Schema.Int, task: DocPublisher }),
-    error: Schema.Union([NotFound, Conflict]),
+    error: Schema.Union([NotFound, Conflict, Unavailable]),
   }).annotate(RequiredScope, "operate"),
   /** The profile's connection to its docs site, without its tokens. */
   Rpc.make("docs.hostedStatus", { payload: { profile_id: ProfileId }, success: HostedDocsStatus, error: NotFound }).annotate(RequiredScope, "read"),

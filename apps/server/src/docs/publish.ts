@@ -23,7 +23,8 @@ import type { GivenImage } from "./imageRules.ts"
 export interface DocsCaller {
   readonly profile: ProfileId
   readonly task: Task
-  readonly run: RunId
+  /** Null for the demo's document, which no run published. */
+  readonly run: RunId | null
 }
 
 /** `publish_document`'s arguments, their types checked. */

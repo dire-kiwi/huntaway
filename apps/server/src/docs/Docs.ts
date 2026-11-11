@@ -1,7 +1,7 @@
 import { Clock, Context, DateTime, Effect, Layer, Option, Result, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Base64 } from "effect/encoding"
-import { Conflict, Invalid, NotFound, Timestamp } from "@huntaway/contracts"
+import { Conflict, Invalid, NotFound, Timestamp, Unavailable } from "@huntaway/contracts"
 import type {
   DocComment,
   DocComments,
@@ -34,6 +34,7 @@ import type { RenderLib } from "./DocsRender.ts"
 import { chars, commentsMessage, docBase, inLabel, labelTree, normalizeLabels, quoted, renamedFolders, spelt } from "./docRules.ts"
 import { HostedDocs } from "./HostedDocs.ts"
 import { withImages } from "./imageRules.ts"
+import { demoCaller, demoPublishes } from "./demo.ts"
 import { publishFor } from "./publish.ts"
 import type { DocsCaller, PublishInput, Published } from "./publish.ts"
 
@@ -107,7 +108,10 @@ export interface DocsShape {
   readonly updateComment: (profile: ProfileId, slug: string, id: number, comment: string) => Effect.Effect<DocComment, NotFound | Invalid>
   readonly deleteComment: (profile: ProfileId, slug: string, id: number) => Effect.Effect<void, NotFound>
   /** Sends the unsent comments to the task that published the document, as one message, and marks them sent. */
-  readonly sendComments: (profile: ProfileId, slug: string) => Effect.Effect<{ readonly sent: number; readonly task: DocPublisher }, NotFound | Conflict>
+  readonly sendComments: (
+    profile: ProfileId,
+    slug: string,
+  ) => Effect.Effect<{ readonly sent: number; readonly task: DocPublisher }, NotFound | Conflict | Unavailable>
 
   // The docs server's (mcp/tools/docs.ts): each as its tool answers, failing with what the agent is told.
 
@@ -122,6 +126,8 @@ export interface DocsShape {
   readonly agentLabels: (caller: DocsCaller) => Effect.Effect<DocLabels>
   readonly feedback: (caller: DocsCaller, slug: string, version: number | null, since: number | null) => Effect.Effect<unknown, DocsRefused>
   readonly components: Effect.Effect<string>
+  /** `--demo`'s published document (lifecycle/Demo.ts), as `task`'s agent would have published it, in `folder`. */
+  readonly seedDemo: (profile: ProfileId, task: Task, folder: string) => Effect.Effect<void>
 }
 
 export class Docs extends Context.Service<Docs, DocsShape>()("huntaway-server/docs/Docs") {
@@ -416,7 +422,16 @@ export class Docs extends Context.Service<Docs, DocsShape>()("huntaway-server/do
           yield* runs.send(task.id, { text: message, source: "board" }).pipe(
             Effect.catchTags({
               TaskNotFound: () => Effect.fail(new Conflict({ reason: "no_task", detail: "the task that published this document is gone" })),
-              SendRefused: (e) => Effect.fail(new Conflict({ reason: "archived", detail: e.detail })),
+              // A host that runs no agents can't send them anything; the rest are the board's refusals, as `tasks.send` has them.
+              SendRefused: (e) =>
+                Effect.fail(
+                  e.reason === "no_agents"
+                    ? new Unavailable({ what: "agents", reason: e.detail })
+                    : new Conflict({
+                        reason: e.reason === "merge_queued" ? "merging" : e.reason === "archived" ? "archived" : "agent_running",
+                        detail: e.detail,
+                      }),
+                ),
             }),
           )
           const now = yield* nowTimestamp
@@ -529,6 +544,10 @@ export class Docs extends Context.Service<Docs, DocsShape>()("huntaway-server/do
         }),
         agentLabels: (caller) => Effect.map(repo.list(caller.profile), labelTree),
         components: Effect.map(render.lib, (lib) => lib.componentsReference()),
+        seedDemo: Effect.fn("Docs.seedDemo")(function* (profile: ProfileId, task: Task, folder: string) {
+          const deps = { repo, db, events, render, images, projects, boardUrl, random }
+          for (const input of yield* demoPublishes(folder)) yield* publishFor(deps, demoCaller(profile, task), input).pipe(Effect.orDie)
+        }),
       })
     }),
   )
