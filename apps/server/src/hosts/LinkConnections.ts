@@ -5,7 +5,7 @@ import { SecureRandom } from "effect/crypto"
 import { Hex } from "effect/encoding"
 import { Headers } from "effect/http"
 import { RpcClient, RpcMiddleware, RpcSerialization } from "effect/rpc"
-import type { RpcClientError, RpcGroup } from "effect/rpc"
+import type { Rpc, RpcClientError, RpcGroup } from "effect/rpc"
 import { Socket } from "effect/socket"
 import { Auth, boardScopes, HostOffline, LinkId, LinkRefused, LINK_HEADER, PROTOCOL, PeerRpcs, SESSION_HEADER } from "@huntaway/contracts"
 import type { AssertedSession, HostInfo, LinkHello, LinkStatus, OpenStream, SessionShape, Timestamp } from "@huntaway/contracts"
@@ -189,9 +189,12 @@ export class LinkConnections extends Context.Service<
     readonly stop: (id: LinkId) => Effect.Effect<void>
     /**
      * A host dialling in, saying `hello`, with the hub token (`session`): the requests for sockets the hub makes of it,
-     * until either end goes. Refused as the trust rules say.
+     * until either end goes. Refused as the trust rules say. `over` is the RPC connection it came on: while the host is
+     * registered, `dialInOver` gives it for that connection (its board tool calls up come on it, 7.4).
      */
-    readonly attach: (hello: LinkHello, session: SessionShape) => Stream.Stream<OpenStream, LinkRefused>
+    readonly attach: (hello: LinkHello, session: SessionShape, over?: Rpc.ServerClient) => Stream.Stream<OpenStream, LinkRefused>
+    /** The dial-in host registered by `attach` on RPC connection `over`, while it is the registered one for its id. */
+    readonly dialInOver: (over: Rpc.ServerClient) => Effect.Effect<Option.Option<Live>>
     /** The socket a dial-in host opened for request `id`: who is waiting for it, if anyone. */
     readonly arrived: (id: string) => Effect.Effect<Option.Option<Deferred.Deferred<Handoff>>>
     /** Every link's state now. */
@@ -220,6 +223,8 @@ export class LinkConnections extends Context.Service<
       const views = yield* SubscriptionRef.make<ReadonlyMap<LinkId, LinkView>>(new Map())
       const lives = yield* Ref.make<ReadonlyMap<LinkId, Registered>>(new Map())
       const handoffs = yield* Ref.make<ReadonlyMap<string, Deferred.Deferred<Handoff>>>(new Map())
+      // The dial-in hosts by the RPC connection they attached on.
+      const attachedOn = yield* Ref.make<ReadonlyMap<Rpc.ServerClient, Registered>>(new Map())
       const bumps = yield* SubscriptionRef.make(0)
 
       const setView = (id: LinkId, change: (view: LinkView) => LinkView) =>
@@ -383,7 +388,7 @@ export class LinkConnections extends Context.Service<
         return null
       })
 
-      const attach = (hello: LinkHello, session: SessionShape): Stream.Stream<OpenStream, LinkRefused> =>
+      const attach = (hello: LinkHello, session: SessionShape, over?: Rpc.ServerClient): Stream.Stream<OpenStream, LinkRefused> =>
         Stream.unwrap(
           Effect.gen(function* () {
             const refused = yield* refusal(hello, session)
@@ -417,6 +422,10 @@ export class LinkConnections extends Context.Service<
             )
             if (!registered) return yield* new LinkRefused({ reason: `host ${hello.host_id} is already connected to this hub` })
             yield* Effect.addFinalizer(() => unregister(live))
+            if (over !== undefined) {
+              yield* Ref.update(attachedOn, (all) => new Map(all).set(over, live))
+              yield* Effect.addFinalizer(() => Ref.update(attachedOn, (all) => without(all, over)))
+            }
             yield* connections.touch
             yield* connectedView(id, hello, "dial-in")
             yield* Effect.logInfo(`host ${hello.name} connected in`)
@@ -444,6 +453,11 @@ export class LinkConnections extends Context.Service<
             return live === undefined ? offline(id) : Effect.succeed<Live>(live)
           }),
         connected: Effect.map(Ref.get(lives), (all): ReadonlyArray<Live> => [...all.values()]),
+        dialInOver: (over: Rpc.ServerClient) =>
+          Effect.gen(function* () {
+            const live = (yield* Ref.get(attachedOn)).get(over)
+            return live !== undefined && (yield* Ref.get(lives)).get(live.id) === live ? Option.some<Live>(live) : Option.none<Live>()
+          }),
       }
 
       // A host that becomes a profile's assistant host is taken only the way it is linked: a dial-in standing in for one

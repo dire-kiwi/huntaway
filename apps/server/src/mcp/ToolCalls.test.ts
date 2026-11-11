@@ -6,6 +6,7 @@ import { BLOCKED } from "@huntaway/shared"
 import { fakeAgent, TestMcp, TestMcpOver, TestTools } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
+import { Identity } from "../platform/Identity.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
 import { McpHooks } from "./McpHooks.ts"
 import { ToolError } from "./tool.ts"
@@ -194,13 +195,15 @@ describe("ToolCalls", () => {
       assert.strictEqual(err(yield* call(agent, "c4", "test_echo", null)), `test_echo needs text (its arguments are n, text). ${hint}`)
       assert.strictEqual(err(yield* call(agent, "c5", "test_echo", ["a"])), "test_echo's arguments must be an object")
       assert.include(err(yield* call(agent, "c6", "test_echo", { text: 5 })), "test_echo's arguments don't fit its schema")
-      // `host` picks a linked host, whatever the tool.
-      assert.deepStrictEqual(ok(yield* call(agent, "c7", "test_echo", { text: "a", host: "here" })), {
+      // `host` picks a linked host, whatever the tool: this host's own name is here, and one it doesn't link is refused.
+      const { hostName } = yield* Identity
+      assert.deepStrictEqual(ok(yield* call(agent, "c7", "test_echo", { text: "a", host: hostName.toUpperCase() })), {
         text: "a",
         task: agent.run.task_id,
         profile: "p",
         mode: "default",
       })
+      assert.strictEqual(err(yield* call(agent, "c7b", "test_echo", { text: "a", host: "elsewhere" })), "no linked host named elsewhere")
       assert.strictEqual(err(yield* call(agent, "c8", "no_such_tool", {})), "unknown tool no_such_tool")
       // A tool that dies is an error for the agent, recorded as the call's answer.
       assert.include(err(yield* call(agent, "c9", "test_echo", { text: "die" })), "The board failed running test_echo")

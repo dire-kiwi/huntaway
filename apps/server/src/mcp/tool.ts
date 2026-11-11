@@ -129,11 +129,14 @@ export type ToolHandler<T extends Tool.Any> = (params: Tool.Parameters<T>, calle
 export type ToolHandlers<Tools extends Record<string, Tool.Any>> = { readonly [K in keyof Tools]: ToolHandler<Tools[K]> }
 
 /** How a call came out: the tool's result as JSON, or the message of its error. What `mcp_calls` records. */
-export type ToolResult = { readonly _tag: "Ok"; readonly value: unknown } | { readonly _tag: "Err"; readonly message: string }
+export type ToolResult =
+  | { readonly _tag: "Ok"; readonly value: unknown }
+  /** `notFound`: what it names isn't on this host (an up-call's answer says so); not recorded, so unset on a call answered again. */
+  | { readonly _tag: "Err"; readonly message: string; readonly notFound?: boolean | undefined }
 
 export const ToolResult = {
   ok: (value: unknown): ToolResult => ({ _tag: "Ok", value }),
-  err: (message: string): ToolResult => ({ _tag: "Err", message }),
+  err: (message: string, notFound?: boolean): ToolResult => (notFound === true ? { _tag: "Err", message, notFound } : { _tag: "Err", message }),
 }
 
 /** A tool as `tools/list` shows it. */

@@ -71,12 +71,7 @@ export const threadTool = <Config extends HandledConfig>(
   tool: Tool.Tool<string, Config, unknown>,
   handle: (params: Tool.Parameters<Tool.Tool<string, Config, unknown>>, caller: LocalCaller) => ReturnType<ToolHandler<Tool.Tool<string, Config, unknown>>>,
   options: BoardToolOptions = {},
-): RegisteredTool =>
-  boardTool(
-    tool,
-    (params, caller) => Effect.flatMap(ownThread(caller, tool.name), (local) => handle(params, local)),
-    options,
-  )
+): RegisteredTool => boardTool(tool, (params, caller) => Effect.flatMap(ownThread(caller, tool.name), (local) => handle(params, local)), options)
 
 /** A string argument, or null when it's left out or blank (the old `str_arg`). */
 export const given = (v: string | undefined): string | null => (v === undefined || v === "" ? null : v)

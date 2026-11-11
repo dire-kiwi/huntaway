@@ -1,11 +1,13 @@
 import { Cause, Context, DateTime, Deferred, Effect, FiberSet, Layer, Option, Ref, Schedule, Schema } from "effect"
 import type { SqlError } from "effect/sql"
-import { CallId, Timestamp } from "@huntaway/contracts"
-import type { PermissionMode, RunId, Task } from "@huntaway/contracts"
+import { CallId, RunId, Timestamp } from "@huntaway/contracts"
+import type { PermissionMode, RemoteToolCall, Task, ToolOutcome } from "@huntaway/contracts"
 import { blockedReason } from "@huntaway/shared"
+import { SecureRandom } from "effect/crypto"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { ASKS_ITSELF } from "../agents/rules.ts"
 import { toJson } from "../platform/columns.ts"
+import { Identity } from "../platform/Identity.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { RunDir } from "../runs/RunDir.ts"
@@ -19,8 +21,22 @@ import type { NewCall, OpenCall } from "./McpCallRepo.ts"
 import { McpHooks } from "./McpHooks.ts"
 import { McpServers } from "./McpServers.ts"
 import type { RegisteredTool } from "./McpServers.ts"
-import { annotation, ApprovalKind, BOARD_SERVER, checkArgs, ForPlanning, ForReviewers, Rerunnable, ToolError, ToolResult } from "./tool.ts"
-import type { LocalCaller, ServerName } from "./tool.ts"
+import { grants } from "./resolve.ts"
+import { makeAcross } from "./acrossHosts.ts"
+import {
+  annotation,
+  ApprovalKind,
+  BOARD_SERVER,
+  checkArgs,
+  ForPlanning,
+  ForReviewers,
+  onlyOnItsHost,
+  Rerunnable,
+  THREAD_TOOLS,
+  ToolError,
+  ToolResult,
+} from "./tool.ts"
+import type { LocalCaller, McpCaller, ServerName } from "./tool.ts"
 
 // Running the board's tool calls (docs/plan/07-agents.md, Dispatch; docs/plan/inventory/03-mcp.md 2.3 and 2.4): at
 // most once per call id, whoever delivers a call and however often. A call is recorded `executing` in `mcp_calls`
@@ -50,7 +66,23 @@ export interface CallInput {
   readonly args: unknown
   /** Set for a call that came on the run's output: it is answered on the run's input before it is recorded done. */
   readonly answer?: ControlAnswer | undefined
+  /** Set for a call another host's agent passed up its link (`upCall`): that host, and the caller's profile's name. */
+  readonly from?: { readonly host: string; readonly profile: string } | undefined
 }
+
+/** A call that an agent on linked host `host` passed up its link to this host, its hub. */
+export interface UpCallInput {
+  readonly host: string
+  /** The agent's own call id: the call runs at most once per (host, call id). */
+  readonly call_id: string
+  readonly profile: string
+  readonly tool: string
+  readonly args: unknown
+}
+
+/** The run id up-calls from `host` are recorded under in `mcp_calls`, and their call id. */
+export const upRun = (host: string) => RunId.make(`up:${host}`)
+export const upCallId = (host: string, call: string) => CallId.make(`up:${host}:${call}`)
 
 export const RUN_ENDED = (tool: string) => `This run has ended on the board, so its ${tool} call wasn't run. Stop here: the board no longer follows this run.`
 
@@ -91,6 +123,18 @@ export interface ToolCallsShape {
   /** Run a call at most once per call id, whoever delivers it and however often; its result. */
   readonly call: (input: CallInput) => Effect.Effect<ToolResult>
   /**
+   * A board tool call of another host's agent that came down a link from its hub (`tools.call`): run here only, as
+   * this host's profile of the caller's name (or for the profiles that let that name in), with no run or thread here.
+   * Not recorded (it has no call id: the hub doesn't retry it).
+   */
+  readonly remote: (call: RemoteToolCall) => Effect.Effect<ToolOutcome>
+  /**
+   * A board tool call of an agent on linked host `host` that it passed up its link, once the hub has let it in
+   * (`hosts/HostTools`): run here, and on this host's other links, never back down to that host nor further up; at
+   * most once per call id (recorded as `up:<host>:<call id>`).
+   */
+  readonly upCall: (input: UpCallInput) => Effect.Effect<ToolOutcome>
+  /**
    * The agent no longer wants call `call` of run `run` answered (Claude Code's `notifications/cancelled`, a
    * `control_cancel_request`): if it is running, it is not answered, the prompt it raised expires and its wait ends.
    */
@@ -121,6 +165,9 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
       const projects = yield* ProjectRepo
       const settings = yield* HostSettings
       const rules = yield* ApprovalRules
+      const { hostName } = yield* Identity
+      const random = yield* SecureRandom.SecureRandom
+      const across = yield* makeAcross
       // The calls running here, each with what its other deliveries wait on; the ones the agent gave up on.
       const running = yield* Ref.make<ReadonlyMap<CallId, Deferred.Deferred<ToolResult>>>(new Map())
       const cancelled = yield* Ref.make<ReadonlySet<CallId>>(new Set())
@@ -181,15 +228,53 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
           if (tool !== "wait") yield* hooks.callMade(caller)
           // The rules hold for every board tool but the plumbing of questions, `wait` included.
           if (tool !== "request_user_input") yield* checkRules(caller, tool, args)
+          // Here, or on another host (docs/plan/08-hosts.md, Board tools across hosts): not the thread's own tools.
+          if (!THREAD_TOOLS.includes(tool)) return yield* across.run({ caller, tool, args, local: (a) => registered.run(a, caller), from: null, upById: true })
         }
         return yield* registered.run(args, caller)
       })
 
+      /**
+       * Another host's agent as a caller here: this host's profile of its name, else one with no id that reaches only the
+       * boards of the profiles that let that name in (none: it isn't found). No run, no thread, no mode of its own.
+       */
+      const remoteCaller = Effect.fnUntraced(function* (name: string, callId: CallId) {
+        const all = yield* profiles.list
+        const own = all.find((p) => p.name === name)
+        if (own === undefined && !all.some((p) => grants(p, name))) {
+          return yield* ToolError.notFound(`not found: ${hostName} has no profile named ${name}, and no profile there lets its agents in`)
+        }
+        const caller: McpCaller = {
+          call_id: callId,
+          server: BOARD_SERVER,
+          run: null,
+          task: null,
+          profile: own ?? { id: null, name },
+          mode: "default",
+        }
+        return caller
+      })
+
+      /** The tool another host's agent calls, its arguments checked; thread tools are refused. */
+      const remoteTool = Effect.fnUntraced(function* (tool: string, given: unknown) {
+        if (THREAD_TOOLS.includes(tool)) return yield* ToolError.other(onlyOnItsHost(tool))
+        const registered = yield* servers.find(BOARD_SERVER, tool)
+        if (registered === undefined) return yield* ToolError.other(`unknown tool ${tool}`)
+        return { registered, args: yield* checkArgs(tool, registered.args, given) }
+      })
+
+      /** An up-call (`from`): the gates for another host's agent, then the tool here or on this host's other links. */
+      const upGated = Effect.fnUntraced(function* (input: CallInput, from: { readonly host: string; readonly profile: string }) {
+        const { registered, args } = yield* remoteTool(input.tool, input.args)
+        const caller = yield* remoteCaller(from.profile, input.call_id)
+        return yield* across.run({ caller, tool: input.tool, args, local: (a) => registered.run(a, caller), from: from.host, upById: true })
+      })
+
       /** The call's outcome: the tool's result, or its error; a defect is logged and told as an error, an interruption kept. */
       const outcome = (input: CallInput, registered: RegisteredTool | undefined) =>
-        gated(input, registered).pipe(
+        (input.from === undefined ? gated(input, registered) : upGated(input, input.from)).pipe(
           Effect.map(ToolResult.ok),
-          Effect.catchTag("ToolError", (e) => Effect.succeed(ToolResult.err(e.message))),
+          Effect.catchTag("ToolError", (e) => Effect.succeed(ToolResult.err(e.message, e.notFound))),
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>
@@ -354,8 +439,32 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
         Effect.forkScoped,
       )
 
+      const remote = Effect.fn("ToolCalls.remote")(function* (input: RemoteToolCall) {
+        const ran = yield* Effect.gen(function* () {
+          const { registered, args } = yield* remoteTool(input.tool, input.args)
+          const caller = yield* remoteCaller(input.profile, CallId.make(input.call_id ?? (yield* random.uuidV4())))
+          // Here only: a call down a link is never passed on.
+          return yield* registered.run(args, caller).pipe(Effect.mapError((e) => (e.notFound ? ToolError.notFound(`not found: ${e.message}`) : e)))
+        }).pipe(Effect.result)
+        return outcomeOf(ran._tag === "Success" ? ToolResult.ok(ran.success) : ToolResult.err(ran.failure.message, ran.failure.notFound))
+      })
+
+      const upCall = Effect.fn("ToolCalls.upCall")(function* (input: UpCallInput) {
+        const result = yield* call({
+          call_id: upCallId(input.host, input.call_id),
+          run: upRun(input.host),
+          server: BOARD_SERVER,
+          tool: input.tool,
+          args: input.args,
+          from: { host: input.host, profile: input.profile },
+        })
+        return outcomeOf(result)
+      })
+
       return ToolCalls.of({
         call,
+        remote,
+        upCall,
         cancel: Effect.fn("ToolCalls.cancel")(function* (run: RunId, id: CallId) {
           // Unless it has been answered already.
           if (!(yield* Ref.get(running)).has(id)) return
@@ -373,6 +482,10 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
     }),
   )
 }
+
+/** A call's result as another host is told it. */
+const outcomeOf = (result: ToolResult): ToolOutcome =>
+  result._tag === "Ok" ? { _tag: "Ok", value: result.value } : { _tag: "Err", message: result.message, not_found: result.notFound === true }
 
 const without = <K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> => new Map([...map].filter(([k]) => k !== key))
 const withoutOne = <K>(set: ReadonlySet<K>, key: K): ReadonlySet<K> => new Set([...set].filter((k) => k !== key))

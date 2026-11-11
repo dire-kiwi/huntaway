@@ -20,6 +20,7 @@ import {
   PublicRpcs,
   TaskRpcs,
   ThreadRpcs,
+  ToolRpcs,
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
@@ -33,6 +34,7 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { HostTools } from "./hosts/HostTools.ts"
 import { Hubs } from "./hosts/Hubs.ts"
 import { LinkConnections } from "./hosts/LinkConnections.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
@@ -40,6 +42,7 @@ import { Links } from "./hosts/Links.ts"
 import { Relay } from "./hosts/Relay.ts"
 import { SessionSeal } from "./hosts/SessionSeal.ts"
 import { Ssh } from "./hosts/Ssh.ts"
+import { Uplink } from "./hosts/Uplink.ts"
 import { LinkStreamRoute } from "./http/linkStream.ts"
 import { RelayRoute } from "./http/relay.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
@@ -106,6 +109,7 @@ import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
+import { ToolHandlers } from "./rpc/tools.ts"
 import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
 import { HostSettings } from "./settings/HostSettings.ts"
@@ -203,11 +207,18 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
-/** The hosts area (docs/plan/08-hosts.md): the links, their connections, the relay. */
-const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, Hubs.layer).pipe(
-  Layer.provideMerge(LinkConnections.layer),
+/**
+ * The hosts area's connections (docs/plan/08-hosts.md), built before the board's MCP area, which asks them for the other
+ * hosts a board tool call can go to (`OtherHosts`, 7.4): the links' connections, the hubs this host dialled in to, and
+ * the hubs that take its agents' calls up.
+ */
+const HostLinksLive = Uplink.otherHosts.pipe(
+  Layer.provideMerge(Layer.mergeAll(Uplink.layer, LinkConnections.layer, Hubs.layer)),
   Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer)),
 )
+
+/** The hosts area over the board: the directory of links, the relay, and other hosts' agents' board tool calls run here. */
+const HostsLive = Layer.mergeAll(Links.layer, Relay.layer, HostTools.served).pipe(Layer.provideMerge(HostTools.layer))
 
 /**
  * The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered), questions, and the
@@ -246,6 +257,8 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
     Layer.provideMerge(HostsLive),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
+    // The links' connections, which the board's calls go to other hosts through.
+    Layer.provideMerge(HostLinksLive),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
     Layer.provideMerge(PermissionsLive),
@@ -283,6 +296,7 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   HubHostRpcs,
   LinkRpcs,
+  ToolRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -301,6 +315,7 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   HubHostHandlers,
   LinkHandlers,
+  ToolHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

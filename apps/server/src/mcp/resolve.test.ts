@@ -121,7 +121,7 @@ describe("resolve", () => {
       assert.strictEqual(ok(yield* call(me, "get_task", { task_id: "WEB-2" }))["title"], "Two")
       assert.strictEqual(ok(yield* call(me, "get_task", { task_id: "web-1" }))["title"], "One")
       assert.strictEqual(ok(yield* call(me, "get_task", { task_id: "API-1" }))["title"], "Elsewhere")
-      for (const key of ["WEB-0", "WEB-3"]) assert.strictEqual(err(yield* call(me, "get_task", { task_id: key })), `task ${key}`)
+      for (const key of ["WEB-0", "WEB-3"]) assert.strictEqual(err(yield* call(me, "get_task", { task_id: key })), `not found: task ${key}`)
     }).pipe(Effect.provide(TestMcp())),
   )
 
@@ -135,7 +135,7 @@ describe("resolve", () => {
       yield* sql`INSERT INTO tasks (id, profile_id, project_id, kind, parent_id, title, status, last_activity_at, created_at, updated_at)
         VALUES (${thread}, ${p.id}, ${kiw.id}, 'review', ${reviewed.id}, 'review', 'todo', '', '', '')`.pipe(Effect.orDie)
       const me = yield* agentOf(p)
-      assert.strictEqual(err(yield* call(me, "get_task", { task_id: thread })), `task ${thread}`)
+      assert.strictEqual(err(yield* call(me, "get_task", { task_id: thread })), `not found: task ${thread}`)
       assert.strictEqual(ok(yield* call(me, "get_task", { task_id: reviewed.id }))["title"], "Reviewed")
     }).pipe(Effect.provide(TestMcp())),
   )

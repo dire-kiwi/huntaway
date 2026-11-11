@@ -65,8 +65,8 @@ describe("pen tools", () => {
       const work = yield* profile("work")
       const pens = yield* Pens
       const theirs = yield* pens.create({ profile_id: work.id, name: "Secret" })
-      assert.strictEqual(err(yield* call(me, "update_pen", { pen: theirs.id, active: false })), `pen ${theirs.id}`)
-      assert.strictEqual(err(yield* call(me, "delete_pen", { pen: "Secret" })), "pen Secret")
+      assert.strictEqual(err(yield* call(me, "update_pen", { pen: theirs.id, active: false })), `not found: pen ${theirs.id}`)
+      assert.strictEqual(err(yield* call(me, "delete_pen", { pen: "Secret" })), "not found: pen Secret")
       // A pen's own thread.
       const today = yield* pens.create({ profile_id: p.id, name: "Today" })
       const thread = yield* task(web, "Pen thread")
