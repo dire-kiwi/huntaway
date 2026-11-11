@@ -76,6 +76,10 @@ import { PermissionRepo } from "./permissions/PermissionRepo.ts"
 import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
+import { ReviewRepo } from "./review/ReviewRepo.ts"
+import { Reviews } from "./review/Reviews.ts"
+import { ReviewStats } from "./review/ReviewStats.ts"
+import { Summaries } from "./review/Summaries.ts"
 import { DevServers } from "./runs/DevServers.ts"
 import { AgentRequests } from "./runs/AgentRequests.ts"
 import { ClaudeOutput } from "./runs/claude/output.ts"
@@ -245,6 +249,9 @@ const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.register
   Layer.provideMerge(PermissionRepo.layer),
 )
 
+/** The review area (4.6): reviews, summaries of the changes, and what reviewers reported. */
+const ReviewLive = Reviews.layer.pipe(Layer.provideMerge(Layer.mergeAll(Summaries.layer, ReviewStats.layer)), Layer.provideMerge(ReviewRepo.layer))
+
 /**
  * What a board call needs of the areas built after `ToolCalls`' (`McpHooks`): `Wait`'s `callMade` (any call but `wait`
  * ends the run's wait), `Permissions`' `askRule` (an approval rule's ask is the user's), and both `cancelled` (a call
@@ -275,6 +282,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
     // The merge gate the gh tools ask before a merge (4.7 fills it).
     Layer.provideMerge(MergeGate.layer),
+    // Reviews and summaries (4.6), over the runs they start.
+    Layer.provideMerge(ReviewLive),
     Layer.provideMerge(PermissionsLive),
     // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
     Layer.provideMerge(RunEnds.layer),

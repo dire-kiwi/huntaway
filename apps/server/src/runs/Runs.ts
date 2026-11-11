@@ -334,7 +334,9 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         const done = yield* register(id, message, kind, take, explain)
         yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: actorOf(message) })
         yield* FiberMap.run(launches, id, launch(done.run, done.text))
-        // The agent is changing the work under review: reviews, summaries and workflow steps are superseded (5.x, 6.x).
+        // The agent is changing the work under review: its review and summaries (4.6) and workflow steps (6.6) are
+        // superseded, by the reactor.
+        if (kind === "prompt" && done.after.kind === "task") yield* changes.offer({ _tag: "PromptStarted", task: id, run: done.run.id })
         return done.after
       })
 

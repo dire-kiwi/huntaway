@@ -187,6 +187,11 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         yield* devServers.notifyRunEnded(run.task_id)
         yield* requests.ended(run, !later)
         yield* threads.endPreview(run.task_id)
+        // 4.6: a review or summary thread's run only stops running here; its outcome is the review's (`Reviews.finished`).
+        if (run.kind === "review") {
+          const outcome = outcomeOf(run, change.exit, change.errorTail)
+          yield* changes.offer({ _tag: "ReviewFinished", thread: run.task_id, run: run.id, outcome, attention: run.attention })
+        }
         if (later) return
         // The queued message carries on the conversation, so the task stays where it is. Out of usage, it would only be
         // refused too: it stays queued for when the limit resets.

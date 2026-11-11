@@ -3,6 +3,7 @@ import { Tokens } from "../agents/Tokens.ts"
 import { Worktrees } from "../git/Worktrees.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { Permissions } from "../permissions/Permissions.ts"
+import { Reviews } from "../review/Reviews.ts"
 import { Runs } from "../runs/Runs.ts"
 
 /**
@@ -21,6 +22,7 @@ export const RecoveryLive = Layer.effectDiscard(
     const permissions = yield* Permissions
     const tokens = yield* Tokens
     const worktrees = yield* Worktrees
+    const reviews = yield* Reviews
     // Worktrees a stopped server left half set up or half removed (4.1): marked failed, or ready or gone by their folder,
     // before anything sets one up again.
     yield* worktrees.recover
@@ -30,6 +32,8 @@ export const RecoveryLive = Layer.effectDiscard(
     // The runs that had not exited are adopted (or ended), then the waiting tasks whose dependencies merged start.
     yield* runs.reattach
     yield* runs.startUnblocked(null)
+    // 4.6: reviews and summaries left running whose threads have no run going end as their runs did.
+    yield* reviews.reconcileAll
     yield* toolCalls.resume
     yield* tokens.countPending(null)
   }).pipe(Effect.withSpan("Recovery"), Effect.annotateLogs({ module: "recovery" })),

@@ -45,6 +45,16 @@
 // assistant message. A prompt containing "fake-until-interrupted" keeps its turn going until an `interrupt` (which the
 // sleep before a reply doesn't heed), then ends it as Claude Code does: "[Request interrupted by user]" and an
 // error_during_execution result.
+//
+// Reviews (plan task 4.6). A reviewer's run (its prompt starts "Review the work on task", and it quotes the task's
+// description) calls `submit_review` through the in-process server before it replies: `pass`, unless the description
+// says "fake-review-fixes" (`needs_fixes` every round, with one serious issue, "fake issue: …") or
+// "fake-review-fixes-once" (`needs_fixes` on a first round; `pass` on a round that checks the issues found before, whose
+// prompt says "The previous review found these serious issues"). A run that is asked to fix a review's issues ("Fix them,
+// then commit") or whose prompt contains "fake-commit" (a task's first run quotes its description) makes an empty commit
+// ("fake work") in its working directory, so the branch has new work for the next round to review. A summarizer's run
+// replies as any other (its reply is the summary).
+import { spawnSync } from "node:child_process"
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -376,42 +386,78 @@ const callBoard = async (text: string) => {
     const space = after.search(/\s/)
     const name = space < 0 ? after : after.slice(0, space)
     const rest = space < 0 ? "" : after.slice(space).trim()
-    const toolArgs = rest === "" ? {} : parse(rest)
-    if (!sdkServers.includes("huntaway")) {
-      answers.push(`board ${name}: no in-process board server`)
-      continue
-    }
-    const tool = `toolu_${hex(12)}`
-    const ask = randomUUID()
-    rpc += 1
-    say([{ type: "tool_use", id: tool, name: `mcp__huntaway__${name}`, input: toolArgs }])
-    emit({
-      type: "control_request",
-      request_id: ask,
-      request: {
-        subtype: "mcp_message",
-        server_name: "huntaway",
-        message: {
-          jsonrpc: "2.0",
-          id: rpc,
-          method: "tools/call",
-          params: { name, arguments: toolArgs, _meta: { "claudecode/toolUseId": tool, progressToken: rpc } },
-        },
-      },
-    })
-    const r = field(field(await awaitResponse(ask), "response"), "mcp_response")
-    const res = field(r, "result")
-    const content = field(res, "content")
-    const said =
-      field(r, "id") === rpc
-        ? (Array.isArray(content) ? content : [])
-            .filter(isObject)
-            .map((c) => str(c.text))
-            .join(" ")
-        : `wrong JSON-RPC id ${JSON.stringify(field(r, "id") ?? null)}`
-    answers.push(`board ${name}: ${said.split(/\s+/).filter(Boolean).join(" ").slice(0, 300)}`)
-    toolResult(tool, said, null, field(res, "isError") === true)
+    await callTool(name, rest === "" ? {} : parse(rest))
   }
+}
+
+/** A reviewer's verdict (see "Reviews" above): `submit_review` before it replies. */
+const review = async (text: string) => {
+  if (!text.startsWith("Review the work on task")) return
+  const recheck = text.includes("The previous review found these serious issues")
+  const fixes = text.includes("fake-review-fixes-once") ? !recheck : text.includes("fake-review-fixes")
+  await callTool(
+    "submit_review",
+    fixes
+      ? {
+          verdict: "needs_fixes",
+          summary: "Fake review: one thing to fix.",
+          serious_issues: ["fake issue: the fake reviewer wants a fix (fake-review-fixes)"],
+          minor_issues: [],
+        }
+      : { verdict: "pass", summary: recheck ? "Fake review: the issues are fixed." : "Fake review: looks good.", serious_issues: [], minor_issues: [] },
+  )
+}
+
+/** An empty commit in the working directory, for a task's run asked to make one or to fix a review's issues. */
+const commit = (text: string) => {
+  if (text.startsWith("Review the work on task") || text.startsWith("Summarise the changes made")) return
+  if (!text.includes("fake-commit") && !text.includes("Fix them, then commit")) return
+  const made = spawnSync(
+    "git",
+    ["-c", "user.name=fake", "-c", "user.email=fake@example.com", "commit", "-q", "--allow-empty", "--no-verify", "-m", "fake work"],
+    {
+      encoding: "utf8",
+    },
+  )
+  answers.push(made.status === 0 ? "committed fake work" : `couldn't commit: ${(made.stderr ?? "").trim().slice(0, 200)}`)
+}
+
+/** Calls a tool of the in-process board server, waiting for its answer; what it returned goes in the reply. */
+const callTool = async (name: string, toolArgs: unknown) => {
+  if (!sdkServers.includes("huntaway")) {
+    answers.push(`board ${name}: no in-process board server`)
+    return
+  }
+  const tool = `toolu_${hex(12)}`
+  const ask = randomUUID()
+  rpc += 1
+  say([{ type: "tool_use", id: tool, name: `mcp__huntaway__${name}`, input: toolArgs }])
+  emit({
+    type: "control_request",
+    request_id: ask,
+    request: {
+      subtype: "mcp_message",
+      server_name: "huntaway",
+      message: {
+        jsonrpc: "2.0",
+        id: rpc,
+        method: "tools/call",
+        params: { name, arguments: toolArgs, _meta: { "claudecode/toolUseId": tool, progressToken: rpc } },
+      },
+    },
+  })
+  const r = field(field(await awaitResponse(ask), "response"), "mcp_response")
+  const res = field(r, "result")
+  const content = field(res, "content")
+  const said =
+    field(r, "id") === rpc
+      ? (Array.isArray(content) ? content : [])
+          .filter(isObject)
+          .map((c) => str(c.text))
+          .join(" ")
+      : `wrong JSON-RPC id ${JSON.stringify(field(r, "id") ?? null)}`
+  answers.push(`board ${name}: ${said.split(/\s+/).filter(Boolean).join(" ").slice(0, 300)}`)
+  toolResult(tool, said, null, field(res, "isError") === true)
 }
 
 const subagent = () => {
@@ -439,6 +485,8 @@ const clock = (seconds: number) => {
 const turn = async (text: string) => {
   await askPermissions(text)
   await callBoard(text)
+  await review(text)
+  commit(text)
   if (text.trim() === "/compact") {
     emit({ type: "system", subtype: "compact_boundary", session_id: session, compact_metadata: { trigger: "manual", pre_tokens: 1234 } })
   }

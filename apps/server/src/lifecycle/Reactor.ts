@@ -5,6 +5,7 @@ import { TaskBase } from "../git/TaskBase.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
+import { Reviews } from "../review/Reviews.ts"
 import { RunEnds } from "../runs/RunEnds.ts"
 import { Runs } from "../runs/Runs.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
@@ -32,6 +33,7 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const permissions = yield* Permissions
       const statusScripts = yield* StatusScripts
       const taskBase = yield* TaskBase
+      const reviews = yield* Reviews
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -40,6 +42,17 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           yield* runEnds.ended(change)
           // What its agent took in of the branch it's stacked on, and the tasks stacked on it of its own (4.1).
           yield* taskBase.keepStarts(change.task)
+          return
+        }
+        // 4.6: a reviewer's (or summarizer's) run ended: its part of the review, and once every part has, the review's
+        // outcome (a round of fixes, the task left for the user, or summaries).
+        if (change._tag === "ReviewFinished") {
+          yield* reviews.finished(change.thread, change.run, change.outcome, change.attention)
+          return
+        }
+        // 4.6: the agent is changing the work under review: its review and summaries in progress stop.
+        if (change._tag === "PromptStarted") {
+          yield* reviews.supersede(change.task)
           return
         }
         const task = change.after ?? change.before
@@ -63,6 +76,9 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           if (moved && change.before !== null) yield* statusScripts.changed(change.after, change.before.status)
           // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.
           if (moved || change.before?.running !== change.after.running) yield* taskTmp.changed(change.after)
+          // 4.6: a task that entered In review (or whose run ended there) is reviewed, if a review is due.
+          const ended = change.before?.running === true && !change.after.running
+          if (change.after.kind === "task" && change.after.status === "in_review" && (moved || ended)) yield* reviews.reconcile(change.after.id)
           // An unpinned title catches up with what was said since.
           if (change.before?.title_pinned === true && !change.after.title_pinned) yield* titles.refreshLater(change.after.id)
         }

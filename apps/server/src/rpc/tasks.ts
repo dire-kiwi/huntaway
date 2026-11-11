@@ -1,10 +1,13 @@
 import { Effect } from "effect"
 import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
-import type { ConflictReason } from "@huntaway/contracts"
+import type { ConflictReason, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
 import { DevServers } from "../runs/DevServers.ts"
 import { Questions } from "../permissions/Questions.ts"
+import { Reviews } from "../review/Reviews.ts"
+import { Summaries } from "../review/Summaries.ts"
+import type { ReviewRefused } from "../review/model.ts"
 import { Runs } from "../runs/Runs.ts"
 import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import type { SendRefused } from "../runs/Runs.ts"
@@ -43,6 +46,10 @@ export const sendRefused = (e: SendRefused) => {
   return Effect.fail(new Invalid({ field: "text", reason: e.detail }))
 }
 
+/** A review or summary refused, as the contract has it: the old 409s ("Can't review: …") and 400s. */
+const reviewRefused = (e: ReviewRefused) =>
+  Effect.fail(e.invalid ? new Invalid({ field: "id", reason: e.reason }) : new Conflict({ reason: "changed_meanwhile", detail: e.reason }))
+
 export const TaskHandlers = TaskRpcs.toLayer(
   Effect.gen(function* () {
     const tasks = yield* Tasks
@@ -52,6 +59,11 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const questions = yield* Questions
     const devServers = yield* DevServers
     const meter = yield* ContextMeter
+    const reviews = yield* Reviews
+    const summaries = yield* Summaries
+    /** The task after a review or summary started, or as it is when there was nothing to start. */
+    const orTask = (id: TaskId) => (t: Task | null) => (t !== null ? Effect.succeed(t) : tasks.get(id))
+    const reviewErrors = { TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused, ReviewRefused: reviewRefused }
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
@@ -75,11 +87,15 @@ export const TaskHandlers = TaskRpcs.toLayer(
           Effect.tap(() => (text.trim() === "" ? Effect.void : questions.settle(id, "replied"))),
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused }),
         ),
+      // Its agent, and its review and summaries (4.6).
       "tasks.stop": ({ id }) =>
         Effect.gen(function* () {
           yield* tasks.get(id)
-          return yield* runs.stop(id)
+          return yield* reviews.stopTask(id)
         }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.review": ({ id }) => reviews.start(id, true).pipe(Effect.flatMap(orTask(id)), Effect.catchTags(reviewErrors)),
+      "tasks.extendReview": ({ id }) => reviews.extend(id).pipe(Effect.catchTags(reviewErrors)),
+      "tasks.summarize": ({ id }) => summaries.start(id, true).pipe(Effect.flatMap(orTask(id)), Effect.catchTags(reviewErrors)),
       "tasks.dropQueued": ({ id }) => runs.dropQueued(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.stopServer": ({ id, port }) => devServers.stop(id, port).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.stopBackground": ({ id, background_id }) =>
