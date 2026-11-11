@@ -6,6 +6,7 @@ import { Socket } from "effect/socket"
 import { TestClock } from "effect/testing"
 import { fakeSocket, gitRepo, TestBoard } from "@huntaway/testing"
 import type { SentFrame } from "@huntaway/testing"
+import { TaskId } from "@huntaway/contracts"
 import type { Project, Task } from "@huntaway/contracts"
 import { Worktrees } from "../git/Worktrees.ts"
 import { Reactor } from "../lifecycle/Reactor.ts"
@@ -207,6 +208,10 @@ describe.skipIf(!hasTmux)("Terminals", () => {
         const used = yield* Effect.flip(terminals.serve(tool.ticket, { cols: 80, rows: 24 }, Effect.succeed(again.socket)).pipe(Effect.scoped))
         assert.strictEqual(used._tag, "TicketInvalid")
         assert.strictEqual((yield* Effect.flip(terminals.open(task.id, "nope")))._tag, "ToolNotFound")
+        // A task that isn't there (the old routes' 404s).
+        const gone = TaskId.make("gone")
+        for (const e of [terminals.status(gone, null), terminals.open(gone, null), terminals.kill(gone, null), terminals.keepalive(gone, "lg")])
+          assert.strictEqual((yield* Effect.flip(e))._tag, "TaskNotFound")
         assert.deepStrictEqual(yield* sessions, [`ia-${other.id}`, `ia-${task.id}`, `ia-${task.id}~lg`].toSorted())
         yield* terminals.killAll(task.id)
         assert.strictEqual((yield* tool.closed).code, 1000)

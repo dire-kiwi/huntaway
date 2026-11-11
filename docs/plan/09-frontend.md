@@ -315,6 +315,22 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   branches stand behind their keys); and, with `--fake-claude`, the approval card after the summary run, Approve
   deciding the merge ("approved", "Merge approved: …", and the merge request sent).
 
+### As built in 6.1 (HE-7): web
+
+- **The Terminal tab and the terminal tools** in the task view (`task/TaskView.tsx`, the old code back where step 1 cut
+  it): the tab on every task, the host's tools beside the tabs, terminals mounted from their first visit and kept while
+  the tab changes, a terminal tab in the side panel expanding it into the dialog, a tool taken out of the host's settings
+  ended. `task/Terminal.tsx` is the old pane: the socket is `/api/terminal/<ticket>` on the page's own server, with a
+  ticket from `terminal.open` asked for each connection (a ticket that can't be had is retried as a dropped socket is).
+  A terminal is still made once its font has loaded and a frame later, and reset before re-attaching; Restart and
+  Reconnect remount the pane (`key`), which the lint's effect rules asked for in place of an `attempt` dependency, and
+  the connection's mutable state is one object in the effect. xterm's styles are imported by `index.css`.
+- **Open tools** are `task/terminalTools.ts` (the old store on `smallStore`, `ia.openTools` in sessionStorage), kept
+  alive every 30 s once signed in (`App.tsx`). `settings/hosts/TerminalTools.tsx` (`TerminalToolsRow`) edits the host's
+  `terminal_tools` with `host.updateSettings`; the settings come with the board, so there is nothing to load. It is
+  mounted by the host page (6.12); it was checked by mounting it there for a moment.
+- **Checks**: `tests/ui/terminal.test.mjs` (the old checks, the status and ticket held with `routeRpc`, and a real tmux).
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |
