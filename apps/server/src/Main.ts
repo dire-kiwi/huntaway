@@ -45,9 +45,11 @@ import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { McpCallRepo } from "./mcp/McpCallRepo.ts"
-import { McpHooks } from "./mcp/McpHooks.ts"
+import type { McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
+import { Wait } from "./mcp/Wait.ts"
+import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
@@ -66,6 +68,7 @@ import { BackgroundWork } from "./runs/BackgroundWork.ts"
 import { Compaction } from "./runs/Compaction.ts"
 import { RunEnds } from "./runs/RunEnds.ts"
 import { Runs } from "./runs/Runs.ts"
+import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
@@ -165,7 +168,7 @@ const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
   Layer.provideMerge(ClaudeOutput),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
@@ -187,8 +190,10 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
-    // `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come.
-    Layer.provideMerge(mcpLayer(McpHooks.layerNone)),
+    // `Wait`'s hooks; an ask rule is refused until `Permissions` (3.3) is combined in.
+    Layer.provideMerge(mcpLayer(Wait.hooks)),
+    // The waits, and the approval of a wait's command (refused until `Permissions` asks the user).
+    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerNone)),
     Layer.provideMerge(Questions.layer),
     // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
     Layer.provideMerge(RunEnds.layer),
