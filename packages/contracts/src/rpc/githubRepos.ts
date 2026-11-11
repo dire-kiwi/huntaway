@@ -64,7 +64,7 @@ export const CloneProject = Schema.Struct({
   repo: Schema.String,
   /** Where to clone it: by default a folder named after it in the profile's clone folder. May start with `~/`. */
   repo_path: Schema.optional(Schema.NullOr(Schema.String)),
-  name: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
   key: Schema.optional(Schema.NullOr(Schema.String)),
 })
 export interface CloneProject extends Schema.Schema.Type<typeof CloneProject> {}
@@ -74,7 +74,7 @@ export const NewGithubProject = Schema.Struct({
   profile_id: ProfileId,
   /** The folder: a git repository, a folder that isn't one yet, or one that doesn't exist yet. May start with `~/`. */
   repo_path: Schema.String,
-  name: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
   key: Schema.optional(Schema.NullOr(Schema.String)),
   /** The repository's name on GitHub: by default the folder's. */
   repo_name: Schema.optional(Schema.NullOr(Schema.String)),

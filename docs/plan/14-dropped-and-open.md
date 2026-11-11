@@ -114,6 +114,10 @@ read or reasoned, not run.
   run view --job N --log-failed` and `gh pr view` were run against the fake GitHub only, which answers them from its own
   model of a pull request (the shapes are the old code's, which ran against GitHub). Not run: a real Claude Code agent
   waiting on a pull request, a wake with a real agent, a preview on another host than the board's.
+- Adding a project from GitHub, and Asana, against the real services (6.11, HE-7): `gh repo clone`, `gh repo create`
+  (with its push), the repositories' listing and search, and `gh auth status --json=hosts` were run against the fake gh
+  only (the arguments and answers are the old code's, which ran against GitHub); Asana's `users/me`, typeahead and task
+  reads against the fake Asana only. A config archive moved between two real hosts waits for 7.5's copy.
 - The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows. Measured at M2 (HE-4) on
   synthetic data of that size, not a real board: 5.5 MB in 154 ms (the old client's 15 loads: 5.7 MB, 65 ms);
   [10-testing.md](10-testing.md#measurements).
