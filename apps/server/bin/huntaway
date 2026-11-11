@@ -18,9 +18,12 @@ else src=$here/../src ext=ts; fi
 # The server goes by it for what runs it (agents' MCP helpers, and which installed release it is).
 HUNTAWAY_EXE=$self
 export HUNTAWAY_EXE
-# Node: $HUNTAWAY_NODE, else the package's own, else on PATH, else where installers put it (an SSH host's forced command runs with sshd's short PATH).
-node=${HUNTAWAY_NODE:-}
-[ -z "$node" ] && [ -x "$here/node/bin/node" ] && node=$here/node/bin/node
+# Node: a release's own (node/bin/node beside this script: a release runs the Node it was built and tested with, whatever
+# its environment says), else $HUNTAWAY_NODE, else on PATH, else where installers put it (an SSH host's forced command
+# runs with sshd's short PATH).
+node=
+[ -x "$here/node/bin/node" ] && node=$here/node/bin/node
+[ -z "$node" ] && node=${HUNTAWAY_NODE:-}
 if [ -z "$node" ]; then
   node=$(command -v node 2>/dev/null) || node=
   for n in /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node "$HOME/.volta/bin/node" "$HOME/.local/share/mise/shims/node" \
