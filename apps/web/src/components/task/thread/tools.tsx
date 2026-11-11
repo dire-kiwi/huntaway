@@ -2,6 +2,9 @@ import { clsx } from "clsx"
 import { Option, Schema } from "effect"
 import { BookOpen, Bot, ChevronRight, FileText, Globe, LayoutGrid, ListChecks, Loader2, Monitor, Pencil, Search, Terminal, Wrench, X } from "lucide-react"
 import { memo, useContext, useState, type ReactNode } from "react"
+import { navigate } from "../../../state/route"
+// 6.3
+import { publishedDocPath } from "../../docs/docs"
 import { lineage, SubagentRowCtx, ThreadCtx, usePendingFocus, useThread } from "./context"
 import type { Any, Call } from "./threadModel"
 
@@ -105,7 +108,26 @@ function desktopSummary(tool: string, input: Any): string {
   return where
 }
 
-// The link to the document a `publish_document` call published (PublishedDoc, HA-281) comes with the board's docs (M6).
+/** 6.3: the link to the document a `publish_document` call published, which opens in the board (HA-281). */
+function PublishedDoc({ call }: { call: Call }) {
+  if (call.name !== "mcp__docs__publish_document" || !call.result || call.result.isError) return null
+  const doc = publishedDocPath(call.result.content)
+  if (!doc) return null
+  return (
+    <a
+      href={doc.path}
+      onClick={(e) => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+        e.preventDefault()
+        navigate(doc.path)
+      }}
+      className="ml-7 flex w-fit items-center gap-1.5 rounded px-2 py-0.5 text-[12.5px] text-accent hover:bg-white/[0.03] hover:underline"
+    >
+      <BookOpen size={12} />
+      Open “{typeof call.input?.title === "string" ? call.input.title : doc.slug}”{doc.version !== null ? ` (v${doc.version})` : ""} in Docs
+    </a>
+  )
+}
 
 /** A tool's input as indented JSON, as the old view showed one it has no view of its own for. */
 const encodePretty = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
@@ -242,6 +264,7 @@ function PlainToolRow({ call, running, cwd }: { call: Call; running: boolean; cw
           ) : null}
         </span>
       </button>
+      <PublishedDoc call={call} />
       {open && (
         <div className="space-y-2 px-2 pb-2 pl-7">
           <ToolInput name={call.name} input={call.input} />

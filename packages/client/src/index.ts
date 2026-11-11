@@ -4,6 +4,7 @@ export * from "./board/board.ts"
 // 6.5
 export * from "./board/automations.ts"
 export * from "./board/configModels.ts"
+export * from "./board/docs.ts"
 export * from "./board/hostBoard.ts"
 export * from "./board/live.ts"
 export * from "./board/tasks.ts"

@@ -28,7 +28,7 @@ import { mentionsScanned, planRest, runPrompt } from "./prompts/start.ts"
 import { planCommand } from "../prompts/planCommand.ts"
 import { systemPrompt } from "./prompts/system.ts"
 import { AgentTools } from "./AgentTools.ts"
-import { GH_SERVER, usesServer } from "./claude/access.ts"
+import { DOCS_SERVER, GH_SERVER, usesServer } from "./claude/access.ts"
 
 // What a run is told (docs/plan/07-agents.md, Prompts): the facts the prompt builders read (`PromptContext`), gathered
 // from the services, and the builders called on them. The texts are in `prompts/`; the builders in `agents/prompts/`.
@@ -166,6 +166,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           task.kind === "task" && project === null && task.group_name !== null
             ? (yield* projectRepo.list(task.profile_id)).filter((p) => p.group_name === task.group_name && p.archived_at === null)
             : []
+        // What the project's agent tools leave of the board's own servers (6.4).
+        const tools = yield* agentTools.preview(task)
         const context: PromptContext = {
           ...OFF,
           tmp: run.tmp ?? null,
@@ -193,8 +195,9 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           githubAccount: set(project?.github_account) ?? set(profile.github_account),
           pen: kind._tag === "Pen" ? yield* penOf(task, kind) : "",
           github: yield* githubOf(task, project),
-          // The board serves gh (4.4), unless the project has its own `gh` server or turns it off (6.4).
-          ghTools: usesServer(yield* agentTools.preview(task), GH_SERVER, true),
+          // The board serves gh (4.4) and docs (6.3), unless the project has its own server of that name or turns it off (6.4).
+          ghTools: usesServer(tools, GH_SERVER, true),
+          docsTools: usesServer(tools, DOCS_SERVER, true),
         }
         return context
       })

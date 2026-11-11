@@ -66,6 +66,11 @@ export interface HostBoard {
    * `automations_changed` event about it, which what shows them reads them again on.
    */
   readonly automations: ReadonlyMap<string, number>
+  /**
+   * 6.3: the number of the latest event about a profile's documents (`docs <profile>`), a document's comments
+   * (`comments <profile> <slug>`) and a profile's docs site (`site <profile>`), which the Docs page reads them again on.
+   */
+  readonly docs: ReadonlyMap<string, number>
 }
 
 const noSettings: HostSettings = {
@@ -96,6 +101,7 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   restart: null,
   checkpoints: new Map(),
   automations: new Map(),
+  docs: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -185,6 +191,9 @@ function reuseApprovals(h: HostId, prev: ReadonlyArray<HostApproval>, next: Read
   )
 }
 
+/** 6.3: the key of `HostBoard.docs` for a profile's documents, a document's comments, or a profile's docs site. */
+export const docsKey = (kind: "docs" | "comments" | "site", profile: string, slug = ""): string => `${kind} ${profile} ${slug}`
+
 /** A numbered event, applied unless the board has it already. */
 function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly type: "hello" | "resync" }>): HostBoard {
   const h = board.host_id
@@ -245,6 +254,13 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       automations.set(message.automation_id, message.seq)
       return { ...next, automations }
     }
+    // 6.3
+    case "docs":
+      return { ...next, docs: new Map(board.docs).set(docsKey("docs", message.profile_id), message.seq) }
+    case "doc_comments":
+      return { ...next, docs: new Map(board.docs).set(docsKey("comments", message.profile_id, message.slug), message.seq) }
+    case "docs_site":
+      return { ...next, docs: new Map(board.docs).set(docsKey("site", message.profile_id), message.seq) }
     case "approval_rules":
     case "approval_log":
     // 6.8: for push; the board has nothing of them.

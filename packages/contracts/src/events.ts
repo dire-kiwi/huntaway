@@ -91,6 +91,18 @@ export const AutomationsChanged = Schema.Struct({
   automation_id: AutomationId,
   ...seq,
 })
+/** 6.3: a profile's document was published, moved, relabelled or (`deleted`) deleted: it is read again. */
+export const DocsChanged = Schema.Struct({
+  type: Schema.Literal("docs"),
+  profile_id: ProfileId,
+  slug: Schema.String,
+  deleted: Schema.optional(Schema.Boolean),
+  ...seq,
+})
+/** 6.3: a document's comments changed (added, edited, deleted or sent): they are read again. */
+export const DocCommentsChanged = Schema.Struct({ type: Schema.Literal("doc_comments"), profile_id: ProfileId, slug: Schema.String, ...seq })
+/** 6.3: a profile's connection to its docs site changed (a sign-in started, stopped, connected or was forgotten). */
+export const DocsSiteChanged = Schema.Struct({ type: Schema.Literal("docs_site"), profile_id: ProfileId, ...seq })
 
 export const BoardEvent = Schema.Union([
   Hello,
@@ -112,6 +124,10 @@ export const BoardEvent = Schema.Union([
   RoutineReported,
   // 6.5
   AutomationsChanged,
+  // 6.3: documents.
+  DocsChanged,
+  DocCommentsChanged,
+  DocsSiteChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

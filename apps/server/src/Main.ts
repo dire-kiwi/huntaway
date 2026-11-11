@@ -22,6 +22,7 @@ import {
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
+  DocRpcs,
   // 6.10: computer use.
   DesktopRpcs,
   GitRpcs,
@@ -68,6 +69,15 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+// 6.3: documents.
+import { DocImages } from "./docs/DocImages.ts"
+import { DocRepo } from "./docs/DocRepo.ts"
+import { Docs } from "./docs/Docs.ts"
+import { DocsRender } from "./docs/DocsRender.ts"
+import { DocsSiteRepo } from "./docs/DocsSiteRepo.ts"
+import { HostedDocs } from "./docs/HostedDocs.ts"
+import { DocsTools } from "./mcp/tools/docs.ts"
+import { DocHandlers } from "./rpc/docs.ts"
 // 6.10: computer use.
 import { CuaDriver } from "./desktop/CuaDriver.ts"
 import { CuaInstall } from "./desktop/CuaInstall.ts"
@@ -236,7 +246,8 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Identity.layer),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
-    // 6.8: Web Push's cryptography; 6.10 and 6.5: SHA-256 (a Cua Driver download, a signed webhook delivery).
+    // 6.8: Web Push's cryptography; 6.10, 6.5 and 6.3: SHA-256 (a Cua Driver download, a signed webhook delivery, a
+    // document's image).
     Layer.provideMerge(Layer.mergeAll(KeyAgreement.layerWebCrypto, Kdf.layerWebCrypto, Aead.layerWebCrypto, Signature.layerWebCrypto, Digest.layerWebCrypto)),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
@@ -342,7 +353,7 @@ const RunsArea = Runs.layer.pipe(
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   Layer.mergeAll(McpControlRegistered, McpCodexRegistered).pipe(
-    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools)),
+    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools, DocsTools /* 6.3 */)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
@@ -432,6 +443,12 @@ const runAreasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R
     Layer.provideMerge(agentsLayer(models)),
   )
 
+/** 6.3: the docs area: published documents, their images, and publishing them to a hosted docs site. */
+const DocsLive = Docs.layer.pipe(
+  Layer.provideMerge(HostedDocs.layer),
+  Layer.provideMerge(Layer.mergeAll(DocRepo.layer, DocsSiteRepo.layer, DocImages.layer, DocsRender.layer)),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
@@ -449,6 +466,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.3: documents, which the docs server's tools call.
+    Layer.provideMerge(DocsLive),
     // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
     Layer.provideMerge(TaskDocuments.registered),
     Layer.provideMerge(TaskDocuments.layer.pipe(Layer.provideMerge(TaskDocumentRepo.layer))),
@@ -496,6 +515,8 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.3
+  DocRpcs,
   // 6.1
   TerminalRpcs,
   // 6.11
@@ -529,6 +550,8 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.3
+  DocHandlers,
   // 6.1
   TerminalHandlers,
   // 6.11

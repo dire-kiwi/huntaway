@@ -1,14 +1,15 @@
-import { MenuButton, NotYet } from "../ui"
-import type { Route } from "../../router"
+// `/docs/<profile>` (HA-281): the profile's documents, which its agents publish through the `docs` MCP server (HA-280),
+// and each document's pages, with its menu and versions (6.3, step 1). See docs.ts for where they're kept. Its parts are in
+// `docsPage/`: the list and its tree, a document's view, and their dialogs.
+import { DocsList } from "./docsPage/DocsList"
+import { DocView } from "./docsPage/DocView"
+import { useHomes } from "./docsPage/hooks"
+import { docRoute } from "./docs"
+import type { DocsRoute } from "./docsPage/model"
 
-// Placeholder: 6.3 brings this page over (docs/plan/13-milestones.md).
-export function DocsPage(_props: { route: Extract<Route, { name: "docs" }> }) {
-  return (
-    <>
-      <div className="flex h-12 items-center border-b border-line px-3">
-        <MenuButton />
-      </div>
-      <NotYet what="Documents" />
-    </>
-  )
+export function DocsPage({ route }: { route: DocsRoute }) {
+  const { name, homes } = useHomes(route.profile)
+  const doc = docRoute(route)
+  if (doc === null) return <DocsList segment={route.profile} name={name} homes={homes} />
+  return <DocView key={doc.slug} route={doc} name={name} homes={homes} />
 }

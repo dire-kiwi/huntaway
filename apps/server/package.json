@@ -14,11 +14,13 @@
     "test:e2e": "vp test --config tests/e2e/vitest.config.ts"
   },
   "dependencies": {
+    "@dire-kiwi/docs-render": "https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@huntaway/contracts": "workspace:*",
     "@huntaway/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "sharp": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

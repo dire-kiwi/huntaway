@@ -11,3 +11,5 @@ export * from "./fakeAsana.ts"
 // 6.10: a fake Cua Driver.
 export * from "./fakeCuaDriver.ts"
 export * from "./fakePush.ts"
+// 6.3
+export * from "./fakeDocsSite.ts"

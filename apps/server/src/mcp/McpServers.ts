@@ -27,6 +27,32 @@ export const INSTRUCTIONS =
 export const GH_INSTRUCTIONS =
   "GitHub through the gh CLI, run outside any sandbox with the user's GitHub login. Use these tools instead of running gh in Bash (where it may not reach GitHub or its login, or act as the wrong account), and git_push instead of `git push` if that fails. They work in your working directory's repository by default; pass repo (OWNER/REPO) for another one, or dir to run in another checkout. pr_* tools take a pull request number, URL or branch, defaulting to the current branch's PR. For anything else, call the gh tool with gh's arguments."
 
+/** 6.3: the docs server's (huntaway's mcp/docs_mcp.ts), copied word for word. */
+export const DOCS_INSTRUCTIONS =
+  "Docs keeps Markdown documents for the user to read on this Huntaway board: reports, plans, research, write-ups. " +
+  "Publish with `publish_document` (one or more pages; nested paths like `plan/phase-1` make a nested menu). Every " +
+  'publish creates a new version, so you can revise freely; `mode: "merge"` keeps the other pages of the previous ' +
+  "version. If you can start sub-agents, have one write and publish the document: give it what the document should " +
+  "say, let it look up components, publish and fix any problems, and have it return the URL. That keeps the component " +
+  "reference and the page sources out of your own context. Plain Markdown needs no reference. For components " +
+  '(callouts, collapsible sections, form fields), call `list_components` for their names, props and examples, and use format "mdx". ' +
+  "Form fields (`<Approval />`, inputs and the like) show read-only here and collect no answers, so ask the user in the " +
+  "thread for a decision or input instead. `publish_document` is the check: it rejects a page it can't publish and says " +
+  "why, and returns warnings (an unknown component, a bad prop) with the URL; fix them and publish again. Don't install " +
+  "or run npm packages, renderers or other tools to check pages. The user can select text in a document on the board and " +
+  "comment on it for you: read the comments with `get_feedback` (pass its `cursor` as `since` next time for only new " +
+  "ones); the board can also send them to the task that published the document as a message. " +
+  "Documents belong to your profile on this board. A new " +
+  "document goes in a folder named after your task's project unless you give `folder`; a `folder` you give is used as " +
+  'it is (`"plans"` is a top-level folder, `"<project>/plans"` one inside the project\'s), and later versions stay ' +
+  "wherever the document is. Use `move_document` only when the user asks to move one. Documents can also have labels, " +
+  "nested with '/' (\"research/ai\"): pass `labels` to `publish_document` or call `set_document_labels`, and call " +
+  "`list_labels` to reuse the labels that already exist rather than inventing near-duplicates. Images: pass them to " +
+  "`publish_document` as `images` ({name, data}: base64 PNG, JPEG, WebP, GIF or AVIF, name a relative path like " +
+  '"images/chart.png") and refer to them by name (`![Chart](images/chart.png)`), or inline them as data: URIs. Every image ' +
+  "is converted to AVIF and must be at most 500 KB after that (downscale or crop one that isn't); only the AVIF is kept, " +
+  "not the original, and SVG and remote images aren't shown. Always give the reader the URL returned by `publish_document`."
+
 /** What the gh server tells a run whose tools act as `account`. */
 export const ghInstructions = (account: string | null): string =>
   account === null ? GH_INSTRUCTIONS : `${GH_INSTRUCTIONS} They act as the GitHub account ${account}.`
@@ -48,7 +74,7 @@ export const DESKTOP_INSTRUCTIONS =
 export const SERVER_INFO: { readonly [S in ServerName]: { readonly name: string; readonly instructions: string | null } } = {
   huntaway: { name: "huntaway", instructions: INSTRUCTIONS },
   gh: { name: "huntaway-gh", instructions: GH_INSTRUCTIONS },
-  docs: { name: "huntaway-docs", instructions: null },
+  docs: { name: "huntaway-docs", instructions: DOCS_INSTRUCTIONS },
   desktop: { name: "huntaway-desktop", instructions: DESKTOP_INSTRUCTIONS },
 }
 
@@ -174,6 +200,13 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
               return rpcResult(request.id, {})
             case "tools/list":
               return rpcResult(request.id, { tools: yield* tools(server, review) })
+            // 6.3: the docs server answers these as the hosted one does, with none.
+            case "resources/list":
+              return server === "docs"
+                ? rpcResult(request.id, { resources: [] })
+                : rpcError(request.id, METHOD_NOT_FOUND, `method not found: ${request.method}`)
+            case "prompts/list":
+              return server === "docs" ? rpcResult(request.id, { prompts: [] }) : rpcError(request.id, METHOD_NOT_FOUND, `method not found: ${request.method}`)
             default:
               return rpcError(request.id, METHOD_NOT_FOUND, `method not found: ${request.method}`)
           }

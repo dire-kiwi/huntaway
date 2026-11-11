@@ -16,7 +16,7 @@ import { McpHttpRoute, RETRY_MS } from "./http.ts"
 // The board's MCP servers over HTTP (docs/plan/inventory/03-mcp.md 2.2): the old mcp/http.test.ts's cases with the test
 // tools, on a real HTTP server on a free port: each run's secret, the JSON-RPC, a call answered on an event stream with
 // its priming event, and the answer of a call whose stream broke given on the stream its client reconnects with
-// (`Last-Event-ID`), across a restart too. gh's, docs' and desktop's own tools come with their servers (M4, M6).
+// (`Last-Event-ID`), across a restart too. gh's and desktop's own tools come with their servers (M4, M6); docs' (6.3) is the last case here.
 
 /** The route on a test HTTP server, over `board` (the MCP area and the whole board's services). */
 const served = <ROut, E, R>(board: Layer.Layer<ROut, E, R>) =>
@@ -103,6 +103,9 @@ const events = (response: HttpClientResponse.HttpClientResponse) =>
 const message = (event: SseEvent) => Schema.decodeEffect(Schema.fromJsonString(Response))(event.data).pipe(Effect.orDie)
 
 const touched = Effect.flatMap(TestTools, (tools) => tools.touched)
+
+/** 6.3: a `publish_document` call. */
+const publishCall = (args: unknown) => ({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "publish_document", arguments: args } })
 
 const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } }
 
@@ -310,7 +313,7 @@ describe("MCP over HTTP", () => {
       // Each with arguments it takes (gh's tools check theirs first, as the board's do).
       for (const [server, tool, args] of [
         ["gh", "git_push", {}],
-        ["docs", "publish_document", { label: "x" }],
+        ["docs", "publish_document", { pages: [{ path: "index", content: "x" }] }],
         ["huntaway", "test_touch", { label: "x" }],
       ] as const) {
         const v = yield* body(
@@ -325,6 +328,30 @@ describe("MCP over HTTP", () => {
         assert.isTrue(error && text.includes("has ended on the board"), `${server}: ${text}`)
       }
       assert.deepStrictEqual(yield* touched, [])
+    }).pipe(Effect.provide(served(TestMcp()))),
+  )
+
+  // 6.3: the old docs_mcp.test.ts `runs_reach_it_over_http_whatever_has_their_board_tools`.
+  it.effect("a run reaches the docs server whatever has its board tools, with a body up to 64 MiB", () =>
+    Effect.gen(function* () {
+      // A run whose board tools are in process still has this server (as it has gh's).
+      const run = yield* running({ in_process: true })
+      const page = { pages: [{ path: "index", content: "# Over HTTP" }] }
+      const answer = yield* post(run.path("docs"), run.secret, publishCall(page), "application/json")
+      assert.strictEqual(answer.status, 200)
+      const v = yield* body(answer)
+      assert.include(said(v.result)[0], '"slug": "over-http"')
+      // Only with the run's own secret.
+      assert.strictEqual((yield* post(run.path("docs"), "nope", publishCall(page))).status, 401)
+      // Images as they were given may be more than the other servers' 32 MiB.
+      const big = yield* post(
+        run.path("docs"),
+        run.secret,
+        publishCall({ ...page, images: [{ name: "a.png", data: "A".repeat(40 << 20) }] }),
+        "application/json",
+      )
+      assert.strictEqual(big.status, 200)
+      assert.deepStrictEqual(said((yield* body(big)).result), ['image "a.png" isn\'t PNG, JPEG, WebP, GIF or AVIF', true])
     }).pipe(Effect.provide(served(TestMcp()))),
   )
 })

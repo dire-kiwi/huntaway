@@ -841,6 +841,33 @@ As built in 6.2 (HE-7), `docs/TaskDocuments.ts` (+ `TaskDocumentRepo.ts`, the `d
 - **Tests**: `docs/TaskDocuments.test.ts` (the old `documents.test.ts` cases for versions, labels and the turn's end; the
   5 MiB notice; `tasks.document`; the daily document; removal and the sweep), the Codex edit's case in
   `runs/codex/output.test.ts`, a tool result's in `runs/claude/output.test.ts`, the demo's in `lifecycle/Demo.test.ts`.
+As built in 6.3 (HE-7), published documents:
+
+- **Services** (`docs/`): `DocRepo` (docs, versions, pages, labels, images, comments) and `DocsSiteRepo` (the docs
+  site's clients, connections and publish records; tokens read as `Redacted`); `DocsRender`, the hosted app's renderer
+  (`@dire-kiwi/docs-render` 0.2.0, WebAssembly) loaded once on first use; `DocImages` (`take`: the `images` argument and
+  the pages' inline `data:` images, `convert`: `sharp` to AVIF one at a time, `sha256` on `effect/crypto`'s `Digest`,
+  which `platformLayer` now provides); `Docs` (the board's reads and changes, the comments and sending them, and each
+  docs tool's answer; a publish's body is `docs/publish.ts`); `HostedDocs` (the device flow, pasted tokens, renewals,
+  publishing). Rules that read no state are `docRules.ts` (slugs, labels and their spelling, the label tree, folder
+  renames, the comments' message) and `imageRules.ts` (names, signatures, inline images, code spans, `<img>` refs), each
+  the old function's cases as tests. `--demo`'s "Rollout plan" is `Docs.seedDemo` (`docs/demo.ts`), called from
+  `lifecycle/Demo.ts`.
+- **The wire**: `docs.*` (05-protocol.md's list; payloads by `profile_id` and `slug`, a version by its number, null the
+  latest). Scopes: reads `read`; moving, relabelling, deleting, renaming folders, publishing and the docs site
+  `settings`; comments and sending them `operate` (they send a message to an agent, as `tasks.send` does). Events `docs
+  {profile_id, slug, deleted?}`, `doc_comments {profile_id, slug}`, `docs_site {profile_id}`; `@huntaway/client` keeps
+  the latest of each per profile (`HostBoard.docs`, `docsSeqAtom`), which the Docs page reads again on. A rendered
+  page's `<img>` keeps the old route's address (`/api/profiles/<id>/doc_images/<sha>`) as a marker the page swaps for
+  `docs.image`'s data, as there is no such HTTP route. New `ConflictReason`s: `not_connected`, `no_task`,
+  `nothing_to_send`; `KeyedLock` has `["docs", …]` (a profile's renewal, a document's publishes).
+- **Decided**: errors are the contract's (`Invalid` was 400, `External` 502, `Conflict` 409), with the old messages as
+  their text. A docs site under test is the fake of `packages/testing` (`fakeDocsSite`, an HTTP server in the process);
+  its tests run on the live clock with the intervals shortened (`DocsSiteTiming`, a reference), as they talk to a socket.
+  Sending comments goes through `Runs.send` as the board (`source: "board"`): on a host that runs no agents it is
+  refused (`Unavailable`), where the old server kept the message.
+- **Not here**: a project's own `docs` server or one turned off (6.4: the prompt's docs note is given whenever the board
+  serves it); the old 10-minute memory of docs answers (calls are in `mcp_calls`, 3.1).
 
 ### Assistant — [inventory 02](inventory/02-agent-support.md) (2.12)
 

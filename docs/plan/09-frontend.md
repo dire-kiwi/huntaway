@@ -473,6 +473,30 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   event the same way. Skipped, with its reason in the file: "a touch held on the board doesn't let a plan open a link",
   as on Chromium 155 the board's activation after the held touch didn't run out while the plan kept taking the focus.
   `markdownImages.test.mjs` is about a task's description (Markdown), not its documents, and isn't ported here.
+### Step 1 as done for `docs/` (6.3, HE-7)
+
+- **What came over.** The old `components/docs/` whole (`DocsPage.tsx`, `DocComments.tsx`, `HostedDocs.tsx`,
+  `docFrame.ts`, `docsPage/*`), and the old `src/docs.ts` as `components/docs/docs.ts`; the sidebar's Docs entry
+  (`layout/sidebar/DocsEntry.tsx`, the old `ProfileEntries.tsx`'s half, as the assistant's is 6.7's); a thread's
+  "Open … in Docs" for a `publish_document` call (`task/thread/tools.tsx` `PublishedDoc`) and links to documents in
+  messages (`task/thread/DocLink.tsx`: they open in the board and show the document's title). `task/htmlFrame.ts` is
+  6.2's file, taken as it is (the frame's policy and its scripts).
+- **Calls and events.** `api.*` became `rpc(host, "docs.…", …)`; the old `onDocs`, `onDocsSite`, `onDocComments`
+  listeners are `useDocsChanged`, `useDocsSiteChanged` and `useDocCommentsChanged` (`docsPage/hooks.ts`), which
+  subscribe to `@huntaway/client`'s `docsSeqAtom` (a `docs` event names the profile, so the page reads again for any of
+  its documents). The host-version checks (`hasDocs`, `hasDocLabels`, `hasDocFolders`, `hasDocComments`,
+  `hasHostedDocs`) are gone: every host has them. The view and closed folders stay in `localStorage` under their old
+  keys (step 2 makes them atoms).
+- **Smaller changes the lint asked for.** The frame's source is set on the frame in a layout effect (as 6.2's
+  `Document.tsx` does), so where the reader was is read when it's drawn, not in a render; the comments' marks are a
+  memoised message posted in an effect; the functions that run inside the frame keep their helpers inside them (one
+  captures `document`, the context matcher is inlined).
+- **Checks.** `tests/ui/docs.test.mjs` (plus the board's `frame-src 'self'`), `docFolders`, `docLinks`, `docComments`
+  (on `--fake-claude`: sending starts DEMO-5's agent) and `hosted_docs` (a stub site in the check, as before), all on
+  `--demo`; `tests/ui/docs.mjs` writes documents into the test server's database as `threads.mjs` writes threads. Unit:
+  `tests/unit/docs.test.ts`, every old case. Not ported here: `documentCsp.test.mjs` (plans and artifacts, 6.2's) and
+  `markdownImages.test.mjs` (images in a task's Markdown). The old check's count of the page's HTTP requests for a
+  version is gone with HTTP.
 
 ### Step 2: by hand, a feature folder at a time
 
