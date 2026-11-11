@@ -188,6 +188,26 @@ Order within step 1, each a task of its own once `state/` and the shared pieces 
 to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The app is runnable after `board/` and
 `task/`.
 
+### Step 1 as done for `ui/`, `layout/` and `board/` (M1, HE-3)
+
+- What a board or layout file needs from a later milestone is cut with the smallest edit and a note in the code: the
+  task panel, page and modal are stubs; the Triage view, the Agents pill, the usage panel, notifications, the
+  assistant and docs entries, Add project, the config picker, Compare, stack merges and titles, merge targets, the
+  branch list, review badges, Asana, preview polling and attachments in New task wait for their areas. The rest of the
+  app's pages show "not yet on this server".
+- `components/boardHelpers.ts` holds what the old `store.ts` offered beside its state (`useHost`, `useProject`,
+  `taskConfig`…) and `moveTask(task, patch)`, a promise over the client's `optimisticMove` that replaces `upsertTask`
+  for drops and menus. `src/smallStore.ts` (`useSyncExternalStore`) replaces zustand for the selection and the drawer.
+- `index.html` links `index.css` (a side-effect import in `main.tsx` breaks `import/no-unassigned-import`).
+- Fixing the React hook rules changed a few things slightly: clocks tick inside the components that show the time, and
+  some effects that kept refs now run after every render or adjust state during render.
+- `HostBoard` also carries `boot` and archived projects' tasks (the merged `Board` leaves them out), and a session's
+  view carries its `host.info`. The page's own host id comes from `public.health`. Keys the old app stored as bare
+  strings use `storedBare`, because `Atom.kvs` writes JSON.
+- Not yet: component checks under `tests/browser` (the fake is there, with unit tests), and a catch-all member for
+  board events of a kind a client does not know (`BoardMessage` has none; the client's reducer ignores unknown kinds,
+  but decoding fails first).
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |
