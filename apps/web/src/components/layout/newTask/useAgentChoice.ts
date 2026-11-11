@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { agentOf } from "@huntaway/client"
-import { inheritedModel, modelOptions, type ConfigsModels } from "../../../agents"
+import { inheritedModel, modelOptions, useConfigsModels, type ConfigsModels } from "../../../agents"
 import { useAvailableConfigs } from "../../boardHelpers"
 import { asEffort, configKey, effortKey, modelKey } from "./draft"
 import type { Where } from "./useWhere"
@@ -23,9 +23,9 @@ export function useAgentChoice({ target, inProject, prefId }: Where) {
   const pickConfig = configs.length > 1
   const configObj = configs.find((c) => c.id === config)
   const codex = agentOf(configObj) === "codex"
-  // Every config's models, as a `!` can send the task to any of them (IA-227). A Codex config's models
-  // (`configs.models`) are not yet on this server: Claude's aliases are offered for each.
-  const discovery: ConfigsModels = { models: Object.fromEntries(configs.map((c) => [c.id, null])), loading: [], failed: [] }
+  // Every config's models, as a `!` can send the task to any of them (IA-227): a Codex config's are its host's
+  // (`configs.models`), a Claude config offers Claude's aliases.
+  const discovery: ConfigsModels = useConfigsModels(target.host_id, configs)
   const configModels = discovery.models
   const models = configObj ? (configModels[configObj.id] ?? null) : null
   const modelList = modelOptions(configObj, models)
