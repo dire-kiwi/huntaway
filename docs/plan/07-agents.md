@@ -249,6 +249,32 @@ export class Threads extends Context.Service<Threads, {
   metadata and read it back.
 - **Todos on a card** still come only from a completed, top-level todo call.
 
+As built (HE-4, 2.2), in `apps/server/src/threads/`: `model.ts` (`WriteNo`, `ItemMeta`, `Entry`, `legacyId`,
+`writeNoOf`), `ThreadStore.ts`, `Threads.ts`, `ThreadReaders.ts`; `rpc/threads.ts` serves `threads.watch` and
+`threads.page`.
+
+- **The interface as built** differs from the sketch above: `notice`'s level is the protocol's (`warning`, not
+  `warn`); `openRequest` takes a `NewRequest` (a `ThreadRequest` without `resolution`, its `id` optional: left out, it
+  is `legacy:<n>`); `appendFromAgent(task, events, metas?)` returns the saved events; `writeFromAgent(task, make)` is
+  added for agent output that needs a write number (`make(n)` returns the events, in the write's transaction);
+  `endPreview(task)` ends the reply being previewed; `stored(task)` reads every item with its meta and write number,
+  and the requests, in one transaction: **the hook a translator rebuilds its state from** (the translator and the
+  per-thread cache of its state are 2.4's); `watchers(task)` says how many watch a thread; `prune` is the hourly sweep
+  (`Threads.pruner`, run from `ThreadsLive`). Writes fail with `TaskNotFound` for a task that is not there.
+- **A thread's own state** (`Thread`) is read from its task on every snapshot: `status` from `tasks.running` and the
+  open requests (no `Runs.isRunning` yet), `harness` from the task's config, else its project's or profile's first
+  (the old `task_is_codex`).
+- **Publishing** uses `SqlClient.afterCommit`, as `Events.emit` does, so a write inside a caller's `Db.tx` is
+  published when that commits, and not at all on a rollback. The watcher drops a saved event whose seq it has already
+  sent (the window's, or a replay's). A `PubSub` per watched thread is unbounded.
+- **The card's todo list** is written in the same transaction as the events that change it (`TaskRepo.write` and a
+  `task` event), not through `Tasks.change`, so a caller holding the task's lock can write a thread.
+- **The readers** are pure functions of entries newest first (`said`, `userRepliesOf`…) fed by
+  `ThreadStore.newest`, which reads 64 entries and four times as many each time a reader wants more. `approval` (3.3,
+  over `permission_requests`) and `turn_end` of a Claude result's data (2.4) are not readers here; `openQuestions`
+  returns the open question requests with `legacy:<n>` ids and their write numbers (the card state moves to
+  `Questions`, 3.2).
+
 The recorded sessions (22 Claude, 20 Codex scenarios: raw CLI output and the expected events) move to
 `packages/testing/fixtures/threads/` and are the conformance suite for the two translators and the reducer. They
 come from the `agent-threads` project, whose protocol this is.

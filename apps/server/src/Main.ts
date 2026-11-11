@@ -5,7 +5,7 @@ import { HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
 import { createServer } from "node:http"
-import { AttachmentRpcs, BoardRpcs, ConfigRpcs, HostRpcGroup, PenRpcs, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs } from "@huntaway/contracts"
+import { AttachmentRpcs, BoardRpcs, ConfigRpcs, HostRpcGroup, PenRpcs, ProfileRpcs, ProjectRpcs, PublicRpcs, TaskRpcs, ThreadRpcs } from "@huntaway/contracts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -36,6 +36,7 @@ import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
+import { ThreadHandlers } from "./rpc/threads.ts"
 import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
 import { HostSettings } from "./settings/HostSettings.ts"
@@ -47,6 +48,9 @@ import { Pens } from "./tasks/Pens.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
 import { TaskRepo } from "./tasks/TaskRepo.ts"
 import { Tasks } from "./tasks/Tasks.ts"
+import { ThreadReaders } from "./threads/ThreadReaders.ts"
+import { Threads } from "./threads/Threads.ts"
+import { ThreadStore } from "./threads/ThreadStore.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -78,18 +82,23 @@ const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner).pipe(
   Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer)),
   Layer.provideMerge(ProjectsLive),
 )
+const ThreadsLive = Threads.pruner.pipe(
+  Layer.provideMerge(Layer.mergeAll(Threads.layer, ThreadReaders.layer)),
+  Layer.provideMerge(ThreadStore.layer),
+  Layer.provideMerge(TasksLive),
+)
 // The demo board is seeded once every area is built, before Recovery runs.
 const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
   Layer.provideMerge(DemoLive),
   Layer.provideMerge(Dependencies.layer),
-  Layer.provideMerge(TasksLive),
+  Layer.provideMerge(ThreadsLive),
 )
 
 /** Every area's services. */
 export const AreasLive = LifecycleLive
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
-export const Served = PublicRpcs.merge(HostRpcGroup, ProfileRpcs, ConfigRpcs, ProjectRpcs, TaskRpcs, BoardRpcs, PenRpcs, AttachmentRpcs)
+export const Served = PublicRpcs.merge(HostRpcGroup, ProfileRpcs, ConfigRpcs, ProjectRpcs, TaskRpcs, BoardRpcs, PenRpcs, AttachmentRpcs, ThreadRpcs)
 
 /** Their handlers. One line per area. */
 export const HandlersLive = Layer.mergeAll(
@@ -102,6 +111,7 @@ export const HandlersLive = Layer.mergeAll(
   BoardHandlers,
   PenHandlers,
   AttachmentHandlers,
+  ThreadHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
