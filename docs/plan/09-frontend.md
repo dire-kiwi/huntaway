@@ -315,6 +315,23 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   branches stand behind their keys); and, with `--fake-claude`, the approval card after the summary run, Approve
   deciding the merge ("approved", "Merge approved: …", and the merge request sent).
 
+### As built in 6.8 (HE-7): notifications and push
+
+- **`state/notify.ts`**: which changes notify (`taskEvent`, `stillApplies`, `notificationText`, `attentionCount`), the
+  settings under `ia.notifications` and own moves under `ia.movedHere` (noted by `boardHelpers.moveTask` before its
+  request), read from the browser's storage each time as the old ones were (another tab changes them). The DOM half is
+  `components/layout/notifier.ts` (one notifying tab by Web Lock or `ia.notifyLeader`, `ia.focusedTask`, the chime, the
+  count in the title, icon and the desktop app's badge, `setTitleProfile`), under the components' lint override for
+  timers and `Date`. Live changes come from the client's `onLiveTaskChange` (`board/live.ts`): `watchBoard` calls it
+  for a task event numbered after its `hello`, never for a snapshot or a replay after a reconnect.
+- **Push**: `components/layout/push.ts` (the old `push.ts`, calling `hub.push.*` through `state/rpc.ts`'s `hubRpc`),
+  `public/sw.js` without Allow and Deny, and `layout/Notifications.tsx` as the old one but its prompts hint. Both start
+  in `main.tsx`.
+- **Checks**: `tests/ui/push.test.mjs` (a `--fake-claude` server: the agent's permission prompt is the move that
+  pushes) and `tests/ui/notifications.test.mjs` (moves by `tasks.update` in place of the old fed websocket; a stopped run
+  through the fake agent). The harness's `withBrowser` takes `fullBrowser` again (the full Chromium: notifications,
+  service workers). Not ported: answering a prompt from its notification (deferred), a hub's linked hosts (M7).
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |
