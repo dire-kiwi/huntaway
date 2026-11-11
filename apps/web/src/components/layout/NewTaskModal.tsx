@@ -1,5 +1,6 @@
 import { type HostProfile as Profile, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import type { Status } from "@huntaway/contracts"
+import { asanaLink, AsanaPicker } from "../task/ExternalLinks"
 import { Modal } from "../ui"
 import { submitBlocks } from "./newTask/blocks"
 import { Editor, Legend } from "./newTask/Editor"
@@ -62,7 +63,10 @@ export function NewTaskModal({
   const { group, hosts } = origin
   const { project, noProject, asGroup, host } = place
   const { noun, docType } = tok
-  const { attach, pickingLink } = kept
+  const { attach, pickingLink, setPickingLink, links, setLinks } = kept
+  const { description, input, edit } = ed
+  const { target } = place
+  const { text } = tok
   const { submit } = submission
   const hostCount = hosts.length
   const where = noProject
@@ -103,6 +107,23 @@ export function NewTaskModal({
         <Notes opened={opened} origin={origin} where={place} tok={tok} worktree={options.worktree} blocks={blocks} whenLoaded={submission.whenLoaded} />
         <Footer submission={submission} options={options} tok={tok} kept={kept} blocks={blocks} onClose={onClose} />
       </form>
+      {pickingLink && (
+        <AsanaPicker
+          hostId={target.host_id}
+          profileId={target.profile_id}
+          linked={links}
+          onClose={() => setPickingLink(false)}
+          onPick={(t) => {
+            setPickingLink(false)
+            setLinks((ls) => [...ls, asanaLink(t)])
+            // Nothing written yet (tokens aside): the Asana task says what to do.
+            const about = [t.name, t.notes.trim()].filter(Boolean).join("\n\n")
+            const next = description.trim() ? `${description.trimEnd()}\n\n${about}` : about
+            if (!text.trim()) edit(next, next.length)
+            else input.current?.focus()
+          }}
+        />
+      )}
     </Modal>
   )
 }

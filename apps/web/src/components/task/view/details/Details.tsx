@@ -12,6 +12,7 @@ import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/
 import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
 import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
 import { Button, errorText, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
+import { LinkedTasks, usesAsana } from "../../ExternalLinks"
 import { TitleSection } from "../Title"
 import type { Mode } from "../layout"
 import { AgentSection } from "./AgentSection"
@@ -25,13 +26,13 @@ import { StatusSection } from "./StatusSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
 import { TrackedWork } from "./TrackedWork"
 
-// Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the Asana links
-// (ExternalLinks, 6.11), the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12), the task's workflows
+// Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12), the task's workflows
 // (Workflows, 6.6). Subprojects were a legacy branch and are gone. The stack sections "Stacked on" and "Landing after
-// this" are back (stacks, 4.8).
+// this" are back (stacks, 4.8), and the Asana links (6.11).
 
 export function Details({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
   const project = useProject(task.project_id)
+  const asana = usesAsana(useBoard((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)))
   // A group task has no repository, so nothing to review, merge or depend on. A plan, artifact or
   // diagram has no branch to merge either.
   const groupTask = isGroupTask(task)
@@ -90,6 +91,13 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
 
       {/* The assistant's is the conversation itself. */}
       {!assistant && <DescriptionSection task={task} />}
+
+      {/* With Asana turned off for the profile, only to show (and unlink) the links it has. */}
+      {task.kind === "task" && ((asana && !lasting) || task.external_links.length > 0) && (
+        <Section title="Asana">
+          <LinkedTasks task={task} canLink={asana} />
+        </Section>
+      )}
 
       {task.fanout_id && <FanoutSection task={task} />}
 
