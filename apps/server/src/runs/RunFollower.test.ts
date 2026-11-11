@@ -146,6 +146,34 @@ describe("RunFollower", () => {
     ),
   )
 
+  it.effect("tells the line handler when it lets a run go: the run exited, or following it was stopped", () =>
+    Effect.gen(function* () {
+      const lines = yield* Queue.unbounded<string>()
+      const released = yield* Queue.unbounded<string>()
+      const output = Layer.succeed(
+        RunOutput,
+        RunOutput.of({
+          handle: (_, line) => Queue.offer(lines, line).pipe(Effect.asVoid),
+          released: (run) => Queue.offer(released, run.id).pipe(Effect.asVoid),
+        }),
+      )
+      yield* Effect.gen(function* () {
+        const follower = yield* RunFollower
+        const ending = yield* fakeAgent({ output: `${text("working")}\n` })
+        yield* follower.follow(ending.run)
+        assert.deepStrictEqual(yield* takeLines(lines, 1), [text("working")])
+        yield* ending.end({ code: 0, signal: null })
+        runExited(yield* exited)
+        assert.strictEqual(yield* whileTicking(Queue.take(released)), ending.run.id)
+        const stopped = yield* fakeAgent({ output: `${text("working")}\n` })
+        yield* follower.follow(stopped.run)
+        assert.deepStrictEqual(yield* takeLines(lines, 1), [text("working")])
+        yield* follower.stop(stopped.run.id)
+        assert.strictEqual(yield* Queue.take(released), stopped.run.id)
+      }).pipe(Effect.provide(TestRuns(output)))
+    }).pipe(Effect.scoped),
+  )
+
   it.effect("tells a vanished shim from a live one", () =>
     withLines(() =>
       Effect.gen(function* () {

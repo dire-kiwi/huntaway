@@ -87,6 +87,8 @@ export class RunFollower extends Context.Service<RunFollower, RunFollowerShape>(
           }
         }).pipe(
           Effect.onError((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logError(`run=${run.id} following its output failed`, cause))),
+          // However it ends, what the line handler kept for the run goes with it.
+          Effect.ensuring(output.released === undefined ? Effect.void : output.released(run)),
           Effect.annotateLogs({ module: "runs" }),
           // No span per line and per statement: nothing collects them, and they were a good part of a line's cost.
           Effect.withTracerEnabled(false),

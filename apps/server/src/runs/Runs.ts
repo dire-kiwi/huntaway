@@ -140,7 +140,9 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
   static readonly limitResets = Layer.effectDiscard(
     Effect.gen(function* () {
       const runs = yield* Runs
-      yield* runs.startUnblocked(null).pipe(Effect.repeat(Schedule.spaced("30 seconds")), Effect.forkScoped)
+      // A pass that fails is logged; the loop goes on (a defect would otherwise end it until the server restarts).
+      const pass = runs.startUnblocked(null).pipe(Effect.catchCause((cause) => Effect.logError("starting the tasks whose usage limit reset failed", cause)))
+      yield* pass.pipe(Effect.repeat(Schedule.spaced("30 seconds")), Effect.forkScoped)
     }),
   )
 
@@ -692,25 +694,31 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       })
 
       const startWaiting = Effect.fn("Runs.startWaiting")(function* (id: TaskId) {
-        if (yield* runs.hasActive(id)) return
-        const before = yield* load(id).pipe(Effect.orElseSucceed(() => null))
-        if (before === null) return
-        const limit = before.limit_reset_at !== null
-        yield* withLock(
+        // Claimed under the task's lock, in one transaction: a task deleted meanwhile, no longer waiting (the reactor's
+        // pass and the 30-second one both found it, and the other took it) or with a run going is left alone, so it is
+        // started once.
+        const before = yield* withLock(
           id,
           db.tx(
             Effect.gen(function* () {
-              const task = yield* load(id)
+              if (yield* runs.hasActive(id)) return null
+              const task = yield* load(id).pipe(Effect.orElseSucceed(() => null))
+              if (task === null || !task.waiting) return null
               yield* write(task, { waiting: false, limit_reset_at: null }, yield* nowTimestamp)
-              const why = limit
-                ? "Its usage limit has reset, so its agent is carrying on"
-                : task.depends_on.length === 0
-                  ? "Its agent is starting"
-                  : "Nothing it depends on is left to merge, so its agent is starting"
+              const why =
+                task.limit_reset_at !== null
+                  ? "Its usage limit has reset, so its agent is carrying on"
+                  : task.depends_on.length === 0
+                    ? "Its agent is starting"
+                    : "Nothing it depends on is left to merge, so its agent is starting"
               yield* threads.notice(id, "info", why)
+              return task
             }),
           ),
-        ).pipe(Effect.orDie)
+          // Deleted while it was being claimed: there is nothing to start.
+        ).pipe(Effect.catchTag("TaskNotFound", () => Effect.succeed(null)))
+        if (before === null) return
+        const limit = before.limit_reset_at !== null
         const queued = (yield* tasks.queued(id)).some((q) => q.text.trim() !== "")
         const text = queued
           ? null
@@ -794,7 +802,10 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         startWaiting,
         startUnblocked: Effect.fn("Runs.startUnblocked")(function* (project: ProjectId | null) {
           if (config.noAgents) return
-          for (const id of yield* dependencies.ready(project, yield* Clock.currentTimeMillis)) yield* startWaiting(id)
+          // One task's failure doesn't keep the others waiting.
+          for (const id of yield* dependencies.ready(project, yield* Clock.currentTimeMillis)) {
+            yield* startWaiting(id).pipe(Effect.catchCause((cause) => Effect.logError(`task=${id} starting a waiting task failed`, cause)))
+          }
         }),
       })
     }),

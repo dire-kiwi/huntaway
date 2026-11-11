@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Layer, Option, Ref, Result, Schema } from "effect"
+import { Cause, Effect, Exit, Layer, MutableHashMap, Option, Result, Schema } from "effect"
 import type { NewEvent, RunId, TaskId } from "@huntaway/contracts"
 import { SavedEvent } from "@huntaway/contracts"
 import { INIT_PREFIX } from "../../agents/claude/launch.ts"
@@ -122,7 +122,9 @@ export const ClaudeOutput = Layer.effect(
     const background = yield* BackgroundWork
     const usage = yield* Usage
     const waits = yield* RunWaits
-    const kept = yield* Ref.make<ReadonlyMap<TaskId, Kept>>(new Map())
+    // Changed in place, one key at a time (a line's run is the only writer of its task's entry), and emptied of a run's
+    // entry when the follower lets the run go (`released`), so it holds the threads being followed and no more.
+    const kept = MutableHashMap.empty<TaskId, Kept>()
 
     /** The thread's state as stored, for a run followed afresh. */
     const rebuild = Effect.fnUntraced(function* (run: Run) {
@@ -142,7 +144,7 @@ export const ClaudeOutput = Layer.effect(
 
     /** The state for `run`'s line, with what others wrote to the thread since taken in. In the line's transaction. */
     const current = Effect.fnUntraced(function* (run: Run) {
-      const had = (yield* Ref.get(kept)).get(run.task_id)
+      const had = Option.getOrUndefined(MutableHashMap.get(kept, run.task_id))
       const base = had !== undefined && had.run === run.id ? had : yield* rebuild(run)
       const seq = yield* store.seq(run.task_id)
       if (seq === base.seq) return base
@@ -351,7 +353,7 @@ export const ClaudeOutput = Layer.effect(
 
     /** What follows the line's commit. */
     const follow = Effect.fnUntraced(function* (run: Run, line: ClaudeLine, done: After) {
-      yield* Ref.update(kept, (all) => new Map([...all, [run.task_id, done.kept]]))
+      MutableHashMap.set(kept, run.task_id, done.kept)
       if (done.awaitedBefore !== null && done.kept.awaited === null) {
         yield* dir.setAwaited(run.id, null).pipe(Effect.catch((e) => Effect.logWarning(`run=${run.id} forgetting its awaited prompt: ${e.reason}`)))
       }
@@ -468,7 +470,15 @@ export const ClaudeOutput = Layer.effect(
       }
     })
 
+    /** The follower let `run` go: its thread's state goes, unless a later run of the task has it now. */
+    const released = (run: Run) =>
+      Effect.sync(() => {
+        const had = Option.getOrUndefined(MutableHashMap.get(kept, run.task_id))
+        if (had !== undefined && had.run === run.id) MutableHashMap.remove(kept, run.task_id)
+      })
+
     return RunOutput.of({
+      released,
       handle: (run, line, end) => one(run, line, end).pipe(Effect.annotateLogs({ module: "runs" })),
       handleChunk: (run, lines) =>
         chunk(run, lines).pipe(

@@ -377,6 +377,39 @@ describe("after a restart", () => {
     ),
   )
 
+  it.effect("two passes that find the same waiting task start it once; a task deleted or no longer waiting is left alone", () =>
+    run(
+      Effect.gen(function* () {
+        const pr = yield* project
+        const sql = yield* SqlClient.SqlClient
+        const runs = yield* Runs
+        const dependency = yield* newTask({ project: pr, status: "done", running: false })
+        const waiting = yield* newTask({ project: pr, running: false, session: "s1" })
+        yield* sql`UPDATE tasks SET depends_on = ${`["${dependency}"]`}, waiting = 1 WHERE id = ${waiting}`.pipe(Effect.orDie)
+        // The reactor's pass for the project and the 30-second one, at once.
+        yield* Effect.all([runs.startUnblocked(pr), runs.startUnblocked(null)], { concurrency: 2, discard: true })
+        const t = yield* task(waiting)
+        assert.deepStrictEqual([t.waiting, t.running, t.status, t.attention_reason], [false, true, "in_progress", null])
+        assert.deepStrictEqual(
+          (yield* notices(waiting)).filter((n) => n.startsWith("Nothing it depends on")),
+          ["Nothing it depends on is left to merge, so its agent is starting"],
+        )
+        assert.strictEqual((yield* items(waiting)).filter((i) => i.type === "user_message").length, 1)
+        // Started already, so no longer waiting: a later pass leaves it alone.
+        yield* runs.startUnblocked(pr)
+        assert.strictEqual((yield* items(waiting)).filter((i) => i.type === "user_message").length, 1)
+        // A pass that found a task waiting, which another took (or the user moved) before this one held its lock: left
+        // alone, not started a second time. And one deleted meanwhile is no failure.
+        const taken = yield* newTask({ project: pr, running: false, session: "s1" })
+        yield* runs.startWaiting(taken)
+        const after = yield* task(taken)
+        assert.deepStrictEqual([after.running, after.status, after.attention_reason], [false, "in_progress", null])
+        assert.deepStrictEqual(yield* items(taken), [])
+        yield* runs.startWaiting(TaskId.make("gone"))
+      }),
+    ),
+  )
+
   it.effect("sessions are compacted once idle for 50 minutes, while their prompt cache is warm, and the card stays", () =>
     run(
       Effect.gen(function* () {

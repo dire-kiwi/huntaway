@@ -17,6 +17,11 @@ export interface RunOutputShape {
    * several to a transaction (a handler that has it says how). The follower uses it when there is one.
    */
   readonly handleChunk?: (run: Run, lines: ReadonlyArray<readonly [line: string, end: number]>) => Effect.Effect<void>
+  /**
+   * The follower stopped following `run` (it exited, was stopped, its task deleted, or the server is stopping): what the
+   * handler kept for it goes. A handler that keeps nothing has none.
+   */
+  readonly released?: (run: Run) => Effect.Effect<void>
 }
 
 /**
