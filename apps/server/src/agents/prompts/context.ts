@@ -62,7 +62,7 @@ export interface PromptContext {
   readonly workflowStart: string | null
   /** It has the board's docs server. false until plan task 6.3 (`Docs`). */
   readonly docsTools: boolean
-  /** It has the desktop server: the host's name, whose desktop it is. null until plan task 6.10 (computer use). */
+  /** It has the desktop server: the host's name, whose desktop it is (6.10). */
   readonly desktopHost: string | null
   /** Its temp folder, its `$TMPDIR`. null until plan task 2.8 (`TaskTmp`). */
   readonly tmp: string | null

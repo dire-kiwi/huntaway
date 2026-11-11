@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { Mac, SecureRandom } from "effect/crypto"
+import { Digest, Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
@@ -16,6 +16,8 @@ import {
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
+  // 6.10: computer use.
+  DesktopRpcs,
   GitRpcs,
   HostRpcGroup,
   PenRpcs,
@@ -45,6 +47,13 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+// 6.10: computer use.
+import { CuaDriver } from "./desktop/CuaDriver.ts"
+import { CuaInstall } from "./desktop/CuaInstall.ts"
+import { Desktop } from "./desktop/Desktop.ts"
+import { DesktopClaims } from "./desktop/DesktopClaims.ts"
+import { DesktopOpRepo } from "./desktop/DesktopOpRepo.ts"
+import { DesktopTools } from "./desktop/DesktopTools.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
@@ -145,6 +154,8 @@ import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
 import { CheckpointHandlers } from "./rpc/checkpoints.ts"
+// 6.10: computer use.
+import { DesktopHandlers } from "./rpc/desktop.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
@@ -192,6 +203,8 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Identity.layer),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
+    // 6.10: the SHA-256 of a Cua Driver download.
+    Layer.provideMerge(Digest.layerWebCrypto),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
 
@@ -334,6 +347,17 @@ export const BoardHooks = Layer.effect(
   }),
 )
 
+/**
+ * 6.10: computer use: the host's one Cua Driver, who drives the desktop, the journal, installing the driver, and the
+ * `desktop` MCP server's tools, which it registers with the MCP area below it (desktop sits below mcp in the
+ * dependency order, so mcp/ doesn't import it).
+ */
+const DesktopLive = DesktopTools.pipe(
+  Layer.provideMerge(Desktop.layer),
+  Layer.provideMerge(CuaInstall.layer),
+  Layer.provideMerge(Layer.mergeAll(CuaDriver.layer, DesktopClaims.layer, DesktopOpRepo.layer)),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
@@ -341,6 +365,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(DemoLive),
     // 6.1: terminals (a tmux session per task and per terminal tool), ended with a worktree's teardown.
     Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
+    // 6.10: computer use, over the MCP area it registers its server with.
+    Layer.provideMerge(DesktopLive),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
@@ -410,6 +436,8 @@ export const Served = PublicRpcs.merge(
   ConfigArchiveRpcs,
   FanoutRpcs,
   GithubRepoRpcs,
+  // 6.10: computer use.
+  DesktopRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -435,6 +463,8 @@ export const HandlersLive = Layer.mergeAll(
   ConfigArchiveHandlers,
   FanoutHandlers,
   GithubRepoHandlers,
+  // 6.10: computer use.
+  DesktopHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

@@ -1,4 +1,4 @@
-import { Config, Context, Effect, Layer, Option, Redacted } from "effect"
+import { Config, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { Flag } from "effect/cli"
 
 /**
@@ -110,6 +110,10 @@ export const SERVE_ENV = [
   "HUNTAWAY_GH_BIN",
   // 6.11: where Asana's API is (a fake one for a test server).
   "HUNTAWAY_ASANA_URL",
+  // 6.10: the Cua Driver to run, the release to install, and a screen said to be locked or not (tests).
+  "HUNTAWAY_CUA_DRIVER",
+  "HUNTAWAY_CUA_DRIVER_RELEASE",
+  "HUNTAWAY_DESKTOP_LOCKED",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -186,7 +190,17 @@ export interface ServerConfigShape {
   readonly taskTmpRoot: string | null
   /** 6.11: Asana's API (`HUNTAWAY_ASANA_URL`, default Asana's own); a test points it at a fake. Tests have none by default. */
   readonly asanaUrl: string
+  /** 6.10: `HUNTAWAY_CUA_DRIVER`, the Cua Driver to run instead of one installed or on PATH (`desktop/CuaDriver`). Tests give the fake. */
+  readonly cuaDriver: string | null
+  /** 6.10: `HUNTAWAY_CUA_DRIVER_RELEASE` (JSON), the release the host's page installs instead of the pinned one (a fake download in tests). */
+  readonly cuaRelease: CuaReleaseConfig | null
+  /** 6.10: `HUNTAWAY_DESKTOP_LOCKED` (`1` or `0`), whether the screen is locked, instead of asking the session (tests). */
+  readonly desktopLocked: boolean | null
 }
+
+/** 6.10: a Cua Driver release archive: where it is, and what it must be. */
+export const CuaReleaseConfig = Schema.Struct({ version: Schema.String, url: Schema.String, bytes: Schema.Int, sha256: Schema.String })
+export type CuaReleaseConfig = typeof CuaReleaseConfig.Type
 
 /** The version of this build. A release sets it when it packages the server. */
 export const VERSION = "0.1.0"
@@ -206,6 +220,10 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""))
         const cacheHome = yield* Config.String("XDG_CACHE_HOME").pipe(Config.withDefault(""))
         const asanaUrl = yield* Config.String("HUNTAWAY_ASANA_URL").pipe(Config.withDefault("https://app.asana.com/api/1.0"))
+        // 6.10: computer use's overrides.
+        const cuaDriver = yield* Config.String("HUNTAWAY_CUA_DRIVER").pipe(Config.option)
+        const cuaRelease = yield* Config.schema(Schema.fromJsonString(CuaReleaseConfig), "HUNTAWAY_CUA_DRIVER_RELEASE").pipe(Config.option)
+        const desktopLocked = yield* Config.String("HUNTAWAY_DESKTOP_LOCKED").pipe(Config.option)
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -238,6 +256,19 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
           taskTmpRoot: null,
           asanaUrl,
+          cuaDriver: Option.getOrNull(
+            Option.map(
+              Option.filter(cuaDriver, (p) => p !== ""),
+              expand,
+            ),
+          ),
+          cuaRelease: Option.getOrNull(cuaRelease),
+          desktopLocked: Option.getOrNull(
+            Option.map(
+              Option.filter(desktopLocked, (v) => v !== ""),
+              (v) => v === "1",
+            ),
+          ),
         })
       }),
     )
@@ -275,6 +306,10 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         taskTmpRoot: `${config.dataDir}/task-tmp`,
         // Never Asana's own: a test gives its fake's.
         asanaUrl: "http://127.0.0.1:9/no-asana-in-tests",
+        // 6.10: never this machine's desktop, nor a download from GitHub: a test gives the fake driver and its own release.
+        cuaDriver: `${config.dataDir}/no-cua-driver-in-tests`,
+        cuaRelease: { version: "0.0.0-none", url: "http://127.0.0.1:1/no-downloads-in-tests", bytes: 1, sha256: "0".repeat(64) },
+        desktopLocked: false,
         ...config,
       }),
     )

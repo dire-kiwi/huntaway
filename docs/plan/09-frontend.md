@@ -293,6 +293,19 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   isn't on this server. Unit tests: `tests/unit/changes/{diffs,lineComments,highlight}.test.ts`, every old case
   (`diffs` drives git through `node:child_process` as the old one did).
 
+### As built in 6.10 (HE-7): computer use
+
+- `settings/HostDesktop.tsx` (the old one: install, check, remove, the switch; `rpc(host, "desktop.*")`, polled every
+  15 s, every second while installing) is a component for the host page 6.12 brings; nothing mounts it yet.
+- `task/Desktop.tsx` (`useDesktopOn(hostId)` from `desktop.status`, cached a minute; `DesktopButton`; `DesktopPane`
+  polling `desktop.frame` every 700 ms and `desktop.ops` every 3 s) is in the task view: the button beside the tabs on a
+  host with computer use on and a driver, the pane beside the main area (half the width while wide, in its place when
+  narrow; it expands a side panel), the details column giving way. The browser's splitter isn't on this server, so the
+  share is fixed. The old capability check (`hostHas(host, DESKTOP)`) is gone.
+- Checks: `tests/ui/desktop.test.mjs` (`--fake-claude --fake-desktop`: a run's desktop calls over its own server, then
+  the pane shows the window and what it did; no button with computer use off) and `tests/ui/driver.test.mjs` (the old
+  checks of `scripts/ui-check.mjs`; its sandboxed frame is a page of the check's own until documents come, 6.2).
+
 ### As built in 4.8 (HE-5): web
 
 - **Wired** (the cuts M1/M2 left for merges and stacks), each through `@huntaway/client`'s mutations

@@ -17,6 +17,8 @@
 #   --fake-gh      run gh as packages/testing/bin/fake-gh over a fake GitHub kept in <data-dir>/github.json (its state,
 #                  which a test reads and changes: accounts, repositories, pull requests; see fake-gh.ts), starting from
 #                  $HUNTAWAY_FAKE_GH_SEED's file if set, else from no accounts and no repositories
+#   --fake-desktop run the Cua Driver as packages/testing/bin/fake-cua-driver (canned windows and images, never this
+#                  machine's desktop), logging its calls to <data-dir>/fake-cua.log, with the screen said to be unlocked
 #
 # `start` prints shell assignments (HUNTAWAY_TEST_URL, HUNTAWAY_TEST_TOKEN, HUNTAWAY_TEST_PID, HUNTAWAY_TEST_DATA_DIR,
 # HUNTAWAY_TEST_ENV, and with --seed HUNTAWAY_TEST_PROFILE, HUNTAWAY_TEST_PROJECT, HUNTAWAY_TEST_REPO), so
@@ -69,7 +71,7 @@ data_dir() {
 # and $token.
 launch() {
   local dir=$1
-  local bin serve
+  local bin serve desktop_env=()
   # shellcheck disable=SC1091
   . "$dir/launch"
   # Nothing from an agent's or a live server's environment (hubs, tokens, profiles, its restart file) carries over:
@@ -81,7 +83,7 @@ launch() {
   mkdir -p "$dir/tmp"
   # 6.11: Asana is the fake a test gives ($HUNTAWAY_ASANA_URL), else none at all: a test server never reaches Asana.
   local asana=${HUNTAWAY_ASANA_URL:-http://127.0.0.1:9/no-asana-on-test-servers}
-  TMPDIR="$dir/tmp" env "${unset[@]}" HUNTAWAY_ASANA_URL="$asana" \
+  TMPDIR="$dir/tmp" env "${unset[@]}" HUNTAWAY_ASANA_URL="$asana" "${desktop_env[@]}" \
     setsid "$bin" serve --host 127.0.0.1 --port "$2" --data-dir "$dir" --name test "${serve[@]}" \
     > "$dir/server.log" 2>&1 < /dev/null &
   pid=$!
@@ -177,12 +179,13 @@ build_shim() {
 }
 
 start() {
-  local bin=${HUNTAWAY_TEST_BIN:-} do_seed="" agents=1 fake="" fake_gh="" serve=()
+  local bin=${HUNTAWAY_TEST_BIN:-} do_seed="" agents=1 fake="" fake_gh="" serve=() desktop_env=()
   for a in "$@"; do
     case $a in
       --seed) do_seed=1 ;;
       --fake-claude) fake=1 ;;
       --fake-gh) fake_gh=1 ;;
+      --fake-desktop) desktop_env=(HUNTAWAY_CUA_DRIVER="$root/packages/testing/bin/fake-cua-driver" HUNTAWAY_DESKTOP_LOCKED=0) ;;
       --no-agents) agents="" ;;
       *) serve+=("$a") ;;
     esac
@@ -224,9 +227,10 @@ start() {
     # The fake claude's merge (HUNTAWAY_FAKE_CLAUDE_MERGE=pr) merges with this gh, never the machine's.
     export HUNTAWAY_FAKE_CLAUDE_GH="$dir/gh"
   fi
+  [[ ${#desktop_env[@]} -gt 0 ]] && desktop_env+=(HUNTAWAY_FAKE_CUA_LOG="$dir/fake-cua.log")
   # What `restart` needs to start the same server again, the fake claude's knobs too.
   {
-    declare -p bin serve
+    declare -p bin serve desktop_env
     for v in $(compgen -e HUNTAWAY_FAKE_CLAUDE_ || true); do
       printf 'export %s=%q\n' "$v" "${!v}"
     done

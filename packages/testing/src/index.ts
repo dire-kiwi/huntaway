@@ -8,3 +8,5 @@ export * from "./fakeGitHub.ts"
 export * from "./fakeSocket.ts"
 // 6.11: a fake Asana.
 export * from "./fakeAsana.ts"
+// 6.10: a fake Cua Driver.
+export * from "./fakeCuaDriver.ts"

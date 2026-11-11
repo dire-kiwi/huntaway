@@ -2,6 +2,8 @@ import { ApprovalRulesRpcs } from "./approvalRules.ts"
 import { AttachmentRpcs } from "./attachments.ts"
 import { BoardRpcs } from "./board.ts"
 import { CheckpointRpcs } from "./checkpoints.ts"
+// 6.10: computer use.
+import { DesktopRpcs } from "./desktop.ts"
 import { GitRpcs } from "./git.ts"
 import { HostRpcGroup } from "./host.ts"
 import { PenRpcs } from "./pens.ts"
@@ -39,6 +41,8 @@ export const HostRpcs = HostRpcGroup.merge(
   ConfigArchiveRpcs,
   FanoutRpcs,
   GithubRepoRpcs,
+  // 6.10: computer use.
+  DesktopRpcs,
 )
 export type HostRpcs = typeof HostRpcs
 

@@ -38,9 +38,12 @@ import { TitleEditor } from "./view/Title"
 import { ReviewDot } from "./Review"
 import { ReviewThreadView } from "./view/ReviewThreadView"
 import { useOpenTools } from "./terminalTools"
+// 6.10: the desktop view.
+import { DesktopButton, DesktopPane, useDesktopOn } from "./Desktop"
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
-// left out here, each with a note: the browser pane and the desktop view (M6),
+// left out here, each with a note: the browser pane (M6; the desktop view, 6.10, has a fixed half of the width until the
+// browser's splitter comes),
 // workflows' tabs (6.6), the assistant's brief, memory, routines and
 // action log (M6), finding a routine's thread on other hosts (M6), and the Agents pill (layout/AgentsPill, with the
 // assistant's and the layout's later pieces). Subprojects are a legacy branch, deleted.
@@ -167,6 +170,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const tools = useBoard((s) => (task ? s.hostSettings[task.host_id]?.terminal_tools : undefined)) ?? NO_TOOLS
   const allOpen = useOpenTools((s) => s.open)
   const openIds = useMemo(() => allOpen.filter((o) => o.taskId === taskId && o.hostId === task?.host_id).map((o) => o.toolId), [allOpen, taskId, task?.host_id])
+  // 6.10: the desktop view (HA-273), beside the main area, on a host whose agents may use its desktop.
+  const [desktop, setDesktop] = useState(false)
+  const desktopOn = useDesktopOn(task?.host_id)
   // The opening tab is picked when the task opens (or once it's loaded), not again as its status moves on.
   const found = !!task
   const [tab, setTab] = useState<Tab>(() => openingTab(task))
@@ -265,6 +271,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     else if (project) navigate(mode === "page" ? href({ name: "board", projectId: project.id }) : boardTaskUrl(project.id, task.id))
   }
 
+  // 6.10: it needs the room.
+  const toggleDesktop = () => {
+    if (!desktop && mode === "panel") setPanelExpanded(true)
+    setDesktop(!desktop)
+  }
+
   // Errors show under the header, with the marks'.
   const stop = () => {
     setMarkErr(null)
@@ -351,6 +363,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           ))}
         </div>
       )}
+      {desktopOn && <DesktopButton open={desktop} onClick={toggleDesktop} />}
       {!narrow && run}
     </>
   )
@@ -428,7 +441,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         )}
       </header>
       <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
+        {/* Too narrow for both: the desktop takes the main area's place. */}
+        <main className={clsx("min-w-0 flex-1", desktop && !wide && "hidden")}>
           {mounted.includes("terminal") && (
             <div className={clsx("h-full", tab !== "terminal" && "hidden")}>
               <Suspense fallback={null}>
@@ -447,8 +461,13 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             ))}
           <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} onShowThread={() => setTab("thread")} />
         </main>
-        {/* A document, the changes' panels and the terminals get the room. */}
-        {wide && !docShown && shown !== "changes" && !isTerminalTab(tab) && (
+        {desktop && (
+          <div className={clsx("min-w-0", wide ? "w-1/2 shrink-0" : "flex-1")}>
+            <DesktopPane key={`${task.host_id}:${task.id}`} task={task} onClose={() => setDesktop(false)} />
+          </div>
+        )}
+        {/* A document, the changes' panels and the terminals get the room; so does the desktop. */}
+        {wide && !desktop && !docShown && shown !== "changes" && !isTerminalTab(tab) && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>
