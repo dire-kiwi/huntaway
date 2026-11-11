@@ -1,4 +1,4 @@
-import { Context, Effect, Fiber, FileSystem, Layer, Option, Schema } from "effect"
+import { Context, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import type { Conflict, MergedWorktreeResult, ProfileId, Project, ProjectId, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
@@ -94,6 +94,11 @@ export interface WorktreesShape {
   readonly recover: Effect.Effect<void>
   /** Hold the task's worktree lock (`["worktree", task]`) around `effect`: what 4.8's restack takes too. */
   readonly withLock: (task: TaskId) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  /**
+   * 6.1: what runs in a worktree that is about to go, before its teardown script: an area below this one registers it
+   * (`Terminals` ends the task's terminals, which would be left in a deleted folder).
+   */
+  readonly beforeTeardown: (hook: (task: TaskId) => Effect.Effect<void>) => Effect.Effect<void>
 }
 
 const kept = (why: string): Removal => ({ _tag: "Kept", why })
@@ -147,6 +152,8 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
       const scope = yield* Effect.scope
       const scripts = { spawner, agentEnv: config.agentEnv }
+      // 6.1: what areas below this one end in a worktree before it goes (`beforeTeardown`).
+      const teardownHooks = yield* Ref.make<ReadonlyArray<(task: TaskId) => Effect.Effect<void>>>([])
 
       const withLock = (task: TaskId) => locks.withLock(["worktree", task])
       const exists = (path: string) => fs.exists(path).pipe(Effect.orElseSucceed(() => false))
@@ -325,7 +332,8 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
             yield* noStrays(g, wt)
           }
           yield* write(id, { worktree_state: "tearing_down" })
-          // M6: its terminals are killed here (`Terminals.killAll`), as they'd be left in a deleted folder.
+          // 6.1: its terminals are killed here (`Terminals.killAll`, registered), as they'd be left in a deleted folder.
+          for (const hook of yield* Ref.get(teardownHooks)) yield* hook(id)
           // And the test servers its agents started from it, which would run on with their build gone.
           yield* leftovers
             .stopTask({ tmp: [taskTmp.dir(task)], worktrees: [wt], data_dir: dataDir.root, tmp_root: taskTmp.root }, `task ${id}`)
@@ -566,6 +574,7 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
         deleteProfile,
         recover: recover(),
         withLock: (task) => withLock(task),
+        beforeTeardown: (hook) => Ref.update(teardownHooks, (hooks) => [...hooks, hook]),
       })
     }),
   )

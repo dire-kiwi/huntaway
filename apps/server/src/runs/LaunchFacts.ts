@@ -78,6 +78,11 @@ export interface LaunchFactsShape {
    * its profile picks, if still one of its configs, else its first; undefined for other threads (they keep theirs).
    */
   readonly threadConfig: (task: Task) => Effect.Effect<AgentConfigId | null | undefined>
+  /**
+   * 6.1: where the thread's agent works (its worktree while that is there), and what of its config a program run there
+   * gets: the config folder (`CLAUDE_CONFIG_DIR`, or `CODEX_HOME` for a Codex config) and its proxy. A task's terminal.
+   */
+  readonly workEnv: (task: Task) => Effect.Effect<{ readonly cwd: string; readonly env: Readonly<Record<string, string>> }>
 }
 
 export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>()("huntaway-server/runs/LaunchFacts") {
@@ -414,7 +419,20 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         return available.find((id) => id === picked) ?? available[0] ?? null
       })
 
-      return LaunchFacts.of({ launch, claude, config: configOf, documentsOf: (task) => dataDir.documents(task), threadConfig })
+      // 6.1: a task's terminal works where its agent does, with its config.
+      const workEnv = Effect.fn("LaunchFacts.workEnv")(function* (task: Task) {
+        const project = task.project_id === null ? null : Option.getOrNull(yield* projects.get(task.project_id))
+        const at = yield* cwdOf(task, project?.repo_path ?? null)
+        // A worktree that's gone (being set up, or removed by hand) is no place to start: the repository is.
+        const cwd = expand(at === task.worktree_path && project !== null && !(yield* exists(at)) ? project.repo_path : at)
+        const cfg = yield* configOf(task)
+        const configDir = yield* configDirOf(task, cfg)
+        const env: Record<string, string> = Object.fromEntries(yield* apiEnv(cfg))
+        if (configDir !== null) env[cfg?.agent === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"] = expand(configDir)
+        return { cwd, env }
+      })
+
+      return LaunchFacts.of({ launch, claude, config: configOf, documentsOf: (task) => dataDir.documents(task), threadConfig, workEnv })
     }),
   )
 }

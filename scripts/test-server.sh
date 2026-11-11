@@ -283,6 +283,9 @@ stop() {
     [[ -n $agent ]] && stop_pid "$agent" "-$agent"
     stop_pid "$shim"
   done
+  # 6.1: terminals outlive the server too, on the data folder's own tmux server (its socket in the data folder, never
+  # the default server or another board's): end it, with its sessions.
+  [[ -S $dir/tmux.sock ]] && command -v tmux >/dev/null && tmux -S "$dir/tmux.sock" kill-server 2>/dev/null || true
   # A process the server started (a git command) may still be writing in it for a moment: "Directory not empty".
   rm -rf "$dir" 2>/dev/null || { sleep 0.5; rm -rf "$dir"; }
   [[ $(readlink "$latest" 2>/dev/null) == "$dir/env" ]] && rm -f "$latest"

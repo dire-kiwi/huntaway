@@ -19,6 +19,8 @@ import {
   ProjectRpcs,
   PublicRpcs,
   TaskRpcs,
+  // 6.1
+  TerminalRpcs,
   ThreadRpcs,
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
@@ -148,6 +150,11 @@ import { Tasks } from "./tasks/Tasks.ts"
 import { ThreadReaders } from "./threads/ThreadReaders.ts"
 import { Threads } from "./threads/Threads.ts"
 import { ThreadStore } from "./threads/ThreadStore.ts"
+// 6.1: terminals.
+import { TerminalRoute } from "./http/terminal.ts"
+import { TerminalHandlers } from "./rpc/terminal.ts"
+import { Pty } from "./terminal/Pty.ts"
+import { Terminals } from "./terminal/Terminals.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -303,6 +310,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // 6.1: terminals (a tmux session per task and per terminal tool), ended with a worktree's teardown.
+    Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
@@ -343,7 +352,7 @@ export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.
 export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
 
 /** Every area's services, and their loops. */
-export const AreasLive = Layer.mergeAll(RunLoops, PrLoops).pipe(
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, Terminals.reaper /* 6.1 */).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
 )
 
@@ -362,6 +371,8 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.1
+  TerminalRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +391,8 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.1
+  TerminalHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
@@ -389,7 +402,16 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
+export const RoutesLive = Layer.mergeAll(
+  RpcLive,
+  HealthRoute,
+  McpHttpRoute,
+  TerminalRoute /* 6.1 */,
+  ApiNotFound,
+  StaticUi,
+  HttpRouter.cors({ maxAge: 86400 }),
+  BodyLimit,
+)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a
