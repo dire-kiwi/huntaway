@@ -235,6 +235,9 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       return { ...next, checkpoints: new Map(board.checkpoints).set(message.task_id, message.seq) }
     case "approval_rules":
     case "approval_log":
+    // 6.8: for push; the board has nothing of them.
+    case "assistant_reply":
+    case "routine_report":
       // A profile's approval rules and action log are read where Settings shows them, not kept in the board.
       return next
     default:

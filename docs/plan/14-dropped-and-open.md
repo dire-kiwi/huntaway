@@ -22,6 +22,7 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | `--broker*` flags, `ssh-host --name/--no-start`, `/profiles/{id}/scratch`, `/profiles/{id}/claude-config` | Removed features kept as no-ops                        | —                                                         |
 | The serde emulation: `_from_json` readers that reproduce Rust's error texts, sorted-key JSON, `hidden()` fields, 422 texts | The Rust port                         | —                                                         |
 | The test seams: `IN_TEST`, `when`/`reached`, `*_BIN` variables read by the code, shortened constants | Tests without layers or a test clock                       | —                                                         |
+| `IA_PUSH_SUBJECT` (6.8): the VAPID `sub` a board names to push services                          | Naming someone other than the project's page                    | — (the subject is the project's GitHub page; a `ServerConfig` flag if wanted) |
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
 
 What is **not** dropped, although it carries an old name: `ia-shim`, branches `ia/…`, `refs/huntaway/…`, the script
@@ -38,6 +39,10 @@ switched and cannot reach one that has. Sessions and scopes are designed with a 
 
 With it, Settings → Network access's paired phones (the old `settings/Devices.tsx`): the panel keeps the board's URL
 and token (6.12).
+
+As built in 6.8: the `expo` subscriptions a board has are listed in Settings and kept, not pushed to (a test push says
+so); `push_answer_tokens` stays in the schema, unused; a push carries no `answer`, and the service worker has no Allow
+or Deny. The `IA_EXPO_*` variables and the receipt loop wait with Expo push.
 
 ## Decisions taken in this plan
 

@@ -7,6 +7,7 @@ import { groupProjects, groupTasks } from "../../../projectGroups"
 import type { Route } from "../../../router"
 import type { ProfileOf } from "./useProfileOf"
 import { useBoard } from "../../../state/board"
+import { setTitleProfile } from "../notifier"
 
 /**
  * The profile whose projects the sidebar lists, which is saved in this browser, named in the
@@ -72,9 +73,9 @@ export function useActiveProfile({
   }, [tint])
 
   const titled = names.length > 1 ? active : undefined
-  // The window's title (the old notifier.ts's setTitleProfile; the attention count it adds comes with notifications).
+  // The window's title, with the count of tasks that need attention (layout/notifier.ts).
   useEffect(() => {
-    document.title = titled ? `${titled} · Huntaway` : "Huntaway"
+    setTitleProfile(titled)
   }, [titled])
 
   return active

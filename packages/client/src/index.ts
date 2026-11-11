@@ -3,6 +3,7 @@
 export * from "./board/board.ts"
 export * from "./board/configModels.ts"
 export * from "./board/hostBoard.ts"
+export * from "./board/live.ts"
 export * from "./board/tasks.ts"
 export * from "./board/turns.ts"
 export * from "./board/watch.ts"

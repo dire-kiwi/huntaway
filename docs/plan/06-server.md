@@ -789,6 +789,38 @@ an MCP server.
 sends by Web Push (VAPID, RFC 8291). With Telegram gone, `AssistantReplied` is emitted by `Assistant` itself. Expo
 push and answering from a lock screen wait for the phone app.
 
+#### As built in 6.8 (HE-7)
+
+- **Files.** `push/Push.ts` (subscriptions and the watcher), `push/PushRepo.ts` (`push_subscriptions`), `push/WebPush.ts`
+  (the VAPID key and one delivery over `HttpClient`, 30 s), `push/crypto.ts` (RFC 8291 `aes128gcm` and the RFC 8292
+  token on `effect/crypto`: `KeyAgreement`, `Kdf`, `Aead`, `Signature`, `Digest`, whose WebCrypto layers `Main`'s platform
+  provides; checked against RFC 8291's example), `push/rules.ts` (the rules and texts as plain functions). No migration.
+- **`Secrets`** (`platform/Secrets.ts`, the smallest one): `get` and `getOrMake` over the `settings` table, as
+  `Redacted`. The VAPID key is `vapid_key`, a JWK `{d, x, y}`: WebCrypto can't import the old bare scalar
+  (`vapid_private_key`) without its public point, so the importer converts it (11-migration.md).
+- **The watcher** (`Push.watcher`, in `areasLayer`, so tests have it) subscribes to `Events`, takes every task and pending
+  prompt as a baseline (nothing about them notifies), and handles each event in order; after `resync`, again from a
+  fresh baseline. Task events notify by `taskEvent` (attention, review after 5 s still so, merge, done). **Prompts** are
+  found on the task's own event (a prompt's raise writes the task's attention in its transaction): each pending prompt of
+  a task in Needs attention not seen before is pushed once (body from `promptText`, never the tool's input, tag
+  `<host>:<task>:<request>`), and the devices it went to aren't told the task needs attention while it waits; a task
+  whose run ended lets its prompts go. **Replies and reports** are two new board events, `assistant_reply {task_id,
+  profile_id}` (for 6.7's `Assistant` to emit at the end of a turn) and `routine_report {id, task_id, automation,
+  outcome, text}` (for 6.5's `Routines` to emit as it posts a report); the web client ignores both. Sends run in the
+  background, one device at a time; `noted` changes a subscription only while it has the endpoint the push went to.
+  `Push.idle` is for tests.
+- **Own moves.** The `tasks.update` handler calls `Push.noteMove` before a status change (the old hub endpoints' place):
+  any RPC move is the user's own, so `huntaway rpc tasks.update` doesn't push either; agents', automations' and the
+  board's moves do. 15 s, on `Clock`.
+- **RPCs**: `hub.push.info` (`read`), `subscribe`, `update`, `unsubscribe`, `test` (`operate`; `test` fails with
+  `External` `push` and why, the old 502). In `HostRpcs` until `HubRpcs` exists (M7). Web subscriptions only: `kind`
+  `expo` isn't taken.
+- **Left out**: Expo push, its receipts, device ownership and answer tokens (the phone app, 14-dropped-and-open.md);
+  linked hosts' events and `hosts_changed` readiness (M7); `IA_PUSH_SUBJECT` (dropped).
+- **Tests**: `push/crypto.test.ts`, `push/rules.test.ts`, `push/Push.test.ts` against `packages/testing`'s
+  `fakePushService` (a push service on 127.0.0.1 that keeps what it's sent) and `pushDevice` (a browser's keys,
+  decrypting on `node:crypto`).
+
 ### Terminal<a id="terminal"></a> — [inventory 05](inventory/05-hosts-update.md) (2.5)
 
 `Terminals`: a tmux session per task and per terminal tool on a tmux server private to the data folder, leases for

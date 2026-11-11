@@ -11,6 +11,7 @@ import { InReview } from "../review/InReview.ts"
 import type { FixChecksRefused } from "../review/InReview.ts"
 import { DevServers } from "../runs/DevServers.ts"
 import { Questions } from "../permissions/Questions.ts"
+import { Push } from "../push/Push.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { Summaries } from "../review/Summaries.ts"
 import type { ReviewRefused } from "../review/model.ts"
@@ -68,6 +69,7 @@ const fixRefused = (e: FixChecksRefused) =>
 export const TaskHandlers = TaskRpcs.toLayer(
   Effect.gen(function* () {
     const tasks = yield* Tasks
+    const push = yield* Push
     const refs = yield* TaskRefs
     const runs = yield* Runs
     const deletion = yield* TaskDeletion
@@ -94,8 +96,11 @@ export const TaskHandlers = TaskRpcs.toLayer(
           Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound, ProfileNotFound: notFound.ProfileNotFound }),
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused }),
         ),
+      // A move the user makes doesn't push them a notification of it (6.8): noted before the change, whose event follows.
       "tasks.update": ({ id, patch }) =>
-        Effect.flatMap(actor, (by) => tasks.update(id, patch, by)).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+        Effect.flatMap(actor, (by) =>
+          Effect.andThen(patch.status === undefined ? Effect.void : push.noteMove(id, patch.status), tasks.update(id, patch, by)),
+        ).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       // Its run is stopped at once and its queue dropped first, then its worktree goes (`TaskDeletion`).
       "tasks.delete": ({ id, delete_branch }) =>
         Effect.flatMap(actor, (by) => deletion.delete(id, { deleteBranch: delete_branch ?? false }, by)).pipe(

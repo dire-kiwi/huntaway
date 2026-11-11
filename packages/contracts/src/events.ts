@@ -59,6 +59,28 @@ export const ApprovalChanged = Schema.Struct({ type: Schema.Literal("approval"),
 /** A task's checkpoints changed (a turn's was taken, or it was rewound): its turns are read again (`checkpoints.turns`). */
 export const CheckpointsChanged = Schema.Struct({ type: Schema.Literal("checkpoints"), task_id: TaskId, ...seq })
 
+// 6.8: what push notifies of besides tasks, emitted by the areas that know (both are above push).
+/**
+ * A profile's assistant finished a reply (its turn's result; not a compaction's): emitted by `Assistant` (6.7) at the
+ * end of a turn, for push's `replies` (the old `assistant_reply`, which Telegram emitted).
+ */
+export const AssistantReplied = Schema.Struct({ type: Schema.Literal("assistant_reply"), task_id: TaskId, profile_id: ProfileId, ...seq })
+/**
+ * A routine posted its report on the assistant's thread (once per run): emitted by `Routines` (6.5) as it posts it, for
+ * push's `reports` (the old `report` thread message). `task_id` is the routine's thread (else the assistant's), which
+ * the notification opens; `text` is the report's.
+ */
+export const RoutineReported = Schema.Struct({
+  type: Schema.Literal("routine_report"),
+  /** The report message's id, for the notification's tag. */
+  id: Schema.String,
+  task_id: TaskId,
+  automation: Schema.String,
+  outcome: Schema.Literals(["reported", "failed", "asked"]),
+  text: Schema.String,
+  ...seq,
+})
+
 export const BoardEvent = Schema.Union([
   Hello,
   Resync,
@@ -74,6 +96,9 @@ export const BoardEvent = Schema.Union([
   ApprovalLogChanged,
   ApprovalChanged,
   CheckpointsChanged,
+  // 6.8
+  AssistantReplied,
+  RoutineReported,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 
