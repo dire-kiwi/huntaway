@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Layer } from "effect"
-import { SecureRandom } from "effect/crypto"
+import { Mac, SecureRandom } from "effect/crypto"
 import { HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
@@ -33,6 +33,12 @@ import type { ServerConfig } from "./platform/ServerConfig.ts"
 import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
+import { McpCallRepo } from "./mcp/McpCallRepo.ts"
+import { McpHooks } from "./mcp/McpHooks.ts"
+import { McpServers } from "./mcp/McpServers.ts"
+import { ToolCalls } from "./mcp/ToolCalls.ts"
+import { McpControlLive } from "./mcp/transport/control.ts"
+import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { RunDir } from "./runs/RunDir.ts"
 import { RunFollower } from "./runs/RunFollower.ts"
@@ -78,6 +84,7 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),
     Layer.provideMerge(DataDir.layer),
+    Layer.provideMerge(Mac.layerWebCrypto),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
 
@@ -102,11 +109,23 @@ const AgentsLive = ApprovalRules.layer.pipe(Layer.provideMerge(ApprovalRulesRepo
 export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
   RunFollower.layer.pipe(Layer.provideMerge(output), Layer.provideMerge(Shim.layer), Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)))
 const RunsLive = runsLayer(RunOutput.layerLog).pipe(Layer.provideMerge(AgentsLive))
+/**
+ * The board's MCP servers over what is above them, with `hooks` (tests give their own): the calls, the server on Claude
+ * runs' files, and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
+ * test's own, built over the whole board's services, is not the one those already have.
+ */
+export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
+  Layer.mergeAll(Layer.fresh(McpControlLive)).pipe(
+    Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
+    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
+  )
+/** `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come. */
+const McpLive = mcpLayer(McpHooks.layerNone).pipe(Layer.provideMerge(RunsLive))
 // The demo board is seeded once every area is built, before Recovery runs.
 const LifecycleLive = Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
   Layer.provideMerge(DemoLive),
   Layer.provideMerge(Dependencies.layer),
-  Layer.provideMerge(RunsLive),
+  Layer.provideMerge(McpLive),
 )
 
 /** Every area's services. */
@@ -136,7 +155,7 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
+export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a
