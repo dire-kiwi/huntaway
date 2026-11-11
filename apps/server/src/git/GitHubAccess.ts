@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect"
+import type { Task, TaskId } from "@huntaway/contracts"
 
 // What the git area needs of GitHub (docs/plan/06-server.md, Git and GitHub), which sits below it in the dependency
 // order: an HTTPS fetch authenticated as a task's GitHub account (huntaway's gh_mcp.authenticate_fetch), and a pull
@@ -35,7 +36,26 @@ export interface GitHubAccessShape {
    * `account` (gh's active account with none); null when there is no such pull request.
    */
   readonly pullRequest: (cwd: string, account: string | null, ref: string, repo: string | null) => Effect.Effect<PullRequestView | null, GitHubUnavailable>
+  /**
+   * 4.8 (`Restack`): linked stack level `task`'s level below was merged: wait for GitHub's own rebase of its branch (from
+   * `pushed`, where the branch was on its remote, onto `base`), as `GhStacks.restacked`.
+   */
+  readonly restacked: (task: Task, dir: string, pushed: string, base: string) => Effect.Effect<GitHubRestack>
+  /** 4.8: have `task`'s pull request (`url`) target `to`, unstacking it on GitHub first if it must (`GhStacks.retarget`). */
+  readonly retarget: (task: Task, dir: string, url: string, to: string) => Effect.Effect<{ readonly moved: boolean } | { readonly error: string }>
+  /** 4.8: link task `id`'s pull request into a stack on GitHub with the one below it, in the background (`GhStacks.link`). */
+  readonly linkStacks: (id: TaskId) => Effect.Effect<void>
 }
+
+/** What GitHub did with a linked stack level once the one below was merged: only `rebased` means it restacked it. */
+export type GitHubRestack = "rebased" | "conflict" | "unstacked" | "unknown"
+
+/** No GitHub stacks: nothing is rebased by GitHub, no pull request retargeted, nothing linked (tests' fakes spread it). */
+export const noGitHubStacks = (): Pick<GitHubAccessShape, "restacked" | "retarget" | "linkStacks"> => ({
+  restacked: () => Effect.succeed("unknown"),
+  retarget: () => Effect.succeed({ error: "GitHub isn't available on this server" }),
+  linkStacks: () => Effect.void,
+})
 
 export class GitHubAccess extends Context.Service<GitHubAccess, GitHubAccessShape>()("huntaway-server/git/GitHubAccess") {
   /** No gh: fetches use git's own authentication, and no pull request can be read. */
@@ -44,6 +64,7 @@ export class GitHubAccess extends Context.Service<GitHubAccess, GitHubAccessShap
     GitHubAccess.of({
       fetchEnv: () => Effect.succeed({}),
       pullRequest: () => Effect.fail(new GitHubUnavailable({ reason: "GitHub isn't available on this server" })),
+      ...noGitHubStacks(),
     }),
   )
 }

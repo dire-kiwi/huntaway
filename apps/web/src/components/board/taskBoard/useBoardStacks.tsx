@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react"
-import { type HostTask as Task } from "@huntaway/client"
-import type { Status } from "@huntaway/contracts"
+import { useAtomSet } from "@effect/atom-react"
+import { mutations, type HostTask as Task } from "@huntaway/client"
+import { TaskId, type Status } from "@huntaway/contracts"
+import { board } from "../../../state/board"
 
-import { StatusIcon, type MenuItem } from "../../ui"
+import { errorText, StatusIcon, type MenuItem } from "../../ui"
 import { showsStatus, type BoardQuery, type SortKey } from "../boardQuery"
 import { stackTitle, type OnStackMenu } from "../StackCard"
 import {
@@ -10,6 +12,7 @@ import {
   groupStacks,
   isGathered,
   loadStackViews,
+  mergeCheck,
   saveStackViews,
   withAll,
   withStack,
@@ -19,16 +22,15 @@ import {
 } from "../stacks"
 import type { DropTarget } from "./model"
 
-// Not yet on this server: merging a whole stack (`tasks.mergeStack`) and a stack's title and description
-// (`tasks.updateStack`). With them, `checkOf` is `mergeCheck(st, board.get().tasks)` on a host that can.
-const checkOf = (_st: Stack): MergeCheck | null => null
-const hasMeta = (_st: Stack) => false
+/** Whether stack `st` can merge as a whole (API 153): every host on this server can. */
+const checkOf = (st: Stack): MergeCheck | null => mergeCheck(st, board.get().tasks)
+/** Whether its title and description can be kept (API 152): every host on this server can. */
+const hasMeta = (_st: Stack) => true
 
 /**
  * The board's stacks (HA-388): on the kanban board (not in rows of pens) the gathered ones are each one card in place of
  * their levels' cards, and a spread one's cards carry its tab. Which are gathered is kept in this browser. Also the
- * gathered card's menu, its drag, its edit dialog, and merging a whole stack (not yet on this server: it needs
- * `tasks.mergeStack` and `tasks.updateStack`, M4).
+ * gathered card's menu, its drag, its edit dialog, and merging a whole stack (`tasks.mergeStack`, 4.8).
  */
 export function useBoardStacks({
   tasks,
@@ -57,6 +59,7 @@ export function useBoardStacks({
   const [menu, setMenu] = useState<{ x: number; y: number; key: string } | null>(null)
   const [dragStack, setDragStack] = useState<Stack | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
+  const mergeStackCall = useAtomSet(mutations.tasks.mergeStack, { mode: "promise" })
 
   const stacks = useMemo(() => groupStacks(tasks), [tasks])
   const gathered = useMemo(() => (kanban ? stacks.filter((st) => isGathered(views, st)) : []), [kanban, stacks, views])
@@ -83,7 +86,13 @@ export function useBoardStacks({
     const check = checkOf(st)
     if (!check) return
     if (!check.ok) return setErr(`The stack can't merge yet. ${check.reason}`)
-    setErr("Couldn't merge the stack: not yet on this server. Spread it to move its levels one at a time.")
+    setErr(null)
+    try {
+      // The levels as moved come back as events.
+      await mergeStackCall({ host: st.bottom.host_id, payload: { id: TaskId.make(st.bottom.id) } })
+    } catch (e) {
+      setErr(`Couldn't merge the stack: ${errorText(e)}`)
+    }
   }
   const onMenu: OnStackMenu = (e, st, button) => {
     e.preventDefault()

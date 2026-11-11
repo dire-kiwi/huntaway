@@ -1,8 +1,15 @@
 import { Context, Effect, Layer } from "effect"
 import { Titles } from "../agents/Titles.ts"
+import { StackTitles } from "../agents/StackTitles.ts"
 import { StatusScripts } from "../git/StatusScripts.ts"
 import { TaskBase } from "../git/TaskBase.ts"
 import { PullRequests } from "../github/PullRequests.ts"
+import { Merges } from "../merge/Merges.ts"
+import { MergeTargets } from "../merge/MergeTargets.ts"
+import { Restack } from "../git/Restack.ts"
+import { GhStacks } from "../github/GhStacks.ts"
+import { isMerged } from "../tasks/checks.ts"
+import { Threads } from "../threads/Threads.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
 import type { Change } from "../platform/Changes.ts"
@@ -31,11 +38,17 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const runEnds = yield* RunEnds
       const taskTmp = yield* TaskTmp
       const titles = yield* Titles
+      const stackTitles = yield* StackTitles
       const permissions = yield* Permissions
       const statusScripts = yield* StatusScripts
       const taskBase = yield* TaskBase
       const reviews = yield* Reviews
       const pullRequests = yield* PullRequests
+      const merges = yield* Merges
+      const threads = yield* Threads
+      const mergeTargets = yield* MergeTargets
+      const restack = yield* Restack
+      const ghStacks = yield* GhStacks
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
@@ -44,6 +57,13 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           yield* runEnds.ended(change)
           // What its agent took in of the branch it's stacked on, and the tasks stacked on it of its own (4.1).
           yield* taskBase.keepStarts(change.task)
+          // 4.8: a restack its agent (or a reviewer) held off is done now that none is in its worktree.
+          yield* restack.afterRun(change.task)
+          return
+        }
+        // 4.8: the board couldn't restack a level: its agent is asked to.
+        if (change._tag === "RestackAsk") {
+          yield* mergeTargets.askToRestack(change)
           return
         }
         // 4.6: a reviewer's (or summarizer's) run ended: its part of the review, and once every part has, the review's
@@ -64,10 +84,23 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         }
         const task = change.after ?? change.before
         if (task === null) return
+        // What the change tells its thread ("Nothing to merge…", "Stepped out of the merge queue…"), first.
+        if (change.after !== null) for (const n of change.notes ?? []) yield* threads.notice(change.after.id, n.level, n.text).pipe(Effect.ignore)
         const moved = change.before?.status !== change.after?.status
         const depsChanged = change.before?.depends_on !== change.after?.depends_on
         // A task that moved, was deleted or changed what it waits for may unblock tasks waiting on its project.
         if (moved || depsChanged || change.after === null) yield* runs.startUnblocked(task.project_id)
+        // 4.8: merged, the stack levels on it are marked to restack onto where it went (before the merge queue is looked
+        // at, so a level waiting in Ready for merge waits for its restack) and restacked in the background.
+        if (change.after !== null && isMerged(change.after) && (change.before === null || !isMerged(change.before))) {
+          yield* restack.reconcileDependants(change.after)
+        }
+        // 4.8: closed without being merged, what merges into it is held; a new target's branch follows it.
+        yield* mergeTargets.taskChanged(change)
+        // 4.7: a replaced approval settled, the approval card once its summary run ended, and the merge queue moved on.
+        yield* merges.taskChanged(change)
+        // 4.8: the stacks it's in (or was in, or deleted from) keep their title on their bottom, written again after a pause.
+        yield* stackTitles.changed(change)
         // A deleted task's temp folder goes (in the background), with what it left running; whoever waits on its
         // prompts is told they expired, and requests to delete it expire (it is deleted anyway).
         if (change.after === null) {
@@ -79,6 +112,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           if (change.before !== null && change.before.permission_mode !== change.after.permission_mode) yield* permissions.applyMode(change.after.id)
           // Done: the tasks stacked on it keep where they took its branch up to, which may well be deleted now (4.1).
           if (moved && change.after.status === "done") yield* taskBase.keepStarts(change.after.id)
+          // 4.8: a pull request set (or changed): linked into a stack on GitHub with the one below, in the background.
+          if (change.after.pr_url !== null && change.before?.pr_url !== change.after.pr_url) yield* ghStacks.link(change.after.id)
           // The project's status scripts for the move, in the background, one task's in order (4.1).
           if (moved && change.before !== null) yield* statusScripts.changed(change.after, change.before.status)
           // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.

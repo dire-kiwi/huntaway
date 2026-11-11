@@ -54,6 +54,18 @@
 // then commit") or whose prompt contains "fake-commit" (a task's first run quotes its description) makes an empty commit
 // ("fake work") in its working directory, so the branch has new work for the next round to review. A summarizer's run
 // replies as any other (its reply is the summary).
+//
+// Merges (plan task 4.7). With HUNTAWAY_FAKE_CLAUDE_MERGE set, a run asked to merge (its prompt is the merge request,
+// 'The user moved this task to "Ready for merge". … Merge branch `<branch>` into `<base>`', and not the summary an
+// approval asks for first, which says "Do not merge yet") merges and then calls `update_task` with `status: "done"` for
+// its own task ($HUNTAWAY_TASK_ID) through the in-process server:
+//   branch  its base branch is moved to the run's HEAD (`git push . HEAD:<base>`, or to the base's remote when it has
+//           one): a fast-forward, which fails (and the task isn't moved) when the base has moved on
+//   pr      `<fake gh> pr merge <branch> --squash`, with the fake gh in $HUNTAWAY_FAKE_CLAUDE_GH (`test-server.sh
+//           --fake-gh` sets it to the server's); without it, it doesn't merge ("couldn't merge: no fake gh"), and it
+//           never runs the machine's gh
+//   refuse  it doesn't merge, and replies so (the board then says it finished without merging)
+// Without it, a merge request is answered like any other prompt.
 import { spawnSync } from "node:child_process"
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -422,6 +434,45 @@ const commit = (text: string) => {
   answers.push(made.status === 0 ? "committed fake work" : `couldn't commit: ${(made.stderr ?? "").trim().slice(0, 200)}`)
 }
 
+/** git in the run's folder; what it printed, or why it failed. */
+const gitIn = (gitArgs: ReadonlyArray<string>): { readonly ok: boolean; readonly out: string } => {
+  const r = spawnSync("git", ["-c", "user.name=fake", "-c", "user.email=fake@example.com", ...gitArgs], { encoding: "utf8" })
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().slice(0, 300) }
+}
+
+/**
+ * The merge (see "Merges" above): asked to merge (the merge request, not the summary for an approval), the branch is
+ * merged into its base as `HUNTAWAY_FAKE_CLAUDE_MERGE` says, then `update_task` says it's done.
+ */
+const merge = async (text: string) => {
+  const how = env.HUNTAWAY_FAKE_CLAUDE_MERGE ?? ""
+  if (how === "" || !text.startsWith('The user moved this task to "Ready for merge".') || text.includes("Do not merge yet")) return
+  const asked = /Merge branch `([^`]+)` into `([^`]+)`/.exec(text)
+  const branch = asked?.[1]
+  const base = asked?.[2]
+  if (how === "refuse" || branch === undefined || base === undefined) {
+    answers.push("not merged (fake)")
+    return
+  }
+  let merged: { readonly ok: boolean; readonly out: string }
+  if (how === "pr") {
+    // The fake GitHub's pull request of the branch, with the fake gh (`HUNTAWAY_FAKE_CLAUDE_GH`); never the machine's gh.
+    const fakeGh = env.HUNTAWAY_FAKE_CLAUDE_GH ?? ""
+    if (fakeGh === "") merged = { ok: false, out: "no fake gh (HUNTAWAY_FAKE_CLAUDE_GH)" }
+    else {
+      const gh = spawnSync(fakeGh, ["pr", "merge", branch, "--squash"], { encoding: "utf8" })
+      merged = { ok: gh.status === 0, out: `${gh.stdout ?? ""}${gh.stderr ?? ""}`.trim().slice(0, 300) }
+    }
+  } else {
+    // Its base moved on to the branch (a fast-forward), in the repository and, with a remote, there too.
+    const remote = gitIn(["config", `branch.${base}.remote`]).out
+    merged = gitIn(["push", "--quiet", "--no-verify", remote === "" ? "." : remote, `HEAD:refs/heads/${base}`])
+  }
+  answers.push(merged.ok ? `merged ${branch} into ${base}` : `couldn't merge: ${merged.out}`)
+  const task = env.HUNTAWAY_TASK_ID
+  if (merged.ok && task !== undefined) await callTool("update_task", { task_id: task, status: "done" })
+}
+
 /** Calls a tool of the in-process board server, waiting for its answer; what it returned goes in the reply. */
 const callTool = async (name: string, toolArgs: unknown) => {
   if (!sdkServers.includes("huntaway")) {
@@ -487,6 +538,7 @@ const turn = async (text: string) => {
   await callBoard(text)
   await review(text)
   commit(text)
+  await merge(text)
   if (text.trim() === "/compact") {
     emit({ type: "system", subtype: "compact_boundary", session_id: session, compact_metadata: { trigger: "manual", pre_tokens: 1234 } })
   }

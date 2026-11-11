@@ -1006,3 +1006,34 @@ As built in HE-4 (2.8), with the services the runs area calls that don't need `R
   which `tasks.create` calls: `start` starts the agent, and a task with only a description gets its title written
   first (`Titles.generateLater`, starting it after if asked); `tasks.create` can then fail as `tasks.send` does
   (`Unavailable` added to its contract).
+
+### As built in 4.8 (HE-5): stack titles
+
+- **`agents/StackTitles.ts`** (the old `agent/stack_title.ts`, HA-387) writes a stack's title and description with the
+  model task titles use (`TitleModel`, the bottom's config: Claude, or Codex's cheapest model; its tokens a `title` side
+  call), kept on the stack's bottom (`stack_title`, `stack_description`, `stack_pinned`, through `Tasks.change`). The
+  stack is `tasks/lanes.ts`' `stackOf` over the tasks of the task's project (or its profile's in no project) of its
+  profile. The pure parts are `agents/stackTitles/text.ts` (`stackInput`, `parseStackReply`), the prompt
+  `prompts/stackTitle.ts`.
+- **`changed(change)`** is the reactor's step for every `TaskChanged` (after the merge step): a task made, deleted, or
+  changed in what a stack reads (its title, description, status, kind, target, the task it lands after) has the stacks it
+  was and is in settled at once (the fields moved to the bottom, cleared elsewhere, a split's handed to the part split
+  off) and written after a pause. A deleted task's fields come from its last row in the change (its hidden input isn't
+  known by then, so an unpinned stack is written again, which its lost level would cause anyway).
+- **The pause is 5 s on the clock** (`STACK_DEBOUNCE_MS`): a fiber per bottom in a `FiberMap` sleeps until the time due
+  (taken when it's scheduled, so a fiber that starts late doesn't wait longer), a new change replacing it; then the
+  stack is queued and written by a writer fiber under a one-permit semaphore (never two writes at once; a stack queued
+  twice is written once, from what it says by then). `settled` (tests) waits, on a `SubscriptionRef` of what's waiting,
+  queued and being written, until none is; tests move the clock past the pause first.
+- **What a stack was written from** is the hidden `stack_input` column (`agents/StackTitleRepo.ts`; the column was in
+  the initial migration, not on the wire). **Decided**: it keeps the input text itself, not the old SHA-256 prefix (the
+  server has no digest service; the text is at most 30 levels of 1,000 characters). An imported board's stacks therefore
+  don't match their old keys and are each written once more after the switch (the pass after a start), unless pinned.
+- **`update(id, edit)`** is `tasks.updateStack` (the old `PATCH /tasks/{id}/stack`): through any level, answered with
+  the bottom; `title`/`description` pin them (blank clears), `regenerate` unpins, forgets the input and writes again
+  forced (also for a stack whose tasks are all done). `StackInvalid` (both, neither, over 200/2,000 characters, a task in
+  no stack, another profile's task naming one of this one's) is the wire's `Invalid`; `TaskNotFound` is `NotFound`.
+- **`resume`** (Recovery, last): a minute after start, on the clock, in the service's scope, the open levels' stacks are
+  queued (not forced): those already written from what their levels say cost nothing.
+- **Tests**: `agents/StackTitles.test.ts`, every case of the old `agent/stack_title.test.ts` on the test board with
+  `TitleScript`, but the wire and MCP parts it names at its top.

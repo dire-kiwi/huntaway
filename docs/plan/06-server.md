@@ -492,6 +492,135 @@ tried again. What follows a move to Done is the reactor's (`startUnblocked` now;
 and terminals join with 4.8, 4.7, 6.6 and 6.1); telemetry's `merge` event is 6.9's. Subprojects' rules are gone with
 them. `MergedWatcher.loop`: first 30 s after start, then 180 s after each check ends.
 
+#### As built in 4.7 (HE-5): `Merges`, `merge/decide.ts`, `MergeGate`
+
+- **The rows' model is `tasks/lanes.ts`** (pure, the old `db/tasks/merges.ts` and `db/tasks/stacks.ts`): `firstTarget`,
+  `targetState`, `reaching`, `stackedBelow`, `stackState`, `stackWaits`, `stackedLevels`, `mergeHeld`, `heldReason` /
+  `heldReasonOf`, `mergeLane`, `isHandoff`, `activeMerge`, `queuedMerges`, `mergeLanes`, `stackRunTasks`, `stackRunLanes`,
+  `stackOf`, `stackLine`. It is in `tasks/` (the lowest area that has the rows), so `runs/` (the active merge of a lane,
+  a held merge at a run's end, a stack level talked to) and `git/`/`github/` (stacks, 4.8) read the same functions;
+  `tasks/decide.ts` re-exports the three it had (`reaching`, `stackedLevels`, `heldReason`). Lanes are a task id or null
+  (the project's own); subprojects' lanes are gone with subprojects.
+- **`merge/decide.ts`** is the old `start_next_merge` as one pure function: `decideLanes({ tasks, finished, archived,
+  approvalRequired }) → { leaveRun, summarise, start }`, with `settleStackRuns`, `awaitsApprovals`, `needsSummary`; its
+  table is `merge/decide.test.ts` (the lane cases of the old merge, tasks, incoming, stacks and stack-merge tests). What
+  a merge request says is `merge/request.ts` (`intoMerge`, `stackedMerge`, `mergeRequestText`, over `prompts/merge.ts`;
+  a request that can't be made fails with the old reasons). The merge handoff (a workflow's, HA-276) is in the rules
+  (`TaskRepo.finishedLast`: the tasks whose latest run said `finish_work`), though nothing makes one before 6.6.
+- **`merge/Merges.ts`**: `reconcileLane(project)` takes **`KeyedLock` `["merges", project]`** (a new key, after the
+  project's and before any task's), reads the rows, decides, and carries the plan out: levels leave their stack's run
+  (`Tasks.change`, with the old notice), merges needing approval are marked `pending` and summarised
+  (`MergeGate.requestSummary`; one that can't be asked needs attention, "Couldn't ask for a summary of the merge: …"),
+  and each lane's next task is asked to merge (`Runs.send`, `source: board`, `auto`), which registers its run (the task
+  `running`) before the lock is let go: two looks can't both give a slot away. A request that can't be made or sent leaves
+  the task in Needs attention, still merging ("Couldn't start the merge: …"), holding its lane. Nothing on a host that runs
+  no agents. `reconcileAll` (Recovery, after `Runs.reattach`) looks at every project. `taskChanged` is the reactor's
+  merge step for every `TaskChanged`: a pending approval that isn't any more has its card settled `replaced`; a merging
+  task whose summary run ended in Needs attention with "Approve or deny the merge" gets the card (`MergeGate.ask`); and
+  the project's lanes are looked at when a column the queue reads changed (status, resolution, merging, running,
+  approval, remerge, restack, stack run, target, the task it lands after) or the task is new or deleted.
+- **`MergeGate`** (`merge/MergeGate.ts`): `blocked` (the gh tools' check), `required` (the project's `merge_approval`,
+  else the profile's), `requestSummary`, `ask` (a question request, `legacy:<n>`, its metadata the old card with
+  `merge_approval: true` and `call_id: "merge-approval"`), `settle`, `decide` (approved: `merge_approval` approved and
+  Ready for merge; denied: out of the merge, In review; refused unless still pending and merging with no agent running:
+  `ApprovalRefused` `not_pending` / `agent_running`, the wire's `Conflict`). **The card's answer goes to the gate through
+  `Questions`**: `Questions.answer` hands a card with `merge_approval` to the decider the merge area registers
+  (`Questions.onMergeApproval`, `MergeGate.registered`), so `threads.answerQuestion` stays one call; the card is answered
+  (compare-and-set) first and opened again if the decision is refused, as before. A user's message settles it `replied`
+  like any other card, as the old `replied` did. `openGate()` is a gate that blocks nothing, for tests.
+- **`Tasks.update`'s git and GitHub facts come through `tasks/MergeFacts.ts`**, a seam in the tasks area that the merge
+  area fills (`Merges.registered`, as areas below `runs/` register with `AgentRequests`): `needsGitFacts(task, patch)` says
+  whether a change needs them (a move to Ready for merge, a new target for a task with a branch, worktree settings of one
+  whose setup failed); they are read before the task's lock (`TaskBase.hasWorkToMerge`, `PullRequests.approval` for the
+  pull request the change leaves it with, the start ref's commit, whether the failed worktree's folder is there), and the
+  change is refused `changed_meanwhile` if the task moved, started merging, changed target, branch or pull request
+  meanwhile (the old `still`). Without the merge area (or when nothing is needed) the facts are the old defaults.
+  `UpdateFacts.running` is the task's `running` column (it was always false), so `remerge` works.
+- **Notes.** `TaskChanged` has `notes` (`ChangeNote`: level and text), which the reactor writes to the task's thread first:
+  `decideUpdate`'s "Nothing to merge…", "Stepped out of the merge queue…", "Merges into … now…", a stack level's "Waits
+  for …" (4.8), and `Tasks.update`'s warning that agents can't run on this host.
+- **Runs.** `decideSend`'s active merge is `lanes.activeMerge` of the task's lane (a message to a task queued behind
+  another merge is refused `merge_queued`); a message to a stack level waiting in Ready for merge takes it out (In
+  progress, `remerge`, "Out of Ready for merge while its agent works…") before anything else. `RunEnds` gives
+  `decideFinish` its `mergeHeld` (`heldReasonOf` over the project's rows).
+- **The fake agent** plays the merge with `HUNTAWAY_FAKE_CLAUDE_MERGE` (`branch`, `pr`, `refuse`; its header says how).
+- **Tests.** `merge/decide.test.ts` (the table), `merge/request.test.ts` (what a request says), `merge/Merges.test.ts` on
+  the board (queued before agents can run, lanes one at a time, stepping out and rejoining, a message refused behind a
+  merge, a request that can't be made, approval asked/approved/denied/replaced and the gate's refusals). Not ported as a test:
+  two moves at once (`two_moves_to_ready_for_merge_at_once`), which needs the two to interleave: the second one, having
+  read the task before the first committed, is refused `changed_meanwhile` (the old 409), and one that reads it after finds
+  it in Ready for merge already, which is no move. The old usage-wait refusal for a merge is `Runs.waitForReset`'s
+  (2.x). Not here: telemetry's `merge` event (6.9); workflows' merge prompts and `merges_to_done` (6.6); the GitHub
+  approval case's gitlab/github remotes (`PullRequests.approval`, 4.5's tests).
+
+#### As built in 4.8 (HE-5): stacks, `Restack`, `GhStacks`, merge targets, whole-stack merges
+
+- **The stack model** is `tasks/lanes.ts` (4.7's: `stackedBelow`, `stackState`, `stackWaits`, `stackOf`, `stackLine`).
+  What follows from it is **`merge/MergeTargets.ts`** (`MergeTargets`, pure parts in `merge/targets.ts`):
+  `taskChanged` (the reactor's step: a task closed without being merged holds the open tasks reaching it and the levels on
+  it, unless their agent runs, which `RunEnds`' `mergeHeld` catches at its end; a held task is told its reason; a new
+  target or base has its branch's `gh-merge-base` follow, `TaskBase.followBase`), `setTarget` (`tasks.mergeTarget`: the
+  old `set_merge_target` and `set_stack_target`: `onward`, `close`, or an heir by id or key; `carries` from the start
+  ref; a level sent elsewhere starts from its start ref's commit and is restacked there; Conflict `nothing_to_choose` and
+  `agent_running`, Invalid `to`), `mergeStack` (`tasks.mergeStack`: the old `stack_to_merge` checks, each moving level's
+  work and GitHub approval read first, then, under the project's `["merges", project]` lock so the queue isn't looked at
+  meanwhile, every open main-line level moved bottom first and given one `stack_run`; Conflict `stack_not_ready` /
+  `pr_not_approved` / `changed_meanwhile` with the old texts), `askToRestack` (the reactor's `RestackAsk`). Two new
+  `ConflictReason`s: `nothing_to_choose`, `stack_not_ready`.
+- **`git/Restack.ts`** (`Restack`, git in `git/restack/git.ts`): `reconcileDependants(merged)` (marks the open levels
+  with a branch `due`, says so, schedules them), `schedule(id)` (a fiber in the service's `FiberSet`, taking **`KeyedLock`
+  `["restack", repo]`** — one at a time per repository, in the order asked — then the level's `["worktree", id]` lock),
+  `afterRun(id)` (a level's or its review thread's run ended), `settled(id)` (what a launch waits for), `resume`
+  (Recovery). The restack is the old one step for step: later while an agent or reviewer is in the worktree (checked at
+  the start, after GitHub's wait, after the rebase); its upstream pushed only when it's its own name; GitHub's own rebase
+  of a linked level waited for and taken in; a fetch of the new base; refusals for remote commits not here, a dirty
+  worktree, no start ref, a start no longer in the branch; the rebase in a detached worktree under a temp folder
+  (`huntaway-restack-`) with `-c core.hooksPath=/dev/null`, `--no-autosquash --no-update-refs`, five minutes; the branch
+  moved (`reset --keep` in its worktree, else `update-ref` with the old value), pushed with `--no-verify
+  --force-with-lease=<ref>:<remote head read>` (120 s, authenticated as fetches are) and put back if the push fails; the
+  start ref moved to the merge-base; `restack` cleared and `base_branch` set; `gh-merge-base`; the pull request
+  retargeted; GitHub's stack linked again; then the levels above follow. A conflict sets `restack: conflict` and, the first
+  time, offers **`RestackAsk { task, text, reason }`** (a new `Changes` member): the reactor has `MergeTargets` take a
+  merging task out of the queue (`remerge`) and send the agent `prompts/restack.ts`; a second conflict, or a send that
+  fails, leaves it in Needs attention ("Couldn't restack it onto …"). `AfterRebase` (a `Context.Reference`) is the old
+  `restack_testing.reached("rebased")`.
+- **`github/GhStacks.ts`** (`GhStacks`, the old `gh_stack.ts`): `link(id)` (the level and the levels on it, in the
+  background, one link at a time under a semaphore, a failure said once per pull-request pair), `linkAll` (Recovery),
+  `settled` (tests), `restacked` (GitHub's rebase waited for, `GhStackWait`: 90 s, every 3 s, a `Context.Reference`),
+  `retarget` (unstacking first when GitHub says it's in a stack). It is built on the git line beside `Gh` (it needs only
+  `Gh` and the task rows: the GitHub account is the project's, else the profile's, read directly) and reaches the
+  restack through **`GitHubAccess`**, which gains `restacked`, `retarget` and `linkStacks` (`noGitHubStacks()` for
+  fakes; `GitHubAccessLive` is without them, `GitHubAccessStacked` with, Main's). The reactor links a task whose `pr_url`
+  was set or changed.
+- **The reactor** (shared edits): `RunExited` → also `Restack.afterRun`; `RestackAsk` → `MergeTargets.askToRestack`; on a
+  `TaskChanged` of a task that became merged, `Restack.reconcileDependants` **before** the merge queue is looked at (so a
+  level waiting in Ready for merge waits for its restack, as the old `update_task_inner` marked it before
+  `start_next_merge`), then `MergeTargets.taskChanged`, then 4.7's `Merges.taskChanged`; a `pr_url` set links GitHub
+  stacks. **Recovery**: `Restack.resume`, `GhStacks.linkAll` (after the reviews'). **Launch**: `LaunchFacts.prepareWork`
+  waits for `Restack.settled` of the task (or a review thread's task) first. **Prompts**: `Prompts.system` tells the
+  agent the task as the old `as_told` did (merged below: not stacked any more, its base where that went).
+- **The fake GitHub** (`packages/testing`): `POST repos/O/R/stacks` and `…/stacks/N/add` with `pull_requests[]` (each on
+  the one below's head), `POST …/stacks/N/unstack`, a pull request's `stack` with its place and size and
+  `mergeable_state`; a base change refused while it's in a stack (`pr edit --base`, PATCH); merging one in a stack
+  retargets the level above to where it went and moves its head to its `rebasedTo` (GitHub's own rebase; `dirty`
+  without one). fake-gh.ts's state types moved to `bin/fake-gh-state.ts` (the file passed 1,000 lines).
+- **Tests.** `merge/Stacks.test.ts` (the old `api/stacks.test.ts` restack and target cases on the board: squash-merged
+  below, an upstream that's another branch, three levels, a conflict to the agent then the user then finished, remote
+  ahead and uncommitted, no remote, an agent running, a waiting level merging once restacked, the agent told after a
+  restack, a restack due at a restart, a waiting level talked to; levels on a closed or deleted level going onward, an
+  heir, closing; a target closed and sent onward with `carries`; a whole stack's merge and its refusals) and
+  `github/GhStacks.test.ts` (linking, a second level not stacked and said once, the level below linked first, not on one
+  whose base will change, GitHub's restack taken in, unstacking before a retarget, recorded or not). The lane cases of the
+  old `api/stack_merge.test.ts` (a level stepping out or denied taking those above out, a restack conflict freeing the
+  lane, approvals up front, a run surviving a restart) are rows in `merge/decide.test.ts`. 4.1's TaskBase case "a stacked
+  task keeps its own changes…" now has its second level's agent running while the first is merged, so the restack 4.8
+  adds doesn't move what it looks at. Not ported: the old `a_level_isnt_stacked_on_github_on_a_task_started_from_a_pull_request`
+  and `…_merging_into_another` (the same check as the one whose base will change, which is ported); the parts of the
+  `incoming` cases that read `summarize`'s view (`merging_into_it`, `merges_into`, `carries`), which is 3.x's
+  `mcp/tools/taskJson.ts` and has its own tests (it keeps its own `targetState`/`stackState`, which could use
+  `tasks/lanes.ts` now).
+- **Not here.** Relocation's hold at launch (6.x); a GitHub stack's merge through `pr_merge` is 4.4's (`merge-async`).
+
 ### Workflows — [inventory 06](inventory/06-integrations.md) (2.1–2.2), `docs/guide/workflows.md`
 
 `WorkflowEngine`: `start`, `advance`, `settle`, `stop`, `resume`. The graph semantics are pure functions in

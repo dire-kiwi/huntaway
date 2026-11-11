@@ -6,7 +6,7 @@ import { CallId } from "@huntaway/contracts"
 import { fakeAgent, fakeGitHub, fakePull, git, gitRepo, TestBoard } from "@huntaway/testing"
 import type { FakeAgent, FakeGitHub, FakeGitHubState } from "@huntaway/testing"
 import { GH_READ_ONLY, GH_WRITES } from "../../agents/claude/access.ts"
-import { MergeGate } from "../../merge/MergeGate.ts"
+import { MergeGate, openGate } from "../../merge/MergeGate.ts"
 import { ProfileRepo } from "../../profiles/ProfileRepo.ts"
 import { RunDir } from "../../runs/RunDir.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
@@ -153,6 +153,7 @@ describe("the gh server", () => {
             Effect.provideService(
               MergeGate,
               MergeGate.of({
+                ...openGate(),
                 blocked: (id) => {
                   asked.push(id)
                   return Effect.succeed("Merging is disabled: the user hasn't approved this merge")

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Result, Schema } from "effect"
+import { Context, Effect, Layer, Ref, Result, Schema } from "effect"
 import type { QuestionOption, QuestionRequest, RequestResolution, Task, TaskId } from "@huntaway/contracts"
 import { Runs } from "../runs/Runs.ts"
 import type { SendRefused } from "../runs/Runs.ts"
@@ -35,6 +35,25 @@ export class QuestionClosed extends Schema.TaggedError<QuestionClosed, { readonl
 export class AnswerInvalid extends Schema.TaggedError<AnswerInvalid, { readonly brand: unique symbol }>()("AnswerInvalid", {
   reason: Schema.String,
 }) {}
+
+/**
+ * The merge approval card's answer can't be acted on (4.7, `MergeGate.decide`): the task isn't waiting for its merge to
+ * be approved any more (`not_pending`), or its agent is still running (`agent_running`).
+ */
+export class ApprovalRefused extends Schema.TaggedError<ApprovalRefused, { readonly brand: unique symbol }>()("ApprovalRefused", {
+  reason: Schema.Literals(["not_pending", "agent_running"]),
+  detail: Schema.String,
+}) {}
+
+/**
+ * What decides a merge from its approval card (the merge area's `MergeGate.decide`, registered when its layer is built:
+ * the merge area is above this one). `approve`: the user picked Approve.
+ */
+export type MergeDecider = (task: TaskId, approve: boolean) => Effect.Effect<Task, TaskNotFound | ApprovalRefused>
+
+/** The merge approval card's options (huntaway's review/merge_gate.ts `APPROVE`, `DENY`). */
+export const APPROVE = "Approve"
+export const DENY = "Deny"
 
 /** The user's answer from a card: the options picked, by label, and what they typed. */
 export interface Answer {
@@ -163,7 +182,12 @@ export interface QuestionsShape {
     task: TaskId,
     requestId: string,
     answer: Answer,
-  ) => Effect.Effect<Task, TaskNotFound | QuestionNotFound | QuestionClosed | AnswerInvalid | SendRefused>
+  ) => Effect.Effect<Task, TaskNotFound | QuestionNotFound | QuestionClosed | AnswerInvalid | SendRefused | ApprovalRefused>
+  /**
+   * 4.7: the merge area decides merges from now on. A merge approval card (`merge_approval` in its metadata) is the
+   * board's own question: its answer is the decision (`decider`), not a message to the agent.
+   */
+  readonly onMergeApproval: (decider: MergeDecider) => Effect.Effect<void>
 }
 
 export class Questions extends Context.Service<Questions, QuestionsShape>()("huntaway-server/permissions/Questions") {
@@ -175,6 +199,7 @@ export class Questions extends Context.Service<Questions, QuestionsShape>()("hun
       const store = yield* ThreadStore
       const tasks = yield* TaskRepo
       const runs = yield* Runs
+      const decider = yield* Ref.make<MergeDecider | null>(null)
 
       const ask = Effect.fn("Questions.ask")(function* (task: TaskId, callId: string, c: QuestionCard) {
         if (yield* readers.asked(task, callId)) return
@@ -210,7 +235,11 @@ export class Questions extends Context.Service<Questions, QuestionsShape>()("hun
           .pipe(
             Effect.catchTag("RequestNotOpen", () => Effect.fail(new QuestionClosed({ reason: "answered", detail: "this question has been answered already" }))),
           )
-        const sent = yield* runs.send(task, { text: replyText(q.question, choices, text), source: "user" }).pipe(
+        // The board's own question, whether to merge (4.7): the answer is the board's to act on.
+        const decide = asked.metadata?.["merge_approval"] === true ? yield* Ref.get(decider) : null
+        const acted: Effect.Effect<Task, TaskNotFound | ApprovalRefused | SendRefused> =
+          decide !== null ? decide(task, choices.includes(APPROVE)) : runs.send(task, { text: replyText(q.question, choices, text), source: "user" })
+        const sent = yield* acted.pipe(
           // Answerable again: its request open again, as it was.
           Effect.tapError(() => threads.openRequest(task, asked).pipe(Effect.ignore)),
         )
@@ -219,7 +248,7 @@ export class Questions extends Context.Service<Questions, QuestionsShape>()("hun
         return sent
       })
 
-      return Questions.of({ ask, settle, answer })
+      return Questions.of({ ask, settle, answer, onMergeApproval: (d) => Ref.set(decider, d) })
     }),
   )
 }

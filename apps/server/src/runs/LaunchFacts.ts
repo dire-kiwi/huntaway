@@ -12,6 +12,7 @@ import { CodexQueries } from "../agents/CodexQueries.ts"
 import { Prompts } from "../agents/Prompts.ts"
 import { Checkpoints, pendingRewind } from "../git/Checkpoints.ts"
 import { Worktrees, WorktreeFailed } from "../git/Worktrees.ts"
+import { Restack } from "../git/Restack.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Identity } from "../platform/Identity.ts"
 import { Proc } from "../platform/Proc.ts"
@@ -102,6 +103,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const background = yield* BackgroundWork
       const checkpoints = yield* Checkpoints
       const worktrees = yield* Worktrees
+      const restack = yield* Restack
       const threads = yield* Threads
       const queries = yield* CodexQueries
       const proc = yield* Proc
@@ -182,7 +184,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
        */
       const prepareWork = Effect.fnUntraced(function* (run: Run, start: Task, project: Project | null) {
         let task = start
-        // 4.8: wait for the project's relocation and for a restack of the task's branch (or its parent's) here.
+        // 4.8: a run doesn't launch in the middle of a restack of the task's branch (or its task's, for a review thread).
+        // The project's relocation's wait goes here too (6.x, `Relocation`).
+        yield* restack.settled(task.kind === "review" && task.parent_id !== null ? task.parent_id : task.id)
         // ---- 4.1: the worktree it works in (the old launch's). A review thread works in its task's, once that's set up;
         // a task with a worktree of its own has it set up first, and a setup that fails fails the launch.
         if (project !== null && task.kind === "review" && task.parent_id !== null) {

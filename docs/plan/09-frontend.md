@@ -293,6 +293,28 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   isn't on this server. Unit tests: `tests/unit/changes/{diffs,lineComments,highlight}.test.ts`, every old case
   (`diffs` drives git through `node:child_process` as the old one did).
 
+### As built in 4.8 (HE-5): web
+
+- **Wired** (the cuts M1/M2 left for merges and stacks), each through `@huntaway/client`'s mutations
+  (`useAtomSet(…, { mode: "promise" })`), what comes back arriving as events: a held task's choice of where it merges
+  now (`board/MergesInto.tsx` `HeldChoice`: onward, close, or one of them taking the closed task's place:
+  `tasks.mergeTarget`, called on the first of them, as before); merging a whole stack from a gathered stack's menu
+  (`board/taskBoard/useBoardStacks.tsx`: `checkOf` is `mergeCheck` again on every host, `tasks.mergeStack`, the server's
+  refusal shown as "Couldn't merge the stack: …"); a stack's title and description edited or written again
+  (`board/StackCard.tsx` `StackEditModal`, `tasks.updateStack`; `hasMeta` is true on every host); the Details panel's
+  "Stacked on"/"Lands after" and "Landing after this"/"Stacked on this" sections (`board/stackSections.tsx`, already
+  split out of `StackedOn.tsx` so it and `MergesInto.tsx` don't import each other); and the New task dialog's branches
+  after `from:` (`layout/newTask/useTokens.ts`, `projects.branches` read once a `from:` is typed, in an effect as the old
+  one was). The merge approval card needed nothing: `task/thread/requestCards.tsx` already answers it through
+  `threads.answerQuestion` and shows approved/denied.
+- **Looked at in a browser** (a `--seed` test server, `ui-check.mjs`): a gathered three-level stack merged from its menu
+  (all levels in Ready for merge, "Merging the stack: 0 of 3 landed"); a stack whose top level has no work refused with
+  the server's reason; the edit dialog saving a title by hand; a task whose target was closed choosing "Go where TES-4 was
+  going" (its thread says "Merges into main now, instead of TES-4"); a level on a closed level closed with it ("Close it
+  too"); Up's "Lands after" and Low's "Landing after this"; `from:` listing the project's branch `main` (the tasks' own
+  branches stand behind their keys); and, with `--fake-claude`, the approval card after the summary run, Approve
+  deciding the merge ("approved", "Merge approved: …", and the merge request sent).
+
 ### Step 2: by hand, a feature folder at a time
 
 | Pattern in a component                                                             | Becomes                                                                                         |

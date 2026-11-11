@@ -31,6 +31,9 @@ import { Prompts } from "./agents/Prompts.ts"
 import { SideCalls } from "./agents/SideCalls.ts"
 import { TitleModel } from "./agents/TitleModel.ts"
 import { Titles } from "./agents/Titles.ts"
+// 4.8: stack titles.
+import { StackTitleRepo } from "./agents/StackTitleRepo.ts"
+import { StackTitles } from "./agents/StackTitles.ts"
 import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
@@ -40,11 +43,13 @@ import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
 import { Git } from "./git/Git.ts"
 import { Gh } from "./github/Gh.ts"
+import { GhStacks } from "./github/GhStacks.ts"
 import { GithubRemote } from "./github/GithubRemote.ts"
-import { GitHubAccessLive } from "./github/GitHubAccessLive.ts"
+import { GitHubAccessStacked } from "./github/GitHubAccessLive.ts"
 import { PrWatch } from "./github/PrWatch.ts"
 import { PrWatchRepo } from "./github/PrWatchRepo.ts"
 import { PullRequests } from "./github/PullRequests.ts"
+import { Restack } from "./git/Restack.ts"
 import { StatusScripts } from "./git/StatusScripts.ts"
 import { TaskBase } from "./git/TaskBase.ts"
 import { Worktrees } from "./git/Worktrees.ts"
@@ -67,6 +72,8 @@ import { askRuleWith, cancelledWith, McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { MergeGate } from "./merge/MergeGate.ts"
 import { MergedWatcher } from "./merge/MergedWatcher.ts"
+import { Merges } from "./merge/Merges.ts"
+import { MergeTargets } from "./merge/MergeTargets.ts"
 import { InReview } from "./review/InReview.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { Wait } from "./mcp/Wait.ts"
@@ -131,6 +138,7 @@ import { SettingsRepo } from "./settings/SettingsRepo.ts"
 import { Attachments } from "./tasks/Attachments.ts"
 import { Dependencies } from "./tasks/Dependencies.ts"
 import { Leftovers } from "./tasks/Leftovers.ts"
+import { MergeFacts } from "./tasks/MergeFacts.ts"
 import { PenRepo } from "./tasks/PenRepo.ts"
 import { Pens } from "./tasks/Pens.ts"
 import { TaskRefs } from "./tasks/TaskRefs.ts"
@@ -172,7 +180,7 @@ const ProfilesLive = Profiles.ensureFromConfig.pipe(
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
 const TasksLive = Layer.mergeAll(Pens.layer, Attachments.pruner, TaskTmp.sweeper).pipe(
   Layer.provideMerge(Layer.mergeAll(Tasks.layer, TaskRefs.layer, Attachments.layer, TaskTmp.layer)),
-  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer)),
+  Layer.provideMerge(Layer.mergeAll(TaskRepo.layer, PenRepo.layer, Leftovers.layer, Dependencies.layer, MergeFacts.layer)),
   Layer.provideMerge(ProjectsLive),
 )
 const ThreadsLive = Threads.pruner.pipe(
@@ -185,9 +193,13 @@ const ThreadsLive = Threads.pruner.pipe(
  * (4.2). What it needs of GitHub is `GitHubAccess`, whose live layer is the github area's (4.4), built here under the
  * git area's services since it only needs `Gh`, which only needs `Git`.
  */
-const GitLive = Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer).pipe(
+const GitLive = Restack.layer.pipe(
+  // 4.8: restacking stack levels, over their worktrees.
+  Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer)),
   Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
-  Layer.provideMerge(Layer.mergeAll(GitHubAccessLive, CheckpointRepo.layer)),
+  Layer.provideMerge(Layer.mergeAll(GitHubAccessStacked, CheckpointRepo.layer)),
+  // 4.8: GitHub's stacks, which `GitHubAccess` offers the restack (it needs only `Gh` and the task rows).
+  Layer.provideMerge(GhStacks.layer),
   Layer.provideMerge(Gh.layer),
   Layer.provideMerge(Git.layer),
   Layer.provideMerge(ThreadsLive),
@@ -217,7 +229,11 @@ const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1,
     Layer.provideMerge(
       Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer, CodexQueries.registered),
     ),
-    Layer.provideMerge(Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window)),
+    // 4.8: stack titles, over the same model as task titles.
+    Layer.provideMerge(StackTitles.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, StackTitleRepo.layer, models.titles, models.window),
+    ),
     // A Codex config's titles are asked of Codex, as its models are (5.3).
     Layer.provideMerge(models.codex),
     Layer.provideMerge(GithubLive),
@@ -293,7 +309,11 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
     // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
     Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
-    // The merge gate the gh tools ask before a merge (4.7 fills it).
+    // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
+    // the merge area reads `Tasks.update`'s git and GitHub facts (both registered below the areas they serve).
+    Layer.provideMerge(Layer.mergeAll(Merges.registered, MergeGate.registered)),
+    // 4.8: where held tasks go now, a whole stack's merge, and the agent asked to restack.
+    Layer.provideMerge(Layer.mergeAll(Merges.layer, MergeTargets.layer)),
     Layer.provideMerge(MergeGate.layer),
     // Reviews and summaries (4.6), over the runs they start.
     Layer.provideMerge(ReviewLive),

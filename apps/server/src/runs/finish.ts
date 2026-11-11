@@ -76,7 +76,7 @@ export interface FinishFacts {
   readonly limitWait: boolean
   /** Its config's name, for what the thread is told. */
   readonly configName: string
-  /** Its merge target was closed or deleted while it ran (M4: never yet). */
+  /** Why it needs attention when its merge target (or the level it lands after) was closed or deleted while it ran (`tasks/lanes.ts` `heldReasonOf`). */
   readonly mergeHeld: string | null
   /** Its project's workflow moves a merged task to Done (6.6: never yet). */
   readonly mergesToDone: boolean

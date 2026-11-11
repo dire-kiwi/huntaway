@@ -21,6 +21,7 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
 import { Dependencies, isMerged } from "../tasks/Dependencies.ts"
+import { activeMerge, mergeLane, stackWaits } from "../tasks/lanes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
@@ -355,10 +356,44 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         return (yield* tasks.getMany(task.depends_on)).filter((t) => !isMerged(t)).map((t) => t.key)
       })
 
+      /**
+       * 4.7: the task merging in `task`'s merge lane, if another and it waits for its turn (its approval isn't pending):
+       * a message to it is refused, as it can't run alongside the merge going on.
+       */
+      const activeMergeOf = Effect.fnUntraced(function* (task: Task) {
+        if (!task.merging || task.merge_approval === "pending" || task.project_id === null) return null
+        const rows = yield* tasks.projectTasks(task.project_id)
+        const other = activeMerge(rows, mergeLane(rows, task), yield* tasks.finishedLast(task.project_id))
+        return other !== null && other.id !== task.id ? { title: other.title } : null
+      })
+
+      /**
+       * 4.8: a stack level waiting in Ready for merge for the one below it isn't merging yet, so a message to it takes it
+       * out of the merge queue while its agent works, holding no merge slot; it goes back to waiting when its run ends
+       * (`remerge`). Not one summarising its merge for the user's approval, which is out of the queue as it is.
+       */
+      const outOfStackWait = Effect.fnUntraced(function* (task: Task, live: boolean) {
+        if (!task.merging || task.status !== "ready_for_merge" || task.running || live || task.merge_approval === "pending" || task.project_id === null) {
+          return task
+        }
+        if (!stackWaits(yield* tasks.projectTasks(task.project_id), task)) return task
+        const at = yield* nowTimestamp
+        const after = yield* db.tx(
+          Effect.gen(function* () {
+            yield* threads
+              .notice(task.id, "info", "Out of Ready for merge while its agent works: it goes back to waiting for the task it lands after when it's done")
+              .pipe(Effect.catchTag("TaskNotFound", () => Effect.void))
+            return yield* write(task, { status: "in_progress", merging: false, remerge: true }, at)
+          }),
+        )
+        yield* changes.offer({ _tag: "TaskChanged", before: task, after, cause: Actor.board })
+        return after
+      })
+
       const sendLocked = Effect.fnUntraced(function* (id: TaskId, message: Outgoing | null) {
-        const task = yield* load(id)
-        const project = task.project_id === null ? null : yield* tasks.project(task.project_id)
         const live = yield* liveRun(id)
+        const task = yield* outOfStackWait(yield* load(id), live !== null)
+        const project = task.project_id === null ? null : yield* tasks.project(task.project_id)
         const text = message?.text.trim() ?? ""
         const plan = task.kind === "task" && message !== null && !message.review && planRest(text) !== null
         const decision = decideSend({
@@ -366,8 +401,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           message,
           plan,
           project: project === null ? null : { name: project.name, archived: project.archived },
-          // Merges are plan task 4.x: until then no task is merging another's lane.
-          activeMerge: null,
+          activeMerge: yield* activeMergeOf(task),
           live:
             live === null
               ? null

@@ -3,7 +3,9 @@ import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@hu
 import type { ConflictReason, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
+import { StackTitles } from "../agents/StackTitles.ts"
 import { PullRequests } from "../github/PullRequests.ts"
+import { MergeTargets } from "../merge/MergeTargets.ts"
 import { InReview } from "../review/InReview.ts"
 import type { FixChecksRefused } from "../review/InReview.ts"
 import { DevServers } from "../runs/DevServers.ts"
@@ -71,6 +73,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const questions = yield* Questions
     const devServers = yield* DevServers
     const meter = yield* ContextMeter
+    const stackTitles = yield* StackTitles
+    const targets = yield* MergeTargets
     const reviews = yield* Reviews
     const summaries = yield* Summaries
     /** The task after a review or summary started, or as it is when there was nothing to start. */
@@ -131,6 +135,14 @@ export const TaskHandlers = TaskRpcs.toLayer(
           }),
         ),
       "tasks.context": ({ id }) => meter.get(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      // 4.8: a stack's title and description, by hand or written again.
+      "tasks.updateStack": ({ id, title, description, regenerate }) =>
+        stackTitles
+          .update(id, { title, description, regenerate })
+          .pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, StackInvalid: (e) => Effect.fail(new Invalid({ field: e.field, reason: e.reason })) })),
+      // 4.8: where the tasks held by a closed or deleted task go now, and a whole stack's merge.
+      "tasks.mergeTarget": ({ id, to }) => targets.setTarget(id, to).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.mergeStack": ({ id }) => targets.mergeStack(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       // 4.5: Fix broken checks, and whether Done would leave work unmerged.
       "tasks.fixChecks": ({ id }) =>
         inReview.fixChecks(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused, FixChecksRefused: fixRefused })),

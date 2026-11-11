@@ -119,6 +119,14 @@ export const FakePull = Schema.Struct({
   threadsPage: Schema.optional(Schema.Finite),
   /** A GraphQL read of it fails with this. */
   unreadable: Schema.optional(Schema.String),
+  /** 4.8: the REST API's `mergeable_state` (default `dirty` for a CONFLICTING one, else `clean`). */
+  mergeableState: Schema.optional(Schema.String),
+  /**
+   * 4.8: GitHub's own rebase of a stacked level: when the pull request below it in its stack is merged, GitHub retargets it
+   * to where that went and its head becomes this commit (as GitHub force-pushes the rebased branch; the test pushes the
+   * commit itself). Without it, the head stays (GitHub couldn't rebase it), and `mergeableState` says `dirty`.
+   */
+  rebasedTo: Schema.optional(Schema.String),
 })
 export type FakePull = typeof FakePull.Type
 

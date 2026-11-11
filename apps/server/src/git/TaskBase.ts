@@ -18,7 +18,7 @@ import type { WorktreeFailed } from "./worktree/failed.ts"
 import { github, pushRemote, pushRepo } from "./worktree/remote.ts"
 import type { Github } from "./worktree/remote.ts"
 import { uncommitted } from "./worktree/remove.ts"
-import { branches, pickStart } from "./worktree/start.ts"
+import { branches, pickStart, setMergeBase } from "./worktree/start.ts"
 import type { Picked } from "./worktree/start.ts"
 import { stackedBase, taskBase } from "./worktree/stacks.ts"
 import { compareRef, fetchBase, fetchUpstream, startPoint, upstream } from "./worktree/upstream.ts"
@@ -106,6 +106,11 @@ export interface TaskBaseShape {
   readonly hasWorkToMerge: (task: Task) => Effect.Effect<boolean>
   /** Drop a deleted task's start ref from `repo`. */
   readonly forgetStart: (repo: string, task: TaskId) => Effect.Effect<void>
+  /**
+   * 4.8: have `task`'s branch record where its pull request goes now (`branch.<b>.gh-merge-base`, so `gh pr create`
+   * targets it): its `taskBase`, unless that's its project's base branch.
+   */
+  readonly followBase: (task: Task) => Effect.Effect<void>
 }
 
 export interface TaskBaseOptions {
@@ -335,6 +340,12 @@ export class TaskBase extends Context.Service<TaskBase, TaskBaseShape>()("huntaw
           diff,
           hasWorkToMerge,
           forgetStart: (dir, task) => forgetStart(g, dir, task),
+          followBase: Effect.fn("TaskBase.followBase")(function* (task: Task) {
+            const project = yield* projectOf(task)
+            if (project === null || task.branch === null) return
+            const main = project.base_branch === "" ? null : project.base_branch
+            yield* setMergeBase(g, repoOf(project), task.branch, yield* taskBase(get, task, project), main)
+          }),
         })
       }),
     )

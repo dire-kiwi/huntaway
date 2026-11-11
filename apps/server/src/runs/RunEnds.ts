@@ -14,6 +14,7 @@ import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { todoNudge } from "../prompts/todoNudge.ts"
 import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
+import { heldReasonOf } from "../tasks/lanes.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { ThreadReaders } from "../threads/ThreadReaders.ts"
 import { Threads } from "../threads/Threads.ts"
@@ -110,7 +111,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
               limitAhead: isAhead(task.limit_reset_at, at),
               limitWait: profile?.limit_wait ?? false,
               configName: config?.name ?? "Its config",
-              mergeHeld: null,
+              // 4.7: what it merges into (or lands after) was closed or deleted while it ran.
+              mergeHeld: task.kind === "task" && task.project_id !== null ? heldReasonOf(yield* tasks.projectTasks(task.project_id), task) : null,
               mergesToDone: false,
               planOnly,
               nudged: nudged(yield* readers.lastUserMessage(task.id)),

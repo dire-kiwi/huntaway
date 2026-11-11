@@ -13,7 +13,7 @@ import { TaskDeletion } from "../runs/TaskDeletion.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Git } from "./Git.ts"
-import { GitHubAccess, GitHubUnavailable } from "./GitHubAccess.ts"
+import { GitHubAccess, GitHubUnavailable, noGitHubStacks } from "./GitHubAccess.ts"
 import type { GitHubAccessShape, PullRequestView } from "./GitHubAccess.ts"
 import { startRef, TaskBase } from "./TaskBase.ts"
 import type { TaskBaseOptions } from "./TaskBase.ts"
@@ -552,6 +552,10 @@ describe("where a branch starts", () => {
             yield* git(repo, ["commit", "-qm", "First"])
             yield* git(repo, ["push", "-q", "origin", "master", `${aBranch}:${aBranch}`])
             yield* git(repo, ["fetch", "-q", "origin"])
+            // Second's agent is at work, so the board doesn't restack it onto master as First is merged (4.8's
+            // `Restack`, which this case isn't about): its start ref is what's looked at.
+            const tasks = yield* Tasks
+            yield* tasks.change(b.id, () => ({ running: true }), Actor.board).pipe(Effect.orDie)
             yield* done(a.id)
             if (how === "done") {
               yield* (yield* Reactor).idle
@@ -568,6 +572,8 @@ describe("where a branch starts", () => {
             assert.strictEqual((yield* base.changesBase(bWt, bNow, project)).start, yield* rev(bWt, "HEAD~1"), how)
             assert.deepStrictEqual(yield* base.workScope(bWt, bNow, project), { ref: takenIn, ownStart: true }, how)
             // And its branch's, with its worktree removed.
+            yield* tasks.change(b.id, () => ({ running: false }), Actor.board).pipe(Effect.orDie)
+            yield* (yield* Reactor).idle
             yield* (yield* Worktrees).teardown(b.id, { force: false, deleteBranch: false })
             assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"], how)
             yield* setUp(b.id)
@@ -669,6 +675,7 @@ describe("where a branch starts", () => {
 
 /** A fake GitHub whose pull requests are `prs` by number in `repo`, recording what it was asked. */
 const fakeGitHub = (asked: Ref.Ref<ReadonlyArray<string>>, prs: Readonly<Record<string, PullRequestView>>, repo: string): GitHubAccessShape => ({
+  ...noGitHubStacks(),
   fetchEnv: (_cwd, account) =>
     Effect.as(
       Ref.update(asked, (all) => [...all, `fetch as ${account}`]),
@@ -696,6 +703,7 @@ describe("a task started from a pull request", () => {
       const asked = yield* Ref.make<ReadonlyArray<string>>([])
       const prs = yield* Ref.make<Record<string, PullRequestView>>({})
       const github: GitHubAccessShape = {
+        ...noGitHubStacks(),
         fetchEnv: () => Effect.succeed({}),
         pullRequest: (cwd, account, ref, repo) => Effect.flatMap(Ref.get(prs), (all) => fakeGitHub(asked, all, "o/r").pullRequest(cwd, account, ref, repo)),
       }
@@ -744,6 +752,7 @@ describe("a task started from a pull request", () => {
       const asked = yield* Ref.make<ReadonlyArray<string>>([])
       const prs = yield* Ref.make<Record<string, PullRequestView>>({})
       const github: GitHubAccessShape = {
+        ...noGitHubStacks(),
         fetchEnv: () => Effect.succeed({}),
         pullRequest: (cwd, account, ref, repo) =>
           Effect.flatMap(Ref.get(prs), (all) => fakeGitHub(asked, all, "o/upstream").pullRequest(cwd, account, ref, repo)),
@@ -895,6 +904,7 @@ describe("accounts", () => {
       const asked = yield* Ref.make<ReadonlyArray<string>>([])
       // No network: the fetch is pointed at a folder that isn't there.
       const github: GitHubAccessShape = {
+        ...noGitHubStacks(),
         fetchEnv: (_cwd, account) =>
           Effect.as(
             Ref.update(asked, (all) => [...all, `${account}`]),
