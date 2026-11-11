@@ -237,7 +237,14 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const prompt = compact ? text : yield* prompts.start(task.id, text, yield* background.takeLost(task.id))
         // The task's own temp folder, its TMPDIR, which goes once it's done.
         const tmp = yield* taskTmp.ensure(task)
-        const systemPrompt = yield* prompts.system(task.id, { codex: false, permission_mode: permissionMode, tmp })
+        // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
+        const served = yield* requests.served
+        const systemPrompt = yield* prompts.system(task.id, {
+          codex: false,
+          permission_mode: permissionMode,
+          tmp,
+          desktopHost: served.desktop ? identity.hostName : null,
+        })
         const configDir = yield* configDirOf(task, cfg)
         const review = task.kind === "review"
         const spec = yield* claudeLaunch({
@@ -259,7 +266,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           permissionMode,
           rules: yield* rules.forTask(task),
           tools: noRunTools,
-          served: yield* requests.served,
+          served,
           githubAccount: nonBlank(project?.github_account) ?? nonBlank(profile?.github_account),
           addDirs: [...group, ...(docs !== null && docs !== cwd ? [docs] : [])],
           attachmentDirs: [],
@@ -346,7 +353,14 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const effort = asked === null ? null : codexEffort(asked, model, yield* queries.models(cfg).pipe(Effect.orElseSucceed(() => [])))
         const prompt = compact ? "" : yield* prompts.start(task.id, text, yield* background.takeLost(task.id))
         const tmp = yield* taskTmp.ensure(task)
-        const systemPrompt = yield* prompts.system(task.id, { codex: true, permission_mode: permissionMode, tmp })
+        // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
+        const served = yield* requests.served
+        const systemPrompt = yield* prompts.system(task.id, {
+          codex: true,
+          permission_mode: permissionMode,
+          tmp,
+          desktopHost: served.desktop ? identity.hostName : null,
+        })
         const configDir = yield* configDirOf(task, cfg)
         const gitDir = nonBlank(yield* git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
         const caches = yield* cacheDirs()
@@ -371,7 +385,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           permissionMode,
           rules: yield* rules.forTask(task),
           tools: noRunTools,
-          served: yield* requests.served,
+          served,
           githubAccount: nonBlank(project?.github_account) ?? nonBlank(profile?.github_account),
           systemPrompt,
           prompt,

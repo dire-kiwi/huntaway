@@ -37,6 +37,8 @@ export interface RunTold {
   readonly permission_mode: PermissionMode
   /** The task's temp folder (its `TMPDIR`), which it is told of; none by default. */
   readonly tmp?: string | null | undefined
+  /** 6.10: it has the desktop server: the host's name, whose desktop it is; none by default. */
+  readonly desktopHost?: string | null | undefined
 }
 
 /** The options of a new thread that change what it is told (the old `GET /projects/{id}/system-prompt`'s query). */
@@ -164,6 +166,8 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         const context: PromptContext = {
           ...OFF,
           tmp: run.tmp ?? null,
+          // 6.10: computer use.
+          desktopHost: run.desktopHost ?? null,
           task,
           project,
           parent:

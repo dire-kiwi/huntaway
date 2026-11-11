@@ -31,12 +31,25 @@ export const GH_INSTRUCTIONS =
 export const ghInstructions = (account: string | null): string =>
   account === null ? GH_INSTRUCTIONS : `${GH_INSTRUCTIONS} They act as the GitHub account ${account}.`
 
+/** 6.10: the desktop server's (huntaway's mcp/desktop_mcp.ts), copied word for word. */
+export const DESKTOP_INSTRUCTIONS =
+  "`desktop` drives native apps on the desktop of the computer you run on, through Cua Driver. Use it only when the " +
+  "shell, files or other tools can't do the job. Find the app with `windows` (or `apps`, then `launch`), `read` its " +
+  'window\'s accessibility tree (start with `query` to keep it small; `since: "latest"` gets only what changed), then ' +
+  "`act` with a batch of steps on `element_token`s from that read: it reports what changed, so you rarely need another " +
+  "read. Use `screen` to look, and pixels only for what the tree can't reach. Keep delivery in the background (the " +
+  'default): don\'t bring windows to the front just to look, and use `delivery_mode: "foreground"` only when the user ' +
+  "allows it. Target windows by `pid` and `window_id`. Give each `act`, `launch` and `clipboard` an `op_id`; if an " +
+  "answer is lost, call `op_status` with it instead of acting again. The person at this computer may be using it: " +
+  "leave it as you found it (close the windows you opened, not theirs). If the screen is locked or another task is " +
+  "using the desktop, stop and say so; don't try to unlock it."
+
 /** What each server says it is in `initialize` (`serverInfo.name`, `instructions`). gh's name the run's account (`ghInstructions`). */
 export const SERVER_INFO: { readonly [S in ServerName]: { readonly name: string; readonly instructions: string | null } } = {
   huntaway: { name: "huntaway", instructions: INSTRUCTIONS },
   gh: { name: "huntaway-gh", instructions: GH_INSTRUCTIONS },
   docs: { name: "huntaway-docs", instructions: null },
-  desktop: { name: "huntaway-desktop", instructions: null },
+  desktop: { name: "huntaway-desktop", instructions: DESKTOP_INSTRUCTIONS },
 }
 
 /** A tool with its handler, over JSON: what `ToolCalls` runs. */
@@ -95,6 +108,13 @@ const offered = (server: ServerName, registered: RegisteredTool, review: boolean
 export interface McpServersShape {
   /** Adds tools to a server, after the ones it has (the order `tools/list` shows them in). A name already there is replaced. */
   readonly add: (server: ServerName, tools: ReadonlyArray<RegisteredTool>) => Effect.Effect<void>
+  /**
+   * 6.10: whether runs get a server is asked of `gate` at each launch (the desktop's: computer use is on and there is a
+   * driver). A server with no gate is served once it has tools.
+   */
+  readonly serveWhen: (server: ServerName, gate: Effect.Effect<boolean>) => Effect.Effect<void>
+  /** Whether a run launched now gets the server: it has tools, and its gate (if any) says so. */
+  readonly serves: (server: ServerName) => Effect.Effect<boolean>
   /** A server's tool by name. */
   readonly find: (server: ServerName, name: string) => Effect.Effect<RegisteredTool | undefined>
   /** The tools a server offers a run (`tools/list`): a review thread's the reviewers' tools. */
@@ -117,6 +137,8 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
       const config = yield* ServerConfig
       const registry = yield* Ref.make<{ readonly [S in ServerName]: ReadonlyArray<RegisteredTool> }>({ huntaway: [], gh: [], docs: [], desktop: [] })
 
+      const gates = yield* Ref.make<{ readonly [S in ServerName]?: Effect.Effect<boolean> }>({})
+
       const find = (server: ServerName, name: string) => Effect.map(Ref.get(registry), (all) => all[server].find((r) => r.tool.name === name))
       const tools = (server: ServerName, review: boolean) =>
         Effect.map(Ref.get(registry), (all) => all[server].filter((r) => offered(server, r, review)).map((r) => listedOn(server, r.tool)))
@@ -133,6 +155,13 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
           Ref.update(registry, (all) => {
             const names = new Set(added.map((r) => r.tool.name))
             return { ...all, [server]: [...all[server].filter((r) => !names.has(r.tool.name)), ...added] }
+          }),
+        serveWhen: (server, gate) => Ref.update(gates, (all) => ({ ...all, [server]: gate })),
+        serves: (server) =>
+          Effect.gen(function* () {
+            if ((yield* Ref.get(registry))[server].length === 0) return false
+            const gate = (yield* Ref.get(gates))[server]
+            return gate === undefined ? true : yield* gate
           }),
         find,
         tools,
