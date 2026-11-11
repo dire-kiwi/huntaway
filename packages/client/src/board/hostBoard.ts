@@ -225,6 +225,20 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       const approvals = at < 0 ? [...board.approvals, approval] : board.approvals.map((a, i) => (i === at ? approval : a))
       return { ...next, approvals }
     }
+    case "restart":
+      // A new job starts its log afresh.
+      return {
+        ...next,
+        restart: { phase: message.phase, error: message.error, log: message.phase === "starting" ? [] : (board.restart?.log ?? []) },
+      }
+    case "restart_log": {
+      const log = [...(board.restart?.log ?? []), message.line]
+      return { ...next, restart: { phase: board.restart?.phase ?? "starting", error: board.restart?.error ?? null, log: log.slice(-500) } }
+    }
+    case "release_checked":
+    case "release_download":
+      // What a release check found is read where Settings shows it (`admin.status`).
+      return next
     case "approval_rules":
     case "approval_log":
       // A profile's approval rules and action log are read where Settings shows them, not kept in the board.

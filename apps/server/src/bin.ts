@@ -3,12 +3,14 @@ import { Console, Context, Effect, Layer, Option, Redacted, Schema } from "effec
 import { Command, Flag } from "effect/cli"
 import { Mac, SecureRandom } from "effect/crypto"
 import { HttpServer } from "effect/http"
+import { installServiceCommand } from "./cli/installService.ts"
 import { rpcCommand } from "./cli/rpc.ts"
+import { Supervisor } from "./update/Supervisor.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
-import { ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
+import { releaseBuild, ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
 import type { ServeArgs } from "./platform/ServerConfig.ts"
 
 // The entry point (docs/plan/06-server.md, The CLI): `huntaway [serve] [flags]`, `huntaway token [--hub]`,
@@ -31,6 +33,8 @@ const serve = (args: ServeArgs) =>
     yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
     const line = yield* Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) })
     yield* Console.log(`HUNTAWAY_READY ${line}`)
+    // From now on the launcher starts the server again if it crashes (step 6).
+    yield* Context.get(context, Supervisor).started
     return yield* Effect.never
   }).pipe(Effect.scoped, Effect.provide(ServerConfig.layerFrom(args)))
 
@@ -69,13 +73,13 @@ const tokenCommand = Command.make(
 
 const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
   Command.withDescription("Huntaway: a kanban board for orchestrating Claude Code and Codex agents"),
-  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand]),
+  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand, installServiceCommand]),
 )
 
 const program =
   process.argv[2] === "--version"
-    ? // The release smoke test depends on this exact form.
-      Console.log(`huntaway ${VERSION}`)
+    ? // The release smoke test depends on this exact form. A release's version is its build.json's (beside its launcher).
+      releaseBuild(process.env["HUNTAWAY_EXE"] ?? null).pipe(Effect.flatMap((build) => Console.log(`huntaway ${build?.version ?? VERSION}`)))
     : Command.run(huntaway, { version: VERSION })
 
 program.pipe(

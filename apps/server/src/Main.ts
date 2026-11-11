@@ -1,6 +1,6 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { Mac, SecureRandom } from "effect/crypto"
+import { Digest, Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
@@ -13,6 +13,7 @@ import {
   HostRpcGroup,
   PenRpcs,
   PermissionRpcs,
+  AdminRpcs,
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
@@ -93,6 +94,13 @@ import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
+import { AdminHandlers } from "./rpc/admin.ts"
+import { Releases } from "./update/Releases.ts"
+import { Restarts } from "./update/Restarts.ts"
+import { Service } from "./update/Service.ts"
+import { Supervisor } from "./update/Supervisor.ts"
+import { Systemd } from "./update/Systemd.ts"
+import { Updater } from "./update/Updater.ts"
 import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
 import { HostSettings } from "./settings/HostSettings.ts"
@@ -123,6 +131,8 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),
+    // Before the identity and the database: hand over to a newer release this host updated to (8.2).
+    Layer.provideMerge(Releases.execInstalled.pipe(Layer.provideMerge(Supervisor.layer))),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
@@ -218,11 +228,23 @@ export const BoardHooks = Layer.effect(
   }),
 )
 
+/**
+ * The update area: the restart job, rebuilds and a hub's push (`Updater`), release updates, the systemd service. The
+ * launcher (`Supervisor`) is the platform's, for the hand-over at startup. Outside the process: `Systemd`, git through
+ * `Proc`, GitHub through the HTTP client.
+ */
+const UpdateLive = Updater.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Releases.layer, Service.layer)),
+  Layer.provideMerge(Layer.mergeAll(Restarts.layer, Systemd.layer, Digest.layerWebCrypto)),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // Restarts, updates, releases and the service (8.1, 8.2): Recovery settles a release that has come up.
+    Layer.provideMerge(UpdateLive),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
@@ -260,6 +282,7 @@ export const Served = PublicRpcs.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
+  AdminRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -276,6 +299,7 @@ export const HandlersLive = Layer.mergeAll(
   ApprovalRulesHandlers,
   ThreadHandlers,
   PermissionHandlers,
+  AdminHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

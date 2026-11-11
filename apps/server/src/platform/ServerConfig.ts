@@ -1,5 +1,7 @@
-import { Config, Context, Effect, Layer, Option, Redacted } from "effect"
+import { Config, Context, Effect, FileSystem, Layer, Option, Redacted, Schema } from "effect"
 import { Flag } from "effect/cli"
+import { userInfo } from "node:os"
+import { StartupError } from "./StartupError.ts"
 
 /**
  * `serve`'s flags, each with a `HUNTAWAY_*` variable as its fallback (docs/plan/06-server.md, The CLI). This file is
@@ -66,6 +68,22 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_AGENTS")),
     Flag.withDefault(false),
   ),
+  // Updates (plan tasks 8.1, 8.2).
+  sourceDir: Flag.String("source-dir").pipe(
+    Flag.withDescription("The source checkout to rebuild from (default: the checkout this server runs from, if any)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_SOURCE_DIR")),
+    Flag.optional,
+  ),
+  updateFrom: Flag.String("update-from").pipe(
+    Flag.withDescription("URL of a deployment of the board whose commit this host offers to update to"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_UPDATE_FROM")),
+    Flag.optional,
+  ),
+  releaseUpdates: Flag.String("release-updates").pipe(
+    Flag.withDescription("OWNER/REPO: update from that GitHub repository's releases"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_RELEASE_UPDATES")),
+    Flag.optional,
+  ),
 }
 
 /**
@@ -120,6 +138,9 @@ export interface ServeArgs {
   readonly shimBin?: Option.Option<string>
   readonly claudeBin?: Option.Option<string>
   readonly noAgents?: boolean
+  readonly sourceDir?: Option.Option<string>
+  readonly updateFrom?: Option.Option<string>
+  readonly releaseUpdates?: Option.Option<string>
 }
 
 export interface ServerConfigShape {
@@ -138,7 +159,7 @@ export interface ServerConfigShape {
   readonly skipDbBackup: boolean
   /** The server's version, as `--version` prints it. */
   readonly version: string
-  /** The commit this server runs, when known (`HUNTAWAY_COMMIT`, or none). */
+  /** The commit this server runs, when known: a release's `build.json`, else `HUNTAWAY_COMMIT` (`pickCommit`); a checkout's HEAD is `About`'s. */
   readonly commit: string | null
   /** The machine's home folder, for defaults and `~` in paths. */
   readonly home: string
@@ -159,7 +180,157 @@ export interface ServerConfigShape {
   readonly tmpDir: string
   /** The root of the tasks' temp folders when it is not the usual one in `tmpDir`: tests put it in their data folder. */
   readonly taskTmpRoot: string | null
+  // Updates (plan tasks 8.1, 8.2; docs/plan/06-server.md, Desktop, update, analytics).
+  /** `--source-dir`, else the checkout this server runs from (a root with `Cargo.toml` and `apps/web/`); null for a release. */
+  readonly sourceDir: string | null
+  /** `--update-from`: a deployment whose `/api/health` commit this host follows, without a trailing `/`. */
+  readonly updateFrom: string | null
+  /** `--release-updates`: the `OWNER/REPO` whose GitHub releases this server updates from. */
+  readonly releaseRepo: string | null
+  /** `HUNTAWAY_RELEASE_API`: GitHub's API (tests serve a fake one). */
+  readonly releaseApi: string
+  /** `<os>-<arch>` as release assets name it (`linux-x64`, `mac-arm64`). */
+  readonly platform: string
+  /** `HUNTAWAY_DESKTOP_VERSION`, `_SHELL`, `_INSTALL`: the desktop app that started this server, if one did. */
+  readonly desktopVersion: string | null
+  readonly desktopShell: string | null
+  readonly desktopInstall: string | null
+  /** `HUNTAWAY_BUNDLED_SERVER`: the server this host was installed as, which Roll back can go back to. */
+  readonly bundledServer: string | null
+  /** Whether this server is a release package (a `build.json` beside its launcher), whose version and commit that file gives. */
+  readonly release: boolean
+  /** `bin/huntaway`'s restart file and process id, when it is this process's parent (taken out of the environment). */
+  readonly supervisor: { readonly file: string; readonly pid: number } | null
+  /** The arguments this server was started with (after the program), to start it again with. */
+  readonly args: ReadonlyArray<string>
+  /** Every `HUNTAWAY_*` variable of this server's environment, sorted by name (a service unit keeps those that configure it). */
+  readonly huntawayEnv: ReadonlyArray<readonly [string, string]>
+  /** The user's login shell (`SHELL`, else `/bin/sh`), the user's name, and the folder this server was started in. */
+  readonly loginShell: string
+  readonly user: string
+  readonly cwd: string
+  /** `XDG_CONFIG_HOME`, else `~/.config`: user units go in its `systemd/user`. */
+  readonly configHome: string
+  /** `XDG_RUNTIME_DIR`, else `/run/user/<uid>`: what `systemctl --user` needs to find the user's manager. */
+  readonly runtimeDir: string | null
+  /** `PATH`, where a rebuild looks for pnpm and cargo. */
+  readonly path: string
 }
+
+/** What a release package says of itself in `build.json`, beside its launcher. */
+const ReleaseBuild = Schema.fromJsonString(Schema.Struct({ version: Schema.String, commit: Schema.optional(Schema.NullOr(Schema.String)) }))
+
+/** The `build.json` beside the launcher `exe` (`HUNTAWAY_EXE`), when this server is a release package. */
+export const releaseBuild = (exe: string | null) =>
+  Effect.gen(function* () {
+    if (exe === null) return null
+    const fs = yield* FileSystem.FileSystem
+    const text = yield* fs.readFileString(`${exe.slice(0, Math.max(0, exe.lastIndexOf("/")))}/build.json`).pipe(Effect.option)
+    if (Option.isNone(text)) return null
+    return yield* Schema.decodeEffect(ReleaseBuild)(text.value).pipe(
+      Effect.mapError((e) => new StartupError({ reason: `can't read the build.json beside ${exe}: ${e.message}` })),
+    )
+  })
+
+/**
+ * The commit a server without a checkout runs: the one its release was built from, else (not for a release, which
+ * inherits the deployment's environment when it was updated to) what its deployment says (`HUNTAWAY_COMMIT`).
+ */
+export const pickCommit = (built: string | null, deployed: string | null, isRelease: boolean): string | null =>
+  nonBlank(built) ?? (isRelease ? null : nonBlank(deployed))
+
+/** Text trimmed, or null when there's none. */
+const nonBlank = (c: string | null) => (c !== null && c.trim() !== "" ? c.trim() : null)
+
+/** A variable, trimmed; null when unset or blank. */
+const text = (name: string) =>
+  Config.String(name).pipe(
+    Config.option,
+    Config.map((value) => nonBlank(Option.getOrNull(value))),
+  )
+
+/** A GitHub repository named as `OWNER/REPO`, or null. */
+export const ownerRepo = (repo: string): string | null => {
+  const trimmed = repo.trim()
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(trimmed) ? trimmed : null
+}
+
+/** The checkout this file is in: `apps/server/src/platform/` is four folders below its root. */
+const thisCheckout = new URL("../../../..", import.meta.url)
+
+/**
+ * `bin/huntaway`'s restart file and process id, taken out of the environment so that nothing this server starts sees
+ * them, and kept when the launcher is this process's parent (docs/plan/inventory/05-hosts-update.md, section 9).
+ */
+function takeSupervisor(): { readonly file: string; readonly pid: number } | null {
+  const file = process.env["HUNTAWAY_RESTART_FILE"]
+  const pid = Number(process.env["HUNTAWAY_SUPERVISOR_PID"])
+  delete process.env["HUNTAWAY_RESTART_FILE"]
+  delete process.env["HUNTAWAY_SUPERVISOR_PID"]
+  return file !== undefined && file !== "" && pid > 1 && process.ppid === pid ? { file, pid } : null
+}
+
+/** Every `HUNTAWAY_*` variable, sorted by name. */
+function huntawayVariables(): ReadonlyArray<readonly [string, string]> {
+  return Object.entries(process.env)
+    .flatMap(([name, value]): ReadonlyArray<readonly [string, string]> => (name.startsWith("HUNTAWAY_") && value !== undefined ? [[name, value]] : []))
+    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
+/** What the update area reads of the environment (plan tasks 8.1, 8.2). */
+const updateConfig = (args: ServeArgs, home: string, exe: string | null, expand: (path: string) => string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const supervisor = yield* Effect.sync(takeSupervisor)
+    const build = yield* releaseBuild(exe)
+    const isFile = (path: string) =>
+      fs.stat(path).pipe(
+        Effect.map((info) => info.type === "File"),
+        Effect.orElseSucceed(() => false),
+      )
+    const given = args.sourceDir === undefined ? Option.none<string>() : Option.map(args.sourceDir, expand)
+    const candidate = Option.isSome(given) ? given.value : build === null ? decodeURIComponent(thisCheckout.pathname).replace(/\/$/, "") : null
+    const real = candidate === null ? null : yield* fs.realPath(candidate).pipe(Effect.orElseSucceed(() => null))
+    const sourceDir = real !== null && (yield* isFile(`${real}/Cargo.toml`)) && (yield* isFile(`${real}/apps/web/package.json`)) ? real : null
+    const repo = args.releaseUpdates === undefined ? null : Option.getOrNull(args.releaseUpdates)
+    const releaseRepo = repo === null || repo.trim() === "" ? null : ownerRepo(repo)
+    if (repo !== null && repo.trim() !== "" && releaseRepo === null) {
+      return yield* new StartupError({ reason: `--release-updates "${repo}" isn't OWNER/REPO` })
+    }
+    const updateFrom = args.updateFrom === undefined ? null : Option.getOrNull(Option.map(args.updateFrom, (url) => url.trim().replace(/\/+$/, "")))
+    const deployed = yield* text("HUNTAWAY_COMMIT")
+    const uid = typeof process.getuid === "function" ? process.getuid() : null
+    const huntawayEnv = yield* Effect.sync(huntawayVariables)
+    return {
+      sourceDir,
+      updateFrom: updateFrom === "" ? null : updateFrom,
+      releaseRepo,
+      releaseApi: ((yield* text("HUNTAWAY_RELEASE_API")) ?? "https://api.github.com").replace(/\/+$/, ""),
+      platform: `${process.platform === "darwin" ? "mac" : process.platform}-${process.arch}`,
+      desktopVersion: yield* text("HUNTAWAY_DESKTOP_VERSION"),
+      desktopShell: yield* text("HUNTAWAY_DESKTOP_SHELL"),
+      desktopInstall: yield* text("HUNTAWAY_DESKTOP_INSTALL"),
+      bundledServer: yield* text("HUNTAWAY_BUNDLED_SERVER"),
+      release: build !== null,
+      supervisor,
+      args: process.argv.slice(2),
+      huntawayEnv,
+      loginShell: (yield* text("SHELL")) ?? "/bin/sh",
+      user: (yield* text("USER")) ?? userInfo().username,
+      cwd: process.cwd(),
+      configHome: (yield* text("XDG_CONFIG_HOME")) ?? `${home}/.config`,
+      runtimeDir: (yield* text("XDG_RUNTIME_DIR")) ?? (uid === null ? null : `/run/user/${uid}`),
+      path: (yield* text("PATH")) ?? "",
+      // A release reports its own version and commit, and serves its own UI, not the deployment's.
+      ...(build === null
+        ? { commit: pickCommit(null, deployed, false) }
+        : {
+            version: build.version,
+            commit: pickCommit(build.commit ?? null, deployed, true),
+            ...(exe !== null && Option.isNone(args.uiDir) ? { uiDir: `${exe.slice(0, exe.lastIndexOf("/"))}/ui` } : {}),
+          }),
+    } satisfies Partial<ServerConfigShape>
+  })
 
 /** The version of this build. A release sets it when it packages the server. */
 export const VERSION = "0.1.0"
@@ -173,7 +344,6 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
       Effect.gen(function* () {
         const home = yield* Config.String("HOME").pipe(Config.withDefault("/"))
         const dataHome = yield* Config.String("XDG_DATA_HOME").pipe(Config.withDefault(`${home}/.local/share`))
-        const commit = yield* Config.String("HUNTAWAY_COMMIT").pipe(Config.option)
         const exe = yield* Config.String("HUNTAWAY_EXE").pipe(Config.option)
         const tmpDir = yield* Config.String("TMPDIR").pipe(Config.withDefault("/tmp"))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
@@ -193,7 +363,6 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           profiles,
           skipDbBackup: args.skipDbBackup,
           version: VERSION,
-          commit: Option.getOrNull(commit),
           home,
           shimBin: args.shimBin === undefined ? null : Option.getOrNull(Option.map(args.shimBin, expand)),
           claudeBin: args.claudeBin === undefined ? "claude" : Option.getOrElse(Option.map(args.claudeBin, expand), () => "claude"),
@@ -202,6 +371,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           agentEnv: AGENT_ENV,
           tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
           taskTmpRoot: null,
+          ...(yield* updateConfig(args, home, Option.getOrNull(exe), expand)),
         })
       }),
     )
@@ -231,6 +401,26 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         agentEnv: AGENT_ENV,
         tmpDir: config.dataDir,
         taskTmpRoot: `${config.dataDir}/task-tmp`,
+        // No updates unless a test gives them; nothing outside the data folder.
+        sourceDir: null,
+        updateFrom: null,
+        releaseRepo: null,
+        releaseApi: "http://127.0.0.1:1",
+        platform: "linux-x64",
+        desktopVersion: null,
+        desktopShell: null,
+        desktopInstall: null,
+        bundledServer: null,
+        release: false,
+        supervisor: null,
+        args: ["serve"],
+        huntawayEnv: [],
+        loginShell: "/bin/sh",
+        user: "test",
+        cwd: config.dataDir,
+        configHome: `${config.dataDir}/config`,
+        runtimeDir: null,
+        path: "",
         ...config,
       }),
     )
