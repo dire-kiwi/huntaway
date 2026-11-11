@@ -1,8 +1,15 @@
-import { Cause, Context, Effect, Exit, Fiber, FiberMap, FileSystem, Layer, Option, Ref, Schema } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Fiber, FiberMap, FileSystem, Layer, Option, Ref, Schedule, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { DocumentLabel, RunId, threadKindOf } from "@huntaway/contracts"
 import type { ProjectId, Task, TaskId, Timestamp } from "@huntaway/contracts"
+import { ContextMeter } from "../agents/ContextMeter.ts"
 import { planRest, startInstructions } from "../agents/prompts/start.ts"
+import { worthAsking } from "../agents/titles/text.ts"
+import { Titles } from "../agents/Titles.ts"
+import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
+import { ProfileRepo } from "../profiles/ProfileRepo.ts"
+import { Usage } from "../profiles/Usage.ts"
+import { isResetDue } from "../profiles/usage/limits.ts"
 import { Actor, Changes } from "../platform/Changes.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { Db } from "../platform/Db.ts"
@@ -18,7 +25,7 @@ import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Threads } from "../threads/Threads.ts"
 import type { WriteNo } from "../threads/model.ts"
 import { LaunchFacts } from "./LaunchFacts.ts"
-import { combine, decideSend, newCommand, rowOf } from "./queue.ts"
+import { combine, decideSend, isCompact, newCommand, rowOf } from "./queue.ts"
 import type { Outgoing, Refusal, Take } from "./queue.ts"
 import type { Run, RunKind } from "./Run.ts"
 import { AgentRequests } from "./AgentRequests.ts"
@@ -109,6 +116,14 @@ interface Registered {
 }
 
 export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/runs/Runs") {
+  /** Tasks waiting for a usage limit carry on once it resets: every 30 seconds, as long as the server runs. */
+  static readonly limitResets = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const runs = yield* Runs
+      yield* runs.startUnblocked(null).pipe(Effect.repeat(Schedule.spaced("30 seconds")), Effect.forkScoped)
+    }),
+  )
+
   static readonly layer = Layer.effect(
     Runs,
     Effect.gen(function* () {
@@ -129,6 +144,11 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const facts = yield* LaunchFacts
       const requests = yield* AgentRequests
       const dependencies = yield* Dependencies
+      const meter = yield* ContextMeter
+      const titles = yield* Titles
+      const usage = yield* Usage
+      const profileRepo = yield* ProfileRepo
+      const configRepo = yield* AgentConfigRepo
       const fs = yield* FileSystem.FileSystem
       // The launches being prepared, by task: a stop interrupts one.
       const launches = yield* FiberMap.make<TaskId>()
@@ -383,11 +403,76 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: actorOf(message) })
           return done.after
         }
+        // A config that's out of usage would refuse the run: it starts on another, or waits for the reset.
+        if (decision.kind === "prompt" && task.kind === "task" && !task.merging) {
+          const held = yield* usageGate(task, message, at)
+          if (held !== null) return held
+        }
         if (plan) {
           yield* db.tx(labelled(task))
           yield* fs.makeDirectory(facts.documentsOf(id), { recursive: true }).pipe(Effect.ignore)
         }
         return yield* start(id, message, decision.kind, decision.take)
+      })
+
+      /**
+       * A task out of usage waits in In progress, keeping `message` queued, until its config's limit resets (the old
+       * `wait_for_limit`); `Runs.startUnblocked` carries it on then.
+       */
+      const waitForLimit = Effect.fnUntraced(function* (task: Task, configName: string, until: Timestamp, message: Outgoing | null, at: Timestamp) {
+        const done = yield* db.tx(
+          Effect.gen(function* () {
+            if (message !== null) yield* tasks.enqueue(task.id, rowOf(message), at)
+            if (!(task.waiting && task.limit_reset_at === until)) {
+              yield* threads.notice(task.id, "info", `Waiting for ${configName}'s usage limit to reset`, `It resets at ${until}`)
+            }
+            const idle = task.running && !(yield* runs.hasActive(task.id))
+            const after = yield* write(
+              task,
+              { waiting: true, limit_reset_at: until, status: "in_progress", attention_reason: null, ...(idle ? { running: false } : {}) },
+              at,
+            )
+            return after
+          }),
+        )
+        yield* changes.offer({ _tag: "TaskChanged", before: task, after: done, cause: actorOf(message) })
+        return done
+      })
+
+      /**
+       * Before a run of `task` starts (the old `usage::before_run`): already waiting for a reset, a message joins the
+       * queue; else with its config out of usage, a task that hasn't started moves to another config of the same agent
+       * with room (the profile's `limit_switch`), or it waits for the reset (`limit_wait`). The task if it waits.
+       */
+      const usageGate = Effect.fnUntraced(function* (task: Task, message: Outgoing | null, at: Timestamp) {
+        const nowMs = Date.parse(at)
+        const own = yield* facts.config(task)
+        const name = own?.name ?? "its config"
+        if (task.limit_reset_at !== null && task.waiting && !isResetDue(task.limit_reset_at, nowMs)) {
+          return yield* waitForLimit(task, name, task.limit_reset_at, message, at)
+        }
+        const profile = Option.getOrNull(yield* profileRepo.get(task.profile_id))
+        if (profile === null || own === null || (!profile.limit_wait && !profile.limit_switch)) return null
+        const until = yield* usage.outUntil(own.id)
+        if (until === null) return null
+        if (profile.limit_switch && task.session_id === null) {
+          // Another of its configs with the same agent, so its model and effort still apply.
+          const project = task.project_id === null ? null : yield* tasks.project(task.project_id)
+          for (const other of yield* tasks.configs(task.profile_id, project)) {
+            if (other === own.id) continue
+            const row = Option.getOrNull(yield* configRepo.get(other))
+            if (row === null || row.agent !== own.agent || (yield* usage.outUntil(other)) !== null) continue
+            yield* db.tx(
+              Effect.gen(function* () {
+                yield* write(task, { claude_config_id: other }, at)
+                yield* threads.notice(task.id, "info", `Starting on ${row.name} instead: ${own.name} is out of usage`, `${own.name} resets at ${until}`)
+              }),
+            )
+            return null
+          }
+        }
+        if (!profile.limit_wait) return null
+        return yield* waitForLimit(task, own.name, until, message, at)
       })
 
       const withLock = <A, E>(id: TaskId, effect: Effect.Effect<A, E>) => locks.withLock(["task", id])(effect)
@@ -409,6 +494,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
               at,
             )
             yield* threads.notice(id, "info", "The next message starts a new conversation with the agent")
+            yield* meter.clear(id)
             return after
           }),
         )
@@ -423,7 +509,10 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           const renewed = yield* withLock(id, newSessionLocked(id))
           return rest === "" ? renewed : yield* withLock(id, sendLocked(id, { ...message, text: rest }))
         }
-        return yield* withLock(id, sendLocked(id, message))
+        const sent = yield* withLock(id, sendLocked(id, message))
+        // The user's prompt may have moved the task on, so its title follows.
+        if (message.source === "user" && message.auto !== true && !isCompact(message.text) && worthAsking(message.text)) yield* titles.refreshLater(id)
+        return sent
       })
 
       // ---- stopping ----
@@ -643,7 +732,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
         startWaiting,
         startUnblocked: Effect.fn("Runs.startUnblocked")(function* (project: ProjectId | null) {
           if (config.noAgents) return
-          for (const id of yield* dependencies.ready(project)) yield* startWaiting(id)
+          for (const id of yield* dependencies.ready(project, yield* Clock.currentTimeMillis)) yield* startWaiting(id)
         }),
       })
     }),

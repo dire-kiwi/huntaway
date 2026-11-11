@@ -2,6 +2,8 @@ import { Cause, Effect, Exit, Layer, Option, Ref, Result, Schema } from "effect"
 import type { NewEvent, RunId, TaskId } from "@huntaway/contracts"
 import { SavedEvent } from "@huntaway/contracts"
 import { INIT_PREFIX } from "../../agents/claude/launch.ts"
+import { ContextMeter } from "../../agents/ContextMeter.ts"
+import { Usage } from "../../profiles/Usage.ts"
 import { decodeLine } from "../../agents/claude/lines.ts"
 import type { ClaudeLine, ResultLine } from "../../agents/claude/lines.ts"
 import { emptyState, isForeignResult, observe, stateFromItems, translate, turnCost } from "../../agents/claude/translate.ts"
@@ -47,6 +49,8 @@ interface After {
   readonly awaitedBefore: string | null
   readonly effects: ReadonlyArray<LineEffect>
   readonly turnEnded: boolean
+  /** What the turn the line ended cost (`RunRepo.addCost`). */
+  readonly cost: number
 }
 
 /** The lines whose items take the board's write number (`legacy:<n>…` ids): the others make no items. */
@@ -89,6 +93,8 @@ export const ClaudeOutput = Layer.effect(
     const events = yield* Events
     const input = yield* RunInput
     const requests = yield* AgentRequests
+    const meter = yield* ContextMeter
+    const usage = yield* Usage
     const kept = yield* Ref.make<ReadonlyMap<TaskId, Kept>>(new Map())
 
     /** The thread's state as stored, for a run followed afresh. */
@@ -216,7 +222,7 @@ export const ClaudeOutput = Layer.effect(
           if (line.type === "result" && isForeignResult(line, { sawResult: now.saw_result, awaiting: awaited !== null })) {
             yield* Effect.logInfo(`run=${run.id} a result of another turn than its prompt's, before it took the prompt in`)
             yield* repo.saveOffset(run.id, end)
-            const skipped: After = { kept: { ...before, awaited }, awaitedBefore: before.awaited, effects: [], turnEnded: false }
+            const skipped: After = { kept: { ...before, awaited }, awaitedBefore: before.awaited, effects: [], turnEnded: false, cost: 0 }
             return skipped
           }
           const at = yield* nowTimestamp
@@ -242,10 +248,29 @@ export const ClaudeOutput = Layer.effect(
           const turnEnded = yield* apply(run, line, made.effects, cost, now.stop)
           if (line.type === "control_response") yield* initRefused(run, line)
           yield* repo.saveOffset(run.id, end)
-          const after: After = { kept: { run: run.id, state: made.state, seq, awaited }, awaitedBefore: before.awaited, effects: made.effects, turnEnded }
+          const after: After = { kept: { run: run.id, state: made.state, seq, awaited }, awaitedBefore: before.awaited, effects: made.effects, turnEnded, cost }
           return after
         }),
       )
+
+    /** The config the run's task runs on, if it has one. */
+    const configOf = Effect.fnUntraced(function* (run: Run) {
+      const task = yield* tasks.get(run.task_id)
+      return task?.claude_config_id ?? null
+    })
+
+    const rateLimit = Effect.fnUntraced(function* (run: Run, info: unknown) {
+      const config = yield* configOf(run)
+      if (config !== null) yield* usage.onRateLimit(config, info)
+    })
+
+    /** The run's config is out of usage: the task notes when it resets (the old `usage::ran_out`). */
+    const ranOut = Effect.fnUntraced(function* (run: Run) {
+      const config = yield* configOf(run)
+      if (config === null) return
+      const until = yield* usage.outUntil(config)
+      if (until !== null) yield* db.tx(writeTask(run.task_id, { limit_reset_at: until }))
+    })
 
     /** What follows the line's commit. */
     const follow = Effect.fnUntraced(function* (run: Run, line: ClaudeLine, done: After) {
@@ -256,6 +281,20 @@ export const ClaudeOutput = Layer.effect(
       for (const effect of done.effects) {
         if (effect._tag === "PreviewReset") yield* threads.endPreview(run.task_id)
         else if (effect._tag === "PreviewText") yield* threads.preview(run.task_id, effect.text)
+        // How much of a usage window is left: the config's usage (a `rate_limit_event`, or a turn refused for it).
+        else if (effect._tag === "RateLimit") yield* rateLimit(run, line.type === "rate_limit_event" ? line : effect.info)
+        else if (effect._tag === "Compacted") yield* meter.onCompacted(run, effect.metadata)
+      }
+      // The context meter: each request's context, and the breakdown asked for at a turn's end (before the input closes).
+      if (line.type === "assistant") yield* meter.onAssistant(run, line)
+      if (line.type === "control_response") yield* meter.onControlResponse(run.task_id, line)
+      if (line.type === "result" && done.turnEnded) {
+        yield* meter.onResult(run.task_id, line)
+        const ask = yield* meter.requestLine
+        yield* dir.appendInput(run.id, ask).pipe(Effect.catch((e) => Effect.logWarning(`run=${run.id} asking for its context: ${e.reason}`)))
+        yield* meter.recordTurn(run, done.cost)
+        // Refused for the usage limit: the config is out until it resets, which the run's end reads.
+        if (line.api_error === "usage_limit_reached") yield* ranOut(run)
       }
       if (line.type === "control_request") yield* requests.handle(run, line)
       else if (line.type === "control_cancel_request") yield* requests.cancel(run, line.request_id)

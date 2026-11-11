@@ -159,7 +159,8 @@ export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
  * The runs area: the commands (`Runs`) and what a launch is made of, the follower with the Claude line handler, what
  * the server writes to a run's input, and the registry the areas below answer agents' requests through.
  */
-const RunsArea = Layer.mergeAll(Runs.layer).pipe(
+const RunsArea = Runs.limitResets.pipe(
+  Layer.provideMerge(Runs.layer),
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
   Layer.provideMerge(ClaudeOutput),

@@ -3,7 +3,7 @@ import { Rpc, RpcGroup } from "effect/rpc"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { TaskId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
-import { NewTask, Task, TaskFilter, TaskPatch } from "../task.ts"
+import { Context as TaskContext, NewTask, Task, TaskFilter, TaskPatch } from "../task.ts"
 
 /** Tasks (the old `/projects/{id}/tasks`, `/profiles/{id}/tasks`, `/tasks/{id}`). Changes emit `task` or `task_deleted`. */
 export class TaskRpcs extends RpcGroup.make(
@@ -36,4 +36,16 @@ export class TaskRpcs extends RpcGroup.make(
   Rpc.make("tasks.stop", { payload: { id: TaskId }, success: Schema.Struct({ stopped: Schema.Boolean }), error: NotFound }).annotate(RequiredScope, "operate"),
   /** Take back what is queued for the next run: the task as it was, so the client can put the text back in the composer. */
   Rpc.make("tasks.dropQueued", { payload: { id: TaskId }, success: Task, error: NotFound }).annotate(RequiredScope, "operate"),
+  /** Stop a server the task's processes left listening on `port` (the old `POST /tasks/{id}/servers/{port}/stop`). */
+  Rpc.make("tasks.stopServer", {
+    payload: { id: TaskId, port: Schema.Int },
+    success: Task,
+    error: Schema.Union([NotFound, Conflict, Invalid]),
+  }).annotate(RequiredScope, "operate"),
+  /** How full the task's agent's context is: the summary on the task and the latest breakdown (the old `GET /tasks/{id}/context`). */
+  Rpc.make("tasks.context", {
+    payload: { id: TaskId },
+    success: Schema.Struct({ context: Schema.NullOr(TaskContext), detail: Schema.Unknown }),
+    error: NotFound,
+  }).annotate(RequiredScope, "read"),
 ).middleware(Auth) {}

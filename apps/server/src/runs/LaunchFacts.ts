@@ -15,6 +15,7 @@ import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
+import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { AgentRequests } from "./AgentRequests.ts"
 import type { Run } from "./Run.ts"
@@ -49,6 +50,8 @@ const threadConfigKey = (task: Task): "assistant_config_id" | "threads_config_id
 export interface LaunchFactsShape {
   /** Everything a Claude run of `run` is launched with, its folder's contents included: prepared for `RunDir.prepare` and `Shim.spawn`. */
   readonly claude: (run: Run, text: string) => Effect.Effect<Prepared, TaskNotFound>
+  /** The config a thread runs on (the old `task_claude_config`): its own, else (with no conversation yet) its first available. */
+  readonly config: (task: Task) => Effect.Effect<AgentConfigRow | null>
   /** A task's documents folder. */
   readonly documentsOf: (task: TaskId) => string
   /**
@@ -77,6 +80,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
       const dir = yield* RunDir
       const fs = yield* FileSystem.FileSystem
       const random = yield* SecureRandom.SecureRandom
+      const taskTmp = yield* TaskTmp
 
       const expand = (path: string) => (path === "~" ? config.home : path.startsWith("~/") ? `${config.home}${path.slice(1)}` : path)
       const exists = (path: string) => fs.exists(expand(path)).pipe(Effect.orElseSucceed(() => false))
@@ -166,7 +170,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const model = nonBlank(task.model) ?? nonBlank(project?.model) ?? nonBlank(profile?.default_model) ?? nonBlank(host.default_model)
         const effort = nonBlank(task.effort) ?? nonBlank(host.default_effort)
         const prompt = compact ? text : yield* prompts.start(task.id, text)
-        const systemPrompt = yield* prompts.system(task.id, { codex: false, permission_mode: permissionMode })
+        // The task's own temp folder, its TMPDIR, which goes once it's done.
+        const tmp = yield* taskTmp.ensure(task)
+        const systemPrompt = yield* prompts.system(task.id, { codex: false, permission_mode: permissionMode, tmp })
         const configDir = yield* configDirOf(task, cfg)
         const review = task.kind === "review"
         const spec = yield* claudeLaunch({
@@ -181,7 +187,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           configDir,
           apiEnv: yield* apiEnv(cfg),
           telemetryEnv: [],
-          tmp: null,
+          tmp,
           resumeAt: null,
           model,
           effort,
@@ -216,7 +222,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         return available.find((id) => id === picked) ?? available[0] ?? null
       })
 
-      return LaunchFacts.of({ claude, documentsOf: (task) => dataDir.documents(task), threadConfig })
+      return LaunchFacts.of({ claude, config: configOf, documentsOf: (task) => dataDir.documents(task), threadConfig })
     }),
   )
 }
