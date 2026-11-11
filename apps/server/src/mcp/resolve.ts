@@ -138,7 +138,7 @@ export const makeReach = Effect.gen(function* () {
   const task = Effect.fnUntraced(function* (caller: McpCaller, ref: string, profile: string | null) {
     const [prefix, rest] = yield* splitRef(ref)
     const bs = yield* pickBoards(caller, prefix ?? profile)
-    return yield* refs.resolve(rest, { own: caller.profile.id, profiles: bs.map((b) => b.id) }).pipe(
+    return yield* refs.resolve(rest, { own: caller.profile.id ?? undefined, profiles: bs.map((b) => b.id) }).pipe(
       Effect.catchTags({
         TaskNotFound: () => Effect.fail(ToolError.notFound(`task ${ref}`)),
         TaskRefAmbiguous: (e) =>
@@ -162,7 +162,7 @@ export const makeReach = Effect.gen(function* () {
 
   const projectOrOwn = Effect.fnUntraced(function* (caller: McpCaller, ref: string | null, profile: string | null) {
     if (ref !== null) return yield* project(caller, ref, profile)
-    const own = profile === null ? caller.task.project_id : null
+    const own = profile === null ? (caller.task?.project_id ?? null) : null
     if (own === null) return yield* ToolError.other("project_id is required (use list_projects)")
     const found = yield* projects.get(own)
     if (Option.isNone(found)) return yield* ToolError.notFound(`project ${own}`)

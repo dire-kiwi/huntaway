@@ -267,7 +267,7 @@ const marksOf = (params: { readonly starred?: boolean; readonly remind_at?: stri
   })
 
 /** The caller's agent, as the actor of what it changes. */
-const agent = (caller: McpCaller) => ({ _tag: "Agent", task_id: caller.task.id }) as const
+const agent = (caller: McpCaller) => ({ _tag: "Agent", task_id: caller.task?.id ?? null }) as const
 
 /** The task tools' handlers, in the order runs are shown them. */
 export const taskTools = Effect.gen(function* () {
@@ -282,8 +282,9 @@ export const taskTools = Effect.gen(function* () {
 
   /** The pen whose own thread the caller is: where its new tasks go, and whose tasks it lists, by default. */
   const ownPen = Effect.fnUntraced(function* (caller: McpCaller, profile: string | null) {
-    if (profile !== null || caller.task.task_type !== "pen") return null
-    return (yield* pens.all).find((p) => p.thread_id === caller.task.id) ?? null
+    if (profile !== null || caller.task === null || caller.task.task_type !== "pen") return null
+    const own = caller.task.id
+    return (yield* pens.all).find((p) => p.thread_id === own) ?? null
   })
 
   /** The tasks a `depends_on` names (ids or keys), as ids. */
@@ -321,7 +322,7 @@ export const taskTools = Effect.gen(function* () {
       const own = yield* ownPen(caller, profile)
       const penName = given(params.pen) ?? (own !== null && projectId === null && sp === null ? own.id : null)
       // A pen's tasks are from every project, unless it's given one.
-      const pid = projectId ?? (penName !== null || profile !== null ? null : caller.task.project_id)
+      const pid = projectId ?? (penName !== null || profile !== null ? null : (caller.task?.project_id ?? null))
       let list: ReadonlyArray<Task>
       if (pid === null || pid === "all") {
         // Every task on the named board(s), else on the caller's own.
@@ -476,7 +477,7 @@ export const taskTools = Effect.gen(function* () {
         t.session_id === null &&
         t.status === "in_progress" &&
         !t.waiting &&
-        t.id !== caller.task.id &&
+        t.id !== caller.task?.id &&
         !(yield* runs.isRunning(t.id))
       if (starts) {
         // On a host that can't run agents, it's left in In progress, as before.
@@ -503,7 +504,7 @@ export const taskTools = Effect.gen(function* () {
   const sendToTask = boardTool(SendToTask, (params, caller) =>
     Effect.gen(function* () {
       const found = yield* reach.task(caller, params.task_id, given(params.profile))
-      if (found.id === caller.task.id) return yield* ToolError.other("cannot send a message to your own task")
+      if (found.id === caller.task?.id) return yield* ToolError.other("cannot send a message to your own task")
       return yield* json.summarize(yield* runs.send(found.id, { text: params.message, source: "agent" }))
     }).pipe(told),
   )

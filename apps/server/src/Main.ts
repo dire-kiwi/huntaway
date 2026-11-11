@@ -1,10 +1,12 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { Mac, SecureRandom } from "effect/crypto"
+import { Digest, Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
+import { createSocket } from "node:dgram"
 import { createServer } from "node:http"
+import { networkInterfaces } from "node:os"
 import {
   ApprovalRulesRpcs,
   AttachmentRpcs,
@@ -13,13 +15,18 @@ import {
   ConfigRpcs,
   GitRpcs,
   HostRpcGroup,
+  HubHostRpcs,
+  LinkRpcs,
   PenRpcs,
   PermissionRpcs,
+  AdminRpcs,
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
+  SettingsSyncRpcs,
   TaskRpcs,
   ThreadRpcs,
+  ToolRpcs,
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
@@ -38,6 +45,24 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { CopyConfig } from "./hosts/CopyConfig.ts"
+import { Discovery } from "./hosts/Discovery.ts"
+import { Tailscale } from "./hosts/discovery/Tailscale.ts"
+import { Udp } from "./hosts/discovery/Udp.ts"
+import { HostTools } from "./hosts/HostTools.ts"
+import { Hubs } from "./hosts/Hubs.ts"
+import { LinkConnections } from "./hosts/LinkConnections.ts"
+import { LinkRepo } from "./hosts/LinkRepo.ts"
+import { Links } from "./hosts/Links.ts"
+import { Relay } from "./hosts/Relay.ts"
+import { SessionSeal } from "./hosts/SessionSeal.ts"
+import { SettingsSync } from "./hosts/SettingsSync.ts"
+import { SettingsSyncExchange } from "./hosts/SettingsSyncExchange.ts"
+import { SettingsSyncRepo } from "./hosts/SettingsSyncRepo.ts"
+import { Ssh } from "./hosts/Ssh.ts"
+import { Uplink } from "./hosts/Uplink.ts"
+import { LinkStreamRoute } from "./http/linkStream.ts"
+import { RelayRoute } from "./http/relay.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
@@ -124,13 +149,25 @@ import { BoardHandlers } from "./rpc/board.ts"
 import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
+import { HubHostHandlers } from "./rpc/hub.ts"
+import { LinkHandlers } from "./rpc/link.ts"
 import { PenHandlers } from "./rpc/pens.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
+import { SettingsSyncHandlers } from "./rpc/settingsSync.ts"
 import { TaskHandlers } from "./rpc/tasks.ts"
 import { ThreadHandlers } from "./rpc/threads.ts"
+import { AdminHandlers } from "./rpc/admin.ts"
+import { Releases } from "./update/Releases.ts"
+import { Restarts } from "./update/Restarts.ts"
+import { Service } from "./update/Service.ts"
+import { Supervisor } from "./update/Supervisor.ts"
+import { Systemd } from "./update/Systemd.ts"
+import { HostUpdates } from "./update/HostUpdates.ts"
+import { Updater } from "./update/Updater.ts"
+import { ToolHandlers } from "./rpc/tools.ts"
 import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
 import { HostSettings } from "./settings/HostSettings.ts"
@@ -162,6 +199,8 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),
+    // Before the identity and the database: hand over to a newer release this host updated to (8.2).
+    Layer.provideMerge(Releases.execInstalled.pipe(Layer.provideMerge(Supervisor.layer))),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
@@ -268,6 +307,36 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   )
 
 /**
+ * Node's UDP sockets and network interfaces, for mDNS: Effect's `DatagramSocket` can't pick the interface each datagram
+ * goes out of, nor list them (`hosts/discovery/Udp.ts`). Named here, as Node's HTTP server is.
+ */
+const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
+
+/**
+ * The hosts area's connections (docs/plan/08-hosts.md), built before the board's MCP area, which asks them for the other
+ * hosts a board tool call can go to (`OtherHosts`, 7.4): the links' connections, the hubs this host dialled in to, and
+ * the hubs that take its agents' calls up.
+ */
+const HostLinksLive = Uplink.otherHosts.pipe(
+  Layer.provideMerge(Layer.mergeAll(Uplink.layer, LinkConnections.layer, Hubs.layer)),
+  Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer)),
+)
+
+/** The rest of the hosts area, over the board's MCP area: the directory, the relay, tools called from other hosts, settings sync, discovery. */
+const HostsLive = Layer.mergeAll(
+  Links.layer,
+  Relay.layer,
+  HostTools.served,
+  SettingsSyncExchange.layer,
+  SettingsSync.observer,
+  Discovery.layer,
+  CopyConfig.layer,
+).pipe(
+  Layer.provideMerge(Layer.mergeAll(HostTools.layer, SettingsSync.layer)),
+  Layer.provideMerge(Layer.mergeAll(SettingsSyncRepo.layer, UdpLive, Tailscale.layer)),
+)
+
+/**
  * The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered), questions, and the
  * board's changes that always ask (with a deleted project's approvals expiring).
  */
@@ -298,13 +367,31 @@ export const BoardHooks = Layer.effect(
   }),
 )
 
+/**
+ * The update area: the restart job, rebuilds and a hub's push (`Updater`), release updates, the systemd service. The
+ * launcher (`Supervisor`) is the platform's, for the hand-over at startup. Outside the process: `Systemd`, git through
+ * `Proc`, GitHub through the HTTP client.
+ */
+const UpdateLive = Updater.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Releases.layer, Service.layer)),
+  Layer.provideMerge(Layer.mergeAll(Restarts.layer, Systemd.layer, Digest.layerWebCrypto)),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // A hub's Update of a linked host: over the hosts' connections and the updater.
+    Layer.provideMerge(HostUpdates.layer),
+    // Hosts: links, the relay, tools across hosts (M7).
+    Layer.provideMerge(HostsLive),
+    // Restarts, updates, releases and the service (8.1, 8.2): Recovery settles a release that has come up.
+    Layer.provideMerge(UpdateLive),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
+    // The links' connections, which the board's calls go to other hosts through.
+    Layer.provideMerge(HostLinksLive),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
     // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
@@ -360,6 +447,11 @@ export const Served = PublicRpcs.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
+  HubHostRpcs,
+  LinkRpcs,
+  SettingsSyncRpcs,
+  AdminRpcs,
+  ToolRpcs,
   CheckpointRpcs,
   GitRpcs,
 )
@@ -378,6 +470,11 @@ export const HandlersLive = Layer.mergeAll(
   ApprovalRulesHandlers,
   ThreadHandlers,
   PermissionHandlers,
+  HubHostHandlers,
+  LinkHandlers,
+  SettingsSyncHandlers,
+  AdminHandlers,
+  ToolHandlers,
   CheckpointHandlers,
   GitHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
@@ -389,14 +486,25 @@ export const RpcLive = Layer.mergeAll(
 ).pipe(Layer.provide(HandlersLive), Layer.provide(RpcSerialization.layerNdjson))
 
 /** The routes the server answers, `/api` first, then the UI. */
-export const RoutesLive = Layer.mergeAll(RpcLive, HealthRoute, McpHttpRoute, ApiNotFound, StaticUi, HttpRouter.cors({ maxAge: 86400 }), BodyLimit)
+export const RoutesLive = Layer.mergeAll(
+  RpcLive,
+  HealthRoute,
+  RelayRoute,
+  LinkStreamRoute,
+  McpHttpRoute,
+  ApiNotFound,
+  StaticUi,
+  HttpRouter.cors({ maxAge: 86400 }),
+  BodyLimit,
+)
 
 /**
  * The whole server. The listener binds last, once every area is built and recovery has run, so no request reaches a
  * server that is still starting (the old server bound first and held requests at a gate instead).
  */
 export const serverLayer = (config: ServerConfig["Service"]) =>
-  HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }).pipe(
+  // Once it listens, this host dials the hubs it is a host of and discovery answers on the port it got (step 6).
+  Layer.mergeAll(HttpRouter.serve(RoutesLive, { disableListenLog: true, disableLogger: true }), Hubs.dialIn, Discovery.responder).pipe(
     Layer.provideMerge(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
     Layer.provideMerge(AreasLive),
     Layer.provideMerge(PlatformLive),

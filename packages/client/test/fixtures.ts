@@ -2,6 +2,7 @@ import {
   type AgentConfig,
   AgentConfigId,
   type BoardSnapshot,
+  type Host,
   type HostInfo,
   HostId,
   type HostSettings,
@@ -255,4 +256,26 @@ export const info = (host: string, i: Partial<HostInfo> = {}): HostInfo => ({
   hostname: host,
   home: null,
   ...i,
+})
+
+/** A host as the hub's directory lists it (`hub.hosts.watch`): a linked, connected one unless `h` says otherwise. */
+export const hostEntry = (host: string, h: Partial<Host> = {}): Host => ({
+  id: HostId.make(host),
+  name: `${host} link`,
+  local: false,
+  connected: true,
+  mode: "outbound",
+  agents: true,
+  url: `http://${host}:7878`,
+  version: "0.0.0-test",
+  protocol: PROTOCOL,
+  capabilities: [],
+  commit: null,
+  updates_from: null,
+  last_seen: null,
+  last_message_at: null,
+  uplink: false,
+  status: "connected",
+  status_reason: null,
+  ...h,
 })

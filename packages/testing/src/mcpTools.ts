@@ -93,7 +93,7 @@ export const TestToolsRegistered = McpServers.register(
       toolHandler(TestEcho, (params, caller) =>
         params.text === "die"
           ? Effect.die(new Error("the test tool died"))
-          : Effect.succeed({ text: params.text, task: caller.task.id, profile: caller.profile.name, mode: caller.mode }),
+          : Effect.succeed({ text: params.text, task: caller.task?.id ?? "", profile: caller.profile.name, mode: caller.mode }),
       ),
       toolHandler(TestTouch, (params) => Effect.map(tools.record(params.label), (count) => ({ count }))),
       toolHandler(TestBlock, (params) => tools.record(`block:${params.key}`).pipe(Effect.andThen(tools.hold(params.key)), Effect.as(params))),

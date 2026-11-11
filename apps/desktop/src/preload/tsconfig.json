@@ -1,0 +1,6 @@
+{
+  // The preload runs in the page's renderer: the DOM's types, and Electron's renderer modules.
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": { "lib": ["es2024", "DOM"], "types": ["node"] },
+  "include": ["."]
+}

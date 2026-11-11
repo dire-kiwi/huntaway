@@ -10,5 +10,7 @@ export const PROTOCOL = 1
 export const Capability = {
   /** The board is a read-only rehearsal of an import. */
   readOnly: "read_only",
+  /** It takes part in settings sync (`settingsSync.*`) when switched on. */
+  settingsSync: "settings_sync",
 } as const
 export type Capability = (typeof Capability)[keyof typeof Capability]

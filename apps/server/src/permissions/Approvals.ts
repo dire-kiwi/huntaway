@@ -124,6 +124,10 @@ export type Deleted =
   | { readonly deleted: true; readonly key: string; readonly title: string }
   | { readonly deleted: false; readonly key: string; readonly note: string }
 
+/**
+ * Each method takes the call asking (`asker`), or null for an agent on another host: a change that needs asking is then
+ * refused (`approvalElsewhere`), one that needs no approval is made.
+ */
 export interface ApprovalsShape {
   /**
    * `create_project`: asks to add the folder `request` names (checked first: absolute, symlinks resolved, `..` refused
@@ -131,7 +135,7 @@ export interface ApprovalsShape {
    * call hasn't asked before.
    */
   readonly createProject: <E>(
-    asker: Asker,
+    asker: Asker | null,
     request: Effect.Effect<CreationRequest, E>,
   ) => Effect.Effect<Project, E | NotApproved | Invalid | ProfileNotFound | Conflict>
   /**
@@ -140,11 +144,11 @@ export interface ApprovalsShape {
    * change made meanwhile; with approval, exactly what the user saw.
    */
   readonly updateProject: <E>(
-    asker: Asker,
+    asker: Asker | null,
     request: Effect.Effect<ChangeRequest, E>,
   ) => Effect.Effect<Project, E | NotApproved | Invalid | ProjectNotFound | Conflict>
   /** `delete_task`: asks to delete the task (not the asker's own, nor the assistant), then stops its agent and deletes it. */
-  readonly deleteTask: <E>(asker: Asker, request: Effect.Effect<DeletionRequest, E>) => Effect.Effect<Deleted, E | NotApproved | Invalid | Conflict>
+  readonly deleteTask: <E>(asker: Asker | null, request: Effect.Effect<DeletionRequest, E>) => Effect.Effect<Deleted, E | NotApproved | Invalid | Conflict>
 }
 
 const isRecord = Predicate.isObject
@@ -176,6 +180,22 @@ export const approvalWhat = (tool: string, input: unknown): string => {
 }
 
 const NOTHING: Readonly<Record<string, string>> = { create_project: "added", delete_task: "deleted", update_project: "changed" }
+
+/**
+ * What an agent on another host is told of a change that needs the user's approval: it has no thread here to ask in
+ * (the old `ask_user` for a call with no task). Of what, and what the user can do instead.
+ */
+const NO_THREAD: Readonly<Record<string, readonly [string, string]>> = {
+  create_project: ["board", "ask the user to add it on the board"],
+  delete_task: ["task", "ask the user to delete it on the board"],
+  update_project: ["project", "ask the user to do it in the project's settings"],
+}
+
+/** The refusal of `tool`'s approval to an agent on another host. */
+export const approvalElsewhere = (tool: string, input: unknown): string => {
+  const [of, instead] = NO_THREAD[tool] ?? ["project", "ask the user to do it in the project's settings"]
+  return `${approvalWhat(tool, input)} needs the user's approval, which only an agent on the ${of}'s own host can ask for; ${instead}`
+}
 
 /** What a project change's approval reads back. */
 const SavedChange = Schema.Struct({ project: Schema.Struct({ id: ProjectId }), apply: ProjectPatch })
@@ -213,14 +233,19 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
       /** The project a change is to, as the approval shows it. */
       const projectRef = (p: Pick<Project, "id" | "key" | "name">) => ({ id: p.id, key: p.key, name: p.name, host: hostName })
       /** The thread asking, as the approval shows it. */
-      const askedBy = Effect.fnUntraced(function* (asker: Asker) {
+      const askedBy = Effect.fnUntraced(function* (asker: Asker | null) {
+        if (asker === null) return null
         const t = yield* taskRepo.get(asker.run.task_id)
         if (t === null) return null
         return { id: t.id, key: t.kind === "task" ? t.key : null, title: t.title }
       })
 
-      /** Asks the user to approve `input` for `tool` in the asker's thread and waits: the input they approved. */
-      const ask = Effect.fnUntraced(function* (asker: Asker, kind: "project" | "delete_task", tool: string, input: unknown) {
+      /**
+       * Asks the user to approve `input` for `tool` in the asker's thread and waits: the input they approved. An agent on
+       * another host (no asker) has no thread here to ask in, and is refused.
+       */
+      const ask = Effect.fnUntraced(function* (asker: Asker | null, kind: "project" | "delete_task", tool: string, input: unknown) {
+        if (asker === null) return yield* new NotApproved({ message: approvalElsewhere(tool, input) })
         const answer = yield* permissions.approve(asker, kind, tool, input)
         if (Result.isSuccess(answer)) return answer.success
         return yield* new NotApproved({
@@ -229,12 +254,12 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
       })
 
       /** What this call asked before it was cut short, if it did. */
-      const saved = (asker: Asker) => permissions.asked(asker.call_id)
+      const saved = (asker: Asker | null) => (asker === null ? Effect.succeedNone : permissions.asked(asker.call_id))
 
       const exists = (p: string) => fs.exists(p).pipe(Effect.orElseSucceed(() => false))
 
       /** What `create_project` asks the user to approve (inventory 03 2.6). */
-      const creation = Effect.fnUntraced(function* (asker: Asker, r: CreationRequest) {
+      const creation = Effect.fnUntraced(function* (asker: Asker | null, r: CreationRequest) {
         const given = expandTilde(r.repo_path.trim(), config.home)
         if (!given.startsWith("/")) return yield* badFolder("repo_path must be an absolute path, or start with ~/")
         // The folder as it would be added: symlinks resolved, as far as it exists.
@@ -285,7 +310,7 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
         }
       })
 
-      const createProject = Effect.fn("Approvals.createProject")(function* <E>(asker: Asker, request: Effect.Effect<CreationRequest, E>) {
+      const createProject = Effect.fn("Approvals.createProject")(function* <E>(asker: Asker | null, request: Effect.Effect<CreationRequest, E>) {
         // A call retried after a restart carries on with the approval it asked for.
         const before = yield* saved(asker)
         const input = Option.isSome(before) ? before.value : yield* creation(asker, yield* request)
@@ -294,7 +319,7 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
       })
 
       /** What a change to `p` would change, and whether any of it needs asking: `null` when it asks nothing. */
-      const change = Effect.fnUntraced(function* (asker: Asker, r: ChangeRequest) {
+      const change = Effect.fnUntraced(function* (asker: Asker | null, r: ChangeRequest) {
         const { move_repo: moveRepo, ...patch } = r.patch
         if (Object.keys(patch).length === 0 && moveRepo === undefined) return yield* new Invalid({ field: "patch", reason: "nothing to change" })
         const p = r.project
@@ -327,7 +352,7 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
         return yield* projects.update(project.id, apply)
       })
 
-      const updateProject = Effect.fn("Approvals.updateProject")(function* <E>(asker: Asker, request: Effect.Effect<ChangeRequest, E>) {
+      const updateProject = Effect.fn("Approvals.updateProject")(function* <E>(asker: Asker | null, request: Effect.Effect<ChangeRequest, E>) {
         // A call retried after a restart carries on with the approval it asked for, and the project it was for, whatever
         // has changed since.
         const before = yield* saved(asker)
@@ -337,11 +362,11 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
       })
 
       /** What `delete_task` asks the user to confirm. */
-      const deletion = Effect.fnUntraced(function* (asker: Asker, r: DeletionRequest) {
+      const deletion = Effect.fnUntraced(function* (asker: Asker | null, r: DeletionRequest) {
         const t = r.task
         if (t.kind === "task" && t.task_type === "assistant")
           return yield* new Invalid({ field: "task_id", reason: "the profile's assistant can't be deleted" })
-        if (t.id === asker.run.task_id) return yield* new Invalid({ field: "task_id", reason: "you can't delete your own task" })
+        if (t.id === asker?.run.task_id) return yield* new Invalid({ field: "task_id", reason: "you can't delete your own task" })
         const project = t.project_id === null ? null : yield* projectRepo.get(t.project_id)
         return {
           project: project === null || Option.isNone(project) ? null : projectRef(project.value),
@@ -352,7 +377,7 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
         }
       })
 
-      const deleteTask = Effect.fn("Approvals.deleteTask")(function* <E>(asker: Asker, request: Effect.Effect<DeletionRequest, E>) {
+      const deleteTask = Effect.fn("Approvals.deleteTask")(function* <E>(asker: Asker | null, request: Effect.Effect<DeletionRequest, E>) {
         // A call retried after a restart carries on with the deletion it asked about.
         const before = yield* saved(asker)
         const input = Option.isSome(before) ? before.value : yield* deletion(asker, yield* request)
@@ -365,7 +390,9 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
         const t = yield* taskRepo.get(doomed.id)
         if (t === null) return already
         // Its agent stops and its queue goes first, then its worktree, as when the user deletes it (`TaskDeletion`).
-        const done = yield* Effect.result(deletions.delete(t.id, { deleteBranch: deleteBranch === true }, { _tag: "Agent", task_id: asker.run.task_id }))
+        const done = yield* Effect.result(
+          deletions.delete(t.id, { deleteBranch: deleteBranch === true }, { _tag: "Agent", task_id: asker?.run.task_id ?? null }),
+        )
         if (Result.isFailure(done)) return done.failure._tag === "TaskNotFound" ? already : yield* done.failure
         const out: Deleted = { deleted: true, key: doomed.key, title: t.title }
         return out

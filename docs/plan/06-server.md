@@ -36,7 +36,7 @@ push          Push
 hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
 terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
-update        Supervisor · Updater · Releases · Service
+update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
 lifecycle     Reactor · Recovery · Board · Demo
 transports    rpc/* · http/* · mcp/transport/*
@@ -668,6 +668,50 @@ shim (`ia-pty`) if Python proves a burden on a release host. Flow control by ack
 from a hub), `Releases` (check GitHub, download, verify, stage, try, settle, roll back; `app/state.json` shared with
 the desktop shell), `Service` (the systemd user unit with `KillMode=process`). `Analytics`, `Disk`.
 
+As built in 8.1 and 8.2 (`apps/server/src/update/`):
+
+- **`Supervisor`** is the launcher as the server sees it: its pid, `started` (the marker the launcher's crash restarts
+  wait for, written after `HUNTAWAY_READY`), `exec` (the restart file, written to a temp file and renamed, then exit 75
+  at once, as the old server did: no graceful close, the database is safe in WAL), and a 1 s watch that stops the
+  server when the launcher has gone. `ServerConfig` takes `HUNTAWAY_RESTART_FILE`/`HUNTAWAY_SUPERVISOR_PID` out of
+  `process.env` as it reads them (it is the one place the environment is read), so step 1's "take" happens there.
+  `Supervisor.layerTest` records an exec and fails as an unsupervised server's does. There are no one-shot serve flags
+  any more (`--recopy-db` went with the two-file database); `restartArgs` keeps the rule for the next one.
+- **`Restarts`** (not in the plan's list): the one restart job (`Conflict` `restart_in_progress` for a second), its
+  phase and log tail, the `restart` and `restart_log` events, and `restartInto` (phase `restarting`, 300 ms for the
+  last events, exec). `Updater`, `Releases` and `Service` all run their jobs through it.
+- **`Updater`**: `status` (`admin.status`), `restart` (rebuild: `pnpm install --frozen-lockfile --filter
+  huntaway-server... --filter huntaway-web...`, the web build, `cargo build --release -p ia-shim` unless there's no
+  cargo and a prebuilt `apps/server/bin/ia-shim`; output streamed into the log; a failed step ends the job and the
+  server carries on), `update` (a hub's push: refusals are `Unavailable`, a bad payload `Invalid`), `bodyFor(hostCommit)`
+  (what a hub sends a linked host: an incremental bundle `^<host commit>` from a checkout, else its commit, and always
+  its version; for `hub.hosts.pushUpdate`), and the `--update-from` check every 5 minutes.
+- **`Releases`**, with its rules as pure functions in `update/releases/` (`semver`, `installed` for `app/state.json`,
+  `github` for picking and the desktop shell, `tarball` for the safety rules). `execInstalled` is a layer that
+  `Main.ts`'s platform builds between `DataDir` and `Identity` (with `Supervisor` under it); `settle` runs in `serve`
+  once the server listens and the hubs and discovery have started, before the ready line (step 6; it was the last step of
+  `Recovery`, until review of HE-6: a release that failed binding or after would have been current already). "A backup, or room for one" before an Update or Roll back is a room check only (the backups folder can be
+  made, and `df` says the database fits), since every release backs the database up itself before it migrates;
+  `--skip-db-backup` goes on without it. A changed "Include prereleases" checks again by watching `settings_changed`
+  (`HostSettings` is above the update area). Digests are taken with `effect/crypto`'s `Digest` over the downloaded file.
+- **`Service`** and **`Systemd`**: everything outside the process (systemctl, loginctl, booted, the cgroup, lingering,
+  the detached hand-over) is `Systemd`, which tests replace. The unit is `huntaway-<port>.service` on every port (the
+  old server named its default port's `huntaway.service`; this one never writes that name, so it cannot replace the old
+  server's unit on a machine that runs both). A server on `--port 0` has no service status and can't install one.
+  `huntaway install-service [serve flags…]` (`cli/installService.ts`) needs `--port N` and the launcher.
+- **A release package** carries `build.json` (`{ version, commit }`) beside its launcher: `ServerConfig` reads it for
+  the version, the commit (never the deployment's `HUNTAWAY_COMMIT`) and the default UI folder (`<release>/ui`), and
+  `--version` prints its version. `About` reports `updates_from` (`checkout` when there's a source checkout, else
+  `releases` with `--release-updates`) and a checkout's HEAD at startup as `commit`. The launcher runs a release's own
+  `node/bin/node` before `HUNTAWAY_NODE`.
+- `admin.update` takes at most the server's request body limit (16 MiB, `http/routes.ts`), not the old 256 MB: bundles
+  are incremental since HA-185.
+- Tests: the old cases in `update/*.test.ts` (a fake GitHub as an `HttpClient` layer, real `tar` and git in temp
+  folders), the launcher's in `tests/e2e/launcher.test.ts`, and `tests/e2e/releases.test.ts`, which stages a release of
+  this checkout from a fake GitHub on a free port, updates onto it through the launcher, refuses one that fails its
+  smoke test, marks bad one that never comes up (started again, the server runs the good one), and rolls back to the
+  server the host was installed as.
+
 ## Hook commands<a id="hook-commands"></a>
 
 `huntaway approval-hook`, `gh-hook` and `gh-run` are started by an agent CLI for a tool call, the first two for
@@ -706,8 +750,9 @@ the one-off moves removed:
 5. `Recovery`: resume kills left half done · for each run that had not exited: re-ask its open prompts and tool
    calls, then follow it from its saved offset, re-arm its timers · tasks marked running with no run · expire
    prompts with no live run · `Merges.reconcileAll` · `Dependencies.reconcileAll` · `Reviews.reconcileAll` ·
-   `WorkflowEngine.resume` · `Restack.resume` · `Releases.settle`.
-6. Open the gate: links dial, discovery answers, the RPC and HTTP routes serve. Print `HUNTAWAY_READY
+   `WorkflowEngine.resume` · `Restack.resume`.
+6. Open the gate: links dial, discovery answers, the RPC and HTTP routes serve. Then `Releases.settle` (a release that
+   got this far is current; one that failed before stays `trying` and is marked bad at the next start). Print `HUNTAWAY_READY
    {"port":…,"token":…}` on stdout (the desktop shell and test scripts read it), and tell the launcher it started.
 
 Shutdown (SIGTERM, SIGINT, or the launcher gone) closes the root scope: the listener stops, fibers are interrupted,

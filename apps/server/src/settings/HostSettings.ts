@@ -102,9 +102,9 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
 
       const update = Effect.fn("HostSettings.update")(function* (patch: HostSettingsPatch) {
         // Checked before anything is written.
-        // There are no linked hosts before M7 (docs/plan/13-milestones.md), so no value can name one.
-        if (patch.scratch_host != null && patch.scratch_host.trim() !== "") {
-          return yield* new Invalid({ field: "scratch_host", reason: "scratch_host must be a linked host, and this host has none" })
+        // The scratch host must be a linked host (a `links` row).
+        if (patch.scratch_host != null && patch.scratch_host.trim() !== "" && !(yield* repo.linkExists(patch.scratch_host.trim()))) {
+          return yield* new Invalid({ field: "scratch_host", reason: "scratch_host must be a linked host" })
         }
         const publicUrl = patch.public_url == null ? patch.public_url : yield* checkPublicUrl(patch.public_url)
         const newId = Effect.map(random.uuidV4(), (id) => id.slice(0, 8)).pipe(Effect.orDie)

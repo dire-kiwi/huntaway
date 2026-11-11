@@ -32,8 +32,9 @@ later.
 ```
 packages/client/src/
   session/     HostSession.ts   one RPC connection to one host: its protocol layer, its auth, its state
-               Sessions.ts      which hosts there are (from the hub) and a runtime for each
+               sessions.ts      which hosts there are (from the hub) and a runtime for each
                relay.ts         a relayed session: ticket, then the socket through the hub
+               hub.ts           the hub's own queries (its SSH key, the dial-in command, hosts nearby)
   board/       hostBoard.ts     one host's board, folded from board.watch
                board.ts         every host's, merged: the read surface the components use
                tasks.ts         taskAtom(ref), tasks of a project, of a profile, optimistic moves
@@ -262,6 +263,32 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   Checks: `tests/ui/permissions.test.mjs`, on a test server with `--fake-claude`; the harness starts every other server
   with `--no-agents`.
 
+### Step 1 as done for linked hosts and Settings → Hosts (M7, HE-6, 7.2)
+
+- **The client**: `hubHostsAtom` folds `hub.hosts.watch` on the hub's runtime (subscribed again when the hub's
+  connection comes back), and `hubHostListAtom` is its list. `boardHostIdsAtom` is the page's own host and every host the
+  hub lists, offline ones too: their `hostBoardAtom` keeps its last board, and their session's state marks them. A linked
+  host's runtime is `relayTransport` (relay.ts, see [08-hosts.md](08-hosts.md#relay)); the page's own stays the hub's.
+  `Board.hosts` takes a linked host from the hub's entry (its link's name, mode, URL, uplink, `status` and
+  `status_reason`), `connected` while its own session is live. A linked host whose `protocol` is not this client's, or
+  that the hub says `needs_update`, has the `needs_update` session state without a runtime and is not subscribed to; the
+  sidebar says "needs update" beside it. The hub's own reads (`hubSshKeyAtom`, `hubJoinAtom(url)`, `nearbyHostsAtom`)
+  are query atoms in `session/hub.ts`; linking, renaming, the uplink switch and forgetting are plain calls on the hub.
+- **The web app**: `components/settings/Settings.tsx` is the page at `/settings/<tab>`, with the old tab list's
+  structure and only Hosts in it; 6.12 adds the other sections as siblings. A board with no profiles of its own still
+  opens Settings, to link a host that has some. `settings/Hosts.tsx`, `hosts/AddHost.tsx` (over SSH, by URL and token,
+  and "Connect from elsewhere"), `hosts/HostRow.tsx` and `hosts/NearbyHosts.tsx` (with the scratch-host picker) are the
+  old ones on `hubRpc` (`settings/hosts/hub.ts`) and the query atoms; they load nothing in effects. Over SSH, the hub's
+  key and nearby hosts answer `Unavailable` until 7.3 and 7.5, and say so.
+- **Cut with a note**: the row's Update (the hub pushing its code or release to a host) needs `hub.hosts.pushUpdate`,
+  which is not in the contract yet, and the host's restart state (`admin.status`): 8.1. A row's version line shows
+  `protocol` where it showed the API number. Copying a login between hosts is on the host page and Agent configs, which
+  are 6.12's (its RPC, `hub.hosts.copyConfig`, is 7.5's).
+- **Checks**: `packages/client/test/hosts.test.ts` (an in-memory hub with two hosts; the relay socket's new ticket per
+  connection), and `tests/ui/hosts.test.mjs`: the Hosts page on one server, and two test servers linked through the
+  page, the linked host's projects and tasks on the board, one opened and moved, the host stopped (its board stays,
+  marked offline) and started again, and forgotten. The harness's servers have `kill()` and `restart()` for it.
+
 ### Step 1 as done for `changes/` (4.2, HE-5)
 
 - **What came over.** All of the old `components/changes/` but `Compare.tsx`: `Changes.tsx`, `DiffLines.tsx`,
@@ -358,6 +385,56 @@ section 9): only `ECONNREFUSED` means "no server"; a failed start is blamed on t
 server came up; AppImage and pacman installs are done by the shell; `app/state.json` is shared with the server's
 `Releases` service and keeps its format; the preload exposes the same six members on `window.huntawayDesktop`, to
 the main frame only, with origin checks.
+
+As built (8.3):
+
+```
+apps/desktop/
+  src/boot/      boot.ts (the frame, the package's `main`), shells.ts (which release's shell to load, shell-state.json, the crash marker)
+  src/shared/    versions.ts (every decision as a plain function: chooseServer, chooseShell, markBad, shellChange, installKind,
+                 updateKind, packageName, releaseEnv), paths.ts (the data folder, the shell's folder, the default port)
+  src/main/      main.ts (the entry: NodeRuntime.runMain), Desktop (what it knows: desktop.json, environment, Electron),
+                 Servers (find, attach or start; the blame rule; restarts; stop on quit), ServerProcess (the launcher's
+                 process, its ready line and output), fallback.ts (startWithFallback), health.ts, appState.ts, install.ts,
+                 stamp.ts, shellUpdate.ts (the AppImage and pacman update), Windows.ts (windows, navigation, browser
+                 pane, IPC, menu, relaunch), urls.ts, errorPage.ts
+  src/preload/   preload.ts (its own tsconfig, with the DOM)
+  scripts/       dist.ts (electron-builder), stamp.ts (the release manifest's `shell` and `electron/shell.json`)
+```
+
+- **The frame stays a separate file.** `vp pack` makes three CommonJS bundles with their dependencies inside
+  (`dist/boot.cjs`, `dist/main.cjs`, `dist/preload.cjs`; one build each, so no chunk is shared), and the packaged app
+  carries no `node_modules`. boot.cjs is plain TypeScript with no effect import, so that its stamp (sha256 over
+  `boot.cjs`, its contents and the Electron version, as before) changes only when the frame does. It still loads
+  `main.cjs` from a release's `electron/` (with `shell.json {electron, boot: 1}`) and gives it the same
+  `globalThis.huntawayBoot`. A release's tarball carries `dist/main.cjs`, `dist/preload.cjs` and the `shell.json` that
+  `pnpm --filter huntaway-desktop run stamp --shell-json` prints; `stamp` without it prints the manifest's
+  `{shell, electron}`.
+- **Its own names, beside the old app.** desktop.json and the windows' storage (Electron's userData) are in
+  `<appData>/huntaway-effect/` (`HUNTAWAY_DESKTOP_DIR` overrides it), not the old app's `huntaway/` and `Huntaway/`: the
+  old desktop.json points at the old board, and the single-instance lock is per userData folder, so the two apps would
+  otherwise open each other's windows. The default port is 7879 and the data folder the new server's. The variables are
+  `HUNTAWAY_*`: `HUNTAWAY_PORT`, `HUNTAWAY_DATA_DIR`, `HUNTAWAY_SERVER_BIN`, `HUNTAWAY_DEV_URL`,
+  `HUNTAWAY_PACKAGED_RESOURCES`, `HUNTAWAY_RELEASE_UPDATES`, `HUNTAWAY_RELEASE_API`, `HUNTAWAY_LAUNCHER`, and to the
+  server `HUNTAWAY_DESKTOP_VERSION`, `HUNTAWAY_DESKTOP_SHELL`, `HUNTAWAY_DESKTOP_INSTALL`, `HUNTAWAY_BUNDLED_SERVER`,
+  `HUNTAWAY_SKIP_DB_BACKUP[_ONCE]`. Dropped with the former name (14, "The `issue-agent` command…"): the `issue-agent`
+  and "Issue Agent" folder fallbacks; and with the Rust port's leftovers (14, "the backup rules for Rust releases"): the
+  `server/target` fallback and `server_version` for Rust releases.
+- **The server it starts** is the launcher (a release's `huntaway`, the bundled one, or the checkout's
+  `apps/server/bin/huntaway` once `apps/server/node_modules` is installed), run as a child that is not in a process
+  group of its own, so that stopping it is SIGTERM to the launcher alone (SIGKILL after 10 seconds). Its PATH is the
+  login shell's for a packaged app; the old shell changed its own `process.env.PATH` instead.
+- **What the shell reads of the server**: `HUNTAWAY_READY {"port","token"}`, and `HUNTAWAY_BACKUP_FAILED {reason, why,
+  dir}` for the error page's "Start without a backup". The server does not print the second yet (its `Backup` fails
+  the start with a `StartupError`); until it does, a failed backup shows as a server that exited.
+- **The package update** asks the board for the release status with `admin.status` over `POST /api/rpc` (a one-method
+  group with the contracts' `Auth`), where the old shell called `GET /api/admin/server`. It reads only
+  `release.latest.version` and `release.shell.outdated`. It hashes the download after writing it (Effect's `Digest`
+  has no streaming hash), still before the rename.
+- **Tests**: the old `desktop-versions`, `desktop-boot` and `desktop-shell-update` cases, and `Servers.test.ts`, which
+  runs stand-in launchers (shell scripts) on a free port: the ready line, an installed version that exits and is
+  blamed once the next is up, a failed backup, attaching to a server already there, remote mode, and windows sharing
+  one start.
 
 ## The phone app
 

@@ -7,6 +7,7 @@ import { Pen } from "./pen.ts"
 import { Profile } from "./profile.ts"
 import { Project } from "./project.ts"
 import { Task } from "./task.ts"
+import { ReleaseDownload, RestartPhase } from "./update.ts"
 import { Usage } from "./usage.ts"
 
 // What a host's board stream carries (docs/plan/03-domain.md, Events): the old `HostEvent` union with a sequence
@@ -56,6 +57,14 @@ export const ApprovalLogChanged = Schema.Struct({
  */
 export const ApprovalChanged = Schema.Struct({ type: Schema.Literal("approval"), request_id: RequestId, approval: Schema.NullOr(Approval), ...seq })
 
+/** This host's restart job moved to another phase (or failed, with why). */
+export const RestartChanged = Schema.Struct({ type: Schema.Literal("restart"), phase: RestartPhase, error: Schema.NullOr(Schema.String), ...seq })
+/** A line of the restart job's log (a build's output, a download's progress). */
+export const RestartLog = Schema.Struct({ type: Schema.Literal("restart_log"), line: Schema.String, ...seq })
+/** A release check finished: `admin.status` has what it found. */
+export const ReleaseChecked = Schema.Struct({ type: Schema.Literal("release_checked"), ...seq })
+/** The background download of a release moved on; null once it is staged. */
+export const ReleaseDownloadChanged = Schema.Struct({ type: Schema.Literal("release_download"), download: Schema.NullOr(ReleaseDownload), ...seq })
 /** A task's checkpoints changed (a turn's was taken, or it was rewound): its turns are read again (`checkpoints.turns`). */
 export const CheckpointsChanged = Schema.Struct({ type: Schema.Literal("checkpoints"), task_id: TaskId, ...seq })
 
@@ -73,6 +82,10 @@ export const BoardEvent = Schema.Union([
   ApprovalRulesChanged,
   ApprovalLogChanged,
   ApprovalChanged,
+  RestartChanged,
+  RestartLog,
+  ReleaseChecked,
+  ReleaseDownloadChanged,
   CheckpointsChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type

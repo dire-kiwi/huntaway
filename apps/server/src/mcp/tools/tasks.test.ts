@@ -457,7 +457,7 @@ describe("task tools", () => {
       const theirs = yield* task(sec, "Theirs")
       const me = yield* agentOf(p)
       for (const r of [theirs.id, "SEC-1", "work:SEC-1"])
-        assert.match(err(yield* call(me, "update_task", { task_id: r, model: "opus" })), /^task |doesn't let agents in profile personal/)
+        assert.match(err(yield* call(me, "update_task", { task_id: r, model: "opus" })), /^not found: task |doesn't let agents in profile personal/)
       assert.match(
         err(yield* call(me, "create_task", { title: "Sneaky", project_id: "work:SEC", model: "opus" })),
         /^project |doesn't let agents in profile personal/,
@@ -588,7 +588,7 @@ describe("task tools", () => {
         ["API-1", "WEB-1"],
       )
       assert.deepStrictEqual(list(yield* call(me, "list_tasks", { pen: "none" })), [])
-      assert.strictEqual(err(yield* call(me, "list_tasks", { pen: "Nope" })), "pen Nope")
+      assert.strictEqual(err(yield* call(me, "list_tasks", { pen: "Nope" })), "not found: pen Nope")
       // Out of a pen; and a new task can start in one.
       assert.isUndefined(ok(yield* call(me, "update_task", { task_id: api["key"], pen: "" }))["pen"])
       assert.strictEqual(ok(yield* call(me, "create_task", { title: "Another", project_id: "WEB", pen: "Fresh", start: false }))["pen"], "Fresh")
