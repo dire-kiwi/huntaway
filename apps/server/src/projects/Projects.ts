@@ -399,23 +399,29 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
               // Tried (and rolled back) before the folder moves, so a change that can't be stored doesn't leave the folder
               // somewhere the project doesn't say.
               yield* write(id, rest, false)
-              const moved = yield* move(before)
-              const after = yield* write(id, rest, true, moved).pipe(
-                Effect.tapError(() =>
-                  // The folder has moved all the same, so the project says where it is now.
-                  db
-                    .tx(
-                      Effect.gen(function* () {
-                        yield* repo.update(id, {
-                          repo_path: moved.repo_path,
-                          repo_root: moved.repo_root,
-                          ...(moved.scratch_path === null ? {} : { scratch_path: moved.scratch_path }),
-                          ...(moved.worktrees_root === null ? {} : { worktrees_root: moved.worktrees_root }),
-                        })
-                        yield* events.emit({ type: "project", project: yield* getProject(id) })
-                      }),
-                    )
-                    .pipe(Effect.ignore),
+              // From the folder's move to the write that records where it went, one step a caller going away (an RPC's
+              // client disconnecting) can't cut in two: cut after the rename, the folder would be at the new path while
+              // the project and its worktrees still named the old one, which no longer exists to move again.
+              const after = yield* Effect.uninterruptible(
+                Effect.flatMap(move(before), (moved) =>
+                  write(id, rest, true, moved).pipe(
+                    Effect.tapError(() =>
+                      // The folder has moved all the same, so the project says where it is now.
+                      db
+                        .tx(
+                          Effect.gen(function* () {
+                            yield* repo.update(id, {
+                              repo_path: moved.repo_path,
+                              repo_root: moved.repo_root,
+                              ...(moved.scratch_path === null ? {} : { scratch_path: moved.scratch_path }),
+                              ...(moved.worktrees_root === null ? {} : { worktrees_root: moved.worktrees_root }),
+                            })
+                            yield* events.emit({ type: "project", project: yield* getProject(id) })
+                          }),
+                        )
+                        .pipe(Effect.ignore),
+                    ),
+                  ),
                 ),
               )
               if (after.pr_preview_url !== before.pr_preview_url) yield* changes.offer({ _tag: "ProjectChanged", before, after })

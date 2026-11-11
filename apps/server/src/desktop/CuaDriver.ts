@@ -183,8 +183,9 @@ export class CuaDriver extends Context.Service<CuaDriver, CuaDriverShape>()("hun
           Effect.asVoid,
         )
 
-      const stop = Effect.gen(function* () {
-        yield* FiberHandle.clear(idle)
+      /** Forgets the driver and ends it. Not through `stop`: the idle fiber runs this, and `stop`'s clear of the handle
+       * would interrupt that fiber before it got here. */
+      const stopNow = Effect.gen(function* () {
         const was = yield* Ref.modify(state, (s): readonly [Running | null, State] => [
           s.running,
           {
@@ -196,11 +197,13 @@ export class CuaDriver extends Context.Service<CuaDriver, CuaDriverShape>()("hun
         if (was !== null) yield* end(was)
       })
 
+      const stop = Effect.andThen(FiberHandle.clear(idle), stopNow)
+
       /** After a call, or a start: the driver stops once it has gone `IDLE` without another. */
       const touch = Effect.gen(function* () {
         const at = yield* nowTimestamp
         yield* setStatus((s) => ({ ...s, last_call_at: at }))
-        yield* FiberHandle.run(idle, Effect.andThen(Effect.sleep(IDLE), stop))
+        yield* FiberHandle.run(idle, Effect.andThen(Effect.sleep(IDLE), stopNow))
       })
 
       /** The driver has exited by itself (`why`): forgotten, unless another has replaced it. */

@@ -159,8 +159,10 @@ export class Scheduler extends Context.Service<Scheduler, SchedulerShape>()("hun
               at,
             )
             .pipe(Effect.tapCause(() => (took ? drop(r.automation_id) : Effect.void)))
-          if (a !== null && runs && claimed && existing !== undefined) existing.runs.push(r)
-          else if (a !== null && runs && claimed && took) out.set(a.id, { a, runs: [r] })
+          // The run as claimed, not as read above: a delivery coalesced into it meanwhile (`joinBatch`) is in its count and
+          // payload, as a batch runs with its latest delivery's values.
+          if (a !== null && runs && claimed !== null && existing !== undefined) existing.runs.push(claimed)
+          else if (a !== null && runs && claimed !== null && took) out.set(a.id, { a, runs: [claimed] })
           else {
             if (took) yield* drop(r.automation_id)
             if (a !== null) yield* routines.changed(a)

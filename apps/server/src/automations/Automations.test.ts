@@ -9,6 +9,7 @@ import { AutomationRepo } from "./AutomationRepo.ts"
 import { Automations } from "./Automations.ts"
 import { defang, render, sortedJson, UNTRUSTED_TAG } from "./delivery.ts"
 import type { Vars } from "./delivery.ts"
+import { Timestamp } from "@huntaway/contracts"
 import type { NewAutomation, Project, Trigger, TriggerInput, Weekday } from "@huntaway/contracts"
 import { checkTrigger, hookPath, KEEP_PAYLOADS, KEEP_RECENT, MAX_PENDING, RATE_PER_MINUTE, WEEKDAYS } from "./model.ts"
 import { Scheduler } from "./Scheduler.ts"
@@ -408,6 +409,23 @@ describe("webhooks", () => {
         assert.deepStrictEqual(titles(yield* tasksOf(p)), ["Issue 1: One, again (3 events)", "Issue 2: Two (1 events)"])
         yield* tick(NOW + 120_000)
         assert.lengthOf(yield* tasksOf(p), 2)
+      }),
+    ),
+  )
+
+  it.effect("a batch is claimed with what was coalesced into it after the scheduler read it", () =>
+    board(
+      Effect.gen(function* () {
+        const { project: p } = yield* setup
+        const a = yield* hook(p, { kind: "webhook", coalesce_seconds: 60, coalesce_key: "{{body.issue.number}}" }, { kind: "create_task", title: "x" })
+        yield* deliver(a, { "x-github-delivery": "d0" }, issue(1, "One"))
+        const repo = yield* AutomationRepo
+        // The scheduler reads the pending run, then a delivery joins it before the claim.
+        const read = (yield* repo.pendingDue(Timestamp.make(isoOf(NOW + 61_000))))[0] ?? assert.fail("no pending run")
+        yield* deliver(a, { "x-github-delivery": "d1" }, issue(1, "One, edited"))
+        const claimed = yield* repo.claimPending(read.id, "running", null, Timestamp.make(isoOf(NOW + 61_000)))
+        assert.deepStrictEqual([read.count, claimed?.count], [1, 2])
+        assert.include(claimed?.payload ?? "", "One, edited")
       }),
     ),
   )

@@ -186,8 +186,11 @@ export interface AutomationRepoShape {
   readonly pendingCount: (automation: AutomationId) => Effect.Effect<number>
   /** The pending runs whose window has closed by `at`, oldest first. */
   readonly pendingDue: (at: Timestamp) => Effect.Effect<ReadonlyArray<StoredRun>>
-  /** Claims a pending run: `running`, or `skipped` with why. False if it isn't pending any more. */
-  readonly claimPending: (id: string, status: "running" | "skipped", detail: string | null, at: Timestamp) => Effect.Effect<boolean>
+  /**
+   * Claims a pending run: `running`, or `skipped` with why. The run as claimed (its count and payload include every
+   * delivery coalesced into it until then), or null if it isn't pending any more.
+   */
+  readonly claimPending: (id: string, status: "running" | "skipped", detail: string | null, at: Timestamp) => Effect.Effect<StoredRun | null>
   /** The latest delivery kept, for the next test delivery. */
   readonly latestPayload: (automation: AutomationId) => Effect.Effect<string | null>
 
@@ -353,10 +356,12 @@ export class AutomationRepo extends Context.Service<AutomationRepo, AutomationRe
         pendingCount: (automation) => n(sql`SELECT COUNT(*) AS n FROM automation_runs WHERE automation_id = ${automation} AND status = 'pending'`),
         pendingDue: (at) => runRows(sql`SELECT ${run} FROM automation_runs WHERE status = 'pending' AND due_at <= ${at} ORDER BY due_at`),
         claimPending: (id, status, detail, at) =>
-          idRows(
-            sql`UPDATE automation_runs SET status = ${status}, detail = ${detail}, finished_at = ${status === "skipped" ? at : null}
-              WHERE id = ${id} AND status = 'pending' RETURNING id`,
-          ).pipe(Effect.map((rows) => rows.length === 1)),
+          firstOf(
+            runRows(
+              sql`UPDATE automation_runs SET status = ${status}, detail = ${detail}, finished_at = ${status === "skipped" ? at : null}
+                WHERE id = ${id} AND status = 'pending' RETURNING ${run}`,
+            ),
+          ),
         latestPayload: (automation) =>
           firstOf(
             payloadRows(

@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Schema } from "effect"
+import { TestClock } from "effect/testing"
 import { SecureRandom } from "effect/crypto"
 import { SqlClient } from "effect/sql"
 import { CallId, threadKindOf } from "@huntaway/contracts"
@@ -14,7 +15,7 @@ import { DESKTOP_INSTRUCTIONS, McpServers } from "../mcp/McpServers.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { LaunchFacts } from "../runs/LaunchFacts.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
-import { CuaDriver } from "./CuaDriver.ts"
+import { CuaDriver, IDLE } from "./CuaDriver.ts"
 import { forAgent } from "./cua.ts"
 import { Desktop } from "./Desktop.ts"
 import { DesktopClaims, LEASE_MS } from "./DesktopClaims.ts"
@@ -373,6 +374,32 @@ describe("the desktop server", () => {
         yield* desktopCall(agent, "act", step)
         assert.strictEqual((yield* desktop.status).in_use_by?.task_id, agent.run.task_id)
         assert.strictEqual((yield* desktop.stop).driver.state, "stopped")
+      }),
+    ),
+  )
+
+  it.effect("the driver stops once it has gone ten minutes without a call, and a call starts it again", () =>
+    withDesktop(() =>
+      Effect.gen(function* () {
+        const driver = yield* CuaDriver
+        const agent = yield* fakeAgent()
+        yield* desktopCall(agent, "apps", {})
+        assert.strictEqual((yield* driver.status).state, "running")
+        // A call within the ten minutes puts the stop off again.
+        yield* TestClock.adjust("9 minutes")
+        yield* desktopCall(agent, "apps", {})
+        yield* TestClock.adjust("9 minutes")
+        assert.strictEqual((yield* driver.status).state, "running")
+        // Then ten minutes with none: the idle fiber stops it (it once interrupted itself in `stop`'s clear of its handle).
+        yield* TestClock.adjust(IDLE)
+        let state = (yield* driver.status).state
+        for (let i = 0; i < 100 && state !== "stopped"; i++) {
+          yield* Effect.yieldNow
+          state = (yield* driver.status).state
+        }
+        assert.strictEqual(state, "stopped")
+        yield* desktopCall(agent, "apps", {})
+        assert.strictEqual((yield* driver.status).state, "running")
       }),
     ),
   )
