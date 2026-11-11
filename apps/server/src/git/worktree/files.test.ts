@@ -16,8 +16,8 @@ import { Worktrees } from "../Worktrees.ts"
 import { bringIn, checkPattern, INCLUDE_FILE, linkPath, literalMatches, relink } from "./files.ts"
 
 // huntaway's git/worktree_files.test.ts: the ignored files and folders a project brings into each new worktree.
-// Dropped: `links_are_moved_with_the_repository_even_once_out_of_the_setting` (moving a project's folder is
-// `Relocation`'s, a later task; `relink`, which it calls, is tested here on its own).
+// Moved: `links_are_moved_with_the_repository_even_once_out_of_the_setting` is in Relocation.test.ts (6.11); `relink`,
+// which it calls, is tested here on its own.
 
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null"
 process.env["GIT_CONFIG_NOSYSTEM"] = "1"

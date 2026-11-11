@@ -23,8 +23,8 @@ import { agentOf, agentOn, at, call, err, ok, profile, project, setTask, task } 
 //   call here comes from a run with a thread;
 // - the subproject cases (`tasks_added_while_the_user_is_asked…`, `no_task_joins_a_subproject…`,
 //   `deleting_a_subproject_lists_its_tasks…`): there are no subprojects any more;
-// - `a_repository_path_it_cant_have_is_refused_before_asking`'s relocation texts: moving a project's folder is M4's
-//   (`Projects` refuses a new repo_path); what is kept is that it's refused before asking, and `move_repo` without one;
+// - `a_repository_path_it_cant_have_is_refused_before_asking`'s "/x doesn't exist" for a move: the project's folder is
+//   there here, so a move to a folder whose parent is missing is what's refused (6.11: `Relocation.check`);
 // - `agents_read_and_change_a_projects_prompts`' Codex reviewer config and the one `summarizer` read back: no configs
 //   are made here, and `get_project` leaves `summarizer` out (3.2);
 // - "the agent configs are the user's to change" (`claude_config_ids`): it isn't an argument of update_project, so the
@@ -209,7 +209,8 @@ describe("update_project", () => {
       assert.strictEqual(ok(yield* call(me, "update_project", { group_name: "Kiwi" }))["group_name"], "Kiwi")
       assert.isNull(ok(yield* call(me, "update_project", { group_name: "" }))["group_name"])
       // A repository path it can't have is refused before the user is asked.
-      assert.include(err(yield* call(me, "update_project", { repo_path: "/nowhere" })), "moving a project's folder")
+      assert.include(err(yield* call(me, "update_project", { repo_path: "/nowhere" })), "/nowhere isn't a folder")
+      assert.include(err(yield* call(me, "update_project", { repo_path: "/nowhere/deeper", move_repo: true })), "/nowhere/deeper's parent folder doesn't exist")
       assert.include(err(yield* call(me, "update_project", { move_repo: true })), "move_repo needs a new repo_path")
       assert.include(err(yield* call(me, "update_project", { repo_path: kiw.repo_path, move_repo: true })), "move_repo needs a new repo_path")
       assert.include(err(yield* call(me, "update_project", { status_scripts: { later: "x" } })), 'unknown status "later" in status_scripts')

@@ -76,6 +76,15 @@ export interface ProjectRepoShape {
   readonly nextNumber: (id: ProjectId) => Effect.Effect<number>
   /** Delete the project and its tasks, review threads first, then the row. */
   readonly delete: (id: ProjectId) => Effect.Effect<void>
+  // 6.11: what `Relocation` and the fingerprint recorder read and write.
+  /** What its repository was when last seen (`repo_root`): its root commits, `git`, "" or null. */
+  readonly repoRoot: (id: ProjectId) => Effect.Effect<string | null>
+  /** Every project's folder, in every profile: what a folder move must not take from under another project. */
+  readonly folders: Effect.Effect<ReadonlyArray<{ readonly id: ProjectId; readonly name: string; readonly repo_path: string }>>
+  /** The projects whose `repo_root` isn't a history yet (null, "" or `git`). */
+  readonly unrecorded: Effect.Effect<ReadonlyArray<{ readonly id: ProjectId; readonly repo_path: string; readonly repo_root: string | null }>>
+  /** Records `root` as what the project's folder is, unless the project has moved to another folder meanwhile. */
+  readonly recordRoot: (id: ProjectId, repoPath: string, root: string) => Effect.Effect<void>
 }
 
 /** The `projects` table. */
@@ -131,6 +140,18 @@ export class ProjectRepo extends Context.Service<ProjectRepo, ProjectRepoShape>(
             Effect.orDie,
           ),
         delete: remove,
+        repoRoot: (id) =>
+          sql<{ readonly repo_root: string | null }>`SELECT repo_root FROM projects WHERE id = ${id}`.pipe(
+            Effect.map((rows) => rows[0]?.repo_root ?? null),
+            Effect.orDie,
+          ),
+        folders: sql<{ readonly id: ProjectId; readonly name: string; readonly repo_path: string }>`SELECT id, name, repo_path FROM projects`.pipe(
+          Effect.orDie,
+        ),
+        unrecorded: sql<{ readonly id: ProjectId; readonly repo_path: string; readonly repo_root: string | null }>`
+          SELECT id, repo_path, repo_root FROM projects WHERE repo_root IS NULL OR repo_root IN ('', 'git')`.pipe(Effect.orDie),
+        recordRoot: (id, repoPath, root) =>
+          sql`UPDATE projects SET repo_root = ${root} WHERE id = ${id} AND repo_path = ${repoPath}`.pipe(Effect.asVoid, Effect.orDie),
       })
     }),
   )

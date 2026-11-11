@@ -17,10 +17,10 @@ platform      ServerConfig · DataDir · Identity · Db · Migrations · Backup 
               Secrets · Telemetry · Lag
 settings      HostSettings
 profiles      Profiles · AgentConfigs · Usage
-projects      Projects · Relocation
+projects      Projects
 tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp · Leftovers
 threads       ThreadStore · Threads · ThreadReaders
-git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts
+git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts · Relocation
 github        Gh · PullRequests · PrWatch · GithubRepos · GhStacks
 agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · SideCalls · Titles · UsageWindow
 runs          RunRepo · RunDir · Shim · RunFollower · Runs · BackgroundWork · DevServers · Compaction
@@ -115,6 +115,41 @@ tail and publishes it. A subscriber that cannot keep up is cut off with `resync`
 `Projects`: create (a folder, a clone, a new GitHub repository), keys and former keys, settings, archive, delete.
 Changes to one project are serialised by its lock. `Relocation`: recognising a moved repository by its fingerprint
 and moving worktrees and sessions with it.
+
+#### As built in 6.11 (HE-7): Relocation
+
+- **Where.** `git/Relocation.ts` (`Relocation`), not `projects/`: it needs the tasks' rows, git, the worktrees' linked
+  folders (`git/worktree/files.ts` `relink`) and `folderName` (moved to `git/worktree/folder.ts`, re-exported by
+  `Worktrees.ts`), and `Worktrees` holds the folder through it. Its rows besides the projects' are `git/RelocationRepo.ts`
+  (a project's tasks and review threads, the tasks working in a folder, the config folder a conversation started in
+  from `runs`). `Projects` keeps what is the project's: `relocate(id, patch, move)` (under the project's lock: the rest of
+  the patch written and rolled back first, then `move`, then the change stored with the new paths, which are stored
+  alone if the change then fails), `fingerprint`, `repoRoot`, `recordFingerprint(s)` and the `recorder` loop; a plain
+  `update` still refuses a new folder. `ProjectRepo` gained `repoRoot`, `folders`, `unrecorded`, `recordRoot` (only
+  where `repo_path` is still the one looked at).
+- **What it does** is the old `relocate.ts` step for step: `update(id, patch)` (`projects.update`'s handler and an
+  agent's approved `update_project`) checks the folder (`check`: absolute; with `move_repo` the old refusals, `Conflict`
+  `in_use` for another project on it or a setup holding it, `agent_running` for a running agent; else the same
+  repository by its worktrees, its root commits with the shallow-clone ancestor check, or its tasks' branches, all
+  `Invalid` `repo_path` with the old texts), moves it (`rename`, the EXDEV hint), rewrites tasks' `worktree_path` and
+  scratch chats' `work_dir` through `Tasks.change`, runs `git worktree repair`, fixes `.git`/`gitdir` and submodule links
+  by hand, relinks linked folders, copies Claude transcripts newer-only keeping their times (Codex threads skipped), and
+  returns the paths that moved with it and the new fingerprint. `Approvals` checks a new `repo_path` with
+  `Relocation.check` before asking (`Projects.preview` now shows the path as given).
+- **Moving and holding** are a `Ref` in the service: a move marks the project moving (a `Deferred` its waiters await)
+  and is refused while a setup holds the folder; `hold(project)` (around `Worktrees.setup`'s lock, nested setups
+  included) waits for a move under way, then counts itself in; `settled(project)` is what both launches
+  (`LaunchFacts.claude`/`codex`, before the project is read) wait on. No polling. `isMoving` is for tests.
+- **Fingerprints.** `Worktrees.setup` records the project's fingerprint once its folder is a repository (the old
+  `record_fingerprint`). `Projects.recorder` (Main's `ProjectLoops`, beside `RunLoops`/`PrLoops`, so tests run a pass
+  themselves) records them at start and hourly.
+- **Tests.** `git/Relocation.test.ts` has every case of the old `git/relocate/tests.test.ts` and the old
+  `worktree_files.test.ts` case that moved a repository with its links. Changed: the two key races can't be interleaved
+  as the old ones were (the key is checked where it's stored): one key goes to one project whichever commits first, and
+  a rename meanwhile waits for the move under the project's lock; "a change that can't be stored" uses `review_rounds: 99`
+  (`use_worktrees: null` doesn't decode); the setup hold uses named pipes, not a polling script. The recorder's hourly
+  timing isn't tested (its pass is). The 4.1 note "Not here: relocation's hold on the project's folder during a setup"
+  above is done by this.
 
 ### Tasks — [inventory 07](inventory/07-server-root-api.md) (7.7–7.9), [09](inventory/09-data-model.md)
 

@@ -28,6 +28,24 @@ const text = (v: string | null | undefined) => (v === undefined ? undefined : bl
 
 export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound, { readonly brand: unique symbol }>()("ProjectNotFound", { id: Schema.String }) {}
 
+/**
+ * 6.11: a project's paths after its folder moved (`Relocation`), to store with the change that moved it. The worktrees and
+ * scratch folders are given when they were inside the repository folder and moved with it.
+ */
+export interface Relocated {
+  readonly repo_path: string
+  readonly worktrees_root: string | null
+  readonly scratch_path: string | null
+  /** The new folder's fingerprint (`Projects.fingerprint`). */
+  readonly repo_root: string
+}
+
+/**
+ * Whether a fingerprint is the commits a repository's history started from, which tell it apart from others (unlike
+ * `git`, a repository without commits yet, or "", a folder that wasn't one when it was looked at but may be one now).
+ */
+export const isHistory = (fingerprint: string | null): fingerprint is string => fingerprint !== null && fingerprint !== "" && fingerprint !== "git"
+
 /** A preview's way out of its transaction, which rolls it back. */
 class Previewed extends Schema.TaggedError<Previewed, { readonly brand: unique symbol }>()("Previewed", { after: Project }) {}
 
@@ -59,7 +77,29 @@ export interface ProjectsShape {
   readonly delete: (id: ProjectId) => Effect.Effect<void, ProjectNotFound | Conflict>
   /** Read `is_git` and `has_commits` from its folder again; emits `project` when they changed. */
   readonly refreshGit: (id: ProjectId) => Effect.Effect<Project, ProjectNotFound>
+  // 6.11: relocation (`git/Relocation`) and the fingerprint recorder.
+  /**
+   * `update` with a new folder: under the project's lock, the rest of the patch is checked (written and rolled back),
+   * then `move` moves the folder (or checks it moved), then the change is stored with where everything is now. A change
+   * that can't be stored after the folder moved still stores the new paths, so the project says where its folder is.
+   */
+  readonly relocate: <E>(
+    id: ProjectId,
+    patch: ProjectPatch,
+    move: (before: Project) => Effect.Effect<Relocated, E>,
+  ) => Effect.Effect<Project, ProjectNotFound | Invalid | Conflict | E>
+  /** What the folder is: its sorted root commits, `git` for a repository without commits, "" for a folder that isn't one. */
+  readonly fingerprint: (dir: string) => Effect.Effect<string>
+  /** The project's `repo_root` (not on the wire). */
+  readonly repoRoot: (id: ProjectId) => Effect.Effect<string | null>
+  /** Record the project's fingerprint if its history isn't known yet (it has become a repository, or has its first commit). */
+  readonly recordFingerprint: (id: ProjectId) => Effect.Effect<void>
+  /** `recordFingerprint` for every project, while their folders are where the board expects them: the recorder's pass. */
+  readonly recordFingerprints: Effect.Effect<void>
 }
+
+/** How `write` is writing: a change, a preview (rolled back), or a change with a folder that moved. */
+type Writing = "update" | "preview" | "relocated"
 
 /** Projects: a folder on this host and the settings its tasks inherit. */
 export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaway-server/projects/Projects") {
@@ -104,9 +144,9 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
           return { is_git: true, has_commits: head.code === 0 }
         })
       /** What tells the repository apart after a move: its root commits, `git` for one without commits, "" for a folder that isn't one. */
-      const fingerprint = (dir: string, facts: GitFacts) =>
+      const fingerprint = (dir: string, facts?: GitFacts) =>
         Effect.gen(function* () {
-          if (!facts.is_git) return ""
+          if (!(facts ?? (yield* gitFacts(dir))).is_git) return ""
           const roots = yield* git(dir, ["rev-list", "--max-parents=0", "HEAD"])
           const list = roots.stdout.split(/\s+/).filter((r) => r !== "")
           return roots.code === 0 && list.length > 0 ? list.toSorted().join(" ") : "git"
@@ -178,13 +218,14 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
       })
 
       /** The patch's fields that need the file system or git, checked outside the transaction. */
-      const checkOutside = (before: Project, patch: ProjectPatch) =>
+      const checkOutside = (before: Project, patch: ProjectPatch, how: Writing) =>
         Effect.gen(function* () {
+          const columns: { base_branch?: string | null; worktrees_root?: string; repo_path?: string } = {}
           if (patch.move_repo === true || (patch.repo_path !== undefined && expandTilde(patch.repo_path, config.home) !== before.repo_path)) {
-            // Relocating a project (pointing it at its folder's new place, or moving the folder) is a later milestone.
-            return yield* new Invalid({ field: "repo_path", reason: "moving a project's folder isn't available on this server yet" })
+            // 6.11: a new folder is `Relocation`'s (`relocate`); a preview shows it as given.
+            if (how !== "preview") return yield* new Invalid({ field: "repo_path", reason: "a project's folder is changed by relocating it" })
+            if (patch.repo_path !== undefined) columns.repo_path = expandTilde(patch.repo_path, config.home)
           }
-          const columns: { base_branch?: string | null; worktrees_root?: string } = {}
           if (patch.base_branch !== undefined) columns.base_branch = yield* checkBaseBranch(patch.base_branch)
           if (patch.worktrees_root !== undefined) {
             const given = patch.worktrees_root.trim()
@@ -202,11 +243,14 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
           return columns
         })
 
-      /** The patch checked and written: the project after it. Emits `project`. Not `keep`, it is rolled back (a preview). */
-      const write = (id: ProjectId, patch: ProjectPatch, keep: boolean) =>
+      /**
+       * The patch checked and written: the project after it. Emits `project`. Not `keep`, it is rolled back (a preview).
+       * `relocated`: the paths of a folder that moved, stored with it (6.11).
+       */
+      const write = (id: ProjectId, patch: ProjectPatch, keep: boolean, relocated?: Relocated) =>
         Effect.gen(function* () {
-          const outside = yield* checkOutside(yield* getProject(id), patch)
-          const facts = yield* gitFacts((yield* getProject(id)).repo_path)
+          const outside = yield* checkOutside(yield* getProject(id), patch, relocated !== undefined ? "relocated" : keep ? "update" : "preview")
+          const facts = yield* gitFacts(relocated?.repo_path ?? (yield* getProject(id)).repo_path)
           return yield* db.tx(
             Effect.gen(function* () {
               const before = yield* getProject(id)
@@ -271,6 +315,16 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
                 link_folders: yield* ifGiven(patch.link_folders, (v) => checkFileList("link_folders", v)),
                 is_git: facts.is_git,
                 has_commits: facts.has_commits,
+                repo_path: outside.repo_path,
+                // 6.11: where the folder and what moved with it are now. Folders set by the patch win.
+                ...(relocated === undefined
+                  ? {}
+                  : {
+                      repo_path: relocated.repo_path,
+                      repo_root: relocated.repo_root,
+                      ...(relocated.scratch_path === null ? {} : { scratch_path: relocated.scratch_path }),
+                      ...(relocated.worktrees_root === null || outside.worktrees_root !== undefined ? {} : { worktrees_root: relocated.worktrees_root }),
+                    }),
               }
               yield* repo.update(id, columns)
               const project = yield* getProject(id)
@@ -331,7 +385,88 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
         )
       })
 
-      return Projects.of({ list, get: getProject, create, update, preview, delete: remove, refreshGit })
+      // ---- 6.11: relocation and fingerprints ----
+
+      const relocate = <E>(id: ProjectId, patch: ProjectPatch, move: (before: Project) => Effect.Effect<Relocated, E>) =>
+        locks
+          .withLock(["project", id])(
+            Effect.gen(function* () {
+              const before = yield* getProject(id)
+              const { repo_path: _path, move_repo: _move, ...rest } = patch
+              // Tried (and rolled back) before the folder moves, so a change that can't be stored doesn't leave the folder
+              // somewhere the project doesn't say.
+              yield* write(id, rest, false)
+              const moved = yield* move(before)
+              const after = yield* write(id, rest, true, moved).pipe(
+                Effect.tapError(() =>
+                  // The folder has moved all the same, so the project says where it is now.
+                  db
+                    .tx(
+                      Effect.gen(function* () {
+                        yield* repo.update(id, {
+                          repo_path: moved.repo_path,
+                          repo_root: moved.repo_root,
+                          ...(moved.scratch_path === null ? {} : { scratch_path: moved.scratch_path }),
+                          ...(moved.worktrees_root === null ? {} : { worktrees_root: moved.worktrees_root }),
+                        })
+                        yield* events.emit({ type: "project", project: yield* getProject(id) })
+                      }),
+                    )
+                    .pipe(Effect.ignore),
+                ),
+              )
+              if (after.pr_preview_url !== before.pr_preview_url) yield* changes.offer({ _tag: "ProjectChanged", before, after })
+              return after
+            }),
+          )
+          .pipe(Effect.withSpan("Projects.relocate"))
+
+      const recordAt = (id: ProjectId, repoPath: string, root: string | null) =>
+        Effect.gen(function* () {
+          if (isHistory(root) || !(yield* isDir(repoPath))) return
+          const now = yield* fingerprint(repoPath)
+          if (now !== root) yield* repo.recordRoot(id, repoPath, now)
+        })
+
+      const recordFingerprint = Effect.fn("Projects.recordFingerprint")(function* (id: ProjectId) {
+        const p = Option.getOrNull(yield* repo.get(id))
+        if (p !== null) yield* recordAt(id, p.repo_path, yield* repo.repoRoot(id))
+      })
+
+      const recordFingerprints = Effect.gen(function* () {
+        for (const p of yield* repo.unrecorded) yield* recordAt(p.id, p.repo_path, p.repo_root)
+      }).pipe(Effect.withSpan("Projects.recordFingerprints"))
+
+      return Projects.of({
+        list,
+        get: getProject,
+        create,
+        update,
+        preview,
+        delete: remove,
+        refreshGit,
+        relocate,
+        fingerprint: (dir) => fingerprint(dir),
+        repoRoot: repo.repoRoot,
+        recordFingerprint,
+        recordFingerprints,
+      })
+    }),
+  )
+
+  /**
+   * 6.11: the fingerprint recorder (the old `relocate.start_recording`): what each project's folder is, for those whose
+   * history isn't known yet, now and every hour.
+   */
+  static readonly recorder = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const projects = yield* Projects
+      yield* projects.recordFingerprints.pipe(
+        Effect.catchCause((cause) => Effect.logWarning("recording the projects' repositories", cause)),
+        Effect.andThen(Effect.sleep("1 hour")),
+        Effect.forever,
+        Effect.forkScoped,
+      )
     }),
   )
 }

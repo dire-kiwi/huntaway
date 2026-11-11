@@ -423,7 +423,7 @@ export const bringIn = Effect.fnUntraced(function* (
 /**
  * Points the folder links in worktree `wt` that lead into the repository's old folder at its new one, after the
  * repository moved and the worktree was repaired (`map` gives a path's new place): those recorded for it, and those the
- * project's `link_folders` name. For relocation (`Relocation`, a later task).
+ * project's `link_folders` name. For relocation (`Relocation`, 6.11).
  */
 export const relink = Effect.fnUntraced(function* (deps: FilesDeps, wt: string, linkFolders: string, map: (p: string) => string | null) {
   const { fs } = deps
