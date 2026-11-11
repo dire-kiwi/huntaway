@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { ConfigRpcs, NotFound, ProfileRpcs } from "@huntaway/contracts"
+import { Worktrees } from "../git/Worktrees.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import type { AgentConfigNotFound } from "../profiles/AgentConfigs.ts"
 import { Profiles } from "../profiles/Profiles.ts"
@@ -11,11 +12,13 @@ const configNotFound = (e: AgentConfigNotFound) => Effect.fail(new NotFound({ wh
 export const ProfileHandlers = ProfileRpcs.toLayer(
   Effect.gen(function* () {
     const profiles = yield* Profiles
+    const worktrees = yield* Worktrees
     return ProfileRpcs.of({
       "profiles.list": () => profiles.list,
       "profiles.create": ({ profile }) => profiles.create(profile),
       "profiles.update": ({ id, patch }) => profiles.update(id, patch).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
-      "profiles.delete": ({ id }) => profiles.delete(id).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
+      // Its projects' worktrees go first (`Worktrees.deleteProfile`).
+      "profiles.delete": ({ id }) => worktrees.deleteProfile(id).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
     })
   }),
 )

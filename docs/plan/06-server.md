@@ -183,7 +183,7 @@ two tool-call test cases.
   `workScope` (4.6's reviews), `keepStarts`, `diff` (`git.taskDiff`), `hasWorkToMerge`, `forgetStart`; `startRef(id)`.
   `unmerged` is 4.5's (it needs the pull request's state).
 - **`Worktrees`** (`git/Worktrees.ts`): `setup`, `teardown`, `removeIfMerged`, `removeMerged`, `agentInWorktree` (its
-  `running` column or a review thread's), `forDeletion`, `deleteProject`, `recover`, `withLock`. One at a time per task
+  `running` column or a review thread's), `forDeletion`, `deleteProject`, `deleteProfile`, `recover`, `withLock`. One at a time per task
   under **`KeyedLock` `["worktree", id]`**, a key added for it, not `["task", id]`: a setup script may run 30 minutes,
   and a stop, a message or an update takes the task's lock meanwhile (each write inside a setup takes it briefly
   through `Tasks.change`). The order is project, worktree, task, run. A setup goes on in the layer's scope when its
@@ -199,7 +199,8 @@ two tool-call test cases.
   reviewers' runs aborted, `Worktrees.forDeletion` (the worktree as it is once a setup under way is done, torn down
   forced, its branch deleted when asked; `unstack`; the start ref dropped), then `Tasks.delete`. **Deleting a project**
   is `Worktrees.deleteProject` (refused while an agent runs; each task's worktree removed forced once a setup under way
-  is done, branches kept; then `Projects.delete`), which `projects.delete` calls.
+  is done, branches kept; then `Projects.delete`), which `projects.delete` calls; deleting a profile is
+  `Worktrees.deleteProfile` (its projects' worktrees the same way, then `Profiles.delete`), which `profiles.delete` calls.
 - **At launch** (`runs/LaunchFacts`, one block): a review thread whose task uses a worktree that isn't ready fails with
   "the task's worktree isn't set up"; a task with `use_worktree` (not documents-only) gets "Setting up worktree…" and
   `Worktrees.setup`; a failed setup fails the launch (`RunExited` with `WorktreeFailed: <reason>`), as the old

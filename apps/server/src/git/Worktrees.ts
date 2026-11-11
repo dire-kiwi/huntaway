@@ -1,11 +1,13 @@
 import { Context, Effect, Fiber, FileSystem, Layer, Option, Schema } from "effect"
 import { ChildProcessSpawner } from "effect/process"
-import type { Conflict, MergedWorktreeResult, Project, ProjectId, Task, TaskId } from "@huntaway/contracts"
+import type { Conflict, MergedWorktreeResult, ProfileId, Project, ProjectId, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
+import { Profiles } from "../profiles/Profiles.ts"
+import type { ProfileNotFound } from "../profiles/Profiles.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { ProjectNotFound, Projects } from "../projects/Projects.ts"
 import { refuseWhileRunning } from "../profiles/checks.ts"
@@ -82,6 +84,8 @@ export interface WorktreesShape {
    * under way is done, their branches kept so no committed work is lost; then `Projects.delete`.
    */
   readonly deleteProject: (project: ProjectId) => Effect.Effect<void, ProjectNotFound | Conflict>
+  /** Delete a profile (refused while one of its agents runs): its projects' worktrees go first, as `deleteProject`'s; then `Profiles.delete`. */
+  readonly deleteProfile: (profile: ProfileId) => Effect.Effect<void, ProfileNotFound | Conflict>
   /**
    * At startup: a worktree left `setting_up` by a server that stopped is marked failed (set up again by the next run or
    * the button), one left `tearing_down` is `ready` if its folder is still there, else gone.
@@ -130,6 +134,7 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
       const profiles = yield* ProfileRepo
       const tasks = yield* Tasks
       const projectsService = yield* Projects
+      const profilesService = yield* Profiles
       const threads = yield* Threads
       const locks = yield* KeyedLock
       const leftovers = yield* Leftovers
@@ -501,10 +506,9 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
         }
       })
 
-      const deleteProject = Effect.fn("Worktrees.deleteProject")(function* (projectId: ProjectId) {
-        const project = Option.getOrNull(yield* projects.get(projectId))
-        if (project === null) return yield* new ProjectNotFound({ id: projectId })
-        yield* refuseWhileRunning(yield* projects.running(projectId), (n) => `${n} of the project's agents ${n === 1 ? "is" : "are"} running; stop them first`)
+      /** Before `project` goes: its tasks' worktrees, forced, each once a setup under way is done; branches kept. */
+      const removeProjectWorktrees = Effect.fnUntraced(function* (project: Project) {
+        const projectId = project.id
         const dir = home(project.repo_path)
         let removed = false
         // All its threads: tasks, review threads and any other kind.
@@ -519,7 +523,22 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
           yield* g.run(dir, ["worktree", "remove", "--force", wt]).pipe(Effect.ignore)
         }
         if (removed) yield* g.run(dir, ["worktree", "prune"]).pipe(Effect.ignore)
+      })
+
+      const deleteProject = Effect.fn("Worktrees.deleteProject")(function* (projectId: ProjectId) {
+        const project = Option.getOrNull(yield* projects.get(projectId))
+        if (project === null) return yield* new ProjectNotFound({ id: projectId })
+        yield* refuseWhileRunning(yield* projects.running(projectId), (n) => `${n} of the project's agents ${n === 1 ? "is" : "are"} running; stop them first`)
+        yield* removeProjectWorktrees(project)
         return yield* projectsService.delete(projectId)
+      })
+
+      const deleteProfile = Effect.fn("Worktrees.deleteProfile")(function* (profileId: ProfileId) {
+        // Refused before anything is removed, as `Profiles.delete` would refuse after.
+        const running = yield* profiles.running(profileId)
+        yield* refuseWhileRunning(running, (n) => `${n} of the profile's agents ${n === 1 ? "is" : "are"} running; stop them first`)
+        for (const project of yield* projects.list(profileId)) yield* removeProjectWorktrees(project)
+        return yield* profilesService.delete(profileId)
       })
 
       const recover = Effect.fn("Worktrees.recover")(function* () {
@@ -541,6 +560,7 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
         agentInWorktree,
         forDeletion,
         deleteProject,
+        deleteProfile,
         recover: recover(),
         withLock: (task) => withLock(task),
       })

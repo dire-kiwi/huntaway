@@ -400,6 +400,21 @@ describe("Worktrees", () => {
     ),
   )
 
+  it.live("deleting a profile removes its projects' worktrees first, keeping their branches", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* Worktrees
+        const { repo, project, task, wt, branch } = yield* taskWithWork
+        yield* write(`${wt}/draft`, "uncommitted")
+        yield* w.deleteProfile(project.profile_id)
+        assert.isFalse(yield* exists(wt))
+        assert.isTrue(Option.isNone(yield* Effect.option((yield* Tasks).get(task.id))))
+        assert.strictEqual(yield* git(repo, ["branch", "--list", "--format=%(refname:short)", "ia/*"]), branch)
+        assert.deepStrictEqual((yield* git(repo, ["worktree", "list", "--porcelain"])).split("\n").filter((l) => l.startsWith("worktree ")).length, 1)
+      }),
+    ),
+  )
+
   it.live("keeps what the teardown script leaves", () =>
     run(
       Effect.gen(function* () {
