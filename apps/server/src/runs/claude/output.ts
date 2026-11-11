@@ -23,6 +23,7 @@ import { RunInput } from "../RunInput.ts"
 import { RunOutput } from "../RunOutput.ts"
 import { RunRepo } from "../RunRepo.ts"
 import { RunWaits } from "../RunWaits.ts"
+import { TurnHooks } from "../TurnHooks.ts"
 
 // A Claude run's output, line by line (docs/plan/07-agents.md, Following; inventory 01, sections 5 and 9; huntaway's
 // runner/output.ts `handle_line`): each line is decoded (`decodeLine`; a problem is logged and skipped), translated
@@ -124,6 +125,7 @@ export const ClaudeOutput = Layer.effect(
     const usage = yield* Usage
     const waits = yield* RunWaits
     const checkpoints = yield* Checkpoints
+    const turnHooks = yield* TurnHooks
     // Changed in place, one key at a time (a line's run is the only writer of its task's entry), and emptied of a run's
     // entry when the follower lets the run go (`released`), so it holds the threads being followed and no more.
     const kept = MutableHashMap.empty<TaskId, Kept>()
@@ -191,7 +193,7 @@ export const ClaudeOutput = Layer.effect(
         result_error: error,
         write_no: null,
       })
-      // Documents (6.2), memory (6.7), the context meter (2.8) hear of the turn's end here.
+      // Documents (6.2) hear of the turn's end after the line commits (`follow`); memory (6.7) and the context meter (2.8) here.
     })
 
     /** What a line tells the run, in its transaction, given its row as the line found it: whether it ended a turn, and started one. */
@@ -394,6 +396,12 @@ export const ClaudeOutput = Layer.effect(
         // Refused for the usage limit: the config is out until it resets, which the run's end reads.
         if (line.api_error === "usage_limit_reached") yield* ranOut(run)
       }
+      // 6.2: a tool call may have changed the task's documents (the task shows them as they're written), and a turn's end
+      // closes their versions.
+      if (line.type === "user" && typeof line.message.content !== "string" && line.message.content.some((b) => b.type === "tool_result")) {
+        yield* turnHooks.toolDone(run.task_id)
+      }
+      if (line.type === "result" && done.turnEnded) yield* turnHooks.turnEnded(run.task_id)
       if (line.type === "control_request") yield* requests.handle(run, line)
       else if (line.type === "control_cancel_request") yield* requests.cancel(run, line.request_id)
     })

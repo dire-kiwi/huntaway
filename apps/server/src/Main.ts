@@ -18,6 +18,7 @@ import {
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
+  TaskDocumentRpcs,
   TaskRpcs,
   ThreadRpcs,
 } from "@huntaway/contracts"
@@ -109,6 +110,9 @@ import { SetupThread } from "./runs/SetupThread.ts"
 import { TaskDeletion } from "./runs/TaskDeletion.ts"
 import { Runs } from "./runs/Runs.ts"
 import { RunWaits } from "./runs/RunWaits.ts"
+import { TurnHooks } from "./runs/TurnHooks.ts"
+import { TaskDocumentRepo } from "./docs/TaskDocumentRepo.ts"
+import { TaskDocuments } from "./docs/TaskDocuments.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
@@ -125,6 +129,7 @@ import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
+import { TaskDocumentHandlers } from "./rpc/taskDocuments.ts"
 import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
@@ -250,7 +255,7 @@ const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(RunFollower.layer),
   // The line handler: Codex runs' lines to the Codex handler (5.2), the others to Claude's.
   Layer.provideMerge(CodexOutput.pipe(Layer.provide(ClaudeOutput))),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer, TurnHooks.layer)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
@@ -307,6 +312,9 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
     Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
+    Layer.provideMerge(TaskDocuments.registered),
+    Layer.provideMerge(TaskDocuments.layer.pipe(Layer.provideMerge(TaskDocumentRepo.layer))),
     // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
     Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
     // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
@@ -362,6 +370,7 @@ export const Served = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
+  TaskDocumentRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -380,6 +389,7 @@ export const HandlersLive = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
+  TaskDocumentHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

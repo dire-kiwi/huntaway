@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync, symlinkSync } from "node:fs"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, FileSystem, Option, Result, Schema } from "effect"
 import type { Scope } from "effect"
@@ -11,6 +12,7 @@ import type { Decision as RuleDecision } from "@huntaway/shared"
 import { fakeAgent, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
+import { DataDir } from "../platform/DataDir.ts"
 import { AgentRequests } from "../runs/AgentRequests.ts"
 import type { RunDir } from "../runs/RunDir.ts"
 import { RunOutput } from "../runs/RunOutput.ts"
@@ -34,6 +36,7 @@ import { reason } from "./prompts.ts"
 
 type Env =
   | Permissions
+  | DataDir
   | PermissionRepo
   | ApprovalRules
   | RunRepo
@@ -106,7 +109,7 @@ const asked = (agent: FakeAgent, call: string, tool: string, input: unknown) =>
     // (A prompt that fails before it waits ends the test with its cause.)
     const id = yield* Effect.raceFirst(
       permissions.asking(call),
-      Effect.flatMap(Fiber.join(told), (d) => Effect.die(`decided without asking: ${d.behavior}`)),
+      Effect.flatMap(Fiber.join(told), (d) => Effect.die(`decided without asking ${call}: ${d.behavior}`)),
     )
     return { id, told }
   })
@@ -396,6 +399,46 @@ describe("Permissions", () => {
         assert.strictEqual((yield* Fiber.join(p.told)).behavior, "allow")
         assert.deepStrictEqual((yield* taskRow(task)).auto_allow, ["Bash"])
         assert.deepStrictEqual(yield* decided(agent, "c2", "Bash", { command: "ls" }), { behavior: "allow", updatedInput: { command: "ls" } })
+      }),
+    ),
+  )
+})
+
+describe("Permissions: the thread's own documents folder (6.2)", () => {
+  // The old agent/documents.test.ts the_agent_writes_its_own_folder_without_asking.
+  it.effect("a labelled task's agent writes its own folder without asking, but not through a link out of it", () =>
+    run(
+      Effect.gen(function* () {
+        // In a mode that asks before edits, which would otherwise allow them all.
+        const { task, agent } = yield* runningTask({ mode: "default" })
+        // A group's task (projectless with neither, it would be a scratch task, which owns its folder).
+        yield* (yield* TaskRepo).write(task, { labels: ["plan"], group_name: "Shop" }, AT)
+        const dataDir = yield* DataDir
+        const d = dataDir.documents(task)
+        const allowed = (n: string, tool: string, file: string) => Effect.map(decided(agent, n, tool, { file_path: file }), (r) => r.behavior === "allow")
+        assert.isTrue(yield* allowed("c1", "Write", `${d}/plan.html`))
+        assert.isTrue(yield* allowed("c2", "Edit", `${d}/notes/a.md`))
+        // Not own: these ask the user.
+        yield* asked(agent, "c3", "Bash", { file_path: `${d}/plan.html` })
+        yield* asked(agent, "c4", "Write", { file_path: `${d}/../other/plan.html` })
+        yield* asked(agent, "c5", "Write", { file_path: `${dataDir.root}/x.html` })
+        yield* asked(agent, "c6", "Write", { file_path: "plan.html" })
+        // Not through a link out of the folder, nor through one to a file that doesn't exist yet (writing would create it).
+        mkdirSync(d, { recursive: true })
+        const outside = `${dataDir.root}/elsewhere`
+        mkdirSync(outside, { recursive: true })
+        symlinkSync(outside, `${d}/out`)
+        yield* asked(agent, "c7", "Write", { file_path: `${d}/out/x.html` })
+        symlinkSync(`${outside}/missing.html`, `${d}/link.html`)
+        yield* asked(agent, "c8", "Write", { file_path: `${d}/link.html` })
+        symlinkSync(`${outside}/gone/x`, `${d}/deep`)
+        yield* asked(agent, "c9", "Write", { file_path: `${d}/deep/y.html` })
+        assert.isFalse(existsSync(`${outside}/missing.html`))
+        assert.isTrue(yield* allowed("c10", "Write", `${d}/new/dir/x.html`))
+        // A task with no labels (nor a folder of its own) asks.
+        const code = yield* runningTask({ mode: "default" })
+        yield* (yield* TaskRepo).write(code.task, { group_name: "Shop" }, AT)
+        yield* asked(code.agent, "c11", "Write", { file_path: `${dataDir.documents(code.task)}/a` })
       }),
     ),
   )

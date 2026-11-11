@@ -27,6 +27,7 @@ import type { Run } from "./Run.ts"
 import { RunRepo } from "./RunRepo.ts"
 import { Runs } from "./Runs.ts"
 import { RunWaits } from "./RunWaits.ts"
+import { TurnHooks } from "./TurnHooks.ts"
 
 // What the reactor does with `RunExited` (docs/plan/07-agents.md, When a run ends; inventory 01, section 9): under the
 // task's lock, the run's outcome, the run recorded as exited, the steers it never took in queued again ahead of what
@@ -70,6 +71,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       const requests = yield* AgentRequests
       const background = yield* BackgroundWork
       const waits = yield* RunWaits
+      const turnHooks = yield* TurnHooks
       const checkpoints = yield* Checkpoints
       const pullRequests = yield* PullRequests
 
@@ -179,6 +181,8 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
       })
 
       const ended = Effect.fn("RunEnds.ended")(function* (change: RunExited) {
+        // 6.2: what a stopped or failed run had written of its documents, kept as its turn's (before the plan rule reads them).
+        yield* turnHooks.turnEnded(change.task)
         const planOnly = yield* turnCheckpoints(change)
         const first = yield* locks.withLock(["task", change.task])(recordEnd(change, planOnly))
         if (first === null) return

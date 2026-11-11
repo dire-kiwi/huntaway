@@ -24,6 +24,7 @@ import { RunOutput } from "../RunOutput.ts"
 import type { RunOutputShape } from "../RunOutput.ts"
 import { RunRepo } from "../RunRepo.ts"
 import { RunWaits } from "../RunWaits.ts"
+import { TurnHooks } from "../TurnHooks.ts"
 
 // A Codex run's output, line by line (docs/plan/07-agents.md, Following; inventory 01, section 5 "Codex"; huntaway's
 // agent/codex/output.ts `handle_line` and driver.ts `handle`): the adapter writes the app-server's notifications, its
@@ -74,6 +75,7 @@ export const makeCodexOutput = Effect.gen(function* () {
   const usage = yield* Usage
   const waits = yield* RunWaits
   const checkpoints = yield* Checkpoints
+  const turnHooks = yield* TurnHooks
   const kept = MutableHashMap.empty<TaskId, Kept>()
 
   /** The thread's state as stored, for a run followed afresh. */
@@ -123,7 +125,7 @@ export const makeCodexOutput = Effect.gen(function* () {
           break
         case "TurnEnded": {
           // A checkpoint of what the turn left (4.3), taken in the background once this commits, with the message the
-          // turn started with, which goes (as the Claude line handler does). Documents (6.2) and memory (6.7) here.
+          // turn started with, which goes (as the Claude line handler does). Documents (6.2) follow the commit; memory (6.7) here.
           const atEnd = Option.getOrElse(yield* repo.get(run.id), () => now)
           const status = now.stop === "requested" ? "stopped" : effect.error !== null ? "failed" : "done"
           yield* db.sql.afterCommit(checkpoints.afterTurn(atEnd, status))
@@ -248,6 +250,8 @@ export const makeCodexOutput = Effect.gen(function* () {
         }
         case "TurnEnded": {
           yield* meter.recordTurn(run, null)
+          // 6.2: the task's documents the turn changed are kept, their versions closed.
+          yield* turnHooks.turnEnded(run.task_id)
           // Refused for the account's usage limit: the config is out until it resets, which the run's end reads.
           if (effect.usageLimit) {
             const config = yield* configOf(run)
@@ -261,6 +265,8 @@ export const makeCodexOutput = Effect.gen(function* () {
         }
         // A tool call may have changed the task's documents: the task shows them as they're written (6.2).
         case "ToolDone":
+          yield* turnHooks.toolDone(run.task_id)
+          break
         case "SessionStarted":
         case "TurnStarted":
         case "Echoed":

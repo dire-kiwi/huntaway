@@ -5,6 +5,7 @@ import { Thread } from "../Thread"
 import { Composer } from "../thread/Composer"
 import { WithHeldChoice } from "../../board/MergesInto"
 import { Details } from "./details/Details"
+import { DocumentView } from "../Document"
 import { ChangeSummaryView, ReviewSummary } from "../Review"
 import type { Mode, Tab } from "./layout"
 
@@ -88,8 +89,8 @@ export function TabContent({
         />
       </WithHeldChoice>
     )
-  // A document has a composer of its own, for asking for changes to it: documents come with M6 (task/Document.tsx).
-  if (docShown) return <NotYet what="Its document is" />
+  // A document has a composer of its own, for asking for changes to it (6.2).
+  if (docShown) return <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />
   const content = tabView(task, mode, tab, shown)
   if (!content) return null
   // Every other tab keeps the thread's composer under it, and a message sent from it shows the thread (HA-334).

@@ -6,7 +6,9 @@ import type { SqlClient } from "effect/sql"
 import { RunId, Timestamp } from "@huntaway/contracts"
 import { fakeAgent, TestBoard } from "@huntaway/testing"
 import type { FakeAgent } from "@huntaway/testing"
+import { TaskDocuments } from "../../docs/TaskDocuments.ts"
 import { Permissions } from "../../permissions/Permissions.ts"
+import { Db } from "../../platform/Db.ts"
 import { TaskRepo } from "../../tasks/TaskRepo.ts"
 import { ThreadReaders } from "../../threads/ThreadReaders.ts"
 import { Threads } from "../../threads/Threads.ts"
@@ -224,5 +226,32 @@ describe("a Codex run's output", () => {
         })
       }),
     ),
+  )
+
+  it.effect("6.2: a Codex edit shows before its turn ends (the old a_codex_edit_shows_before_its_turn_ends)", () =>
+    Effect.gen(function* () {
+      const documents = yield* TaskDocuments
+      const fs = yield* FileSystem.FileSystem
+      const agent = yield* codexAgent
+      const { sql } = yield* Db
+      yield* sql`UPDATE tasks SET labels = '["plan"]' WHERE id = ${agent.run.task_id}`.pipe(Effect.orDie)
+      const file = `${documents.folder(agent.run.task_id)}/plan.html`
+      yield* fs.makeDirectory(documents.folder(agent.run.task_id), { recursive: true }).pipe(Effect.orDie)
+      yield* fs.writeFileString(file, "<h1>Plan</h1>").pipe(Effect.orDie)
+      const item = { type: "fileChange", id: "f1", status: "completed", changes: [{ path: file, kind: { type: "add" }, diff: "+<h1>Plan</h1>" }] }
+      yield* feed(agent, [
+        { method: "thread/started", params: { thread: { id: "th1" } } },
+        { method: "turn/started", params: { ...t, turn: { id: "turn1" } } },
+        { method: "item/completed", params: { ...t, item } },
+      ])
+      const doc = yield* documents.get(agent.run.task_id).pipe(Effect.orDie)
+      assert.deepStrictEqual([doc.content, doc.versions.map((v) => v.open)], ["<h1>Plan</h1>", [true]])
+      assert.notStrictEqual((yield* (yield* TaskRepo).get(agent.run.task_id))?.document_at ?? null, null)
+      yield* feed(agent, [{ method: "turn/completed", params: { ...t, turn: { id: "turn1", status: "completed" } } }])
+      assert.deepStrictEqual(
+        (yield* documents.get(agent.run.task_id).pipe(Effect.orDie)).versions.map((v) => v.open),
+        [false],
+      )
+    }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 })
