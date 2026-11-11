@@ -10,7 +10,6 @@ import { Threads } from "../../threads/Threads.ts"
 import { McpServers } from "../McpServers.ts"
 import { BAD_REMIND_AT, reminderTime } from "./reminders.ts"
 import { overview, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./taskJson.ts"
-import { NOT_STARTED } from "./tasks.ts"
 import { agentOf, agentOn, at, byText, call, err, grant, idOf, keys, list, ok, profile, project, setTask, str, task } from "./tests/board.ts"
 
 // The task tools (the old mcp/tools/tasks.test.ts, local.test.ts and model_effort.test.ts), as an agent calls them
@@ -19,9 +18,9 @@ import { agentOf, agentOn, at, byText, call, err, grant, idOf, keys, list, ok, p
 // - subprojects (made by `testing.legacy_subproject`): there are none any more, and `type: "subproject"` is refused by
 //   the schema; a named one is "not a subproject";
 // - `group_tasks_follow_their_group_when_its_renamed`, `a_database_from_before…`: the database's, not the tools';
-// - starting agents (`agents_can_run`, `started`): with `Runs` (2.5) — until then `create_task` says it wasn't started;
-// - `start_from` and `merges_into` on a worktree task: worktrees need a git repository (M4); `merges_into` is kept on
-//   tasks without one;
+// - `start_from` a branch or a pull request on a worktree task: worktrees are M4's (`merges_into`, which starts it from
+//   the other task, is tested on a repository);
+// - starting agents, `send_to_task`: in starting.test.ts;
 // - a task's config on another profile's board, and Codex configs: no configs are made here; the model and effort are
 //   kept whatever the config, as `Tasks` does;
 // - exact type-error texts ("starred must be", "model must be a string", "effort must be one of"): the arguments'
@@ -392,35 +391,6 @@ describe("task tools", () => {
     }).pipe(Effect.provide(TestMcp())),
   )
 
-  it.effect("create_task starts its task unless told not to (it says it wasn't, until runs come)", () =>
-    Effect.gen(function* () {
-      const p = yield* profile("personal")
-      const kiw = yield* project(p, "kiwicd", "KIW")
-      const me = yield* agentOn(yield* task(kiw, "Me"))
-      const note = (args: Readonly<Record<string, unknown>>) => Effect.map(call(me, "create_task", args), (r) => ok(r)["note"])
-      assert.strictEqual(yield* note({ title: "Go" }), NOT_STARTED)
-      assert.strictEqual(yield* note({ title: "Todo", status: "todo" }), NOT_STARTED)
-      assert.isUndefined(yield* note({ title: "Later", start: false }))
-      assert.isUndefined(yield* note({ title: "Someday", status: "backlog" }))
-      assert.isUndefined(yield* note({ title: "Finished", status: "done" }))
-      assert.strictEqual(yield* note({ title: "Now", status: "backlog", start: true }), NOT_STARTED)
-      // Made all the same, once each, in todo.
-      const made = yield* (yield* Tasks).list({ _tag: "ByProject", project_id: kiw.id })
-      assert.deepStrictEqual(
-        made.map((t) => [t.title, t.status]).toSorted((a, b) => byText(a[0], b[0])),
-        [
-          ["Finished", "done"],
-          ["Go", "todo"],
-          ["Later", "todo"],
-          ["Me", "todo"],
-          ["Now", "backlog"],
-          ["Someday", "backlog"],
-          ["Todo", "todo"],
-        ],
-      )
-    }).pipe(Effect.provide(TestMcp())),
-  )
-
   it.effect("update_task doesn't move a task its todo list holds", () =>
     Effect.gen(function* () {
       const p = yield* profile("personal")
@@ -530,6 +500,7 @@ describe("task tools", () => {
         "create_task",
         "update_task",
         "list_pens",
+        "send_to_task",
         "get_project",
       ])
       const reviewers = (yield* servers.tools("huntaway", true))

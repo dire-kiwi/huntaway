@@ -533,7 +533,7 @@ export class ToolCalls extends Context.Service<ToolCalls, {
 
 - **`mcp/tools/<area>.ts`** declare and handle the board's tools: `questions.ts` (`request_user_input`, `finish_work`),
   `projects.ts` (`list_projects`, `get_project`), `tasks.ts` (`list_tasks`, `get_task`, `get_task_field`,
-  `create_task`, `update_task`; `send_to_task` with `Runs`), `pens.ts` (`list_pens`). `taskJson.ts` is the task as the
+  `create_task`, `update_task`, `send_to_task`), `pens.ts` (`list_pens`). `taskJson.ts` is the task as the
   tools give it (`summary`, `summarize`, `details`, `overview`, `field`), `reminders.ts` the old `reminder_time`,
   `common.ts` the shared arguments and `boardTool` (the registration, which drops arguments given as null, as the old
   tools read null as "not given"; `get_task_field` keeps them and refuses a null offset). **`board.ts`** registers
@@ -551,9 +551,13 @@ export class ToolCalls extends Context.Service<ToolCalls, {
 - **Subprojects are gone**: `subproject` is kept in the schemas (names are copied), `"none"` and `"all"` list every
   task, and any task named is "not a subproject". Left out of a task's JSON: `subproject`, `is_subproject`,
   `workflows` (M6); of `get_project`'s: `summarizer`, `profile_summarizer`, `subproject_pull_requests` (legacy).
-- **Starting agents waits for `Runs` (2.5)**: until it is merged, `create_task` with `start` (said or by default) makes
-  the task and adds the note that this host can't run agents, `update_task` moves a task into In progress without
-  starting it, and `send_to_task` is not registered.
+- **Starting agents** goes through `Runs.send(task, { text: "", source: "agent" })` (a never-run task's start message):
+  `create_task` with `start` (said, or by default for todo and in_progress), and `update_task` moving a todo or backlog
+  task that has never run (no session, not queued for dependencies, not running, not the caller's own) to in_progress.
+  `send_to_task` is `Runs.send(task, { text, source: "agent" })`. Refused, `create_task` still returns the task it made,
+  with a note: the old one for `no_agents`, "The task was made, but not started: <why>" for another refusal (new: the
+  old server threw, after making the task, which an agent could retry into a duplicate); `update_task` on a host that
+  can't run agents leaves the task in In progress, as before.
 
 ### `wait`
 
@@ -594,9 +598,15 @@ question `q`, metadata the card and the `call_id` that asked), opened with `Thre
 (`ThreadReaders.asked`); the tool sets the run's `attention`. The request is the card's one record: open is pending, an
 `answer` resolution is answered (`answers.q` the picks and the text), a `cancel` is replied, replaced or expired
 (`SETTLED` has each one's message; `settle(task, how)` does it). `card` (the checks of what the agent asks) and
-`replyText` (the user's message an answer sends) are plain functions. `answer(task, requestId, …)` and the
-`threads.answerQuestion` RPC send that message through `Runs.send`, and come with it; whoever sends a user's message
-(`tasks.send`) calls `settle(task, "replied")`.
+`replyText` (the user's message an answer sends) and `checkAnswer` are plain functions. `answer(task, requestId,
+{ choices, text })` (the `threads.answerQuestion` RPC, the old `POST /tasks/{id}/questions/{message_id}`) checks the card
+is open and the conversation hasn't moved on (`ThreadReaders.movedOn` past the card's write), resolves it (the
+compare-and-set), sends `replyText` with `Runs.send(task, { source: "user" })` (on a failure the card is opened again),
+then settles the thread's other open questions as replied. It fails with `QuestionNotFound`, `QuestionClosed`
+(`answered`, `moved_on`), `AnswerInvalid`, `SendRefused` or `TaskNotFound`; the handler maps them to `NotFound`,
+`Conflict` (`not_pending`, `moved_on`), `Invalid` and `rpc/tasks.ts`'s `sendRefused`. `tasks.send` settles the open
+questions as replied after a user's message that isn't blank. The merge gate's card (`merge_approval`, M4) is not
+special-cased yet: M4 routes its answer to the gate.
 
 ## Prompts
 
