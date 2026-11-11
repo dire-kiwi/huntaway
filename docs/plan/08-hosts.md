@@ -154,9 +154,26 @@ A hub updates its hosts one at a time through the link, so for a while they diff
 
 ## To check early
 
-Two things in this design were read in Effect's source but not run, and M7 starts by running them:
+Two things in this design were read in Effect's source but not run, and M7 started by running them (7.0, HE-6):
 
 1. That headers on a websocket's upgrade request reach RPC middleware for every request on that socket
    (`RpcServer.ts` prepends them), and that the signed-session scheme holds when a request carries a header of the
-   same name.
-2. That piping two `Socket`s gives back-pressure in both directions, with a terminal's output as the load.
+   same name. **Holds** (`hosts/SessionSeal.test.ts`, a real server and websocket): the RPC server puts the upgrade's
+   headers before each request's own and `Headers.fromInput` joins two of one name as `a, b`, so a relayed client's
+   own `x-huntaway-session` spoils the seal (the request is refused) and never replaces it.
+2. That piping two `Socket`s gives back-pressure in both directions, with a terminal's output as the load. **Not with
+   Effect's `Socket` alone** (`hosts/pipe.test.ts` keeps it as the control): its websocket `Reader` pauses a peer while
+   frames wait unread, but its `Writer` hands each frame to `ws.send` and returns, so `reader.pull` into
+   `writer.writeAll` reads a fast peer as fast as it sends and holds whatever the slow side has not taken (all 16 MiB
+   of the control's load). `hosts/pipe.ts` therefore waits, after each write, for the TCP connection under the slow side
+   to drain (`writableNeedDrain`, `drain`): the connection of an accepted socket is the request's (`NodeHttpServerRequest
+   .toIncomingMessage(request).socket`), a dialled one's comes with `ws`'s `upgrade` event. With that, 96 MiB to a
+   reader that does not read leaves the sender holding more than half, the hub pauses the sender's connection, no write
+   leaves more than 1 MiB in the hub's buffer, and everything arrives in order once the reader reads, both ways.
+
+As built (7.0): the seal is MAC'd with the board token of the host that serves the socket, always. A hub that dials a
+host holds that token (the link's); a host that dialled in is told the client's session on its control stream and
+seals it itself before it pipes the hub's socket to its own `/api/rpc`. So a host never takes a session sealed with a
+hub token, which every host dialled into that hub also holds and could otherwise use on another such host reached
+directly. A sealed session of kind `link` (a hub's own connection to a host) may carry `link`; a relayed board client's
+never, and a device's only `read` and `operate`.

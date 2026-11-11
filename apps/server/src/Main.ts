@@ -31,6 +31,7 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { SessionSeal } from "./hosts/SessionSeal.ts"
 import { ApiNotFound, BodyLimit, HealthRoute, StaticUi } from "./http/routes.ts"
 import { Backup } from "./platform/Backup.ts"
 import { Changes } from "./platform/Changes.ts"
@@ -223,6 +224,8 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
+    // Hosts: links, the relay, tools across hosts (M7).
+    Layer.provideMerge(SessionSeal.layer),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').

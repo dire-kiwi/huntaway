@@ -85,7 +85,7 @@ Each could have gone another way. They are listed so that a different answer is 
 | Strict lint slows agents down or pushes them to suppress                                 | Suppressions are counted by a structural test and need a written reason; a rule that is wrong here is turned off in the config, in the open |
 | The import loses or bends data                                                           | Every row passes the schema it will be read with; `--check`; no table is dropped on the strength of one board's row count; nightly runs on a scrubbed copy; the old file untouched |
 | A server on imported data acts on the live board (same host id, links, repositories)     | Two kinds of import only. The switch needs the old server stopped, and `ImportGuard` refuses to start beside it afterwards. A rehearsal has its own identity, no credentials, and a server that is read-only at four separate places, with a test ([11-migration.md](11-migration.md#rehearsal)) |
-| The relay's signed session, and socket piping under load                                 | Tested first in M7 (7.0)                                                                                         |
+| The relay's signed session, and socket piping under load                                 | Tested first in M7 (7.0): both hold, the pipe with a drain-waiting write                                         |
 | Atomicity bugs that the old single-threaded style could not have                          | Every state change is one transaction; work across a wait holds the entity's lock; decisions are pure and tested as tables |
 
 ## Not verified
@@ -95,7 +95,9 @@ Checked for this plan, on 11 November 2026: the versions, the RPC, SQL, atom and
 read or reasoned, not run.
 
 - The per-host family of atom runtimes: the spike type-checked one host with `AtomRpc.Service`.
-- Upgrade headers reaching RPC middleware on every request of a socket; the signed session; piping two sockets.
+- ~~Upgrade headers reaching RPC middleware on every request of a socket; the signed session; piping two sockets.~~
+  Checked in 7.0 (HE-6, [08-hosts.md](08-hosts.md#to-check-early)): the headers and the seal hold; piping needs a write
+  that waits for the connection to drain, which Effect's websocket `Writer` does not do.
 - `Rpc.annotate` as the carrier of an RPC's scope, read by the middleware (the method exists; the pattern was not
   run).
 - Effect's `Tool.getJsonSchema` output against what Claude Code and Codex accept for each of the 70 tools. Partly checked in
