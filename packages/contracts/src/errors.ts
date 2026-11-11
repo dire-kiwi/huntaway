@@ -26,6 +26,9 @@ export const ConflictReason = Schema.Literals([
   "restart_in_progress",
   "in_use",
   "worktree_kept",
+  // The Changes tab (4.2): git's own refusal, and what would act on a whole repository the project is only a folder of.
+  "git_refused",
+  "whole_repository",
 ])
 export type ConflictReason = typeof ConflictReason.Type
 

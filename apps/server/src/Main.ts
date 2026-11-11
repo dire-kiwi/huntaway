@@ -35,6 +35,7 @@ import { TokenRepo } from "./agents/TokenRepo.ts"
 import { Tokens } from "./agents/Tokens.ts"
 import { UsageWindow } from "./agents/UsageWindow.ts"
 import { WindowPrompt } from "./agents/WindowPrompt.ts"
+import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
 import { Git } from "./git/Git.ts"
@@ -171,11 +172,11 @@ const ThreadsLive = Threads.pruner.pipe(
   Layer.provideMerge(TasksLive),
 )
 /**
- * The git area: running git; a task's base and worktrees, status scripts (4.1), checkpoints (4.3); the Changes tab
- * joins this line (4.2). What it needs of GitHub is `GitHubAccess`, whose live layer is the github area's (4.4), built
- * here under the git area's services since it only needs `Gh`, which only needs `Git`.
+ * The git area: running git; a task's base and worktrees, status scripts (4.1), checkpoints (4.3), the Changes tab
+ * (4.2). What it needs of GitHub is `GitHubAccess`, whose live layer is the github area's (4.4), built here under the
+ * git area's services since it only needs `Gh`, which only needs `Git`.
  */
-const GitLive = Layer.mergeAll(Worktrees.layer, StatusScripts.layer).pipe(
+const GitLive = Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
   Layer.provideMerge(Layer.mergeAll(GitHubAccessLive, CheckpointRepo.layer)),
   Layer.provideMerge(Gh.layer),

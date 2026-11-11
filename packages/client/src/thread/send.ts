@@ -26,6 +26,8 @@ export interface SendMessage {
   readonly files: ReadonlyArray<AttachmentRef>
   /** The draft it was written in. */
   readonly draft: Atom.Writable<ComposerDraft | null>
+  /** Called once it has gone: what went with it (the Changes tab's line comments) comes off where it's kept. */
+  readonly onSent?: (() => void) | undefined
 }
 
 const refKey = (ref: ThreadRef): string => `${ref.host_id}\u0000${ref.task_id}`
@@ -67,6 +69,7 @@ const sendByKey = Atom.family((key: string) => {
       )
       const draft = registry.get(message.draft)
       if (draft !== null) registry.set(message.draft, draftAfterSend(draft, message.sent, message.files))
+      message.onSent?.()
       return task
     }),
     { concurrent: true },

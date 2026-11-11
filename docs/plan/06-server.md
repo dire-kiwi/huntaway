@@ -274,6 +274,36 @@ two tool-call test cases.
   the branch and the conversation, "Keep the conversation", the next run's `--resume-session-at`, marks following a
   live run).
 
+#### As built in 4.2 (HE-5): `ChangesTab`
+
+- **Files.** `git/ChangesTab.ts` (the service: every operation of the old `git_view.ts`) and `git/changes/parse.ts`
+  (pure: the porcelain v2 `-z` status reader, `git log`/`stash list`/`show` formats, `apply --numstat -z` paths, path and
+  hash checks, the limits). The wire is in `packages/contracts/src/rpc/git.ts`: `git.status`, `git.diff`, `git.show` at
+  `read`; `git.stage`, `unstage`, `discard`, `apply`, `commit`, `stash`, `reset` at `git` (`GitStatus`, `GitFile`,
+  `GitCommit`, `GitStash`, `GitFileDiff`, `GitShown` keep the old field names); the handlers are `rpc/git.ts`, the layer is
+  on Main's git line.
+- **How git runs.** At the top of the folder `TaskBase.changesDir` gives (its worktree once ready, else the project's
+  repository), through `Git.bytes` with `-c core.quotePath=false`, `GIT_EDITOR=true`, `GIT_OPTIONAL_LOCKS=0` and the
+  location variables cleared (the old view didn't clear them; nothing it ran should follow another repository). A diff
+  is read as bytes: past 4 MiB (`maxBytes`) it is `too_large`, and output that isn't UTF-8 is `{ not_utf8, preview }`
+  with no patch.
+- **Errors.** `ChangesRefused` is the old 409, the wire's `Conflict`: `git_refused` (git's own message, and a commit
+  that would take what's staged outside the project's folder), `whole_repository` (amend, reword, stash, reset when the
+  project's folder is a subfolder of a repository), `changed_meanwhile` (a stash's index and sha no longer match). Both
+  new reasons are added to `ConflictReason`. `ChangesInvalid` is the old 400, `Invalid` with its field (`paths`, `rev`,
+  `message`, `index`, `repository` for a folder that isn't a git repository). Git that can't run is `Unavailable`.
+  `git.status` of a folder that isn't a repository is `{ available: false, reason }`, as before.
+- **Decided.** Arguments are a schema's, so the old 422 texts for a body of the wrong shape are gone (the RPC's decode
+  error). The apply body's 32 MiB limit was the old route's; here a patch is bounded by the RPC's 16 MiB message (see
+  `http/routes.ts`), so the method has no limit of its own. The writes take no lock, as the old ones didn't: git's index
+  lock is what keeps two of them apart, and the agent may be working in the same folder (the tab says so). Nothing is
+  emitted: the tab reads the status again as before (see 09-frontend.md, "Step 1 as done for changes/").
+- **Tests.** `git/ChangesTab.test.ts` has every case of the old `git/git_view/tests.test.ts` (the porcelain reader,
+  path and hash checks, staging lines and files and discarding them with HA-341's folder, commits/amend/reword with
+  stash push/show/pop by index and sha and a soft reset, HA-42's folder inside a bigger repository, unstaging before the
+  first commit, non-UTF-8 files staged whole), on the whole board's services with worktrees from `Worktrees.setup`,
+  plus the 5,000-file cut, `numstat` paths of a rename, a diff over 4 MiB and a folder that isn't a repository.
+
 ### GitHub — [inventory 03](inventory/03-mcp.md) (2.9, 2.10), [04](inventory/04-git-review.md), [06](inventory/06-integrations.md)
 
 `Gh` (running `gh` with one account's token and nothing else, target checks, the unsandboxed-git hardening),
