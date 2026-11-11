@@ -5,6 +5,7 @@ import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
+import { CodexQueries } from "./CodexQueries.ts"
 import { claudeCallEnv } from "./configEnv.ts"
 import type { Spent } from "./tokens/calls.ts"
 import { spentFromClaude } from "./tokens/calls.ts"
@@ -95,8 +96,8 @@ const makeScript = Effect.gen(function* () {
 export class TitleModel extends Context.Service<TitleModel, TitleModelShape>()("huntaway-server/agents/TitleModel") {
   /**
    * `claude -p --model haiku --output-format json` with no tools, no MCP servers, no session kept and no slash commands,
-   * the input on stdin, in the data folder, with the config's folder and proxy; killed after 60 seconds. Codex titles
-   * (`codex.task_title`) come with Codex (M5): a Codex config's call fails, and the task keeps its title.
+   * the input on stdin, in the data folder, with the config's folder and proxy; killed after 60 seconds. A Codex config's
+   * title is its cheapest model's, in an ephemeral thread (`CodexQueries.title`, 5.3).
    */
   static readonly layer = Layer.effect(
     TitleModel,
@@ -105,11 +106,11 @@ export class TitleModel extends Context.Service<TitleModel, TitleModelShape>()("
       const config = yield* ServerConfig
       const dataDir = yield* DataDir
       const configs = yield* AgentConfigRepo
+      const codex = yield* CodexQueries
 
       const ask = Effect.fn("TitleModel.ask")(function* (cfg: AgentConfigRow | null, system: string, input: string) {
-        if (cfg !== null && cfg.agent === "codex") {
-          return { reply: Result.fail("Codex titles are not supported yet"), spent: null } satisfies TitleAnswer
-        }
+        // A Codex config's title comes from its own cheapest model (5.3).
+        if (cfg !== null && cfg.agent === "codex") return yield* codex.title(cfg, dataDir.root, system, input)
         const args = ["-p", "--model", "haiku", "--output-format", "json", "--tools", "", "--strict-mcp-config"]
         args.push("--no-session-persistence", "--disable-slash-commands", "--system-prompt", system)
         const apiKey = cfg === null ? null : (yield* configs.keys(cfg.id)).api_key

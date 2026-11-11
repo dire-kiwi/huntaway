@@ -11,6 +11,7 @@ import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
 import { Usage } from "../profiles/Usage.ts"
 import { rfc3339 } from "../profiles/usage/limits.ts"
+import { CodexQueries } from "./CodexQueries.ts"
 import { SideCalls } from "./SideCalls.ts"
 import { newWatch, UsageWindow, windowOf } from "./UsageWindow.ts"
 import { WindowPrompt, WindowPromptFailed } from "./WindowPrompt.ts"
@@ -56,7 +57,7 @@ const noNetwork = HttpClient.make((request) =>
 
 const layerWith = (script: Script) =>
   UsageWindow.layer.pipe(
-    Layer.provideMerge(fakePrompt(script)),
+    Layer.provideMerge(Layer.mergeAll(fakePrompt(script), CodexQueries.layerTest)),
     Layer.provideMerge(Layer.mergeAll(Usage.layer, SideCalls.layer)),
     Layer.provideMerge(AgentConfigRepo.layer),
     Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, noNetwork)),

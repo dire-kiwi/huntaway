@@ -3,7 +3,7 @@ import type { HostTask as Task } from "@huntaway/client"
 import { Effort } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useState } from "react"
-import { effortOptions, inheritedModel, modelOptions } from "../../../agents"
+import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../../agents"
 import { useBoard } from "../../../state/board"
 import { rpc } from "../../../state/rpc"
 import { useProject } from "../../boardHelpers"
@@ -22,8 +22,8 @@ export function ModelEffort({ task }: { task: Task }) {
   const profileModel = useBoard((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)?.default_model)
   const hostModel = useBoard((s) => s.hostSettings[task.host_id]?.default_model)
   const threadConfig = useThreadConfig(task).current
-  // A Codex config's models (`configs.models`) are not yet on this server (M5): Claude's aliases are offered.
-  const models = null
+  // A Codex config's models (`configs.models`), or Claude's aliases.
+  const models = useAgentModels(task.host_id, threadConfig)
   const [err, setErr] = useState<string | null>(null)
   const change = (fields: { model?: string | null; effort?: Effort | null }, what: string) => {
     setErr(null)

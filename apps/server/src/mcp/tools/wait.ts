@@ -137,8 +137,13 @@ export const waitTools = Effect.gen(function* () {
   const dirs = yield* RunDir
   const background = yield* BackgroundWork
 
-  /** Whether the agent's own reviewer has reviewed its wait calls (Claude in auto mode; Codex's is M5's). */
+  /**
+   * Whether the agent's own reviewer has reviewed its wait calls: Claude's classifier in auto mode, or Codex's reviewer
+   * on the board's MCP server (`codex.json`'s `review_waits`; a dynamic tool's call is the board's to ask about).
+   */
   const reviewsOwnWaits = Effect.fnUntraced(function* (caller: McpCaller) {
+    const codex = yield* dirs.codexSpec(caller.run.id)
+    if (codex !== null) return codex.review_waits
     const spec = yield* dirs.spec(caller.run.id)
     return spec !== null && approvesOwnWaits(spec.args)
   })

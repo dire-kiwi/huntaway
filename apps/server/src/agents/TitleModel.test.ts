@@ -5,6 +5,7 @@ import { AgentConfigId, Timestamp } from "@huntaway/contracts"
 import { TestPlatform, tempDir } from "@huntaway/testing"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
 import type { AgentConfigRow } from "../profiles/AgentConfigRepo.ts"
+import { CodexQueries } from "./CodexQueries.ts"
 import { TitleModel } from "./TitleModel.ts"
 
 // The live model call against a stand-in `claude` (a shell script): its arguments, input, folder and environment, and
@@ -45,7 +46,15 @@ const ask = (bin: string, cfg: AgentConfigRow | null) =>
   Effect.gen(function* () {
     const model = yield* TitleModel
     return yield* model.ask(cfg, "the system prompt", "<task>\nx\n</task>")
-  }).pipe(Effect.provide(TitleModel.layer.pipe(Layer.provideMerge(AgentConfigRepo.layer), Layer.provideMerge(TestPlatform({ claudeBin: bin })))))
+  }).pipe(
+    Effect.provide(
+      TitleModel.layer.pipe(
+        Layer.provideMerge(CodexQueries.layerTest),
+        Layer.provideMerge(AgentConfigRepo.layer),
+        Layer.provideMerge(TestPlatform({ claudeBin: bin })),
+      ),
+    ),
+  )
 
 describe("TitleModel", () => {
   it.live("asks Haiku through claude -p, in the data folder, with the config's folder, and reads its result", () =>
@@ -91,7 +100,7 @@ describe("TitleModel", () => {
       const notResult = yield* withClaude('{"type":"assistant"}')
       answer = yield* ask(`${notResult}/claude`, null)
       assert.deepStrictEqual(answer.reply, Result.fail("claude's reply isn't a result"))
-      // Codex titles come with Codex (M5): no call.
+      // A Codex config's title is Codex's (`CodexQueries.title`, whose test layer writes none): claude is not called.
       answer = yield* ask(`${notResult}/claude`, config({ agent: "codex" }))
       assert.isTrue(Result.isFailure(answer.reply))
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

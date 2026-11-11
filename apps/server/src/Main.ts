@@ -23,6 +23,8 @@ import {
 } from "@huntaway/contracts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
+import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
 import { ContextStatsRepo } from "./agents/ContextStatsRepo.ts"
 import { Prompts } from "./agents/Prompts.ts"
@@ -63,6 +65,7 @@ import { MergeGate } from "./merge/MergeGate.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
 import { Wait } from "./mcp/Wait.ts"
 import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
+import { McpCodexRegistered } from "./mcp/transport/codex.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
@@ -75,6 +78,7 @@ import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { DevServers } from "./runs/DevServers.ts"
 import { AgentRequests } from "./runs/AgentRequests.ts"
 import { ClaudeOutput } from "./runs/claude/output.ts"
+import { CodexOutput } from "./runs/codex/output.ts"
 import { LaunchFacts } from "./runs/LaunchFacts.ts"
 import { RunDir } from "./runs/RunDir.ts"
 import { RunFollower } from "./runs/RunFollower.ts"
@@ -180,17 +184,26 @@ const GitLive = Layer.mergeAll(Worktrees.layer, StatusScripts.layer).pipe(
 )
 /** The github area: gh as one account (`Gh`, on the git line), where a task's pull request goes (`GithubRemote`). */
 const GithubLive = GithubRemote.layer.pipe(Layer.provideMerge(GitLive))
-/** What asks a model besides runs: titles and window restarts. Tests give scripted ones, so no test calls a model. */
-export interface ModelCalls<T, E1, R1, E2, R2> {
+/**
+ * What asks a model besides runs: titles, window restarts, and Codex's one-off questions (its models, skills, rate limits
+ * and titles). Tests give scripted ones, so no test calls a model or starts a Codex.
+ */
+export interface ModelCalls<T, E1, R1, E2, R2, C = never, E3 = never, R3 = never> {
   /** `TitleModel`, and what a test drives it with (`TitleScript`). */
   readonly titles: Layer.Layer<TitleModel | T, E1, R1>
   readonly window: Layer.Layer<WindowPrompt, E2, R2>
+  /** `CodexQueries`: a config's models, skills, rate limits and titles from a short-lived `codex app-server` (5.3). */
+  readonly codex: Layer.Layer<CodexQueries | C, E3, R3>
 }
 /** The agents area over what is above it. */
-const agentsLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
+const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   UsageWindow.loop.pipe(
-    Layer.provideMerge(Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(ApprovalRules.layer, Prompts.layer, Tokens.layer, ContextMeter.layer, Titles.layer, UsageWindow.layer, CodexQueries.registered),
+    ),
     Layer.provideMerge(Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, models.titles, models.window)),
+    // A Codex config's titles are asked of Codex, as its models are (5.3).
+    Layer.provideMerge(models.codex),
     Layer.provideMerge(GithubLive),
   )
 /** The runs area over what is above it, with `output` handling runs' lines (tests give their own). */
@@ -203,7 +216,8 @@ export const runsLayer = <E, R>(output: Layer.Layer<RunOutput, E, R>) =>
 const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
-  Layer.provideMerge(ClaudeOutput),
+  // The line handler: Codex runs' lines to the Codex handler (5.2), the others to Claude's.
+  Layer.provideMerge(CodexOutput.pipe(Layer.provide(ClaudeOutput))),
   Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
@@ -211,11 +225,11 @@ const RunsArea = Runs.layer.pipe(
 )
 /**
  * The board's MCP servers over what is above them, with `hooks` (tests give their own): the calls, the server on Claude
- * runs' files, and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
+ * runs' files and Codex runs' dynamic tools (5.2), and each area's tools (an area's `McpServers.register` layer joins the first line). Fresh, so that a
  * test's own, built over the whole board's services, is not the one those already have.
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
-  McpControlRegistered.pipe(
+  Layer.mergeAll(McpControlRegistered, McpCodexRegistered).pipe(
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
@@ -250,7 +264,7 @@ export const BoardHooks = Layer.effect(
 )
 
 /** Every area's services, with `models` for the board's own model calls. */
-export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
+export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
@@ -280,7 +294,7 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
 export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.scanner)
 
 /** Every area's services, and their loops. */
-export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })))
+export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })))
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(

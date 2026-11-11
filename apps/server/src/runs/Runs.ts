@@ -224,7 +224,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       /** Prepares the run's folder and starts its agent, then follows it. Interrupted by a stop while it prepares. */
       const launch = (run: Run, text: string) =>
         Effect.gen(function* () {
-          const prepared = yield* facts.claude(run, text)
+          const prepared = yield* facts.launch(run, text)
           if (prepared.writesDocuments) yield* Ref.update(writesDocuments, (all) => new Set([...all, run.id]))
           yield* dir.prepare(run.id, prepared.spec)
           // Not if it was stopped meanwhile (after spec.json, which a reap goes by): an agent started now would work

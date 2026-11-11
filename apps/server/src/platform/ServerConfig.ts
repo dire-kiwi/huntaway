@@ -66,6 +66,11 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.String("HUNTAWAY_GH_BIN")),
     Flag.optional,
   ),
+  codexBin: Flag.String("codex-bin").pipe(
+    Flag.withDescription("The Codex program Codex runs and queries start (default codex, on PATH)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_CODEX_BIN")),
+    Flag.optional,
+  ),
   noAgents: Flag.Boolean("no-agents").pipe(
     Flag.withDescription("Run no agent at all (test servers)"),
     Flag.withFallbackConfig(Config.Boolean("HUNTAWAY_NO_AGENTS")),
@@ -126,6 +131,7 @@ export interface ServeArgs {
   readonly shimBin?: Option.Option<string>
   readonly claudeBin?: Option.Option<string>
   readonly ghBin?: Option.Option<string>
+  readonly codexBin?: Option.Option<string>
   readonly noAgents?: boolean
 }
 
@@ -161,6 +167,8 @@ export interface ServerConfigShape {
   readonly cacheDir: string
   /** The SSH config `ssh -G` reads for a remote's host alias (`-F`); null for the user's own. Tests give `/dev/null`. */
   readonly sshConfig: string | null
+  /** `--codex-bin`/`HUNTAWAY_CODEX_BIN`: the Codex program (default `codex`), which a Codex run's adapter is told of too. */
+  readonly codexBin: string
   /** `--no-agents`/`HUNTAWAY_NO_AGENTS`: this host runs no agent at all (test servers). `Runs` checks it. */
   readonly noAgents: boolean
   /** The launcher this server was started by (`HUNTAWAY_EXE`, which bin/huntaway sets), if any. */
@@ -218,6 +226,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           path: pathEnv,
           cacheDir: cacheHome.startsWith("/") ? cacheHome : `${home}/.cache`,
           sshConfig: null,
+          codexBin: args.codexBin === undefined ? "codex" : Option.getOrElse(Option.map(args.codexBin, expand), () => "codex"),
           noAgents: args.noAgents ?? false,
           exe: Option.getOrNull(exe),
           agentEnv: AGENT_ENV,
@@ -252,6 +261,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         path: process.env["PATH"] ?? "",
         cacheDir: `${config.dataDir}/cache`,
         sshConfig: "/dev/null",
+        codexBin: `${config.dataDir}/no-codex-in-tests`,
         noAgents: false,
         exe: null,
         agentEnv: AGENT_ENV,
