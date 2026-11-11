@@ -513,6 +513,11 @@ describe("task tools", () => {
         "update_project",
         "create_project",
       ])
+      // Every tool's input is a JSON Schema object: Claude Code drops the whole server's list when one isn't.
+      for (const tool of yield* servers.tools("huntaway", false)) {
+        assert.strictEqual(at(tool.inputSchema, "type"), "object", tool.name)
+        assert.isUndefined(at(tool.inputSchema, "not"), tool.name)
+      }
       const reviewers = (yield* servers.tools("huntaway", true))
         .map((t) => t.name)
         .filter((n) => !n.startsWith("test_") && n !== "wait" && n !== "submit_test_review")

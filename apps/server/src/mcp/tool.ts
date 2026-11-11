@@ -109,9 +109,14 @@ const InputShape = Schema.Struct({
 const AnObject = Schema.Record(Schema.String, Schema.Unknown)
 const isObject = Schema.is(AnObject)
 
-/** A tool's JSON Schema, with `properties` always there (an object of none for a tool without parameters). */
+/**
+ * A tool's JSON Schema, an object with `properties` always there (an object of none for a tool without parameters).
+ * MCP requires `"type": "object"`, and Claude Code drops a server's whole tool list when one tool's schema lacks it (seen
+ * with a real `claude`: `Tool.getJsonSchema` gives a struct of no fields as `{ not: { type: "null" }, properties: {} }`).
+ */
 export const inputSchema = (tool: Tool.Any): Readonly<Record<string, unknown>> => {
-  const schema: Record<string, unknown> = { ...Tool.getJsonSchema(tool) }
+  const { not: _not, ...schema }: Record<string, unknown> = { ...Tool.getJsonSchema(tool) }
+  schema["type"] = "object"
   if (schema["properties"] === undefined) schema["properties"] = {}
   return schema
 }
