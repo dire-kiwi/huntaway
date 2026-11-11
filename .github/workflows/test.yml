@@ -137,6 +137,10 @@ jobs:
       - name: pnpm test
         run: pnpm test
 
+      # The install scripts against fakes (a fake curl, HOME, systemctl and loginctl): nothing is installed.
+      - name: pnpm test:scripts
+        run: pnpm test:scripts
+
   # `pnpm test:e2e`: the whole-server tier (apps/server/tests/e2e), real server processes started through the launcher.
   e2e:
     needs: tree

@@ -32,7 +32,7 @@ cleanup() {
   rm -rf "$tmp"
 }
 trap cleanup EXIT
-"$rel/huntaway" serve --host 127.0.0.1 --port 0 --data-dir "$tmp/data" --no-agents > "$tmp/out" 2> "$tmp/log" < /dev/null &
+"$rel/huntaway" serve --host 127.0.0.1 --port 0 --data-dir "$tmp/data" --no-agents --no-discovery > "$tmp/out" 2> "$tmp/log" < /dev/null &
 pid=$!
 port=
 for _ in $(seq 300); do
