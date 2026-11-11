@@ -24,7 +24,9 @@ specification of behaviour and not of structure.
   error, warnings failing the check. Run in a spike: 13 errors from a 24-line file.
 - **Data**: a data folder and port of its own, so the new server runs beside the live board until the switch. A
   one-off importer then converts the old database and copies what it needs; the old folder is never written and is
-  the way back. Subprojects, Telegram and every compatibility layer are left behind. The phone app is left for later.
+  the way back. An imported board is the old host, so the importer runs for the switch or as a rehearsal that only
+  a read-only server will open. Subprojects, Telegram and every compatibility layer are left behind. The phone app
+  is left for later.
 - **Work**: about 65 tasks in ten milestones. After M4 a task can go from To do to Done on the new server, and this
   repository's own work can move onto it.
 

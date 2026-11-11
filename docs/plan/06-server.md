@@ -239,8 +239,8 @@ every matching call. They must start in tens of milliseconds and fail closed (ex
 server says it is ready. This is the old order ([inventory 07](inventory/07-server-root-api.md), section 6) with
 the one-off moves removed:
 
-1. `Supervisor.take` (restart file and parent PID out of the environment) · data folder · `Releases.execInstalled`
-   (hand over to a newer staged release) · `Identity`.
+1. `Supervisor.take` (restart file and parent PID out of the environment) · data folder · `ImportGuard` (below) ·
+   `Releases.execInstalled` (hand over to a newer staged release) · `Identity`.
 2. `Backup.beforeStart` · `Db` · `Migrations`.
 3. The HTTP listener binds; requests wait until step 6.
 4. Every area's layer, bottom up. Loops that start here: telemetry exporter, usage, window restarts, PR watcher,
@@ -256,6 +256,29 @@ the one-off moves removed:
 Shutdown (SIGTERM, SIGINT, or the launcher gone) closes the root scope: the listener stops, fibers are interrupted,
 the database closes. A two-second fallback exits regardless. Agents and tmux sessions are untouched.
 
+### `ImportGuard` and a read-only server<a id="a-read-only-server"></a>
+
+A folder filled by `import-legacy` has an `import.json`. `ImportGuard` reads it before anything else is built, for
+the reasons in [11-migration.md](11-migration.md#the-guard):
+
+- **An import that was the switch**: the server refuses to start while a process has the old folder's database
+  open. Two servers never act as one host.
+- **A rehearsal** (`rehearsal: true`): `Main.ts` builds `ReadOnlyMain` and nothing else. No flag overrides it.
+
+`ReadOnlyMain` is a second, short composition root in `apps/server/src/`, not a set of `if`s spread through the
+areas. It is made of the same services with four differences, and steps 4 to 6 above become "serve reads":
+
+| Normal                                           | Read-only                                                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `Auth` gives a session its token's scopes        | `Auth.readOnly`: every session has `read` only                                                    |
+| The loops of step 4, the `Reactor`, `Recovery`   | Not in the layer graph at all                                                                     |
+| `Proc` runs any command                          | `Proc.readOnly`: `git` with a fixed list of reading subcommands and `GIT_OPTIONAL_LOCKS=0`; all else fails `Unavailable` |
+| `HttpClient`, links, discovery, hub, webhook, MCP and hook paths | `HttpClient` that fails every request; the rest not built or not mounted             |
+
+`host.info` reports `read_only: true`. The test that holds this is in
+[11-migration.md](11-migration.md#rehearsal); a structural test also fails if `ReadOnlyMain`'s imports reach a
+module under `lifecycle/` or a loop's layer.
+
 ## The CLI
 
 `effect/cli` commands in `apps/server/src/cli/`, one file each, each a thin call into a service or the RPC client:
@@ -265,7 +288,7 @@ the database closes. A two-second fallback exits regardless. Agents and tmux ses
 | `serve` (default)                         | The server. Flags as now ([inventory 07](inventory/07-server-root-api.md), section 5), each with a `HUNTAWAY_*` variable |
 | `token [--hub]`                           | Print the board or hub token                                                                 |
 | `rpc <method> [json]`, `dev …`            | The typed client over HTTP, and the helpers on top of it                                     |
-| `import-legacy --from <old db>`           | [11-migration.md](11-migration.md)                                                           |
+| `import-legacy --from <old folder> [--rehearsal] [--check]` | [11-migration.md](11-migration.md). `--rehearsal` makes a board that only a read-only server will open |
 | `ssh-host`, `install-service`             | As now                                                                                       |
 | `telemetry init \| test \| backfill`      | As now                                                                                       |
 | `codex-run <spec>`                        | The Codex adapter, started under the shim (not through `effect/cli`: it is a run's process)  |

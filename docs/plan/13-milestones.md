@@ -142,7 +142,7 @@ Independent of each other unless said; all need M3, and the ones touching git ne
 
 | Task | Does                                                                                               | Needs      | Read |
 | ---- | -------------------------------------------------------------------------------------------------- | ---------- | ---- |
-| 9.1  | `import-legacy` and `--check` (database, paths made absolute, files copied), with tests per table family and a nightly run on a scrubbed copy | M6         | 11   |
+| 9.1  | `import-legacy` and `--check` (database, paths made absolute, files copied, the refusals, threads not yet items), `--rehearsal` with `ImportGuard` and the read-only server and its test, the throwaway switch of an old test server, tests per table family and a nightly run on a scrubbed copy | M6         | 11, 06 |
 | 9.2  | The parity run: all of `tests/ui` against the new server; the measurements; a week of this repository's own work on a board running it | 9.1, M7, M8 | 10 |
 | 9.3  | The guide (`docs/guide/`) brought into line; the switch on each host                               | 9.2        | 11   |
 

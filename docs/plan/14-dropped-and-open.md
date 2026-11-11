@@ -9,8 +9,8 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------- |
 | **Subprojects**: a task with a board of its own, its merge lane, `subproject_pull_requests`, the subproject prompts, `SubprojectBoard` | Replaced by `merges_into`; new ones have been refused since HA-295 | Their tasks become ordinary tasks ([11-migration.md](11-migration.md#tasks)) |
 | **Telegram**: the bot, its polling, linking, the `telegram` event and settings                   | Not in use                                                      | Settings not imported                                     |
-| The `messages` table, the legacy thread routes, the `message`, `message_updated`, `delta`, `delta_reset` events | Threads before they were items                  | Empty today                                               |
-| Moving threads onto items: `thread_source`, flip, batch rebuild, `threads-rebuild`, `threads-import`, the converter version | A finished migration                | Columns dropped                                           |
+| The `messages` table, the legacy thread routes, the `message`, `message_updated`, `delta`, `delta_reset` events | Threads before they were items                  | Checked by the importer: it refuses a board with a thread still on messages, and carries a stray row ([11-migration.md](11-migration.md#threads-not-yet-items)) |
+| Moving threads onto items: `thread_source`, flip, batch rebuild, `threads-rebuild`, `threads-import`, the converter version | A migration that is finished on the board measured, and must be finished on each host before its import | Columns dropped once the importer has seen every task on items |
 | `API_VERSION`, `API_COMPAT`, the forty numeric gates in the clients, `too_old` in board tools, the probes for old hosts | Linking to hosts on older builds          | —                                                         |
 | The HTTP proxy `/api/h/<host>/…`, the tunnel frames, the event socket's call frames              | Three host protocols                                            | —                                                         |
 | The two-file database scheme, `db_origin`, recopy, the backup rules for Rust releases            | Rolling back to older builds on one data folder                 | The old file is left as the way back                      |
@@ -83,7 +83,8 @@ Each could have gone another way. They are listed so that a different answer is 
 | Two code bases for months                                                                | M4 is the point this repository's own work can run on the new server; the old one then takes fixes only           |
 | Slower than the old server on the hot path (schema decoding per output line)             | Measured at M2 with limits; precompiled decoders and untraced functions held in reserve                           |
 | Strict lint slows agents down or pushes them to suppress                                 | Suppressions are counted by a structural test and need a written reason; a rule that is wrong here is turned off in the config, in the open |
-| The import loses or bends data                                                           | Every row passes the schema it will be read with; `--check`; nightly runs on a scrubbed copy; the old file untouched |
+| The import loses or bends data                                                           | Every row passes the schema it will be read with; `--check`; no table is dropped on the strength of one board's row count; nightly runs on a scrubbed copy; the old file untouched |
+| A server on imported data acts on the live board (same host id, links, repositories)     | Two kinds of import only. The switch needs the old server stopped, and `ImportGuard` refuses to start beside it afterwards. A rehearsal has its own identity, no credentials, and a server that is read-only at four separate places, with a test ([11-migration.md](11-migration.md#rehearsal)) |
 | The relay's signed session, and socket piping under load                                 | Tested first in M7 (7.0)                                                                                         |
 | Atomicity bugs that the old single-threaded style could not have                          | Every state change is one transaction; work across a wait holds the entity's lock; decisions are pure and tested as tables |
 
@@ -105,6 +106,10 @@ read or reasoned, not run.
 - Three names in the lint configuration: `import/no-cycle`, the `react/*` rules and the options of
   `eslint/no-restricted-imports` under Vite+ 1.5.0.
 - The `STRICT` tables against every value the importer will write.
+- The read-only server: that the listed git subcommands under `GIT_OPTIONAL_LOCKS=0` leave a repository byte for
+  byte untouched, and that finding "a process has this database open" works on macOS. (`node:sqlite`'s online
+  backup beside a writing connection was run.)
+- Whether any host has threads still on messages. Only one board's database was looked at; the importer checks each.
 - That every thread resumes its agent session after an import, with stored paths made absolute (reasoned from how
   the old server pins a session to its folder; M9 tests it on a copy).
 - The task count and sizes: an estimate from line counts.

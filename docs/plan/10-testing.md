@@ -69,7 +69,8 @@ tools exist from M0, because every later task is built with them.
 | `scripts/test-server.sh`         | Same name and behaviour: a server from this worktree on a free port with a fresh data folder, `--seed`, `--demo`, `--fake-claude`, `--no-agents`, `restart`, `stop`. It prints and saves `export HUNTAWAY_TEST_URL=…` lines (`_TOKEN`, `_PID`, `_DATA_DIR`, `_ENV`, and with `--seed` `_PROFILE`, `_PROJECT`, `_REPO`) |
 | `scripts/ia-api`                 | `huntaway rpc <method> [json]` and `huntaway dev new-task \| start \| send \| task \| thread \| pending \| approve-all \| wait-idle`, with the same exit codes (0, 2 needs attention, 124 timeout) and the same refusal to touch anything but a test server |
 | `scripts/ui-check.mjs`           | Carried over: the step language (`goto`, `click`, `type`, `press`, `wait`, `gone`, `shot`…) and the module API are unchanged |
-| `scripts/ui-profile.mjs`, `event-loop-probe.mjs`, `copy-live-board.sh` | Carried over, pointed at the new server and database                                       |
+| `scripts/ui-profile.mjs`, `event-loop-probe.mjs` | Carried over, pointed at the new server                                                                         |
+| `scripts/copy-live-board.sh`     | Same purpose, one more step: snapshot an old board's database, scrub it as now (paths under `/nonexistent`, no configs, links, automations, PR watches, sign-ins or telemetry), then `import-legacy` it into a `--no-agents` test server. It still refuses any folder `test-server.sh` did not make. Looking at a real board's import without scrubbing is a [rehearsal](11-migration.md#rehearsal), which is read-only |
 | `IA_SERVER=… pnpm dev`           | `HUNTAWAY_SERVER=… pnpm dev`                                                                                              |
 
 The rules around them are unchanged and go into the new `CLAUDE.md`: never a fixed port, never the live daemon,
@@ -78,8 +79,8 @@ browser before finishing.
 
 ## Measurements
 
-Taken at the end of M2 and again before the switch, on a copy of a live board's data, and compared with the old
-server on the same data:
+Taken at the end of M2 and again before the switch, on a scrubbed copy of a live board's data
+(`copy-live-board.sh`), and compared with the old server on the same data:
 
 | What                                                        | How                                         | Limit                                   |
 | ----------------------------------------------------------- | ------------------------------------------- | --------------------------------------- |
