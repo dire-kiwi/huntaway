@@ -1,4 +1,5 @@
-import { Context, Effect, Layer, Schema, SchemaGetter, SchemaTransformation } from "effect"
+import { Bit, JsonColumn } from "../platform/columns.ts"
+import { Context, Effect, Layer, Schema, SchemaTransformation } from "effect"
 import { SqlClient, SqlSchema } from "effect/sql"
 import type { SqlError } from "effect/sql"
 import {
@@ -43,30 +44,9 @@ import type { NewRow, NumberFamily, TaskColumns } from "./decide.ts"
 
 // ---- columns ----------------------------------------------------------------------------------------------------
 
-/** An `INTEGER` 0/1 column as a boolean. */
-export const Bit = Schema.Finite.pipe(
-  Schema.decodeTo(Schema.Boolean, SchemaTransformation.transform<boolean, number>({ decode: (n) => n !== 0, encode: (b) => (b ? 1 : 0) })),
-)
-
 const JsonText = Schema.fromJsonString(Schema.Unknown)
 /** A value as JSON text. */
 const encodeJson = (value: unknown) => Schema.encodeEffect(JsonText)(value).pipe(Effect.orDie)
-
-/**
- * A JSON text column read leniently (docs/plan/03-domain.md, rule 7): null, a value that isn't JSON, or one that fails
- * `schema` reads as `fallback`, so one bad value cannot break a board. Written strictly (through `TaskRepo.write`).
- */
-export const JsonColumn = <S extends Schema.Codec<unknown, unknown>>(schema: S, fallback: S["Type"]) => {
-  const Json = Schema.fromJsonString(schema)
-  return Schema.NullOr(Schema.String).pipe(
-    Schema.decodeTo(Schema.toType(schema), {
-      decode: SchemaGetter.transformEffect((text: string | null) =>
-        text === null ? Effect.succeed(fallback) : Schema.decodeEffect(Json)(text).pipe(Effect.orElseSucceed(() => fallback)),
-      ),
-      encode: SchemaGetter.transformEffect((value: S["Type"]) => Schema.encodeEffect(Json)(value).pipe(Effect.mapError((e) => e.issue))),
-    }),
-  )
-}
 
 /** `restack`: `due` or `conflict`; anything else reads as null. */
 const Restack = Schema.NullOr(Schema.String).pipe(

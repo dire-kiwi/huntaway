@@ -4,7 +4,7 @@ import type { SqlError } from "effect/sql"
 import { PenColor, PenId, ProfileId, TaskId, Timestamp } from "@huntaway/contracts"
 import type { Pen } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
-import { Bit } from "../settings/columns.ts"
+import { Bit } from "../platform/columns.ts"
 import { penColorOf } from "./penChecks.ts"
 
 // The `pens` table (docs/plan/04-database.md), and `tasks.pen_id`. Single statements and small groups; `SqlError` and

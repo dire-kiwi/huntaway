@@ -4,7 +4,7 @@ import { SqlSchema } from "effect/sql"
 import { AgentConfigId, LinkId, ProfileId, Reviewer, Timestamp } from "@huntaway/contracts"
 import type { Profile, ProjectId, TaskId } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
-import { Bit, encodeColumns, JsonColumn } from "../settings/columns.ts"
+import { Bit, encodeColumns, JsonColumn } from "../platform/columns.ts"
 
 /** A `profiles` row as the wire's `Profile`. The Asana token and the approval rules are not selected. */
 export const ProfileRow = Schema.Struct({

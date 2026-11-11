@@ -5,7 +5,7 @@ import type { HostSettings as Settings, HostSettingsPatch } from "@huntaway/cont
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { SettingsRepo } from "./SettingsRepo.ts"
-import { JsonColumn, toJson } from "./columns.ts"
+import { JsonColumn, toJson } from "../platform/columns.ts"
 
 // The host's settings (docs/plan/06-server.md, Settings): typed over the `settings` table, as the old `api/host.ts`
 // get_settings / update_settings, without `thread_items` (threads are always items now).

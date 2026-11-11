@@ -4,7 +4,7 @@ import { SqlSchema } from "effect/sql"
 import { AgentConfigId, PermissionMode, ProfileId, ProjectId, Reviewer, StatusScripts, TaskId, Timestamp, WatchPullRequests } from "@huntaway/contracts"
 import type { Project } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
-import { Bit, encodeColumns, JsonColumn, NullableBit, NullableJsonColumn } from "../settings/columns.ts"
+import { Bit, encodeColumns, JsonColumn, NullableBit, NullableJsonColumn } from "../platform/columns.ts"
 
 /** A `projects` row as the wire's `Project`. `repo_root` and `next_number` are not selected. */
 export const ProjectRow = Schema.Struct({

@@ -7,7 +7,7 @@ import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { Identity } from "../platform/Identity.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
-import { nowTimestamp } from "../settings/columns.ts"
+import { nowTimestamp } from "../platform/columns.ts"
 import { AgentConfigRepo } from "./AgentConfigRepo.ts"
 import { AgentConfigs } from "./AgentConfigs.ts"
 import {

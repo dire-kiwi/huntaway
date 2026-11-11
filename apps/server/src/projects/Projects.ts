@@ -13,7 +13,7 @@ import { blank, checkConfigIds, checkGithubAccount, ifGiven, refuseWhileRunning,
 import { removeUnusedDir } from "../profiles/dataFolders.ts"
 import { ProfileRepo } from "../profiles/ProfileRepo.ts"
 import { ProfileNotFound } from "../profiles/Profiles.ts"
-import { nowTimestamp } from "../settings/columns.ts"
+import { nowTimestamp } from "../platform/columns.ts"
 import { expandTilde } from "../settings/Folders.ts"
 import { checkFileList, checkGroupName, checkName, checkPreviewUrl, checkReviewRounds, tidyStatusScripts } from "./checks.ts"
 import { checkKey, formerKeysAfter, newProjectKey, normalizeKey } from "./keys.ts"

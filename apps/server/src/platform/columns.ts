@@ -2,13 +2,15 @@ import { DateTime, Effect, Schema, SchemaTransformation } from "effect"
 import { Timestamp } from "@huntaway/contracts"
 
 // Column schemas for row schemas (docs/plan/04-database.md, Access): what SQLite stores, turned into what the wire has.
-// Shared by every repository, so they live in the lowest area (settings) until the platform takes them.
+// Shared by every repository.
 
-/** An INTEGER 0/1 column as a boolean. */
-export const Bit = Schema.BooleanFromBit
+/** An INTEGER 0/1 column as a boolean; any other number reads as true, as SQLite's own truth does. */
+export const Bit = Schema.Finite.pipe(
+  Schema.decodeTo(Schema.Boolean, SchemaTransformation.transform<boolean, number>({ decode: (n) => n !== 0, encode: (b) => (b ? 1 : 0) })),
+)
 
 /** A nullable INTEGER 0/1 column as a tri-state boolean (null follows something else). */
-export const NullableBit = Schema.NullOr(Schema.BooleanFromBit)
+export const NullableBit = Schema.NullOr(Bit)
 
 /**
  * A JSON TEXT column read leniently (docs/plan/inventory/09-data-model.md, section 3: readers never throw on bad JSON):

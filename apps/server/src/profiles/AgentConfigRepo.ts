@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { SqlSchema } from "effect/sql"
 import { Agent, AgentConfigId, Timestamp } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
-import { Bit, encodeColumns, JsonColumn, toJson } from "../settings/columns.ts"
+import { Bit, encodeColumns, JsonColumn, toJson } from "../platform/columns.ts"
 
 /** An `agent_configs` row as the wire's `AgentConfig` without `settings_api_url` (read from its folder). Keys are not selected: only whether it has them. */
 export const AgentConfigRow = Schema.Struct({

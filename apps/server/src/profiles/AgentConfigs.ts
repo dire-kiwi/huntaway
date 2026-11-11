@@ -5,7 +5,7 @@ import type { AgentConfig, AgentConfigPatch, NewAgentConfig } from "@huntaway/co
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
-import { nowTimestamp } from "../settings/columns.ts"
+import { nowTimestamp } from "../platform/columns.ts"
 import { expandTilde } from "../settings/Folders.ts"
 import { AgentConfigRepo } from "./AgentConfigRepo.ts"
 import type { AgentConfigColumns, AgentConfigRow } from "./AgentConfigRepo.ts"

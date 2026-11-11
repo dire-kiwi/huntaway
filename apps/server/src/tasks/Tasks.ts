@@ -13,10 +13,10 @@ import { PenRepo } from "./PenRepo.ts"
 import type { CreateFacts, TaskColumns, UpdateFacts } from "./decide.ts"
 import { TaskRepo } from "./TaskRepo.ts"
 import type { ProjectRef } from "./TaskRepo.ts"
+import { ProfileNotFound } from "../profiles/Profiles.ts"
+import { ProjectNotFound } from "../projects/Projects.ts"
 
 export class TaskNotFound extends Schema.TaggedError<TaskNotFound, { readonly brand: unique symbol }>()("TaskNotFound", { id: Schema.String }) {}
-export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound, { readonly brand: unique symbol }>()("ProjectNotFound", { id: Schema.String }) {}
-export class ProfileNotFound extends Schema.TaggedError<ProfileNotFound, { readonly brand: unique symbol }>()("ProfileNotFound", { id: Schema.String }) {}
 
 export interface TasksShape {
   readonly get: (id: TaskId) => Effect.Effect<Task, TaskNotFound>

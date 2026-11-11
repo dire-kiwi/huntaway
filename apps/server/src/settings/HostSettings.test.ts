@@ -5,7 +5,7 @@ import { TestBoard } from "@huntaway/testing"
 import { Events } from "../platform/Events.ts"
 import { HostSettings } from "./HostSettings.ts"
 import { SettingsRepo } from "./SettingsRepo.ts"
-import { JsonColumn } from "./columns.ts"
+import { JsonColumn } from "../platform/columns.ts"
 
 const failure = <A, E>(effect: Effect.Effect<A, E>) => Effect.flip(effect)
 
