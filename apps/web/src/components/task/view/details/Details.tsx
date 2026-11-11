@@ -138,7 +138,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
       {!lasting && (
         <Section
           title="Preview"
-          right={showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} label className="text-[11.5px] text-faint" />}
+          right={showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} host={task.host_id} label className="text-[11.5px] text-faint" />}
         >
           <TextInput
             value={task.preview_url ?? null}
