@@ -235,6 +235,7 @@ export const snapshot = (s: Partial<BoardSnapshot> = {}): BoardSnapshot => ({
   pens: [],
   settings: settings(),
   usage: [],
+  approvals: [],
   ...s,
 })
 

@@ -53,9 +53,12 @@ export const TaskHandlers = TaskRpcs.toLayer(
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
+      // A task to start (`start`) starts; one with only a description gets its title written first (`Runs.created`).
       "tasks.create": ({ task }) =>
         Effect.flatMap(actor, (by) => tasks.create(task, by)).pipe(
+          Effect.flatMap((created) => runs.created(created, task)),
           Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound, ProfileNotFound: notFound.ProfileNotFound }),
+          Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused }),
         ),
       "tasks.update": ({ id, patch }) =>
         Effect.flatMap(actor, (by) => tasks.update(id, patch, by)).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
@@ -77,6 +80,24 @@ export const TaskHandlers = TaskRpcs.toLayer(
         }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.dropQueued": ({ id }) => runs.dropQueued(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.stopServer": ({ id, port }) => devServers.stop(id, port).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+      "tasks.stopBackground": ({ id, background_id }) =>
+        Effect.gen(function* () {
+          yield* tasks.get(id)
+          return { stopping: yield* runs.stopBackground(id, background_id ?? null) }
+        }).pipe(
+          Effect.catchTags({
+            TaskNotFound: notFound.TaskNotFound,
+            BackgroundRefused: (e) => Effect.fail(new Conflict({ reason: "changed_meanwhile", detail: e.reason })),
+          }),
+        ),
+      "tasks.waitForLimit": ({ id }) =>
+        runs.waitForReset(id).pipe(
+          Effect.catchTags({
+            TaskNotFound: notFound.TaskNotFound,
+            WaitRefused: (e) =>
+              Effect.fail(e.invalid ? new Invalid({ field: "id", reason: e.reason }) : new Conflict({ reason: "changed_meanwhile", detail: e.reason })),
+          }),
+        ),
       "tasks.context": ({ id }) => meter.get(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
     })
   }),

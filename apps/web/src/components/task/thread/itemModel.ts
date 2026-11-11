@@ -120,12 +120,30 @@ const promptData = (r: ThreadRequest) =>
     return d
   })
 
+/** What a board question's resolution says of its card: its status, and the answer given. */
+function boardQuestionState(r: Extract<ThreadRequest, { type: "question" }>, md: Any): Any {
+  const res = r.resolution
+  if (!res) return { status: "pending" }
+  if (res.outcome === "answer") {
+    const given = Object.values(res.answers ?? {})[0] ?? []
+    const labels = new Set((Array.isArray(md.options) ? md.options : []).map((o: Any) => (typeof o === "string" ? o : o?.label)))
+    const choices = given.filter((a) => labels.has(a))
+    const typed = given.filter((a) => !labels.has(a))
+    return { status: "answered", answer: { choices, text: typed.length ? typed.join("\n") : null } }
+  }
+  const why = res.message ?? ""
+  return { status: why.startsWith("Replaced") ? "replaced" : why.startsWith("Expired") ? "expired" : "replied" }
+}
+
 /** A question asked with the board's request_user_input: its message data. */
 const questionData = (r: Extract<ThreadRequest, { type: "question" }>) =>
   once(r, (): Any => {
     if (r.metadata) {
       const md: Any = { ...r.metadata }
       delete md.message_id
+      // The board's card keeps its state in the request (permissions/Questions.ts): open is pending, an answer answered
+      // (the picks, then what was typed), a cancellation replied, replaced or expired, as its message says.
+      if (md.status === undefined) Object.assign(md, boardQuestionState(r, md))
       return md
     }
     const [q] = r.questions

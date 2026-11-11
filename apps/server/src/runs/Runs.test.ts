@@ -319,6 +319,35 @@ describe("Runs.send", () => {
     ),
   )
 
+  it.effect("Carry on then: a task out of usage waits for the reset; not one that isn't, or is running", () =>
+    run(
+      Effect.gen(function* () {
+        const runs = yield* Runs
+        const id = yield* newTask({ status: "needs_attention" })
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`UPDATE tasks SET limit_reset_at = '1970-01-01T01:00:00.000Z' WHERE id = ${id}`.pipe(Effect.orDie)
+        const t = yield* runs.waitForReset(id)
+        assert.deepStrictEqual([t.waiting, t.status, t.attention_reason], [true, "in_progress", null])
+        const fresh = yield* newTask({ status: "needs_attention" })
+        assert.strictEqual((yield* Effect.flip(runs.waitForReset(fresh)))._tag, "WaitRefused")
+      }),
+    ),
+  )
+
+  it.effect("a task created to start starts at once", () =>
+    run(
+      Effect.gen(function* () {
+        const runs = yield* Runs
+        const id = yield* newTask({ status: "todo" })
+        const t = yield* runs.created(yield* task(id), { title: "Go", start: "now please" })
+        assert.isTrue(t.running)
+        assert.deepStrictEqual(yield* userMessages(id), [{ text: "now please", steered: false }])
+        const quiet = yield* newTask({ status: "todo" })
+        assert.isFalse((yield* runs.created(yield* task(quiet), { title: "Later" })).running)
+      }),
+    ),
+  )
+
   it.effect("a message to a task whose dependencies aren't merged waits for them, queued", () =>
     run(
       Effect.gen(function* () {
@@ -706,10 +735,10 @@ describe("a Claude run's output", () => {
     run(
       Effect.gen(function* () {
         const { agent } = yield* running()
-        yield* output(agent, [{ type: "control_request", request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" } } }])
+        yield* output(agent, [{ type: "control_request", request_id: "r1", request: { subtype: "elicitation" } }])
         yield* output(agent, [{ type: "control_request", request_id: "r2", request: { subtype: "hook_callback" } }])
         assert.deepStrictEqual(yield* agent.input, [
-          { type: "control_response", response: { subtype: "error", request_id: "r1", error: 'the board doesn\'t handle "can_use_tool" requests' } },
+          { type: "control_response", response: { subtype: "error", request_id: "r1", error: 'the board doesn\'t handle "elicitation" requests' } },
           { type: "control_response", response: { subtype: "error", request_id: "r2", error: 'the board doesn\'t handle "hook_callback" requests' } },
         ])
       }),

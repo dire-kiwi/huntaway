@@ -273,7 +273,7 @@ describe("the end of a run", () => {
 })
 
 describe("after a restart", () => {
-  it.effect("a turn that ended with nothing waiting ends the run; messages waiting still have STEER_GRACE", () =>
+  it.effect("a turn that ended with nothing waiting ends the run (after BACKGROUND_GRACE); messages waiting still have STEER_GRACE", () =>
     run(
       Effect.gen(function* () {
         const runs = yield* Runs
@@ -290,7 +290,8 @@ describe("after a restart", () => {
           VALUES ('s1', 1, ${unsent.task}, ${unsent.agent.run.id}, 'not sent yet', 'user', 0, ${AT})`.pipe(Effect.orDie)
         yield* repo.update(unsent.agent.run.id, { saw_result: true, between_turns: true })
         yield* runs.reattach
-        assert.isTrue(yield* quiet.agent.inputClosed)
+        // Its background tasks may have ended just before: the input is left open for a turn on their outcome.
+        assert.isFalse(yield* quiet.agent.inputClosed)
         assert.isFalse(yield* waiting.agent.inputClosed)
         const sent = yield* unsent.agent.input
         assert.deepStrictEqual(sent.at(-1), { type: "user", uuid: "s1", message: { role: "user", content: "not sent yet" } })
@@ -301,6 +302,9 @@ describe("after a restart", () => {
         yield* input.settled(unsent.agent.run.id, "steer")
         assert.isTrue(yield* waiting.agent.inputClosed)
         assert.isTrue(yield* unsent.agent.inputClosed)
+        yield* TestClock.adjust("90 seconds")
+        yield* input.settled(quiet.agent.run.id, "grace")
+        assert.isTrue(yield* quiet.agent.inputClosed)
         yield* (yield* Runs).stop(quiet.task)
       }),
     ),

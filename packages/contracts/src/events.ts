@@ -1,8 +1,8 @@
 import { Schema } from "effect"
 import { AgentConfig } from "./agentConfig.ts"
-import { ApprovalAction, ApprovalRulesView } from "./approval.ts"
+import { Approval, ApprovalAction, ApprovalRulesView } from "./approval.ts"
 import { HostSettings } from "./host.ts"
-import { HostId, ProfileId, ProjectId, TaskId } from "./ids.ts"
+import { HostId, ProfileId, ProjectId, RequestId, TaskId } from "./ids.ts"
 import { Pen } from "./pen.ts"
 import { Profile } from "./profile.ts"
 import { Project } from "./project.ts"
@@ -50,6 +50,11 @@ export const ApprovalLogChanged = Schema.Struct({
   action: ApprovalAction,
   ...seq,
 })
+/**
+ * One of the board's own approvals (a project change, a task's deletion, an automation or a workflow) was asked
+ * (`approval`), or is no longer waiting (`approval` null: answered, expired, or its thread gone).
+ */
+export const ApprovalChanged = Schema.Struct({ type: Schema.Literal("approval"), request_id: RequestId, approval: Schema.NullOr(Approval), ...seq })
 
 export const BoardEvent = Schema.Union([
   Hello,
@@ -64,6 +69,7 @@ export const BoardEvent = Schema.Union([
   UsageChanged,
   ApprovalRulesChanged,
   ApprovalLogChanged,
+  ApprovalChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 
@@ -87,6 +93,8 @@ export const BoardSnapshot = Schema.Struct({
   pens: Schema.Array(Pen),
   settings: HostSettings,
   usage: Schema.Array(Usage),
+  /** The board's own approvals waiting for the user, oldest first. */
+  approvals: Schema.Array(Approval),
 })
 export interface BoardSnapshot extends Schema.Schema.Type<typeof BoardSnapshot> {}
 

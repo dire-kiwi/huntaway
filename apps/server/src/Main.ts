@@ -1,5 +1,5 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
-import { Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { Mac, SecureRandom } from "effect/crypto"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
@@ -12,6 +12,7 @@ import {
   ConfigRpcs,
   HostRpcGroup,
   PenRpcs,
+  PermissionRpcs,
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
@@ -45,12 +46,16 @@ import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { McpCallRepo } from "./mcp/McpCallRepo.ts"
-import { McpHooks } from "./mcp/McpHooks.ts"
+import { askRuleWith, cancelledWith, McpHooks } from "./mcp/McpHooks.ts"
 import { McpServers } from "./mcp/McpServers.ts"
 import { ToolCalls } from "./mcp/ToolCalls.ts"
+import { Wait } from "./mcp/Wait.ts"
+import { CommandApproval } from "./mcp/wait/CommandApproval.ts"
 import { McpControlLive, McpControlRegistered } from "./mcp/transport/control.ts"
 import { McpHttpRoute } from "./mcp/transport/http.ts"
 import { BoardTools } from "./mcp/tools/board.ts"
+import { PermissionRepo } from "./permissions/PermissionRepo.ts"
+import { Permissions } from "./permissions/Permissions.ts"
 import { Questions } from "./permissions/Questions.ts"
 import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { DevServers } from "./runs/DevServers.ts"
@@ -62,9 +67,11 @@ import { RunFollower } from "./runs/RunFollower.ts"
 import type { RunOutput } from "./runs/RunOutput.ts"
 import { RunInput } from "./runs/RunInput.ts"
 import { RunRepo } from "./runs/RunRepo.ts"
+import { BackgroundWork } from "./runs/BackgroundWork.ts"
 import { Compaction } from "./runs/Compaction.ts"
 import { RunEnds } from "./runs/RunEnds.ts"
 import { Runs } from "./runs/Runs.ts"
+import { RunWaits } from "./runs/RunWaits.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
@@ -79,6 +86,7 @@ import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
+import { PermissionHandlers } from "./rpc/permissions.ts"
 import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
 import { ProjectHandlers } from "./rpc/projects.ts"
 import { PublicHandlers } from "./rpc/public.ts"
@@ -164,7 +172,8 @@ const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(LaunchFacts.layer),
   Layer.provideMerge(RunFollower.layer),
   Layer.provideMerge(ClaudeOutput),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
+  Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
 )
@@ -180,14 +189,41 @@ export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
 
+/** The permissions area: prompts (with their sweeper, and Claude's `can_use_tool` requests registered) and questions. */
+const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.registered, Questions.layer).pipe(
+  Layer.provideMerge(Permissions.layer),
+  Layer.provideMerge(PermissionRepo.layer),
+)
+
+/**
+ * What a board call needs of the areas built after `ToolCalls`' (`McpHooks`): `Wait`'s `callMade` (any call but `wait`
+ * ends the run's wait), `Permissions`' `askRule` (an approval rule's ask is the user's), and both `cancelled` (a call
+ * the agent gave up on has its wait end and its prompt expire). Tests that need neither build `mcpLayer(Wait.hooks)`.
+ */
+export const BoardHooks = Layer.effect(
+  McpHooks,
+  Effect.gen(function* () {
+    const waits = yield* Wait
+    const permissions = yield* Permissions
+    const expire = cancelledWith(permissions)
+    return McpHooks.of({
+      callMade: waits.callMade,
+      askRule: askRuleWith(permissions),
+      cancelled: (run, call) => Effect.andThen(waits.cancelled(run, call), expire(run, call)),
+    })
+  }),
+)
+
 /** Every area's services, with `models` for the board's own model calls. */
 export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, R2>) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
-    // `McpHooks.layerNone` until `Wait` (3.5) and `Permissions` come.
-    Layer.provideMerge(mcpLayer(McpHooks.layerNone)),
-    Layer.provideMerge(Questions.layer),
+    // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
+    Layer.provideMerge(mcpLayer(BoardHooks)),
+    // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
+    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    Layer.provideMerge(PermissionsLive),
     // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
     Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
@@ -218,6 +254,7 @@ export const Served = PublicRpcs.merge(
   AttachmentRpcs,
   ApprovalRulesRpcs,
   ThreadRpcs,
+  PermissionRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -233,6 +270,7 @@ export const HandlersLive = Layer.mergeAll(
   AttachmentHandlers,
   ApprovalRulesHandlers,
   ThreadHandlers,
+  PermissionHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */

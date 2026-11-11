@@ -219,7 +219,19 @@ export interface RunDirShape {
   readonly setAwaited: (run: RunId, id: string | null) => Effect.Effect<void, RunFileError>
   readonly marker: (run: RunId, name: RunMarker) => Effect.Effect<boolean>
   readonly setMarker: (run: RunId, name: RunMarker, on: boolean) => Effect.Effect<void, RunFileError>
+  /** One of the board's own small files of the run's (`background`, `background-waited`…): null when there's none. */
+  readonly readFile: (run: RunId, name: RunFile) => Effect.Effect<string | null>
+  /** Write it (whole, by a rename), or remove it for null. */
+  readonly writeFile: (run: RunId, name: RunFile, text: string | null) => Effect.Effect<void, RunFileError>
+  // `background-waited` (plan task 3.5, the `background_wait` tool; the rest of the `background*` files are 2.8's).
+  /** The ids of the background shells the agent said it waits on (`background_wait`); none if the file is missing or odd. */
+  readonly backgroundWaited: (run: RunId) => Effect.Effect<ReadonlyArray<string>>
+  /** Record them: a JSON list of ids, the file removed for none. */
+  readonly setBackgroundWaited: (run: RunId, ids: ReadonlyArray<string>) => Effect.Effect<void, RunFileError>
 }
+
+/** The board's files about a run's background work (docs/plan/07-agents.md, The run folder; `runs/background.ts`). */
+export type RunFile = "background" | "background-waited" | "background-killed" | "background-ended" | "background-calls"
 
 export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-server/runs/RunDir") {
   static readonly layer = Layer.effect(
@@ -432,6 +444,21 @@ export class RunDir extends Context.Service<RunDir, RunDirShape>()("huntaway-ser
         setAwaited,
         marker: (run, name) => has(run, name),
         setMarker: (run, name, on) => (on ? write(run, name, "") : fs.remove(file(run, name), { force: true }).pipe(Effect.mapError(failed(run, name)))),
+        readFile: (run, name) => readText(run, name).pipe(Effect.map(Option.getOrNull)),
+        writeFile: (run, name, text) =>
+          text === null
+            ? fs.remove(file(run, name), { force: true }).pipe(Effect.mapError(failed(run, name)))
+            : write(run, `.${name}.tmp`, text).pipe(
+                Effect.andThen(fs.rename(file(run, `.${name}.tmp`), file(run, name)).pipe(Effect.mapError(failed(run, name)))),
+              ),
+        backgroundWaited: (run) =>
+          readJson(run, "background-waited", Schema.Array(Schema.Unknown)).pipe(
+            Effect.map((ids) => (ids ?? []).filter((id): id is string => typeof id === "string")),
+          ),
+        setBackgroundWaited: (run, ids) =>
+          ids.length > 0
+            ? writeJson(run, "background-waited", Schema.Array(Schema.String), ids)
+            : fs.remove(file(run, "background-waited"), { force: true }).pipe(Effect.mapError(failed(run, "background-waited"))),
       })
     }),
   )

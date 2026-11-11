@@ -230,8 +230,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   agent's tool input and the board's metadata loosely through one `type Any = any` (the one listed suppression) until
   step 2. Every host keeps threads as items, so the old notices for an old host or a thread not on items are gone; a
   thread that cannot be watched (its task gone) says so with "Try again".
-- **Cut with a note, by milestone**: answering permission, question and plan cards (3.3: `thread/requestCards.tsx` draws
-  what a request carries, with no buttons); the background banner's Stop buttons (2.5); turns, checkpoints, rewind marks
+- **Cut with a note, by milestone**: the background banner's Stop buttons (2.5); turns, checkpoints, rewind marks
   and the rewind dialog (4.3); line comments sent with a message (4.2); the skills menu (6.4, inert); Changes, review,
   summary and the review's dot (M4); workflows' tabs and list (6.6); the terminal and its tools, the browser pane and
   the desktop view (M6); documents and plan tabs, document links (M6: links are plain external links); the assistant's
@@ -252,6 +251,16 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   `host.info` says `agents: true`, which the server now reports unless it runs with `--no-agents`; the fake agent
   streams a reply only for a prompt with `fake-subagent`, and keeps a turn going until a stop interrupts it only for
   one with `fake-until-interrupted` (its sleep before a reply doesn't heed a stop).
+- **Answering what agents ask (3.3)**: the permission card (`items.tsx`: Allow, Always allow, Deny), Claude's questions
+  (`AskCard`: picks by click or keys 1–9, typed answers, Dismiss, answers by message after the run ended), the plan
+  (`PlanCard`: Approve into a mode, Keep planning with feedback) and the board's own approvals (`ApprovalCard`: Approve or
+  Deny; their detailed views are 3.4's) answer with `mutations.permissions.answer` through `thread/promptAnswers.ts`
+  (`usePromptAnswers(host)`); the board's request_user_input card answers with `mutations.threads.answerQuestion`. The
+  old `Questions.tsx` cards live in `thread/requestCards.tsx` (no `Questions.tsx`, `Approvals.tsx` or `planAnswers.ts`:
+  plan documents' answers are M6's). A board question's state comes from its request's resolution (`itemModel.ts`), as
+  its metadata keeps only the card. The snapshot's `approvals` and `approval` events fold into `HostBoard.approvals`.
+  Checks: `tests/ui/permissions.test.mjs`, on a test server with `--fake-claude`; the harness starts every other server
+  with `--no-agents`.
 
 ### Step 2: by hand, a feature folder at a time
 

@@ -4,6 +4,7 @@ import { TaskId } from "@huntaway/contracts"
 import type { Agent, PermissionMode, ProjectId, Task, ThreadKind, ThreadKindFields } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import type { DocumentFile } from "../prompts/documentGuide.ts"
+import type { LostWork } from "../prompts/lostBackground.ts"
 import { penBrief } from "../prompts/penBrief.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import { Profiles } from "../profiles/Profiles.ts"
@@ -60,7 +61,7 @@ export interface PromptsShape {
    * What a prompt run (not a `/compact`) of `task` is sent for `text`: a task's first prompt when its agent has no
    * session yet, `/plan` rewritten (once the task has the plan label), and the note on what the keys in it name.
    */
-  readonly start: (task: TaskId, text: string) => Effect.Effect<string, TaskNotFound>
+  readonly start: (task: TaskId, text: string, lost?: ReadonlyArray<LostWork>) => Effect.Effect<string, TaskNotFound>
   /**
    * What a message steered into `task`'s running agent is sent as (huntaway's write_steers): a `/plan` says how to write
    * the plan (the run may have started without the plan label, so its system prompt may not), and the note on what the
@@ -197,14 +198,14 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
         return { profiles: all, projects: allProjects, tasks: found }
       })
 
-      const start = Effect.fn("Prompts.start")(function* (id: TaskId, text: string) {
+      const start = Effect.fn("Prompts.start")(function* (id: TaskId, text: string, lost: ReadonlyArray<LostWork> = []) {
         const task = yield* tasks.get(id)
         const kind = threadKindOf(task)
         const project = yield* projectOf(task.project_id)
         const c = { ...OFF, task, project, docs: documentsOf(dataDir.documents(task.id), task) }
         const board = task.kind === "task" ? yield* mentionBoard(mentionsScanned(c, text)) : { profiles: [], projects: [], tasks: [] }
         // The background work its last run stopped is plan task 2.8's (`BackgroundWork`); the routines' reports 6.5's.
-        return runPrompt(kind, c, { text, lost: [], mentions: (scanned) => mentionsNote(task, scanned, board) })
+        return runPrompt(kind, c, { text, lost, mentions: (scanned) => mentionsNote(task, scanned, board) })
       })
 
       const steer = Effect.fn("Prompts.steer")(function* (id: TaskId, text: string) {
