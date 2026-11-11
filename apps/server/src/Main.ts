@@ -231,7 +231,7 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
     // The end of a run, which the reactor calls: over the runs area and what a run's end tells (tokens, dev servers).
     Layer.provideMerge(RunEnds.layer),
     // DevServers reads tasks, which the runs area's own tests (`TestRuns`) don't build: it goes on top of the area.
-    Layer.provideMerge(DevServers.scanner.pipe(Layer.provideMerge(DevServers.layer))),
+    Layer.provideMerge(DevServers.layer),
     Layer.provideMerge(RunsArea),
     Layer.provideMerge(agentsLayer(models)),
   )
@@ -239,9 +239,10 @@ export const areasLayer = <T, E1, R1, E2, R2>(models: ModelCalls<T, E1, R1, E2, 
 /** Every area's services. */
 /**
  * The runs area's loops: tasks whose usage limit reset carry on (every 30 s), idle sessions are compacted (every
- * minute). Not in `areasLayer`, so a test board's clock moves without them; tests run a pass themselves.
+ * minute), the task's dev servers are looked for in `/proc` (every 4 s). Not in `areasLayer`, so a test board's clock
+ * moves without them (a day on the test clock was 20,000 scans of the machine's `/proc`); tests run a pass themselves.
  */
-export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction)
+export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.scanner)
 
 /** Every area's services, and their loops. */
 export const AreasLive = RunLoops.pipe(Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer })))
