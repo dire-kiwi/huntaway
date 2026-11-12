@@ -236,15 +236,16 @@ export const serverBoardAtom: Atom.Atom<Board> = Atom.make((get) => {
   )
 }).pipe(Atom.keepAlive)
 
-/** The merged board with the star and reminder saves in flight shown on its tasks (marks.ts). */
-const markedBoardAtom: Atom.Atom<Board> = Atom.make((get) => {
-  const board = get(serverBoardAtom)
-  const tasks = withPendingMarks(board.tasks, get(pendingMarksAtom))
-  return tasks === board.tasks ? board : { ...board, tasks }
-})
+/** The merged board with the moves and reorders in flight (tasks.ts) shown until the host's event for them arrives. */
+export const movesBoardAtom: Atom.Writable<Board, Atom.Atom<AsyncResult.AsyncResult<Board, unknown>>> = Atom.optimistic(serverBoardAtom).pipe(Atom.keepAlive)
 
 /**
- * What components read: every host's board merged, with the optimistic changes in flight (moves, reorders: see
- * tasks.ts; stars and reminders: see marks.ts) shown until the host's event for them arrives.
+ * What components read: every host's board merged, with the optimistic changes in flight shown until the host's event
+ * for them arrives: moves and reorders (tasks.ts), and on top of them stars and reminders (marks.ts), which, unlike a
+ * move, don't hold back the host's events while they save.
  */
-export const boardAtom: Atom.Writable<Board, Atom.Atom<AsyncResult.AsyncResult<Board, unknown>>> = Atom.optimistic(markedBoardAtom).pipe(Atom.keepAlive)
+export const boardAtom: Atom.Atom<Board> = Atom.make((get) => {
+  const board = get(movesBoardAtom)
+  const tasks = withPendingMarks(board.tasks, get(pendingMarksAtom))
+  return tasks === board.tasks ? board : { ...board, tasks }
+}).pipe(Atom.keepAlive)

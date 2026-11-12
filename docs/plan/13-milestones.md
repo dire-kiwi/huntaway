@@ -132,8 +132,9 @@ As done in HE-7 (one pull request): every area above is on the server and reacha
 in 6.x" section in [06-server.md](06-server.md) and, for its web part, in [09-frontend.md](09-frontend.md). 6.12 came as
 one pull request with the rest, its settings parts that waited for M7 and M8 (Server's updates, the host page) done
 after HE-6 merged. No component in `apps/web/src` shows "not yet on this server" for an M6 area any more; the ones left
-are earlier milestones' cuts (the board's setup thread, a pen's thread, Triage, attachments in New task, the background
-banner's Stop).
+are earlier milestones' cuts (the board's setup thread, Triage, attachments in New task, the background banner's Stop).
+The pens thread and a pen's own thread came with 9.2 (`pens.thread`, `pens.penThread`, the buttons beside the profile
+board's tabs and the tab's "Open its thread"), as `tests/ui/pens.test.mjs` needs them.
 
 ## M7: hosts
 

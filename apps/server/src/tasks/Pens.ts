@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { Conflict, PenId } from "@huntaway/contracts"
-import type { Invalid, NewPen, Pen, PenPatch, ProfileId, TaskId } from "@huntaway/contracts"
+import { Conflict, PenId, TaskId } from "@huntaway/contracts"
+import type { AgentConfigId, Invalid, NewPen, Pen, PenPatch, ProfileId, Task } from "@huntaway/contracts"
 import { Changes } from "../platform/Changes.ts"
 import type { Actor } from "../platform/Changes.ts"
 import { Db } from "../platform/Db.ts"
@@ -34,6 +34,18 @@ export interface PensShape {
    * pen's thread can't delete its own pen (it would delete the thread that asks). The tasks it left.
    */
   readonly delete: (id: PenId, by: Actor) => Effect.Effect<ReadonlyArray<TaskId>, PenNotFound | Conflict>
+  /**
+   * The profile's pens thread (HA-285, the old `GET /profiles/{id}/pens-thread`): the one lasting thread in no project
+   * that arranges its pens, keyed among its scratch tasks (`S-<n>`), made the first time it's asked for. Emits `task`
+   * when it's made.
+   */
+  readonly thread: (profile: ProfileId) => Effect.Effect<Task, ProfileNotFound>
+  /**
+   * A pen's own thread (HA-293, the old `GET /pens/{id}/thread`), which works on its tasks: titled after it, keyed among
+   * the profile's scratch tasks, made the first time it's asked for (or again once it was deleted). Emits `task` and
+   * `pens` when it's made.
+   */
+  readonly penThread: (id: PenId) => Effect.Effect<Task, PenNotFound>
 }
 
 /**
@@ -138,7 +150,83 @@ export class Pens extends Context.Service<Pens, PensShape>()("huntaway-server/ta
         return left.map((t) => t.id)
       })
 
-      return Pens.of({ list, create, update, delete: remove })
+      /**
+       * The config a new pens thread starts with (the old `thread_config`): the one its profile picks for its pens'
+       * threads, if still one of its configs, else its first.
+       */
+      const threadConfig = Effect.fnUntraced(function* (profile: ProfileId, picked: AgentConfigId | null) {
+        const configs = yield* taskRepo.configs(profile, null)
+        return configs.find((c) => c === picked) ?? configs[0] ?? null
+      })
+
+      /** Adds a lasting thread of the profile's in no project, numbered among its scratch tasks; in the caller's transaction. */
+      const insertThread = Effect.fnUntraced(function* (id: TaskId, profile: ProfileId, type: "pens" | "pen", title: string, config: AgentConfigId | null) {
+        const at = yield* nowTimestamp
+        yield* taskRepo.insert(
+          id,
+          {
+            family: "scratch",
+            profile_id: profile,
+            project_id: null,
+            generateTitle: false,
+            // Its title stays: it isn't renamed after the user's prompts (a pen's is renamed with its pen).
+            columns: { title, description: "", status: "todo", use_worktree: false, task_type: type, title_pinned: true, claude_config_id: config },
+          },
+          at,
+        )
+        const task = yield* taskRepo.get(id)
+        if (task === null) return yield* Effect.die(new Error("the thread's row is gone"))
+        return task
+      })
+
+      const findPensThread = (profile: ProfileId) =>
+        Effect.map(taskRepo.list({ _tag: "Projectless", profile_id: profile, include_pens: true }), (all) => all.find((t) => t.task_type === "pens") ?? null)
+
+      const thread = Effect.fn("Pens.thread")(function* (profile: ProfileId) {
+        const had = yield* findPensThread(profile)
+        if (had !== null) return had
+        const p = yield* profiles.get(profile)
+        if (p._tag === "None") return yield* new ProfileNotFound({ id: profile })
+        const id = TaskId.make(yield* random.uuidV4())
+        const config = yield* threadConfig(profile, p.value.threads_config_id)
+        // Looked for again in the transaction that makes it, so two first opens make one.
+        const made = yield* db.tx(
+          Effect.gen(function* () {
+            const there = yield* findPensThread(profile)
+            if (there !== null) return { task: there, made: false }
+            return { task: yield* insertThread(id, profile, "pens", "Pens", config), made: true }
+          }),
+        )
+        if (made.made) yield* events.emit({ type: "task", task: made.task })
+        return made.task
+      })
+
+      const penThread = Effect.fn("Pens.penThread")(function* (penId: PenId) {
+        const pen = yield* load(penId)
+        if (pen.thread_id !== null) {
+          const had = yield* taskRepo.get(pen.thread_id)
+          if (had !== null) return had
+        }
+        const p = yield* profiles.get(pen.profile_id)
+        const config = yield* threadConfig(pen.profile_id, p._tag === "Some" ? p.value.threads_config_id : null)
+        const id = TaskId.make(yield* random.uuidV4())
+        const now = yield* nowTimestamp
+        // Its pen read again in the transaction that makes it, so two first opens make one.
+        return yield* db.tx(
+          Effect.gen(function* () {
+            const was = yield* load(penId)
+            const there = was.thread_id === null ? null : yield* taskRepo.get(was.thread_id)
+            if (there !== null) return there
+            const task = yield* insertThread(id, was.profile_id, "pen", penThreadTitle(was.name), config)
+            yield* repo.update(penId, { thread_id: id }, now)
+            yield* events.emit({ type: "task", task })
+            yield* changed(was.profile_id)
+            return task
+          }),
+        )
+      })
+
+      return Pens.of({ list, create, update, delete: remove, thread, penThread })
     }),
   )
 }

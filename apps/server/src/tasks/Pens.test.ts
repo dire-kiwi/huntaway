@@ -3,7 +3,7 @@ import { Effect, Fiber, Stream } from "effect"
 import type { FileSystem } from "effect"
 import type { Scope } from "effect"
 import { SqlClient } from "effect/sql"
-import { ProfileId, TaskId } from "@huntaway/contracts"
+import { PenId, ProfileId, TaskId } from "@huntaway/contracts"
 import type { BoardEvent, Pen, Task } from "@huntaway/contracts"
 import { tempDir, TestBoard } from "@huntaway/testing"
 import { Board } from "../lifecycle/Board.ts"
@@ -209,6 +209,35 @@ describe("Pens", () => {
         assert.strictEqual(yield* tag(tasks.get(thread)), "TaskNotFound")
         // Its tasks stay.
         assert.isNull(pen(yield* tasks.get(webTask.id)))
+      }),
+    ),
+  )
+
+  it.effect("makes the pens thread and a pen's own thread the first time they're asked for, and the same ones after", () =>
+    run(
+      Effect.gen(function* () {
+        const pens = yield* Pens
+        const tasks = yield* Tasks
+        const { profile, scratch } = yield* board
+        // The pens thread: one per profile, keyed among its scratch tasks, its title pinned, in To do.
+        const thread = yield* pens.thread(profile)
+        assert.deepStrictEqual(
+          [thread.task_type, thread.project_id, thread.title, thread.title_pinned, thread.status, thread.key],
+          ["pens", null, "Pens", true, "todo", `S-${scratch.number + 1}`],
+        )
+        assert.strictEqual((yield* pens.thread(profile)).id, thread.id)
+        assert.strictEqual(yield* tag(pens.thread(ProfileId.make("nobody"))), "ProfileNotFound")
+        // A pen's own: titled after it, numbered after the pens thread, and the pen says it's its thread.
+        const today = yield* pens.create({ profile_id: profile, name: "Today" })
+        const own = yield* pens.penThread(today.id)
+        assert.deepStrictEqual([own.task_type, own.title, own.key], ["pen", "Pen: Today", `S-${scratch.number + 2}`])
+        assert.strictEqual((yield* pens.list(profile)).find((p) => p.id === today.id)?.thread_id, own.id)
+        assert.strictEqual((yield* pens.penThread(today.id)).id, own.id)
+        // Made again once it was deleted.
+        yield* tasks.delete(own.id, { deleteBranch: false }, Actor.user)
+        const again = yield* pens.penThread(today.id)
+        assert.notStrictEqual(again.id, own.id)
+        assert.strictEqual(yield* tag(pens.penThread(today.id).pipe(Effect.andThen(pens.penThread(PenId.make("gone"))))), "PenNotFound")
       }),
     ),
   )
