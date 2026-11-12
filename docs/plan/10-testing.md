@@ -211,3 +211,52 @@ there was nothing of it left to try. What the measurement found instead:
 `copy-live-board.sh` had never run to the end since 9.1: it put the snapshot inside the test server's data folder, and
 `import-legacy` refuses an old folder inside the new one. The snapshot is now beside it (`<data dir>-legacy-source`),
 which `test-server.sh stop` removes with the data folder.
+
+### As measured at HE-1 (`main` at `26b22c4`)
+
+On 12 November 2026, the same i9-13900K shared with the live board and other agents' work (load 0.4 to 5 for the
+figures below; each pair taken alternately, new then old, the floods and runs only once the load was under 4 or 5), the
+old server at `f2298f0c` from a clone, both through their own `test-server.sh`. RSS had no swap beside it.
+
+The data: the old test server seeded by `scripts/seed-old-board.mjs` (3 projects, 2,848 tasks, no runs) and the new one
+on its import (`copy-live-board.sh`, 0 failures, 0 problems); empty boards for the empty figures; and for the floods and
+the runs a fresh `--seed` board of each with 11 tasks and `fake-claude-flood.mjs` as the agent (each with its own
+repository, so no projects to repoint). All floods were on one task, whose thread grew by 10,000 items each time. The
+"release" rows run `scripts/package-server.sh`'s package of each (`HUNTAWAY_TEST_BIN`, `IA_TEST_BIN`): precompiled `.js`,
+so neither loads Node's TypeScript stripper, as a checkout's does. Medians, with the number of runs.
+
+| What                                                                 | New              | Old              | New/old       | Limit    |
+| -------------------------------------------------------------------- | ---------------- | ---------------- | ------------- | -------- |
+| RSS at idle, 20 s after ready: empty board / 2,848 tasks (5)         | 169 / 191 MB     | 116 / 145 MB     | 1.46× / 1.32× | ≤ 1.5×   |
+| … release packages, empty board (5)                                  | 149 MB           | 91 MB            | **1.64×**     | ≤ 1.5×   |
+| RSS, ten runs live / stored / 60 s after they ended (3 × ten runs)   | 200 / 213 / 194 MB | 131 / 131 / 129 MB | 1.52× / 1.62× / 1.51× | ≤ 1.5× |
+| Start to ready: empty board / 2,848 tasks (5)                        | 800 / 1,425 ms   | 302 / 353 ms     | 2.6× / 4.0×   | < 2 s    |
+| … release packages, empty board (5)                                  | 579 ms           | 156 ms           | 3.7×          | < 2 s    |
+| Follower: 10,000 lines with `usage`, first written to last stored (5) | 1,720 ms         | 896 ms           | **1.92×**     | ≤ 1.5×   |
+| … CPU per line                                                       | 0.198 ms         | 0.098 ms         | 2.0×          |          |
+| `/api/health` p99 meanwhile (5)                                      | 4.7 ms           | 983 ms           | 0.005×        | ≤ old    |
+| Board's first message (snapshot; old: its 16 loads) (6)              | 164 ms, 5.4 MB   | 88 ms, 5.5 MB    | 1.87×         | recorded |
+| `pnpm check` (vp's own times) / `pnpm test` wall time                | 14.1 s / 31 s    | 1.5 s / 28 s     |               | recorded |
+| … what they find / run                                               | no warning; 2,045 tests in 250 files | 292 lint warnings; 2,046 tests in 211 files | | |
+
+Since HE-8: idle memory and start time are as they were (HE-8: 167 / 190 MB, 855 / 1,303 ms); memory with ten runs is
+1.5× to 1.6× here against HE-8's 1.9× to 2.1×, on a small board rather than a 2,848-task one with floods behind it; the
+follower is 1.92× against HE-8's 1.54× after its fix (and 1.85× before it), at a higher load (3.5 to 3.9 against 2). A
+release package lowers both servers' memory, the old one's more (25 MB against 20 MB), so the release ratio, 1.64×,
+is over the limit where the checkout's is not.
+
+What the profiles showed (`node --cpu-prof` on the new test server through one flood):
+
+- **Start-up** is 0.85 s on the thread before the first request, most of it loading modules: resolving them (190 ms) and
+  stripping their types (165 ms) in a checkout; a release package skips the stripping (579 ms).
+- **A run's start reads its task's whole thread.** The Claude translator keeps its state per run (`kept` in
+  `runs/claude/output.ts` is the run's, and `released` drops it when the follower lets the run go), so the first line of
+  every run calls `rebuild`, which reads every item of the thread (`Threads.stored`: `ThreadStore.entries`, no limit),
+  decodes them and folds them (`stateFromItems`) in the line's transaction. The probe's slowest answer during a flood
+  grew with the thread, 23, 79, 134, 187 and 237 ms over the five floods (the thread at 1,000 to 41,000 items when
+  each run started), then 284 ms at 51,000: about 5 ms per 1,000 items. The
+  old server keeps one translator per thread across runs and checks it against the thread's writes count
+  (`threads/write.ts` at `f2298f0c`), so its runs start with no such read. Not isolated by an experiment beyond that
+  growth; the flood's own time does not include it (the read is at the run's first line, before the flood's first).
+- No single synchronous stretch in the flood passed 25 ms (the longest were SQLite statements); the follower's cost is
+  spread over the Effect runtime, SQLite and schema decoding, as HE-8 found.
