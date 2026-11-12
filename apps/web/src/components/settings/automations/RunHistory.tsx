@@ -3,7 +3,7 @@ import { automationRunsAtom } from "@huntaway/client"
 import type { Automation, AutomationRun, AutomationRunStatus } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { openTask } from "../../../state/route"
-import { timeAgo } from "../../ui"
+import { localeString, timeAgo } from "../../ui"
 import { usd } from "./text"
 
 const STATUS_STYLE: Record<AutomationRunStatus, string> = {
@@ -80,7 +80,7 @@ export function RunHistory({ hostId, automation }: { hostId: string; automation:
       {runs.map((r) => (
         <div key={r.id} className="text-[11.5px]">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="w-16 shrink-0 text-faint" title={new Date(r.created_at).toLocaleString()}>
+            <span className="w-16 shrink-0 text-faint" title={localeString(r.created_at)}>
               {timeAgo(r.created_at)}
             </span>
             <span className="w-16 shrink-0 text-faint">{SOURCE_LABEL[r.source]}</span>

@@ -1,10 +1,13 @@
 import { FilterOp, type Automation } from "@huntaway/contracts"
+import { Exit } from "effect"
 import { Copy, Plus, RefreshCw, X } from "lucide-react"
 import { useCallback, useState } from "react"
 import { useBoard } from "../../../state/board"
-import { useRpc } from "../../../state/rpc"
+import { useMutation } from "../../../state/mutation"
+import { after } from "../../../state/timers"
 import { useHost } from "../../boardHelpers"
-import { Button, copyText, Field, IconButton, Input, useAsyncAction, useConfirm, useDraft } from "../../ui"
+import { Button, copyText, Field, IconButton, Input, useConfirm, useDraft } from "../../ui"
+import { rejectFailure } from "../agentTools/parts"
 import { OP_LABELS } from "./text"
 import { type Draft, type DraftFilter, listText } from "./draft"
 import { selectClass } from "./controls"
@@ -34,12 +37,12 @@ export function WebhookFields({
   set: <K extends keyof Draft>(k: K, v: Draft[K]) => void
   onRotated: (a: Automation) => void
 }) {
-  const rpc = useRpc()
   const host = useHost(hostId)
   const publicUrl = useBoard((s) => s.hostSettings[hostId]?.public_url ?? "")
   // Follows the saved address until it's edited, so a refresh of the host's settings doesn't overwrite what's typed.
   const { draft: address, setDraft: setAddress } = useDraft(publicUrl)
-  const saveAddress = useAsyncAction()
+  const [saveAddress, updateSettings] = useMutation("host.updateSettings")
+  const [, rotate] = useMutation("automations.update")
   const confirm = useConfirm()
   const [copied, setCopied] = useState(false)
   const base = publicUrl || (host?.local ? window.location.origin : "")
@@ -85,7 +88,7 @@ export function WebhookFields({
                 e.preventDefault()
                 copyText(url)
                 setCopied(true)
-                setTimeout(() => setCopied(false), 1500)
+                after("1.5 seconds", () => setCopied(false))
               }}
             >
               {copied ? <span className="text-[11px]">✓</span> : <Copy size={13} />}
@@ -100,7 +103,10 @@ export function WebhookFields({
                   body: "Make a new URL? The current one stops working, so update it wherever it's used.",
                   action: "Make a new URL",
                   danger: true,
-                  onConfirm: async () => onRotated(await rpc(hostId, "automations.update", { id: saved.id, patch: { rotate_token: true } })),
+                  onConfirm: () =>
+                    rotate(hostId, { id: saved.id, patch: { rotate_token: true } }).then((exit) =>
+                      Exit.isSuccess(exit) ? onRotated(exit.value) : rejectFailure(exit),
+                    ),
                 })
               }}
             >
@@ -126,7 +132,7 @@ export function WebhookFields({
               onClick={(e) => {
                 e.preventDefault()
                 // The board's settings follow from the host's event.
-                void saveAddress.run(() => rpc(hostId, "host.updateSettings", { patch: { public_url: address.trim() || null } }))
+                void updateSettings(hostId, { patch: { public_url: address.trim() || null } })
               }}
             >
               Save address

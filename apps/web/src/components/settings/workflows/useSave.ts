@@ -1,8 +1,9 @@
-import { useAtomSet } from "@effect/atom-react"
-import { mutations, type HostProject as Project } from "@huntaway/client"
+import { Exit } from "effect"
+import { mutate, type HostProject as Project } from "@huntaway/client"
 import { ProjectId, type Workflow, type WorkflowGraph } from "@huntaway/contracts"
 import { useState } from "react"
-import { errorText, toJson, useConfirm } from "../../ui"
+import { exitError, useAction } from "../../../state/mutation"
+import { toJson, useConfirm } from "../../ui"
 
 /** The workflow's name and whether it's on, saving it, and closing the editor (asking first when there are changes). */
 export function useSave({
@@ -28,26 +29,22 @@ export function useSave({
   const hostId = project.host_id
   const [name, setName] = useState(initialName)
   const [enabled, setEnabled] = useState(workflow?.enabled ?? true)
-  const [busy, setBusy] = useState(false)
+  const [{ busy }, run] = useAction()
   const confirm = useConfirm()
-  const create = useAtomSet(mutations.workflows.create, { mode: "promise" })
-  const update = useAtomSet(mutations.workflows.update, { mode: "promise" })
   const dirty = name !== initialName || toJson(graph) !== toJson(initialGraph) || enabled !== (workflow?.enabled ?? true)
 
   // The list follows with the event the change makes.
-  const save = async () => {
+  const save = () => {
     setErr(null)
     if (!name.trim()) return setErr("Give it a name.")
-    setBusy(true)
-    try {
-      if (workflow) await update({ host: hostId, payload: { id: workflow.id, patch: { name: name.trim(), graph, enabled } } })
-      else await create({ host: hostId, payload: { workflow: { project_id: ProjectId.make(project.id), name: name.trim(), graph, enabled } } })
+    const change = workflow
+      ? mutate("workflows.update", hostId, { id: workflow.id, patch: { name: name.trim(), graph, enabled } })
+      : mutate("workflows.create", hostId, { workflow: { project_id: ProjectId.make(project.id), name: name.trim(), graph, enabled } })
+    void run(change).then((exit) => {
+      if (!Exit.isSuccess(exit)) return setErr(exitError(exit))
       onSaved(enabled)
       onClose()
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+    })
     return undefined
   }
   const close = () =>

@@ -69,15 +69,6 @@ const stepOne = [
   "apps/web/src/components/settings/Telemetry.tsx",
   "apps/web/src/components/settings/Usage.tsx",
   "apps/web/src/components/settings/HostDesktop.tsx",
-  // settings/: agent tools, automations, workflows
-  "apps/web/src/components/settings/agentTools/**",
-  "apps/web/src/components/settings/automations/**",
-  "apps/web/src/components/settings/workflows/**",
-  "apps/web/src/components/settings/AgentTools.tsx",
-  "apps/web/src/components/settings/AgentStepTools.tsx",
-  "apps/web/src/components/settings/Automations.tsx",
-  "apps/web/src/components/settings/Workflows.tsx",
-  "apps/web/src/components/settings/TemplateField.tsx",
   // settings/: hosts and the server
   "apps/web/src/components/settings/hosts/**",
   "apps/web/src/components/settings/server/**",

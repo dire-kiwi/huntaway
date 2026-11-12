@@ -66,7 +66,7 @@ export function WorkflowEditor({
   const selectedEdge = sel && "edge" in sel ? graph.edges[sel.edge] : undefined
 
   return (
-    <Modal title={workflow ? `Edit ${workflow.name}` : "New workflow"} onClose={close} onSubmit={() => void save()} width="max-w-[1400px]">
+    <Modal title={workflow ? `Edit ${workflow.name}` : "New workflow"} onClose={close} onSubmit={() => save()} width="max-w-[1400px]">
       <div className="space-y-3">
         <div className="flex flex-wrap items-end gap-4">
           <div className="min-w-60 flex-1">
@@ -151,7 +151,7 @@ export function WorkflowEditor({
           <Button variant="ghost" onClick={close}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+          <Button variant="primary" disabled={busy} onClick={() => save()}>
             {workflow ? "Save" : "Create workflow"}
           </Button>
         </div>
