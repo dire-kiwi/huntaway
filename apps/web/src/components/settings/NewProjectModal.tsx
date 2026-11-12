@@ -1,17 +1,19 @@
-// Step 1 (6.11, docs/plan/09-frontend.md "Step 1 as done for 6.11"): `projects.create`, `projects.clone` and
-// `projects.createOnGithub`; the project arrives on the board with the `project` event. Picking the host, and making the
-// profile on a host that hasn't got it, are the hosts' (M7): the project goes on the page's own host, in one of its profiles.
+// `projects.create`, `projects.clone` and `projects.createOnGithub` (6.11); the project arrives on the board with the
+// `project` event. Picking the host, and making the profile on a host that hasn't got it, are the hosts' (M7): the project
+// goes on the page's own host, in one of its profiles.
+import { mutate } from "@huntaway/client"
 import { clsx } from "clsx"
+import { Effect, Exit, Fiber } from "effect"
 import { Folder, Globe, Loader2, Lock } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { board, useBoard } from "../../state/board"
+import { useAction } from "../../state/mutation"
 import { navigate } from "../../state/route"
-import { rpc } from "../../state/rpc"
 import { defaultAgentHost, profileNames } from "../boardHelpers"
 import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "./repoSource"
 import { DirPicker } from "./DirPicker"
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos"
-import { Button, errorText, Field, Input, Modal, ModalFooter } from "../ui"
+import { Button, Field, Input, Modal, ModalFooter } from "../ui"
 
 /** The last folder in a path. */
 const lastPart = (path: string) => path.split("/").findLast((p) => p !== "")
@@ -44,10 +46,11 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
   const folderName = lastPart(path) ?? ""
   // The repository was created and the project added, but its commits weren't pushed: said here rather than closing as if all went well.
   const [pushFailed, setPushFailed] = useState<{ projectId: string; repo: string; path: string; error: string } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  // A clone can take a while, and the dialog can be closed meanwhile. Open again on each mount, as
-  // StrictMode mounts it twice in development.
+  const [{ busy, error }, run] = useAction()
+  // Its error goes once another source is picked, until it's tried again.
+  const [hidden, setHidden] = useState(false)
+  const err = hidden ? null : error
+  // Whether the dialog has gone. Open again on each mount, as StrictMode mounts it twice in development.
   const closed = useRef(false)
   useEffect(() => {
     closed.current = false
@@ -58,45 +61,44 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
   const pickSource = (s: ProjectSource) => {
     setSource(s)
     saveProjectSource(s)
-    setErr(null)
+    setHidden(true)
   }
-  const submit = async () => {
-    if (profileId === undefined) return
-    setBusy(true)
-    try {
-      const key_ = key || undefined
-      let p: { id: string; repo_path: string }
-      let github: { full_name: string; push_error: string | null } | undefined
-      if (fromGithub && repo)
-        p = await rpc(host, "projects.clone", { clone: { profile_id: profileId, repo: repo.full_name, repo_path: clonePathNow.trim(), name, key: key_ } })
-      else if (creating) {
-        const made = await rpc(host, "projects.createOnGithub", {
-          project: {
-            profile_id: profileId,
-            repo_path: path,
-            visibility,
-            repo_name: repoName.trim() || undefined,
-            owner: owner.trim() || undefined,
-            name,
-            key: key_,
-          },
-        })
-        p = made.project
-        github = made.github
-      } else p = await rpc(host, "projects.create", { project: { profile_id: profileId, name, repo_path: path, key: key_ } })
-      if (closed.current) return
+  const submit = (): void => {
+    if (profileId === undefined || busy) return
+    setHidden(false)
+    const key_ = key || undefined
+    const add =
+      fromGithub && repo
+        ? mutate("projects.clone", host, { clone: { profile_id: profileId, repo: repo.full_name, repo_path: clonePathNow.trim(), name, key: key_ } }).pipe(
+            Effect.map((project) => ({ project, github: undefined })),
+          )
+        : creating
+          ? mutate("projects.createOnGithub", host, {
+              project: {
+                profile_id: profileId,
+                repo_path: path,
+                visibility,
+                repo_name: repoName.trim() || undefined,
+                owner: owner.trim() || undefined,
+                name,
+                key: key_,
+              },
+            })
+          : mutate("projects.create", host, { project: { profile_id: profileId, name, repo_path: path, key: key_ } }).pipe(
+              Effect.map((project) => ({ project, github: undefined })),
+            )
+    // A clone can take a while, and the dialog can be closed meanwhile: the clone goes on (detached, so the dialog's
+    // action ending with it doesn't stop it), and a closed dialog does nothing with its answer.
+    void run(Effect.forkDetach(add, { startImmediately: true }).pipe(Effect.flatMap(Fiber.join))).then((exit) => {
+      if (closed.current || !Exit.isSuccess(exit)) return
+      const { project: p, github } = exit.value
       if (github?.push_error) {
         setPushFailed({ projectId: p.id, repo: github.full_name, path: p.repo_path, error: github.push_error })
-        setBusy(false)
         return
       }
       onClose()
       navigate({ name: "board", projectId: p.id })
-    } catch (e) {
-      if (closed.current) return
-      setErr(errorText(e))
-      setBusy(false)
-    }
+    })
   }
   if (pushFailed) {
     return (
@@ -181,7 +183,7 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
                 onChange={(r) => {
                   setRepo(r)
                   setDest(null)
-                  setErr(null)
+                  setHidden(true)
                 }}
               />
             </Field>
@@ -264,11 +266,11 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
               Cancel
             </Button>
             {fromGithub ? (
-              <Button variant="primary" disabled={busy || !profileId || !repo || !clonePathNow.trim()} onClick={() => void submit()}>
+              <Button variant="primary" disabled={busy || !profileId || !repo || !clonePathNow.trim()} onClick={submit}>
                 {busy && <Loader2 size={13} className="animate-spin" />} {busy ? "Cloning…" : "Clone and add project"}
               </Button>
             ) : (
-              <Button variant="primary" disabled={busy || !profileId || !path || (creating && !(repoName.trim() || folderName))} onClick={() => void submit()}>
+              <Button variant="primary" disabled={busy || !profileId || !path || (creating && !(repoName.trim() || folderName))} onClick={submit}>
                 {busy && creating && <Loader2 size={13} className="animate-spin" />}{" "}
                 {creating ? (busy ? "Creating…" : `Create ${visibility} repository and add project`) : "Add project"}
               </Button>
