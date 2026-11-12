@@ -39,6 +39,7 @@ const taskState = (board: HostBoard, id: string): string => {
 
 /** The number of the host's latest `docs` / `doc_comments` / `docs_site` event about a profile (and document). */
 const docsSeq = (board: HostBoard, kind: "docs" | "comments" | "site", profile: string, slug = ""): number => board.docs.get(docsKey(kind, profile, slug)) ?? 0
+
 /** A task's branch and column as well: what its diff against its base is taken from (the compare view's diffs). */
 const taskBranch = (board: HostBoard, id: string): string => {
   const t = board.tasks.get(TaskId.make(id))
@@ -53,24 +54,12 @@ const fanoutState = (board: HostBoard, id: string): string => {
     .filter((t) => t.fanout_id === fanout)
     .map((t) => `${t.id}:${t.status}:${t.running}:${t.worktree_state}`)
     .join(",")
-/**
- * A number for each distinct object, by identity: the board keeps an unchanged value's identity (hostBoard.ts' `keep`),
- * so the number changes when the value does.
- */
-const versions = { seen: new WeakMap<object, number>(), last: 0 }
-const versionOf = (value: object): number => {
-  const known = versions.seen.get(value)
-  if (known !== undefined) return known
-  versions.last += 1
-  versions.seen.set(value, versions.last)
-  return versions.last
 }
 
 /** Per method, what of the board a query of it is read again on (none: only mutations and its own refresh). */
 export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
-  "git.taskDiff": (board, p) => taskState(board, p.id),
   // 6.3: the Docs page reads a profile's documents again on its `docs` events, and on `docs_site` (their published
   // state is the site's); a document's comments on its `doc_comments`; the latest version (not a numbered one) on `docs`.
   "docs.list": (board, p) => `${docsSeq(board, "docs", p.profile_id)}:${docsSeq(board, "site", p.profile_id)}`,
@@ -86,6 +75,7 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
     const project = board.projects.find((x) => x.id === p.id)
     return `${project ? Hash.hash(project) : ""}:${board.settings.default_permission_mode ?? ""}`
   },
+  // A task's diff against its base: also its column and branch (the old compare view read it again on them).
   "git.taskDiff": (board, p) => taskBranch(board, p.id),
   // A file's diffs too: its content can change while its state in the status doesn't (the old tab read them with it).
   "git.diff": (board, p) => taskState(board, p.id),
@@ -94,7 +84,7 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A host's status is another once it has booted again (a restart, an update): its new boot id, commit and version.
   "admin.status": (board) => board.boot,
   // What a host's settings sync lists changes with its settings (the old SettingsSyncRow read it again on them).
-  "settingsSync.get": (board) => versionOf(board.settings),
+  "settingsSync.get": (board) => Hash.hash(board.settings),
 }
 
 /** The key a host's group is invalidated by. */
