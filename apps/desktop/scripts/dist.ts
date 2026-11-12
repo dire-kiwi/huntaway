@@ -52,7 +52,7 @@ const config: Configuration = {
     icon: "build/icon.png",
     synopsis: "Kanban board for Claude Code and Codex agents",
     description: "A kanban board for orchestrating Claude Code and Codex agents.",
-    maintainer: "Huntaway <https://github.com/dire-kiwi/huntaway>",
+    maintainer: "Huntaway <https://github.com/dire-kiwi/huntaway-effect>",
   },
   pacman: {
     packageName: "huntaway",

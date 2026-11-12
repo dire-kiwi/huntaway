@@ -193,7 +193,7 @@ export const packageName = (kind: UpdateKind, version: string, platform: string)
 }
 
 /** The repository whose releases a release build follows, unless `HUNTAWAY_RELEASE_UPDATES` says otherwise. */
-export const RELEASE_REPO = "dire-kiwi/huntaway"
+export const RELEASE_REPO = "dire-kiwi/huntaway-effect"
 
 /**
  * The environment that turns release updates on for a server a release build starts, and tells it about the app.
