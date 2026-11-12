@@ -49,7 +49,7 @@ export interface Loaded<T> extends Gathered<T> {
 }
 
 /** `atom` while `enabled` (nothing is read otherwise), the last of what it gathered kept. */
-function useLoaded<T>(atom: Atom.Atom<Gathered<T>>, enabled: boolean): Loaded<T> {
+function useShownReport<T>(atom: Atom.Atom<Gathered<T>>, enabled: boolean): Loaded<T> {
   const shown = enabled ? atom : notGathered
   const got = useGathered<T>(shown)
   const reload = useAtomRefresh(shown)
@@ -59,17 +59,17 @@ function useLoaded<T>(atom: Atom.Atom<Gathered<T>>, enabled: boolean): Loaded<T>
 /** Every profile's activity in `range`: a profile's is picked out once active time is worked out (useView). */
 export function useActivity(range: Range, rules: Rules, enabled: boolean): Loaded<Activity> {
   const targets = useAtomValue(targetsAtom(null))
-  return useLoaded(activityAtom({ from: range.from, to: range.to, idleMin: rules.idleMin, targets }), enabled)
+  return useShownReport(activityAtom({ from: range.from, to: range.to, idleMin: rules.idleMin, targets }), enabled)
 }
 
 /** The context sizes of `profile`'s turns (every profile's when it's null) in `range`. */
 export function useContext(range: Range, profile: string | null, enabled: boolean): Loaded<ContextData> {
   const targets = useAtomValue(targetsAtom(profile))
-  return useLoaded(contextAtom({ from: range.from, to: range.to, targets }), enabled)
+  return useShownReport(contextAtom({ from: range.from, to: range.to, targets }), enabled)
 }
 
 /** The tokens of `profile`'s runs (every profile's when it's null) in `range`. */
 export function useTokens(range: Range, profile: string | null, enabled: boolean): Loaded<TokenData> {
   const targets = useAtomValue(targetsAtom(profile))
-  return useLoaded(tokensAtom({ from: range.from, to: range.to, targets }), enabled)
+  return useShownReport(tokensAtom({ from: range.from, to: range.to, targets }), enabled)
 }

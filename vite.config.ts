@@ -49,12 +49,6 @@ const noEffect = {
   message: "Plain TypeScript: the hooks load this per tool call, so it does not import effect.",
 }
 
-/** The component files still as step 1 left them (see the override below), by the part of step 2 that takes them off. */
-const stepOne = [
-  // docs/: what runs inside the sandboxed page frame, as source, where Effect's timers aren't (its selection debounce)
-  "apps/web/src/components/docs/docFrame.ts",
-]
-
 export default defineConfig({
   fmt: {
     printWidth: 160,
@@ -153,12 +147,9 @@ export default defineConfig({
           ]),
         },
       },
-      // Step 1 of the components (docs/plan/09-frontend.md): what is still as step 1 left it keeps async handlers, `Date`
-      // and DOM timers. A folder leaves this list when step 2 has moved it onto atoms, and the list goes with the last.
-      {
-        files: stepOne,
-        rules: { "effecttsgo/async-function": "off", "effecttsgo/global-date": "off", "effecttsgo/global-timers": "off" },
-      },
+      // What runs inside a sandboxed document frame, as source text (docFrame.ts' `docComments`): there is no Effect in
+      // the frame, so its selection debounce is the frame's own DOM timer.
+      { files: ["apps/web/src/components/docs/docFrame.ts"], rules: { "effecttsgo/global-timers": "off" } },
       // Entry points provide layers and read the environment.
       {
         files: [

@@ -1,5 +1,4 @@
-import { useAtomSet } from "@effect/atom-react"
-import { canRunAgents, hostHas, type HostProfile as Profile, mutations } from "@huntaway/client"
+import { canRunAgents, hostHas, type HostProfile as Profile } from "@huntaway/client"
 import { LinkId } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { ChevronLeft, Plus, Server, Trash2 } from "lucide-react"
@@ -19,6 +18,7 @@ import { hubRpc } from "./hosts/hub"
 import { SettingsSyncRow } from "./hosts/SettingsSync"
 import { HostService, RemoteServer } from "./server/RemoteServer"
 import { HostTelemetry } from "./Telemetry"
+import { useMutation } from "../../state/mutation"
 
 // The host page (route "host", docs/plan/09-frontend.md): its version and Update (hosts/HostRow's
 // HostVersion), settings sync, agent configs (with Copy login, `hub.hosts.copyConfig`), profiles, terminal tools, this
@@ -140,7 +140,7 @@ function HostProfiles({ hostId }: { hostId: string }) {
   const [editing, setEditing] = useState<Profile | "new" | null>(null)
   const confirm = useConfirm()
   // The confirm dialog shows why a delete was refused.
-  const deleteProfile = useAtomSet(mutations.profiles.delete, { mode: "promise" })
+  const [, deleteProfile] = useMutation("profiles.delete")
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
@@ -170,7 +170,7 @@ function HostProfiles({ hostId }: { hostId: string }) {
                   body: `Delete profile "${p.name}" on this host, with all its projects and tasks here?`,
                   action: "Delete profile",
                   danger: true,
-                  onConfirm: () => deleteProfile({ host: p.host_id, payload: { id: p.id } }),
+                  onConfirm: () => deleteProfile(p.host_id, { id: p.id }),
                 })
               }
             >

@@ -1,47 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { errorText } from "../../state/mutation"
 
 // An error's message, for showing: state/mutation.ts's.
 export { errorText }
-
-/**
- * Runs an action that calls the API (a button's), keeping whether it's running and what it failed with: show `error`
- * where the action is, and disable its button while `busy`. `run` does nothing while it's already running (a
- * double-click), and resolves to whether the action succeeded.
- */
-export function useAsyncAction() {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const running = useRef(false)
-  // Gone once the action navigates away or closes what showed it.
-  const mounted = useRef(true)
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-  const run = useCallback((fn: () => unknown): Promise<boolean> => {
-    if (running.current) return Promise.resolve(false)
-    running.current = true
-    setBusy(true)
-    setError(null)
-    return Promise.resolve()
-      .then(fn)
-      .then(
-        () => true,
-        (e: unknown) => {
-          if (mounted.current) setError(errorText(e))
-          return false
-        },
-      )
-      .finally(() => {
-        running.current = false
-        if (mounted.current) setBusy(false)
-      })
-  }, [])
-  return { busy, error, setError, run }
-}
 
 /**
  * A field's draft of `value`: it follows `value` until it's edited (and again once the edit is put back), so a refresh
