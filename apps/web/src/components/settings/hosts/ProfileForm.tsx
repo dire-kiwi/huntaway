@@ -1,19 +1,20 @@
-import { canRunAgents, type HostAgentConfig as ClaudeConfig, type HostProfile as Profile } from "@huntaway/client"
+import { canRunAgents, type HostAgentConfig as ClaudeConfig, type HostProfile as Profile, mutate } from "@huntaway/client"
 import { AgentConfigId, LinkId, type ProfilePatch, type Reviewer } from "@huntaway/contracts"
+import { Effect, Exit } from "effect"
 import { Loader2 } from "lucide-react"
 import { useState } from "react"
 import { useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
+import { useAction } from "../../../state/mutation"
 import { defaultCloneDir } from "../repoSource"
 import { ConfigPicker } from "../ClaudeConfigs"
 import { DEFAULT_REVIEWER, ReviewerList, SummarizerList, useReviewerExtras } from "../../task/Reviewers"
-import { Button, Field, Input, ModalFooter, Toggle, useAsyncAction } from "../../ui"
+import { Button, Field, Input, ModalFooter, Toggle } from "../../ui"
 import { TintField } from "./TintField"
 import { AsanaAccount } from "../../task/ExternalLinks"
 import { AccessPicker, AssistantHostSelect, GithubAccountSelect, HostSelect, ThreadConfigSelect } from "./profileFields"
 
-// Step 1 (docs/plan/09-frontend.md). Every host takes every field, so the old API gates are gone, and a profile's
+// Every host takes every field (docs/plan/09-frontend.md), so the old API gates are gone, and a profile's
 // summarizers are always a list. A profile has agent configs, never a folder of its own: with none on the host yet, the
 // folder typed here is made its first config, named after the profile, as the old server did. Connecting Asana with a
 // token is 6.11's `AsanaAccount` (task/ExternalLinks).
@@ -59,7 +60,7 @@ export function ProfileForm({
   const [tint, setTint] = useState<string | null | undefined>(undefined)
   // Its Asana connection is saved as it's changed, so it follows the store rather than the form.
   const liveProfile = useBoard((s) => s.profiles.find((p) => p.host_id === initial?.host_id && p.id === initial?.id))
-  const { busy, error: err, run } = useAsyncAction()
+  const [{ busy, error: err }, run] = useAction()
   // This board's own profiles can run their assistants on a linked host.
   const assistantHosts = useBoard(useShallow((s) => s.hosts.filter((h) => !h.local && h.connected)))
   const onBoardHost = useBoard((s) => !!s.hosts.find((h) => h.id === host)?.local)
@@ -72,11 +73,12 @@ export function ProfileForm({
   const ownConfigs = configIds.map((id) => hostConfigs.find((c) => c.id === id)).filter((c): c is ClaudeConfig => !!c)
   const threadPick = (id: string): AgentConfigId | null => (ownConfigs.some((c) => c.id === id) ? AgentConfigId.make(id) : null)
   const submit = (): void => {
-    void run(async () => {
+    if (busy) return
+    const save = Effect.gen(function* () {
       // With no configs on the host, the folder typed becomes its first, named after the profile.
       const ids = pick
         ? configIds.map((id) => AgentConfigId.make(id))
-        : [(await rpc(host, "configs.create", { config: { name: name.trim(), config_dir: dir.trim() } })).id]
+        : [(yield* mutate("configs.create", host, { config: { name: name.trim(), config_dir: dir.trim() } })).id]
       const fields = {
         default_model: model || null,
         claude_config_ids: ids,
@@ -97,9 +99,11 @@ export function ProfileForm({
       }
       if (initial) {
         const patch: ProfilePatch = { name: name.trim(), ...fields, telemetry, telemetry_titles: telemetryTitles }
-        await rpc(initial.host_id, "profiles.update", { id: initial.id, patch })
-      } else await rpc(host, "profiles.create", { profile: { name: name.trim(), ...fields } })
-      onDone()
+        yield* mutate("profiles.update", initial.host_id, { id: initial.id, patch })
+      } else yield* mutate("profiles.create", host, { profile: { name: name.trim(), ...fields } })
+    })
+    void run(save).then((exit) => {
+      if (Exit.isSuccess(exit)) onDone()
     })
   }
   return (

@@ -1,4 +1,5 @@
-import { canRunAgents, hostHas, type HostProfile as Profile } from "@huntaway/client"
+import { useAtomSet } from "@effect/atom-react"
+import { canRunAgents, hostHas, type HostProfile as Profile, mutations } from "@huntaway/client"
 import { LinkId } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { ChevronLeft, Plus, Server, Trash2 } from "lucide-react"
@@ -6,7 +7,6 @@ import { useState } from "react"
 import { profileConfigLabel } from "../boardHelpers"
 import { useBoard } from "../../state/board"
 import { navigate } from "../../state/route"
-import { rpc } from "../../state/rpc"
 import { Button, IconButton, MenuButton, Modal, timeAgo, useConfirm } from "../ui"
 import { HostClaudeConfigs } from "./ClaudeConfigs"
 import { AgentDefaultsRow } from "./hosts/AgentDefaults"
@@ -20,7 +20,7 @@ import { SettingsSyncRow } from "./hosts/SettingsSync"
 import { HostService, RemoteServer } from "./server/RemoteServer"
 import { HostTelemetry } from "./Telemetry"
 
-// Step 1 (docs/plan/09-frontend.md) for the host page (route "host"): its version and Update (hosts/HostRow's
+// The host page (route "host", docs/plan/09-frontend.md): its version and Update (hosts/HostRow's
 // HostVersion), settings sync, agent configs (with Copy login, `hub.hosts.copyConfig`), profiles, terminal tools, this
 // host's Server or a linked host's (server/RemoteServer, over that host's `admin.*`), its systemd service, Desktop, and
 // taking a linked host off the board (`hub.hosts.remove`), and its telemetry (6.9). A profile has agent configs on every
@@ -117,10 +117,7 @@ export function HostPage({ hostId }: { hostId: string }) {
                       body: `Remove ${host.name} from this board? Its projects, threads and agents stay on that host.`,
                       action: "Remove from board",
                       danger: true,
-                      onConfirm: async () => {
-                        await hubRpc("hub.hosts.remove", { id: LinkId.make(host.id) })
-                        navigate({ name: "settings", tab: "hosts" }, true)
-                      },
+                      onConfirm: () => hubRpc("hub.hosts.remove", { id: LinkId.make(host.id) }).then(() => navigate({ name: "settings", tab: "hosts" }, true)),
                     })
                   }
                 >
@@ -142,6 +139,8 @@ function HostProfiles({ hostId }: { hostId: string }) {
   const profiles = all.filter((p) => p.host_id === hostId)
   const [editing, setEditing] = useState<Profile | "new" | null>(null)
   const confirm = useConfirm()
+  // The confirm dialog shows why a delete was refused.
+  const deleteProfile = useAtomSet(mutations.profiles.delete, { mode: "promise" })
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
@@ -171,7 +170,7 @@ function HostProfiles({ hostId }: { hostId: string }) {
                   body: `Delete profile "${p.name}" on this host, with all its projects and tasks here?`,
                   action: "Delete profile",
                   danger: true,
-                  onConfirm: () => rpc(p.host_id, "profiles.delete", { id: p.id }),
+                  onConfirm: () => deleteProfile({ host: p.host_id, payload: { id: p.id } }),
                 })
               }
             >

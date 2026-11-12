@@ -23,6 +23,9 @@ export const invalidates: { readonly [M in keyof Methods]?: ReadonlyArray<GroupO
   "projects.removeMergedWorktrees": ["analytics"],
   // Picking one of a prompt's tasks completes the others and removes their worktrees: the compare view's diffs change.
   "tasks.pickFanout": ["git"],
+  // A host's settings are part of what its status (`release_prereleases`: the release checks run again) and its
+  // settings sync (`settings_sync`) say.
+  "host.updateSettings": ["admin", "settingsSync"],
 }
 
 /** What a query reads again on, as picked from its host's board: it is read again whenever the value changes. */
@@ -50,6 +53,17 @@ const fanoutState = (board: HostBoard, id: string): string => {
     .filter((t) => t.fanout_id === fanout)
     .map((t) => `${t.id}:${t.status}:${t.running}:${t.worktree_state}`)
     .join(",")
+/**
+ * A number for each distinct object, by identity: the board keeps an unchanged value's identity (hostBoard.ts' `keep`),
+ * so the number changes when the value does.
+ */
+const versions = { seen: new WeakMap<object, number>(), last: 0 }
+const versionOf = (value: object): number => {
+  const known = versions.seen.get(value)
+  if (known !== undefined) return known
+  versions.last += 1
+  versions.seen.set(value, versions.last)
+  return versions.last
 }
 
 /** Per method, what of the board a query of it is read again on (none: only mutations and its own refresh). */
@@ -77,6 +91,10 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   "git.diff": (board, p) => taskState(board, p.id),
   // The compare view's facts, as one of the prompt's tasks moves, starts or stops, or its worktree changes.
   "tasks.fanout": (board, p) => fanoutState(board, p.id),
+  // A host's status is another once it has booted again (a restart, an update): its new boot id, commit and version.
+  "admin.status": (board) => board.boot,
+  // What a host's settings sync lists changes with its settings (the old SettingsSyncRow read it again on them).
+  "settingsSync.get": (board) => versionOf(board.settings),
 }
 
 /** The key a host's group is invalidated by. */

@@ -1,42 +1,15 @@
-import type { ServerStatus } from "@huntaway/contracts"
+import { Exit } from "effect"
 import { Download, Loader2, RotateCw } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
-import { rpc } from "../../../state/rpc"
-import { Button, errorText, Modal } from "../../ui"
-import { PHASES, RunningServer, stagedRelease } from "./parts"
+import { useEffect, useRef, useState } from "react"
+import { useMutation } from "../../../state/mutation"
+import { Button, Modal } from "../../ui"
+import { PHASES, RunningServer, stagedRelease, useServerStatus } from "./parts"
 import { Releases, ShellNotice } from "./Releases"
 import { RestartModal } from "./RestartModal"
 
-// Step 1 (docs/plan/09-frontend.md) of the old HostPage's RemoteServer and HostService: a linked host's server and any
-// host's systemd service, over that host's `admin.*` through the hub's relay, followed by polling `admin.status` (a
-// linked host's restart events reach its own board stream, which goes down with it).
-
-/** `hostId`'s `admin.status`, polled every `every(status)` ms; `down` while it doesn't answer. */
-function usePolledStatus(hostId: string, every: number) {
-  const [read, setRead] = useState<{ host: string; status: ServerStatus | null; down: boolean } | null>(null)
-  const poll = useCallback(
-    () =>
-      rpc(hostId, "admin.status", undefined).then(
-        (status) => {
-          setRead({ host: hostId, status, down: false })
-          return status
-        },
-        () => {
-          setRead((r) => ({ host: hostId, status: r?.host === hostId ? r.status : null, down: true }))
-          return null
-        },
-      ),
-    [hostId],
-  )
-  useEffect(() => {
-    void poll()
-    const id = setInterval(() => void poll(), every)
-    return () => clearInterval(id)
-  }, [poll, every])
-  const mine = read?.host === hostId ? read : null
-  const setStatus = useCallback((status: ServerStatus) => setRead({ host: hostId, status, down: false }), [hostId])
-  return { status: mine?.status ?? null, down: mine?.down ?? false, poll, setStatus }
-}
+// The old HostPage's RemoteServer and HostService (docs/plan/09-frontend.md): a linked host's server and any host's
+// systemd service, over that host's `admin.*` through the hub's relay, followed by polling its `admin.status` (a linked
+// host's restart events reach its own board stream, which goes down with it).
 
 /**
  * A linked host's server, followed by polling it: Rebuild & restart, and for a host with release updates
@@ -46,7 +19,7 @@ export function RemoteServer({ hostId }: { hostId: string }) {
   // The boot id before the restart: it's over when that changes, or the restart fails.
   const [watching, setWatching] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
-  const { status, down, poll, setStatus } = usePolledStatus(hostId, watching ? 1500 : downloading ? 3000 : 10_000)
+  const { status, down } = useServerStatus(hostId, watching ? "1.5 seconds" : downloading ? "3 seconds" : "10 seconds")
   const [asking, setAsking] = useState<"restart" | "release" | "rollback" | null>(null)
   const logRef = useRef<HTMLPreElement>(null)
   // A background download's progress is worth following more closely.
@@ -123,8 +96,6 @@ export function RemoteServer({ hostId }: { hostId: string }) {
         <Releases
           hostId={hostId}
           release={release}
-          onStatus={setStatus}
-          refresh={poll}
           onRollback={() => {
             setAsking("rollback")
           }}
@@ -152,22 +123,20 @@ export function RemoteServer({ hostId }: { hostId: string }) {
 export function HostService({ hostId }: { hostId: string }) {
   // The boot id before the switch.
   const [watching, setWatching] = useState<string | null>(null)
-  const { status } = usePolledStatus(hostId, watching ? 1500 : 30_000)
+  const { status } = useServerStatus(hostId, watching ? "1.5 seconds" : "30 seconds")
   const [asking, setAsking] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ error: err }, installService] = useMutation("admin.installService")
   if (watching && status && (status.boot_id !== watching || status.restart?.phase === "failed")) setWatching(null)
   const svc = status?.service
   if (!status || !svc) return null
   const failed = !watching && status.restart?.phase === "failed" ? status.restart : null
-  const install = async () => {
-    setErr(null)
-    try {
-      await rpc(hostId, "admin.installService", undefined)
-      setWatching(status.boot_id)
+  const install = () => {
+    const boot = status.boot_id
+    void installService(hostId, undefined).then((exit) => {
+      if (!Exit.isSuccess(exit)) return
+      setWatching(boot)
       setAsking(false)
-    } catch (e) {
-      setErr(errorText(e))
-    }
+    })
   }
   return (
     <section>
@@ -222,7 +191,7 @@ export function HostService({ hostId }: { hostId: string }) {
               <Button variant="ghost" onClick={() => setAsking(false)}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={() => void install()}>
+              <Button variant="primary" onClick={install}>
                 {svc.installed ? "Restart under it" : "Install & restart"}
               </Button>
             </div>

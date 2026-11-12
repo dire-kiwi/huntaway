@@ -53,14 +53,6 @@ const noEffect = {
 const stepOne = [
   // docs/: what runs inside the sandboxed page frame, as source, where Effect's timers aren't (its selection debounce)
   "apps/web/src/components/docs/docFrame.ts",
-  // settings/: hosts and the server
-  "apps/web/src/components/settings/hosts/**",
-  "apps/web/src/components/settings/server/**",
-  "apps/web/src/components/settings/HostPage.tsx",
-  "apps/web/src/components/settings/Server.tsx",
-  "apps/web/src/components/settings/Hosts.tsx",
-  "apps/web/src/components/settings/Network.tsx",
-  "apps/web/src/components/settings/uiVersion.ts",
   // task/: the assistant, documents and links
   "apps/web/src/components/task/Memory.tsx",
   "apps/web/src/components/task/Brief.tsx",
