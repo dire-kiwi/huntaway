@@ -1,6 +1,6 @@
 import { clsx } from "clsx"
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
-import { inTab, type PenLanes } from "../pens"
+import { inTab, type PenLanes } from "../penModel"
 import { IconButton, StatusIcon } from "../../ui"
 import { Cards, type CardsProps } from "./Cards"
 import { DropColumn } from "./DropColumn"

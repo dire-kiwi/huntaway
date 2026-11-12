@@ -31,7 +31,7 @@ import {
   settled,
   tabOf,
   type PenTab,
-} from "./pens"
+} from "./penModel"
 import { useAction } from "../../state/mutation"
 import { navigate } from "../../state/route"
 import { after } from "../../state/timers"

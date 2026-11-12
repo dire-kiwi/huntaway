@@ -124,7 +124,9 @@ write_env() {
     echo "# open: http://127.0.0.1:$port/?token=$token"
     echo "# stop: $0 stop $dir"
   } > "$dir/env"
-  ln -sfn "$dir/env" "$latest"
+  # A link of its own renamed over it: `ln -sfn` removes the old link and then makes the new one, and two servers
+  # starting at once (the UI checks' files) both removed it and the second's failed with "Already exists".
+  ln -sfn "$dir/env" "$latest.$$" && mv -f "$latest.$$" "$latest"
   cat "$dir/env"
 }
 

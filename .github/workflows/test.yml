@@ -122,6 +122,14 @@ jobs:
       - name: pnpm check
         run: pnpm check
 
+      # macOS's filesystem doesn't tell case apart, so an import of ./Pens there found pens.ts beside Pens.tsx and the
+      # release's macOS build failed (HE-11) while Linux built. Paths that differ only in case, or in case and a
+      # .js/.ts/.tsx extension (which imports leave out), fail here, on Linux.
+      - name: Paths that differ only in case
+        run: |
+          clash=$(git ls-files | sed -E 's/\.[cm]?[jt]sx?$//' | sort -u | sort -f | uniq -di)
+          [ -z "$clash" ] || { echo "::error::paths that differ only in case, which macOS doesn't tell apart: $clash"; exit 1; }
+
   # `pnpm test`: the server's tests (pure, service and structural tiers) and the packages'.
   test:
     needs: tree

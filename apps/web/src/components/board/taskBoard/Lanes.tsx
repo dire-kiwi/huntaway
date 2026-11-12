@@ -1,7 +1,7 @@
 import { clsx } from "clsx"
 import { ChevronLeft, ChevronRight, Fence, Plus } from "lucide-react"
 import { PEN_COLORS } from "@huntaway/client"
-import { inTab, type PenLanes, type PenTab } from "../pens"
+import { inTab, type PenLanes, type PenTab } from "../penModel"
 import { IconButton, StatusIcon } from "../../ui"
 import { TaskRow } from "../TaskCard"
 import { Cards, type CardsProps } from "./Cards"
