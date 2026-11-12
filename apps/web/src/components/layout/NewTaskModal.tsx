@@ -89,7 +89,7 @@ export function NewTaskModal({
       }
       onClose={onClose}
       // Not while the Asana dialog is open over it, whose Enter (with Ctrl or Cmd too) is its own.
-      onSubmit={pickingLink ? undefined : () => void submit()}
+      onSubmit={pickingLink ? undefined : () => submit()}
       width="max-w-xl"
     >
       <form
@@ -97,7 +97,7 @@ export function NewTaskModal({
         {...attach.dropProps}
         onSubmit={(e) => {
           e.preventDefault()
-          void submit()
+          submit()
         }}
       >
         <Editor ed={ed} completion={completion} layout={layout} where={place} tok={tok} attach={attach} />
