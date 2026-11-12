@@ -62,6 +62,7 @@ import { Analytics } from "./analytics/Analytics.ts"
 import { AnalyticsRepo } from "./analytics/AnalyticsRepo.ts"
 import { Disk } from "./analytics/Disk.ts"
 import { Assistant } from "./assistant/Assistant.ts"
+import { AssistantHost } from "./hosts/AssistantHost.ts"
 import { Brief } from "./assistant/Brief.ts"
 import { Google } from "./assistant/Google.ts"
 import { Memory } from "./assistant/Memory.ts"
@@ -313,7 +314,12 @@ export const ReadOnlyAreas = Layer.mergeAll(Board.layer, LinkRepo.layer).pipe(
   Layer.provideMerge(Layer.mergeAll(Analytics.layer, Disk.layer).pipe(Layer.provideMerge(AnalyticsRepo.layer))),
   Layer.provideMerge(Push.layer.pipe(Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)))),
   Layer.provideMerge(Workflows.layer.pipe(Layer.provideMerge(WorkflowEngine.layer), Layer.provideMerge(WorkflowStore.layer))),
-  Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer).pipe(Layer.provideMerge(Assistant.layer), Layer.provideMerge(Memory.layer))),
+  Layer.provideMerge(
+    Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer, AssistantHost.readOnly).pipe(
+      Layer.provideMerge(Assistant.layer),
+      Layer.provideMerge(Memory.layer),
+    ),
+  ),
   Layer.provideMerge(
     Docs.layer.pipe(
       Layer.provideMerge(HostedDocs.layer),

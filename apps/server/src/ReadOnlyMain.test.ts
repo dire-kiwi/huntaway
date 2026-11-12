@@ -19,9 +19,8 @@ import { isRead } from "./rpc/readOnly.ts"
 // taken from the contract; then the repository and the old folder are byte for byte what they were, the processes
 // started were reading git commands only, and nothing was asked of the network.
 //
-// The folder is `@huntaway/testing`'s `importedFolder`: until the importer converts boards it builds the board with the
-// server's own services and writes `import.json` by hand; then it runs `import-legacy --rehearsal`, and this test does
-// not change.
+// The folder is `@huntaway/testing`'s `importedFolder`: an old board (the old schema) whose task has a worktree in the
+// old folder, imported with `import-legacy --rehearsal --check`, as a host's rehearsal is made.
 
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null"
 process.env["GIT_CONFIG_NOSYSTEM"] = "1"

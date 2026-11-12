@@ -92,4 +92,21 @@ export class AssistantHost extends Context.Service<AssistantHost, AssistantHostS
       return AssistantHost.of({ get, send })
     }),
   )
+
+  /**
+   * A read-only server's (docs/plan/06-server.md, A read-only server): it has no links, so a profile's assistant is
+   * always this board's own, whatever host the profile names.
+   */
+  static readonly readOnly = Layer.effect(
+    AssistantHost,
+    Effect.gen(function* () {
+      const assistant = yield* Assistant
+      const identity = yield* Identity
+      const mine = (task: Task): AssistantTask => Object.assign({ host_id: HostId.make(identity.hostId) }, task)
+      return AssistantHost.of({
+        get: (profile) => Effect.map(assistant.get(profile, true), mine),
+        send: (profile, text) => Effect.map(assistant.send(profile, text, true), mine),
+      })
+    }),
+  )
 }
