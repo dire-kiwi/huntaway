@@ -1,10 +1,10 @@
 import { clsx } from "clsx"
 import { Check, Plus } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useAtomValue } from "@effect/atom-react"
+import { useState } from "react"
 import type { ProjectAgentTools as AgentTools } from "@huntaway/contracts"
-import type { HostProject as Project } from "@huntaway/client"
-import { useRpc } from "../../state/rpc"
-import { Input } from "../ui"
+import { query, type HostProject as Project } from "@huntaway/client"
+import { Input, resultError, resultValue } from "../ui"
 
 // A workflow agent step's skills and MCP servers (6.4; huntaway's settings/AgentStepTools.tsx), for the workflow
 // inspector (6.6 mounts it).
@@ -42,20 +42,10 @@ export function AgentStepTools({
   disabled: ReadonlyArray<string>
   onChange: (patch: { skills?: string[]; disabled_mcp_servers?: string[] }) => void
 }) {
-  const rpc = useRpc()
-  const [tools, setTools] = useState<AgentTools | null>(null)
-  const [failed, setFailed] = useState(false)
+  const result = useAtomValue(query("agentTools.project", project.host_id, { project_id: project.id }))
+  const tools = resultValue(result)
+  const failed = !tools && resultError(result) !== null
   const [adding, setAdding] = useState("")
-  useEffect(() => {
-    let live = true
-    rpc(project.host_id, "agentTools.project", { project_id: project.id }).then(
-      (t) => live && setTools(t),
-      () => live && setFailed(true),
-    )
-    return () => {
-      live = false
-    }
-  }, [rpc, project.host_id, project.id])
   const choices = tools ? stepToolChoices(tools, configId) : { skills: [], servers: [] }
   // What it has that isn't on the list (a skill from elsewhere, a server since removed) shows too, to take off.
   const skillNames = [...choices.skills, ...skills.filter((s) => !choices.skills.includes(s))]
