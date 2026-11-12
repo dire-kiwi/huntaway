@@ -30,7 +30,8 @@ test("a config's login is copied to the linked host, into a config made there", 
   writeFileSync(join(from, ".credentials.json"), '{"token":"t"}')
   writeFileSync(join(from, "settings.json"), "{}")
   await hub.rpc("configs.create", { config: { name: "work", config_dir: from } })
-  await withBrowser(hub, {}, async (ui) => {
+  // The dialog's folder field comes once the page has the linked host (over the hub's relay), slower on CI's runner.
+  await withBrowser(hub, { timeout: 20000 }, async (ui) => {
     const { page } = ui
     await ui.run([`goto /hosts/${hubId}`, "wait Agent configs on this host", "click Copy login", 'wait Copy "work" login from', `wait ${from}`])
     const dir = page.locator("[data-modal] input").last()
