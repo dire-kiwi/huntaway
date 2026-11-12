@@ -110,6 +110,9 @@ const copyOldDatabase = Effect.fnUntraced(function* (file: string, copy: string,
   if (yield* fs.exists(`${file}-wal`)) yield* fs.copyFile(`${file}-wal`, `${copy}-wal`)
 })
 
+/** Keys for a refusal: the first 30, and how many more. */
+const listed = (keys: ReadonlyArray<string>) => (keys.length <= 30 ? keys.join(", ") : `${keys.slice(0, 30).join(", ")} and ${keys.length - 30} more`)
+
 /** What the old database must be before it is imported; every reason it is not. */
 const preconditions = Effect.fnUntraced(function* (old: OldDb, options: ImportOptions) {
   const reasons: Array<string> = []
@@ -119,16 +122,16 @@ const preconditions = Effect.fnUntraced(function* (old: OldDb, options: ImportOp
   if (!options.force && !options.rehearsal && old.tables.has("runs")) {
     const live = yield* old.query(`SELECT id FROM runs WHERE status <> 'exited' ORDER BY rowid`)
     if (live.length > 0)
-      reasons.push(
-        `${live.length} runs are live (${live.map((r) => String(r["id"])).join(", ")}): wait for them to end, or --force records them as interrupted`,
-      )
+      reasons.push(`${live.length} runs are live (${listed(live.map((r) => String(r["id"])))}): wait for them to end, or --force records them as interrupted`)
   }
-  if (old.columns("tasks").has("thread_source")) {
+  // A task not yet moved onto items whose thread has no `messages` rows has nothing to convert: the old server leaves
+  // every task made since its last start on messages until its next start, and moving one with no rows rebuilds nothing.
+  if (old.columns("tasks").has("thread_source") && old.tables.has("messages")) {
     const onMessages = yield* old.query(`SELECT ${taskKeySql} AS key FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
-      WHERE t.thread_source <> 'items' ORDER BY t.created_at`)
+      WHERE t.thread_source <> 'items' AND EXISTS (SELECT 1 FROM messages m WHERE m.task_id = t.id) ORDER BY t.created_at`)
     if (onMessages.length > 0)
       reasons.push(
-        `${onMessages.length} tasks' threads are not yet items (${onMessages.map((r) => String(r["key"])).join(", ")}): start the old server once and let it move them (docs/plan/11-migration.md, Threads not yet items)`,
+        `${onMessages.length} tasks' threads are not yet items (${listed(onMessages.map((r) => String(r["key"])))}): start the old server once and let it move them (docs/plan/11-migration.md, Threads not yet items)`,
       )
   }
   if (old.columns("threads").has("error")) {
@@ -136,7 +139,7 @@ const preconditions = Effect.fnUntraced(function* (old: OldDb, options: ImportOp
       WHERE h.error IS NOT NULL ORDER BY t.created_at`)
     if (broken.length > 0)
       reasons.push(
-        `${broken.length} threads stopped on a fault (${broken.map((r) => String(r["key"])).join(", ")}): rebuild them on the old server (huntaway threads-rebuild <key>)`,
+        `${broken.length} threads stopped on a fault (${listed(broken.map((r) => String(r["key"])))}): rebuild them on the old server (huntaway threads-rebuild <key>)`,
       )
   }
   return reasons

@@ -63,11 +63,47 @@ describe("import-legacy", () => {
             created_at: "2026-01-01T00:00:00.000Z",
             updated_at: "2026-01-01T00:00:00.000Z",
           })
+          yield* old.insert("messages", { task_id: "t1", kind: "user", data: '{"text":"hi"}', created_at: "2026-01-01T00:00:00.000Z" })
         }),
       )
       const error = yield* Effect.flip(importLegacy(options(`${tmp}/old`, `${tmp}/new`)))
       expect(error._tag === "StartupError" ? error.reason : error.message).toContain("PRJ-7")
       expect(yield* fs.exists(`${tmp}/new/board.db`)).toBe(false)
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+  it.effect("imports a task not yet moved onto items that has no messages: there is nothing to convert", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const tmp = yield* fs.makeTempDirectoryScoped()
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const old = yield* makeLegacyBoard(`${tmp}/old`)
+          yield* old.insert("profiles", { id: "p1", name: "Me", created_at: "2026-01-01T00:00:00.000Z" })
+          yield* old.insert("projects", {
+            id: "j1",
+            profile_id: "p1",
+            name: "Proj",
+            key: "PRJ",
+            repo_path: "/nonexistent/repo",
+            scratch_path: "/nonexistent/scratch",
+            worktrees_root: "/nonexistent/wt",
+            created_at: "2026-01-01T00:00:00.000Z",
+          })
+          yield* old.insert("tasks", {
+            id: "t1",
+            profile_id: "p1",
+            project_id: "j1",
+            number: 7,
+            title: "Old",
+            thread_source: "messages",
+            last_activity_at: "2026-01-01T00:00:00.000Z",
+            created_at: "2026-01-01T00:00:00.000Z",
+            updated_at: "2026-01-01T00:00:00.000Z",
+          })
+        }),
+      )
+      const result = yield* importLegacy(options(`${tmp}/old`, `${tmp}/new`))
+      expect(result.report.tables["tasks"]).toEqual({ old: 1, written: 1, withheld: 0 })
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

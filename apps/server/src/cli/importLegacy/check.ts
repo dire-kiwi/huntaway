@@ -66,7 +66,6 @@ const PATHS: ReadonlyArray<readonly [table: string, column: string, key: string]
   ["projects", "repo_path", "key"],
   ["projects", "scratch_path", "key"],
   ["projects", "worktrees_root", "key"],
-  ["projects", "repo_root", "key"],
   ["tasks", "work_dir", "id"],
   ["tasks", "worktree_path", "id"],
 ]
