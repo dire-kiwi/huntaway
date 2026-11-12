@@ -1,86 +1,57 @@
+import { useAtom } from "@effect/atom-react"
+import { BrowserKeyValueStore } from "@effect/platform-browser"
+import { callRpc } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
-import { createStore } from "../../smallStore"
-import { rpc } from "../../state/rpc"
-import { parseJson, toJson } from "../ui/json"
+import { Effect, Schedule, Schema } from "effect"
+import { Atom } from "effect/reactivity"
+import { useCallback } from "react"
+import { registry } from "../../state/registry"
 
 /**
  * Terminal tools (lazygit, an editor…) this board has open, per task. Each is a tmux session
  * on the task's host that lasts as long as a board keeps it open: while the app is open we
  * renew it every so often, and the host ends sessions nobody renews or is attached to. The
  * list is kept for the browser tab (sessionStorage), so reloading doesn't close them.
- *
- * Step 1 (docs/plan/09-frontend.md): the old zustand store on `smallStore`, kept beside the terminal.
  */
 
-const KEY = "ia.openTools"
-const KEEPALIVE_MS = 30_000
+const KEEPALIVE = "30 seconds"
 
-export interface OpenTool {
-  hostId: string
-  taskId: string
-  toolId: string
-}
-
-interface ToolsState {
-  open: OpenTool[]
-  openTool: (t: OpenTool) => void
-  closeTool: (t: OpenTool) => void
-}
+const OpenTool = Schema.Struct({ hostId: Schema.String, taskId: Schema.String, toolId: Schema.String })
+export type OpenTool = typeof OpenTool.Type
 
 const same = (a: OpenTool, b: OpenTool) => a.hostId === b.hostId && a.taskId === b.taskId && a.toolId === b.toolId
 
-const isOpenTool = (v: unknown): v is OpenTool =>
-  typeof v === "object" &&
-  v !== null &&
-  "hostId" in v &&
-  typeof v.hostId === "string" &&
-  "taskId" in v &&
-  typeof v.taskId === "string" &&
-  "toolId" in v &&
-  typeof v.toolId === "string"
+/** The open tools, under the old `ia.openTools` key of the tab's sessionStorage, as JSON. */
+const openToolsAtom = Atom.kvs({
+  runtime: Atom.runtime(BrowserKeyValueStore.layerSessionStorage),
+  key: "ia.openTools",
+  schema: Schema.Array(OpenTool),
+  defaultValue: (): ReadonlyArray<OpenTool> => [],
+})
 
-function load(): OpenTool[] {
-  try {
-    const v = parseJson(sessionStorage.getItem(KEY) ?? "[]")
-    return Array.isArray(v) ? v.filter(isOpenTool) : []
-  } catch {
-    return []
-  }
+/** The tools this tab has open, and opening or closing one. */
+export function useOpenTools() {
+  const [open, setOpen] = useAtom(openToolsAtom)
+  const openTool = useCallback((t: OpenTool) => setOpen((cur) => (cur.some((o) => same(o, t)) ? cur : [...cur, t])), [setOpen])
+  const closeTool = useCallback((t: OpenTool) => setOpen((cur) => cur.filter((o) => !same(o, t))), [setOpen])
+  return { open, openTool, closeTool }
 }
 
-function save(open: OpenTool[]) {
-  try {
-    sessionStorage.setItem(KEY, toJson(open))
-  } catch {
-    /* ignore */
-  }
-}
-
-export const useOpenTools = createStore<ToolsState>((set) => ({
-  open: load(),
-  openTool: (t) => {
-    const { open } = useOpenTools.getState()
-    if (open.some((o) => same(o, t))) return
-    const next = [...open, t]
-    set({ open: next })
-    save(next)
-  },
-  closeTool: (t) => {
-    const next = useOpenTools.getState().open.filter((o) => !same(o, t))
-    set({ open: next })
-    save(next)
-  },
-}))
-
-let timer: ReturnType<typeof setInterval> | undefined
-
-const tick = () => {
-  for (const t of useOpenTools.getState().open) rpc(t.hostId, "terminal.keepalive", { task_id: TaskId.make(t.taskId), tool: t.toolId }).catch(() => {})
-}
+/**
+ * Renews every open tool's session now and every 30 seconds while mounted. A renewal changes nothing the board shows,
+ * so it reads nothing again (a plain call, not a mutation).
+ */
+const keepaliveAtom = Atom.make((get) =>
+  Effect.suspend(() =>
+    Effect.forEach(
+      get.once(openToolsAtom),
+      (t) => callRpc(t.hostId, "terminal.keepalive", { task_id: TaskId.make(t.taskId), tool: t.toolId }).pipe(Effect.ignore),
+      { concurrency: "unbounded", discard: true },
+    ),
+  ).pipe(Effect.repeat(Schedule.spaced(KEEPALIVE)), Effect.asVoid),
+)
 
 /** Keep every open tool's session alive while the app is open. */
 export function startToolKeepalive() {
-  if (timer) return
-  tick()
-  timer = setInterval(tick, KEEPALIVE_MS)
+  registry.mount(keepaliveAtom)
 }

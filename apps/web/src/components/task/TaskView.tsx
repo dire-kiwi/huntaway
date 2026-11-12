@@ -9,6 +9,7 @@ import {
   isScratch,
   keyPrefix,
   LABELS,
+  mutate,
   runningAgentSteers,
   stopTitle,
   taskLabels,
@@ -16,12 +17,14 @@ import {
 } from "@huntaway/client"
 import type { TerminalTool } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import type { Effect } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
 import { ChevronLeft, ChevronRight, Clock, Folder, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react"
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { boardTaskUrl, groupTaskUrl, href, profileTaskUrl, type Panel } from "../../router"
 import { closeTask, closeTaskModal, navigate, setPanelExpanded } from "../../state/route"
 import { board, useBoard } from "../../state/board"
-import { rpc } from "../../state/rpc"
+import { exitError, useAction } from "../../state/mutation"
 import { isGroupTask, useHost, useProfileName, useProject } from "../boardHelpers"
 import { useNarrow } from "../../narrow"
 import { openingTab } from "./openingTab"
@@ -30,7 +33,7 @@ import { AgentIcon } from "../ui/AgentIcon"
 import { ContextPill } from "./Context"
 import { TaskTypeBadge } from "./documentInfo"
 import { ReminderButton, StarButton, useCanMark } from "./Reminders"
-import { Button, errorText, IconButton } from "../ui"
+import { Button, IconButton } from "../ui"
 import { Details } from "./view/details/Details"
 import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout"
 import { TabContent } from "./view/TabContent"
@@ -174,7 +177,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const [markErr, setMarkErr] = useState<string | null>(null)
   // 6.1: the host's terminal tools, and which of them this board has open for the task.
   const tools = useBoard((s) => (task ? s.hostSettings[task.host_id]?.terminal_tools : undefined)) ?? NO_TOOLS
-  const allOpen = useOpenTools((s) => s.open)
+  const { open: allOpen, openTool, closeTool } = useOpenTools()
+  // Ending tools, stopping and starting the agent: their errors show under the header, with the marks'.
+  const [, act] = useAction()
   const openIds = useMemo(() => allOpen.filter((o) => o.taskId === taskId && o.hostId === task?.host_id).map((o) => o.toolId), [allOpen, taskId, task?.host_id])
   // 6.10: the desktop view (HA-273), beside the main area, on a host whose agents may use its desktop.
   const [desktop, setDesktop] = useState(false)
@@ -201,10 +206,10 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     if (!task || !hostTools) return
     for (const id of openIds)
       if (!hostTools.some((t) => t.id === id)) {
-        rpc(task.host_id, "terminal.kill", { task_id: task.id, tool: id }).catch(() => {})
-        useOpenTools.getState().closeTool({ hostId: task.host_id, taskId: task.id, toolId: id })
+        void act(mutate("terminal.kill", task.host_id, { task_id: task.id, tool: id }))
+        closeTool({ hostId: task.host_id, taskId: task.id, toolId: id })
       }
-  }, [task, hostTools, openIds])
+  }, [task, hostTools, openIds, act, closeTool])
   // A subagent's thread stays shown while the task is open: closing it (or opening another) goes back to the main thread.
   useEffect(() => () => useSubagentView.getState().show(taskId, null), [taskId])
   // Wide enough for the details column: their tab is gone, and the thread shows instead. Not
@@ -267,12 +272,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     setTab(t)
   }
   const showTool = (t: TerminalTool) => {
-    useOpenTools.getState().openTool({ hostId: task.host_id, taskId: task.id, toolId: t.id })
+    openTool({ hostId: task.host_id, taskId: task.id, toolId: t.id })
     selectTab(toolTab(t.id))
   }
   const endTool = (t: TerminalTool) => {
-    rpc(task.host_id, "terminal.kill", { task_id: task.id, tool: t.id }).catch(() => {})
-    useOpenTools.getState().closeTool({ hostId: task.host_id, taskId: task.id, toolId: t.id })
+    void act(mutate("terminal.kill", task.host_id, { task_id: task.id, tool: t.id }))
+    closeTool({ hostId: task.host_id, taskId: task.id, toolId: t.id })
     setMounted((m) => m.filter((x) => x !== toolTab(t.id)))
     if (tab === toolTab(t.id)) setTab("thread")
   }
@@ -292,10 +297,14 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   }
 
   // Errors show under the header, with the marks'.
-  const stop = () => {
+  const runShowing = <A, E>(what: string, effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>) => {
     setMarkErr(null)
-    rpc(task.host_id, "tasks.stop", { id: task.id }).catch((e: unknown) => setMarkErr(`Couldn't stop the agent: ${errorText(e)}`))
+    void act(effect).then((exit) => {
+      const err = exitError(exit)
+      if (err !== null) setMarkErr(`${what}: ${err}`)
+    })
   }
+  const stop = () => runShowing("Couldn't stop the agent", mutate("tasks.stop", task.host_id, { id: task.id }))
 
   // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
   // Stopping the task also stops its review, summaries and workflows, so it can be stopped while only those run.
@@ -329,8 +338,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           size="sm"
           variant="primary"
           onClick={() => {
-            setMarkErr(null)
-            rpc(task.host_id, "tasks.send", { id: task.id, text: "" }).catch((e: unknown) => setMarkErr(`Couldn't start the agent: ${errorText(e)}`))
+            runShowing("Couldn't start the agent", mutate("tasks.send", task.host_id, { id: task.id, text: "" }))
             setTab("thread")
           }}
         >
