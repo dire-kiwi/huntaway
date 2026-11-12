@@ -1,13 +1,15 @@
 import type { HostTask as Task } from "@huntaway/client"
+import { Exit } from "effect"
 import { Pin } from "lucide-react"
 import { useState } from "react"
-import { rpc } from "../../../state/rpc"
-import { Button, errorText, Input } from "../../ui"
+import { exitError, useMutation } from "../../../state/mutation"
+import { Button, Input } from "../../ui"
 import { Section } from "./details/Section"
 
 export function TitleEditor({ task, onError }: { task: Task; onError: (err: string | null) => void }) {
   const [editing, setEditing] = useState(false)
   const [v, setV] = useState(task.title)
+  const [, update] = useMutation("tasks.update")
   // Taken when editing starts and kept while it's being edited, so a title that changes meanwhile (re-titled from a
   // message, say) doesn't overwrite what's typed.
   if (!editing)
@@ -30,9 +32,10 @@ export function TitleEditor({ task, onError }: { task: Task; onError: (err: stri
             aria-label="Unpin title"
             onClick={() => {
               onError(null)
-              rpc(task.host_id, "tasks.update", { id: task.id, patch: { title_pinned: false } }).catch((e: unknown) =>
-                onError(`Couldn't unpin the title: ${errorText(e)}`),
-              )
+              void update(task.host_id, { id: task.id, patch: { title_pinned: false } }).then((exit) => {
+                const why = exitError(exit)
+                if (why !== null) onError(`Couldn't unpin the title: ${why}`)
+              })
             }}
           >
             <Pin size={12} />
@@ -45,11 +48,13 @@ export function TitleEditor({ task, onError }: { task: Task; onError: (err: stri
     const typed = v
     if (!typed.trim() || typed === task.title) return
     onError(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { title: typed.trim() } }).catch((e: unknown) => {
+    void update(task.host_id, { id: task.id, patch: { title: typed.trim() } }).then((exit) => {
+      const why = exitError(exit)
+      if (why === null) return
       // Back to editing what was typed, to try again.
       setV(typed)
       setEditing(true)
-      onError(`Couldn't rename the task: ${errorText(e)}`)
+      onError(`Couldn't rename the task: ${why}`)
     })
   }
   return (
@@ -71,7 +76,8 @@ export function TitleEditor({ task, onError }: { task: Task; onError: (err: stri
 export function TitleSection({ task }: { task: Task }) {
   const [editing, setEditing] = useState(false)
   const [v, setV] = useState(task.title)
-  const [busy, setBusy] = useState(false)
+  const [{ busy }, rename] = useMutation("tasks.update")
+  const [, update] = useMutation("tasks.update")
   const [err, setErr] = useState<string | null>(null)
   // Taken when editing starts and kept while it's being edited, as in the header's editor.
   const save = () => {
@@ -81,18 +87,19 @@ export function TitleSection({ task }: { task: Task }) {
       setEditing(false)
       return
     }
-    setBusy(true)
     setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { title: typed } })
-      .then(() => setEditing(false))
-      .catch((e: unknown) => setErr(`Couldn't rename the task: ${errorText(e)}`))
-      .finally(() => setBusy(false))
+    void rename(task.host_id, { id: task.id, patch: { title: typed } }).then((exit) => {
+      const why = exitError(exit)
+      if (Exit.isSuccess(exit)) setEditing(false)
+      else if (why !== null) setErr(`Couldn't rename the task: ${why}`)
+    })
   }
   const unpin = () => {
     setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { title_pinned: false } }).catch((e: unknown) =>
-      setErr(`Couldn't unpin the title: ${errorText(e)}`),
-    )
+    void update(task.host_id, { id: task.id, patch: { title_pinned: false } }).then((exit) => {
+      const why = exitError(exit)
+      if (why !== null) setErr(`Couldn't unpin the title: ${why}`)
+    })
   }
   return (
     <Section

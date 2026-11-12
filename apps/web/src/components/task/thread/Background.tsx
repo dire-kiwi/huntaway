@@ -3,7 +3,9 @@ import { ExternalLink, Globe, Loader2, MonitorPlay, Square } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { backgroundLabel, serverUrl, type HostTask as Task } from "@huntaway/client"
 import type { BackgroundItem, TaskServer } from "@huntaway/contracts"
-import { duration, useClock } from "../../ui/time"
+import { useNow } from "../../../state/clock"
+import { millisOf } from "../../ui"
+import { duration } from "../../ui/time"
 
 /**
  * What the task's agent left going (HA-405), above its composer: the shells it has running in the background (a dev
@@ -40,7 +42,7 @@ export function BackgroundBanner({ task }: { task: Task }) {
 const NOT_YET = "not yet on this server (it comes with agent runs)"
 
 function ShellRow({ item, onError }: { item: BackgroundItem; onError: (e: string | null) => void }) {
-  const now = useClock(1000)
+  const now = useNow(1000)
   const label = backgroundLabel(item)
   const title = [item.command, item.description && item.description !== item.command ? item.description : null].filter(Boolean).join("\n") || undefined
   return (
@@ -49,7 +51,7 @@ function ShellRow({ item, onError }: { item: BackgroundItem; onError: (e: string
       <span className="min-w-0 flex-1 truncate text-muted" title={title}>
         <span className="text-faint">{item.waited ? "Waiting on: " : "Background: "}</span>
         <span className="text-fg">{label}</span>
-        {item.since && <span className="text-faint"> · running {duration(now - new Date(item.since).getTime())}</span>}
+        {item.since && <span className="text-faint"> · running {duration(now - millisOf(item.since))}</span>}
       </span>
       {item.id && (
         <RowButton

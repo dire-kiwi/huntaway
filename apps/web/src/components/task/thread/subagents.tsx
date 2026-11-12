@@ -3,6 +3,7 @@ import { ArrowLeft, Bot, Check, ChevronRight, FileText, Loader2, LocateFixed, Ma
 import { Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { duration, subagentTitle, useSubagentFocus, useSubagentView, type Subagent } from "./subagentView"
 import type { Call, Item, ToolResult } from "./threadModel"
+import { after } from "../../../state/timers"
 import { RunningDot } from "../../ui"
 import { lineage, SubagentRowCtx, ThreadCtx, usePendingFocus, useThread } from "./context"
 import { ItemList } from "./ItemList"
@@ -89,8 +90,7 @@ export function SubagentRow({ call, sub }: { call: Call; sub: Subagent }) {
   }, [focus, sub.id, handle])
   useEffect(() => {
     if (!flash) return undefined
-    const t = setTimeout(() => setFlash(false), 1500)
-    return () => clearTimeout(t)
+    return after("1.5 seconds", () => setFlash(false))
   }, [flash])
 
   return (

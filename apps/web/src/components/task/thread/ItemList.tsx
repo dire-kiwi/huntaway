@@ -8,7 +8,7 @@ import { AttachmentList } from "../Attachments"
 import { CompactLine, EventLine, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
 import { Markdown } from "./Markdown"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
-import type { Item } from "./threadModel"
+import type { Item, ReportData } from "./threadModel"
 import { ToolGroup } from "./tools"
 
 // Memoized: the thread redraws for changes to its task (e.g. its context use), which leave the items as they were.
@@ -118,7 +118,7 @@ function UserText({ text, hostId }: { text: string; hostId: string }) {
 const REPORT_SAYS: Record<string, string> = { reported: "reported", failed: "failed", asked: "is waiting for you" }
 
 /** A routine's report in the assistant's thread (API 110): what its run in a thread of its own found, with a link to it. */
-function RoutineReport({ data }: { data: { automation?: string; task_id?: string; key?: string; outcome?: string; text?: string } }) {
+function RoutineReport({ data }: { data: ReportData }) {
   const outcome = data.outcome ?? "reported"
   return (
     <div

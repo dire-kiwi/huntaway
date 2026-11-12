@@ -5,10 +5,9 @@ import { Schema } from "effect"
 import { useState } from "react"
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../../agents"
 import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
+import { useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
 import { ModelPicker } from "../../layout/newTask/ModelPicker"
-import { errorText } from "../../ui"
 import { useThreadConfig } from "../view/hooks"
 
 const pickerClass =
@@ -24,11 +23,13 @@ export function ModelEffort({ task }: { task: Task }) {
   const threadConfig = useThreadConfig(task).current
   // A Codex config's models (`configs.models`), or Claude's aliases.
   const models = useAgentModels(task.host_id, threadConfig)
-  const [err, setErr] = useState<string | null>(null)
+  const [changing, setChanging] = useState("")
+  const [{ error }, update] = useMutation("tasks.update")
   const change = (fields: { model?: string | null; effort?: Effort | null }, what: string) => {
-    setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: fields }).catch((e: unknown) => setErr(`Couldn't change the ${what}: ${errorText(e)}`))
+    setChanging(what)
+    void update(task.host_id, { id: task.id, patch: fields })
   }
+  const err = error === null ? null : `Couldn't change the ${changing}: ${error}`
   return (
     <>
       <ModelPicker

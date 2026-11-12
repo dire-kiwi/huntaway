@@ -90,9 +90,6 @@ const stepOne = [
   "apps/web/src/components/task/mermaid.ts",
   "apps/web/src/components/task/documentInfo.tsx",
   "apps/web/src/components/task/ExternalLinks.tsx",
-  // task/thread/ and task/view/
-  "apps/web/src/components/task/thread/**",
-  "apps/web/src/components/task/view/**",
 ]
 
 export default defineConfig({

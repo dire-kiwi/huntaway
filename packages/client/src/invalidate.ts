@@ -53,6 +53,8 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
     const project = board.projects.find((x) => x.id === p.id)
     return `${project ? Hash.hash(project) : ""}:${board.settings.default_permission_mode ?? ""}`
   },
+  // A document is published, moved, relabelled or deleted: its profile's `docs` event (the old useDocsChanged).
+  "docs.get": (board, p) => board.docs.get(docsKey("docs", p.profile_id)) ?? 0,
 }
 
 /** The key a host's group is invalidated by. */
