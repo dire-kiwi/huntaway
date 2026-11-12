@@ -1,15 +1,22 @@
+import { useAtomValue } from "@effect/atom-react"
+import { invalidateGroups, query, type QueryResult } from "@huntaway/client"
 import type { Host } from "@huntaway/contracts"
 import { LinkId } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Effect, Exit } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { Loader2, Server, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useBoard } from "../../../state/board"
+import { exitError, useAction } from "../../../state/mutation"
 import { navigate } from "../../../state/route"
-import { rpc } from "../../../state/rpc"
-import { Button, errorText, Input, timeAgo, Toggle, useAsyncAction, useConfirm } from "../../ui"
+import { Button, Input, timeAgo, Toggle, useConfirm } from "../../ui"
 import { compareVersions } from "../versions"
-import { hubRpc } from "./hub"
+import { hubMutate, hubRpc, useHubMutation } from "./hub"
 import { useUpdateCommit } from "./useUpdateCommit"
+
+/** No update to follow. */
+const noStatus: Atom.Atom<QueryResult<"admin.status">> = Atom.make<QueryResult<"admin.status">>(AsyncResult.initial())
 
 const MODE_LABEL: Record<Host["mode"], string> = {
   local: "this host",
@@ -55,6 +62,9 @@ export function HostVersion({ host }: { host: Host }) {
   const [boot, setBoot] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [upToDate, setUpToDate] = useState(false)
+  // The hub has sent the update: what the host's status says from then on is about it.
+  const [sent, setSent] = useState(false)
+  const [, run] = useAction()
   const outdated = host.status === "needs_update"
   const behind = !host.local && !!host.commit && !!local?.commit && host.commit !== local.commit
   const differs = !!host.commit && !!target && host.commit !== target
@@ -66,48 +76,50 @@ export function HostVersion({ host }: { host: Host }) {
   // Back on what it was sent.
   if (phase && (release ? !!local?.version && host.version === local.version : !!target && host.commit === target)) setPhase(null)
 
-  // While the host rebuilds, show its progress; done when it comes back (a new boot).
-  const following = phase !== null
-  useEffect(() => {
-    if (!following) return undefined
-    const id = setInterval(() => {
-      rpc(host.id, "admin.status", undefined).then(
-        (st) => {
-          if (boot && st.boot_id !== boot) {
-            setPhase(null)
-            setBoot(null)
-          } else if (st.restart?.phase === "failed") {
-            setErr(st.restart.error ?? "update failed")
-            setPhase(null)
-          } else if (st.restart) setPhase(st.restart.phase)
-        },
-        () => setPhase("restarting"),
-      )
-    }, 1500)
-    return () => clearInterval(id)
-  }, [following, boot, host.id])
+  // While the host rebuilds, show its progress (its status, polled); done when it comes back (a new boot). A status read
+  // again is followed once it has been read: until then it's the one from before.
+  const following = phase !== null && sent
+  const polled = useAtomValue(following ? query("admin.status", host.id, undefined, { refresh: "1.5 seconds" }) : noStatus)
+  if (following && !polled.waiting) {
+    if (AsyncResult.isSuccess(polled)) {
+      const st = polled.value
+      if (boot && st.boot_id !== boot) {
+        setPhase(null)
+        setBoot(null)
+      } else if (st.restart?.phase === "failed") {
+        setErr(st.restart.error ?? "update failed")
+        setPhase(null)
+      } else if (st.restart && st.restart.phase !== phase) setPhase(st.restart.phase)
+    } else if (AsyncResult.isFailure(polled) && phase !== "restarting") setPhase("restarting")
+  }
 
   if (!host.version && !outdated) return null
-  const update = async () => {
+  const update = () => {
     setErr(null)
     setUpToDate(false)
     setPhase("starting")
-    try {
-      setBoot(
-        await rpc(host.id, "admin.status", undefined).then(
-          (st) => st.boot_id,
-          () => null,
-        ),
-      )
-      const r = await hubRpc("hub.hosts.pushUpdate", { id: LinkId.make(host.id) })
-      if (r.up_to_date) {
+    setSent(false)
+    void run(
+      Effect.gen(function* () {
+        const before = yield* Atom.getResult(query("admin.status", host.id, undefined), { suspendOnWaiting: true }).pipe(
+          Effect.map((st) => st.boot_id),
+          Effect.orElseSucceed(() => null),
+        )
+        yield* Effect.sync(() => setBoot(before))
+        const sentUpdate = yield* hubMutate("hub.hosts.pushUpdate", { id: LinkId.make(host.id) })
+        // The host's status read before the update isn't what it says now.
+        yield* invalidateGroups(host.id, ["admin"])
+        return sentUpdate
+      }),
+    ).then((exit) => {
+      if (Exit.isFailure(exit)) {
+        setErr(exitError(exit))
+        setPhase(null)
+      } else if (exit.value.up_to_date) {
         setPhase(null)
         setUpToDate(true)
-      }
-    } catch (e) {
-      setErr(errorText(e))
-      setPhase(null)
-    }
+      } else setSent(true)
+    })
   }
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-faint">
@@ -128,7 +140,7 @@ export function HostVersion({ host }: { host: Host }) {
         <button
           type="button"
           className="text-accent hover:underline"
-          onClick={() => void update()}
+          onClick={update}
           title={
             release
               ? "The host downloads this release and restarts onto it. Agents keep running."
@@ -148,19 +160,23 @@ export function HostVersion({ host }: { host: Host }) {
 export function HostRow({ host }: { host: Host }) {
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState(host.name)
-  const rename = useAsyncAction()
+  const [rename, update] = useHubMutation("hub.hosts.update")
+  // The last rename's failure, until renaming again.
+  const [showRenameError, setShowRenameError] = useState(true)
   const confirm = useConfirm()
   const status = statusOf(host)
   const startRename = () => {
     // From its name now, which may have changed since this row was first shown.
     setName(host.name)
-    rename.setError(null)
+    setShowRenameError(false)
     setRenaming(true)
   }
   const save = () => {
     setRenaming(false)
     const to = name.trim()
-    if (to && to !== host.name) void rename.run(() => hubRpc("hub.hosts.update", { id: LinkId.make(host.id), name: to }))
+    if (!to || to === host.name || rename.busy) return
+    setShowRenameError(true)
+    void update({ id: LinkId.make(host.id), name: to })
   }
   const away = !host.local && host.status !== "connected" && host.status !== undefined
   return (
@@ -194,7 +210,7 @@ export function HostRow({ host }: { host: Host }) {
           {host.connected && host.agents === false ? " · board only (can't run agents)" : ""}
         </div>
         <HostVersion host={host} />
-        {rename.error && <div className="mt-1 text-xs text-red-400">Couldn't rename it: {rename.error}</div>}
+        {showRenameError && rename.error && <div className="mt-1 text-xs text-red-400">Couldn't rename it: {rename.error}</div>}
         <UplinkToggle host={host} />
       </div>
       <Button size="sm" onClick={() => navigate({ name: "host", hostId: host.id })}>
@@ -234,13 +250,15 @@ export function HostRow({ host }: { host: Host }) {
  * then create and message tasks on this board's projects, with the access their profile has here.
  */
 function UplinkToggle({ host }: { host: Host }) {
-  const action = useAsyncAction()
+  const [action, update] = useHubMutation("hub.hosts.update")
   if (host.local || !(host.uplink || host.connected)) return null
   return (
     <div className="mt-2 space-y-1">
       <Toggle
         checked={host.uplink}
-        onChange={(on) => void action.run(() => hubRpc("hub.hosts.update", { id: LinkId.make(host.id), uplink: on }))}
+        onChange={(on) => {
+          if (!action.busy) void update({ id: LinkId.make(host.id), uplink: on })
+        }}
         label="Let this host's agents use this board"
       />
       <div className="text-[11.5px] text-faint">

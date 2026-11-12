@@ -80,14 +80,6 @@ const stepOne = [
   "apps/web/src/components/settings/Automations.tsx",
   "apps/web/src/components/settings/Workflows.tsx",
   "apps/web/src/components/settings/TemplateField.tsx",
-  // settings/: hosts and the server
-  "apps/web/src/components/settings/hosts/**",
-  "apps/web/src/components/settings/server/**",
-  "apps/web/src/components/settings/HostPage.tsx",
-  "apps/web/src/components/settings/Server.tsx",
-  "apps/web/src/components/settings/Hosts.tsx",
-  "apps/web/src/components/settings/Network.tsx",
-  "apps/web/src/components/settings/uiVersion.ts",
   // settings/: the rest, and project settings
   "apps/web/src/components/settings/project/**",
   "apps/web/src/components/settings/ClaudeConfigs.tsx",

@@ -1,11 +1,14 @@
-import type { Host, HostSettings, SettingsSyncStatus, SyncEntry } from "@huntaway/contracts"
-import { useEffect, useState } from "react"
+import { useAtomValue } from "@effect/atom-react"
+import { mutate, query } from "@huntaway/client"
+import type { Host, SyncEntry } from "@huntaway/contracts"
+import { Effect } from "effect"
+import { Atom, type AtomRegistry } from "effect/reactivity"
 import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
-import { Button, errorText, toJson, Toggle } from "../../ui"
+import { useAction } from "../../../state/mutation"
+import { Button, localeString, resultError, resultValue, toJson, Toggle } from "../../ui"
 
-// Step 1 (docs/plan/09-frontend.md) for hosts/SettingsSync.tsx, over `settingsSync.get` and `settingsSync.resolve`,
-// switched with the host's `settings_sync` setting (`host.updateSettings`).
+// A host's settings sync (docs/plan/09-frontend.md), over `settingsSync.get` and `settingsSync.resolve`, switched with
+// the host's `settings_sync` setting (`host.updateSettings`).
 
 /** A synced setting's name as the user knows it: `profile/work/limit_wait` is "work: limit wait". */
 export function syncLabel(name: string): string {
@@ -38,54 +41,27 @@ export function syncValue(v: unknown): string {
  * that were overwritten because two hosts changed a setting while apart, each of which can be used instead.
  */
 export function SettingsSyncRow({ host }: { host: Host }) {
-  const [read, setRead] = useState<{ host: string; sync: SettingsSyncStatus; settings?: HostSettings | undefined } | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  // Read again after a change here, and when the host says its settings changed, which a sync that changed its entries
+  // does too (invalidate.ts).
+  const result = useAtomValue(query("settingsSync.get", host.id, undefined))
+  const [action, run] = useAction()
+  const busy = action.busy
+  const err = action.error ?? resultError(result)
   const hosts = useBoard((s) => s.hosts)
-  // The host's settings are read again when it says they changed, which a sync that changed its entries does too.
-  const settings = useBoard((s) => s.hostSettings[host.id])
-  useEffect(() => {
-    const req = { live: true }
-    rpc(host.id, "settingsSync.get", undefined).then(
-      (sync) => {
-        // As of these settings.
-        if (req.live) setRead({ host: host.id, sync, settings })
-      },
-      (e: unknown) => {
-        if (req.live) setErr(errorText(e))
-      },
-    )
-    return () => {
-      req.live = false
-    }
-  }, [host.id, settings])
-  const run = async (f: () => Promise<SettingsSyncStatus>) => {
-    setErr(null)
-    setBusy(true)
-    try {
-      setRead({ host: host.id, sync: await f() })
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const sync = read?.host === host.id ? read.sync : null
+  /** Runs a change, then waits for the status read again after it, as what it shows. */
+  const change = <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>) =>
+    void run(Effect.andThen(effect, Atom.getResult(query("settingsSync.get", host.id, undefined), { suspendOnWaiting: true }).pipe(Effect.ignore)))
+  const sync = resultValue(result)
   if (!sync) return err ? <div className="text-xs text-red-400">{err}</div> : null
   const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? "another host"
   const lost = sync.entries.filter((e) => e.lost.length)
   const resolve = (e: SyncEntry, value?: unknown) =>
-    run(() => rpc(host.id, "settingsSync.resolve", value === undefined ? { name: e.name } : { name: e.name, value }))
+    change(mutate("settingsSync.resolve", host.id, value === undefined ? { name: e.name } : { name: e.name, value }))
   return (
     <div className="rounded-xl border border-line px-4 py-3">
       <Toggle
         checked={sync.enabled}
-        onChange={(on) =>
-          void run(async () => {
-            await rpc(host.id, "host.updateSettings", { patch: { settings_sync: on } })
-            return rpc(host.id, "settingsSync.get", undefined)
-          })
-        }
+        onChange={(on) => change(mutate("host.updateSettings", host.id, { patch: { settings_sync: on } }))}
         label="Sync this host's settings"
       />
       <p className="mt-1 text-[12px] text-faint">
@@ -106,7 +82,7 @@ export function SettingsSyncRow({ host }: { host: Host }) {
                     is <span className="font-mono text-[12px] text-fg">{syncValue(e.value)}</span>, set on {hostName(e.changed_by)}
                   </span>
                 </div>
-                <Button disabled={busy} onClick={() => void resolve(e)} title="Keep the value it has, and drop the others">
+                <Button disabled={busy} onClick={() => resolve(e)} title="Keep the value it has, and drop the others">
                   Keep
                 </Button>
               </div>
@@ -114,9 +90,9 @@ export function SettingsSyncRow({ host }: { host: Host }) {
                 <div key={`${l.by} ${l.at}`} className="mt-1.5 flex items-center justify-between gap-3 text-muted">
                   <div className="min-w-0 truncate" title={typeof l.value === "string" ? l.value : toJson(l.value)}>
                     {hostName(l.by)} had <span className="font-mono text-[12px] text-fg">{syncValue(l.value)}</span>
-                    {l.at ? ` (${new Date(l.at).toLocaleString()})` : " (from before it synced)"}
+                    {l.at ? ` (${localeString(l.at)})` : " (from before it synced)"}
                   </div>
-                  <Button disabled={busy} onClick={() => void resolve(e, l.value)}>
+                  <Button disabled={busy} onClick={() => resolve(e, l.value)}>
                     Use this
                   </Button>
                 </div>
