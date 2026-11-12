@@ -1,9 +1,9 @@
 # Concepts
 
 - **Agent configs** are Claude Code config directories on a host, passed to agents as
-  `CLAUDE_CONFIG_DIR`, or Codex homes, passed as `CODEX_HOME` (API 25), so logins, settings and
+  `CLAUDE_CONFIG_DIR`, or Codex homes, passed as `CODEX_HOME`, so logins, settings and
   history stay separate. A thread's config decides which agent runs it (see _Codex agents_).
-- **A proxy for a Claude config** (API 106): an Anthropic-compatible proxy such as
+- **A proxy for a Claude config**: an Anthropic-compatible proxy such as
   [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), which pools several Claude
   subscriptions behind one address. Set its URL and one of its client keys in the config's _Edit_
   dialog (Settings → Agent configs), and the config's agents, task titles and task terminals send
@@ -13,14 +13,16 @@
   (Claude Code leaves claude.ai connectors out when it has a key like this). The keys are kept on the host
   and never sent to the board (`has_api_key`, `has_management_key`); a key left out of an update is
   kept, and a blank one clears it. Codex configs can't have one. _Restart 5h window_ doesn't apply to
-  them (the proxy picks the account). `PATCH /claude-configs/{id}` (and `POST /claude-configs`) take
+  them (the proxy picks the account). The `configs.update` and `configs.create` RPC methods take
   `api_url`, `api_key` and `management_key`.
 - **Profiles** (work / personal) scope projects and tasks, and pick which Claude
   configs their agents can use (the first is the default). A project can pick its own instead.
-  When more than one is available, the new task dialog asks which to use. A thread keeps the
+  When more than one is available, a new task gets the one last used there, or one named with
+  `!<config>` in its description (see below); the new task dialog's config picker isn't on the new
+  server yet. A thread keeps the
   config it was created with (it can be changed under Details until its agent first starts),
   and its review thread uses the same one unless the project's reviewers pick another.
-- **One prompt, several agents** (API 61), as t3code sends a prompt to several models: each
+- **One prompt, several agents**, as t3code sends a prompt to several models: each
   `!model` in the new task dialog's description makes a task with that model, so `!opus
   !gpt-5.5` makes two tasks from one prompt, one on Claude Code and one on Codex. `!` takes any
   model of the configs the task can use (the picked config's first), `!<config>` a config's
@@ -28,7 +30,7 @@
   Code tasks made this way each get their own worktree and branch. They share a `fanout_id`, so
   their cards show which model each ran with, and each one's Details list the others with their
   state and cost.
-  **Compare** them (API 83) from a card's model badge or right-click menu (_Compare all N from its
+  **Compare** them from a card's model badge or right-click menu (_Compare all N from its
   prompt_), or _Compare all N_ in a task's Details. It opens over the board: each one's model,
   status, cost, agent time (all of its runs together), review (the verdict and each reviewer's
   issues) and diff against its base branch, with a table of the files any of them changed (click
@@ -43,10 +45,9 @@
   has commits on no branch (a detached HEAD's) is always kept, as they'd be lost with it. A branch
   is deleted after its pushed copy, so it's kept while its worktree is, while a pull request kept
   open has it, or when its pushed copy can't be deleted. Anything that couldn't be done is listed
-  after, and picking again cleans up what was kept the first time. `GET /tasks/{id}/fanout` gives each one's agent time, uncommitted
-  files and branch, and `POST /tasks/{id}/fanout/pick` (`delete_branches`, `close_prs`,
-  `discard_uncommitted`) picks it.
-- **Agents across profiles** (API 23): each profile has its own board, and agents' board tools
+  after, and picking again cleans up what was kept the first time. The `tasks.fanout` RPC method
+  gives each one's agent time, uncommitted files and branch, and `tasks.pickFanout` picks it.
+- **Agents across profiles**: each profile has its own board, and agents' board tools
   see their own profile's. A profile can let other profiles' agents use its board too: edit it
   under Settings → Profiles and tick them under _Agents from other profiles_ (or _Every
   profile_). It's off by default, so work and personal stay apart until you open one up, and it's
@@ -60,10 +61,9 @@
   ask rather than create a project that may already be there. The setting is per host, and is
   checked by name, so on a linked host it applies to agents from the profile of that name
   anywhere on the board.
-  This keeps profiles' work apart, but it isn't a security boundary. Each agent's board helper
-  calls the host's API with the host's own access token (`IA_TOKEN` in the run's MCP config),
-  and agents run as the same OS user as the server, so they can also read `<data-dir>/auth_token`
-  and the database. An agent that ignores its tools (one following injected instructions, say)
+  This keeps profiles' work apart, but it isn't a security boundary. Agents run as the same OS
+  user as the server, so they can read the host's own access token (`<data-dir>/auth_token`) and
+  the database. An agent that ignores its tools (one following injected instructions, say)
   can reach every profile's board on the host (and on a hub, its linked hosts', whose tokens are in its data). Keep
   logins whose work must stay apart on separate hosts or OS users. What the tools do ask the user
   about (project changes and new projects, deletions, automations) is asked by the server, and
@@ -71,17 +71,16 @@
   calls, not against code running as you.
 - **Usage:** the sidebar shows how much of each config's plan limits (session,
   weekly, per-model weekly) is left, for the configs the sidebar's profile and its projects use. It's off until
-  _Show usage_ is ticked on a config in Settings → Agent configs (API 52): the endpoint's rate
+  _Show usage_ is ticked on a config in Settings → Agent configs: the endpoint's rate
   limit is per account, and every copy of a login (PR previews, test servers) would otherwise
   ask too. Each host reads the config's login (`<config dir>/.credentials.json`) and asks
   Anthropic's usage endpoint every few minutes (for Codex configs it asks `codex app-server`),
   and agent runs update it live. The login is never refreshed by the board. An expired login
-  shows its last numbers until the config's next agent run renews it. Hosts before API 52
-  don't show usage. Each limit shows when it resets (a countdown, or a day and time further
-  out). A limit at 80% or more is marked in amber, and one that's used up in red, in the
-  sidebar and where a config is picked (the new task dialog's config picker, a task's
-  _Config_ row), so you can pick another config before starting work.
-  A config with a proxy (API 106) shows the proxy's Claude accounts instead, given CLIProxyAPI's
+  shows its last numbers until the config's next agent run renews it. Each limit shows when it
+  resets (a countdown, or a day and time further out). A limit at 80% or more is marked in amber,
+  and one that's used up in red, in the sidebar and where a config is picked (a task's _Config_
+  row), so you can pick another config before starting work.
+  A config with a proxy shows the proxy's Claude accounts instead, given CLIProxyAPI's
   management key in its _Edit_ dialog (and `management.allow-remote: true` in the proxy's config,
   unless it's on the same machine): the host lists its credentials (`GET /v8/management/credentials`)
   and asks Anthropic's usage endpoint for each Claude one through the proxy, with that account's
@@ -92,10 +91,10 @@
   refusal the proxy passes on (every account it tried was out) still marks the config out. The
   management key can act as any of the proxy's accounts, so it stays on the host.
   A config whose directory's `settings.json` sends Claude Code to a proxy itself
-  (`"env": {"ANTHROPIC_BASE_URL": …}`) counts as one with that proxy (API 149): its _Edit_ dialog
+  (`"env": {"ANTHROPIC_BASE_URL": …}`) counts as one with that proxy: its _Edit_ dialog
   says so and takes the management key, and its usage is read the same way. The board doesn't
   pass that proxy to its agents, as `settings.json` already does.
-- **Restarting the 5-hour window** (API 91): a plan's session limit runs for five hours from
+- **Restarting the 5-hour window**: a plan's session limit runs for five hours from
   the first message after the last window ended, so a window that ends while nothing runs leaves
   the next one to start whenever work does. Tick _Restart 5h window_ on a config in Settings →
   Agent configs (off by default) and the host sends one short prompt just after each window ends
@@ -113,15 +112,15 @@
   restarts until the setting is turned on again. Codex's windows are told apart by their length
   (`windowDurationMins`), so a plan whose only window is weekly has no session limit. A prompt that fails, or after which no window is running, is tried again in 5 minutes,
   then 10, 20 and 40, then hourly. The setting's checkbox is greyed when the config's shown usage
-  has no session limit. See `apps/server/src/agent/window.ts`.
-- **Running out of usage** (API 81): when a run is refused for its config's usage limit
+  has no session limit. See `apps/server/src/agents/UsageWindow.ts`.
+- **Running out of usage**: when a run is refused for its config's usage limit
   (Claude Code's 429 `usage_limit_reached`, with a `rate_limit_event` whose status is
   `rejected`; Codex's `usageLimitExceeded`), the host marks that config _out_ until the
   limit resets and notes the reset on the task. Usage at 100% alone doesn't count, since a
   plan with extra usage carries on past it, and nor does a `rejected` event on extra usage
-  (`isUsingOverage`, or an `overageStatus` of `allowed`), whose turns go on. Until API 81 such a run just failed, and its task
-  needed attention with "Run failed: You've hit your 5-hour limit · resets …". Now the task
-  needs attention with that message and offers _Carry on then_: it waits in _In progress_
+  (`isUsingOverage`, or an `overageStatus` of `allowed`), whose turns go on. The task needs
+  attention with "Run failed: You've hit your 5-hour limit · resets …" and offers _Carry on
+  then_: it waits in _In progress_
   (with an hourglass and the countdown on its card), and when the limit resets its agent is
   told to carry on, with any message queued meanwhile. Two settings on each profile (Settings
   → Profiles, _When a config runs out of usage_, both off by default) do more by themselves:
@@ -143,7 +142,7 @@
     in the database and carries on after a restart. Codex doesn't say which limit refused it,
     so the host takes the latest reset of the limits Codex last reported as used up, and a
     Codex task with none known just fails as before.
-- **Context** (API 40): a thread's _Context_ pill shows how full its agent's context window is,
+- **Context**: a thread's _Context_ pill shows how full its agent's context window is,
   following each reply as it works. Clicking it opens the breakdown Claude Code's `/context`
   shows (system prompt, tools, MCP servers, memory files, skills, messages, free space and the
   autocompact buffer). The board asks the agent for it at the end of each turn (a
@@ -152,7 +151,7 @@
   `/context`'s recount with the token-counting API. Codex agents only report the total.
 - **Projects** are local repositories. Each has a key (`ABC-12`), a scratch folder, a worktrees
   folder, setup/teardown and status change scripts, a permission mode and an optional model.
-- **Skills and MCP servers** (API 21, 22): skills (a `SKILL.md` each) and MCP servers for
+- **Skills and MCP servers**: skills (a `SKILL.md` each) and MCP servers for
   agents, kept on the host rather than in a repository. **Global** ones (Settings → Skills and MCP
   servers) are switched on or off by default per profile. A project can override that in its
   settings (_Profile default_, _On_ or _Off_), and it can have its own skills and servers, which
@@ -165,13 +164,13 @@
   They're denied with `--disallowedTools` (`Skill(<name>)`, `mcp__<server>`). The settings list
   what the project's runs reported in their `init` message over the last two weeks, and anything
   else can be turned off by name. Changes apply from each thread's next message.
-- **Skill sources** (API 104): global skills can come from a git repository, as with `npx skills add`.
+- **Skill sources**: global skills can come from a git repository, as with `npx skills add`.
   Settings → Skills and MCP servers → _Add from git_ takes a git URL (https, ssh or a local path),
   `git@host:owner/repo` or `owner/repo` for GitHub, and optionally a branch or tag. The host clones it
   (shallow, into `<data-dir>/skill-sources/<id>/`, with its own git setup, so a private repository needs
   credentials there) and every folder with a `SKILL.md` in it (the repository's root too, and `skills/`,
   `.claude/skills` and so on, up to six folders down) becomes a global skill, **off** for every profile
-  and project. A _Subfolder_ (API 139) takes only the skills in that folder of the repository, for one with
+  and project. A _Subfolder_ takes only the skills in that folder of the repository, for one with
   several sets of the same skills (Deep-Research-skills has `skills/research-en` and `skills/research-zh`):
   add the repository once for each folder you want. Switch them on like any global skill: per profile (a source's chip switches all its skills at
   once, or each skill's own chips) and per project (_Profile default_, _On_ or _Off_). A run gets the skill's
@@ -179,14 +178,13 @@
   the repository again: new skills appear (off), changed ones are updated, ones that went are removed with
   their switches, and if the clone fails the skills stay as they were and the source shows why. A source's
   skills can't be edited or deleted one by one, and one whose name another global skill has is left out
-  (the source lists what it left out). `POST /agent-tools/skill-sources` (`url`, `ref`, `subdir`) adds one,
-  `POST /agent-tools/skill-sources/{id}/update` updates it, `DELETE /agent-tools/skill-sources/{id}`
-  removes it, and `POST /agent-tools/switches` takes a `source_id` instead of an `item_id` to switch all of
-  a source's skills.
+  (the source lists what it left out). The `agentTools.addSource` RPC method (`url`, `ref`, `subdir`) adds
+  one, `agentTools.updateSource` updates it, `agentTools.removeSource` removes it, and
+  `agentTools.setSwitch` takes a `source_id` instead of an `item_id` to switch all of a source's skills.
 - **Tasks** start their agent when you press Start, drag the card into _In progress_, or tick
   "Start agent now". The first prompt is the task title and description. Replies resume the
   same Claude session (`--resume`). While the agent works, the card shows how long it has been
-  working instead of when it was last active (API 15).
+  working instead of when it was last active.
 - **Titles** follow the work. A task created from a description alone gets a title using its
   agent and login: Haiku for Claude (`claude -p --model haiku`), or the Codex config's model for
   Codex. Each message you send it after that (not the board's own, nor
@@ -196,9 +194,9 @@
   and routine steps (continue, review, rebase, merge) leave the title alone, and a message that's
   only links or attached files isn't asked about. A title renamed by hand (double-click it in the task
   panel, or `update_task`) is pinned and stays as it is; the pin next to it lets it follow the
-  messages again (`title_pinned`, API 49). The branch keeps the name it was given.
+  messages again (`title_pinned`). The branch keeps the name it was given.
 - **Steering:** a message sent while the agent is running goes to it straight away, as in Claude
-  Code (API 28). The agent reads it once it finishes its current step (the tool call it's in) and
+  Code. The agent reads it once it finishes its current step (the tool call it's in) and
   carries on in the same turn; until then it's shown above the composer, and then in the thread
   where the agent read it. One that arrives as the turn ends starts the next turn of the same run.
   Runs read stream-json input for this (`--input-format stream-json`; `turn/steer` for Codex):
@@ -208,14 +206,15 @@
   stays resumable; a message it hadn't read yet then starts its next turn. If it hasn't ended the
   turn within 10 seconds, its process is stopped. Messages from other agents (`send_to_task`) are
   steered the same way.
-- **Queued messages:** where a message can't go to the running agent (a `/compact` run, a run
-  started before steering, a task waiting on its dependencies) it's queued (shown above the
+- **Queued messages:** where a message can't go to the running agent (a `/compact` run, a task
+  waiting on its dependencies) it's queued (shown above the
   composer; more messages are added to it) and sent as the next prompt when the run ends, so the
   card stays in _In progress_. Press **Stop** to stop the run and send the queued message straight
   away, or the ✕ on it to take it back for editing. Messages the agent never read (its run ended
   first) are sent the same way. The card's working timer keeps counting through queued messages.
-- **Attachments:** paste, drop or pick (📎) images and other files in the new task dialog or a
-  thread's composer (API 18). Each file is uploaded to the host that runs the agent, saved under
+- **Attachments:** paste, drop or pick (📎) images and other files in a thread's composer (the
+  new task dialog doesn't take them on the new server yet). Each file is uploaded to the host that
+  runs the agent, saved under
   `<data-dir>/attachments/<id>/<name>` (10 MB at most), and listed by path at the end of the
   description or message, so the agent reads it with its Read tool. A Claude agent gets `--add-dir`
   on the folders of its own task's files (not the whole folder, which has every profile's), so
@@ -228,17 +227,17 @@
   prompts, while its prompt cache (1 hour) is still warm. Sessions idle longer than an hour (for
   example while the host was down) and tasks in _Done_ are left alone. The thread shows where it
   was compacted; click the line to read the summary.
-- **A new conversation:** reply `/new` (API 138) to have the thread's next message start a new
+- **A new conversation:** reply `/new` to have the thread's next message start a new
   conversation with its agent, without the context of the old one; the thread keeps what it shows.
   `/new <message>` starts it with that message. It's refused while the agent runs: stop it first.
   The assistant and the pens threads start the new conversation on the agent config their profile
   picks for them (**Assistant agent** and **Threads agent** in Settings → Profiles).
-- **Skills** (API 54): type `/` at the start of a message to pick one of the skills the task's
+- **Skills**: type `/` at the start of a message to pick one of the skills the task's
   agent has, with what each does (also `/compact` and `/new`). Arrow keys move, Enter or Tab picks, Escape
   closes the menu. A Claude agent gets `/name arguments`, which Claude Code runs as at its own
   prompt; as a task's first message it goes before the task, which becomes part of its
   arguments. A Codex agent gets `$name` (also typed to open the menu), which tells it to use that
-  skill. For Claude, the list (`GET /api/tasks/{id}/skills`) is the skills the project's last run
+  skill. For Claude, the list (the `tasks.skills` RPC method) is the skills the project's last run
   with the task's config reported (the ones a user can call), and those in the config's and the
   repository's skills folders by folder name, less any changed since to `user-invocable: false`;
   descriptions also come from installed plugins and synced skills. Codex's host lists its own
@@ -250,16 +249,15 @@
   attention_; a run finishes cleanly → _In review_. You move cards to _Done_ yourself, or to
   _Ready for merge_; a task whose pull request is merged on GitHub moves to _Done_ by itself
   (see _Pull requests_). Moving a task to _Done_ (with the _Done_ resolution) whose work isn't
-  merged asks first (API 75): its branch has commits its base branch doesn't, or it has
+  merged asks first: its branch has commits its base branch doesn't, or it has
   uncommitted changes, and its pull request (if any) isn't merged on GitHub. Tasks with a
   document, and _Won't fix_ or _Not done_, don't ask.
-- **Archived** (API 53): a task that's been in _Done_ for two days is archived. It leaves the
+- **Archived**: a task that's been in _Done_ for two days is archived. It leaves the
   kanban board's _Done_ column, which links to it ("N archived"), for the list view's _Archived_
   section, the last one, which starts collapsed. It's still done (a task that depends on it
   still counts it as merged). Drag it back into _Done_ to bring it back for another two days, or
-  to another column to reopen it. Tasks keep when they were done in `done_at`; hosts from before
-  that go by when the task last changed.
-- **Search, filter and sort:** each board's header (a project's, a subproject's, a group's or a
+  to another column to reopen it. Tasks keep when they were done in `done_at`.
+- **Search, filter and sort:** each board's header (a project's, a group's or a
   profile's; on a narrow board, a row below it), in every view, has a search field (`/` goes to it; Settings → Keyboard shortcuts lists the board's keys and gives this one, the
   triage and compare views' next and previous, and the keys that work on every page (`p` and `P` for the next and previous profile's board,
   `a` for the profile's assistant) another key, kept in the browser). It doesn't filter the
@@ -273,10 +271,9 @@
   the browser tab; _Sort_ (the board's own order, latest activity, newest, oldest, title or cost)
   is kept for every board. A task dropped below a filtered column's last card goes after that
   card; sorted other than by hand, a drop only moves a task to another column, at its end.
-- **Now and Later** (HA-109, API 97) were taken out by HA-285 (API 127): pens took their place
-  (see _Pens_ in [Using the board](board.md)). Hosts ignore `now` on `PATCH /tasks/{id}` and the
-  agents' task tools, tasks no longer have `now_at`, and `/settings` no longer has
-  `now_expiry_hours`.
+- **Now and Later** (HA-109) were taken out by HA-285: pens took their place
+  (see _Pens_ in [Using the board](board.md)). Tasks no longer have `now_at`, and the agents' task
+  tools have no `now`.
   - **Lasso:** hold Ctrl and drag with the right mouse button on a board, in any view, to draw a
     loop; the tasks it goes round or over are picked (outlined) as it's drawn, and the browser's
     own menu stays shut. Add Shift to keep those already picked. Ctrl + right-click (without a
@@ -288,18 +285,19 @@
   _Board_ and _List_, the view switch has two more, which show the same tasks (the search and
   filters apply) and are kept for every board like the other two. On a board narrower than
   1500px the switch names only the current view, and below 1180px none.
-  - _Triage_: what each task needs from you, most pressing first: an answer (_Needs
-    attention_), a review (_In review_), a reminder that's come round, an agent that stopped
-    before it finished, a start; then the agents at work. Each shows the agent's last words
-    (`GET /tasks/{id}`'s `last_message`); picking one (a click, or `j`/`k`) shows its pending
+  - _Triage_ (not on the new server yet: the view says so): what each task needs from you, most
+    pressing first: an answer (_Needs attention_), a review (_In review_), a reminder that's come
+    round, an agent that stopped before it finished, a start; then the agents at work. Each shows
+    the agent's last words (`last_message`); picking one (a click, or `j`/`k`) shows its pending
     permission prompts to allow or deny, its thread's composer (the same draft as its panel's)
     and, in review, _Ready for merge_. `Enter` opens its thread.
   - _Graph_: tasks linked by how they came about: a task follows the task whose agent created
-    it, the tasks it waits for (`depends_on`) and the subproject it's in, a column per step, and
+    it, the tasks it waits for (`depends_on`), the task it merges into and the one it lands after,
+    a column per step, and
     a link that a longer way round already makes is left out. Tasks made from one prompt are
     boxed together; tasks from other boards that one links to are shown faded. Tasks with no
     links are in a grid below.
-- **Waiting** (API 36): an agent with nothing to do until something happens (the tasks it
+- **Waiting**: an agent with nothing to do until something happens (the tasks it
   created, CI and reviews, a deploy) calls the `wait` tool (`reason`, `seconds`, `tasks`) instead of sleeping,
   polling or ending its turn. The call blocks until the first of: the wait period is over (10
   minutes unless given, an hour at most, or 10 minutes at most with a `command`; for a wait with no `tasks`, `command` or `pull_request`, 30
@@ -307,7 +305,7 @@
   down with a note to give one or wait 30 seconds at a time), one of the tasks in `tasks` changes status (or is
   deleted) or its review finishes (passes, finds issues, fails or is stopped: a review that passes leaves the task in
   _In review_), one of its subagents completes, fails or stops, the shell command in `command`
-  exits (API 41, see below), there's news about the pull request in `pull_request` (API 62, see
+  exits (see below), there's news about the pull request in `pull_request` (see
   below), a message is sent to the agent (yours or `send_to_task`), the run is stopped, the
   task is moved to another column from the board or with `update_task` (_Needs attention_ too;
   the board's own moves there and back for a subagent's permission prompt don't count), or the run carries on with other work: another board tool
@@ -319,10 +317,10 @@
   so it's not _Needs attention_), and the card, list and thread show _waiting_ with the agent's
   reason instead of _working_. The waiting state lasts exactly as long as the call, however it returns
   (failing that, until the turn or run ends), and is kept as the task's `agent_wait`, apart from `waiting`
-  (queued for dependencies). A server restart doesn't start a wait over: the agent reconnects for
-  the call (Claude's runs' calls are taken up again from their output, and an MCP helper retries it), which carries on until the same deadline, watching the same tasks (one
-  deleted meanwhile ends it). Planning agents (subprojects and
-  group tasks) are told to wait for the tasks they started this way rather than end their turn.
+  (queued for dependencies). A server restart doesn't start a wait over: the call, taken up again
+  after it (Claude's runs' calls from their output), carries on until the same deadline, watching
+  the same tasks (one deleted meanwhile ends it). Planning agents (group tasks) are told to wait for
+  the tasks they started this way rather than end their turn.
   - A wait on `tasks` watches each task from how it is when the wait starts, so a change
     before then doesn't end it (HA-389: HA-346's agent waited on a task that had gone to
     _In review_ 11 seconds before, and the wait sat for 50 minutes). So the agent can give
@@ -353,7 +351,7 @@
     that started it is gone, however it went (restarting, exiting or crashing), so a restart
     doesn't leave the old copy running. It's kept in `agent_wait.command` and shown with the
     wait.
-  - `pull_request` (API 62) watches a pull request: its number (in the task's repository, the one
+  - `pull_request` watches a pull request: its number (in the task's repository, the one
     its branch is pushed to, whose SSH host alias, like `git@github-work:o/r.git`, is the host
     `ssh -G` says it stands for), `OWNER/REPO#NUMBER` or URL. The wait ends on news the agent hasn't
     been told yet: a check on its head commit failed (or was cancelled or timed out), all of the
@@ -376,7 +374,7 @@
     row the wait ends with `events: ["unreadable"]` and the error. The first read is made before
     the wait starts, so a pull request that can't be read fails the call. No one's asked about it:
     it only reads. What the agent has been told about each pull request is kept with the task
-    (`pr_watches`, DB 54), across its waits and runs and server restarts: the comments and reviews
+    (`pr_watches`), across its waits and runs and server restarts: the comments and reviews
     it has seen, the head commit whose checks' outcome it was told, and whether it was told of a
     conflict. A wait reports what happened since the last one on that pull request, so a review
     left while the agent works between waits ends the next one straight away, and a restart
@@ -390,8 +388,8 @@
   instructions. The card stays in _Ready for merge_ while the agent works. If the agent needs
   approval or asks a question, the card goes to _Needs attention_ and comes back afterwards. When
   the merge is done, the agent moves the task to _Done_. If the agent stops without doing that,
-  the task goes to _Needs attention_. A project merges one task at a time (and each subproject
-  one of its tasks at a time): tasks moved there while another is merging show _queued to merge_
+  the task goes to _Needs attention_. A project merges one task at a time (and the tasks merging
+  into one task, one at a time in a lane of their own): tasks moved there while another is merging show _queued to merge_
   and start in column order (top first) once it ends.
   A task with nothing to merge (no commits on its branch beyond its base and no uncommitted
   changes, or no worktree at all) skips the merge and goes straight to _Done_.
@@ -432,17 +430,17 @@
   is reviewed again. After the project's _Fix rounds_ (default 2) in a row, a review that still
   finds serious issues moves the task to _Needs attention_ instead. There, _N more rounds of fixes_
   (in the task's sidebar, under its status and on its _Review_ tab) sends those issues to the agent
-  and gives the task as many rounds again, at least one: a project's 2 become 4, then 6 (API 93,
-  `POST /tasks/{id}/review/extend`). _Review again_ starts afresh, with the project's rounds. A commit that was already
+  and gives the task as many rounds again, at least one: a project's 2 become 4, then 6
+  (`tasks.extendReview`). _Review again_ starts afresh, with the project's rounds. A commit that was already
   reviewed isn't reviewed again (unless its review found issues and the branch has no commits, as
   the fixes are then elsewhere), and a review in progress is stopped when the task's agent
   starts working again. The card stays in _In review_ while it's reviewed, and only goes back to
   _In progress_ when the agent works on it again (to fix the issues found, or because you sent
   it a message). _Review now_ in the task's sidebar reviews on demand, once the agent has
   stopped; a task in _In progress_ or _Needs attention_ moves to _In review_ for it. Turn reviews off,
-  or set the rounds, in the project's settings (API 12). The task's _Review_ tab shows what each
-  round of fixes changed, from its checkpoints (API 70, see _Checkpoints and rewinding_).
-- **Several reviewers** (API 29): a project's settings can list more than one reviewer under
+  or set the rounds, in the project's settings. The task's _Review_ tab shows what each
+  round of fixes changed, from its checkpoints (see _Checkpoints and rewinding_).
+- **Several reviewers**: a project's settings can list more than one reviewer under
   _Reviewers_, each an agent config with an optional model and effort (for example one Codex and
   one Claude, or Fable and Opus). By default there's one, with the task's own config. Each reviews
   in a review thread of its own, all at once; the card shows how many have finished, and the
@@ -451,7 +449,7 @@
   passes when they all pass; if none found issues but one failed or was stopped, the review
   failed. A reviewer keeps its thread from one review to the next, and changing its config, model
   or effort starts a new one. `update_project` takes `reviewers` too.
-- **Instructions and skills per reviewer** (API 105): each reviewer can have instructions of its own
+- **Instructions and skills per reviewer**: each reviewer can have instructions of its own
   and skills it uses, as a summarizer can (_Instructions and skills_ beside it in the project's and
   the profile's settings; `prompt` and `skills` in each `reviewers` entry). A reviewer's
   instructions replace the project's _In review_ prompt for it only (what to look for: the board still
@@ -463,15 +461,14 @@
   don't get them (a project's own skill that is off for the project can be named too, and wins over a
   global one of the same name), and they show in the thread's `/` menu. The settings are copied to
   the thread as each review starts, so they apply from the next review.
-- **A profile's reviewers and summarizers** (API 87, several summarizers in API 103): a profile's settings
+- **A profile's reviewers and summarizers**: a profile's settings
   (_Settings → Profiles → Edit_) pick the _Reviewers_ and _Summarizers_ for its projects, and each project's
   _Review_ settings use _The profile's_ until you switch to _This project's own_, which starts from the
   profile's and overrides them. A project's own can still be one reviewer with the task's config,
   over a profile's that differ. Through the API a project's `reviewers: []` and `summarizers: []`
-  use the profile's (`reviewers` and `summarizers` on `PATCH /profiles/{id}`), and `get_project`
-  shows the profile's as `profile_reviewers` and `profile_summarizers`. (`summarizer`, the first of
-  `summarizers`, is still read and written for clients from before API 103: `null` is `[]`.)
-- **Summaries** (API 84): once a task's review passes, an agent summarises its changes for you
+  use the profile's (`reviewers` and `summarizers` on `profiles.update`), and `get_project`
+  shows the profile's as `profile_reviewers` and `profile_summarizers`.
+- **Summaries**: once a task's review passes, an agent summarises its changes for you
   to read before merging: what changed and why, the main changes, and how to try it. It reads the
   pull request (or the branch's diff) read-only in the task's worktree, in a summary thread of its
   own (a review thread of type `summary`), and its last message is the summary, kept in the task's
@@ -480,9 +477,9 @@
   writes one at any time. A summary in progress stops when the task's agent works again, and the
   next review that passes writes a new one. Turn it off, or pick the _Summarizers_ (each an agent
   config, model and effort; the profile's, and otherwise one with the task's config, by default), in the
-  project's _Review_ settings (`auto_summary` and `summarizers`, which `update_project` takes too). `POST /tasks/{id}/summary`
+  project's _Review_ settings (`auto_summary` and `summarizers`, which `update_project` takes too). `tasks.summarize`
   summarises on demand.
-- **Several summarizers, to compare skills and prompts** (API 103): a project or profile can list up
+- **Several summarizers, to compare skills and prompts**: a project or profile can list up
   to six summarizers, each writing the summary in a thread of its own at the same time, and the task's
   _Summary_ tab shows each one's, boxed and labelled. Besides its agent config, model and effort, a
   summarizer has a _name_ (to tell them apart), the _skills_ its agent is asked to use while it writes
@@ -493,51 +490,47 @@
   thread is kept from one summary to the next while its config, model, effort, name, skills and prompt
   stay the same; one added later is written when the next summary is (without redoing the others), and
   one taken out loses its summary. `summaries` on a task is one `{thread_id, label, name, skills,
-  custom_prompt, state, head, text}` for each, and `summary` is the first.
+  custom_prompt, state, head, text}` for each.
 - **Prompts:** the project's settings show the instructions in the prompts the board sends as a
   task moves across it, and each can be replaced: _In progress_ is sent to the task's agent when
   it starts, after the task's title and description (and before any message it was started
   with); _In review_ tells the reviewer what to look for; _Ready for merge_ tells the agent how to
   merge. The board keeps the parts it relies on around them (which branch, how to report a
   verdict, setting the task to done). A prompt left as the default (or cleared) follows the
-  default, which `GET /default-prompts` returns. Agents can read and change them with
-  `get_project` and `update_project` (API 27). Below them, a read-only preview shows what the
+  default, which `host.defaultPrompts` returns. Agents can read and change them with
+  `get_project` and `update_project`. Below them, a read-only preview shows what the
   board adds to the agent's own system prompt for a new thread in the project, with the options a
-  thread is made with (task, subproject or scratch task, labels, its own worktree, Claude Code or
-  Codex, and Codex's plan mode) and the project's saved settings (`GET
-  /projects/{id}/system-prompt`, API 80).
-- **Project changes by agents** (API 44): `update_project` changes any project setting but its
+  thread is made with (task or scratch task, labels, its own worktree, Claude Code or Codex, and
+  its permission mode) and the project's saved settings (`projects.systemPrompt`).
+- **Project changes by agents**: `update_project` changes any project setting but its
   agent configs, which only the user changes; agents can't delete projects. Its name, key, base
   branch, model, prompts, reviews and group change straight away. A change to its permission
   mode, a script (setup, teardown or status), its repository path or its worktree settings
-  (the files copied or folders linked into worktrees too, from API 82) first asks the user: a
+  (the files copied or folders linked into worktrees too) first asks the user: a
   dialog over the whole app (and a card in the agent's thread) shows each
   setting's old and new value and the agent's reason, and the call waits for the answer. Nothing
   changes unless they approve, whatever the thread's permission mode, and an approval is never
   "always". What counts as a change is what the project would be after it (the update is made
   and rolled back), and only those settings are written. Agents on other hosts can't ask for
-  these. `GET /project-approvals` lists the ones waiting. From API 45 a new repository path is checked before asking
+  these. The `permissions.approvals` RPC method lists the ones waiting. A new repository path is checked before asking
   (it must be the same repository, or with `move_repo` a free path to move the folder to), and
   approving `move_repo` moves the folder.
-  From API 76 `create_project` asks too, before anything is made: the dialog (_Add a project?_)
+  `create_project` asks too, before anything is made: the dialog (_Add a project?_)
   shows the folder with symlinks resolved (and whether it exists yet, or is a git repository),
   the name and key it would get, the board, and the host's default permission mode, which its
   tasks get. The path must be absolute (or start with `~/`). Its tasks' agents work in that
   folder, so without this an agent could add your home folder as a project and start a task
-  there. It's asked as a project change (kind `project`, tool `create_project`, with `changes`
-  for older UIs), and a call retried after a restart waits for the same answer, like
+  there. It's asked as a project change (kind `project`, tool `create_project`), and a call retried
+  after a restart waits for the same answer, like
   `update_project`'s.
-- **Task deletions by agents** (API 58): `delete_task` deletes a task (and a subproject's tasks)
+- **Task deletions by agents**: `delete_task` deletes a task
   as the task panel's _Delete_ does, but only once the user confirms it. Like a project change, it
-  asks in a dialog over the whole app and a card in the agent's thread, showing the task, the
-  tasks deleted with it, whether its branch goes too (`delete_branch`) and the agent's reason. The
+  asks in a dialog over the whole app and a card in the agent's thread, showing the task, whether
+  its branch goes too (`delete_branch`) and the agent's reason. The
   call waits for the answer whatever the thread's permission mode, and deletes nothing unless they
-  confirm. Agents can't delete their own task or the subproject they're in, reviewers don't get
-  the tool, and agents on other hosts can't ask for it. Only the tasks the user was shown are
-  deleted: if a subproject gains tasks while the user is asked (or a task becomes one), the call
-  deletes none of them and the agent has to ask again. No task can be added to a subproject while
-  it's being deleted (by an agent or from the board), since it would go with it. A task deleted
-  some other way while the user is asked settles the question. `GET /project-approvals?all=true` lists these with the
+  confirm. Agents can't delete their own task, reviewers don't get
+  the tool, and agents on other hosts can't ask for it. A task deleted
+  some other way while the user is asked settles the question. `permissions.approvals` lists these with the
   project changes waiting.
 - **Worktrees:** by default each task gets `ia/<key>-<n>-<slug>` in its own worktree, created on
   first run (or from the task panel). A new branch starts from the latest base branch: its
@@ -547,8 +540,8 @@
   fast-forwarded when it can be, and is used as it is when it's ahead (with unpushed commits)
   or has no upstream. The task's log says which it started from.
   A new worktree has none of the repository's git-ignored files (`.env`, local config, caches),
-  so a project can bring them in from its repository folder, before the setup script runs (API 82,
-  the _Worktrees_ settings, `copy_files` and `link_folders`):
+  so a project can bring them in from its repository folder, before the setup script runs (the
+  _Worktrees_ settings, `copy_files` and `link_folders`):
   - **Files to copy** are .gitignore-style patterns, one per line (`.env` matches at any depth,
     `/.env` only at the top, `config/*.local.json`, `!` leaves one out), as is a
     `.worktreeinclude` file at the top of the repository folder, which is read as well (the file
@@ -577,8 +570,8 @@
   Teardown runs the teardown script and removes the worktree. It refuses while there are
   uncommitted changes unless you choose to discard them, and keeps the branch unless asked.
   Agents are told to commit to their branch.
-  **Remove merged worktrees** in a project's settings (API 39,
-  `POST /projects/{id}/remove-merged-worktrees`) removes the worktrees of its done tasks when
+  **Remove merged worktrees** in a project's settings (`projects.removeMergedWorktrees`) removes the
+  worktrees of its done tasks when
   nothing in them would be lost: no uncommitted or untracked files, including changes to tracked
   files marked assume-unchanged or skip-worktree (ignored files, such as build output, don't
   count and go with the worktree), and HEAD is in the base branch, locally or
@@ -588,17 +581,16 @@
   if a task's agent runs again, its worktree is set up again in the same folder (named from its
   branch), so its conversation carries on.
   A project that uses worktrees but whose folder can't have them yet (it isn't the top folder of
-  a git repository, or the repository has no commit to branch from) shows its **setup thread**
-  instead of its board (API 73). _Start setup thread_ (`POST /projects/{id}/setup-thread`, with
-  an optional `message` for the agent) makes a task in the project, without a worktree, whose
-  agent looks at the folder, makes it a repository with a `.gitignore` and a first commit, and
-  offers to put it on GitHub, asking before anything hard to undo. The project keeps it as
-  `setup_task_id`, so asking again gives the same thread. The page looks at the folder every few
-  seconds, and the board comes back, with the thread's task on it, once the folder is ready.
-  _Use without worktrees_ turns the project's worktrees off instead, and the board shows at once.
-  Projects list `has_commits` beside `is_git`.
+  a git repository, or the repository has no commit to branch from) can have a **setup thread**:
+  the `projects.setupThread` RPC method (with an optional `message` for the agent) makes a task in
+  the project, without a worktree, whose agent looks at the folder, makes it a repository with a
+  `.gitignore` and a first commit, and offers to put it on GitHub, asking before anything hard to
+  undo. The project keeps it as `setup_task_id`, so asking again gives the same thread. The old
+  board showed this thread in place of such a project's board, with _Start setup thread_ and _Use
+  without worktrees_; the new board doesn't show that page yet. Projects list `has_commits` beside
+  `is_git`.
 
-- **Starting from elsewhere** (API 96): a task's worktree can start from something other than the
+- **Starting from elsewhere**: a task's worktree can start from something other than the
   project's base branch, picked before it's made: type `from:` in the new task dialog's
   description (it suggests the project's open tasks and its branches), fill in _Starts from_ in
   the task's _Worktree_ details before its first run (or after a setup that failed before making
@@ -629,8 +621,9 @@
     when the parent is done, before the parent's worktree or branch is removed, and when _Changes_
     or a review reads it. _Remove merged worktrees_ counts a stacked task merged into the
     project's base branch as merged too. Stacking doesn't make its agent wait for the other task
-    to start (add a dependency for that), only its merge. A task can't start from one that (by way of others, or a subproject it's
-    in) starts from it. Deleting a merged task keeps the tasks stacked on it going where it went:
+    to start (add a dependency for that), only its merge. A task can't start from one that (by way
+    of others) starts from it. Deleting a merged task keeps the tasks stacked on it going where it
+    went:
     when that's the branch of a task it was stacked on that isn't merged yet, they're stacked on
     that one; otherwise one with a branch then starts from the commit where its own work starts,
     and one without is a task on that branch. A stacked task's pull request goes to the repository
@@ -655,9 +648,9 @@
     branch's changes from where it started rather than its pull request's diff, which has more.
     The task's log says where it started. Its branch, base branch and worktree folder are saved as
     soon as git makes them, so a setup script that fails doesn't lose them. It can't change once the
-    task's branch exists (it's set up again from that branch), a subproject's tasks start from the subproject's branch, and a task
+    task's branch exists (it's set up again from that branch), and a task
     that doesn't use a worktree has nothing to start. `base_branch` and `start_from` replace each
-    other. `GET /projects/{id}/branches` lists the branches of a project's repository, latest first.
+    other. `projects.branches` lists the branches of a project's repository, latest first.
 - **Temp folders:** each task's agents get a temp folder of their own,
   `<system temp>/ha-<hash of the data dir>/<first 12 hex digits of the task id>` (kept short, as
   sockets in it can't have paths over 107 bytes), as `$TMPDIR` for its runs (Claude and
@@ -673,8 +666,8 @@
   deletes another's (a test server's, say). Nothing is deleted unless that folder is a real
   folder (not a link) of the server's user that no one else can write to, and only folders in it
   named after a task are. Files written straight to `/tmp` by name don't go with it.
-  Before a task's folder or worktree goes, what its agents left running there is stopped (TS
-  server, `apps/server/src/agent/leftovers.ts`): test servers whose `--data-dir` is in the folder,
+  Before a task's folder or worktree goes, what its agents left running there is stopped
+  (`apps/server/src/tasks/Leftovers.ts`): test servers whose `--data-dir` is in the folder,
   or that run the worktree's build or were started in it (unless their data is in another task's
   folder), the ia-shim runs in their data dirs, the folder or by the worktree's ia-shim, the
   agents under those shims, and what the servers started. The sweep also stops those whose task
@@ -713,7 +706,7 @@
   beside a board is at least 480px wide, so it's usable on a tablet. Wider windows and the
   desktop app keep the desktop layout. To install the board on a phone and have it push
   notifications, see _Push notifications on a phone_.
-- **Status scripts** (API 37, 38): a project's status scripts run with bash when one of its
+- **Status scripts**: a project's status scripts run with bash when one of its
   tasks moves to another column, whoever moved it (you, its agent, a review or a merge), e.g. to
   send a notification, update another tracker or clean up a finished build. Each column has its
   own script, run when a task moves into it, and the _Any column_ script runs on every move,
@@ -722,20 +715,21 @@
   5 minutes. Its output, or why it failed, goes in the task's thread. They get the setup script's
   variables (`IA_WORKTREE_PATH` is empty without a worktree) and `IA_OLD_STATUS`, `IA_NEW_STATUS`
   (`backlog`, `todo`, `in_progress`, `needs_attention`, `in_review`, `ready_for_merge` or
-  `done`), `IA_TASK_KEY`, `IA_TASK_TITLE`, `IA_RESOLUTION` (when done) and `IA_PR_URL`. The API
+  `done`), `IA_TASK_KEY`, `IA_TASK_TITLE`, `IA_RESOLUTION` (when done) and `IA_PR_URL`. A project
   has the column scripts in `status_scripts` (`{"done": "…"}`) and the any-column one in
   `status_script`.
-  This repository's own project frees a done task's worktree build output (`target`,
+  The old repository's own project freed a done task's worktree build output (`target`,
   `apps/web/dist`, about 2 GB each) with this _Done_ script:
 
   ```bash
   "$IA_REPO_PATH/scripts/clean-worktree.sh" "$IA_WORKTREE_PATH"
   ```
 
-  `scripts/clean-worktree.sh` only cleans linked worktrees, never the main checkout the daemon
+  [`scripts/clean-worktree.sh`](https://github.com/dire-kiwi/huntaway/blob/master/scripts/clean-worktree.sh)
+  (not in this repository) only cleans linked worktrees, never the main checkout the daemon
   runs from, and keeps `node_modules`. A task that's reopened builds again from scratch.
 
-- **Merging into another task** (API 133, HA-295): a task can merge into another task in the same
+- **Merging into another task** (HA-295): a task can merge into another task in the same
   project instead of the project's base branch, to split a piece of work into smaller tasks that
   are each reviewed and merged on their own and then land together. Give it `into:` and the
   other task's key in the new task dialog, pick it under _Merges into_ in the task's sidebar, or
@@ -758,14 +752,14 @@
   when its run ends), their merges wait, and the sidebar of any of them (or of the closed task)
   asks where they go now, for all of them at once: where it was going (what it merged into, or
   the base branch), one of them in its place (the others then merge into that one), or closed too.
-  `POST /tasks/{id}/merge-target` with `{"to": "onward" | "close" | <task id>}` does the same.
+  The `tasks.mergeTarget` RPC method with `to` (`"onward"`, `"close"` or a task id) does the same.
   A branch that started from the closed task's may still have its commits: the board remembers it
   (`carries`, shown by `get_task`), and the task's next merge has its agent ask you whether to keep
   them or rebase them out (`git rebase --onto <base> <where its own work starts>`). `merges_into` can be changed until the task is merging or done;
   with a branch already, it then keeps where its own work starts and goes to the new branch, and
   its agent changes its pull request's base. `get_task` and `list_tasks` show `merges_into` and,
   for the task they merge into, `merging_into_it`.
-- **Stack levels and GitHub's stacked pull requests** (API 142, HA-297; API 150, HA-336): a task
+- **Stack levels and GitHub's stacked pull requests** (HA-297, HA-336): a task
   started from another (`from:` that task's key, or `start_from`, without _Merges into_) is a stack
   level: its pull request targets the other's branch, and its work lands on its own after the
   other's, one level at a time, rather than being collected on the other's branch (which is what
@@ -824,7 +818,7 @@
   its agent can rebase it if it needs to; GitHub merges the one below all the same. Tasks merging
   into others (_Merges into_) are never put in a stack on GitHub: they land together with that task.
 
-  A **stack** is the tree of tasks joined this way (API 152, HA-387): its bottom (the task with no
+  A **stack** is the tree of tasks joined this way (HA-387): its bottom (the task with no
   level below it, or whose level below was deleted) and everything landing after it, directly or
   not, done tasks too, and one landing beside another (two after the same level) in the same stack.
   A stack has a title and a short description of what the whole of it is for, kept on its bottom
@@ -833,7 +827,7 @@
   counted as title calls), from the levels' titles and descriptions in landing order: when a
   stack forms, and when a level is added, removed, or has its title or description changed, a few
   seconds after the last change, one stack at a time, and only when what they'd be written from has
-  changed. Not for a stack whose tasks are all done. `PATCH /tasks/{id}/stack` (on any task of the
+  changed. Not for a stack whose tasks are all done. `tasks.updateStack` (on any task of the
   stack, answered with its bottom) sets them by hand with `title` and `description`, which pins them
   (`stack_pinned`) so the model leaves them alone, and `regenerate: true` unpins them and has them
   written again. When the bottom changes (it's given a level below, two stacks are joined, or it's
@@ -841,8 +835,8 @@
   and so does one left alone. Stacks from before them are written once, a minute after the server
   starts. The board tool `get_task` shows them on each task of a stack.
 
-- **Merging a whole stack** (API 153, HA-386): the board's stack card moves every open level of a
-  stack to _Ready for merge_ at once (`POST /tasks/{id}/merge-stack`, on any level), and they merge
+- **Merging a whole stack** (HA-386): the board's stack card moves every open level of a
+  stack to _Ready for merge_ at once (`tasks.mergeStack`, on any level), and they merge
   as **one run** of the merge queue: bottom first, each once the one below is merged and it's been
   restacked, with nothing else in their merge lane merging between them, also while the next level
   waits to be restacked. That keeps the base branch still under the stack, so its levels only ever
@@ -852,7 +846,7 @@
   - **When it can.** Every open level of the main line is in _In review_ with its agent idle and
     its review passed (or none), or in _Ready for merge_ already; no open task still merges into
     one of them; and the lowest isn't held (the task below it closed or deleted). Otherwise the
-    request is refused (409) with the levels that aren't through, by title. A level with no
+    request is refused (a `Conflict`) with the levels that aren't through, by title. A level with no
     changes to merge, or whose pull request lacks a required approving review on GitHub, refuses
     it too, before any level is moved.
   - **The queue.** The run joins the back of the queue in stack order, behind a merge that's under
@@ -874,32 +868,15 @@
   - **Tasks beside the stack** aren't moved or merged with it: one stays where it is, is restacked
     once the level it lands after is merged, and merges in its own turn. A task that merges into a
     level (_Merges into_) has to be done before the stack can go.
-- **Subprojects** (kept for the ones there are; new work merges into another task instead, see
-  above): new subprojects can't be made since HA-295, and the API refuses `subproject: true` and
-  task type `subproject`. Existing ones keep working as below, and tasks can still be added to
-  them, from their board or by their agents, so they can be finished. A subproject is a task like any other, with its own worktree, thread, changes, review
-  and pull request into the project's base branch, and clicking its card opens it beside the board.
-  The card also shows how many of its tasks are done, and its **Board** button (or _Board_ in the
-  task's header) opens the subproject's own board of tasks, as a kanban board or a list. The
-  subproject's branch collects its tasks' work: each task gets a worktree branched from
-  it (the subproject's worktree is set up first if needed), its agent is told to open its pull
-  request against that branch (pushing the branch if the remote doesn't have it yet), and
-  _Ready for merge_ merges it there instead of the project's main branch. The subproject's own
-  agent plans and coordinates: tasks it creates with `create_task` go in the subproject, and
-  `list_tasks` lists them. The subproject's column follows its tasks (and its own agent), by
-  priority: _Needs attention_ if any of them is waiting on you, else _In progress_ if any is being
-  worked on, else _In review_ once they're all in review or merged (tasks still to do don't
-  count). It stays in review after the last one is merged, and its card then says so. Moving it
-  to _Ready for merge_ or _Done_ is up to you. When they're done, the subproject is merged as a
-  whole like any other task (its agent asks first if some of its tasks aren't done). Deleting a
-  subproject deletes its tasks. Subprojects don't nest (API 17).
-- **Changes** (API 66): a task's _Changes_ tab works like lazygit, in its worktree (or its
+- **Subprojects** are gone: new work merges into another task instead (see _Merging into another
+  task_ above). An old board's subprojects and their tasks import as ordinary tasks.
+- **Changes**: a task's _Changes_ tab works like lazygit, in its worktree (or its
   project's repository when it has none). Panels on the left list the branch (_Status_: its
   commits since the base branch, and against its upstream), the changed files (a tree, or a
   list with `` ` ``), the commits (the branch's, then a few from its base) and the stashes; the
   main panel shows what's selected: the branch's whole diff against its base, a file's unstaged
   and staged changes, or a commit's or stash's. A task in a worktree of its own has a fifth panel,
-  _Turns_ (API 70): its agent's turns, latest first, each showing what that turn changed (see
+  _Turns_: its agent's turns, latest first, each showing what that turn changed (see
   _Checkpoints_ below); `g` rewinds to before one. `1`–`5` or ←/→ move between panels, ↑/↓ (or
   `j`/`k`) through a list, and the bar at the bottom shows the keys for where you are (each one
   can be clicked; `?` lists them all). In the files, space stages or unstages a file or folder,
@@ -917,7 +894,7 @@
   applied with `git apply --cached`; if the file has changed since, git refuses it and the view
   shows why. A file whose diff isn't UTF-8 (one in another encoding) is shown but only staged or
   discarded whole, as a patch made from the text the view shows would write its other bytes back
-  wrong. A host before API 66 shows the branch's diff alone.
+  wrong.
 - **Diffs and comments for the agent:** the Changes tab's diffs are highlighted for their
   file's language (by extension or name; the theme is the board's own colours), with
   [Shiki](https://shiki.style)'s TextMate grammars in a web worker (`apps/web/src/components/changes/highlight.worker.ts`),
@@ -938,7 +915,7 @@
   the diff has them and its note, and while the agent works it's queued or steered as any message
   is then. Comments, and notes still being written, are kept in the browser per task
   (`apps/web/src/components/changes/lineComments.ts`), as composer drafts are.
-- **Checkpoints and rewinding** (API 70): a task in a worktree of its own keeps a checkpoint of
+- **Checkpoints and rewinding**: a task in a worktree of its own keeps a checkpoint of
   its files before each of its agent's runs (when anything changed since the last, so the first
   run's is the task's baseline) and after each of the agent's turns, including ones that were
   stopped or failed. A checkpoint is a commit of everything git doesn't ignore in the worktree
@@ -957,8 +934,8 @@
     onto, told apart by the worktree's HEAD reflog) and by merges made there, except where the
     merge's result isn't git's own (conflicts resolved, from `git show --remerge-diff`). The
     task's _Review_ tab lists what each round of fixes a review sent back changed (the turns of
-    the run it started, whose message is marked with `review_round`). A turn from before a host
-    had checkpoints has none to start from, so its changes aren't shown.
+    the run it started, whose message is marked with `review_round`). A turn from before
+    checkpoints were kept has none to start from, so its changes aren't shown.
   - **Rewinding:** hovering one of your messages in the thread shows _Rewind to here_ (or `g` in
     the _Turns_ panel). It puts the worktree's files back to the checkpoint taken before that
     message's turn: only the files that differ are written or removed (never through a symlink),
@@ -977,17 +954,17 @@
     back into the composer to edit and send again. The rest of the thread stays, with the
     message marked _rewound_, and the checkpoints after it are marked stale and can't be
     rewound to again. A rewind is refused while the agent or a review of the task is running,
-    or while a merge or rebase is in progress in the worktree. `GET /tasks/{id}/turns` lists the
-    turns, `GET /tasks/{id}/turns/diff?from=&to=` diffs two checkpoints, `POST /tasks/{id}/rewind
-    {message_id, conversation, branch}` rewinds and `DELETE /tasks/{id}/rewind` keeps the
+    or while a merge or rebase is in progress in the worktree. The `checkpoints.turns` RPC method
+    lists the turns, `checkpoints.turnDiff` diffs two checkpoints, `checkpoints.rewind`
+    (`message_id`, `conversation`, `branch`) rewinds and `checkpoints.cancelRewind` keeps the
     conversation.
 - **Terminals:** a task's _Terminal_ tab opens a shell (xterm.js) in its worktree, or where its
   agent runs if it has none. It is a tmux session on the task's host, on a tmux server of its
-  own (`tmux -L ia-<host id>`, so your other tmux sessions aren't touched, though `~/.tmux.conf`
-  still applies). The session outlives the browser and server restarts, ends when the shell
+  data folder's own (`tmux -S <data-dir>/tmux.sock`, so your other tmux sessions aren't touched,
+  though `~/.tmux.conf` still applies). The session outlives the browser and server restarts, ends when the shell
   exits or with **End**, and is killed when the worktree is torn down or the task deleted.
   `CLAUDE_CONFIG_DIR` is set to the task's Claude config. The host needs `tmux` installed. Terminals
-  on linked hosts are relayed by the hub (API 7). Copying in tmux reaches the browser's
+  on linked hosts are relayed by the hub. Copying in tmux reaches the browser's
   clipboard (OSC 52); Shift+drag selects in the browser instead.
 - **Terminal tools:** TUI programs or scripts (`lazygit`, `nvim`, `~/bin/review.sh`…) set up on
   a host's page (Settings → the host → _Terminal tools_) show as shortcuts next to a task's
@@ -996,9 +973,11 @@
   board has it open: the board renews it every 30 seconds while the app is open, and the host
   ends tool sessions that nobody is attached to and nobody has renewed for 90 seconds.
   Reloading the page keeps them. **Close** ends one straight away. If a tool exits with an
-  error, the message stays on screen until you press Enter (API 13).
-- **Browser pane:** in the desktop app, the globe button in a task's header opens a browser beside
-  its thread (HA-275), to look at the app the agent is building: an address bar (a bare port such
+  error, the message stays on screen until you press Enter.
+- **Browser pane:** not on the new board yet: the desktop app is ready for it (its session and
+  rules below), but the task view has no globe button. On the old board, in the desktop app, the
+  globe button in a task's header opened a browser beside its thread (HA-275), to look at the app
+  the agent is building: an address bar (a bare port such
   as `5173` opens `localhost:5173`), back, forward, reload, the page's DevTools, and _Open in your
   browser_. Drag the bar between them to resize it (double-click for half and half). Each task
   remembers the page it was last on, or opens on its PR preview; closing the pane keeps the page
@@ -1015,10 +994,8 @@
   is asked again, and can be answered as before. A `/compact` run, which takes no input and calls no
   tools, has no prompt tool (until HA-225 it had the board's MCP server's `permission_prompt`). Codex's approvals come on the
   run's output too (the app-server's requests, which its adapter writes there) and get the same
-  card, which names the agent asking; a Codex `/compact` declines them. Runs that ask on their output are
-  run format 3 (4 when they call the board's tools there too, see _Agent tools (MCP)_, and 5 for
-  Codex's): an older build that's rolled back to stops them (it couldn't answer them) rather than follow them.
-- **Questions and plans** (API 64) are cards in the thread rather than approvals, and the task's
+  card, which names the agent asking; a Codex `/compact` declines them.
+- **Questions and plans** are cards in the thread rather than approvals, and the task's
   card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
   Keys 1–9 pick an option in the latest one that's waiting, unless you're typing.
   - `request_user_input` can give `options` (each a `label` and a `description`, up to nine),
@@ -1026,7 +1003,7 @@
     default). The card's buttons answer it, and the answer goes as your message (the question
     quoted, then the options picked or what you wrote), which resumes the agent. A reply typed in
     the thread settles it too. The agent's turn ends when it asks, so it stays answerable after
-    its run ends (`POST /tasks/{id}/questions/{message id}` with `choices` and `text`).
+    its run ends (the `threads.answerQuestion` RPC method, with `choices` and `text`).
   - Claude's `AskUserQuestion` shows its questions with their headers, options and descriptions,
     multi-select and an _Other_ answer. The answers go back the way headless Claude Code takes
     them, in the tool's input (`updatedInput.answers`, each question's text to its answers joined
@@ -1043,7 +1020,7 @@
     still be answered: the answers (or the approval, or the feedback) go to the agent as your
     message. Once a message has been sent to the agent after one (by you, the board or another
     agent), it isn't answered any more. Only the first answer counts, so two tabs can't both send one.
-  - `POST /permissions/{id}` takes `answers` (a list per question of option labels and typed
+  - `permissions.answer` takes `answers` (a list per question of option labels and typed
     answers), `mode` (for a plan approved) and `feedback` (for one sent back) besides `decision`.
 - **Permission modes:** each host has a default mode (its agent defaults), each project can
   set its own (Settings, or _Host default_), and every thread can override it from the selector under the message box (beside its model and effort pickers; Shift+Tab cycles Ask → Accept edits →
@@ -1062,21 +1039,22 @@
   default); both are adjustable. The _Report_ tab filters by time range and project, with a chart
   per day, totals per project and task, a prompt log and a CSV export (one row per day and task).
   The _Calendar_ tab shows months or weeks, and each day's timeline of your prompting and the
-  agents' runs (API 16). The _Disk_ tab shows how much space each project takes up on its host:
+  agents' runs. The _Disk_ tab shows how much space each project takes up on its host:
   its repository (and how much of that is `.git`), each task's worktree, its agent runs' folders
   (output and logs, kept 14 days after a run ends) and its scratch folders, as `du` counts them,
-  and each host's database (API 59). Worktrees of done tasks, and worktrees of a project's repository in its
-  worktrees folder that no task on the host has, count as reclaimable. **Reclaim space** (API 39) removes the done tasks' worktrees that are merged and clean, as _Remove
+  and each host's database. Worktrees of done tasks, and worktrees of a project's repository in its
+  worktrees folder that no task on the host has, count as reclaimable. **Reclaim space** removes the
+  done tasks' worktrees that are merged and clean, as _Remove
   merged worktrees_ does for each project, and lists what it removed, how much that freed and what it kept; click a worktree to open its task and
   remove it there, which is also the way to remove a worktree no task has. The
-  folders are measured when the tab first opens and again on refresh (API 35).
-  The _Tokens_ tab (API 98) shows where agents' tokens go: in total and per day, by what they were
+  folders are measured when the tab first opens and again on refresh.
+  The _Tokens_ tab shows where agents' tokens go: in total and per day, by what they were
   spent on (tasks' own agents, reviews, summaries, compactions, scratch and group tasks), by model
   (Claude's and Codex's), and per task, with a review or summary thread's tokens counted towards
-  its task and a subproject's tasks' towards the subproject (expand it to see each). It can measure
+  its task. It can measure
   all tokens (uncached input, cache reads and writes, and output), output tokens, or cost (Claude
   Code's; Codex doesn't report one). Each run's tokens are counted per model, subagents' included,
-  from its output once it ends (see `apps/server/src/agent/tokens.ts`): runs from before this was kept
+  from its output once it ends (see `apps/server/src/agents/Tokens.ts`): runs from before this was kept
   are counted at startup from the output the board still keeps (14 days of it), and older ones
   show only what they cost, as estimates. Its _Reviews_ part counts each reviewer's submission:
   how many found serious issues, how many tasks passed their first round, and how many rounds of
@@ -1085,10 +1063,10 @@
   task's first round and rounds of fixes count all of its rounds, those outside the range too. Reviewers also
   list minor issues (`submit_review`'s `minor_issues`); reviews from before that count as noting
   minor issues when their summary mentions some, and the follow-ups are the tasks the reviewed
-  task's agent created after such a review. `GET /profiles/{id}/token-stats?from=&to=` has the data.
+  task's agent created after such a review. The `analytics.tokenStats` RPC method has the data.
 - **Subagents:** each subagent Claude or Codex starts is a row in the thread
   showing whether it is running (in the foreground or background), done, failed or stopped. Expand
   the row to read its prompt and transcript. They are read-only: you reply to the parent thread,
-  and stopping the parent stops its subagents. The **Agents** pill in the header counts running
-  and finished subagents and jumps to each. A permission prompt raised inside a subagent shows
+  and stopping the parent stops its subagents. The old board's **Agents** pill in the header,
+  which counted them and jumped to each, isn't on the new board yet. A permission prompt raised inside a subagent shows
   on the parent thread and names the subagent that asked.
