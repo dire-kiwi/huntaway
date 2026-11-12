@@ -13,7 +13,7 @@ import { StartupError } from "../../platform/StartupError.ts"
 import { checkImport } from "./check.ts"
 import { FAMILIES } from "./families/index.ts"
 import { issueText } from "./family.ts"
-import type { FamilyIo, ImportContext, NewRow, TableCheck } from "./family.ts"
+import type { Family, FamilyIo, ImportContext, NewRow, TableCheck } from "./family.ts"
 import { makeOldDb } from "./oldDb.ts"
 import type { OldDb } from "./oldDb.ts"
 import { makeReport, ReportJson, reportPasses } from "./report.ts"
@@ -38,6 +38,8 @@ export interface ImportOptions {
   readonly rehearsal: boolean
   /** `--db`: which old database file, when the old folder has more than one. */
   readonly database: Option.Option<string>
+  /** The families to run, for tests (every family of `FAMILIES` when not given). */
+  readonly families?: ReadonlyArray<Family> | undefined
 }
 
 /** The schema version and named migrations of the old repository at f2298f0c, the one the importer reads. */
@@ -317,7 +319,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
               write: makeWriter(sql, report),
               exec: (statement: string, params: ReadonlyArray<ColumnValue> = []) => sql.unsafe<Record<string, unknown>>(statement, params).pipe(Effect.orDie),
             }
-            for (const family of FAMILIES) {
+            for (const family of options.families ?? FAMILIES) {
               yield* Effect.logInfo(`importing ${family.name}`)
               yield* family.run(io)
             }
