@@ -163,6 +163,15 @@ board's tabs and the tab's "Open its thread"), as `tests/ui/pens.test.mjs` needs
 | 9.2  | The parity run: all of `tests/ui` against the new server; the measurements; a week of this repository's own work on a board running it | 9.1, M7, M8 | 10 |
 | 9.3  | The guide (`docs/guide/`) brought into line; the switch on each host                               | 9.2        | 11   |
 
+As done in HE-8 (one pull request): 9.1 in full, as built in [11-migration.md](11-migration.md#as-built-in-91-he-8) and
+[06-server.md](06-server.md#a-read-only-server), with the throwaway switch of an old test server and the nightly job
+written and switched off. 9.2: the old 93 `tests/ui` files are 88 here (`questions` is `permissions`, `release-update`
+is `releaseUpdate`), with `databaseFile`, `devices`, `itemsSource`, `subprojects` and `telegram` dropped with what they
+test (14-dropped-and-open.md); the measurements are in [10-testing.md](10-testing.md#measurements). "A week of this
+repository's own work on a board running it" is the user's. 9.3: the guide is the new server's, with
+`docs/guide/switching.md`; the switch on each host is the user's to make. Also done here: the assistant on a host of its
+own (7.4, left by HE-6 and HE-7), the pens' threads (a cut of M1), and a project's git facts read again.
+
 ## M10: step 2 of the frontend
 
 From 2.7 on, in parallel with everything above and after the switch: one task per feature folder or large file, in
