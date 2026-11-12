@@ -5,10 +5,13 @@
 import { clsx } from "clsx"
 import { CirclePause, CirclePlay, Plus, Fence } from "lucide-react"
 import { memo, useMemo, useState, type DragEvent, type FormEvent, type MouseEvent } from "react"
+import { Effect, Exit } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
 import { useShallow } from "../boardHelpers"
-import { PEN_COLOR_NAMES, PEN_COLORS, type HostTask as Task } from "@huntaway/client"
+import { type CallError, PEN_COLOR_NAMES, PEN_COLORS, type HostTask as Task } from "@huntaway/client"
 import {
   ACTIVE_VIEW,
+  attempt,
   canPen,
   changeTab,
   createPen,
@@ -21,11 +24,15 @@ import {
   penLabel,
   penStyle,
   penTabs,
+  type PenRefused,
   saveTab,
+  settled,
   tabOf,
   type PenTab,
 } from "./pens"
+import { useAction } from "../../state/mutation"
 import { navigate } from "../../state/route"
+import { after } from "../../state/timers"
 import { profileNameOf } from "../boardHelpers"
 import { Button, ContextMenu, errorText, Input, Modal, ModalFooter, RunningDot, useConfirm, type MenuItem } from "../ui"
 import { board, useBoard } from "../../state/board"
@@ -56,7 +63,7 @@ export function penItems(task: Task, picked: Task[], onError: (msg: string) => v
   const suffix = among ? ` (${targets.length} picked)` : ""
   const tabs = tabsFor(task)
   const current = tabOf(tabs, task)
-  const move = (name: string | null) => moveToPen(targets, name).catch((e) => onError(errorText(e)))
+  const move = (name: string | null) => attempt(moveToPen(targets, name), onError)
   const items: MenuItem[] = tabs
     .filter((t) => t.active || t === current)
     .map((t, i) => ({
@@ -68,11 +75,11 @@ export function penItems(task: Task, picked: Task[], onError: (msg: string) => v
       ),
       divider: i === 0,
       checked: !among && t === current,
-      onSelect: () => void move(t.name),
+      onSelect: () => move(t.name),
     }))
   items.push({ label: `New pen…${suffix}`, divider: !items.length, onSelect: () => onNew(targets) })
   if (among ? targets.some((t) => t.pen_id) : current)
-    items.push({ label: `Out of ${among ? "their pens" : (current?.name ?? "its pen")}${suffix}`, onSelect: () => void move(null) })
+    items.push({ label: `Out of ${among ? "their pens" : (current?.name ?? "its pen")}${suffix}`, onSelect: () => move(null) })
   return items
 }
 
@@ -87,28 +94,21 @@ export function PenNameModal({
   title: string
   initial?: string | undefined
   action: string
-  onSave: (name: string) => Promise<unknown>
+  /** What saving it does (the dialog closes once it has, and shows why it failed if it did). */
+  onSave: (name: string) => Effect.Effect<void, CallError<"tasks.update" | "pens.create" | "pens.update"> | PenRefused, AtomRegistry.AtomRegistry>
   onClose: () => void
 }) {
   const [name, setName] = useState(initial)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const save = async (e?: FormEvent) => {
+  const [{ busy, error: err }, run] = useAction()
+  const submit = (e?: FormEvent) => {
     e?.preventDefault()
     const n = name.trim()
     if (!n || busy) return
     if (n === initial) return onClose()
-    setBusy(true)
-    setErr(null)
-    try {
-      await onSave(n)
-      onClose()
-    } catch (failure) {
-      setErr(errorText(failure))
-      setBusy(false)
-    }
+    void run(onSave(n)).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
-  const submit = (e?: FormEvent) => void save(e)
   return (
     <Modal title={title} onClose={onClose} onSubmit={submit} width="max-w-md">
       <form onSubmit={submit} className="space-y-3">
@@ -144,7 +144,8 @@ export function useNewPen(onError: (msg: string) => void) {
     <PenNameModal
       title={tasks.length > 1 ? `Put ${tasks.length} tasks in a new pen` : "Put the task in a new pen"}
       action="Create pen"
-      onSave={(name) => moveToPen(tasks, name).catch((e) => onError(errorText(e)))}
+      // Why it failed shows on the board, as for the menus' moves: the dialog closes either way.
+      onSave={(name) => moveToPen(tasks, name).pipe(Effect.catch((e) => Effect.sync(() => onError(errorText(e)))))}
       onClose={() => setTasks(null)}
     />
   )
@@ -205,7 +206,7 @@ export function PenTabs({
   const threadRunning = (tab: PenTab) => tab.pens.some((p) => running.has(`${p.host_id}:${p.id}`))
   const shown = tabs.filter((t) => t.active || t.key === selected)
   const inactive = tabs.filter((t) => !t.active)
-  const fail = (e: unknown) => setErr(errorText(e))
+  const fail = (msg: string) => setErr(msg)
 
   const onDragOver = (e: DragEvent, key: string) => {
     if (!e.dataTransfer.types.includes("text/task-id")) return
@@ -218,7 +219,7 @@ export function PenTabs({
     const task = board.get().tasks[e.dataTransfer.getData("text/task-id")]
     // A drag stops at a tab, so the column it came from doesn't take it as a drop on itself.
     e.stopPropagation()
-    if (task) moveToPen([task], tab?.name ?? null).catch(fail)
+    if (task) attempt(moveToPen([task], tab?.name ?? null), fail)
   }
   const onTabMenu = (e: MouseEvent, tab?: PenTab) => {
     e.preventDefault()
@@ -230,16 +231,21 @@ export function PenTabs({
     return [
       { label: "Rename…", onSelect: () => setNaming({ tab }) },
       // The menu closes as an item is picked, so the colours open in a menu of their own where it was.
-      { label: "Colour…", onSelect: () => setTimeout(() => menu && setMenu({ x: menu.x, y: menu.y, tab, colors: true })) },
+      {
+        label: "Colour…",
+        onSelect: () => {
+          after(0, () => menu && setMenu({ x: menu.x, y: menu.y, tab, colors: true }))
+        },
+      },
       {
         label: tab.active ? "Mark inactive" : "Mark active",
         onSelect: () => {
           if (tab.active && selected === tab.key) onSelect("")
-          changeTab(tab, { active: !tab.active }).catch(fail)
+          attempt(changeTab(tab, { active: !tab.active }), fail)
         },
       },
-      ...(i > 0 ? [{ label: "Move left", divider: true, onSelect: () => moveTab(tabs, tab, i - 1).catch(fail) }] : []),
-      ...(i < tabs.length - 1 ? [{ label: "Move right", divider: i === 0, onSelect: () => moveTab(tabs, tab, i + 1).catch(fail) }] : []),
+      ...(i > 0 ? [{ label: "Move left", divider: true, onSelect: () => attempt(moveTab(tabs, tab, i - 1), fail) }] : []),
+      ...(i < tabs.length - 1 ? [{ label: "Move right", divider: i === 0, onSelect: () => attempt(moveTab(tabs, tab, i + 1), fail) }] : []),
       {
         label: <span className="text-red-300">Delete…</span>,
         divider: true,
@@ -251,10 +257,10 @@ export function PenTabs({
               (tab.pens.some((p) => p.thread_id) ? " Its own thread is deleted with it." : ""),
             action: "Delete pen",
             danger: true,
-            onConfirm: async () => {
-              await deleteTab(tab)
-              if (selected === tab.key) onSelect("")
-            },
+            onConfirm: () =>
+              settled(deleteTab(tab)).then(() => {
+                if (selected === tab.key) onSelect("")
+              }),
           }),
       },
     ]
@@ -371,7 +377,7 @@ export function PenTabs({
                       </span>
                     ),
                     onSelect: () => {
-                      changeTab(t, { active: true }).catch(fail)
+                      attempt(changeTab(t, { active: true }), fail)
                       onSelect(t.key)
                     },
                   }))
@@ -384,14 +390,17 @@ export function PenTabs({
           title={naming.tab ? `Rename the ${naming.tab.name} pen` : "New pen"}
           initial={naming.tab?.name}
           action={naming.tab ? "Rename" : "Create pen"}
-          onSave={async (name) => {
-            if (naming.tab) {
-              await changeTab(naming.tab, { name })
-              if (selected === naming.tab.key) onSelect(penKey(name))
-            } else {
-              await createPen(byHost, name)
-              onSelect(penKey(name))
-            }
+          onSave={(name) => {
+            const renamed = naming.tab
+            if (renamed)
+              return changeTab(renamed, { name }).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    if (selected === renamed.key) onSelect(penKey(name))
+                  }),
+                ),
+              )
+            return createPen(byHost, name).pipe(Effect.tap(() => Effect.sync(() => onSelect(penKey(name)))))
           }}
           onClose={() => setNaming(null)}
         />
@@ -418,7 +427,7 @@ export function tabCounts(tabs: PenTab[], tasks: Task[]): Map<string, number> {
 }
 
 /** The menu of a tab's colours: picking one gives it to each of its pens. */
-function colorMenu(tab: PenTab, fail: (e: unknown) => void): MenuItem[] {
+function colorMenu(tab: PenTab, fail: (msg: string) => void): MenuItem[] {
   return PEN_COLOR_NAMES.map((c) => ({
     label: (
       <span className="flex items-center gap-2">
@@ -427,7 +436,7 @@ function colorMenu(tab: PenTab, fail: (e: unknown) => void): MenuItem[] {
       </span>
     ),
     checked: tab.color === c,
-    onSelect: () => void changeTab(tab, { color: c }).catch(fail),
+    onSelect: () => attempt(changeTab(tab, { color: c }), fail),
   }))
 }
 

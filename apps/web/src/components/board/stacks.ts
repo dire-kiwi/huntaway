@@ -2,7 +2,6 @@
 // links (`stackedBelowId`), the column a gathered stack's card sits in, whether it can merge as a whole, and whether each
 // stack is gathered into one card or spread into its levels' own, kept in this browser. Plain functions of the tasks, no
 // React, so the component checks can test them as they are.
-import { parseJson, toJson } from "../ui/json"
 import { isArchived, isMerged, readyToCheck, STATUSES, type HostTask as Task } from "@huntaway/client"
 import type { Status } from "@huntaway/contracts"
 import { sortTasks, type SortKey } from "./boardQuery"
@@ -244,37 +243,15 @@ export function placeIn(s: Stack, t: Task): { n: number; of: number; beside: boo
   return i >= 0 ? { n: i + 1, of: s.main.length, beside: false } : { n: s.beside.indexOf(t) + 1, of: s.main.length, beside: true }
 }
 
-// Whether stacks are gathered (the top bar's switch, for every board), and the stacks gathered or spread one at a time
-// since it was last flipped (by their keys), in this browser.
-const STACKS_KEY = "ia.board.stacks"
-const STACK_VIEWS_KEY = "ia.board.stackViews"
-
+/**
+ * Whether stacks are gathered (the top bar's switch, for every board), and the stacks gathered or spread one at a time
+ * since it was last flipped (by their keys), in this browser (`stackViewsKept` in taskBoard/useBoardStacks).
+ */
 export interface StackViews {
   /** The switch: every stack gathered unless it says otherwise. */
-  gathered: boolean
+  readonly gathered: boolean
   /** The stacks gathered (true) or spread (false) on their own, by key. */
-  own: Record<string, boolean>
-}
-
-export function loadStackViews(): StackViews {
-  let own: Record<string, boolean> = {}
-  try {
-    const v = parseJson(localStorage.getItem(STACK_VIEWS_KEY) ?? "{}")
-    if (v && typeof v === "object") own = Object.fromEntries(Object.entries(v).filter((e): e is [string, boolean] => typeof e[1] === "boolean"))
-  } catch {
-    /* none kept */
-  }
-  return { gathered: localStorage.getItem(STACKS_KEY) !== "spread", own }
-}
-
-export function saveStackViews(v: StackViews) {
-  try {
-    localStorage.setItem(STACKS_KEY, v.gathered ? "gathered" : "spread")
-    if (Object.keys(v.own).length) localStorage.setItem(STACK_VIEWS_KEY, toJson(v.own))
-    else localStorage.removeItem(STACK_VIEWS_KEY)
-  } catch {
-    /* kept for this page only */
-  }
+  readonly own: Readonly<Record<string, boolean>>
 }
 
 export const isGathered = (v: StackViews, s: Stack) => v.own[s.key] ?? v.gathered

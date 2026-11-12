@@ -1,8 +1,10 @@
 import { Plus, X } from "lucide-react"
 import { useEffect, useMemo, type ReactNode } from "react"
-import { type HostProfile as Profile, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
+import type { Effect } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
+import { type CallError, type HostProfile as Profile, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import type { Status } from "@huntaway/contracts"
-import { moveToPen, type PenLanes } from "./pens"
+import { attempt, moveToPen, type PenLanes, type PenRefused } from "./pens"
 import { FilterBar, FilterMenu, SearchBox, SortMenu } from "./BoardControls"
 
 import { useConfirmDone } from "./ConfirmDone"
@@ -13,7 +15,7 @@ import { useSelection } from "../../selection"
 import { penItems } from "./Pens"
 import { LassoPath, SelectionBar, useClearSelection, useLasso } from "./Lasso"
 import { GraphView } from "./GraphView"
-import { Button, ContextMenu, errorText, IconButton } from "../ui"
+import { Button, ContextMenu, IconButton } from "../ui"
 import { useNarrow } from "../../narrow"
 import { NewTaskModal } from "../layout/NewTaskModal"
 import { PROJECT_KEY } from "../layout/newTask/draft"
@@ -86,9 +88,8 @@ export function TaskBoard({
   penLabels?: boolean | undefined
   /** Opens a pen's tab (by its key) on this board, when a card's pen label is clicked; else it opens the profile's board. */
   onOpenPen?: ((key: string) => void) | undefined
-  /** Told of the tasks New task made. */
-  /** Its promise's failure (the tasks couldn't go in the tab's pen, say) is shown. */
-  onCreated?: ((tasks: ReadonlyArray<Task>) => Promise<void> | void) | undefined
+  /** What to do with the tasks New task made: why it failed (the tasks couldn't go in the tab's pen, say) is shown. */
+  onCreated?: ((tasks: ReadonlyArray<Task>) => Effect.Effect<void, CallError<"tasks.update"> | PenRefused, AtomRegistry.AtomRegistry>) | undefined
   /**
    * Rows of pens (HA-292), for the Active and Inactive views: the tasks (which `only` keeps to these pens' ones) in a row
    * for each, across the columns. A task dropped in a row goes in its pen.
@@ -274,8 +275,8 @@ export function TaskBoard({
           }}
           // Made in a pen's row, it goes in the pen.
           onCreated={(made) => {
-            void Promise.resolve(onCreated?.(made)).catch((e) => setDropErr(errorText(e)))
-            if (newLane) void moveToPen(made, newLane.name).catch((e) => setDropErr(errorText(e)))
+            if (onCreated) attempt(onCreated(made), setDropErr)
+            if (newLane) attempt(moveToPen(made, newLane.name), setDropErr)
           }}
         />
       )}

@@ -4,7 +4,7 @@ import { backgroundIdle, isScratch, keyPrefix, taskLabels, type HostProject as P
 import { openTask, usePanelOpen } from "../../state/route"
 import { useSelectable } from "../../selection"
 
-import { RunningDot, StatusIcon, STATUS_COLOR } from "../ui"
+import { millisOf, RunningDot, StatusIcon, STATUS_COLOR } from "../ui"
 import type { OnMenu, Progress } from "./TaskCard"
 import { stackedBelowId } from "./StackedOn"
 import { useBoard } from "../../state/board"
@@ -131,7 +131,7 @@ function layout(shown: Task[], all: Readonly<Record<string, Task>>) {
   const created = (id: string) => nodes.get(id)?.task.created_at ?? ""
   // The biggest groups first, then the most recent.
   const ordered = [...groups.values()].toSorted(
-    (a, b) => b.length - a.length || Math.max(...b.map((i) => Date.parse(created(i)))) - Math.max(...a.map((i) => Date.parse(created(i)))),
+    (a, b) => b.length - a.length || Math.max(...b.map((i) => millisOf(created(i)))) - Math.max(...a.map((i) => millisOf(created(i)))),
   )
 
   const placed: Placed[] = []

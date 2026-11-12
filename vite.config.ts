@@ -51,9 +51,6 @@ const noEffect = {
 
 /** The component files still as step 1 left them (see the override below), by the part of step 2 that takes them off. */
 const stepOne = [
-  // board/ and boardHelpers.ts
-  "apps/web/src/components/board/**",
-  "apps/web/src/components/boardHelpers.ts",
   // changes/
   "apps/web/src/components/changes/**",
   // docs/

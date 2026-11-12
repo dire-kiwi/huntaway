@@ -5,15 +5,14 @@ import { clsx } from "clsx"
 import { GitMerge } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { useShallow, type State } from "../boardHelpers"
-import { documentsOnly, isMerged, isScratch, keyPrefix, mutations, STATUSES, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
-import { useAtomSet } from "@effect/atom-react"
+import { documentsOnly, isMerged, isScratch, keyPrefix, STATUSES, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
 import { openTask } from "../../state/route"
 
-import { Button, CARD_BADGE, errorText, ProgressCount, Wide } from "../ui"
+import { Button, CARD_BADGE, ProgressCount, Wide } from "../ui"
 import { LinkedTaskRow, stackedBelowId, useOpenLevels, useStackState, useStacksOn } from "./StackedOn"
-import { rpc } from "../../state/rpc"
 import { board, useBoard } from "../../state/board"
+import { useMutation } from "../../state/mutation"
 
 type StoreState = State
 
@@ -249,15 +248,11 @@ const errBox = "rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text
 export function MergesIntoSection({ task, project }: { task: Task; project?: Project | null | undefined }) {
   const target = useBoard((s) => (task.merges_into ? s.tasks[task.merges_into] : undefined))
   const targets = useTargets(task)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ error }, update] = useMutation("tasks.update")
+  const err = error === null ? null : `Couldn't change what it merges into: ${error}`
   const { st, goneId, gone } = useTargetState(task)
   const fixed = task.status === "done" || task.merging
-  const save = (id: string) => {
-    setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { merges_into: id || null } }).catch((e) =>
-      setErr(`Couldn't change what it merges into: ${errorText(e)}`),
-    )
-  }
+  const save = (id: string) => void update(task.host_id, { id: task.id, patch: { merges_into: id ? TaskId.make(id) : null } })
   const base = project?.base_branch || "base branch"
   return (
     <div className="space-y-2">
@@ -383,26 +378,16 @@ export function HeldChoice({
   const into = useBoard((s) => (gone?.merges_into ? s.tasks[gone.merges_into] : undefined))
   const onward = under && under.status !== "done" ? under : into
   const [heir, setHeir] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const mergeTarget = useAtomSet(mutations.tasks.mergeTarget, { mode: "promise" })
+  const [{ busy, error: err }, mergeTarget] = useMutation("tasks.mergeTarget")
   if (!siblings.length) return null
   const goneKey = gone ? keyOf(gone, project) : null
   const base = project?.base_branch || "the base branch"
   // Where it was going: what it merged into while that's open, else the base branch.
   const onwardTo = onward && onward.status !== "done" ? keyOf(onward, project) : base
-  const choose = async (to: string) => {
-    setBusy(true)
-    setErr(null)
-    try {
-      // The tasks it changed come back as events.
-      const first = siblings[0]
-      if (first) await mergeTarget({ host: hostId, payload: { id: TaskId.make(first.id), to } })
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
+  const choose = (to: string) => {
+    // The tasks it changed come back as events.
+    const first = siblings[0]
+    if (first) void mergeTarget(hostId, { id: TaskId.make(first.id), to })
   }
   const them = siblings.length === 1 ? "it" : `them (${keyList(siblings, project)})`
   const pick = siblings.find((t) => t.id === heir) ?? null
@@ -428,7 +413,7 @@ export function HeldChoice({
         )}
       </div>
       <div className="flex flex-col items-start gap-1.5">
-        <Button size="sm" disabled={busy} onClick={() => void choose("onward")}>
+        <Button size="sm" disabled={busy} onClick={() => choose("onward")}>
           {goneKey ? `Go where ${goneKey} was going (${onwardTo})` : `Merge into ${base} instead`}
         </Button>
         {siblings.length > 1 && (
@@ -444,14 +429,14 @@ export function HeldChoice({
             <Button
               size="sm"
               disabled={busy || !pick}
-              onClick={() => pick && void choose(pick.id)}
+              onClick={() => pick && choose(pick.id)}
               title={stacked ? "It takes the closed task's place: the others land after it" : "It takes the closed task's place: the others merge into it"}
             >
               {stacked ? "Put the others after it" : "Make it the new target"}
             </Button>
           </div>
         )}
-        <Button size="sm" variant="danger" disabled={busy} onClick={() => void choose("close")}>
+        <Button size="sm" variant="danger" disabled={busy} onClick={() => choose("close")}>
           Close {them} too
         </Button>
       </div>

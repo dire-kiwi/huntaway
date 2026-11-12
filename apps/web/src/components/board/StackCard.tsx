@@ -13,19 +13,19 @@ import {
   keyPrefix,
   mergeAwaitsApproval,
   mergeQueued,
-  mutations,
   STATUSES,
   type HostProject as Project,
   type HostTask as Task,
 } from "@huntaway/client"
-import { useAtomSet } from "@effect/atom-react"
+import { Exit } from "effect"
 import { TaskId } from "@huntaway/contracts"
 import { useNarrow, useTouch } from "../../narrow"
 import { openTask, usePanel } from "../../state/route"
 
-import { Button, errorText, Input, Modal, ModalFooter, RunningDot, STATUS_COLOR, Textarea } from "../ui"
+import { Button, Input, Modal, ModalFooter, RunningDot, STATUS_COLOR, Textarea } from "../ui"
 import { landsNext, named, namesOf, openMain, stackColumn, stackedBelowId, stackRun, type MergeCheck, type Stack } from "./stacks"
 import { useBoard } from "../../state/board"
+import { useMutation } from "../../state/mutation"
 
 /** The stack's title: its own (API 152), else its bottom task's. */
 export const stackTitle = (s: Stack) => s.bottom.stack_title?.trim() || s.bottom.title
@@ -442,25 +442,18 @@ export function StackEditModal({ stack, onClose }: { stack: Stack; onClose: () =
   const b = stack.bottom
   const [title, setTitle] = useState(stackTitle(stack))
   const [description, setDescription] = useState(b.stack_description ?? "")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const updateStack = useAtomSet(mutations.tasks.updateStack, { mode: "promise" })
-  const send = async (body: { title?: string | undefined; description?: string | undefined; regenerate?: boolean | undefined }) => {
-    setBusy(true)
-    setErr(null)
-    try {
-      // The bottom task comes back as an event too.
-      await updateStack({ host: b.host_id, payload: { id: TaskId.make(b.id), ...body } })
-      onClose()
-    } catch (e) {
-      setErr(`Couldn't change the stack: ${errorText(e)}`)
-      setBusy(false)
-    }
+  const [{ busy, error }, updateStack] = useMutation("tasks.updateStack")
+  const err = error === null ? null : `Couldn't change the stack: ${error}`
+  const send = (body: { title?: string | undefined; description?: string | undefined; regenerate?: boolean | undefined }) => {
+    // The bottom task comes back as an event too.
+    void updateStack(b.host_id, { id: TaskId.make(b.id), ...body }).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   const save = (e?: FormEvent) => {
     e?.preventDefault()
     if (!title.trim() || busy) return
-    void send({ title: title.trim(), description: description.trim() })
+    send({ title: title.trim(), description: description.trim() })
   }
   return (
     <Modal title="The stack's title and description" onClose={onClose} onSubmit={save} width="max-w-lg">
@@ -481,7 +474,7 @@ export function StackEditModal({ stack, onClose }: { stack: Stack; onClose: () =
         <ModalFooter className="space-y-3">
           {err && <div className="text-xs text-red-400">{err}</div>}
           <div className="flex items-center justify-end gap-2">
-            <Button type="button" variant="ghost" className="mr-auto" disabled={busy} onClick={() => void send({ regenerate: true })}>
+            <Button type="button" variant="ghost" className="mr-auto" disabled={busy} onClick={() => send({ regenerate: true })}>
               Write them again
             </Button>
             <Button type="button" variant="ghost" onClick={onClose}>
