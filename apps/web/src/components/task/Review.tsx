@@ -2,18 +2,21 @@
 // reviewer's part, more rounds of fixes, what each round of fixes changed, and the summaries. Step 1 of
 // docs/plan/09-frontend.md: the old components/task/Review.tsx, on this server's RPCs. Left out: `ReviewVerdict`, which
 // only the fan-out compare view used (not ported yet).
-import type { HostTask as Task } from "@huntaway/client"
-import type { ChangeSummary, Review, ReviewerRun, ReviewState, Turn, TurnDiff } from "@huntaway/contracts"
+import { useAtomValue } from "@effect/atom-react"
+import { query, type HostTask as Task, type QueryResult } from "@huntaway/client"
+import type { ChangeSummary, Review, ReviewerRun, ReviewState, Turn } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleSlash, FileText, Loader2, MessageSquareText, RotateCw, ScanSearch } from "lucide-react"
 import { Suspense, useMemo, useState, type MouseEvent } from "react"
 import { useBoard } from "../../state/board"
+import { useMutation } from "../../state/mutation"
 import { openTask } from "../../state/route"
-import { rpc } from "../../state/rpc"
 import { useProject, useShallow } from "../boardHelpers"
 import { turnStat, useTurns } from "./turns"
 import { Markdown } from "./thread/Markdown"
-import { Button, CARD_BADGE, errorText, Wide } from "../ui"
+import { Button, CARD_BADGE, resultError, resultValue, Wide } from "../ui"
+import { localeString } from "../ui/dates"
 import { preloadable } from "../ui/preloadable"
 
 const PatchBox = preloadable(() => import("../changes/git/Patches").then((m) => m.PatchBox))
@@ -229,28 +232,17 @@ const roundsOf = (r: Review, rounds: number) => rounds + r.extra_rounds
 export function MoreFixRounds({ task, className }: { task: Task; className?: string | undefined }) {
   const r = task.review
   const rounds = useProject(task.project_id)?.review_rounds
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ busy, error: err }, extendReview] = useMutation("tasks.extendReview")
   const out = r?.state === "issues" && r.issues.length > 0 && rounds !== undefined && r.fixes >= roundsOf(r, rounds)
   if (!r || !out || rounds === undefined || task.kind !== "task" || task.running || task.status === "done" || task.merging) return null
   const more = Math.max(rounds, 1)
-  const extend = async () => {
-    setBusy(true)
-    setErr(null)
-    try {
-      await rpc(task.host_id, "tasks.extendReview", { id: task.id })
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const extend = () => void extendReview(task.host_id, { id: task.id })
   return (
     <div className={clsx("flex flex-wrap gap-2", className)}>
       <Button
         size="sm"
         disabled={busy}
-        onClick={() => void extend()}
+        onClick={extend}
         title={`Send the review's ${plural(r.issues.length, "issue")} to the agent to fix, and review its changes again after each round, up to ${roundsOf(r, rounds) + more} rounds in all`}
       >
         {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCw size={12} />}{" "}
@@ -266,19 +258,8 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
   const r = task.review
   const threads = useThreads(r)
   const rounds = useProject(task.project_id)?.review_rounds
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const reviewNow = async () => {
-    setBusy(true)
-    setErr(null)
-    try {
-      await rpc(task.host_id, "tasks.review", { id: task.id })
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [{ busy, error: err }, review] = useMutation("tasks.review")
+  const reviewNow = () => void review(task.host_id, { id: task.id })
   const d = r && describeReview(r, threads)
   const parts = r ? reviewParts(r) : []
   return (
@@ -320,7 +301,7 @@ export function ReviewSummary({ task, threadId }: { task: Task; threadId?: strin
           </Button>
         )}
         {r?.state !== "running" && task.kind === "task" && (
-          <Button size="sm" disabled={busy || task.running} onClick={() => void reviewNow()} title={task.running ? "Wait for the agent to finish" : undefined}>
+          <Button size="sm" disabled={busy || task.running} onClick={reviewNow} title={task.running ? "Wait for the agent to finish" : undefined}>
             {busy ? <Loader2 size={12} className="animate-spin" /> : <ScanSearch size={12} />} {r ? "Review again" : "Review now"}
           </Button>
         )}
@@ -340,19 +321,8 @@ export function ChangeSummaryView({ task, threadId }: { task: Task; threadId?: s
   const all = task.summaries
   const list = threadId ? all.filter((s) => s.thread_id === threadId) : all
   const auto = useProject(task.project_id)?.auto_summary
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const summarize = async () => {
-    setBusy(true)
-    setErr(null)
-    try {
-      await rpc(task.host_id, "tasks.summarize", { id: task.id })
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [{ busy, error: err }, summarizeCall] = useMutation("tasks.summarize")
+  const summarize = () => void summarizeCall(task.host_id, { id: task.id })
   const running = all.some((s) => s.state === "running")
   return (
     <div className="space-y-2.5 text-[12.5px]">
@@ -368,7 +338,7 @@ export function ChangeSummaryView({ task, threadId }: { task: Task; threadId?: s
       )}
       <div className="flex flex-wrap gap-2 pt-1">
         {!running && task.kind === "task" && (
-          <Button size="sm" disabled={busy || task.running} onClick={() => void summarize()} title={task.running ? "Wait for the agent to finish" : undefined}>
+          <Button size="sm" disabled={busy || task.running} onClick={summarize} title={task.running ? "Wait for the agent to finish" : undefined}>
             {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}{" "}
             {all.length > 0 ? (all.length > 1 ? "Summarise all again" : "Summarise again") : "Summarise now"}
           </Button>
@@ -473,17 +443,21 @@ function FixRounds({ task }: { task: Task }) {
   )
 }
 
+/** A round's diff not asked for yet. */
+const noDiff: Atom.Atom<QueryResult<"checkpoints.turnDiff">> = Atom.make<QueryResult<"checkpoints.turnDiff">>(AsyncResult.initial())
+
 function FixRound({ task, r }: { task: Task; r: Round }) {
   const [open, setOpen] = useState(false)
-  const [diff, setDiff] = useState<TurnDiff | { error: string } | null>(null)
+  // Read once it's first opened, and kept for its line's stat after it's closed.
+  const [asked, setAsked] = useState(false)
   const from = r.first.before_n
   const can = from !== null && r.first.diff && r.last.diff
+  const result = useAtomValue(asked && from !== null ? query("checkpoints.turnDiff", task.host_id, { task_id: task.id, from, to: r.last.n }) : noDiff)
+  const error = resultError(result)
+  const diff = error !== null ? { error } : (resultValue(result) ?? null)
   const toggle = () => {
     setOpen(!open)
-    if (open || !can || diff) return
-    rpc(task.host_id, "checkpoints.turnDiff", { task_id: task.id, from, to: r.last.n })
-      .then(setDiff)
-      .catch((e: unknown) => setDiff({ error: errorText(e) }))
+    if (!open && can) setAsked(true)
   }
   const stat = diff && "stats" in diff ? turnStat(Object.assign({}, r.last, { stats: diff.stats })) : r.turns === 1 ? turnStat(r.last) : `${r.turns} turns`
   return (
@@ -500,7 +474,7 @@ function FixRound({ task, r }: { task: Task; r: Round }) {
           {stat}
           {r.last.stale && " · rewound"}
         </span>
-        <span className="shrink-0 text-[11px] text-faint">{new Date(r.last.at).toLocaleString()}</span>
+        <span className="shrink-0 text-[11px] text-faint">{localeString(r.last.at)}</span>
       </button>
       {open && (
         <div className="px-2.5 pb-2.5">
