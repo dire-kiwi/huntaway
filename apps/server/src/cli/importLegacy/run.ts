@@ -293,7 +293,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
   const checkAlone = Effect.scoped(
     Effect.gen(function* () {
       const old = yield* makeOldDb(yield* clientAt(copy))
-      yield* report.checked(yield* checkImport(old, yield* clientAt(boardFile, true), ctx))
+      yield* report.checked(yield* checkImport(old, yield* clientAt(boardFile, true), ctx, report))
     }),
   )
   const importAll = Effect.gen(function* () {
@@ -323,7 +323,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
             }
             yield* dropDangling(sql, report)
             yield* sql`PRAGMA foreign_keys = ON`.pipe(Effect.orDie)
-            if (options.check) yield* report.checked(yield* checkImport(old, sql, ctx))
+            if (options.check) yield* report.checked(yield* checkImport(old, sql, ctx, report))
             yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`.pipe(Effect.orDie)
           }),
         )

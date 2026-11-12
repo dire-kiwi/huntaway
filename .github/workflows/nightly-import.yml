@@ -1,0 +1,56 @@
+# The nightly import (docs/plan/11-migration.md, Rehearsal: "In CI and for measurements"): on a self-hosted runner
+# whose machine has an old Huntaway board, `scripts/copy-live-board.sh` snapshots that board's database, scrubs it,
+# and imports it with `import-legacy --check` into a test server with no agents; the job fails if the check does. So a
+# change to the schema or the importer that cannot read a real board is seen the next morning, not at a switch.
+#
+# Switched off: it runs only when the repository variable NIGHTLY_IMPORT is `on`, and then only on a runner with the
+# labels `self-hosted` and `huntaway-board`. To turn it on, the owner provides:
+#   - a self-hosted runner on a machine with an old board, registered with the label `huntaway-board`, whose user can
+#     read that board's data folder (it is only read: an online backup through a read-only connection);
+#   - the repository variable NIGHTLY_OLD_DATA_DIR, the old board's data folder on that machine (default
+#     ~/.local/share/issue-agent), and NIGHTLY_IMPORT=on;
+#   - sqlite3 on the runner.
+# The report stays on the runner: it names the board's task keys and the values that did not decode, which are the
+# board's own data. The job's log says only the counts.
+name: Nightly import
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    if: vars.NIGHTLY_IMPORT == 'on'
+    runs-on: [self-hosted, huntaway-board]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: 24
+          cache: false
+
+      - name: Import a scrubbed copy of the board
+        env:
+          HUNTAWAY_LIVE_DATA_DIR: ${{ vars.NIGHTLY_OLD_DATA_DIR }}
+        run: |
+          export TMPDIR="$RUNNER_TEMP"
+          [ -n "$HUNTAWAY_LIVE_DATA_DIR" ] || unset HUNTAWAY_LIVE_DATA_DIR
+          scripts/test-server.sh --no-agents > "$RUNNER_TEMP/env"
+          . "$RUNNER_TEMP/env"
+          trap 'scripts/test-server.sh stop "$HUNTAWAY_TEST_DATA_DIR"' EXIT
+          scripts/copy-live-board.sh "$RUNNER_TEMP/env"
+          report="$HUNTAWAY_TEST_DATA_DIR/import-report.json"
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const written = Object.values(r.tables).reduce((n, t) => n + t.written, 0);
+            console.log(`${written} rows written; ${r.failures.length} failures, ${r.json.length} JSON values not read, ${r.notes.length} notes; check: ${r.check ? r.check.problems.length + " problems" : "not run"}`);
+            process.exit(r.failures.length === 0 && r.json.length === 0 && (r.check === null || r.check.ok) ? 0 : 1);
+          ' "$report" | tee -a "$GITHUB_STEP_SUMMARY"
+          # The server opens what was imported.
+          apps/server/bin/huntaway rpc --env "$RUNNER_TEMP/env" public.health > /dev/null
