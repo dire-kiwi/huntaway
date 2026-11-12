@@ -953,10 +953,21 @@ an MCP server.
   importer's absolute form. Its config is the profile's `assistant_config_id` if it still has it, else its first.
   A routine thread's turn commits the workspace too (the old server waited for the assistant's next turn). The brief's
   document is refused (`NotFound`) for any task but the assistant.
-- **Left out.** The assistant on a host of its own (`on_its_host`, `check_host`, the hub's proxying): 7.4; until then
-  `get`/`send` for a profile that names another host is `Unavailable` ("offline"), and its memory, Google and brief are
-  `Conflict` unless this host has its assistant. Moving a workspace's own `.git` (HA-160): dropped
-  (14-dropped-and-open.md).
+- **Left out.** Moving a workspace's own `.git` (HA-160): dropped (14-dropped-and-open.md). The assistant on a host of
+  its own came with HE-8 (below).
+- **As built (HE-8): the assistant on a host of its own** (7.4; the old `on_its_host`). `assistant.get` and
+  `assistant.send` are `hosts/AssistantHost.ts`'s: for a profile whose `assistant_host` is another host, the call goes
+  over that link (`LinkConnections.live(...).client`) to the host's profile of the same name, with `here: true`, and
+  answers with that host's task and `host_id` (`AssistantTask`); offline or on another protocol is `Unavailable`
+  ("…'s assistant runs on homeserver, which is offline"), no profile of that name there `Conflict` (`no_profile`).
+  `here` (the old `?local=1`) asks for this host's own whatever the profile says, which `Assistant.get(profile, true)`
+  makes; without it, `Assistant.get` and `send` stay `Unavailable` for a profile whose assistant is elsewhere and that
+  has none here, and memory, Google and the brief `Conflict`, as before. The board asks the host `assistantHome` found
+  with `here: true` (HA-120: a host whose own profile names the hub doesn't send it back). Routines on this host for
+  such a profile fail with the link's name (`RoutineHost.elsewhere`), and the assistant's Routines tab lists them
+  (`RoutinesLeftBehind`) with a Delete for this host. Tests: `Assistant.test.ts` (`here`), `Routines.test.ts` (the
+  link's name), `tests/e2e/hosts-assistant.test.ts` (two linked servers: no profile, sent there and not back, a message
+  answered there, `here`, offline), and the browser check `assistantHost.test.mjs`.
 - **Tests**: `assistant/Memory.test.ts` (real git in temp folders), `memory/text.test.ts`, `Assistant.test.ts`,
   `Brief.test.ts`, `briefText.test.ts`, `Google.test.ts` (a token endpoint of the test's own), `googleText.test.ts`,
   `cli/googleAuth.test.ts` (the flow with the test as the browser), the workspace's case in `Permissions.test.ts`.

@@ -4,6 +4,7 @@ import { Assistant } from "../assistant/Assistant.ts"
 import { Brief } from "../assistant/Brief.ts"
 import { Google } from "../assistant/Google.ts"
 import { Tracked } from "../assistant/Tracked.ts"
+import { AssistantHost } from "../hosts/AssistantHost.ts"
 import type { SendRefused } from "../runs/Runs.ts"
 import type { TaskNotFound } from "../tasks/Tasks.ts"
 import { sendRefused } from "./tasks.ts"
@@ -17,9 +18,11 @@ export const AssistantHandlers = AssistantRpcs.toLayer(
     const brief = yield* Brief
     const google = yield* Google
     const tracked = yield* Tracked
+    const assistantHost = yield* AssistantHost
     return AssistantRpcs.of({
-      "assistant.get": ({ profile_id }) => assistant.get(profile_id),
-      "assistant.send": ({ profile_id, text }) => assistant.send(profile_id, text).pipe(Effect.catchTags(sent)),
+      // Where the profile's assistant runs: sent to its host when that's another (7.4), unless this host's own is asked for.
+      "assistant.get": ({ profile_id, here }) => assistantHost.get(profile_id, here ?? false),
+      "assistant.send": ({ profile_id, text, here }) => assistantHost.send(profile_id, text, here ?? false).pipe(Effect.catchTags(sent)),
       "assistant.memory": ({ profile_id }) => assistant.memory(profile_id),
       "assistant.memoryFile": ({ profile_id, path, rev }) => assistant.memoryFile(profile_id, path, rev ?? null),
       "assistant.writeMemoryFile": ({ profile_id, path, content, expected, force }) =>

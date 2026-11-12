@@ -1,7 +1,7 @@
 // The Routines tab of a profile's assistant (6.7): its profile's automations that wake it, each with its next run, its
 // last result (quiet, reported, skipped and why), what it's cost, and Run now, pause and edit. 6.5's `automations.*`
-// with the profile as owner, read again on `automations_changed`. The routines left behind on this board's host when a
-// profile's assistant moved to another (the old `LeftBehind`, `assistant_host`) are M7's (7.4).
+// with the profile as owner, read again on `automations_changed`. Under them, the routines left behind on this board's
+// host when a profile's assistant moved to another (`RoutinesLeftBehind`, 7.4).
 import { useAtomValue } from "@effect/atom-react"
 import { automationsAtom, type HostTask as Task } from "@huntaway/client"
 import type { Automation } from "@huntaway/contracts"
@@ -13,6 +13,7 @@ import { AutomationEditor } from "../settings/automations/AutomationEditor"
 import { AutomationRow } from "../settings/automations/AutomationRow"
 import { activeText, usd } from "../settings/automations/text"
 import { Button, errorText, useConfirm } from "../ui"
+import { RoutinesLeftBehind } from "./RoutinesLeftBehind"
 
 /** The assistant's routines: `assistant` is the profile's assistant, whose host and profile they're on. */
 export function Routines({ assistant }: { assistant: Task }) {
@@ -68,6 +69,7 @@ export function Routines({ assistant }: { assistant: Task }) {
             ))}
           </div>
         )}
+        <RoutinesLeftBehind assistant={assistant} />
         {list && !list.length && <div className="text-[12px] text-faint">No routines yet. Try asking the assistant: "Every weekday at 8, check my inbox."</div>}
         {(err ?? failed) && <div className="text-xs text-red-400">{err ?? failed}</div>}
         {confirm.dialog}

@@ -3,7 +3,7 @@ import { Rpc, RpcGroup } from "effect/rpc"
 import { BriefFeedback, BriefRating, GoogleStatus, MemoryDiff, MemoryFileContent, MemoryHistory, MemoryOverview, MemoryWrite } from "../assistant.ts"
 import { Automation, Weekday } from "../automation.ts"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
-import { ProfileId, TaskId } from "../ids.ts"
+import { HostId, ProfileId, TaskId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
 import { Task } from "../task.ts"
 
@@ -11,15 +11,29 @@ import { Task } from "../task.ts"
 // docs/plan/05-protocol.md's `assistant` group. Every method makes the assistant the first time it's needed. `Conflict`
 // (`in_use`) for a profile whose assistant runs on another host (its memory is there), `Unavailable` for a workspace that
 // isn't its own (a symlink in its place). A change of a file is committed to the workspace's history.
+//
+// A profile's assistant can run on a linked host of its own (`assistant_host`, 7.4): `get` and `send` on the hub are
+// sent there, to its profile of the same name (`Unavailable` while it is offline or a build behind, `Conflict`
+// `no_profile` when it has none), and answer with that host's task and its `host_id`. `here` asks a host for its own
+// assistant, whatever its profile says (the old `?local=1`): what the hub asks of the assistant's host, and what a
+// board asks of the host it found the assistant on (`assistantHome` in @huntaway/client).
 
 const profile = { profile_id: ProfileId }
+const here = { here: Schema.optionalKey(Schema.Boolean) }
+
+/** The profile's assistant, with the host it's on. */
+export const AssistantTask = Schema.Struct({ ...Task.fields, host_id: HostId })
+export interface AssistantTask extends Schema.Schema.Type<typeof AssistantTask> {}
 const Errors = Schema.Union([NotFound, Invalid, Conflict, Unavailable])
 
 export class AssistantRpcs extends RpcGroup.make(
   /** The profile's assistant, made the first time it's asked for. */
-  Rpc.make("assistant.get", { payload: profile, success: Task, error: Errors }).annotate(RequiredScope, "read"),
+  Rpc.make("assistant.get", { payload: { ...profile, ...here }, success: AssistantTask, error: Errors }).annotate(RequiredScope, "read"),
   /** Sends the user's message to the assistant (starting its agent or steering it), settling its pending questions. */
-  Rpc.make("assistant.send", { payload: { ...profile, text: Schema.String }, success: Task, error: Errors }).annotate(RequiredScope, "operate"),
+  Rpc.make("assistant.send", { payload: { ...profile, ...here, text: Schema.String }, success: AssistantTask, error: Errors }).annotate(
+    RequiredScope,
+    "operate",
+  ),
   /** Its workspace's files, and how much of each a run is told. */
   Rpc.make("assistant.memory", { payload: profile, success: MemoryOverview, error: Errors }).annotate(RequiredScope, "read"),
   /** A file in its workspace, now or as it was in commit `rev`. */
