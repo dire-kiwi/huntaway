@@ -85,7 +85,10 @@ export function useFileDiffs(h: string, id: string, target: FileRow | undefined,
   const result = useAtomValue(target ? fileDiffsAtom(diffsKey(h, id, target, reads)) : nothing)
   const error = resultError(result)
   const read = resultValue(result)
-  const fileDiffs = useKept(error !== null ? { ...NO_DIFFS, key: target?.key ?? "", error } : (read ?? null))
+  // Why the target's diffs couldn't be read, as one object while it stays the same failure.
+  const targetKey = target?.key ?? ""
+  const failed = useMemo(() => (error === null ? null : { ...NO_DIFFS, key: targetKey, error }), [error, targetKey])
+  const fileDiffs = useKept(failed ?? read ?? null)
   const diffs = fileDiffs && target && fileDiffs.key === target.key ? fileDiffs : null
   const unstagedFiles = useMemo(() => parseDiff(diffs?.unstaged ?? ""), [diffs?.unstaged])
   const stagedFiles = useMemo(() => parseDiff(diffs?.staged ?? ""), [diffs?.staged])

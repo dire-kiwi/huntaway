@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { afterAll, afterEach, beforeAll, test } from "vite-plus/test"
-import { eventually, makeProfile, routeRpc, startServer, withBrowser } from "./harness.mjs"
+import { eventually, failure, makeProfile, routeRpc, startServer, withBrowser } from "./harness.mjs"
 
 // The Changes tab (the old changes.test.mjs): a task with a worktree on a repository the check makes, changed by hand,
 // and its tab driven from the keyboard. The old checks slowed the page's `/git/diff` and `/git/show` requests with
@@ -123,6 +123,25 @@ test("Escape after Enter on a file still loading goes back to the files", async 
     await ui.run(["press Space"])
     await waitFor(() => git(wt, "diff", "--cached", "--name-only") === "new.txt\n")
   })
+})
+
+// HE-9 review: a file's diffs that failed to read were a new object on every render, which the tab kept as a change of
+// state each time, so React gave up ("Too many re-renders") and the tab crashed. A host dropping during a poll did it.
+test("a file's diff that can't be read says why, and the tab goes on", async () => {
+  writeFileSync(
+    `${wt}/app.txt`,
+    lines(30, (i) => (i === 3 ? "three" : `line ${i}`)),
+  )
+  try {
+    await withBrowser(server, {}, async (ui) => {
+      await routeRpc(ui.page, (request) =>
+        request.tag === "git.diff" ? failure({ _tag: "Unavailable", what: "git", reason: "the check's diff failed" }) : undefined,
+      )
+      await ui.run([`goto /t/${task.id}`, "click Changes", "wait app.txt", "wait the check's diff failed", "sleep 500", "wait app.txt"])
+    })
+  } finally {
+    git(wt, "checkout", "-q", "--", "app.txt")
+  }
 })
 
 // A dialog opened from a menu (stash options, then its message) had nothing to give the focus back to, so keys

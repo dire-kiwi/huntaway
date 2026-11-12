@@ -14,14 +14,16 @@ export const sameJson = (a: unknown, b: unknown) => toJson(a) === toJson(b)
 
 /**
  * `value`, or the one it was before while what's read again is the same (`sameJson`): what depends on it (a diff's lines
- * picked, a file's diffs) stays as it was. State adjusted during render; the answer is compared once.
+ * picked, a file's diffs) stays as it was. State adjusted during render, and only when the value has changed: a value
+ * made anew on every render with the same content (a failure's) must not set it, or each render asks for another and
+ * React gives up.
  */
 export function useKept<T>(value: T): T {
   const [kept, setKept] = useState<{ readonly raw: T; readonly value: T }>({ raw: value, value })
   if (kept.raw === value) return kept.value
-  const next = kept.value !== undefined && value !== undefined && sameJson(kept.value, value) ? kept.value : value
-  setKept({ raw: value, value: next })
-  return next
+  if (kept.value !== undefined && value !== undefined && sameJson(kept.value, value)) return kept.value
+  setKept({ raw: value, value })
+  return value
 }
 
 /**
