@@ -1,12 +1,14 @@
-import { useAtom } from "@effect/atom-react"
+import { useAtom, useAtomValue } from "@effect/atom-react"
 import type { AttachmentRef, ComposerDraft } from "@huntaway/client"
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import type { Atom } from "effect/reactivity"
 import { FileText, Loader2, Paperclip, X } from "lucide-react"
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from "react"
 import { createPortal } from "react-dom"
-import { errorText } from "../ui"
-import { attachmentUrl, isImage, uploadAttachment } from "./attachmentFiles"
+import { resultError, resultValue } from "../ui"
+import { exitError, useAction } from "../../state/mutation"
+import { attachmentUrlAtom, isImage, uploadAttachment } from "./attachmentFiles"
 
 interface Item {
   key: string
@@ -31,6 +33,7 @@ export function useAttachmentDraft(hostId: string, draft: Atom.Writable<Composer
   const [pending, setPending] = useState<Item[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [, run] = useAction()
   const files = saved?.files ?? NO_FILES
   const setFiles = (change: (files: ReadonlyArray<AttachmentRef>) => ReadonlyArray<AttachmentRef>) =>
     setDraft((d) => ({ text: d?.text ?? "", files: change(d?.files ?? NO_FILES) }))
@@ -41,16 +44,11 @@ export function useAttachmentDraft(hostId: string, draft: Atom.Writable<Composer
     for (const file of picked) {
       const key = `a${++seq}`
       setPending((cur) => [...cur, { key, name: file.name || "pasted file" }])
-      uploadAttachment(hostId, file).then(
-        (ref) => {
-          setPending((cur) => cur.filter((it) => it.key !== key))
-          setFiles((cur) => [...cur, ref])
-        },
-        (e: unknown) => {
-          setPending((cur) => cur.filter((it) => it.key !== key))
-          setErr(errorText(e))
-        },
-      )
+      void run(uploadAttachment(hostId, file)).then((exit) => {
+        setPending((cur) => cur.filter((it) => it.key !== key))
+        if (Exit.isSuccess(exit)) setFiles((cur) => [...cur, exit.value])
+        else setErr(exitError(exit))
+      })
     }
   }
   const items: Item[] = [...files.map((ref) => ({ key: ref.id, name: ref.name, ref })), ...pending]
@@ -199,22 +197,10 @@ function Chip({ name, pending, url }: { name: string; pending?: boolean | undefi
 
 /** An image's thumbnail (opens full size), or a file's name (downloads it). */
 function Thumb({ hostId, file }: { hostId: string; file: AttachmentRef }) {
-  const [url, setUrl] = useState<string>()
-  const [failed, setFailed] = useState(false)
+  const result = useAtomValue(attachmentUrlAtom(hostId, file))
+  const url = resultValue(result)
+  const failed = resultError(result) !== null
   const [open, setOpen] = useState(false)
-  const { id, name, path } = file
-  useEffect(() => {
-    let live = true
-    const { url: loading, release } = attachmentUrl(hostId, { id, name, path })
-    loading.then(
-      (u) => live && setUrl(u),
-      () => live && setFailed(true),
-    )
-    return () => {
-      live = false
-      release()
-    }
-  }, [hostId, id, name, path])
   if (!isImage(file.name) || failed) return <Chip name={failed ? `${file.name} (unavailable)` : file.name} url={url} />
   return (
     <>

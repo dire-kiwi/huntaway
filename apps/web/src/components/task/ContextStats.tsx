@@ -15,13 +15,14 @@ import {
 } from "./contextStatsData"
 import { navigate } from "../../state/route"
 import { Swatch, useTip } from "../settings/chart"
+import { localeString } from "../ui/dates"
 
 /** The Analytics page's Context tab: how big threads' contexts get, and when they're compacted. */
 
 const BAR = PALETTE[0]
 const usd = (n: number) => (n >= 100 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`)
 const pct = (n: number) => `${Math.round(n * 100)}%`
-const when = (t: number) => new Date(t).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+const when = (t: number) => localeString(t, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
 const SOURCES: CompactSource[] = ["idle", "user", "auto"]
 
 function openTask(t: ATask | undefined) {
