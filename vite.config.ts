@@ -58,8 +58,6 @@ const stepOne = [
   "apps/web/src/components/changes/**",
   // docs/
   "apps/web/src/components/docs/**",
-  // layout/
-  "apps/web/src/components/layout/**",
   // settings/: analytics, token statistics, disk usage, telemetry, usage
   "apps/web/src/components/settings/analytics/**",
   "apps/web/src/components/settings/Analytics.tsx",
