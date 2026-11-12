@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { isArchived, type HostTask as Task } from "@huntaway/client"
 import type { Resolution, Status } from "@huntaway/contracts"
 import type { TaskUpdateOptions } from "../ConfirmTodos"
-import type { PenTab } from "../pens"
+import type { PenTab } from "../penModel"
 
 import { isoOf, StatusIcon, type MenuItem } from "../../ui"
 import { useNewPen } from "../Pens"

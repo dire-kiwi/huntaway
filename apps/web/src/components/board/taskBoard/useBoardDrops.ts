@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { canRunAgents, isArchived, mutate, type HostTask as Task } from "@huntaway/client"
 import type { Resolution, Status } from "@huntaway/contracts"
 import type { TaskUpdateOptions } from "../ConfirmTodos"
-import { attempt, inTab, moveToPen, type PenTab } from "../pens"
+import { attempt, inTab, moveToPen, type PenTab } from "../penModel"
 
 import { isoOf } from "../../ui"
 import type { SortKey } from "../boardQuery"

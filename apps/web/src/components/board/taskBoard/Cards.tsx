@@ -1,6 +1,6 @@
 import { Archive } from "lucide-react"
 import type { Status } from "@huntaway/contracts"
-import { inTab, type PenTab } from "../pens"
+import { inTab, type PenTab } from "../penModel"
 import { CardPenLabel } from "../Pens"
 import { TaskCard } from "../TaskCard"
 import { StackCard, StackTab } from "../StackCard"

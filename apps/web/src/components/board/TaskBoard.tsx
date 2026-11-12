@@ -4,7 +4,7 @@ import type { Effect } from "effect"
 import type { AtomRegistry } from "effect/reactivity"
 import { type CallError, type HostProfile as Profile, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import type { Status } from "@huntaway/contracts"
-import { attempt, moveToPen, type PenLanes, type PenRefused } from "./pens"
+import { attempt, moveToPen, type PenLanes, type PenRefused } from "./penModel"
 import { FilterBar, FilterMenu, SearchBox, SortMenu } from "./BoardControls"
 
 import { useConfirmDone } from "./ConfirmDone"

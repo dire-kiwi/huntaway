@@ -168,12 +168,14 @@ jobs:
           path: release
           merge-multiple: true
 
+      # upload-artifact keeps the files' paths below their common folder, the checkout, so they come down as
+      # release/apps/desktop/release/* and release/release/*: the files are looked for in any folder under release/.
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          shopt -s nullglob
-          files=(release/*.{AppImage,pacman,dmg,zip,tar.gz,sha256,json})
+          shopt -s nullglob globstar
+          files=(release/**/*.{AppImage,pacman,dmg,zip,tar.gz,sha256,json})
           [ ${#files[@]} -gt 0 ] || { echo "::error::no files to attach"; exit 1; }
           ls -l "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
