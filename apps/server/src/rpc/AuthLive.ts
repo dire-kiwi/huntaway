@@ -25,6 +25,32 @@ const boardSession: SessionShape = { kind: "board", scopes: boardScopes, device_
 /** A host that dialled in, with the hub token every such host shares: `link` and nothing else. */
 const hubTokenSession: SessionShape = { kind: "link", scopes: new Set(["link"]), device_id: null, via_link: null }
 
+/** A read-only server's one session: the board token's, narrowed to `read`. */
+const readOnlySession: SessionShape = { kind: "board", scopes: new Set(["read"]), device_id: null, via_link: null }
+
+/**
+ * `Auth` on a read-only server (docs/plan/06-server.md, A read-only server; 05-protocol.md, Sessions and scopes):
+ * the board token is still required, and its session has `read` and no other scope, so every RPC that changes anything
+ * is refused with `Forbidden` as for any missing scope. Read-only narrows a session; it does not open the board. The
+ * hub token and a hub's sealed sessions are refused (`Unauthorized`): a rehearsal accepts no links.
+ */
+export const AuthReadOnly = Layer.effect(
+  Auth,
+  Effect.gen(function* () {
+    const identity = yield* Identity
+    const token = Redacted.value(identity.token)
+    return Auth.of((effect, { headers, rpc }) => {
+      const scope = Context.get(rpc.annotations, RequiredScope)
+      if (headers[LINK_HEADER] !== undefined || headers[SESSION_HEADER] !== undefined) return Effect.fail(new Unauthorized())
+      const given = bearer(headers["authorization"])
+      if (given === null || !sameSecret(given, token)) return Effect.fail(new Unauthorized())
+      return scope === null || !readOnlySession.scopes.has(scope)
+        ? Effect.fail(new Forbidden({ scope: scope ?? "none" }))
+        : Effect.provideService(effect, Session, readOnlySession)
+    })
+  }),
+)
+
 /**
  * The server's side of `Auth` (docs/plan/05-protocol.md, Sessions and scopes). A socket a hub relays carries its
  * session sealed in the headers of its upgrade request (`x-huntaway-link`, `x-huntaway-session`), which the RPC server

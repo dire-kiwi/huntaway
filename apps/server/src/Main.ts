@@ -107,6 +107,7 @@ import { SettingsSyncExchange } from "./hosts/SettingsSyncExchange.ts"
 import { SettingsSyncRepo } from "./hosts/SettingsSyncRepo.ts"
 import { Ssh } from "./hosts/Ssh.ts"
 import { Uplink } from "./hosts/Uplink.ts"
+import { AssistantHost } from "./hosts/AssistantHost.ts"
 import { LinkStreamRoute } from "./http/linkStream.ts"
 import { RelayRoute } from "./http/relay.ts"
 // 6.3: documents.
@@ -158,7 +159,7 @@ import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
 import { Secrets } from "./platform/Secrets.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
-import { Board } from "./lifecycle/Board.ts"
+import { Board } from "./board/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
 import { McpCallRepo } from "./mcp/McpCallRepo.ts"
@@ -453,6 +454,7 @@ const HostLinksLive = Uplink.otherHosts.pipe(
 /** The rest of the hosts area, over the board's MCP area: the directory, the relay, tools called from other hosts, settings sync, discovery. */
 const HostsLive = Layer.mergeAll(
   Links.layer,
+  AssistantHost.layer,
   Relay.layer,
   HostTools.served,
   SettingsSyncExchange.layer,
@@ -643,8 +645,8 @@ export const AutomationLoops = Scheduler.loop
 export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
 
 /** Every area's services, and their loops. */
-/** 6.11: the fingerprint recorder: what each project's folder is, until its history is known (now, then hourly). */
-export const ProjectLoops = Projects.recorder
+/** 6.11: the fingerprint recorder (what each project's folder is, until its history is known: now, then hourly); 9.2: the git facts' sweep. */
+export const ProjectLoops = Layer.mergeAll(Projects.recorder, Projects.gitSweeper)
 
 export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, PlatformLoops, Terminals.reaper /* 6.1 */).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),

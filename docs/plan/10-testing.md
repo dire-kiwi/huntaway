@@ -53,7 +53,7 @@ Rules:
 | `board`                | Builders: `profile()`, `project({ git: true })`, `task()`, `taskWithWork()`, `review()`, `stack()`                  |
 | `git`                  | A repository in a temp folder with commits, branches and a bare remote; `squashMerge`                              |
 | `fakeAgent`            | A scripted agent for service tests: feed lines to a run's `out.jsonl`, read what was written to its input, end it. Replaces `runner/testing.ts` |
-| `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`; and `fake-until-interrupted`, new: a turn that goes on until a stop interrupts it) and knobs. What it must do is inventory 01, section 10. As a reviewer (4.6, new): a review run calls `submit_review` with `pass`, or `needs_fixes` every round when the task's description (which the review prompt quotes) says `fake-review-fixes`, or on a first round only with `fake-review-fixes-once` (a round that re-checks issues passes); a run whose prompt says `fake-commit` (a task's first, which quotes its description) or that is sent a review's issues ("Fix them, then commit") makes an empty commit, so the next round has new work. A task described `fake-commit fake-review-fixes-once` goes To do → In progress → In review → a round of fixes → In review, passed, summarised |
+| `fake-claude`          | The program for whole-server tests and test servers: the old `scripts/fake-claude` ported to TypeScript with its prompt markers (`fake-ask-permission`, `fake-board-call …`, `fake-subagent`; and `fake-until-interrupted`, new: a turn that goes on until a stop interrupts it; `fake-skill-fork`, HE-8: a forked skill, `/code-review`, as a `local_agent` subagent whose Bash call asks first) and knobs. What it must do is inventory 01, section 10. As a reviewer (4.6, new): a review run calls `submit_review` with `pass`, or `needs_fixes` every round when the task's description (which the review prompt quotes) says `fake-review-fixes`, or on a first round only with `fake-review-fixes-once` (a round that re-checks issues passes); a run whose prompt says `fake-commit` (a task's first, which quotes its description) or that is sent a review's issues ("Fix them, then commit") makes an empty commit, so the next round has new work. A task described `fake-commit fake-review-fixes-once` goes To do → In progress → In review → a round of fixes → In review, passed, summarised |
 | `fakeGh`, `fakeGithub` | `gh` answers and a GraphQL pull request that tests change over time. As built (4.4): `fakeGitHub(state)` and `fakePull` over `bin/fake-gh` (its state, a JSON file a test sets and reads back, is documented there); `test-server.sh --fake-gh` |
 | `twoHosts`             | Two `TestBoard`s linked in memory, and the same over real sockets for the whole-server tier                        |
 | `fixtures/threads/`    | The recorded sessions                                                                                              |
@@ -91,6 +91,7 @@ Taken at the end of M2 and again before the switch, on a scrubbed copy of a live
 | The board snapshot                                          | Bytes and time for `board.watch`'s first message | Recorded; a filter is added if it is slow to open |
 | A hook's start                                              | `approval-hook` wall time                   | Under 60 ms                             |
 | `pnpm check`, `pnpm test`                                   | Wall time                                   | Recorded per milestone                  |
+| The import (9.1)                                            | `import-legacy --check`: wall time, peak RSS | Recorded                               |
 
 Schema decoding is the cost Effect adds on the hot path. If the follower misses its limit, its line schemas are
 decoded with precompiled decoders and the per-line span is dropped (`Effect.fnUntraced`), before anything else is
@@ -135,3 +136,78 @@ importer, M9), the old one at `f2298f0c` through its own `test-server.sh`, the s
 
 The probe is `scripts/event-loop-probe.mjs`. The memory and event-loop figures were taken before the follower's changes
 above, which lower the CPU per line; they were not taken again.
+
+### As measured before the switch (HE-8, 9.2)
+
+On 12 November 2026, at `b05a54f` (9.1's last commit) with 9.2's scripts, on the same i9-13900K (32 threads, 62 GiB,
+Linux 7.2, Node 26.13) shared with the live board and other agents' work: the load average ran from 1 to 48 over the
+day, so each pair was taken alternately, new then old, and the table's rows at a load of 1 to 6 unless said. 60 GB of
+swap was in use: RSS is read with `VmSwap` beside it, which was 0 for every figure here (the old test server had 43 MB
+swapped out after an idle hour, so it was restarted before it was measured).
+
+The data: the old test server (`f2298f0c`, its own `test-server.sh --seed --fake-claude`) seeded through its REST API
+with 3 projects and 2,848 tasks over the columns and 60 fake-claude runs (480 thread items; a 4.4 MB database), and the
+new server on a scrubbed copy of it (`copy-live-board.sh`: `import-legacy --check`, 0 failures, 0 problems), so the
+same tasks on both. For the runs, a second old test server seeded by the same script (the first one's agent is the
+plain fake), and the new copy with its three projects pointed (`projects.update`) at clones of the old server's
+repositories, which the scrub moves under `/nonexistent`. The agent for both is `scripts/fake-claude-flood.mjs`, which
+runs each server's own fake claude and, when armed, turns its reply into N assistant text lines, each its own message
+and each with the same `usage` (as Claude Code's lines carry; the old fake's carry none, the new one's a token each).
+`scripts/measure-vs-old.mjs` takes the figures, on either server: RSS of the server's node; start to ready (the
+launcher's start in `/proc` to the time on the log line before the ready line); `/api/health` every 5 ms; the old
+client's loads as `store.ts` makes them; one flood (first line written to the last line's item seen in the database,
+read-only, and the server's CPU meanwhile); ten runs at once. Medians, with the number of runs.
+
+| What                                                                  | New                     | Old                 | New/old       | Limit    | Within  |
+| --------------------------------------------------------------------- | ----------------------- | ------------------- | ------------- | -------- | ------- |
+| RSS at idle, 20 s after ready: empty board (5) / 2,848 tasks (5)      | 167 / 190 MB            | 116 / 138 MB        | 1.44× / 1.38× | ≤ 1.5×   | yes     |
+| RSS, ten runs live / 10 s after they ended (6 × ten runs)             | 275 / 281 MB            | 142 / 134 MB        | 1.93× / 2.10× | ≤ 1.5×   | **no**  |
+| … 60 s after they ended (3)                                           | 214 MB                  | 131 MB              | 1.63×         | ≤ 1.5×   | **no**  |
+| Start to `HUNTAWAY_READY` / `IA_READY`: fresh (5) / 2,848 tasks (5)   | 855 / 1,303 ms          | 353 / 368 ms        | 2.4× / 3.5×   | < 2 s    | yes     |
+| `/api/health` p99 while 10,000 lines arrive at once (3)               | 6.7 ms                  | 1,112 ms            | 0.006×        | ≤ old    | yes     |
+| `/api/health` p99 at ~483 lines/s (5,000 lines, 3)                    | 3.5 ms                  | 11.1 ms             | 0.32×         | ≤ old    | yes     |
+| Follower: 10,000 lines, first written to last stored (5)              | 3,165 ms                | 982 ms              | **3.2×**      | ≤ 1.5×   | **no**  |
+| … CPU per line / SQL statements per line                              | 0.39 ms / 8.1           | 0.106 ms            | 3.7×          |          |         |
+| … the same lines without `usage` (4)                                  | 1,333 ms, 0.18 ms / 6.1 | 720 ms, 0.08 ms     | **1.85×**     | ≤ 1.5×   | **no**  |
+| Follower after the context meter's fix, alternating with the old (7)  | 1,417 ms, 0.17 ms       | 920 ms, 0.12 ms     | **1.54×**     | ≤ 1.5×   | at it   |
+| Board's first message (snapshot; old: its 16 loads) (6)               | 164 ms, 4.9 MB          | 84 ms, 5.0 MB       | 1.95×         | recorded |         |
+| `approval-hook`, cold / warm compile cache (2 × 9)                    | 60 / 30 ms              | 52 / 25 ms          | 1.15× / 1.2×  | < 60 ms  | warm only |
+| `pnpm check` / `pnpm test` (3)                                        | 14.1 s / 28.9 s         |                     |               | recorded |         |
+| `import-legacy --check`, the 2,848-task board (5)                     | 1.27 s, 228 MB peak     |                     |               | recorded |         |
+| … a board of 2,848 tasks and 144,930 items (161 MB) (3)               | 3.8 s, 275 MB peak      |                     |               | recorded |         |
+
+Ten runs: each run 300 lines at 20 a second, on boards that had had the floods (idle before them, 211 against 143 MB).
+Ten runs of one line each lift the new server the same way (211 to 283 MB), so it is what a run's start allocates, not
+its lines; the new server gives most of it back within a minute (a collection); the old one's barely moves. The flood's
+`/api/health` p99 is over a flood that the new server takes 3 s for and the old one 1 s, in which the old answered 18
+times. `pnpm check` covers 1,373 files and `pnpm test` 242 files of 2,016 tests (M2: 4.2 s and 7.0 s). Start with 2,848
+tasks is 450 ms more than fresh on the new server and 15 ms on the old: not looked into. The board's snapshot holds the
+new server's thread for 57 to 77 ms (the probe's slowest answer meanwhile). The hook's cold start is at its limit (60
+and 61 ms medians; M2 56 ms); the warm one, which an agent's calls find, is well under it.
+
+**Three were over their limits.** Memory with runs live and after (1.9× to 2.1×, still 1.6× a minute later; at idle
+1.38× to 1.48×), the follower (3.2×, and 1.85× even without `usage`), and the hook's cold start (60 ms, not under).
+The follower's first cause is fixed (below): 1.54× the old server, seven floods each, new and old alternating at a load
+of 2 (one set of four gave 1.46×), so at its limit rather than within it. Memory with runs and the hook's cold start are
+as measured, and open.
+
+The follower: the plan's first step (precompiled line decoders, no per-line span) has been in since M2 (HE-4) and still
+is (`RunOutput`'s and the Claude output's handlers are `Effect.fnUntraced`, the follower runs with the tracer off), so
+there was nothing of it left to try. What the measurement found instead:
+
+- **The context meter, per line.** `ContextMeter.onAssistant` runs for every assistant line with `usage`, after the
+  line's commit and so outside the 64-line transaction: an `UPDATE runs SET turn_start_tokens…` and a whole task read
+  (`TaskRepo.get`, the task row with its queue as `json_group_array`, 78 µs of SQLite and its decoding) only to find the
+  tokens unchanged. Those are 2 of the 8.1 statements a line and about half its time: with the call skipped (an
+  experiment, not kept) the flood took 1,580 to 2,000 ms. HE-4's 6.1 statements say its lines had no `usage`. Fixed
+  (HE-8): the meter remembers the tokens each task's run last noted and skips a line that repeats them (one reply
+  comes as several lines with the same usage), forgetting them at a turn's end, a compaction and any other change to
+  the task's context; `ContextMeter.test.ts` holds that a turn starting at the last turn's size still has its start.
+- **Without `usage`**, the statements are M2's 6.1 a line, but the CPU a line has gone from 0.098 to 0.18 ms (the old
+  server's from 0.072 to 0.08 on this day's machine), and the time from 770 to 1,333 ms. The profile: SQLite a quarter,
+  then the Effect runtime and `Context` lookups, schema decoding and GC; the work added to each line's `follow` since M2
+  is where to look. Not done here: 9.2 measures.
+
+`copy-live-board.sh` had never run to the end since 9.1: it put the snapshot inside the test server's data folder, and
+`import-legacy` refuses an old folder inside the new one. The snapshot is now beside it (`<data dir>-legacy-source`),
+which `test-server.sh stop` removes with the data folder.

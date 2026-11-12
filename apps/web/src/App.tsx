@@ -5,6 +5,7 @@ import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
 import { Sidebar } from "./components/layout/Sidebar"
+import { RehearsalBanner } from "./components/layout/RehearsalBanner"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
 import { DocsPage } from "./components/docs/DocsPage"
 import { Analytics } from "./components/settings/Analytics"
@@ -90,48 +91,52 @@ export function App() {
   }
 
   return (
-    <div className="relative flex h-full">
-      {narrow ? (
-        // A drawer over the page, which stays mounted closed so its menus and dialogs, and its scroll, stay as they were.
-        <>
-          {drawerOpen && <div className="absolute inset-0 z-40 bg-black/60" onClick={() => useDrawer.getState().setOpen(false)} />}
-          <div
-            inert={!drawerOpen}
-            className={clsx(
-              "absolute inset-y-0 left-0 z-40 w-[min(85%,300px)] shadow-2xl shadow-black/50 transition-[translate,visibility] duration-200",
-              !drawerOpen && "invisible -translate-x-full",
-            )}
-          >
-            <Sidebar route={route} drawer />
+    // 9.1: a rehearsal (a read-only copy of an imported board) says so above everything.
+    <div className="flex h-full flex-col">
+      <RehearsalBanner />
+      <div className="relative flex min-h-0 flex-1">
+        {narrow ? (
+          // A drawer over the page, which stays mounted closed so its menus and dialogs, and its scroll, stay as they were.
+          <>
+            {drawerOpen && <div className="absolute inset-0 z-40 bg-black/60" onClick={() => useDrawer.getState().setOpen(false)} />}
+            <div
+              inert={!drawerOpen}
+              className={clsx(
+                "absolute inset-y-0 left-0 z-40 w-[min(85%,300px)] shadow-2xl shadow-black/50 transition-[translate,visibility] duration-200",
+                !drawerOpen && "invisible -translate-x-full",
+              )}
+            >
+              <Sidebar route={route} drawer />
+            </div>
+          </>
+        ) : (
+          <Sidebar route={route} />
+        )}
+        {/* The task panel slides in over the content below its top bar, rather than squeezing it. */}
+        <div className="relative min-w-0 flex-1">
+          <div className="h-full min-w-0">
+            {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
+            {route.name === "board" && <Board projectId={route.projectId} />}
+            {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
+            {route.name === "task" && <TaskView taskId={route.taskId} />}
+            {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
+            {route.name === "docs" && <DocsPage key={route.profile} route={route} />}
+            {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
+            {route.name === "settings" && <Settings tab={route.tab} />}
+            {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
+            {route.name === "guide" && <Guide page={route.page} />}
+            {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
           </div>
-        </>
-      ) : (
-        <Sidebar route={route} />
-      )}
-      {/* The task panel slides in over the content below its top bar, rather than squeezing it. */}
-      <div className="relative min-w-0 flex-1">
-        <div className="h-full min-w-0">
-          {route.name === "profile" && <ProfileBoard key={route.profile} profile={route.profile} />}
-          {route.name === "board" && <Board projectId={route.projectId} />}
-          {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
-          {route.name === "task" && <TaskView taskId={route.taskId} />}
-          {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
-          {route.name === "docs" && <DocsPage key={route.profile} route={route} />}
-          {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
-          {route.name === "settings" && <Settings tab={route.tab} />}
-          {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
-          {route.name === "guide" && <Guide page={route.page} />}
-          {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
+          {panel && hasPanel(route) && <TaskPanel panel={panel} />}
         </div>
-        {panel && hasPanel(route) && <TaskPanel panel={panel} />}
+        {panel?.compare === true && hasPanel(route) && (
+          <Suspense fallback={null}>
+            <CompareView taskId={panel.taskId} />
+          </Suspense>
+        )}
+        {modal !== null && <TaskModal key={modal} taskId={modal} />}
+        <UnhandledErrors />
       </div>
-      {panel?.compare === true && hasPanel(route) && (
-        <Suspense fallback={null}>
-          <CompareView taskId={panel.taskId} />
-        </Suspense>
-      )}
-      {modal !== null && <TaskModal key={modal} taskId={modal} />}
-      <UnhandledErrors />
     </div>
   )
 }

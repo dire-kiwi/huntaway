@@ -64,7 +64,9 @@ export class Auth extends RpcMiddleware.Service<Auth, { provides: Session }>()("
   client's scopes and no more. A paired device (`read` and `operate` only) is the third kind of session; it is in
   the contract so that scopes are designed for it, and is implemented with the phone app, later. On a
   [read-only server](06-server.md#a-read-only-server) (a rehearsal of an import) every session has `read` and no
-  more, whatever it presents, and `host.info` says `read_only: true`.
+  more, whatever it presents, and `host.info` says `read_only: true`. Read-only narrows a session's scopes; it does not
+  open the board: the board token is still required, there is no open token, and the hub token and relayed sessions
+  are refused (9.1). A rehearsal listens on loopback (127.0.0.1) unless `--host` says otherwise.
 - **What each scope covers.** `read`: lists, gets, subscriptions, thread pages. `operate`: create and change tasks,
   send messages, answer prompts and questions, stop runs, start reviews, attachments. `git`: the Changes tab's writes,
   worktree setup and teardown, rewind. `terminal`: terminals and the desktop viewer. `settings`: profiles, projects,

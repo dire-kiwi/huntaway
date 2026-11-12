@@ -66,6 +66,25 @@ export class CodexQueries extends Context.Service<CodexQueries, CodexQueriesShap
     }),
   )
 
+  /**
+   * A read-only server's (docs/plan/06-server.md, A read-only server): no Codex is started. A Claude config lists no
+   * models, as everywhere; a Codex config's models, rate limits and titles are unavailable, and it has no skills of its own.
+   */
+  static readonly readOnly = Layer.effect(
+    CodexQueries,
+    Effect.gen(function* () {
+      const repo = yield* AgentConfigRepo
+      const none = Effect.fail(new CodexUnavailable({ reason: "a read-only server starts no Codex" }))
+      return CodexQueries.of({
+        models: () => none,
+        configModels: configModelsWith(repo, () => none),
+        skills: () => Effect.succeed([]),
+        rateLimits: () => none,
+        title: () => Effect.succeed({ reply: Result.fail("a read-only server asks no model"), spent: null } satisfies TitleAnswer),
+      })
+    }),
+  )
+
   /** For tests: the models given (settable through `CodexModelsScript`), no skills, no rate limits, no titles. */
   static readonly layerTest = Layer.effect(
     CodexQueries,

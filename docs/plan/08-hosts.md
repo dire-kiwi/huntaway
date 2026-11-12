@@ -161,7 +161,13 @@ As built (7.4):
   refuse it; `Approvals` takes a null asker and refuses what needs asking with the old text ("… needs the user's
   approval, which only an agent on the task's own host can ask for; …"); the actor of its changes is an `Agent` with no
   task.
-- Left out: the assistant on its own host (needs `Assistant`, 6.7); the old checks of hosts on older builds (14).
+- Left out: the old checks of hosts on older builds (14).
+- **As built (HE-8): the assistant on its own host.** `hosts/AssistantHost.ts` sends `assistant.get` and
+  `assistant.send` for a profile whose `assistant_host` is a linked host over that link, to the profile of the same
+  name there, asking for that host's own (`here`), so a host whose profile names the hub doesn't send it back; the
+  answer carries the host's id (`AssistantTask.host_id`). No new host protocol: the hub's link client already has the
+  board's scopes. A stand-in that dialled in under the assistant host's id is refused when it attaches, so the user's
+  messages only go the way the host is linked. Details in [06-server.md](06-server.md) (Assistant, As built HE-8).
   Tested: `hosts/HostTools.test.ts` (two boards, the old uplink tests), `mcp/acrossHosts.test.ts` (scripted hosts),
   `hosts/Uplink.test.ts`, and `tests/e2e/hosts-tools.test.ts` (whole servers, both ways of linking).
 

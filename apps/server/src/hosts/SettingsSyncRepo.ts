@@ -14,7 +14,8 @@ export interface SyncRow extends SyncEntry {
   readonly seen: string | null
 }
 
-const Row = Schema.Struct({
+/** A `setting_versions` row as stored. */
+export const SettingVersionRow = Schema.Struct({
   name: Schema.String,
   value: Schema.String,
   vv: Schema.String,
@@ -30,7 +31,7 @@ const isCounters = Schema.is(Counters)
 const isLost = Schema.is(Schema.Array(SyncLost))
 
 /** A row as an entry; null for one that can't be read (dropped, as the old server did, with a warning). */
-const rowOf = (r: typeof Row.Type): SyncRow | null => {
+const rowOf = (r: typeof SettingVersionRow.Type): SyncRow | null => {
   const vv = parseJson(r.vv)
   const lost = parseJson(r.lost)
   if (!isCounters(vv) || !isLost(lost)) return null
@@ -51,7 +52,7 @@ export class SettingsSyncRepo extends Context.Service<SettingsSyncRepo, Settings
       const { sql } = yield* Db
       const findAll = SqlSchema.findAll({
         Request: Schema.Void,
-        Result: Row,
+        Result: SettingVersionRow,
         execute: () => sql`SELECT name, value, vv, changed_at, changed_by, lost, seen, since FROM setting_versions ORDER BY name`,
       })
       const all = Effect.gen(function* () {

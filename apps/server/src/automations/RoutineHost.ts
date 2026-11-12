@@ -40,6 +40,7 @@ export interface RoutineHostShape extends AssistantAccess {
 
 const IdRow = Schema.Struct({ id: TaskId })
 const idRows = rowsOf(IdRow)
+const nameRows = rowsOf(Schema.Struct({ name: Schema.String }))
 
 export class RoutineHost extends Context.Service<RoutineHost, RoutineHostShape>()("huntaway-server/automations/RoutineHost") {
   static readonly layer = Layer.effect(
@@ -80,8 +81,9 @@ export class RoutineHost extends Context.Service<RoutineHost, RoutineHostShape>(
         if (Option.isNone(p)) return null
         const host = p.value.assistant_host
         if (host === null || String(host) === String(identity.hostId)) return null
-        // The link's name is M7's: its id until then.
-        return `${p.value.name}'s assistant runs on ${host}, so routines on ${identity.hostName} don't wake it: make this one on ${host}, in its assistant's Routines tab there`
+        // The link's name, as the user knows that host (its id for a link that's gone).
+        const name = (yield* nameRows(sql`SELECT name FROM links WHERE id = ${host}`))[0]?.name ?? host
+        return `${p.value.name}'s assistant runs on ${name}, so routines on ${identity.hostName} don't wake it: make this one on ${name}, in its assistant's Routines tab there`
       })
 
       return RoutineHost.of({

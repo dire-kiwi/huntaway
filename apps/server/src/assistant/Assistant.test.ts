@@ -35,8 +35,8 @@ const json = (v: unknown): string => Result.getOrElse(encodeJson(v), () => "")
 // runs are told and where they work, its turns committed and its replies told to push, and its tracked work.
 //
 // Dropped, with why: the database migrations' cases (`a_database_at_version_89…`, `…version_91…`: the importer's, 9.1);
-// assistant hosts (`an_assistant_host_must_be_a_linked_host…`, `the_hub_sends_a_profiles_assistant_to_its_host`,
-// `a_message_to_the_assistant_goes_to_its_host`): linked hosts are M7's (7.4); `the_assistant_writes_its_workspace_without_asking`:
+// assistant hosts (`an_assistant_host_must_be_a_linked_host…`: Profiles.test.ts; `the_hub_sends_a_profiles_assistant_to_its_host`,
+// `a_message_to_the_assistant_goes_to_its_host`: over a link, tests/e2e/hosts-assistant.test.ts); `the_assistant_writes_its_workspace_without_asking`:
 // `Permissions`' own folder rule (permissions/Permissions.test.ts covers the assistant's folder); `no_project_can_have_the_assistants_key`:
 // projects/checks (`A` is refused with `G` and `S` there); `a_claude_run_is_given_its_memory_in_a_file`: the system prompt
 // is always a file now (agents/claude/launch.ts); here, that the memory comes last in what a run is told.
@@ -323,12 +323,14 @@ layer(board)("Assistant", (it) => {
       for (const e of [yield* Effect.flip(assistant.memory(p.id)), yield* Effect.flip(assistant.here(p.id))]) {
         assert.strictEqual(e._tag, "Conflict")
       }
-      // Reaching it there is M7's: here it's offline.
+      // It's there (the hub sends `get` and `send` on: hosts/AssistantHost.ts), so this host makes none.
       assert.strictEqual((yield* Effect.flip(assistant.get(p.id)))._tag, "Unavailable")
-      // One this host has already is its own, whatever its profile says.
-      yield* sql`UPDATE profiles SET assistant_host = NULL WHERE id = ${p.id}`
-      yield* assistant.get(p.id)
-      yield* sql`UPDATE profiles SET assistant_host = 'elsewhere' WHERE id = ${p.id}`
+      assert.strictEqual((yield* Effect.flip(assistant.send(p.id, "hello")))._tag, "Unavailable")
+      assert.isNull(yield* assistant.find(p.id))
+      // Unless this host's own is asked for (what the hub asks of its assistant's host, whose profile may say otherwise):
+      // then it's made here, and it's this host's own from then on, whatever its profile says.
+      const made = yield* assistant.get(p.id, true)
+      assert.strictEqual((yield* assistant.get(p.id)).id, made.id)
       assert.strictEqual((yield* assistant.memory(p.id)).files[0]?.path, "USER.md")
     }),
   )
@@ -380,6 +382,35 @@ layer(TestBoard({ dataDir: via }))("Assistant, on a data folder reached through 
       yield* assistant.writeMemoryFile(p.id, "notes/a.md", "a", null, false)
       assert.strictEqual(readFileSync(`${real}/assistants/${o.task_id}/notes/a.md`, "utf8"), "a")
       assert.deepStrictEqual(log(o.dir)[0], ["You", "Edit notes/a.md"])
+    }),
+  )
+})
+
+// HE-8: on a board imported from an old one (`import.json`), an assistant keeps its workspace in the old data folder,
+// where its sessions ran; that folder's `assistants/<id>` is its own, and no other folder outside the board's is.
+const importedInto = mkdtempSync(`${tmpdir()}/huntaway-imported-`)
+const oldFolder = mkdtempSync(`${tmpdir()}/huntaway-old-`)
+writeFileSync(
+  `${importedInto}/import.json`,
+  json({ from: oldFolder, at: "2026-11-12T00:00:00.000Z", old_host_id: "old-host", rehearsal: false, database: "huntaway-2.db" }),
+)
+
+layer(TestBoard({ dataDir: importedInto }))("Assistant, on an imported board", (it) => {
+  it.effect("its workspace in the old data folder is its own; one elsewhere is refused", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory
+      const p = yield* profile("p")
+      const { task: a } = yield* opened(p)
+      const at = (workDir: string) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          yield* sql`UPDATE tasks SET work_dir = ${workDir} WHERE id = ${a.id}`.pipe(Effect.orDie)
+          return (yield* (yield* TaskRepo).get(a.id)) ?? assert.fail("no assistant")
+        })
+      assert.strictEqual(yield* memory.checked(yield* at(`${oldFolder}/assistants/${a.id}`)), `${oldFolder}/assistants/${a.id}`)
+      assert.isTrue(existsSync(`${oldFolder}/assistants/${a.id}`))
+      const elsewhere = mkdtempSync(`${tmpdir()}/huntaway-elsewhere-`)
+      assert.strictEqual((yield* Effect.flip(memory.checked(yield* at(`${elsewhere}/assistants/${a.id}`))))._tag, "Unavailable")
     }),
   )
 })

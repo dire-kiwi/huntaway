@@ -23,8 +23,10 @@ import { Memory } from "./Memory.ts"
 // review or merge (`tasks/decide.ts` refuses those statuses). It is made the first time it's asked for (`get`), in one
 // transaction that looks for it first, so two first opens make one; it goes only with its profile.
 //
-// A profile can name another host for its assistant (`assistant_host`): reaching it there is M7's (7.4). Until then a
-// profile whose assistant runs elsewhere is refused here, as the old server refused its memory, Google and brief.
+// A profile can name another host for its assistant (`assistant_host`). Then `get` and `send` are refused here unless
+// asked for this host's own (`here`): the hub sends them to that host (`hosts/AssistantHost.ts`, 7.4), asking for its
+// own there, and a board that found the assistant's host asks it so. Its memory, Google and brief are refused here
+// unless this host has the assistant (`here`), as the old server refused them.
 
 /** The assistant's folder, relative to the data folder (so it moves with it). */
 export const workDirOf = (task: TaskId): string => `assistants/${task}`
@@ -41,12 +43,16 @@ export interface Opened {
 type Errors = NotFound | Invalid | Conflict | Unavailable
 
 export interface AssistantShape {
-  /** The profile's assistant, made the first time it's asked for (with its workspace and memory files). */
-  readonly get: (profile: ProfileId) => Effect.Effect<Task, NotFound | Unavailable>
+  /**
+   * The profile's assistant, made the first time it's asked for (with its workspace and memory files). `Unavailable`
+   * when the profile's assistant runs on another host and this one has none, unless `here` (this host's own, whatever
+   * the profile says: the old `?local=1`).
+   */
+  readonly get: (profile: ProfileId, here?: boolean) => Effect.Effect<Task, NotFound | Unavailable>
   /** The profile's assistant, if it has one (none is made). */
   readonly find: (profile: ProfileId) => Effect.Effect<Task | null>
   /** Sends the user's message to the assistant (starting its agent or steering it); a message settles its open questions. */
-  readonly send: (profile: ProfileId, text: string) => Effect.Effect<Task, NotFound | Unavailable | TaskNotFound | SendRefused>
+  readonly send: (profile: ProfileId, text: string, here?: boolean) => Effect.Effect<Task, NotFound | Unavailable | TaskNotFound | SendRefused>
   /**
    * The assistant and its workspace, made ready (checked, seeded, with history). `Conflict` when the profile's assistant
    * runs on another host and this one has none (its memory is there).
@@ -140,14 +146,13 @@ export class Assistant extends Context.Service<Assistant, AssistantShape>()("hun
         return made.task
       })
 
-      const get = Effect.fn("Assistant.get")(function* (profile: ProfileId) {
+      const get = Effect.fn("Assistant.get")(function* (profile: ProfileId, local = false) {
         const p = yield* profileOf(profile)
         let task = yield* find(profile)
         if (task === null) {
-          // 7.4: the hub sends this to the assistant's host. Until hosts link (M7), that host can't be reached.
-          const elsewhere = hostElsewhere(p)
-          if (elsewhere !== null)
-            return yield* new Unavailable({ what: "assistant host", reason: `${p.name}'s assistant runs on ${elsewhere}, which is offline` })
+          // Its host's (the hub asks it there, `hosts/AssistantHost.ts`), unless this host's own is asked for.
+          const elsewhere = local ? null : hostElsewhere(p)
+          if (elsewhere !== null) return yield* new Unavailable({ what: "assistant host", reason: `${p.name}'s assistant runs on another host (${elsewhere})` })
           task = yield* make(p)
         }
         // Its workspace with its memory files, made again if it went missing (its history comes with its first run).
@@ -159,8 +164,8 @@ export class Assistant extends Context.Service<Assistant, AssistantShape>()("hun
         return task
       })
 
-      const send = Effect.fn("Assistant.send")(function* (profile: ProfileId, text: string) {
-        const task = yield* get(profile)
+      const send = Effect.fn("Assistant.send")(function* (profile: ProfileId, text: string, local = false) {
+        const task = yield* get(profile, local)
         const after = yield* runs.send(task.id, { text, source: "user" })
         // The user's reply answers the questions it asked.
         if (text.trim() !== "") yield* questions.settle(after.id, "replied")
@@ -207,9 +212,9 @@ export class Assistant extends Context.Service<Assistant, AssistantShape>()("hun
       const opened = <A, E>(profile: ProfileId, f: (o: Opened) => Effect.Effect<A, E>) => Effect.flatMap(open(profile), f)
 
       return Assistant.of({
-        get,
+        get: (profile, local) => get(profile, local),
         find,
-        send,
+        send: (profile, text, local) => send(profile, text, local),
         open,
         here: (profile) => Effect.asVoid(here(profile)),
         memory: (profile) => opened(profile, ({ task, dir }) => memory.overview(task.id, dir)),

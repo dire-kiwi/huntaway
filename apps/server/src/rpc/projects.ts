@@ -23,7 +23,9 @@ export const ProjectHandlers = ProjectRpcs.toLayer(
     const prompts = yield* Prompts
     return ProjectRpcs.of({
       "projects.list": ({ profile_id, archived }) => projects.list(profile_id, archived ?? false).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
-      "projects.get": ({ id }) => projects.get(id).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
+      // Its folder is looked at again (the old server read `is_git` and `has_commits` on every read): the setup page asks
+      // while its folder isn't ready, and a change reaches every board as the `project` event.
+      "projects.get": ({ id }) => projects.refreshGit(id).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
       "projects.create": ({ project }) => projects.create(project).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
       // 6.11: a new folder moves or follows it (`Relocation`).
       "projects.update": ({ id, patch }) => relocation.update(id, patch).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),

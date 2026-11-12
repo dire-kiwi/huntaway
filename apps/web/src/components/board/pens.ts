@@ -12,6 +12,7 @@ import { board } from "../../state/board"
 import { exitError, runExit } from "../../state/mutation"
 import { penTabAtom } from "../../state/prefs"
 import { registry } from "../../state/registry"
+import { openTask } from "../../state/route"
 
 /** A pen as the store has it: with the host it's on. */
 export type HostPen = Pen & { host_id: string }
@@ -184,6 +185,30 @@ export const changeTab = (
   change: { name?: string | undefined; active?: boolean | undefined; color?: PenColor | undefined },
 ): Effect.Effect<void, CallError<"pens.update">, AtomRegistry.AtomRegistry> =>
   allTried(tab.pens.map((p) => mutate("pens.update", p.host_id, { id: p.id, patch: change })))
+
+/**
+ * Opens the profile's pens thread (made the first time) on the board's own host if it has the profile, else on the
+ * first connected host that has it: `profiles` is the profile on each host, by host id.
+ */
+export const openPensThread = (profiles: Map<string, string>): Effect.Effect<void, CallError<"pens.thread"> | PenRefused, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    const hosts = board.get().hosts.filter((h) => h.connected && profiles.has(h.id))
+    const host = hosts.find((h) => h.local) ?? hosts[0]
+    const profile = host && profiles.get(host.id)
+    if (!host || !profile) return yield* new PenRefused({ reason: "No host with this profile is connected" })
+    const thread = yield* mutate("pens.thread", host.id, { profile_id: ProfileId.make(profile) })
+    return openTask(thread.id)
+  })
+
+/** Opens the tab's pen's own thread (made the first time): its pen on the board's own host if it has one, else its first. */
+export const openPenThread = (tab: PenTab): Effect.Effect<void, CallError<"pens.penThread">, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    const local = board.get().localHostId
+    const pen = tab.pens.find((p) => p.host_id === local) ?? tab.pens[0]
+    if (!pen) return undefined
+    const thread = yield* mutate("pens.penThread", pen.host_id, { id: pen.id })
+    return openTask(thread.id)
+  })
 
 export const deleteTab = (tab: PenTab): Effect.Effect<void, CallError<"pens.delete">, AtomRegistry.AtomRegistry> =>
   allTried(tab.pens.map((p) => mutate("pens.delete", p.host_id, { id: p.id })))

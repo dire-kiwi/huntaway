@@ -23,8 +23,8 @@ export interface BoardShape {
   readonly watch: (since: Since | undefined) => Stream.Stream<BoardMessage>
 }
 
-/** The board's subscription. It reads every area, so it sits in `lifecycle/`, above them all. */
-export class Board extends Context.Service<Board, BoardShape>()("huntaway-server/lifecycle/Board") {
+/** The board's subscription. It reads every area, so its area (`board/`) sits below them all, above `lifecycle/` (a read-only server serves it without the reactor). */
+export class Board extends Context.Service<Board, BoardShape>()("huntaway-server/board/Board") {
   static readonly layer = Layer.effect(
     Board,
     Effect.gen(function* () {

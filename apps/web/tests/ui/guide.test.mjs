@@ -33,13 +33,17 @@ test("the guide's pages open in the app and link to each other", async () => {
     await ui.run(["wait Asana tasks"])
     assert.equal(new URL(page.url()).pathname, "/guide/integrations")
 
-    // Opened at a heading, and a link out of the guide is to the file on GitHub (the old repository's, whose pages
-    // these are until 9.3 brings them into line).
+    // Opened at a heading, and a link out of the guide is to the file on GitHub (this one, written out in full, to
+    // the old repository's).
     await ui.run(["goto /guide/hosts#running-a-host-as-a-service", "wait Running a host as a service"])
     await page.waitForFunction(() => document.querySelector("main").scrollTop > 300)
     await ui.run(["goto /guide/agents", "wait docs/threads.md"])
     const threads = await page.locator('main a:text("docs/threads.md")').first().getAttribute("href")
     assert.equal(threads, "https://github.com/dire-kiwi/huntaway/blob/master/docs/threads.md")
+
+    // The page on moving a board over from the old server is listed too (9.3).
+    await ui.run(['click role=navigation[name="Guide pages"] >> text=Switching from the old server', "wait The rehearsal"])
+    assert.equal(new URL(page.url()).pathname, "/guide/switching")
 
     await ui.run(["goto /", "click role=button[name=/Guide/]", "wait Using the board"])
     assert.equal(new URL(page.url()).pathname, "/guide")

@@ -25,7 +25,7 @@ const PROBE_TIMEOUT = "10 seconds"
 const validPort = (port: number) => Number.isInteger(port) && port > 0 && port <= 65535
 
 /** This host as the directory shows it. */
-const localEntry = (info: HostInfo): Host => ({
+export const localEntry = (info: HostInfo): Host => ({
   id: info.host_id,
   name: info.host_name,
   local: true,

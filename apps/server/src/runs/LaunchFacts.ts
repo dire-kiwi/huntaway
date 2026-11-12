@@ -190,8 +190,24 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         return env
       })
 
-      /** Where the thread's agent works: its worktree, its project's repository, or its profile's scratch folder. */
+      /**
+       * Where the thread's agent works (the old `documents.work_dir`, then `runner.work_dir`): a task's own `work_dir` when
+       * it has one (a scratch task's, a document task's from before labels, an imported one's in the old data folder:
+       * relative to the data folder, `~` its home), so its sessions are found where they ran; a scratch task's or a pen's
+       * thread's own folder (which lasts as long as it, for the pen's notes); its worktree; its project's repository; or
+       * its profile's scratch folder.
+       */
       const cwdOf = Effect.fnUntraced(function* (task: Task, repo: string | null) {
+        if (task.kind === "task" && task.work_dir !== null && task.work_dir !== "") {
+          const own = task.work_dir.startsWith("/") || task.work_dir.startsWith("~") ? expand(task.work_dir) : `${dataDir.root}/${task.work_dir}`
+          yield* mkdir(own)
+          return own
+        }
+        if (task.kind === "task" && (task.task_type === "pen" || task.task_type === "scratch")) {
+          const own = dataDir.documents(task.id)
+          yield* mkdir(own)
+          return own
+        }
         if (task.kind === "review" && task.parent_id !== null) {
           const parent = yield* tasks.get(task.parent_id)
           if (parent?.worktree_path != null && parent.worktree_state === "ready") return parent.worktree_path

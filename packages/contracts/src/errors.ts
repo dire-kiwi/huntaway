@@ -41,6 +41,8 @@ export const ConflictReason = Schema.Literals([
   "not_connected",
   "no_task",
   "nothing_to_send",
+  // 7.4: a profile's assistant host has no profile of its name.
+  "no_profile",
 ])
 export type ConflictReason = typeof ConflictReason.Type
 

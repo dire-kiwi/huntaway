@@ -72,17 +72,27 @@ export const e2eDataDir = Effect.gen(function* () {
  * app starts it, for the scope, with `env` added to its environment, on `folder` (another server's, to restart it) or a
  * fresh one (`e2eDataDir`). It is stopped with SIGTERM when the scope closes, if the test has not stopped it.
  */
-export const startServer = (args: ReadonlyArray<string> = [], env: Readonly<Record<string, string>> = {}, folder?: string) =>
+export const startServer = (
+  args: ReadonlyArray<string> = [],
+  env: Readonly<Record<string, string>> = {},
+  folder?: string,
+  /** The address it is told to listen on: 127.0.0.1 unless given; null gives no `--host`, so the server picks its default. */
+  host: string | null = "127.0.0.1",
+) =>
   Effect.gen(function* () {
     const path = yield* Path.Path
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const dataDir = folder ?? (yield* e2eDataDir)
     const bin = yield* path.fromFileUrl(launcher)
     const process = yield* spawner.spawn(
-      ChildProcess.make(bin, ["serve", ...(args.includes("--port") ? [] : ["--port", "0"]), "--host", "127.0.0.1", "--data-dir", dataDir, ...args], {
-        env,
-        extendEnv: true,
-      }),
+      ChildProcess.make(
+        bin,
+        ["serve", ...(args.includes("--port") ? [] : ["--port", "0"]), ...(host === null ? [] : ["--host", host]), "--data-dir", dataDir, ...args],
+        {
+          env,
+          extendEnv: true,
+        },
+      ),
     )
     // Its stdout carries the ready line; its log (stderr) is kept to show if it never gets there. Both are read to
     // their end, so neither pipe fills.

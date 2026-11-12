@@ -11,7 +11,8 @@ import { Events } from "../platform/Events.ts"
 // the process that started it (`boot`, `Events.boot`): one still `running` with another's was cut short by a restart,
 // and reads as `interrupted`. Statements only.
 
-const OpRow = Schema.Struct({
+/** A `desktop_ops` row as the journal reads it (all but `args`). */
+export const OpRow = Schema.Struct({
   id: Schema.String,
   task_id: TaskId,
   run_id: Schema.NullOr(RunId),

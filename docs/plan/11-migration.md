@@ -22,7 +22,7 @@ made once with the old server stopped for good, and a [rehearsal](#rehearsal), w
 | In the old folder                                               | What the importer does                                                                           |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `huntaway-2.db` (and `-wal`, `-shm`)                            | Reads it once, read-only, into the new folder's `board.db`                                       |
-| `host_id`, `auth_token`, `hub_token`, `ssh/`                    | Copies them, so links between hosts and bookmarked board URLs stay valid, and the tmux server's name (made from the host id) is the same. Not in a rehearsal |
+| `host_id`, `auth_token`, `hub_token`, `ssh/`                    | Copies them, so links between hosts and bookmarked board URLs stay valid. Not in a rehearsal. (The tmux server is not the same: the new server's is `tmux -S <data dir>/tmux.sock`, not the old `-L ia-<host>`; see below) |
 | `attachments/`, `skill-sources/`                                | Copies them: the server finds these by id under its own folder                                   |
 | Worktrees (`projects/<id>/worktrees/…`), scratch folders, document folders (`documents/<id>`), assistant workspaces | **Leaves them where they are.** Every path the database holds is written as an absolute path: `worktree_path` already is; a `work_dir` relative to the old folder, a project's `worktrees_root` and `scratch_path`, and the profile scratch folder a project-less thread worked in are made absolute |
 | `runs/<id>/`                                                    | Copies the folders of runs that ended in the last 14 days (token counts and failure tails are read from them); older ones are due for pruning anyway |
@@ -40,7 +40,10 @@ Why paths are kept rather than files moved:
   across later is `git worktree move` behind a command of its own, not part of the switch.
 
 Outside both folders, nothing changes: repositories, branches `ia/…`, refs under `refs/huntaway/`, agent config
-folders and their sessions, and running tmux sessions.
+folders and their sessions. Running tmux sessions keep running, but on the old server's tmux server (`-L ia-<host>`):
+the new one keeps its terminals on a socket in its own folder (6.1, `terminal/tmux.ts`), so after the switch a task's
+terminal is a new shell and the old session is left to the user (corrected in 9.3: the plan had the tmux server
+carried with the host id).
 
 ## The importer
 
@@ -171,6 +174,63 @@ After writing, and on its own against an existing pair of files, the importer co
 - A sample of 200 threads: `threads.watch`'s snapshot of the new server equals the old `GET /thread?limit=300`
   answer for the same task, item for item, when both servers are run on copies.
 
+### As built in 9.1 (HE-8)
+
+`apps/server/src/cli/importLegacy/`: `run.ts` (the refusals, the copy, the families, the files, `import.json`),
+`family.ts` (a family's interface and the checked writer's `TableCheck`), `oldDb.ts`, `report.ts`, `check.ts`, and
+`families/` with one module per family, in this order: `settingsProfilesProjects`, `tasks` (with `pens`), `threads`,
+`runs` (with `runRecords`), `agentTools`, `docs`, `automations`, `workflows`, `hosts`. Each family's conversions are
+pure functions with tests of their own, and each has an import test that builds an old folder from the old schema
+(`packages/testing/fixtures/legacy/schema.sql`, dumped from a database the old repository's test server made;
+`makeLegacyBoard`) and reads the result back through the new server's repositories.
+
+What was decided where the plan was silent or turned out wrong:
+
+- **The old file is read from a copy.** Even a read-only connection to a WAL database may write its `-shm` beside it,
+  so the importer copies the database (a byte copy of a stopped server's file and its `-wal`; for a rehearsal an online
+  backup through a read-only connection) into the new folder as `legacy-copy.db`, reads that, and deletes it. The
+  throwaway switch checked the old folder byte for byte afterwards.
+- **`board.db` appears last.** The files are copied and `import.json` written first, and `board.db.partial` is
+  renamed only then; a failure on the way removes the partial board and the record. A folder with a board and no
+  record would start as an acting board, past the guard.
+- **A row is checked twice.** The new row against the schema the server reads it with (a failure: the row is not
+  written), and each JSON column strictly against its value's schema (listed under `json`: the row is written, and the
+  server reads the value as its default). Then the board's foreign keys are checked; a row that points at nothing is a
+  failure and is deleted. `--check` fails on any failure or `json` entry.
+- **Threads not yet items are refused only when they have `messages` rows.** The old server leaves every task made
+  since its last start with `thread_source = 'messages'` until its next start, and moving one with no rows rebuilds
+  nothing (`flip` sets the column); a board of synthetic data made through the old API had 2,788 such tasks.
+- **The write counter** is the highest write number kept anywhere (the `messages` sequence, which old databases store
+  as a REAL, item origins, request `message_id`s, `legacy:<n>` ids, prompts, checkpoints, runs, rewinds), not only the
+  sequence.
+- **A stray `messages` row** of kind `claude` goes through the new Claude translator; the board's own kinds (`user`,
+  `event`, `permission`, `question`, `report`) have no pure translator here and are always carried as the `notice`.
+- **Pending prompts** become `expired` and so does their thread request (as `Permissions.expireOne` writes it); a
+  pending `approval_log` entry is settled `expired` by `ended`. The board's own question cards (`request_user_input`,
+  the merge gate's) stay open, as they do on the old board, since answering one resumes the agent.
+- **Runs and workflow runs keep their old `rowid` as `seq`.** A live run (only with `--force` or `--rehearsal`) is
+  written `exited` with `stop = 'interrupted'`; a running workflow run is stopped with "Interrupted by the move to the
+  new server", its pending steps skipped.
+- **Old JSON is read as the old readers read it**: fields added over time take their defaults (`pr_watches.state`,
+  `checkpoints.stats`, reviews, summaries, checks, an SSH target's ports), and a value the old reader could not read
+  either is written as its fallback with a note rather than listed as a `json` problem.
+- **Settings**: `telemetry_inflight` is kept (it points at outbox rows, which are imported as they are). A rehearsal
+  withholds the VAPID key, the telemetry destination and password, Asana sign-ins, docs-site sign-ins, links, web push
+  subscriptions, the outbox, and automations' tokens and secrets (written with a fresh token and no secret). Agent
+  configs' API keys are written: they are not in the list above and the read-only server calls nothing.
+- **Where an imported thread works.** A task's own `work_dir` is now its working folder on the new server too (the
+  old `documents.work_dir`: scratch tasks, document tasks from before labels, pen threads), and an assistant's
+  workspace may be `<old folder>/assistants/<id>` when `import.json` names that old folder (`Memory.checked`), so their
+  sessions are found where they ran. Not on a rehearsal: opening a workspace makes and seeds it, so a rehearsal refuses
+  an assistant whose workspace is in the old folder (`Unavailable`), and the rehearsal's service test has one. Group tasks and project-less review threads with no `work_dir` worked in the old
+  profile scratch folder and now work in the new one: their sessions start afresh.
+- `repo_root` is the repository's fingerprint, not a path, and is copied as it is.
+- The 200-thread sample is `scripts/compare-threads.mjs`, run with an old test server on a copy and a new test server
+  on its import; it is not part of `--check` itself, which runs with no server.
+
+Measured: a board made through the old server's own API (3 projects, 2,848 tasks, 60 runs) imports as a rehearsal
+with `--check` in 1.2 s with no failures; the throwaway switch is in [Rehearsal](#rehearsal).
+
 ## The switch, on one machine
 
 1. Update the desktop app to a build that speaks the new protocol.
@@ -181,7 +241,7 @@ After writing, and on its own against an existing pair of files, the importer co
 4. Start the new server **on the old server's port** (`--port 7878`). A browser's storage belongs to an address, so
    on the same address the token, drafts and preferences under the `ia.*` keys are still there; on another port the
    board asks for its token again and starts with empty drafts.
-5. Open a task, send a message (the session resumes), open its terminal (the tmux session is still there), look at
+5. Open a task, send a message (the session resumes), open its terminal (a new tmux session: the old one stays on the old tmux server), look at
    the Changes tab, check a webhook automation fires.
 
 **Going back**: stop the new server, start the old one on its folder. Nothing there was written, so it is as it was
@@ -227,6 +287,11 @@ one of them is not enough:
 1. **Sessions.** Every session gets the scope `read` and no other, whatever token it presents. The `Auth`
    middleware then refuses every RPC that changes anything with `Forbidden`, as for any missing scope.
    `host.info` says `read_only: true` and the UI shows a banner with the board's name and when it was imported.
+   **The board token is still required** (9.1): read-only narrows a session's scopes, it does not open the board. There
+   is no open token on a rehearsal, whatever `--open-token` says, and the hub token and relayed sessions are refused (it
+   accepts no links). A rehearsal **listens on 127.0.0.1 unless told otherwise** (`--host`, `HUNTAWAY_HOST`): the
+   board's default of `0.0.0.0` does not apply to it. `host.info`'s `rehearsal` is `{ from, imported_at }`, the old
+   folder standing for the board's name (a rehearsal keeps no identity of the old host's).
 2. **Nothing is started.** No loop from the start-up list, no reactor, no `Recovery` reconcilers
    (`Merges`, `Dependencies`, `Reviews`, `WorkflowEngine.resume`, `Restack.resume`), no scheduler, automations, PR
    or merged watcher, pruners, sweepers, terminal reaper, usage, update checks, push, telemetry or settings sync.
@@ -234,7 +299,9 @@ one of them is not enough:
 3. **`Proc`.** Its read-only layer runs one program, `git`, with a fixed list of reading subcommands (`status`,
    `diff`, `log`, `show`, `rev-parse`, `merge-base`, `for-each-ref`, `ls-files`, `cat-file`) under
    `GIT_OPTIONAL_LOCKS=0`, so the Changes tab and history draw. Anything else fails with `Unavailable`: an agent,
-   the shim, tmux, `gh`, `ssh`, a script, a writing git command. Code reached by mistake cannot act.
+   the shim, tmux, `gh`, `ssh`, a script, a writing git command. Code reached by mistake cannot act. (As built, 9.1:
+   the Changes tab's status also reads `rev-list`, `stash list`, `remote` and `config <key>`, so the list has those
+   reading forms too, and `ls-tree`; the whole list is in [06-server.md](06-server.md#a-read-only-server).)
 4. **The network.** The `HttpClient` layer fails every request, and no outgoing socket is opened.
 
 A service test holds it: a board imported with `--rehearsal` from a fixture whose paths point at a real repository
@@ -242,18 +309,39 @@ in a temp folder; every reading RPC is called and every changing RPC is attempte
 folder must be byte for byte what they were, the recording `Proc` must have seen only the allowed git commands, and
 the recording `HttpClient` nothing.
 
+As built in 9.1 (HE-8): `apps/server/src/ReadOnlyMain.test.ts`, over `@huntaway/testing`'s `importedFolder`: an old board made
+from the old schema, its task's worktree in the old folder, imported with `import-legacy --rehearsal --check` (or for the
+guard's switch case without `--rehearsal`). The RPCs come from the contract: every read with a payload from the test's
+table (a read without one fails the test), every change with none, through the RPC server in process without
+serialization, so `Auth` sees each. The recording is under the read-only server: the machine's spawner and an HTTP
+client the read-only graph must replace. A second case gives the handlers an `Auth` that lets everything through and
+checks that every change dies in its handler without acting. `tests/e2e/rehearsal.test.ts` starts the launcher on a
+rehearsal folder (127.0.0.1 with no `--host`, `Unauthorized` without the token, `read_only`, `Forbidden` for
+`tasks.create`) and on a switch's folder while a process holds the old database open (exit 1, the guard's sentence).
+
 **What a rehearsal cannot show**, because showing it would be acting: a session resuming, a terminal, a worktree
 being made, a merge. Those are tried on a board made to be thrown away: the old repository's
 `scripts/test-server.sh --seed` with one real task run on a cheap model, stopped, and imported for real into a
 scratch folder. It has an identity and a repository of its own, so the import is a true switch in miniature. This is
 part of 9.1's acceptance and is the first thing done on each host's own machine before its switch.
 
-**In CI and for measurements**, `scripts/copy-live-board.sh` stays the tool. In this repository it snapshots an old
+As done in 9.1 (HE-8): the old repository's test server (`--seed`, a real Claude Code on haiku) ran one task that
+replied with one word, in a worktree in its folder; the old server was stopped (by its PID, keeping the folder) and
+imported with `--check` into a scratch folder: no failure, no note, and every file of the old folder hashed the same
+before and after. The new server started on it as the same host with the same token; a message sent to the task resumed
+the same session (the agent answered from the earlier turn) and its items' write numbers carried on after the old ones.
+A terminal, the Changes tab and a webhook were not tried there.
+
+**In CI and for measurements**, `scripts/copy-live-board.sh` stays the tool (with its test, `copy-live-board-test.sh`, in
+`pnpm test:scripts`). In this repository it snapshots an old
 database, applies the old script's scrub to it (runs exited, every path moved under `/nonexistent`, scripts, agent
-configs, links, automations, PR watches, sign-ins and telemetry removed), writes throwaway identity files beside it,
-and imports that into a test server started with `--no-agents` or the fake agent. With nothing real left to act on,
-that server runs normally, which the measurements need. A nightly job on a self-hosted runner that has a board runs
-it with `--check` from M9 on; hosted runners import the fixture database.
+configs, links, automations, PR watches, sign-ins, the push key and subscriptions and telemetry removed), writes the
+test server's own identity files beside it (so its env file's token stays good), and imports that into the test server,
+started with `--no-agents` or the fake agent, with `--check --force`. With nothing real left to act on, that server runs
+normally, which the measurements need. The nightly job (`.github/workflows/nightly-import.yml`) runs it with `--check`
+on a self-hosted runner labelled `huntaway-board` whose machine has a board; it is switched off until the repository
+variable `NIGHTLY_IMPORT` is `on` (and `NIGHTLY_OLD_DATA_DIR` says where the board is), and its report stays on the
+runner. Hosted runners import the fixture databases the importer's tests build.
 
 So, before a host's switch: `--rehearsal --check` on its real folder until the report has no failure, a look
 through the read-only board, and the throwaway switch once.
@@ -262,8 +350,9 @@ through the read-only board, and the throwaway switch once.
 
 The old and new servers cannot link to each other. A fleet is moved together: stop every host, import each, start
 each. Links are imported with the tokens they hold, and the identity files are copied, so the hosts find each
-other again without re-linking. A host that cannot be moved at the same time shows as "needs an update" on the hub
-until it is.
+other again without re-linking. A host that cannot be moved at the same time shows as offline on the hub until it
+is: "needs an update" is for a host whose `link.hello` names another protocol, and an old server answers no
+`link.hello` at all, so its link never connects (`LinkConnections`; corrected in 9.3).
 
 ## After the switch
 

@@ -220,4 +220,28 @@ describe("ContextMeter", () => {
       }),
     ),
   )
+
+  // HE-8: a reply's repeated lines are noted once; the next turn's first line, the same size as the last turn's end,
+  // still starts the next turn.
+  it.effect("a turn that starts the size the last one ended still has its start", () =>
+    run(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const task = yield* fakeTask
+        const r = yield* newRun(task)
+        const input: Array<string> = []
+        yield* feed(r, [short(100), short(100), short(100), result("success", 0.1)], input)
+        yield* feed(r, [short(100), short(200), result("success", 0.1)], input)
+        const starts = yield* sql<{ readonly start_tokens: number | null; readonly tokens: number | null }>`
+          SELECT start_tokens, tokens FROM context_stats WHERE kind = 'turn' ORDER BY id`
+        assert.deepStrictEqual(
+          starts.map((s) => [s.start_tokens, s.tokens]),
+          [
+            [1102, 1102],
+            [1102, 1202],
+          ],
+        )
+      }),
+    ),
+  )
 })

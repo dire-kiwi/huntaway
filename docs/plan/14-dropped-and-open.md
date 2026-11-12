@@ -154,7 +154,7 @@ read or reasoned, not run.
 - Memory, start-up time and event-loop delay of a whole server on Effect. HA-408 measured a bare import: 104 ms and
   100 MB for all of `effect`. Measured at M2 (HE-4) against the old server on the same synthetic data: within the limits
   of [10-testing.md](10-testing.md#measurements) (memory 1.13–1.33×, ready in ~0.55 s, event-loop p99 better), after
-  the follower was brought within 1.5×; not yet on a scrubbed copy of a live board (that needs the importer, M9).
+  the follower was brought within 1.5×; at M9 (HE-8) on an import of a board made through the old server's API, beside the old server on the same board ([10-testing.md](10-testing.md#measurements)); not on a scrubbed copy of a real board, which is the user's to make.
 - ~~`tsrs` compiling the whole server for a release; the size of a release package~~: checked in M8 (HE-6), with
   TypeScript 7's own `tsc` instead of `tsrs` (it emits, and the workspace has it): the whole server and the two
   workspace packages it runs compile in under a second with the type check, and the package starts, migrates a new
@@ -168,13 +168,26 @@ read or reasoned, not run.
   `no-restricted-imports` with `{ patterns: [{ group, message }] }`, and `react/rules-of-hooks`/`react/exhaustive-deps`.
   The old line said: `import/no-cycle`, the `react/*` rules and the options of
   `eslint/no-restricted-imports` under Vite+ 1.5.0.
-- The `STRICT` tables against every value the importer will write.
-- The read-only server: that the listed git subcommands under `GIT_OPTIONAL_LOCKS=0` leave a repository byte for
-  byte untouched, and that finding "a process has this database open" works on macOS. (`node:sqlite`'s online
-  backup beside a writing connection was run.)
-- Whether any host has threads still on messages. Only one board's database was looked at; the importer checks each.
-- That every thread resumes its agent session after an import, with stored paths made absolute (reasoned from how
-  the old server pins a session to its folder; M9 tests it on a copy).
+- The `STRICT` tables against every value the importer will write: checked in M9 (HE-8) for what the importer's tests,
+  boards made through the old server's own API (its demo board; 3 projects, 2,848 tasks and 60 fake runs) and the
+  throwaway switch hold; a row SQLite refuses is a failure in the report with SQLite's message. Not against a real
+  board's data: no real board was imported (its rehearsal is the user's to run).
+- The read-only server: the git commands it allows (the plan's nine and a few more reading forms, 06-server.md "As
+  built in 9.1") under `GIT_OPTIONAL_LOCKS=0` left a repository and an old folder byte for byte untouched in the
+  rehearsal's service test (HE-8); finding "a process has this database open" on macOS (`lsof`) was not run, only the
+  Linux `/proc` way. Nothing gates the file system on a read-only server: a read may write inside its own folder (the
+  assistant's workspace, made on `assistant.get`), and the service test's byte-for-byte check is what holds the rest.
+- Whether any host has threads still on messages. The importer checks each board; on boards made through the old API
+  it found that every task made since the old server's last start is left on `messages` with no rows, and imports those
+  (11-migration.md, As built in 9.1). A real board's state is the user's rehearsal to see.
+- ~~That every thread resumes its agent session after an import~~: checked in M9 (HE-8) by the throwaway switch, one
+  real Claude Code session (haiku) on the old repository's test server, stopped and imported: the next message resumed
+  the same session in its worktree in the old folder. Codex sessions, assistants' workspaces and scratch tasks were not
+  resumed for real (their folders are kept: 11-migration.md, As built in 9.1).
+- Terminals after the switch: the new server's tmux server is not the old one (9.3), so a task's terminal starts a new
+  shell; the old sessions stay on the old tmux server until the user ends them.
+- Run folders: nothing prunes them (the old run pruner's 14 days are only reported by `Disk`), and deleting a task
+  leaves its run folders (found in 9.3).
 - Discovery on a real network (7.5, HE-6): the responder and browser were run on loopback with sockets of their own
   and on a fake socket, never on UDP 5353 or the multicast group of a machine with a live board; multicast out of each
   LAN interface, renewal against `igmp_max_memberships`, and `tailscale status --json` against a real Tailscale were

@@ -12,6 +12,7 @@ import { navigate } from "../../state/route"
 import { scratchHost, useHost } from "../boardHelpers"
 import { IconButton, MenuButton, useClock } from "../ui"
 import { NewTaskButton, TaskBoard } from "./TaskBoard"
+import { WorktreeSetup } from "../task/WorktreeSetup"
 import { useBoard } from "../../state/board"
 import { penCollapsedAtom, penTabAtom } from "../../state/prefs"
 
@@ -33,9 +34,8 @@ export function Board({ projectId }: { projectId: string }) {
       </div>
     )
   if (!project) return <div className="p-8 text-muted">Project not found.</div>
-  // Its tasks wait for worktrees: the old board showed the thread that helps get the folder ready instead
-  // (task/WorktreeSetup), which needs agents. Not yet on this server: the board shows a notice above its tasks.
-  const setup = needsWorktreeSetup(project)
+  // Its tasks wait for worktrees: the thread that helps get the folder ready, in place of its board.
+  if (needsWorktreeSetup(project)) return <WorktreeSetup project={project} hostName={hostCount > 1 ? host?.name : undefined} />
   const boardKey = `project:${project.host_id}:${project.id}`
   return (
     <TaskBoard
@@ -43,10 +43,6 @@ export function Board({ projectId }: { projectId: string }) {
       boardKey={boardKey}
       hostId={project.host_id}
       projects={projects}
-      notice={
-        setup &&
-        `${project.name} isn't ready for worktrees yet (its folder needs to be a git repository with a commit). Setting it up comes with agents on this server.`
-      }
       renderHeader={({ controls, newTask }) => (
         <header className="drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-5 narrow:gap-2 narrow:px-3">
           <MenuButton />

@@ -132,8 +132,9 @@ As done in HE-7 (one pull request): every area above is on the server and reacha
 in 6.x" section in [06-server.md](06-server.md) and, for its web part, in [09-frontend.md](09-frontend.md). 6.12 came as
 one pull request with the rest, its settings parts that waited for M7 and M8 (Server's updates, the host page) done
 after HE-6 merged. No component in `apps/web/src` shows "not yet on this server" for an M6 area any more; the ones left
-are earlier milestones' cuts (the board's setup thread, a pen's thread, Triage, attachments in New task, the background
-banner's Stop).
+are earlier milestones' cuts (the board's setup thread, Triage, attachments in New task, the background banner's Stop).
+The pens thread and a pen's own thread came with 9.2 (`pens.thread`, `pens.penThread`, the buttons beside the profile
+board's tabs and the tab's "Open its thread"), as `tests/ui/pens.test.mjs` needs them.
 
 ## M7: hosts
 
@@ -161,6 +162,15 @@ banner's Stop).
 | 9.1  | `import-legacy` and `--check` (database, paths made absolute, files copied, the refusals, threads not yet items), `--rehearsal` with `ImportGuard` and the read-only server and its test, the throwaway switch of an old test server, tests per table family and a nightly run on a scrubbed copy | M6         | 11, 06 |
 | 9.2  | The parity run: all of `tests/ui` against the new server; the measurements; a week of this repository's own work on a board running it | 9.1, M7, M8 | 10 |
 | 9.3  | The guide (`docs/guide/`) brought into line; the switch on each host                               | 9.2        | 11   |
+
+As done in HE-8 (one pull request): 9.1 in full, as built in [11-migration.md](11-migration.md#as-built-in-91-he-8) and
+[06-server.md](06-server.md#a-read-only-server), with the throwaway switch of an old test server and the nightly job
+written and switched off. 9.2: the old 93 `tests/ui` files are 88 here (`questions` is `permissions`, `release-update`
+is `releaseUpdate`), with `databaseFile`, `devices`, `itemsSource`, `subprojects` and `telegram` dropped with what they
+test (14-dropped-and-open.md); the measurements are in [10-testing.md](10-testing.md#measurements). "A week of this
+repository's own work on a board running it" is the user's. 9.3: the guide is the new server's, with
+`docs/guide/switching.md`; the switch on each host is the user's to make. Also done here: the assistant on a host of its
+own (7.4, left by HE-6 and HE-7), the pens' threads (a cut of M1), and a project's git facts read again.
 
 ## M10: step 2 of the frontend
 

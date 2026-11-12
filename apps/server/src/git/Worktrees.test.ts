@@ -571,6 +571,24 @@ describe("a run's launch", () => {
     ),
   )
 
+  // HE-8: a task's own work_dir is where it works (the old documents.work_dir): an imported task's, in the old data
+  // folder, so its session is found where it ran.
+  it.live("a task with a work folder of its own works there, not in a worktree", () =>
+    run(
+      Effect.gen(function* () {
+        const repo = yield* repoOnMaster()
+        const project = yield* projectOn(repo)
+        const task = yield* newTask(project, "Notes")
+        const own = `${repo}-old-board/documents/${task.id}`
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`UPDATE tasks SET work_dir = ${own}, use_worktree = 0 WHERE id = ${task.id}`
+        const spec = yield* launch(task.id, "hello")
+        assert.strictEqual(spec?.cwd, own)
+        assert.strictEqual((yield* getTask(task.id)).worktree_state, "none")
+      }),
+    ),
+  )
+
   it.live("a setup that fails fails the launch", () =>
     run(
       Effect.gen(function* () {

@@ -38,13 +38,15 @@ terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
-lifecycle     Reactor · Recovery · Board · Demo
+board         Board
+lifecycle     Reactor · Recovery · Demo
 transports    rpc/* · http/* · mcp/transport/*
 ```
 
 As built in M1 (HE-3): `hooks/` sits below everything and `prompts/` right after `platform/` (the structural test
 needs every folder placed). `lifecycle/Board` (the board snapshot and `board.watch`) reads every area, so it is in
-`lifecycle/`. `Pens` uses `Tasks` (a pen's thread is deleted with it) and `Tasks` uses `PenRepo`. `Profiles` and
+`lifecycle/`. (9.1, HE-8: it moved to an area of its own, `board/`, just above `lifecycle/`: the read-only server serves
+`board.watch`, and its imports must reach nothing under `lifecycle/`.) `Pens` uses `Tasks` (a pen's thread is deleted with it) and `Tasks` uses `PenRepo`. `Profiles` and
 `Projects` delete what hangs off them with SQL in their repositories, because they sit above `Tasks`; when runs,
 worktrees and terminals exist (M2 on), those deletes move up to `lifecycle/` or go through the reactor.
 
@@ -160,7 +162,10 @@ and moving worktrees and sessions with it.
   (`LaunchFacts.claude`/`codex`, before the project is read) wait on. No polling. `isMoving` is for tests.
 - **Fingerprints.** `Worktrees.setup` records the project's fingerprint once its folder is a repository (the old
   `record_fingerprint`). `Projects.recorder` (Main's `ProjectLoops`, beside `RunLoops`/`PrLoops`, so tests run a pass
-  themselves) records them at start and hourly.
+  themselves) records them at start and hourly. Beside it since 9.2, `Projects.gitSweeper` reads `is_git` and
+  `has_commits` again (`refreshGits`, over `ProjectRepo.unready`): every 3 s for a project that wants worktrees and
+  isn't ready for them, every 5 minutes for all, so a folder that becomes a repository gets worktrees (nothing read them
+  again after a project was made).
 - **Tests.** `git/Relocation.test.ts` has every case of the old `git/relocate/tests.test.ts` and the old
   `worktree_files.test.ts` case that moved a repository with its links. Changed: the two key races can't be interleaved
   as the old ones were (the key is checked where it's stored): one key goes to one project whichever commits first, and
@@ -953,10 +958,21 @@ an MCP server.
   importer's absolute form. Its config is the profile's `assistant_config_id` if it still has it, else its first.
   A routine thread's turn commits the workspace too (the old server waited for the assistant's next turn). The brief's
   document is refused (`NotFound`) for any task but the assistant.
-- **Left out.** The assistant on a host of its own (`on_its_host`, `check_host`, the hub's proxying): 7.4; until then
-  `get`/`send` for a profile that names another host is `Unavailable` ("offline"), and its memory, Google and brief are
-  `Conflict` unless this host has its assistant. Moving a workspace's own `.git` (HA-160): dropped
-  (14-dropped-and-open.md).
+- **Left out.** Moving a workspace's own `.git` (HA-160): dropped (14-dropped-and-open.md). The assistant on a host of
+  its own came with HE-8 (below).
+- **As built (HE-8): the assistant on a host of its own** (7.4; the old `on_its_host`). `assistant.get` and
+  `assistant.send` are `hosts/AssistantHost.ts`'s: for a profile whose `assistant_host` is another host, the call goes
+  over that link (`LinkConnections.live(...).client`) to the host's profile of the same name, with `here: true`, and
+  answers with that host's task and `host_id` (`AssistantTask`); offline or on another protocol is `Unavailable`
+  ("…'s assistant runs on homeserver, which is offline"), no profile of that name there `Conflict` (`no_profile`).
+  `here` (the old `?local=1`) asks for this host's own whatever the profile says, which `Assistant.get(profile, true)`
+  makes; without it, `Assistant.get` and `send` stay `Unavailable` for a profile whose assistant is elsewhere and that
+  has none here, and memory, Google and the brief `Conflict`, as before. The board asks the host `assistantHome` found
+  with `here: true` (HA-120: a host whose own profile names the hub doesn't send it back). Routines on this host for
+  such a profile fail with the link's name (`RoutineHost.elsewhere`), and the assistant's Routines tab lists them
+  (`RoutinesLeftBehind`) with a Delete for this host. Tests: `Assistant.test.ts` (`here`), `Routines.test.ts` (the
+  link's name), `tests/e2e/hosts-assistant.test.ts` (two linked servers: no profile, sent there and not back, a message
+  answered there, `here`, offline), and the browser check `assistantHost.test.mjs`.
 - **Tests**: `assistant/Memory.test.ts` (real git in temp folders), `memory/text.test.ts`, `Assistant.test.ts`,
   `Brief.test.ts`, `briefText.test.ts`, `Google.test.ts` (a token endpoint of the test's own), `googleText.test.ts`,
   `cli/googleAuth.test.ts` (the flow with the test as the browser), the workspace's case in `Permissions.test.ts`.
@@ -1233,6 +1249,47 @@ areas. It is made of the same services with four differences, and steps 4 to 6 a
 `host.info` reports `read_only: true`. The test that holds this is in
 [11-migration.md](11-migration.md#rehearsal); a structural test also fails if `ReadOnlyMain`'s imports reach a
 module under `lifecycle/` or a loop's layer.
+
+#### As built in 9.1 (HE-8)
+
+- **`ImportGuard`** (`platform/ImportGuard.ts`) is built by `bin.ts`'s `serve` over `ServerConfig` alone, before
+  anything else: no `import.json`, the board as usual; `rehearsal: true`, `ReadOnlyMain`; otherwise it fails with a
+  `StartupError` naming the process ids that have `<from>/<database>` open (`ImportRecord.processesWithOpen`) and saying
+  to stop the old server for good, or to stop this one and start only the old one. An `import.json` that does not read
+  is a `StartupError` too: a damaged rehearsal record must not start a board that acts.
+- **Listening address.** `--host`/`HUNTAWAY_HOST` has no default in the flags any more (`serveArgs`): the board takes
+  `0.0.0.0`, a rehearsal `127.0.0.1`, unless one was given.
+- **`ReadOnlyMain.ts`** is a second composition root (an entry point for the lint, as `Main.ts`). It builds the same
+  services as `Main.ts`, area by area, and none of their loops (pruners, sweepers, watchers, `UsageWindow.loop`,
+  `Scheduler.loop`, `Push.watcher`, `Projects.recorder`, `Telemetry.exporter`, `Lag.ticker`…), none of the layers that
+  register one area with another (`*.registered`, `AssistantHooks`, `Approvals.projectsDeleted`), no
+  `Profiles.ensureFromConfig`, and nothing of hosts, terminals, desktop, update, MCP, webhooks, the reactor, recovery
+  or the demo. `Supervisor` is left out too: the launcher is not told a rehearsal started, so it does not restart one
+  that crashed. `CodexQueries.readOnly` starts no Codex; `About.readOnly` reads the guard's record.
+- **Handlers**: the board's own handler layers for every group that has a read (so a read answers exactly as on the
+  board), between `refuseAll` (a handler for every RPC that dies with `RefusedOnReadOnly`: what an RPC without a read
+  handler meets, which the service test catches) and `refuseChanges` (the same over every RPC that is not a read, so
+  a change that got past `Auth` still meets a handler that does nothing). Groups with no read (`admin`, `desktop`,
+  `link`, `settingsSync`, `telemetry`, `terminal`, `tools`) are only refused, so nothing they need is built. `public.*`
+  and `hub.hosts.*` have read-only handlers of their own (`rpc/readOnly.ts`): the open token is never given, and the
+  directory is this host with any linked host offline; `hub.hosts.openRelay` is `Invalid`.
+- **`AuthReadOnly`** (`rpc/AuthLive.ts`): only the board token, as `read`. The hub token and a hub's sealed sessions are
+  `Unauthorized`: a rehearsal accepts no links.
+- **Processes**: `ReadOnlySpawner` (`platform/ReadOnly.ts`) is the spawner of the whole read-only graph (`Git`,
+  `Worktrees`, `Gh`, the shim… spawn without `Proc`), over the machine's; `Proc.readOnly` checks the same before it
+  runs. Both take git only, under `GIT_OPTIONAL_LOCKS=0`, with the plan's subcommands plus what the Changes tab, a
+  task's diff and the branch facts read: `rev-list`, `ls-tree`, and the reading forms of `stash` (`list`, `show`),
+  `worktree list`, `remote` (names, `get-url`; not `remote show`, which asks the remote), `symbolic-ref` (one
+  argument) and `config` (a key's value, the list). Before the subcommand only `-C`, a few printing options and a short
+  list of `-c` settings that turn things off (`core.fsmonitor=false`, `core.hooksPath=/dev/null`…) pass; after it,
+  `--output`, `--ext-diff` and `--exec*` do not. Everything else fails as `PermissionDenied` (`ProcFailed` through
+  `Proc`, "unavailable: … not run on a read-only server"), which each caller answers as it answers a command that
+  failed. `Proc.run`'s error type stays `ProcFailed` rather than the contract's `Unavailable`: callers match on it.
+- **Network**: `RefusingHttpClient` replaces whatever client the environment has.
+- **Structural test**: `tests/structure/read-only.test.ts` walks the graph for `lifecycle/`, and finds every loop's
+  layer from the sources (a class's static whose initialiser forks, `Effect.forkScoped`/`forkIn`/`forkDetach`/
+  `forkChild`, within at most the layer's own generator) and fails if a file of the graph names one. What it cannot
+  see: a loop a layer starts through a function the graph calls under another name.
 
 ## The CLI
 

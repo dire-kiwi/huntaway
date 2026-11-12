@@ -111,7 +111,8 @@ export interface ThreadStoreShape {
 
 // ---- rows ------------------------------------------------------------------------------------------------------
 
-const ItemRow = Schema.Struct({
+/** An item's row as the store reads it (the importer checks what it writes with it). */
+export const ItemRow = Schema.Struct({
   pos: Schema.Int,
   write_no: Schema.NullOr(WriteNo),
   created_at: Timestamp,
@@ -121,7 +122,8 @@ const ItemRow = Schema.Struct({
 const toEntry = (row: typeof ItemRow.Type): Entry => ({ pos: row.pos, item: row.data, meta: row.meta, write_no: row.write_no, created_at: row.created_at })
 const ITEM = "pos, write_no, created_at, data, meta"
 
-const RequestRow = Schema.Struct({ write_no: Schema.NullOr(WriteNo), data: Schema.fromJsonString(ThreadRequest) })
+/** A request's row as the store reads it. */
+export const RequestRow = Schema.Struct({ write_no: Schema.NullOr(WriteNo), data: Schema.fromJsonString(ThreadRequest) })
 const toStoredRequest = (row: typeof RequestRow.Type): StoredRequest => ({ request: row.data, write_no: row.write_no })
 
 const EventRow = Schema.Struct({ data: Schema.fromJsonString(Schema.Union([SavedEvent, UnknownEvent])) })

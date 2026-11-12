@@ -2,7 +2,7 @@ import { Effect, Option, Stream } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
 import { HostId, type Task, TaskId, type TaskPatch } from "@huntaway/contracts"
 import { callRpc, type CallError } from "../rpc.ts"
-import { type Board, boardAtom } from "./board.ts"
+import { type Board, boardAtom, movesBoardAtom } from "./board.ts"
 import type { HostTask } from "./hostBoard.ts"
 import { hostBoardAtom } from "./watch.ts"
 
@@ -53,7 +53,7 @@ const EVENT_WAIT = "5 seconds"
 const moveByKey = Atom.family((key: string) => {
   const [host_id = "", id = ""] = key.split("\u0000")
   const ref = { host_id, id }
-  return Atom.optimisticFn(boardAtom, {
+  return Atom.optimisticFn(movesBoardAtom, {
     reducer: (board: Board, patch: TaskPatch) => withPatch(board, ref, patch),
     // `tasks.update` on the task's host, then a wait for the board to have the task as the answer left it (its event),
     // so the optimistic copy is not dropped a moment before the event arrives.

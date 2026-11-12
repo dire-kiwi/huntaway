@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from "effect"
+import { Context, DateTime, Effect, HashMap, Layer, Option, Predicate, Ref, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Timestamp } from "@huntaway/contracts"
 import type { Context as TaskContext, RunId, TaskId } from "@huntaway/contracts"
@@ -109,6 +109,14 @@ export class ContextMeter extends Context.Service<ContextMeter, ContextMeterShap
       const random = yield* SecureRandom.SecureRandom
 
       const now = Effect.map(DateTime.now, (t) => Timestamp.make(DateTime.formatIso(t)))
+      /**
+       * The tokens each task's run last reported on an assistant line, and noted: one reply comes as several lines with
+       * the same usage, and noting them again (the turn's sizes on the run, the task's context read and compared) was half
+       * the follower's time per line (docs/plan/10-testing.md, As measured before the switch). Forgotten whenever the
+       * context or the turn's sizes change another way.
+       */
+      const noted = yield* Ref.make(HashMap.empty<TaskId, { readonly run: RunId; readonly tokens: number }>())
+      const forget = (task: TaskId) => Ref.update(noted, HashMap.remove(task))
       const current = (task: TaskId) => Effect.map(tasks.get(task), (t) => t?.context ?? null)
 
       /**
@@ -116,6 +124,7 @@ export class ContextMeter extends Context.Service<ContextMeter, ContextMeterShap
        * `Tasks.change`: the context changes nothing the reactor reacts to, and this runs for each of an agent's replies.
        */
       const save = Effect.fnUntraced(function* (task: TaskId, ctx: TaskContext | null, detail?: string | null) {
+        yield* forget(task)
         const at = yield* now
         yield* db.tx(
           Effect.gen(function* () {
@@ -147,8 +156,11 @@ export class ContextMeter extends Context.Service<ContextMeter, ContextMeterShap
         // Counted as `/context` counts it.
         const tokens = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens")
         if (tokens === 0) return
+        const last = HashMap.get(yield* Ref.get(noted), run.task_id)
+        if (Option.isSome(last) && last.value.run === run.id && last.value.tokens === tokens) return
         yield* repo.turnUsage(run.id, tokens)
         yield* setTokens(run.task_id, tokens, null)
+        yield* Ref.update(noted, HashMap.set(run.task_id, { run: run.id, tokens }))
       })
 
       const onCodexUsage = Effect.fnUntraced(function* (run: RunRef, params: unknown) {
@@ -188,10 +200,12 @@ export class ContextMeter extends Context.Service<ContextMeter, ContextMeterShap
         if (tokens === null) return
         yield* repo.compactedTurn(run.id, tokens)
         yield* setTokens(run.task_id, tokens, null)
+        yield* forget(run.task_id)
       })
 
       const recordTurn = Effect.fnUntraced(function* (run: RunRef, costUsd: number | null) {
         if (run.kind === "compact") return
+        yield* forget(run.task_id)
         const turn = yield* db.tx(repo.takeTurn(run.id))
         if (turn === null || turn.end === null) return
         const ctx = yield* current(run.task_id)

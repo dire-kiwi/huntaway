@@ -21,7 +21,7 @@ const StoredRules = Schema.Struct({ rules: Schema.Array(ApprovalRule), expiry_mi
 const RulesRow = Schema.Struct({ approval_rules: NullableJsonColumn(StoredRules) })
 
 /** An `approval_log` row as the wire's `ApprovalAction`, with its profile. */
-const ActionRow = Schema.Struct({ ...ApprovalAction.fields, profile_id: ProfileId })
+export const ActionRow = Schema.Struct({ ...ApprovalAction.fields, profile_id: ProfileId })
 export interface ActionRow extends Schema.Schema.Type<typeof ActionRow> {}
 
 const ACTION_COLUMNS = Object.keys(ApprovalAction.fields).join(", ")

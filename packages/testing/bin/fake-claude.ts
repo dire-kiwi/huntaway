@@ -42,7 +42,9 @@
 // `tools/call` control request), waiting for each answer as for a permission, and its reply says what each returned
 // ("board wait: {...}"). A `/compact` prompt prints a compact_boundary. A prompt containing "fake-subagent" runs a
 // subagent (a Task call, with a Read inside it), and streams its reply's text (stream_event deltas) before the
-// assistant message. A prompt containing "fake-until-interrupted" keeps its turn going until an `interrupt` (which the
+// assistant message. A prompt containing "fake-skill-fork" runs a forked skill (`/code-review`: a Skill call that Claude
+// Code runs as a `local_agent` subagent), whose child's Bash call is asked for as above before it goes on. A prompt
+// containing "fake-until-interrupted" keeps its turn going until an `interrupt` (which the
 // sleep before a reply doesn't heed), then ends it as Claude Code does: "[Request interrupted by user]" and an
 // error_during_execution result.
 //
@@ -523,6 +525,51 @@ const subagent = () => {
   toolResult(call, "It has a README.")
 }
 
+const skillFork = async () => {
+  // A skill with `context: fork` (`/code-review`), in the shape Claude Code printed for it (ODS-9, IA-173): a Skill call,
+  // a `local_agent` task for it, its child's messages keyed by the Skill's tool_use_id with no Task call, a Bash call of
+  // the child's (asked for, with --permission-prompt-tool stdio), the task's end, and the Skill's forked result.
+  const skill = `toolu_${hex(12)}`
+  const diff = `toolu_${hex(12)}`
+  const child = `job_${skill}`
+  const input = { command: "git diff main...HEAD" }
+  say([{ type: "tool_use", id: skill, name: "Skill", input: { skill: "code-review", args: "low 139" } }])
+  emit({
+    type: "system",
+    subtype: "task_started",
+    task_type: "local_agent",
+    tool_use_id: skill,
+    task_id: child,
+    description: "/code-review",
+    prompt: "Review PR 139 for correctness bugs.",
+    subagent_type: "general-purpose",
+    session_id: session,
+  })
+  emit({
+    type: "user",
+    session_id: session,
+    uuid: randomUUID(),
+    parent_tool_use_id: skill,
+    message: { role: "user", content: [{ type: "text", text: "Review PR 139 for correctness bugs." }] },
+  })
+  say([{ type: "tool_use", id: diff, name: "Bash", input }], skill)
+  let allowed = true
+  if (opt("--permission-prompt-tool") === "stdio") {
+    const ask = randomUUID()
+    emit({
+      type: "control_request",
+      request_id: ask,
+      request: { subtype: "can_use_tool", tool_name: "Bash", input, tool_use_id: diff, permission_suggestions: [] },
+    })
+    const r = await awaitResponse(ask)
+    allowed = isObject(r.response) && r.response.behavior === "allow"
+  }
+  toolResult(diff, allowed ? "The reviewed diff." : "denied", skill, !allowed)
+  say([{ type: "text", text: "No runtime bugs found." }], skill)
+  emit({ type: "system", subtype: "task_notification", task_id: child, tool_use_id: skill, status: "completed", summary: "/code-review", session_id: session })
+  toolResult(skill, 'Skill "code-review" completed (forked execution).\n\nResult:\nNo runtime bugs found.')
+}
+
 const now = () => Date.now() / 1000
 
 /** "6:30pm", as Claude Code says when a limit resets. */
@@ -543,6 +590,7 @@ const turn = async (text: string) => {
     emit({ type: "system", subtype: "compact_boundary", session_id: session, compact_metadata: { trigger: "manual", pre_tokens: 1234 } })
   }
   if (text.includes("fake-subagent")) subagent()
+  if (text.includes("fake-skill-fork")) await skillFork()
   if (text.includes("fake-until-interrupted")) {
     // A turn that goes on until it's interrupted (by one that came during the sleep too), as a long one of Claude
     // Code's does: messages steered meanwhile are taken in, and the interrupt ends the turn with Claude Code's note and

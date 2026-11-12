@@ -435,6 +435,12 @@ describe("routines", () => {
           yield* reason(routine(p, { name: "New", trigger: { kind: "cron", expr: "0 8 * * *" }, action: { kind: "message_assistant", message: "z" } })),
           "personal's assistant runs on laptop-id",
         )
+        // Named as the user knows that host, once it's linked.
+        yield* sqlRun(
+          (sql) =>
+            sql`INSERT INTO links (id, name, mode, url, token, ssh, uplink, created_at) VALUES ('laptop-id', 'laptop', 'outbound', 'http://laptop:7879', 't', NULL, 0, ${"2026-11-12T00:00:00.000Z"})`,
+        )
+        assert.isTrue((yield* runNow(fresh.id)).detail?.startsWith("personal's assistant runs on laptop, so routines on "))
         // Back on this host, they run again.
         yield* sqlRun((sql) => sql`UPDATE profiles SET assistant_host = NULL WHERE id = ${p.id}`)
         yield* fakeAgent({ task: assistant.id })

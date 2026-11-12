@@ -177,7 +177,7 @@ describe("Servers", () => {
       assert.isFalse(existsSync(join(resources, "huntaway.starts")))
       // A release build's server gets release updates and is told about the app.
       const env = readFileSync(join(appDir, "0.2.0", "huntaway.env"), "utf8")
-      assert.include(env, "HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway")
+      assert.include(env, "HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway-effect")
       assert.include(env, "HUNTAWAY_DESKTOP_VERSION=0.1.0")
       assert.include(env, "HUNTAWAY_DESKTOP_INSTALL=other")
       assert.include(env, `HUNTAWAY_BUNDLED_SERVER=${join(resources, "huntaway")}`)

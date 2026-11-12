@@ -156,6 +156,8 @@ export default defineConfig({
           "apps/server/src/bin.ts",
           "apps/server/src/codex-run.ts",
           "apps/server/src/Main.ts",
+          // 9.1: the read-only server's composition root, the second one.
+          "apps/server/src/ReadOnlyMain.ts",
           "apps/server/src/platform/ServerConfig.ts",
           "apps/desktop/src/main/main.ts",
           "**/*.test.ts",

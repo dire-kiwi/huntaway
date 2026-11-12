@@ -2,7 +2,7 @@ import { clsx } from "clsx"
 import { Cause, Exit } from "effect"
 import { Bell, BellRing, Star } from "lucide-react"
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react"
-import { mutate, type HostTask as Task } from "@huntaway/client"
+import { saveMarks as saveTaskMarks, type HostTask as Task } from "@huntaway/client"
 import type { TaskPatch } from "@huntaway/contracts"
 import { fromLocalInput, isDue, nextDue, reminderLabel, reminderPresets, toLocalInput } from "../ui/reminders"
 
@@ -19,13 +19,12 @@ export function useCanMark(task: Task | undefined): boolean {
 
 type Marks = Pick<TaskPatch, "starred" | "remind_at" | "reminder">
 
-/** The save of a change to the task's star or reminder (`tasks.update`); the saved task comes in as an event. */
-const marksSaved = (task: Task, patch: Marks) => mutate("tasks.update", task.host_id, { id: task.id, patch })
+/** The save of a change to the task's star or reminder (`tasks.update`), shown at once; the saved task comes in as an event. */
+const marksSaved = (task: Task, patch: Marks) => saveTaskMarks(task, patch)
 
 /**
- * Saves a change to the task's star or reminder, rejecting with the host's error if it fails. The saved task comes in
- * as an event. (The old board showed it straight away and put it back if the save failed, keeping what other saves in
- * flight showed; that is the client's to do, docs/plan/09-frontend.md.)
+ * Saves a change to the task's star or reminder, shown straight away and put back if the save fails, keeping what
+ * other saves in flight show (the client's `saveMarks`); rejects with the host's error if it fails.
  */
 export function saveMarks(task: Task, patch: Marks): Promise<void> {
   return runExit(marksSaved(task, patch)).then((exit) => (Exit.isSuccess(exit) ? undefined : Promise.reject(Cause.squash(exit.cause))))
