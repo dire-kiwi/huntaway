@@ -63,7 +63,7 @@ export interface UsageAlert {
 }
 
 /**
- * For a config with a proxy the shown limits are one account's (the one that resets first), so the alert is worked out
+ * For a config with a proxy each shown limit is one account's (the one that resets first), so the alert is worked out
  * from its accounts instead: the pool has room while any account does, so it's the alert of the account with the most
  * room, taking each account's limit with the least left.
  */

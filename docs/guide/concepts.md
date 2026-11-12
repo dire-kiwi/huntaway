@@ -85,7 +85,9 @@
   unless it's on the same machine): the host lists its credentials (`GET /v8/management/credentials`)
   and asks Anthropic's usage endpoint for each Claude one through the proxy, with that account's
   token (`POST /v8/management/requests/api-call`). The sidebar shows the pool's limits, each as it is
-  on the account where it resets first (the usage that's lost soonest), unless that account has used none of it, and a line
+  on the account where it resets first (the usage that's lost soonest), unless that account has used none of it or has none
+  of it left; an account whose session or weekly limit is used up is left out while another isn't, as the proxy sends it
+  nothing until it resets. Below them is a line
   per account with what's left of its session and weekly limits (or why it couldn't be read).
   Agent runs' `rate_limit_event`s are one account's, so they don't change the pool's numbers; a
   refusal the proxy passes on (every account it tried was out) still marks the config out. The
