@@ -1,6 +1,7 @@
+import { Cause, Exit } from "effect"
 import { boardAtom, callHub, serverUrlAtom, tokenAtom, tokenPendingAtom } from "@huntaway/client"
 import { registry } from "./registry"
-import { isTagged, run } from "./rpc"
+import { isTagged, runExit } from "./mutation"
 
 // The board token (inventory 10, section 2.1): from `?token=` once (how the desktop shell and shared links sign in),
 // else the one this browser keeps (`ia.token`), else, on a board started with `--open-token` (PR previews, test
@@ -62,19 +63,18 @@ export function signOut(): void {
 
 /** Asks the board for the token it hands out, if it does; resolves to whether that changed the token. */
 function fetchOpenToken(): Promise<boolean> {
-  return run(callHub("public.openToken", undefined)).then(
-    ({ token }) => {
-      save(OPEN_KEY, "1")
-      if (!token || token === registry.get(tokenAtom)) return false
-      signIn(token)
-      return true
-    },
-    (e: unknown) => {
+  return runExit(callHub("public.openToken", undefined)).then((exit) => {
+    if (Exit.isFailure(exit)) {
       // Not offered: not asked again on the next load with a token.
-      if (isTagged(e, "NotFound")) save(OPEN_KEY, "0")
+      if (isTagged(Cause.squash(exit.cause), "NotFound")) save(OPEN_KEY, "0")
       return false
-    },
-  )
+    }
+    save(OPEN_KEY, "1")
+    const { token } = exit.value
+    if (!token || token === registry.get(tokenAtom)) return false
+    signIn(token)
+    return true
+  })
 }
 
 /**
