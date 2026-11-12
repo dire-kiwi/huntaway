@@ -54,8 +54,6 @@ const stepOne = [
   // board/ and boardHelpers.ts
   "apps/web/src/components/board/**",
   "apps/web/src/components/boardHelpers.ts",
-  // changes/
-  "apps/web/src/components/changes/**",
   // docs/
   "apps/web/src/components/docs/**",
   // layout/
