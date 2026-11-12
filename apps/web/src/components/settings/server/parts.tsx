@@ -1,12 +1,15 @@
+import { useAtomValue } from "@effect/atom-react"
+import { query, type QueryResult } from "@huntaway/client"
 import type { HostInfo, ReleaseStatus, ServerStatus } from "@huntaway/contracts"
+import type { Duration } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { CircleAlert } from "lucide-react"
-import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { rpc } from "../../../state/rpc"
-import { timeAgo } from "../../ui"
+import { useState, type ReactNode } from "react"
+import { resultValue, timeAgo } from "../../ui"
 import { compareVersions } from "../versions"
 
-// What Settings → Server and a linked host's page share (the old Server.tsx's helpers): a host's `admin.status`, read
-// now and again, and how its parts are said.
+// What Settings → Server and a linked host's page share (the old Server.tsx's helpers): a host's `admin.status`, a
+// polled query, and how its parts are said.
 
 export const PHASES: Record<string, string> = {
   starting: "Starting…",
@@ -29,38 +32,26 @@ export function stagedRelease(status: ServerStatus | null): string | null {
   return r?.staged && compareVersions(r.staged, r.running) > 0 ? r.staged : null
 }
 
-/** `host`'s `admin.status`, read now, every `pollMs` and when the window gets the focus. */
-export function useServerStatus(host: string | null, pollMs: number) {
-  const [read, setRead] = useState<{ host: string; status: ServerStatus } | null>(null)
-  const setStatus = useCallback(
-    (status: ServerStatus) => {
-      if (host) setRead({ host, status })
-    },
-    [host],
-  )
-  const refresh = useCallback(
-    (): Promise<void> =>
-      host
-        ? rpc(host, "admin.status", undefined).then(
-            (status) => setRead({ host, status }),
-            () => {
-              // Read again on the next poll.
-            },
-          )
-        : Promise.resolve(),
-    [host],
-  )
-  useEffect(() => {
-    void refresh()
-    const id = setInterval(() => void refresh(), pollMs)
-    const onFocus = () => void refresh()
-    window.addEventListener("focus", onFocus)
-    return () => {
-      clearInterval(id)
-      window.removeEventListener("focus", onFocus)
-    }
-  }, [refresh, pollMs])
-  return { status: read?.host === host ? read.status : null, setStatus, refresh }
+/** No host to read yet. */
+const noStatus: Atom.Atom<QueryResult<"admin.status">> = Atom.make<QueryResult<"admin.status">>(AsyncResult.initial())
+
+/**
+ * `host`'s `admin.status`, read now and every `every` (and with `focus`, when the window gets the focus back); read again
+ * after its `admin.*` changes and once the host has booted again (invalidate.ts). While the host doesn't answer, the last
+ * status read stays, and `down` says so.
+ */
+export function useServerStatus(
+  host: string | null,
+  every: Duration.Input,
+  options?: { readonly focus?: boolean | undefined },
+): { status: ServerStatus | null; down: boolean } {
+  const result = useAtomValue(host ? query("admin.status", host, undefined, { refresh: every, focus: options?.focus }) : noStatus)
+  const current = resultValue(result)
+  // A host's runtime that connects again starts its reads over: the last status stays meanwhile.
+  const [last, setLast] = useState<{ readonly host: string; readonly status: ServerStatus } | null>(null)
+  if (host && current && (last?.host !== host || last.status !== current)) setLast({ host, status: current })
+  const status = current ?? (last?.host === host ? last.status : null)
+  return { status, down: AsyncResult.isFailure(result) || (!current && status !== null) }
 }
 
 export function installName(shell: NonNullable<ReleaseStatus["shell"]>): string {

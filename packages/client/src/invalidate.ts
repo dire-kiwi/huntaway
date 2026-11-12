@@ -19,6 +19,9 @@ export type GroupOf<M extends string> = M extends `${infer G}.${string}` ? G : n
 export const invalidates: { readonly [M in keyof Methods]?: ReadonlyArray<GroupOf<keyof Methods>> } = {
   "checkpoints.rewind": ["git"],
   "checkpoints.cancelRewind": ["git"],
+  // A host's settings are part of what its status (`release_prereleases`: the release checks run again) and its
+  // settings sync (`settings_sync`) say.
+  "host.updateSettings": ["admin", "settingsSync"],
 }
 
 /** What a query reads again on, as picked from its host's board: it is read again whenever the value changes. */
@@ -30,11 +33,28 @@ const taskState = (board: HostBoard, id: string): string => {
   return t ? `${t.running}:${t.worktree_state}` : ""
 }
 
+/**
+ * A number for each distinct object, by identity: the board keeps an unchanged value's identity (hostBoard.ts' `keep`),
+ * so the number changes when the value does.
+ */
+const versions = { seen: new WeakMap<object, number>(), last: 0 }
+const versionOf = (value: object): number => {
+  const known = versions.seen.get(value)
+  if (known !== undefined) return known
+  versions.last += 1
+  versions.seen.set(value, versions.last)
+  return versions.last
+}
+
 /** Per method, what of the board a query of it is read again on (none: only mutations and its own refresh). */
 export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
   "git.taskDiff": (board, p) => taskState(board, p.id),
+  // A host's status is another once it has booted again (a restart, an update): its new boot id, commit and version.
+  "admin.status": (board) => board.boot,
+  // What a host's settings sync lists changes with its settings (the old SettingsSyncRow read it again on them).
+  "settingsSync.get": (board) => versionOf(board.settings),
 }
 
 /** The key a host's group is invalidated by. */
