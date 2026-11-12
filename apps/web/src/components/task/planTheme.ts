@@ -97,7 +97,7 @@ function iaDiagrams() {
     host.removeAttribute("aria-busy")
     pending.delete(e.data.iaDiagram)
   })
-  const prefix = `${Date.now()}-${crypto.getRandomValues(new Uint32Array(2)).join("")}-`
+  const prefix = `${crypto.getRandomValues(new Uint32Array(4)).join("-")}-`
   for (const [i, pre] of [...document.querySelectorAll<HTMLElement>("ia-diagram > pre")].entries()) {
     const host = pre.parentElement
     if (!host) continue
@@ -297,7 +297,7 @@ function iaForm(saved: Record<string, { readonly v: ReadonlyArray<string>; reado
   document.addEventListener("reset", (e) => {
     const form = e.target
     if (!(form instanceof HTMLFormElement)) return
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       // A plan's own handler can call the reset off (say, when the user declines to), leaving the fields as they were.
       if (e.defaultPrevented) return
       const names = new Set<string>()

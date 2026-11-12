@@ -3,7 +3,7 @@ import { clsx } from "clsx"
 import { ArrowRight } from "lucide-react"
 import type { ReactNode } from "react"
 import { toJson } from "../../ui"
-import type { Any } from "./threadModel"
+import type { ProjectChange, ProjectCreation, TaskDeletion } from "@huntaway/contracts"
 
 // What one of the board's own approvals asks, in detail (the old task/Approvals.tsx `ProjectChangeDetail`,
 // `ProjectCreationDetail` and `TaskDeletionDetail`, step 1 of docs/plan/09-frontend.md): a project's change setting by
@@ -54,17 +54,17 @@ const LONG: ReadonlySet<string> = new Set([
   "summarizers",
 ])
 
-function valueText(field: string, v: Any): string {
+function valueText(field: string, v: unknown): string {
   if (v === null || v === undefined) return field === "group_name" ? "(none)" : "(default)"
   if (typeof v === "boolean") return v ? "On" : "Off"
-  if (field === "permission_mode") return PERMISSION_MODES.find((m) => m.id === v)?.label ?? String(v)
+  if (field === "permission_mode") return PERMISSION_MODES.find((m) => m.id === v)?.label ?? (typeof v === "string" ? v : toJson(v))
   if (field === "status_scripts" && typeof v === "object") {
-    const entries: Array<[string, string]> = Object.entries(v)
-    return entries.length ? entries.map(([status, script]) => `# ${status}\n${script}`).join("\n\n") : ""
+    const entries = Object.entries(v)
+    return entries.length ? entries.map(([status, script]) => `# ${status}\n${typeof script === "string" ? script : toJson(script)}`).join("\n\n") : ""
   }
   if (Array.isArray(v)) return v.map((x) => toJson(x)).join("\n")
   if (typeof v === "object") return toJson(v)
-  return String(v)
+  return typeof v === "string" ? v : toJson(v)
 }
 
 function Block({ text, tone }: { text: string; tone: "from" | "to" }) {
@@ -85,11 +85,11 @@ function Reason({ text }: { text: unknown }) {
 }
 
 /** What an agent asked to change about a project, setting by setting. */
-export function ProjectChangeDetail({ change }: { change: Any }) {
-  const changes: Any[] = Array.isArray(change?.changes) ? change.changes : []
+export function ProjectChangeDetail({ change }: { change: ProjectChange }) {
+  const changes = change.changes
   return (
     <div className="space-y-3 text-[13px]">
-      <Reason text={change?.reason} />
+      <Reason text={change.reason} />
       <ul className="space-y-3">
         {changes.map((c) => {
           const from = valueText(c.field, c.from)
@@ -133,24 +133,24 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 const Mono = ({ children }: { children: ReactNode }) => <span className="font-mono text-[12px] break-words">{children}</span>
 
 /** A project an agent asked to add: where it is, and what its agents would be allowed to do there. */
-export function ProjectCreationDetail({ creation }: { creation: Any }) {
-  const mode = PERMISSION_MODES.find((m) => m.id === creation?.permission_mode)?.label ?? creation?.permission_mode
+export function ProjectCreationDetail({ creation }: { creation: ProjectCreation }) {
+  const mode = PERMISSION_MODES.find((m) => m.id === creation.permission_mode)?.label ?? creation.permission_mode
   return (
     <div className="space-y-3 text-[13px]">
-      <Reason text={creation?.reason} />
+      <Reason text={creation.reason} />
       <div className="space-y-2 rounded-md border border-st-attention/30 bg-[#0c0c10] px-3 py-2">
         <Row label="Folder">
-          <Mono>{creation?.repo_path}</Mono>
-          {!creation?.exists ? (
+          <Mono>{creation.repo_path}</Mono>
+          {!creation.exists ? (
             <div className="text-[12px] text-amber-200/90">Doesn't exist yet: it's created.</div>
           ) : (
-            !creation?.git && <div className="text-[12px] text-faint">Not a git repository.</div>
+            !creation.git && <div className="text-[12px] text-faint">Not a git repository.</div>
           )}
         </Row>
         <Row label="Name">
-          {creation?.project?.name} <span className="font-mono text-[12px] text-faint">{creation?.project?.key}</span>
+          {creation.project.name} <span className="font-mono text-[12px] text-faint">{creation.project.key}</span>
         </Row>
-        <Row label="Board">{creation?.board}</Row>
+        <Row label="Board">{creation.board}</Row>
         <Row label="Permission mode">{mode} (the host's default)</Row>
       </div>
       <p className="text-muted">
@@ -163,11 +163,11 @@ export function ProjectCreationDetail({ creation }: { creation: Any }) {
 const statusLabel = (s: string) => STATUSES.find((x) => x.id === s)?.label ?? s
 
 /** What deleting a task an agent asked to delete would delete. */
-export function TaskDeletionDetail({ deletion }: { deletion: Any }) {
-  const d = deletion?.delete ?? {}
+export function TaskDeletionDetail({ deletion }: { deletion: TaskDeletion }) {
+  const d = deletion.delete
   return (
     <div className="space-y-3 text-[13px]">
-      <Reason text={deletion?.reason} />
+      <Reason text={deletion.reason} />
       <div className="rounded-md border border-red-500/30 bg-[#0c0c10] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 font-mono text-[12px] text-faint">{d.key}</span>
@@ -181,7 +181,7 @@ export function TaskDeletionDetail({ deletion }: { deletion: Any }) {
       </p>
       {d.branch && (
         <p className="text-muted">
-          The branch <span className="font-mono text-fg">{d.branch}</span> {deletion?.delete_branch ? "is deleted too." : "is kept."}
+          The branch <span className="font-mono text-fg">{d.branch}</span> {deletion.delete_branch ? "is deleted too." : "is kept."}
         </p>
       )}
     </div>

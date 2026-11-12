@@ -6,16 +6,15 @@
 // is sent nothing, and the ratings are the board's own buttons, outside it. A page that navigates its frame elsewhere gets
 // nothing.
 import { useAtomValue } from "@effect/atom-react"
-import { automationsAtom, type HostTask as Task } from "@huntaway/client"
+import { automationsAtom, query, type HostTask as Task } from "@huntaway/client"
 import { ProfileId, TaskId, type BriefItem, type BriefRating, type TaskDocument, type Weekday } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Loader2, Newspaper, Play, ThumbsDown, ThumbsUp } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
-import { useRpc } from "../../state/rpc"
-import { useLoaded } from "../changes/git/useLoaded"
+import { exitError, useMutation } from "../../state/mutation"
 import { WEEKDAYS } from "../settings/automations/draft"
 import { localTime, timeUntil, triggerText } from "../settings/automations/text"
-import { Button, errorText, parseJson, toJson } from "../ui"
+import { Button, localeDateString, localeString, parseJson, resultError, resultValue, toJson } from "../ui"
 
 /** The routine the template makes is called this (the server's brief `NAME`). */
 const BRIEF_NAME = "Morning brief"
@@ -72,19 +71,20 @@ export function briefDoc(html: string): string {
 
 const KIND_LABEL: Record<string, string> = { calendar: "Calendar", mail: "Mail", drive: "Drive", board: "Board", other: "Other" }
 
-const dayLabel = (iso: string) => new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })
+const dayLabel = (iso: string) => localeDateString(iso, { weekday: "short", day: "numeric", month: "short" }, [])
 
 export function BriefView({ assistant }: { assistant: Task }) {
   const { host_id: hostId, profile_id: profileId, id: taskId } = assistant
-  const rpc = useRpc()
   const [picked, setPicked] = useState<number | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  // Read again as the assistant's documents change (its `document_at`).
-  const read = useLoaded(`${hostId}\u0000${taskId}\u0000${picked ?? ""}\u0000${assistant.document_at ?? ""}`, () =>
-    rpc(hostId, "tasks.document", { id: TaskId.make(taskId), label: "brief", ...(picked === null ? {} : { version: picked }) }),
-  )
-  const doc: TaskDocument | null = read?.value ?? null
-  const docErr = read?.error ?? null
+  // Read again as the assistant's documents change (its `document_at`, invalidate.ts).
+  const read = useAtomValue(query("tasks.document", hostId, { id: TaskId.make(taskId), label: "brief", ...(picked === null ? {} : { version: picked }) }))
+  const docErr = resultError(read)
+  // The day shown before stays until another picked has been read.
+  const value = resultValue(read)
+  const [shown, setShown] = useState<TaskDocument | null>(null)
+  if (value !== undefined && value !== shown) setShown(value)
+  const doc: TaskDocument | null = value ?? (docErr === null ? shown : null)
   // The profile's routines, read again as they change (`automations_changed`).
   const routines = useAtomValue(automationsAtom({ host_id: hostId, profile_id: profileId }))
   const list = routines.data?.automations ?? null
@@ -98,7 +98,8 @@ export function BriefView({ assistant }: { assistant: Task }) {
   const items = doc?.items ?? []
   // A rating, from the list beside the brief: kept here at once, and taken back if it isn't saved. Pressing a pressed one
   // takes it back.
-  const rate = async (item: BriefItem, pressed: "up" | "down") => {
+  const [, feedback] = useMutation("assistant.briefFeedback")
+  const rate = (item: BriefItem, pressed: "up" | "down") => {
     const key = itemKey(item.kind, item.topic)
     const before = ratedRef.current
     const rating: BriefRating = before[key] === pressed ? "clear" : pressed
@@ -108,31 +109,23 @@ export function BriefView({ assistant }: { assistant: Task }) {
     ratedRef.current = next
     setRated(next)
     saveRated(hostId, taskId, next)
-    try {
-      await rpc(hostId, "assistant.briefFeedback", { profile_id: ProfileId.make(profileId), rating, kind: item.kind, topic: item.topic, text: item.title })
-      setErr(null)
-    } catch (x) {
-      setErr(`That rating wasn't saved: ${errorText(x)}`)
+    void feedback(hostId, { profile_id: ProfileId.make(profileId), rating, kind: item.kind, topic: item.topic, text: item.title }).then((exit) => {
+      const failed = exitError(exit)
+      setErr(failed === null ? null : `That rating wasn't saved: ${failed}`)
+      if (failed === null) return
       ratedRef.current = before
       setRated(before)
       saveRated(hostId, taskId, before)
-    }
+    })
   }
 
   const versions = doc?.versions ?? []
   const latest = versions[versions.length - 1]
-  const [running, setRunning] = useState(false)
-  const runNow = async () => {
+  const [run, runRoutine] = useMutation("automations.run")
+  const running = run.busy
+  const runNow = () => {
     if (!routine) return
-    setRunning(true)
-    try {
-      await rpc(hostId, "automations.run", { id: routine.id })
-      setErr(null)
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setRunning(false)
-    }
+    void runRoutine(hostId, { id: routine.id }).then((exit) => setErr(exitError(exit)))
   }
   const working = routine?.last_run?.task?.running === true
   const shownErr = err ?? docErr ?? routines.failed
@@ -169,14 +162,14 @@ export function BriefView({ assistant }: { assistant: Task }) {
         )}
         {routine && (
           <span className="ml-auto flex min-w-0 items-center gap-2 text-faint">
-            <span className="truncate" title={routine.enabled && routine.next_run_at ? new Date(routine.next_run_at).toLocaleString() : undefined}>
+            <span className="truncate" title={routine.enabled && routine.next_run_at ? localeString(routine.next_run_at) : undefined}>
               {routine.enabled
                 ? routine.next_run_at
                   ? `Next ${timeUntil(routine.next_run_at)} (${localTime(routine.next_run_at)})`
                   : triggerText(routine.trigger, tz)
                 : "Paused"}
             </span>
-            <Button size="sm" variant="ghost" disabled={running || working} onClick={() => void runNow()} title="Write today's brief now">
+            <Button size="sm" variant="ghost" disabled={running || working} onClick={runNow} title="Write today's brief now">
               {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run now
             </Button>
           </span>
@@ -225,7 +218,7 @@ export function BriefView({ assistant }: { assistant: Task }) {
                           aria-pressed={r === v}
                           aria-label={`${v === "up" ? "More" : "Less"} like this: ${it.topic}`}
                           title={`${v === "up" ? "More" : "Less"} like this: ${it.topic}`}
-                          onClick={() => void rate(it, v)}
+                          onClick={() => rate(it, v)}
                           className={clsx(
                             "flex h-6 w-6 shrink-0 items-center justify-center rounded",
                             r === v
@@ -264,22 +257,10 @@ export function BriefView({ assistant }: { assistant: Task }) {
 
 /** The template: the morning brief on the weekdays and at the time picked. It shows once the routine's event comes. */
 function BriefSetup({ hostId, profileId }: { hostId: string; profileId: string }) {
-  const rpc = useRpc()
   const [time, setTime] = useState("07:30")
   const [days, setDays] = useState<Weekday[]>(["mon", "tue", "wed", "thu", "fri"])
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const add = async () => {
-    setBusy(true)
-    try {
-      await rpc(hostId, "assistant.addBrief", { profile_id: ProfileId.make(profileId), time, weekdays: days })
-      setErr(null)
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [{ busy, error: err }, addBrief] = useMutation("assistant.addBrief")
+  const add = () => void addBrief(hostId, { profile_id: ProfileId.make(profileId), time, weekdays: days })
   return (
     <div className="space-y-3 rounded-xl border border-line p-5 text-[13px]" data-testid="brief-setup">
       <div className="text-fg">A morning brief</div>
@@ -316,7 +297,7 @@ function BriefSetup({ hostId, profileId }: { hostId: string; profileId: string }
           ))}
         </div>
       </div>
-      <Button size="sm" variant="primary" disabled={busy || !time || days.length === 0} onClick={() => void add()}>
+      <Button size="sm" variant="primary" disabled={busy || !time || days.length === 0} onClick={add}>
         {busy && <Loader2 size={12} className="animate-spin" />} Add the morning brief
       </Button>
       {err && <div className="text-[12px] text-red-400">{err}</div>}

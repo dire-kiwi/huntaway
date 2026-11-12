@@ -28,8 +28,8 @@ function keepPlace(y: number, inset: number) {
     if (!y) return
     scrollTo(0, y)
     hold = true
-    setTimeout(stop, 3000)
-    new ResizeObserver(() => hold && scrollTo(0, y)).observe(document.documentElement)
+    const until = performance.now() + 3000
+    new ResizeObserver(() => hold && performance.now() < until && scrollTo(0, y)).observe(document.documentElement)
   })
   addEventListener("scroll", () => parent.postMessage({ iaScroll: scrollY }, "*"), { passive: true })
 }

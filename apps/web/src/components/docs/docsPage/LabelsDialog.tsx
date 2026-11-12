@@ -1,17 +1,22 @@
 // The dialog that edits a document's labels, from its row in the tree or from its page.
 import { Loader2, X } from "lucide-react"
-import { useEffect, useId, useState } from "react"
+import { useAtomValue } from "@effect/atom-react"
+import { Exit, type Effect } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
+import { useId, useMemo, useState } from "react"
 import { ProfileId, type DocLabelNode } from "@huntaway/contracts"
-import { rpc } from "../../../state/rpc"
+import { type CallError, query } from "@huntaway/client"
+import { useAction } from "../../../state/mutation"
 import type { DocsHome } from "../docs"
-import { Button, ErrorBox, Field, Input, Modal, ModalFooter, useAsyncAction } from "../../ui"
+import { Button, ErrorBox, Field, Input, Modal, ModalFooter, resultValue } from "../../ui"
+import { idle } from "./reads"
 
 /** Every label of a host's label tree, the labels inside them included. */
 const flatLabels = (nodes: ReadonlyArray<DocLabelNode>): string[] => nodes.flatMap((n) => [n.path, ...flatLabels(n.children)])
 
 /**
  * A dialog that edits a document's labels: each a chip to remove, and a field that adds one, suggesting the labels
- * there are (`suggested`, else the host's, which it loads).
+ * there are (`suggested`, else the host's, which it reads). `onSave`'s change closes it once it's made.
  */
 export function LabelsDialog({
   title,
@@ -19,7 +24,6 @@ export function LabelsDialog({
   suggested,
   home,
   onSave,
-  onDone,
   onClose,
 }: {
   title: string
@@ -27,26 +31,15 @@ export function LabelsDialog({
   suggested?: string[]
   /** Where to load the labels to suggest from, without `suggested`. */
   home?: DocsHome
-  onSave: (labels: ReadonlyArray<string>) => Promise<unknown>
-  onDone: () => void
+  onSave: (labels: ReadonlyArray<string>) => Effect.Effect<unknown, CallError<"docs.update">, AtomRegistry.AtomRegistry>
   onClose: () => void
 }) {
   const [labels, setLabels] = useState(initial)
   const [text, setText] = useState("")
-  const [loaded, setLoaded] = useState<string[]>([])
-  const run = useAsyncAction()
+  const tree = resultValue(useAtomValue(suggested || !home ? idle : query("docs.labels", home.hostId, { profile_id: ProfileId.make(home.profileId) })))
+  const loaded = useMemo(() => (tree === undefined ? [] : flatLabels(tree.labels)), [tree])
+  const [run, start] = useAction()
   const listId = useId()
-  useEffect(() => {
-    if (suggested || !home) return undefined
-    let live = true
-    rpc(home.hostId, "docs.labels", { profile_id: ProfileId.make(home.profileId) }).then(
-      (t) => live && setLoaded(flatLabels(t.labels)),
-      () => {},
-    )
-    return () => {
-      live = false
-    }
-  }, [suggested, home])
   /** The labels with what's typed added (each '/'-separated segment trimmed), once whatever its case. */
   const withText = (list: ReadonlyArray<string>): ReadonlyArray<string> => {
     const l = text
@@ -61,11 +54,9 @@ export function LabelsDialog({
     setText("")
   }
   const save = () =>
-    void run.run(async () => {
-      // What's typed but not added yet is saved too.
-      await onSave(withText(labels))
-      onDone()
-      onClose()
+    // What's typed but not added yet is saved too.
+    void start(onSave(withText(labels))).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
     })
   const options = (suggested ?? loaded).filter((o) => !labels.some((l) => l.toLowerCase() === o.toLowerCase()))
   return (

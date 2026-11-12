@@ -1,11 +1,27 @@
 import { clsx } from "clsx"
 import { ChevronDown, ChevronRight } from "lucide-react"
+import type { Effect, Exit } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
 import { useMemo, useState, type ReactNode } from "react"
 import type { McpServer, McpServerConfig, Skill } from "@huntaway/contracts"
+import type { CallError, Methods } from "@huntaway/client"
+import { exitError } from "../../../state/mutation"
 import { Button, Input, Toggle, timeAgo } from "../../ui"
 
 // What the agent tools' settings share (huntaway's settings/AgentTools.tsx `Section`, `OtherList`, `describe`, and
 // McpSection's `serverSummary`), apart so the sections and the pages that hold them don't import each other.
+
+/** What an editor saves with: the change (an `agentTools.*` mutation) it runs as its own action, showing its failure. */
+export type Save<A extends ReadonlyArray<unknown>> = (...args: A) => Change
+
+/** A change of a host's: one of its methods called as a mutation (`mutate`). */
+export type Change = Effect.Effect<unknown, CallError<keyof Methods>, AtomRegistry.AtomRegistry>
+
+/** An action's exit as a confirm dialog's `onConfirm` wants it: rejected with why it failed, so the dialog shows that. */
+export const rejectFailure = (exit: Exit.Exit<unknown, unknown>): Promise<void> => {
+  const error = exitError(exit)
+  return error === null ? Promise.resolve() : Promise.reject(new Error(error))
+}
 
 export const serverSummary = (c: McpServerConfig) =>
   c.type === "http" || c.type === "sse" ? `${c.type} · ${c.url ?? ""}` : [c.command, ...(c.args ?? [])].join(" ")

@@ -5,13 +5,15 @@ import {
   optimisticMove,
   usableHost,
   type Board,
+  type CallError,
   type HostAgentConfig as ClaudeConfig,
   type HostProfile as Profile,
   type HostProject as Project,
   type HostTask as Task,
 } from "@huntaway/client"
 import type { Task as WireTask, TaskPatch } from "@huntaway/contracts"
-import { Cause } from "effect"
+import { Cause, Effect } from "effect"
+import type { AsyncResult } from "effect/reactivity"
 import { useMemo, useRef } from "react"
 import { board, useBoard } from "../state/board"
 import { registry } from "../state/registry"
@@ -45,27 +47,41 @@ function shallow(a: unknown, b: unknown): boolean {
   return ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && Object.is(Reflect.get(a, k), Reflect.get(b, k)))
 }
 
+/** Starts the optimistic move of `task` and tells `done` how it went (once the host has answered). */
+function startMove(
+  task: { readonly host_id: string; readonly id: string },
+  patch: TaskPatch,
+  done: (result: AsyncResult.Success<WireTask, CallError<"tasks.update">> | AsyncResult.Failure<WireTask, CallError<"tasks.update">>) => void,
+): void {
+  // A move of the user's own doesn't notify them (6.8): noted before the request, as its event reaches every tab first.
+  if (patch.status) noteMove(task.host_id, task.id, patch.status)
+  const fn = optimisticMove({ host_id: task.host_id, id: task.id })
+  const unmount = registry.mount(fn)
+  const cancel = registry.subscribe(fn, (result) => {
+    if (result._tag === "Initial" || result.waiting) return
+    cancel()
+    unmount()
+    done(result)
+  })
+  registry.set(fn, patch)
+}
+
 /**
  * Moves, reorders or stars `task` as `patch` says (`tasks.update`), showing it on the board at once until the host's
  * event replaces it, or putting it back if the host refuses (the client's `optimisticMove`). It takes the place of the
  * old components' `upsertTask` before a request and again after its failure. Rejects with the call's tagged error.
  */
 export function moveTask(task: { readonly host_id: string; readonly id: string }, patch: TaskPatch): Promise<WireTask> {
-  // A move of the user's own doesn't notify them (6.8): noted before the request, as its event reaches every tab first.
-  if (patch.status) noteMove(task.host_id, task.id, patch.status)
-  const fn = optimisticMove({ host_id: task.host_id, id: task.id })
   const { promise, resolve, reject } = Promise.withResolvers<WireTask>()
-  const unmount = registry.mount(fn)
-  const cancel = registry.subscribe(fn, (result) => {
-    if (result._tag === "Initial" || result.waiting) return
-    cancel()
-    unmount()
-    if (result._tag === "Success") resolve(result.value)
-    else reject(Cause.squash(result.cause))
-  })
-  registry.set(fn, patch)
+  startMove(task, patch, (result) => (result._tag === "Success" ? resolve(result.value) : reject(Cause.squash(result.cause))))
   return promise
 }
+
+/** `moveTask` as an effect, for an action that moves tasks among its other steps: it fails with the call's error. */
+export const moveTaskEffect = (task: { readonly host_id: string; readonly id: string }, patch: TaskPatch): Effect.Effect<WireTask, CallError<"tasks.update">> =>
+  Effect.callback<WireTask, CallError<"tasks.update">>((resume) =>
+    startMove(task, patch, (result) => resume(result._tag === "Success" ? Effect.succeed(result.value) : Effect.failCause(result.cause))),
+  )
 
 /** Where new work goes by default: this host if it can run agents, else the first one that can. */
 export function defaultAgentHost(hosts: State["hosts"] = board.get().hosts): string | null {

@@ -1,13 +1,14 @@
-import { agentOf, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { agentOf, query, type HostAgentConfig as ClaudeConfig, type QueryResult } from "@huntaway/client"
 import { AgentConfigId, ProjectId, type Reviewer } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../agents"
 import { useBoard } from "../../state/board"
-import { rpc } from "../../state/rpc"
 import { ModelPicker } from "../layout/newTask/ModelPicker"
-import { Button, IconButton, Input, Textarea } from "../ui"
+import { Button, IconButton, Input, resultValue, Textarea } from "../ui"
 
 // Step 1 (docs/plan/09-frontend.md), for the profile form and the project settings' Review tab (6.12). The board's
 // skills a reviewer's own skills are picked from are the agent tools' (6.4).
@@ -48,29 +49,21 @@ export interface ReviewerExtras {
   inherited: string
 }
 
+/** Nothing to read: a profile's reviewers have no project's tools, and a project's take the board's from them. */
+const noProjectTools: Atom.Atom<QueryResult<"agentTools.project">> = Atom.make<QueryResult<"agentTools.project">>(AsyncResult.initial())
+const noBoardTools: Atom.Atom<QueryResult<"agentTools.get">> = Atom.make<QueryResult<"agentTools.get">>(AsyncResult.initial())
+
 /** The board's skills and the default instructions a reviewer can be given its own of, for a project's reviewers (`projectId`) or a
  * profile's; null while they load or when the host can't take them. `inherited` is what a reviewer without instructions of its
  * own gets, if not the host's default (the project's In review prompt). */
 export function useReviewerExtras(hostId: string, projectId?: string, inherited?: string | null): ReviewerExtras | null {
-  const [loaded, setLoaded] = useState<{ host: string; skills: string[]; defaults: string } | null>(null)
-  useEffect(() => {
-    const req = { live: true }
-    // The project's skills and the board's enabled ones (6.4's agent tools); the board's only, for a profile's.
-    const skills = projectId
-      ? rpc(hostId, "agentTools.project", { project_id: ProjectId.make(projectId) }).then((t) => [...t.skills, ...t.global_skills.filter((x) => x.enabled)])
-      : rpc(hostId, "agentTools.get", undefined).then((t) => t.skills.filter((x) => x.enabled))
-    Promise.all([rpc(hostId, "host.defaultPrompts", undefined), skills]).then(
-      ([defaults, list]) => {
-        if (req.live) setLoaded({ host: hostId, skills: [...new Set(list.map((x) => x.name))].toSorted(), defaults: defaults.review_prompt })
-      },
-      () => {},
-    )
-    return () => {
-      req.live = false
-    }
-  }, [hostId, projectId])
-  if (loaded?.host !== hostId) return null
-  return { skills: loaded.skills, inherited: inherited?.trim() ? inherited : loaded.defaults }
+  // The project's skills and the board's enabled ones (6.4's agent tools); the board's only, for a profile's.
+  const own = resultValue(useAtomValue(projectId ? query("agentTools.project", hostId, { project_id: ProjectId.make(projectId) }) : noProjectTools))
+  const board = resultValue(useAtomValue(projectId ? noBoardTools : query("agentTools.get", hostId, undefined)))
+  const defaults = resultValue(useAtomValue(query("host.defaultPrompts", hostId, undefined)))
+  const list = own ? [...own.skills, ...own.global_skills.filter((x) => x.enabled)] : board?.skills.filter((x) => x.enabled)
+  if (!defaults || !list) return null
+  return { skills: [...new Set(list.map((x) => x.name))].toSorted(), inherited: inherited?.trim() ? inherited : defaults.review_prompt }
 }
 
 /**

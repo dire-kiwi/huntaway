@@ -1,14 +1,17 @@
 // Asana links (6.11, docs/plan/09-frontend.md "Step 1 as done for 6.11"): a task's links are its `external_links`
 // (`tasks.update`), the search is `profiles.asanaTasks`, and connecting is `profiles.update`'s `asana_token`, which the
 // host checks with Asana. The profile changes with the `profiles_changed` event that follows.
-import type { HostProfile as Profile, HostTask as Task } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { query, type HostProfile as Profile, type HostTask as Task } from "@huntaway/client"
 import type { AsanaTask, ExternalLink } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import { CheckCircle2, Circle, Link2, Loader2, X } from "lucide-react"
 import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { useBoard } from "../../state/board"
-import { isTagged, rpc } from "../../state/rpc"
-import { Button, errorText, IconButton, Input, Modal } from "../ui"
+import { failureOf, isTagged, useMutation } from "../../state/mutation"
+import { after } from "../../state/timers"
+import { Button, errorText, IconButton, Input, Modal, resultError, resultValue } from "../ui"
 
 /** Whether a profile uses Asana. */
 export const usesAsana = (p: Profile | undefined) => p?.asana_enabled !== false
@@ -87,11 +90,8 @@ export function LinkList({ links, onRemove, chips }: { links: ReadonlyArray<Exte
 export function LinkedTasks({ task, canLink = true }: { task: Task; canLink?: boolean | undefined }) {
   const links = task.external_links
   const [picking, setPicking] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const save = (next: ReadonlyArray<ExternalLink>) => {
-    setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { external_links: next } }).catch((e: unknown) => setErr(errorText(e)))
-  }
+  const [{ error: err }, update] = useMutation("tasks.update")
+  const save = (next: ReadonlyArray<ExternalLink>) => void update(task.host_id, { id: task.id, patch: { external_links: next } })
   return (
     <div className="space-y-2">
       {links.length > 0 ? (
@@ -177,27 +177,19 @@ export function ConnectAsana({
   onConnected?: (() => void) | undefined
 }) {
   const [token, setToken] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const connect = async () => {
+  const [{ busy, error: err }, update] = useMutation("profiles.update")
+  const connect = () => {
     if (!token.trim() || busy) return
-    setBusy(true)
-    setErr(null)
-    try {
-      await rpc(hostId, "profiles.update", { id: profile.id, patch: { asana_token: token.trim() } })
-      onConnected?.()
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
+    void update(hostId, { id: profile.id, patch: { asana_token: token.trim() } }).then((exit) => {
+      if (Exit.isSuccess(exit)) onConnected?.()
+    })
   }
   return (
     <form
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault()
-        void connect()
+        connect()
       }}
     >
       <p className="text-[12.5px] leading-relaxed text-muted">
@@ -233,54 +225,38 @@ function AsanaSearch({
   onUnauthorized: () => void
 }) {
   const [q, setQ] = useState("")
+  // What's searched for: what's typed, once typing pauses.
+  const [searched, setSearched] = useState(q)
+  useEffect(() => after(q ? 250 : 0, () => setSearched(q)), [q])
+  const result = useAtomValue(query("profiles.asanaTasks", hostId, { profile_id: profile.id, q: searched }))
+  const answer = resultValue(result)
+  // The search for what's typed now is under way until it has answered.
+  const loading = searched !== q || result.waiting || (answer === undefined && resultError(result) === null)
+  const [active, setActive] = useState(0)
+  const isLinked = (t: AsanaTask) => linked.some((l) => l.provider === "asana" && l.id === t.gid)
   // What the last search found, and what it was for. Shown (greyed out) while the next one runs, but
-  // only what was found for what's typed now can be picked.
+  // only what was found for what's typed now can be picked. Each answer starts on its first task not linked yet.
   const [found, setFound] = useState<{ q: string; tasks: ReadonlyArray<AsanaTask> } | null>(null)
+  if (answer !== undefined && found?.tasks !== answer) {
+    setFound({ q: searched, tasks: answer })
+    setActive(
+      Math.max(
+        0,
+        answer.findIndex((t) => !isLinked(t)),
+      ),
+    )
+  }
   const tasks = found?.tasks ?? null
   const current = found?.q === q
-  // The text the last search to finish was for: one for what's typed now is under way until it's this.
-  const [answered, setAnswered] = useState<string | null>(null)
-  const loading = answered !== q
-  const [err, setErr] = useState<string | null>(null)
-  const [active, setActive] = useState(0)
+  const err = resultError(result)
   const list = useRef<HTMLDivElement>(null)
-  const isLinked = (t: AsanaTask) => linked.some((l) => l.provider === "asana" && l.id === t.gid)
-  const firstUnlinked = useEffectEvent((ts: ReadonlyArray<AsanaTask>) =>
-    Math.max(
-      0,
-      ts.findIndex((t) => !isLinked(t)),
-    ),
-  )
+  // The token was refused, or is gone since the board loaded the profile: connect again.
+  const failure = result.waiting ? undefined : failureOf(result)
+  const refused = isTagged(failure, "Unavailable") || (isTagged(failure, "External") && /didn't accept the token/.test(errorText(failure)))
   const unauthorized = useEffectEvent(onUnauthorized)
-  // Searched as it's typed, once typing pauses; only the latest search's answer is shown.
   useEffect(() => {
-    let stale = false
-    const timer = setTimeout(
-      () => {
-        void rpc(hostId, "profiles.asanaTasks", { profile_id: profile.id, q })
-          .then((ts) => {
-            if (stale) return
-            setFound({ q, tasks: ts })
-            setErr(null)
-            setActive(firstUnlinked(ts))
-          })
-          .catch((e: unknown) => {
-            if (stale) return
-            // The token was refused, or is gone since the board loaded the profile: connect again.
-            if (isTagged(e, "Unavailable") || (isTagged(e, "External") && /didn't accept the token/.test(errorText(e)))) unauthorized()
-            setErr(errorText(e))
-          })
-          .finally(() => {
-            if (!stale) setAnswered(q)
-          })
-      },
-      q ? 250 : 0,
-    )
-    return () => {
-      stale = true
-      clearTimeout(timer)
-    }
-  }, [hostId, profile.id, q])
+    if (refused) unauthorized()
+  }, [refused])
   // In braces: scrollIntoView returns a promise in newer browsers, which React would take for the effect's cleanup.
   useEffect(() => {
     list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" })
@@ -373,7 +349,7 @@ function AsanaSearch({
 /** Disconnects a profile from Asana, for its settings. */
 export function AsanaAccount({ hostId, profile }: { hostId: string; profile: Profile }) {
   const [connecting, setConnecting] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ error: err }, update] = useMutation("profiles.update")
   if (!profile.asana_user)
     return connecting ? (
       <ConnectAsana hostId={hostId} profile={profile} onConnected={() => setConnecting(false)} />
@@ -389,10 +365,7 @@ export function AsanaAccount({ hostId, profile }: { hostId: string; profile: Pro
     <div className="flex items-center gap-2 text-[12.5px] text-muted">
       <AsanaIcon />
       <span className="min-w-0 flex-1 truncate">Connected as {profile.asana_user}</span>
-      <IconButton
-        title="Disconnect from Asana"
-        onClick={() => void rpc(hostId, "profiles.update", { id: profile.id, patch: { asana_token: null } }).catch((e: unknown) => setErr(errorText(e)))}
-      >
+      <IconButton title="Disconnect from Asana" onClick={() => void update(hostId, { id: profile.id, patch: { asana_token: null } })}>
         <X size={13} />
       </IconButton>
       {err && <span className="text-red-400">{err}</span>}

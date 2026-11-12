@@ -1,26 +1,34 @@
+import { Effect, Exit, Option } from "effect"
+import { Atom, type AtomRegistry } from "effect/reactivity"
 import { useLayoutEffect, useRef, useState, type RefObject } from "react"
 import { TaskId, type GitCommit, type GitStash, type GitStatus, type Turn } from "@huntaway/contracts"
-import { rpc } from "../../../state/rpc"
+import { mutate, query } from "@huntaway/client"
+import { exitError, useAction } from "../../../state/mutation"
 import { fileRows, hasStaged, hasUnstaged, linesPatch, untracked, type FileRow } from "../diffs"
 import { copyText } from "../../ui"
-import type { FileDiffsView } from "./useFileDiffs"
+import { diffsKey, fileDiffsAtom } from "./useFileDiffs"
 import type { GitSelection } from "./useGitSelection"
+import { statusQuery } from "./useGitStatus"
 import type { Staging } from "./useStaging"
-import { errText, rowPath, short, withOrig, type Dialog, type MenuEntry, type Pane } from "./model"
+import { rowPath, short, withOrig, type Dialog, type MenuEntry, type Pane } from "./model"
 
 export type GitActions = ReturnType<typeof useGitActions>
+
+/** A change to the repository: one of the `git.*` mutations, which read the tab's queries again once it's run. */
+type Change<E> = Effect.Effect<unknown, E, AtomRegistry.AtomRegistry>
 
 export interface GitActionsOptions {
   h: string
   id: string
   status: GitStatus | null
-  refresh: () => Promise<GitStatus | null>
-  /** Whether a change is being made: the polls wait, and so do keys. */
+  /** What's being done (the bar shows it), and setting it: the polls wait meanwhile. */
+  busy: string | null
+  setBusy: (label: string | null) => void
+  /** Whether a change is being made: keys wait for it to be done and drawn. */
   busyRef: RefObject<boolean>
   sel: GitSelection
-  /** The files panel's selected row, if that's the panel you're in, and its diffs. */
+  /** The files panel's selected row, if that's the panel you're in. */
   target: FileRow | undefined
-  diffs: FileDiffsView
   staging: Staging
   setDialog: (d: Dialog) => void
   setFlash: (f: { text: string; error?: boolean } | null) => void
@@ -28,16 +36,16 @@ export interface GitActionsOptions {
 }
 
 /** What the Changes tab does: staging, discarding, committing, resetting, stashing, rewinding and copying. */
-export function useGitActions({ h, id, status, refresh, busyRef, sel, target, diffs, staging, setDialog, setFlash, setRewinding }: GitActionsOptions) {
+export function useGitActions({ h, id, status, busy, setBusy, busyRef, sel, target, staging, setDialog, setFlash, setRewinding }: GitActionsOptions) {
   const { files, commits, tree, collapsed } = sel
   const { file, chosenRows, drows, hunkMode, setAnchor, activePane, paneFile } = staging
   const task = TaskId.make(id)
-  const stage = (paths: ReadonlyArray<string>) => rpc(h, "git.stage", { id: task, paths })
-  const unstage = (paths: ReadonlyArray<string>) => rpc(h, "git.unstage", { id: task, paths })
-  const commit = (message: string, more: { amend?: boolean; reword?: boolean } = {}) => rpc(h, "git.commit", { id: task, message, ...more })
+  const [, run] = useAction()
+  const stage = (paths: ReadonlyArray<string>) => mutate("git.stage", h, { id: task, paths })
+  const unstage = (paths: ReadonlyArray<string>) => mutate("git.unstage", h, { id: task, paths })
+  const commit = (message: string, more: { amend?: boolean; reword?: boolean } = {}) => mutate("git.commit", h, { id: task, message, ...more })
   const applyPatch = (patch: string, what: "stage" | "unstage" | "discard") =>
-    rpc(h, "git.apply", { id: task, patch, cached: what !== "discard", reverse: what !== "stage" })
-  const [busy, setBusy] = useState<string | null>(null)
+    mutate("git.apply", h, { id: task, patch, cached: what !== "discard", reverse: what !== "stage" })
   // Bumped when a change is done: keys wait (`busyRef`) until what it changed is rendered, not only fetched, or one
   // pressed in between would be taken against the old status and diffs (a Tab to a staged diff that isn't there yet).
   const [doneN, setDoneN] = useState(0)
@@ -49,41 +57,47 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
 
   /**
    * Runs a change, one at a time, then shows what's changed (or why it failed): the status and the selected
-   * file's diffs, before the keys pressed meanwhile are taken (see `queued`), as lazygit takes them in turn.
+   * file's diffs, before the keys pressed meanwhile are taken (see `queued`), as lazygit takes them in turn. The
+   * change read them again (its group's queries); this waits for those reads. Resolves with whether it was made.
    */
-  const act = async (label: string, f: () => Promise<unknown>, done?: string) => {
-    if (busyRef.current) return false
+  const act = <E,>(label: string, change: Change<E>, done?: string): Promise<boolean> => {
+    if (busyRef.current) return Promise.resolve(false)
     busyRef.current = true
     setBusy(label)
     setFlash(null)
-    let ok = true
-    try {
-      await f()
-      if (done) setFlash({ text: done })
-    } catch (e) {
-      ok = false
-      setFlash({ text: errText(e), error: true })
-    } finally {
-      const st = await refresh()
-      const row = target && st?.files && fileRows(st.files, tree, collapsed).find((r) => r.key === target.key)
-      if (row) await diffs.reload(row)
+    const row = target
+    return run(
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(change)
+        const failed = exitError(exit)
+        yield* Effect.sync(() => {
+          if (failed !== null) setFlash({ text: failed, error: true })
+          else if (done) setFlash({ text: done })
+        })
+        const read = yield* Effect.option(Atom.getResult(statusQuery(h, id), { suspendOnWaiting: true }))
+        const now = Option.getOrUndefined(read)
+        const again = row && now?.files && fileRows(now.files, tree, collapsed).find((r) => r.key === row.key)
+        if (again) yield* Effect.ignore(Atom.getResult(fileDiffsAtom(diffsKey(h, id, again)), { suspendOnWaiting: true }))
+        return Exit.isSuccess(exit)
+      }),
+    ).then((exit) => {
       setBusy(null)
       setDoneN((n) => n + 1)
-    }
-    return ok
+      return Exit.isSuccess(exit) && exit.value
+    })
   }
 
   const anyUnstaged = files.some(hasUnstaged)
   const anyStaged = files.some(hasStaged)
   const toggleRow = (r: FileRow | undefined) => {
     if (!r) return
-    if (r.files.some(hasUnstaged)) void act("Staging", () => stage([rowPath(r)]))
-    else void act("Unstaging", () => unstage(r.file ? withOrig(r.files) : [rowPath(r)]))
+    if (r.files.some(hasUnstaged)) void act("Staging", stage([rowPath(r)]))
+    else void act("Unstaging", unstage(r.file ? withOrig(r.files) : [rowPath(r)]))
   }
   const toggleAll = () => {
     if (!files.length) return setFlash({ text: "No changes" })
-    if (anyUnstaged) void act("Staging everything", () => stage([]))
-    else void act("Unstaging everything", () => unstage([]))
+    if (anyUnstaged) void act("Staging everything", stage([]))
+    else void act("Unstaging everything", unstage([]))
   }
   const discardRow = (r: FileRow | undefined) => {
     if (!r) return
@@ -94,7 +108,7 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
         label: "Discard all changes",
         hint: r.files.some((f) => untracked(f) || f.x === "A") ? "New files are deleted" : "Staged and unstaged, back to the last commit",
         danger: true,
-        run: () => void act("Discarding", () => rpc(h, "git.discard", { id: task, paths: withOrig(r.files), staged: true }), `Discarded ${name}`),
+        run: () => void act("Discarding", mutate("git.discard", h, { id: task, paths: withOrig(r.files), staged: true }), `Discarded ${name}`),
       },
     ]
     if (r.files.some((f) => hasStaged(f) && hasUnstaged(f)))
@@ -106,13 +120,19 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
         run: () =>
           void act(
             "Discarding",
-            () => rpc(h, "git.discard", { id: task, paths: r.files.filter(hasUnstaged).map((f) => f.path), staged: false }),
+            mutate("git.discard", h, { id: task, paths: r.files.filter(hasUnstaged).map((f) => f.path), staged: false }),
             `Discarded unstaged changes in ${name}`,
           ),
       })
     setDialog({ kind: "menu", title: `Discard ${name}`, items })
   }
-  const commitDialog = (title: string, yes: string, initial: string, submit: (message: string) => Promise<unknown>, onDraft?: (message: string) => void) => {
+  const commitDialog = (
+    title: string,
+    yes: string,
+    initial: string,
+    submit: (message: string) => Promise<string | null>,
+    onDraft?: (message: string) => void,
+  ) => {
     const [summary = "", ...rest] = initial.split("\n")
     setDialog({ kind: "message", title, yes, summary, body: rest.join("\n").replace(/^\n+/, ""), submit, ...(onDraft ? { onDraft } : {}) })
   }
@@ -122,12 +142,14 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
         "Commit",
         "Commit",
         draft.current,
-        async (message) => {
-          const r = await commit(message)
-          draft.current = ""
-          setFlash({ text: `Committed ${short(r.head)}` })
-          void refresh()
-        },
+        (message) =>
+          run(commit(message)).then((exit) => {
+            if (Exit.isSuccess(exit)) {
+              draft.current = ""
+              setFlash({ text: `Committed ${short(exit.value.head)}` })
+            }
+            return exitError(exit)
+          }),
         (message) => {
           draft.current = message
         },
@@ -140,7 +162,7 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
       body: "Stage all the changes and commit them?",
       yes: "Stage all",
       onYes: () =>
-        void act("Staging everything", () => stage([])).then((ok) => {
+        void act("Staging everything", stage([])).then((ok) => {
           if (ok) open()
         }),
     })
@@ -164,27 +186,30 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
         </>
       ),
       yes: "Amend",
-      onYes: () => void act("Amending", () => commit("", { amend: true }), `Amended ${short(head.sha)}`),
+      onYes: () => void act("Amending", commit("", { amend: true }), `Amended ${short(head.sha)}`),
     })
   }
   const reword = (c: GitCommit | undefined) => {
     if (!c || wholeRepo("Rewording")) return
     if (c.sha !== status?.head) return setFlash({ text: "Only the latest commit can be reworded here", error: true })
-    void rpc(h, "git.show", { id: task, rev: c.sha })
-      .then((r) =>
-        commitDialog("Reword the last commit", "Reword", r.message ?? "", async (message) => {
-          await commit(message, { reword: true })
-          setFlash({ text: "Reworded" })
-          void refresh()
+    // Its message, as the commits panel's main panel reads it (the same query).
+    void run(Atom.getResult(query("git.show", h, { id: task, rev: c.sha, stash: false }))).then((exit) => {
+      const failed = exitError(exit)
+      if (failed !== null) return setFlash({ text: failed, error: true })
+      if (!Exit.isSuccess(exit)) return
+      commitDialog("Reword the last commit", "Reword", exit.value.message ?? "", (message) =>
+        run(commit(message, { reword: true })).then((done) => {
+          if (Exit.isSuccess(done)) setFlash({ text: "Reworded" })
+          return exitError(done)
         }),
       )
-      .catch((e: unknown) => setFlash({ text: errText(e), error: true }))
+    })
   }
   const resetMenu = (c: GitCommit | undefined) => {
     if (!c || wholeRepo("Resetting")) return
     const to = `${short(c.sha)} ${c.subject}`
     const reset = (mode: "soft" | "mixed" | "hard") => () =>
-      void act("Resetting", () => rpc(h, "git.reset", { id: task, rev: c.sha, mode }), `Reset to ${short(c.sha)}`)
+      void act("Resetting", mutate("git.reset", h, { id: task, rev: c.sha, mode }), `Reset to ${short(c.sha)}`)
     setDialog({
       kind: "menu",
       title: `Reset the branch to ${to}`,
@@ -217,7 +242,7 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
       title: mode === "all" ? "Stash all changes" : mode === "staged" ? "Stash staged changes" : "Stash unstaged changes",
       placeholder: "Message (optional)",
       yes: "Stash",
-      submit: (message) => void act("Stashing", () => rpc(h, "git.stash", { id: task, action: "push", mode, message }), "Stashed"),
+      submit: (message) => void act("Stashing", mutate("git.stash", h, { id: task, action: "push", mode, message }), "Stashed"),
     })
   }
   const stashMenu = () =>
@@ -234,9 +259,9 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
   const stashDo = (action: "apply" | "pop" | "drop", s: GitStash | undefined) => {
     if (!s) return
     const [doing = "", done = ""] = { apply: ["Applying", "Applied"], pop: ["Popping", "Popped"], drop: ["Dropping", "Dropped"] }[action]
-    const run = () => void act(doing, () => rpc(h, "git.stash", { id: task, action, index: s.index, sha: s.sha }), `${done} stash@{${s.index}}`)
+    const go = () => void act(doing, mutate("git.stash", h, { id: task, action, index: s.index, sha: s.sha }), `${done} stash@{${s.index}}`)
     if (action === "apply") {
-      run()
+      go()
       return
     }
     setDialog({
@@ -245,7 +270,7 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
       body: `${action === "pop" ? "Apply and then drop" : "Throw away"} stash@{${s.index}}: ${s.subject}?`,
       yes: action === "pop" ? "Pop" : "Drop",
       danger: action === "drop",
-      onYes: run,
+      onYes: go,
     })
   }
   const rewindTo = (t: Turn | undefined) => {
@@ -266,18 +291,18 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
     const patch = linesPatch(file, (hunk, line) => keys.has(`${hunk}:${line}`), what !== "stage")
     if (!patch) return
     const n = [...chosenRows].length
-    const run = () => {
+    const go = () => {
       setAnchor(null)
-      void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", () => applyPatch(patch, what))
+      void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", applyPatch(patch, what))
     }
-    if (what !== "discard") return run()
+    if (what !== "discard") return go()
     setDialog({
       kind: "confirm",
       title: "Discard lines",
       body: `Throw away ${hunkMode ? "this hunk" : n === 1 ? "this line's change" : `these ${n} lines' changes`}?`,
       yes: "Discard",
       danger: true,
-      onYes: run,
+      onYes: go,
     })
   }
   const linesAction = () => applyLines(activePane === "unstaged" ? "stage" : "unstage")
@@ -290,11 +315,11 @@ export function useGitActions({ h, id, status, refresh, busyRef, sel, target, di
     if (!f) return
     const patch = linesPatch(f, (hh) => hh === hunk, what !== "stage")
     if (!patch) return
-    const run = () => void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", () => applyPatch(patch, what))
+    const go = () => void act(what === "stage" ? "Staging" : what === "unstage" ? "Unstaging" : "Discarding", applyPatch(patch, what))
 
     if (what === "discard")
-      setDialog({ kind: "confirm", title: "Discard the hunk", body: "Throw away this hunk's changes?", yes: "Discard", danger: true, onYes: run })
-    else run()
+      setDialog({ kind: "confirm", title: "Discard the hunk", body: "Throw away this hunk's changes?", yes: "Discard", danger: true, onYes: go })
+    else go()
   }
 
   return {

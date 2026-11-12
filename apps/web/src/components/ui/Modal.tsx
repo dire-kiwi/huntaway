@@ -2,7 +2,8 @@ import { clsx } from "clsx"
 import { Loader2, X } from "lucide-react"
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { Button, IconButton, isSubmitShortcut } from "./controls"
-import { useAsyncAction } from "./hooks"
+import { Exit } from "effect"
+import { errorText, exitError } from "../../state/mutation"
 
 /** The fields, buttons and links in `el` that Tab stops at, in order. */
 function focusables(el: HTMLElement): HTMLElement[] {
@@ -152,16 +153,33 @@ export type ConfirmProps = {
   action: ReactNode
   /** A red confirm button, for something that deletes or can't be undone. */
   danger?: boolean | undefined
-  /** Runs on confirm: the dialog closes once it resolves, and shows the error it rejects with. */
+  /**
+   * Runs on confirm: the dialog closes once it has done, and shows why it failed: an `Exit` it resolves with that is a
+   * failure (`() => run(effect)` from `useAction`), or what it rejects with.
+   */
   onConfirm: () => unknown
   width?: string | undefined
 }
 
 /** Asks before doing something: Cancel, or `action`, which runs `onConfirm` with its button disabled meanwhile. */
 export function ConfirmModal({ title, body, action, danger, onConfirm, onClose, width = "max-w-md" }: ConfirmProps & { onClose: () => void }) {
-  const { busy, error, run } = useAsyncAction()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const confirm = () => {
-    void run(onConfirm).then((ok) => ok && onClose())
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    void Promise.resolve()
+      .then(onConfirm)
+      .then(
+        (done: unknown) => (Exit.isExit(done) ? exitError(done) : null),
+        (e: unknown) => errorText(e),
+      )
+      .then((failed) => {
+        setBusy(false)
+        if (failed === null) onClose()
+        else setError(failed)
+      })
   }
   return (
     <Modal title={title} onClose={onClose} onSubmit={confirm} width={width}>

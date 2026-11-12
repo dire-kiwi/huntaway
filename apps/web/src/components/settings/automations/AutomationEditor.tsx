@@ -1,15 +1,17 @@
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import { useState } from "react"
-import { agentOf } from "@huntaway/client"
+import { agentOf, mutate } from "@huntaway/client"
 import { ProfileId, type Automation, type DocumentLabel } from "@huntaway/contracts"
 import { effortOptions, inheritedModel, modelOptions, useAgentModels } from "../../../agents"
 import { useBoard } from "../../../state/board"
-import { useRpc } from "../../../state/rpc"
+import { nowMillis } from "../../../state/clock"
+import { useAction } from "../../../state/mutation"
 import { useAvailableConfigs, useShallow } from "../../boardHelpers"
 import { ModelPicker } from "../../layout/newTask/ModelPicker"
 import { Button, errorText, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle } from "../../ui"
 import { type TimeZone, type Owner, DAY_LABELS } from "./text"
-import { type Unit, type Draft, LABELS, localInput, draftOf, inputOf, WEEKDAYS } from "./draft"
+import { type Unit, type Draft, LABELS, localInput, draftOf, inputMillis, inputOf, WEEKDAYS } from "./draft"
 
 const UNITS: ReadonlyArray<Unit> = ["minutes", "hours", "days"]
 import { Segmented, selectClass } from "./controls"
@@ -30,14 +32,16 @@ export function AutomationEditor({
   onClose: () => void
 }) {
   const { hostId, project } = owner
-  const rpc = useRpc()
   // A profile's routine: it wakes the assistant, and makes no tasks.
   const routine = !project
   const what = routine ? "routine" : "automation"
   const [d, setD] = useState<Draft>(() => draftOf(automation, routine))
   const [saved, setSaved] = useState<Automation | null>(automation)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [saving, run] = useAction()
+  const busy = saving.busy
+  // Why the form can't be saved as it is, else why the last save failed.
+  const [invalid, setErr] = useState<string | null>(null)
+  const err = invalid ?? saving.error
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }))
   const configs = useAvailableConfigs(hostId, owner.profileId, project)
   // The model and effort are offered as the new task dialog offers them: for the config the task runs with.
@@ -61,7 +65,7 @@ export function AutomationEditor({
         .toSorted((a, b) => b.number - a.number),
     ),
   )
-  const save = async () => {
+  const save = () => {
     setErr(null)
     if (!d.name.trim()) return setErr("Give it a name.")
     if (d.does === "create_task" && !d.title.trim()) return setErr("The task needs a title.")
@@ -71,28 +75,30 @@ export function AutomationEditor({
     // Only a time that's just been set (or a routine just turned on) has to be to come, as on the server: one that's run
     // (and so turned itself off) can still be renamed or edited.
     const atChanged = !saved || !saved.enabled || saved.trigger.kind !== "at" || localInput(saved.trigger.at) !== d.at
-    if (d.when === "at" && d.enabled && atChanged && !(new Date(d.at).getTime() > Date.now())) return setErr("Pick a time to come.")
-    setBusy(true)
+    if (d.when === "at" && d.enabled && atChanged && !(inputMillis(d.at) > nowMillis())) return setErr("Pick a time to come.")
+    let b: ReturnType<typeof inputOf>
     try {
-      const b = inputOf(d, saved)
-      const a = saved
-        ? await rpc(hostId, "automations.update", { id: saved.id, patch: b })
-        : project
-          ? await rpc(hostId, "automations.create", { project_id: project.id, automation: b })
-          : await rpc(hostId, "automations.create", { profile_id: ProfileId.make(owner.profileId), automation: b })
+      b = inputOf(d, saved)
+    } catch (e) {
+      return setErr(errorText(e))
+    }
+    const change = saved
+      ? mutate("automations.update", hostId, { id: saved.id, patch: b })
+      : project
+        ? mutate("automations.create", hostId, { project_id: project.id, automation: b })
+        : mutate("automations.create", hostId, { profile_id: ProfileId.make(owner.profileId), automation: b })
+    void run(change).then((exit) => {
+      if (!Exit.isSuccess(exit)) return
+      const a = exit.value
       onSaved()
       // A new webhook stays open, to show its URL, and the secret it was given until it closes.
       if (!saved && a.trigger.kind === "webhook") {
         setSaved(a)
         setD({ ...draftOf(a, routine), secret: d.secret })
-        setBusy(false)
         return
       }
       onClose()
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+    })
   }
   const webhook = d.when === "webhook"
   const vars = webhook
@@ -114,7 +120,7 @@ export function AutomationEditor({
     </>
   )
   return (
-    <Modal title={saved ? `Edit ${saved.name}` : `New ${what}`} onClose={onClose} onSubmit={() => void save()} width="max-w-2xl">
+    <Modal title={saved ? `Edit ${saved.name}` : `New ${what}`} onClose={onClose} onSubmit={() => save()} width="max-w-2xl">
       <div className="space-y-4">
         <div className="grid grid-cols-[1fr_auto] items-end gap-3">
           <Field label="Name">
@@ -412,7 +418,7 @@ export function AutomationEditor({
             <Button variant="ghost" onClick={onClose}>
               {saved && !automation ? "Done" : "Cancel"}
             </Button>
-            <Button variant="primary" disabled={busy} onClick={() => void save()}>
+            <Button variant="primary" disabled={busy} onClick={() => save()}>
               {saved ? `Save ${what}` : `Add ${what}`}
             </Button>
           </div>

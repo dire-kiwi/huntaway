@@ -23,7 +23,6 @@ export function HomeTree({
   labelsEditable,
   docLink,
   onRemove,
-  onChanged,
 }: {
   home: DocsHome
   rows: Row[]
@@ -36,7 +35,6 @@ export function HomeTree({
   labelsEditable: boolean
   docLink: (d: Row) => string
   onRemove: (d: Row) => void
-  onChanged: () => void
 }) {
   const tree = useMemo(() => docTree(rows), [rows])
   const folders = useMemo(() => folderPaths(tree), [tree])
@@ -45,7 +43,7 @@ export function HomeTree({
   const closedLabels = useClosed(home, "labels")
   const dialogs = useTreeDialogs()
   const { setMoving, setLabelling, setRenaming } = dialogs
-  const { over, dropError, setDropError, target, source } = useDocDrag(home, editable, view, onChanged)
+  const { over, dropError, setDropError, target, source } = useDocDrag(home, editable, view)
 
   // `within`: the label it's shown under, in the Labels view, where a document can be in several places.
   const docRow = (d: Row, depth: number, within = "") => (
@@ -152,7 +150,7 @@ export function HomeTree({
         </tr>
       )}
       {view === "labels" ? [...labelRows(labels.root, 0), ...unlabelledRows()] : folderRows(tree, 0)}
-      <TreeDialogs dialogs={dialogs} home={home} folders={folders} labels={labels.root} closed={closed} remember={remember} onChanged={onChanged} />
+      <TreeDialogs dialogs={dialogs} home={home} folders={folders} labels={labels.root} closed={closed} remember={remember} />
     </tbody>
   )
 }

@@ -1,17 +1,17 @@
 import { documentsOnly, isAssistant, isPenThread, isPensThread, isScratch, taskLabels, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
-import { TaskId } from "@huntaway/contracts"
+import { TaskId, type TaskPatch } from "@huntaway/contracts"
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../../state/board"
-import { rpc } from "../../../../state/rpc"
+import { exitError, useMutation } from "../../../../state/mutation"
 import { isGroupTask, useProject } from "../../../boardHelpers"
 import { Dependencies } from "../../../board/Dependencies"
 import { useConfirmDone } from "../../../board/ConfirmDone"
 import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/MergesInto"
 import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
 import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
-import { Button, errorText, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
+import { Button, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
 import { LinkedTasks, usesAsana } from "../../ExternalLinks"
 import { TitleSection } from "../Title"
 import type { Mode } from "../layout"
@@ -62,18 +62,23 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
     })
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [teardown, setTeardown] = useState(false)
+  const [, update] = useMutation("tasks.update")
+  /** Changes the task, and says why it couldn't under `part`. */
+  const change = (part: keyof typeof errs, patch: TaskPatch, clear: boolean) => {
+    if (clear) setErr(part, null)
+    void update(task.host_id, { id: task.id, patch }).then((exit) => {
+      const why = exitError(exit)
+      if (why !== null) setErr(part, why)
+    })
+  }
   // A worktree being set up from here (the button's, until the call ends).
-  const [wtBusy, setWtBusy] = useState(false)
-  const setUp = async () => {
-    setWtBusy(true)
+  const [{ busy: wtBusy }, setupWorktree] = useMutation("git.setupWorktree")
+  const setUp = () => {
     setErr("worktree", null)
-    try {
-      await rpc(task.host_id, "git.setupWorktree", { id: TaskId.make(task.id) })
-    } catch (e) {
-      setErr("worktree", errorText(e))
-    } finally {
-      setWtBusy(false)
-    }
+    void setupWorktree(task.host_id, { id: TaskId.make(task.id) }).then((exit) => {
+      const why = exitError(exit)
+      if (why !== null) setErr("worktree", why)
+    })
   }
 
   const { confirmDone, dialog: doneDialog } = useConfirmDone()
@@ -165,10 +170,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
           <TextInput
             value={task.preview_url ?? null}
             placeholder="https://… (where to try this task)"
-            onSave={(url) => {
-              setErr("preview", null)
-              rpc(task.host_id, "tasks.update", { id: task.id, patch: { preview_url: url || null } }).catch((e: unknown) => setErr("preview", errorText(e)))
-            }}
+            onSave={(url) => change("preview", { preview_url: url || null }, true)}
           />
           {errs.preview && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.preview}</div>}
         </Section>
@@ -185,10 +187,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
           <TextInput
             value={task.pr_url ?? null}
             placeholder="https://… (found with gh once the agent opens one)"
-            onSave={(url) => {
-              setErr("pr", null)
-              rpc(task.host_id, "tasks.update", { id: task.id, patch: { pr_url: url || null } }).catch((e: unknown) => setErr("pr", errorText(e)))
-            }}
+            onSave={(url) => change("pr", { pr_url: url || null }, true)}
           />
           {errs.pr && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.pr}</div>}
           <FailedChecks task={task} />
@@ -226,13 +225,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             <div className="space-y-2">
               <div className="text-[12.5px] text-muted">Runs directly in the project repository.</div>
               {project?.use_worktrees !== undefined && project.is_git && (
-                <Toggle
-                  checked={false}
-                  onChange={(v) =>
-                    void rpc(task.host_id, "tasks.update", { id: task.id, patch: { use_worktree: v } }).catch((e: unknown) => setErr("worktree", errorText(e)))
-                  }
-                  label="Use a worktree"
-                />
+                <Toggle checked={false} onChange={(v) => change("worktree", { use_worktree: v }, false)} label="Use a worktree" />
               )}
             </div>
           ) : (
@@ -285,7 +278,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
               )}
               <div className="flex flex-wrap gap-2 pt-2">
                 {task.worktree_state !== "ready" && (
-                  <Button size="sm" disabled={wtBusy || task.running} onClick={() => void setUp()}>
+                  <Button size="sm" disabled={wtBusy || task.running} onClick={setUp}>
                     {wtBusy ? <Loader2 size={12} className="animate-spin" /> : null} Set up
                   </Button>
                 )}
@@ -295,15 +288,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
                   </Button>
                 )}
                 {task.worktree_state === "none" && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      void rpc(task.host_id, "tasks.update", { id: task.id, patch: { use_worktree: false } }).catch((e: unknown) =>
-                        setErr("worktree", errorText(e)),
-                      )
-                    }
-                  >
+                  <Button size="sm" variant="ghost" onClick={() => change("worktree", { use_worktree: false }, false)}>
                     Don't use a worktree
                   </Button>
                 )}

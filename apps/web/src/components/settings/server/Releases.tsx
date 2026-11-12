@@ -1,60 +1,49 @@
-import type { ReleaseDownload, ReleaseStatus, ServerStatus } from "@huntaway/contracts"
+import { mutate, query } from "@huntaway/client"
+import type { ReleaseDownload, ReleaseStatus } from "@huntaway/contracts"
+import { Effect } from "effect"
+import { Atom } from "effect/reactivity"
 import { Copy, Download, Loader2, RefreshCw, Undo2 } from "lucide-react"
-import { useState } from "react"
-import { rpc } from "../../../state/rpc"
-import { Button, copyText, errorText, timeAgo, Toggle } from "../../ui"
+import { useEffect, useState } from "react"
+import { useAction, useMutation } from "../../../state/mutation"
+import { after } from "../../../state/timers"
+import { Button, copyText, errorText, localeTimeString, timeAgo, Toggle } from "../../ui"
 import { compareVersions } from "../versions"
 import { mb } from "./parts"
 
-// Step 1 (docs/plan/09-frontend.md) of the old Server.tsx's release parts: a host's release checks (`--release-updates`)
-// over `admin.checkRelease` and its `release_prereleases` setting, and the desktop app's own update (its preload's
-// `shellUpdateKind` and `updateShell`).
+// The old Server.tsx's release parts (docs/plan/09-frontend.md): a host's release checks (`--release-updates`) over
+// `admin.checkRelease` and its `release_prereleases` setting, and the desktop app's own update (its preload's
+// `shellUpdateKind` and `updateShell`). What a check finds shows as the host's `admin.status`, which its changes read
+// again.
 
 /**
- * The release checks (`--release-updates`) of host `hostId`'s server: what they found, the background download, Check
- * now, prereleases and Roll back.
+ * The release checks (`--release-updates`) of host `hostId`'s server (as its `admin.status` has them): what they found,
+ * the background download, Check now, prereleases and Roll back.
  */
-export function Releases({
-  hostId: host,
-  release,
-  onStatus,
-  refresh,
-  onRollback,
-}: {
-  hostId: string
-  release: ReleaseStatus
-  onStatus: (s: ServerStatus) => void
-  refresh: () => Promise<unknown>
-  onRollback: () => void
-}) {
-  const [checking, setChecking] = useState(false)
+export function Releases({ hostId: host, release, onRollback }: { hostId: string; release: ReleaseStatus; onRollback: () => void }) {
+  const [checkState, checkRelease] = useMutation("admin.checkRelease")
+  const [toggleState, run] = useAction()
+  // Which of the two ran last: its failure is the one shown.
+  const [last, setLast] = useState<"check" | "toggle">("check")
   // The toggle's new value until the server's status has it.
   const [prereleases, setPrereleases] = useState<boolean | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const checking = checkState.busy
+  const err = last === "check" ? checkState.error : toggleState.error
   const latest = release.latest
-  const check = async () => {
+  const check = () => {
     if (checking) return
-    setChecking(true)
-    setErr(null)
-    try {
-      onStatus(await rpc(host, "admin.checkRelease", undefined))
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setChecking(false)
-    }
+    setLast("check")
+    void checkRelease(host, undefined)
   }
-  const togglePrereleases = async (on: boolean) => {
+  const togglePrereleases = (on: boolean) => {
     setPrereleases(on)
-    setErr(null)
-    try {
-      // The server checks again with the new setting, and the status shows what it finds.
-      await rpc(host, "host.updateSettings", { patch: { release_prereleases: on } })
-      await refresh()
-    } catch (e) {
-      setErr(errorText(e))
-    }
-    setPrereleases(null)
+    setLast("toggle")
+    void run(
+      Effect.gen(function* () {
+        // The server checks again with the new setting, and the status, read again after the change, shows what it finds.
+        yield* mutate("host.updateSettings", host, { patch: { release_prereleases: on } })
+        yield* Atom.getResult(query("admin.status", host, undefined), { suspendOnWaiting: true }).pipe(Effect.ignore)
+      }),
+    ).then(() => setPrereleases(null))
   }
   return (
     <div className="mt-3 space-y-2 rounded-xl border border-line p-4 text-[12.5px] text-muted">
@@ -84,7 +73,7 @@ export function Releases({
           </div>
           <div>{release.checked_at ? `Checked ${timeAgo(release.checked_at)}` : "Not checked yet"}</div>
         </div>
-        <Button size="sm" onClick={() => void check()} disabled={checking}>
+        <Button size="sm" onClick={check} disabled={checking}>
           {checking ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Check now
         </Button>
       </div>
@@ -93,7 +82,7 @@ export function Releases({
           {release.error}
           {release.rate_limit_reset && (
             <div className="font-sans text-muted">
-              GitHub&apos;s rate limit resets at {new Date(release.rate_limit_reset).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+              GitHub&apos;s rate limit resets at {localeTimeString(release.rate_limit_reset, { hour: "numeric", minute: "2-digit" }, [])}.
             </div>
           )}
         </div>
@@ -109,7 +98,7 @@ export function Releases({
       )}
       {err && <div className="text-red-400">{err}</div>}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <Toggle checked={prereleases ?? release.prereleases} onChange={(on) => void togglePrereleases(on)} label="Include prereleases" />
+        <Toggle checked={prereleases ?? release.prereleases} onChange={togglePrereleases} label="Include prereleases" />
         {release.rollback_to && (
           <Button size="sm" onClick={onRollback}>
             <Undo2 size={13} /> Roll back to {release.rollback_to === "bundled" ? "the bundled version" : `v${release.rollback_to}`}
@@ -189,6 +178,10 @@ export function ShellNotice({ release, remote }: { release: ReleaseStatus; remot
   const [progress, setProgress] = useState<ShellUpdateProgress | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return undefined
+    return after("1.5 seconds", () => setCopied(false))
+  }, [copied])
   if (!shell) return null
   const command = shell.install === "pacman" && pkg ? `sudo pacman -U ${pkg.url}` : null
   const page = latest && (
@@ -239,7 +232,6 @@ export function ShellNotice({ release, remote }: { release: ReleaseStatus; remot
               onClick={() => {
                 copyText(command)
                 setCopied(true)
-                setTimeout(() => setCopied(false), 1500)
               }}
             >
               <Copy size={12} /> {copied ? "Copied" : "Copy"}

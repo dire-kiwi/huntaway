@@ -1,63 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { errorText } from "../../state/mutation"
 
-/** A string field of an error, if it has a non-empty one. */
-const textOf = (e: object, key: string): string | undefined => {
-  const v: unknown = Reflect.get(e, key)
-  return typeof v === "string" && v !== "" ? v : undefined
-}
-
-/**
- * An error's message, for showing. A host's tagged errors (`NotFound`, `Invalid`, `Conflict`, `Unavailable`…) have no
- * message of their own: what they say is in their fields.
- */
-export const errorText = (e: unknown): string => {
-  if (typeof e === "object" && e !== null && "_tag" in e && typeof e._tag === "string") {
-    const [what, id, field, reason, detail] = ["what", "id", "field", "reason", "detail"].map((k) => textOf(e, k))
-    if (e._tag === "NotFound") return `No ${what ?? "such thing"}${id ? ` ${id}` : ""} here.`
-    if (e._tag === "Invalid") return field ? `${field}: ${reason ?? "not valid"}` : (reason ?? "Not valid.")
-    if (e._tag === "Conflict") return detail ?? reason ?? "It conflicts with the board as it is now."
-    if (e._tag === "Unavailable") return `${what ? `${what.charAt(0).toUpperCase()}${what.slice(1)}: ` : ""}${reason ?? "not available"}`
-    const own = e instanceof Error ? e.message : ""
-    return own || reason || detail || e._tag
-  }
-  return e instanceof Error ? e.message : String(e)
-}
-
-/**
- * Runs an action that calls the API (a button's), keeping whether it's running and what it failed with: show `error`
- * where the action is, and disable its button while `busy`. `run` does nothing while it's already running (a
- * double-click), and resolves to whether the action succeeded.
- */
-export function useAsyncAction() {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const running = useRef(false)
-  // Gone once the action navigates away or closes what showed it.
-  const mounted = useRef(true)
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-  const run = useCallback(async (fn: () => unknown) => {
-    if (running.current) return false
-    running.current = true
-    setBusy(true)
-    setError(null)
-    try {
-      await fn()
-      return true
-    } catch (e) {
-      if (mounted.current) setError(errorText(e))
-      return false
-    } finally {
-      running.current = false
-      if (mounted.current) setBusy(false)
-    }
-  }, [])
-  return { busy, error, setError, run }
-}
+// An error's message, for showing: state/mutation.ts's.
+export { errorText }
 
 /**
  * A field's draft of `value`: it follows `value` until it's edited (and again once the edit is put back), so a refresh

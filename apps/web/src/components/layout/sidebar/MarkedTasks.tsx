@@ -1,28 +1,18 @@
-import { parseJson, toJson } from "../../ui/json"
+import { useAtom } from "@effect/atom-react"
 import { clsx } from "clsx"
 import { Bell, BellRing, ChevronRight, Star, X } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { taskKey, type HostTask as Task } from "@huntaway/client"
 import { isDue, reminderLabel, reminderTasks, starredTasks } from "../../ui/reminders"
 import { type Route } from "../../../router"
+import { collapsedSectionsAtom } from "../../../state/prefs"
 import { openTask, usePanel } from "../../../state/route"
 
 import { ReminderModal, reminderItems, starItem, useReminderClock } from "../../task/Reminders"
-import { ContextMenu, IconButton } from "../../ui"
+import { ContextMenu, IconButton, localeString } from "../../ui"
 import { titleItem, TitleModal } from "../TitleModal"
 import { Badge, NavItem } from "./NavItem"
 import { useBoard } from "../../../state/board"
-
-const COLLAPSED_SECTIONS_KEY = "ia.sidebar.collapsedSections"
-
-function loadCollapsedSections(): Set<string> {
-  try {
-    const kept = parseJson(localStorage.getItem(COLLAPSED_SECTIONS_KEY) ?? "[]")
-    return new Set(Array.isArray(kept) ? kept.filter((k): k is string => typeof k === "string") : [])
-  } catch {
-    return new Set()
-  }
-}
 
 /** A heading over a list in the sidebar, which shows or leaves out the list. */
 function SectionHeading({ label, open, onToggle, right }: { label: string; open: boolean; onToggle: () => void; right?: ReactNode | undefined }) {
@@ -58,7 +48,8 @@ export function MarkedTasks({ route }: { route: Route }) {
   )
   const reminders = useMemo(() => reminderTasks(list), [list])
   const now = useReminderClock(reminders)
-  const [collapsed, setCollapsed] = useState(loadCollapsedSections)
+  const [collapsedKeys, setCollapsed] = useAtom(collapsedSectionsAtom)
+  const collapsed = useMemo(() => new Set(collapsedKeys), [collapsedKeys])
   const [menu, setMenu] = useState<{ x: number; y: number; task: Task } | null>(null)
   const [picking, setPicking] = useState<Task | null>(null)
   const [renaming, setRenaming] = useState<Task | null>(null)
@@ -73,12 +64,7 @@ export function MarkedTasks({ route }: { route: Route }) {
       const next = new Set(old)
       if (next.has(key)) next.delete(key)
       else next.add(key)
-      try {
-        localStorage.setItem(COLLAPSED_SECTIONS_KEY, toJson([...next]))
-      } catch {
-        /* ignore */
-      }
-      return next
+      return [...next]
     })
   const row = (t: Task, right: ReactNode, title: string) => (
     <NavItem
@@ -120,7 +106,7 @@ export function MarkedTasks({ route }: { route: Route }) {
               {on ? <BellRing size={11} /> : <Bell size={11} />}
               {t.remind_at && reminderLabel(t.remind_at, now)}
             </span>,
-            `${t.title}\nReminder: ${t.remind_at ? new Date(t.remind_at).toLocaleString() : ""}${t.reminder ? `\n${t.reminder}` : ""}`,
+            `${t.title}\nReminder: ${t.remind_at ? localeString(t.remind_at) : ""}${t.reminder ? `\n${t.reminder}` : ""}`,
           )
         },
         <Badge n={due} title={`${due} reminder${due === 1 ? "" : "s"} due`} />,

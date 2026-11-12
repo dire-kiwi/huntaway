@@ -11,12 +11,13 @@ import {
 } from "@huntaway/client"
 import type { Host, Resolution, Status } from "@huntaway/contracts"
 import { clsx } from "clsx"
-import { useEffect, useState } from "react"
-import { rpc } from "../../../../state/rpc"
+import { useState } from "react"
+import { useNow } from "../../../../state/clock"
+import { exitError, useMutation } from "../../../../state/mutation"
 import { moveTask, useProject } from "../../../boardHelpers"
-import { useConfirmTodos } from "../../../board/ConfirmTodos"
+import { useConfirmTodos, type TaskUpdateOptions } from "../../../board/ConfirmTodos"
 import { useStackWait } from "../../../board/StackedOn"
-import { errorText, RESOLUTION_LABELS, RunningDot, StatusIcon } from "../../../ui"
+import { errorText, localeString, millisOf, RESOLUTION_LABELS, RunningDot, StatusIcon } from "../../../ui"
 import { resetsIn, resetTime } from "../../../ui/usageConfigs"
 import { saveMarks } from "../../Reminders"
 import { useThreadConfig } from "../hooks"
@@ -28,7 +29,7 @@ import { MoreFixRounds } from "../../Review"
 
 /** When a usage limit resets, as a phrase: "resets in 2h 5m", "resets Sun 2 Nov", "has reset". */
 function resetsPhrase(iso: string, now: number) {
-  const ms = new Date(iso).getTime() - now
+  const ms = millisOf(iso) - now
   if (Number.isNaN(ms)) return ""
   if (ms <= 0) return "has reset"
   return ms < 24 * 3600_000 ? `resets in ${resetsIn(iso, now)}` : `resets ${resetsIn(iso, now)}`
@@ -51,23 +52,32 @@ export function StatusSection({
   const stackWait = useStackWait(task, useProject(task.project_id))
   // Asks before a task whose todo list isn't complete leaves In progress (API 148).
   const { confirmTodos, dialog: todosDialog } = useConfirmTodos()
-  const setStatus = async (status: Status) => {
+  const [, send] = useMutation("tasks.send")
+  const [, update] = useMutation("tasks.update")
+  const failed = (exit: Parameters<typeof exitError>[0]) => {
+    const why = exitError(exit)
+    if (why !== null) setErr(why)
+  }
+  /** What the move adds, once the todo list (and, for Done, `confirmDone`) let it go; null to leave it where it is. */
+  const asked = (status: Status): Promise<TaskUpdateOptions | null> =>
+    confirmTodos(task, status).then((anyway) => (anyway && status === "done" ? confirmDone(task).then((ok) => (ok ? anyway : null)) : anyway))
+  const setStatus = (status: Status) => {
     setErr(null)
-    const anyway = await confirmTodos(task, status)
-    if (!anyway) return
-    if (status === "done" && !(await confirmDone(task))) return
-    try {
-      await moveTask(task, { ...anyway, status })
-      // Moving a fresh task into In progress starts its agent, with the empty message (the old client's `moveTask`).
-      const starts = status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host)
-      if (starts) await rpc(task.host_id, "tasks.send", { id: task.id, text: "" })
-    } catch (e) {
-      setErr(errorText(e))
-    }
+    void asked(status).then((anyway) => {
+      if (!anyway) return undefined
+      return moveTask(task, { ...anyway, status }).then(
+        () => {
+          // Moving a fresh task into In progress starts its agent, with the empty message (the old client's `moveTask`).
+          const starts = status === "in_progress" && task.status !== "in_progress" && !task.session_id && !task.running && canRunAgents(host)
+          if (starts) void send(task.host_id, { id: task.id, text: "" }).then(failed)
+        },
+        (e: unknown) => setErr(errorText(e)),
+      )
+    })
   }
   const setResolution = (resolution: Resolution) => {
     setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { resolution } }).catch((e: unknown) => setErr(errorText(e)))
+    void update(task.host_id, { id: task.id, patch: { resolution } }).then(failed)
   }
   return (
     <Section title="Status">
@@ -75,7 +85,7 @@ export function StatusSection({
         {hostStatuses(host).map((s) => (
           <button
             key={s.id}
-            onClick={() => void setStatus(s.id)}
+            onClick={() => setStatus(s.id)}
             className={clsx(
               "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px]",
               task.status === s.id ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.03] hover:text-fg",
@@ -134,7 +144,7 @@ export function StatusSection({
       {task.remind_at && (
         <div className="mt-2 flex items-start gap-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
           <span className="min-w-0 flex-1">
-            Reminder {new Date(task.remind_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+            Reminder {localeString(task.remind_at, { dateStyle: "medium", timeStyle: "short" }, [])}
             {task.reminder && <span className="block text-fg">{task.reminder}</span>}
           </span>
           <button
@@ -156,15 +166,14 @@ export function StatusSection({
  * (API 81). After the reset, sending a message carries on.
  */
 function UsageLimitNote({ task }: { task: Task }) {
-  const { current } = useThreadConfig(task)
-  const [now, setNow] = useState(() => Date.now())
   const at = task.limit_reset_at
-  useEffect(() => {
-    if (!at) return undefined
-    const tick = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(tick)
-  }, [at])
-  if (!at) return null
+  return at ? <UsageLimitNoteAt task={task} at={at} /> : null
+}
+
+/** The note for a limit that resets at `at`, read again every 30 seconds while it's shown. */
+function UsageLimitNoteAt({ task, at }: { task: Task; at: string }) {
+  const { current } = useThreadConfig(task)
+  const now = useNow(30_000)
   const name = current?.name ?? "Its config"
   const when = `${resetsPhrase(at, now)} (${resetTime(at)})`
   if (limitQueued(task)) {

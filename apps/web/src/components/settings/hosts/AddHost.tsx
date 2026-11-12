@@ -1,10 +1,11 @@
 import { useAtomValue } from "@effect/atom-react"
 import { hubJoinAtom, hubSshKeyAtom } from "@huntaway/client"
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import { Copy } from "lucide-react"
 import { useState } from "react"
-import { Button, copyText, errorText, Field, Input, Modal, ModalFooter } from "../../ui"
-import { failureOf, hubRpc, valueOf } from "./hub"
+import { Button, copyText, Field, Input, Modal, ModalFooter, resultError, resultValue } from "../../ui"
+import { useHubMutation } from "./hub"
 
 export function AddHostModal({ url, onClose }: { url?: string | undefined; onClose: () => void }) {
   const [how, setHow] = useState<"ssh" | "url">(url ? "url" : "ssh")
@@ -39,23 +40,16 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
   const [port, setPort] = useState("7879")
   const [sshPort, setSshPort] = useState("22")
   const keyResult = useAtomValue(hubSshKeyAtom)
-  const key = valueOf(keyResult)?.public_key ?? null
-  const keyError = failureOf(keyResult)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const key = resultValue(keyResult)?.public_key ?? null
+  const keyError = resultError(keyResult)
+  const [{ busy, error: err }, addSsh] = useHubMutation("hub.hosts.addSsh")
   const p = Number(port) || 7879
   const binPath = bin.trim() || "/path/to/huntaway"
   const line = key ? `restrict,port-forwarding,permitopen="127.0.0.1:${p}",command="${binPath} ssh-host --port ${p}" ${key}` : "…"
-  const submit = async () => {
-    setBusy(true)
-    setErr(null)
-    try {
-      await hubRpc("hub.hosts.addSsh", { target: target.trim(), ssh_port: Number(sshPort) || 22, remote_port: p })
-      onClose()
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+  const submit = () => {
+    void addSsh({ target: target.trim(), ssh_port: Number(sshPort) || 22, remote_port: p }).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   return (
     <div className="space-y-4">
@@ -99,7 +93,7 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy || !target.includes("@")} onClick={() => void submit()}>
+          <Button variant="primary" disabled={busy || !target.includes("@")} onClick={submit}>
             {busy ? "Connecting…" : "Connect"}
           </Button>
         </div>
@@ -111,18 +105,11 @@ function AddSshHost({ onClose }: { onClose: () => void }) {
 function AddUrlHost({ initialUrl, onClose }: { initialUrl?: string | undefined; onClose: () => void }) {
   const [url, setUrl] = useState(initialUrl ?? "http://")
   const [token, setToken] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const submit = async () => {
-    setBusy(true)
-    setErr(null)
-    try {
-      await hubRpc("hub.hosts.add", { url: url.trim(), token: token.trim() })
-      onClose()
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+  const [{ busy, error: err }, add] = useHubMutation("hub.hosts.add")
+  const submit = () => {
+    void add({ url: url.trim(), token: token.trim() }).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   return (
     <div className="space-y-4">
@@ -141,7 +128,7 @@ function AddUrlHost({ initialUrl, onClose }: { initialUrl?: string | undefined; 
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy || !token.trim() || url.length < 10} onClick={() => void submit()}>
+          <Button variant="primary" disabled={busy || !token.trim() || url.length < 10} onClick={submit}>
             Add host
           </Button>
         </div>
@@ -153,8 +140,8 @@ function AddUrlHost({ initialUrl, onClose }: { initialUrl?: string | undefined; 
 export function JoinModal({ onClose }: { onClose: () => void }) {
   // The hub builds the command from where this browser reaches it.
   const result = useAtomValue(hubJoinAtom(window.location.origin))
-  const info = valueOf(result)
-  const err = failureOf(result)
+  const info = resultValue(result)
+  const err = resultError(result)
   return (
     <Modal title="Connect hosts and boards" onClose={onClose} width="max-w-2xl">
       <div className="space-y-5 text-[12.5px] text-muted">

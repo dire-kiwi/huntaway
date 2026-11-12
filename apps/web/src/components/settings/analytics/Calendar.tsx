@@ -1,13 +1,15 @@
 import { clsx } from "clsx"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { addDays, dayKey, hm, HOUR, mergeSpans, NEUTRAL, splitByDay, startOfDay, totalsByTask, type RunSpan, type Span } from "./analytics"
+import { addDays, dayKey, hm, HOUR, localDay, mergeSpans, NEUTRAL, partsOf, splitByDay, startOfDay, totalsByTask, type RunSpan, type Span } from "./analytics"
 import { Swatch, useTip } from "../chart"
+import { localeDateString } from "../../ui/dates"
 import { type View } from "./useView"
 import { projectOf, colorOf, hourLabel, SpanTip, Legend, numbered, todayKey } from "./shared"
 import { TaskTable, PromptLog } from "./Report"
 import { lanes, DayTimeline } from "./DayTimeline"
 
-const WEEKDAYS = Array.from({ length: 7 }, (_, i) => new Date(2024, 0, 1 + i).toLocaleDateString(undefined, { weekday: "short" }))
+// 1 January 2024 was a Monday.
+const WEEKDAYS = Array.from({ length: 7 }, (_, i) => localeDateString(localDay(2024, 1, 1 + i), { weekday: "short" }))
 
 /** Active time per day and project, and prompts per day. */
 function useDays(view: View) {
@@ -33,17 +35,17 @@ function useDays(view: View) {
 export function MonthGrid({ view, anchor, selected, onSelect }: { view: View; anchor: number; selected: number | null; onSelect: (d: number) => void }) {
   const a = view.data
   const byDay = useDays(view)
-  const month = new Date(anchor).getMonth()
+  const month = partsOf(anchor).month
   const days: number[] = []
   for (let d = a.from; d < a.to; d = addDays(d, 1)) days.push(d)
   const max = Math.max(HOUR, ...[...byDay.values()].map((d) => d.total))
   const today = todayKey()
-  const monthTotal = days.filter((d) => new Date(d).getMonth() === month).reduce((n, d) => n + (byDay.get(dayKey(d))?.total ?? 0), 0)
+  const monthTotal = days.filter((d) => partsOf(d).month === month).reduce((n, d) => n + (byDay.get(dayKey(d))?.total ?? 0), 0)
 
   return (
     <section>
       <div className="mb-2 flex items-baseline gap-2">
-        <h2 className="text-[13px] font-medium">{new Date(anchor).toLocaleDateString(undefined, { month: "long" })}</h2>
+        <h2 className="text-[13px] font-medium">{localeDateString(anchor, { month: "long" })}</h2>
         <span className="text-[12px] text-faint tabular-nums">{hm(monthTotal)} active</span>
       </div>
       <div className="overflow-hidden rounded-lg border border-line">
@@ -58,7 +60,7 @@ export function MonthGrid({ view, anchor, selected, onSelect }: { view: View; an
           {days.map((d) => {
             const k = dayKey(d)
             const info = byDay.get(k)
-            const inMonth = new Date(d).getMonth() === month
+            const inMonth = partsOf(d).month === month
             const top = info ? [...info.projects.entries()].toSorted((x, y) => y[1] - x[1]) : []
             return (
               <button
@@ -77,7 +79,7 @@ export function MonthGrid({ view, anchor, selected, onSelect }: { view: View; an
                       k === today ? "bg-accent-strong px-1 text-white" : inMonth ? "text-muted" : "text-faint/60",
                     )}
                   >
-                    {new Date(d).getDate()}
+                    {partsOf(d).day}
                   </span>
                   {info && info.total > 0 && <span className={clsx("ml-auto font-medium tabular-nums", !inMonth && "text-muted")}>{hm(info.total)}</span>}
                 </span>
@@ -158,7 +160,7 @@ export function WeekGrid({ view, from, selected, onSelect }: { view: View; from:
               className={clsx("border-l border-line px-2 py-1.5 text-left hover:bg-raised", selected === d && "bg-raised")}
             >
               <div className={clsx("text-[11.5px]", dayKey(d) === today ? "font-medium text-accent" : "text-muted")}>
-                {new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}
+                {localeDateString(d, { weekday: "short", day: "numeric" })}
               </div>
               <div className="text-[12px] font-medium tabular-nums">{info?.total ? hm(info.total) : <span className="text-faint">—</span>}</div>
             </button>
@@ -243,9 +245,7 @@ export function DayDetail({ view, day }: { view: View; day: number }) {
 
   return (
     <section className="space-y-4">
-      <h2 className="text-[13px] font-medium">
-        {new Date(day).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-      </h2>
+      <h2 className="text-[13px] font-medium">{localeDateString(day, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</h2>
       <DayTimeline view={dayView} day={day} />
       {(dayView.events.length > 0 || dayView.runs.length > 0) && (
         <>

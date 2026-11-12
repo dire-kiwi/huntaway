@@ -1,35 +1,37 @@
+import { useAtomValue } from "@effect/atom-react"
 import { BookOpen } from "lucide-react"
-import { useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react"
+import type { ComponentProps, ReactNode } from "react"
+import { Atom } from "effect/reactivity"
+import { query } from "@huntaway/client"
 import { ProfileId } from "@huntaway/contracts"
 import { useBoard } from "../../../state/board"
 import { navigate } from "../../../state/route"
-import { rpc } from "../../../state/rpc"
-import { boardDocLink, docsHomes, type DocsHome } from "../../docs/docs"
-import { useDocsChanged } from "../../docs/docsPage/hooks"
+import { boardDocLink, docsHomes } from "../../docs/docs"
+import { resultError, resultValue } from "../../ui"
 
 // A link in a message (HA-321; 6.3 brings back what M2 cut): one to a document of this board opens in the board, not a
 // new window (in the desktop app, that's the browser), and a link shown as its URL shows the document's title instead.
 
-/** A document's title by where it's kept, so that a message with the same link twice (or shown again) asks once. */
-const titles = new Map<string, Promise<string | null>>()
-
-const titleKey = (home: DocsHome, slug: string) => `${home.hostId}\n${home.profileId}\n${slug}`
-
-function titleOf(home: DocsHome, slug: string): Promise<string | null> {
-  const key = titleKey(home, slug)
-  let got = titles.get(key)
-  if (!got) {
-    got = rpc(home.hostId, "docs.get", { profile_id: ProfileId.make(home.profileId), slug }).then(
-      (d) => d.title,
-      () => {
-        titles.delete(key)
-        return null
-      },
-    )
-    titles.set(key, got)
-  }
-  return got
-}
+/**
+ * A document's title, by its slug and the homes it may be kept in (`<slug>\n<host>\0<profile>\n…`): the first home that
+ * has it names it, each asked once the one before hasn't it. One `docs.get` query per home, so a message with the same
+ * link twice (or shown again) asks once, and a publish (the profile's `docs` event, invalidate.ts) asks again.
+ */
+const titleOf = Atom.family((ask: string) =>
+  Atom.make((get): string | null => {
+    const [slug = "", ...homes] = ask.split("\n")
+    for (const home of homes) {
+      const [hostId = "", profileId = ""] = home.split("\u0000")
+      if (hostId === "") continue
+      const result = get(query("docs.get", hostId, { profile_id: ProfileId.make(profileId), slug }))
+      const doc = resultValue(result)
+      if (doc !== undefined) return doc.title
+      // Still being read: the next home waits for it.
+      if (resultError(result) === null) return null
+    }
+    return null
+  }),
+)
 
 /** The text a link shows, if it's plain text. */
 function plainText(children: ReactNode): string | null {
@@ -55,41 +57,12 @@ export function DocLink({ href, children, ...rest }: ComponentProps<"a">) {
 function BoardDocLink({ link, children, ...rest }: Omit<ComponentProps<"a">, "href"> & { link: NonNullable<ReturnType<typeof boardDocLink>> }) {
   const { route, path } = link
   // Where the document is kept: the first of its profile's hosts that has it.
-  const key = useBoard((s) =>
+  const homes = useBoard((s) =>
     docsHomes(s.profiles, s.hosts, route.profile)
       .homes.map((h) => `${h.hostId}\u0000${h.profileId}`)
       .join("\n"),
   )
-  const homes = useMemo(
-    () =>
-      key === ""
-        ? []
-        : key.split("\n").map((h) => {
-            const [hostId = "", profileId = ""] = h.split("\u0000")
-            return { hostId, profileId }
-          }),
-    [key],
-  )
-  const [title, setTitle] = useState<string | null>(null)
-  // A publish changes the title: it's asked again (`asked` is part of what is asked).
-  const [asked, setAsked] = useState(0)
-  useDocsChanged(homes, () => {
-    for (const h of homes) titles.delete(titleKey(h, route.slug))
-    setAsked((n) => n + 1)
-  })
-  const ask = useMemo(() => ({ homes, slug: route.slug, n: asked }), [homes, route.slug, asked])
-  useEffect(() => {
-    let live = true
-    // Each home in turn: the first that has the document names it.
-    void ask.homes
-      .reduce<Promise<string | null>>((found, h) => found.then((t) => t ?? titleOf(h, ask.slug)), Promise.resolve(null))
-      .then((t) => {
-        if (live && t !== null) setTitle(t)
-      })
-    return () => {
-      live = false
-    }
-  }, [ask])
+  const title = useAtomValue(titleOf(homes === "" ? route.slug : `${route.slug}\n${homes}`))
   // Words the agent wrote for the link stay; its URL (what an autolink shows) is replaced.
   const text = plainText(children)
   const showsUrl = text === null ? false : /^(https?:\/\/|www\.|\/docs\/)\S+$/.test(text.trim())

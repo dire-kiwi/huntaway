@@ -1,37 +1,34 @@
 import type { TerminalTool } from "@huntaway/contracts"
+import { Exit } from "effect"
 import { Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
-import { Button, errorText, IconButton, Input } from "../../ui"
+import { useMutation } from "../../../state/mutation"
+import { Button, IconButton, Input } from "../../ui"
 
 const NO_TOOLS: readonly TerminalTool[] = []
 
 /**
- * TUI programs offered as shortcuts in every task's terminal on this host. Step 1 (docs/plan/09-frontend.md): the host's
- * settings come with the board (and its `settings_changed` event), so there is nothing to load or to put back after a save.
+ * TUI programs offered as shortcuts in every task's terminal on this host (docs/plan/09-frontend.md): the host's settings
+ * come with the board (and its `settings_changed` event), so there is nothing to load or to put back after a save.
  */
 export function TerminalToolsRow({ host }: { host: { readonly id: string } }) {
   const saved = useBoard((s) => s.hostSettings[host.id]?.terminal_tools) ?? NO_TOOLS
   const loaded = useBoard((s) => !!s.hostSettings[host.id])
   const [draft, setDraft] = useState<readonly TerminalTool[] | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ busy, error }, updateSettings] = useMutation("host.updateSettings")
+  // Cancel puts the last save's failure away with the draft.
+  const [cancelled, setCancelled] = useState(false)
+  const err = cancelled ? null : error
   const rows = draft ?? saved
   const edit = (i: number, b: Partial<TerminalTool>) =>
     setDraft(rows.map((t, j) => (j === i ? { id: t.id, name: b.name ?? t.name, command: b.command ?? t.command } : t)))
-  const save = async () => {
-    setBusy(true)
-    setErr(null)
-    try {
-      const terminal_tools = rows.map((t) => ({ id: t.id, name: t.name.trim(), command: t.command.trim() })).filter((t) => t.name || t.command)
-      await rpc(host.id, "host.updateSettings", { patch: { terminal_tools } })
-      setDraft(null)
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
+  const save = () => {
+    setCancelled(false)
+    const terminal_tools = rows.map((t) => ({ id: t.id, name: t.name.trim(), command: t.command.trim() })).filter((t) => t.name || t.command)
+    void updateSettings(host.id, { patch: { terminal_tools } }).then((exit) => {
+      if (Exit.isSuccess(exit)) setDraft(null)
+    })
   }
   if (!loaded) return null
   return (
@@ -48,7 +45,9 @@ export function TerminalToolsRow({ host }: { host: { readonly id: string } }) {
               placeholder="Command, e.g. lazygit or ~/bin/review.sh"
               className="font-mono text-[12px]"
               onChange={(e) => edit(i, { command: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && draft && void save()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && draft) save()
+              }}
             />
           </div>
           <IconButton title="Remove" onClick={() => setDraft(rows.filter((_, j) => j !== i))}>
@@ -62,10 +61,10 @@ export function TerminalToolsRow({ host }: { host: { readonly id: string } }) {
         </Button>
         {draft && (
           <>
-            <Button size="sm" variant="ghost" className="ml-auto" onClick={() => (setDraft(null), setErr(null))}>
+            <Button size="sm" variant="ghost" className="ml-auto" onClick={() => (setDraft(null), setCancelled(true))}>
               Cancel
             </Button>
-            <Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>
+            <Button size="sm" variant="primary" disabled={busy} onClick={save}>
               Save
             </Button>
           </>

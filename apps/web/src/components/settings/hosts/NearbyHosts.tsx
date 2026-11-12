@@ -2,12 +2,10 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react"
 import { canRunAgents, nearbyHostsAtom } from "@huntaway/client"
 import { LinkId } from "@huntaway/contracts"
 import { Loader2, Radar, RefreshCw } from "lucide-react"
-import { useState } from "react"
 import { useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
-import { Button, errorText, Field } from "../../ui"
-import { failureOf, valueOf } from "./hub"
+import { useMutation } from "../../../state/mutation"
+import { Button, Field, resultError, resultValue } from "../../ui"
 
 /**
  * Hosts found on the LAN and Tailscale that aren't on this board yet, each offered for linking by URL. Finding them
@@ -17,8 +15,8 @@ export function NearbyHosts({ onLink }: { onLink: (url: string) => void }) {
   const hosts = useBoard((s) => s.hosts)
   const result = useAtomValue(nearbyHostsAtom)
   const search = useAtomRefresh(nearbyHostsAtom)
-  const found = valueOf(result)
-  const err = failureOf(result)
+  const found = resultValue(result)
+  const err = resultError(result)
   const busy = result.waiting
   // Those linked since the search are left out too, by id or URL.
   const unlinked = (found?.hosts ?? []).filter((d) => !d.linked && !hosts.some((h) => (d.host_id && h.id === d.host_id) || h.url === d.url))
@@ -66,23 +64,16 @@ export function ScratchHostRow() {
   const local = useBoard((s) => s.hosts.find((h) => h.local))
   const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => !h.local && canRunAgents(h))))
   const picked = useBoard((s) => (local ? s.hostSettings[local.id]?.scratch_host : null)) ?? ""
-  const [err, setErr] = useState<string | null>(null)
+  const [{ error: err }, updateSettings] = useMutation("host.updateSettings")
   if (!local || canRunAgents(local) || hosts.length === 0) return null
-  const save = async (id: string) => {
-    setErr(null)
-    try {
-      // The host's settings event puts the choice on the board.
-      await rpc(local.id, "host.updateSettings", { patch: { scratch_host: id ? LinkId.make(id) : null } })
-    } catch (e) {
-      setErr(errorText(e))
-    }
-  }
+  // The host's settings event puts the choice on the board.
+  const save = (id: string) => void updateSettings(local.id, { patch: { scratch_host: id ? LinkId.make(id) : null } })
   return (
     <div className="mt-3 rounded-xl border border-line px-4 py-3">
       <Field label="Scratch task host" hint="This board can't run agents, so new scratch tasks (which are in no project) run on this host.">
         <select
           value={picked}
-          onChange={(e) => void save(e.target.value)}
+          onChange={(e) => save(e.target.value)}
           className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
         >
           <option value="">Automatic (first available host)</option>

@@ -1,9 +1,9 @@
-import type { AnalyticsReport, ProfileId } from "@huntaway/contracts"
+import { DateTime } from "effect"
+import type { AnalyticsReport, ContextReport, TokenReport } from "@huntaway/contracts"
 import type { CCompaction, CompactSource, CTurn } from "../../task/contextStatsData"
 import type { TokenData } from "../tokenStatsData"
-import { errorText } from "../../ui"
-import { board } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
+import { millisOf } from "../../ui/dates"
+import type { Answered } from "./gather"
 
 /**
  * Prompt analytics for time tracking. Each host reports the profile's prompts and agent runs
@@ -84,30 +84,6 @@ export interface Activity {
   errors: string[]
 }
 
-/**
- * Asks each host on the board for a report on each of its profiles, or only on those named `profile` (profiles are
- * merged across hosts by name). Hosts that can't answer go in `errors`.
- */
-async function fromHosts<T>(profile: string | null, errors: string[], ask: (host: string, profileId: ProfileId) => Promise<T>) {
-  const s = board.get()
-  const reports = await Promise.all(
-    s.hosts
-      .filter((h) => h.connected)
-      .flatMap((h) => {
-        const profiles = s.profiles.filter((p) => p.host_id === h.id && (profile === null || p.name === profile))
-        return profiles.map(async (p) => {
-          try {
-            return { host: h.id, profile: p.name, report: await ask(h.id, p.id) }
-          } catch (e) {
-            errors.push(`${h.name}: ${errorText(e)}`)
-            return null
-          }
-        })
-      }),
-  )
-  return reports.filter((r) => r !== null)
-}
-
 type Named = Pick<Activity, "tasks" | "projects">
 
 const EVENT_KINDS: ReadonlyArray<AEvent["kind"]> = ["prompt", "start", "merge"]
@@ -123,7 +99,8 @@ function named(): Named {
 }
 
 /** Adds the projects and tasks of a host's report on `profile` to `out`. */
-function addNames(out: Named, host: string, profile: string, report: Pick<AnalyticsReport, "tasks" | "projects">) {
+function addNames(out: Named, { target, report }: Answered<Pick<AnalyticsReport, "tasks" | "projects">>) {
+  const { host, profile } = target
   let slot = Object.keys(out.projects).length - 1
   for (const p of report.projects) {
     // Colour follows the project, in the order projects were created, whatever is shown.
@@ -137,22 +114,23 @@ function addNames(out: Named, host: string, profile: string, report: Pick<Analyt
   }
 }
 
+/** Where an activity report starts: the idle gap before `from`, so the first prompts in range are credited right. */
+export const paddedFrom = (from: number, rules: Pick<Rules, "idleMin">) => from - rules.idleMin * MIN
+
 /**
- * Every profile's activity in range. A profile's is picked out after active time is worked out (see `forProfile`), as a
- * prompt is credited with the time since the previous one on any task, whichever profile that was in.
+ * Every profile's activity in range, from each host's reports on each of its profiles (asked from `paddedFrom`; a run
+ * still going ends `now`). A profile's is picked out after active time is worked out (see `useView`), as a prompt is
+ * credited with the time since the previous one on any task, whichever profile that was in.
  */
-export async function loadActivity(from: number, to: number, rules: Rules): Promise<Activity> {
-  const out: Activity = { from, to, events: [], runs: [], ...named(), errors: [] }
-  const padded = new Date(from - rules.idleMin * MIN).toISOString()
-  const reports = await fromHosts(null, out.errors, (h, id) => rpc(h, "analytics.report", { profile_id: id, from: padded, to: new Date(to).toISOString() }))
-  const now = Date.now()
+export function activityOf(from: number, to: number, reports: ReadonlyArray<Answered<AnalyticsReport>>, errors: Array<string>, now: number): Activity {
+  const out: Activity = { from, to, events: [], runs: [], ...named(), errors }
   for (const r of reports) {
-    addNames(out, r.host, r.profile, r.report)
-    for (const e of r.report.events) out.events.push({ at: Date.parse(e.at), taskId: e.task_id, kind: eventKind(e.kind), text: e.text })
+    addNames(out, r)
+    for (const e of r.report.events) out.events.push({ at: millisOf(e.at), taskId: e.task_id, kind: eventKind(e.kind), text: e.text })
     for (const run of r.report.runs) {
       if (run.kind === "compact") continue
-      const start = Math.max(from, Date.parse(run.started_at))
-      const end = Math.min(to, run.ended_at ? Date.parse(run.ended_at) : now)
+      const start = Math.max(from, millisOf(run.started_at))
+      const end = Math.min(to, run.ended_at ? millisOf(run.ended_at) : now)
       if (end > start) out.runs.push({ taskId: run.task_id, start, end, running: !run.ended_at })
     }
   }
@@ -169,15 +147,13 @@ export interface ContextData extends Named {
   errors: string[]
 }
 
-export async function loadContext(from: number, to: number, profile: string | null = null): Promise<ContextData> {
-  const out: ContextData = { from, to, turns: [], compactions: [], ...named(), errors: [] }
-  const reports = await fromHosts(profile, out.errors, (h, id) =>
-    rpc(h, "analytics.contextStats", { profile_id: id, from: new Date(from).toISOString(), to: new Date(to).toISOString() }),
-  )
+/** The context sizes and compactions in each host's reports on its profiles. */
+export function contextOf(from: number, to: number, reports: ReadonlyArray<Answered<ContextReport>>, errors: Array<string>): ContextData {
+  const out: ContextData = { from, to, turns: [], compactions: [], ...named(), errors }
   for (const r of reports) {
-    addNames(out, r.host, r.profile, r.report)
+    addNames(out, r)
     for (const x of r.report.stats) {
-      const at = Date.parse(x.at)
+      const at = millisOf(x.at)
       if (x.kind === "turn" && x.tokens !== null) {
         out.turns.push({ at, taskId: x.task_id, tokens: x.tokens, startTokens: x.start_tokens, maxTokens: x.max_tokens, cost: x.cost_usd })
       } else if (x.kind === "compact") {
@@ -197,20 +173,17 @@ export async function loadContext(from: number, to: number, profile: string | nu
   return out
 }
 
-/** The tokens runs that started in range used, and the reviews then (see tokenStats.ts), of `profile` or, when it's null, of every profile. */
-export async function loadTokens(from: number, to: number, profile: string | null = null): Promise<TokenData> {
-  const out: TokenData = { from, to, rows: [], reviews: [], rounds: [], followUps: [], ...named(), threads: {}, pending: 0, errors: [] }
-  const reports = await fromHosts(profile, out.errors, (h, id) =>
-    rpc(h, "analytics.tokenStats", { profile_id: id, from: new Date(from).toISOString(), to: new Date(to).toISOString() }),
-  )
+/** The tokens runs that started in range used, and the reviews then (see tokenStatsData.ts), in each host's reports on its profiles. */
+export function tokensOf(from: number, to: number, reports: ReadonlyArray<Answered<TokenReport>>, errors: Array<string>): TokenData {
+  const out: TokenData = { from, to, rows: [], reviews: [], rounds: [], followUps: [], ...named(), threads: {}, pending: 0, errors }
   for (const r of reports) {
-    addNames(out, r.host, r.profile, r.report)
+    addNames(out, r)
     for (const t of r.report.tasks) {
-      out.threads[t.id] = { parentId: t.parent_id, taskType: t.task_type, subproject: t.subproject, groupName: t.group_name, model: t.model, kind: t.kind }
+      out.threads[t.id] = { parentId: t.parent_id, taskType: t.task_type, groupName: t.group_name, model: t.model, kind: t.kind }
     }
     for (const u of r.report.usage) {
       out.rows.push({
-        at: Date.parse(u.at),
+        at: millisOf(u.at),
         runId: u.run_id,
         // Hosts before API 100 don't say which call a row is from: a call's rows have its time.
         callId: u.run_id === null ? (u.call_id ?? `${u.kind}\u0000${u.task_id}\u0000${u.at}`) : null,
@@ -232,7 +205,7 @@ export async function loadTokens(from: number, to: number, profile: string | nul
     }
     for (const v of r.report.reviews) {
       out.reviews.push({
-        at: Date.parse(v.at),
+        at: millisOf(v.at),
         taskId: v.task_id,
         threadId: v.thread_id,
         verdict: v.verdict,
@@ -251,13 +224,13 @@ export async function loadTokens(from: number, to: number, profile: string | nul
       out.rounds.push({
         taskId: x.task_id,
         round: x.round,
-        at: Date.parse(x.at),
+        at: millisOf(x.at),
         verdict: x.verdict,
         serious: x.serious,
         reviewers: x.reviewers,
       })
     }
-    for (const f of r.report.follow_ups) out.followUps.push({ taskId: f.task_id, createdBy: f.created_by, at: Date.parse(f.at) })
+    for (const f of r.report.follow_ups) out.followUps.push({ taskId: f.task_id, createdBy: f.created_by, at: millisOf(f.at) })
     out.pending += r.report.pending
   }
   out.rows.sort((a, b) => a.at - b.at)
@@ -293,42 +266,45 @@ export function mergeSpans(spans: Span[]): Span[] {
   return out
 }
 
-export function startOfDay(t: number) {
-  const d = new Date(t)
-  d.setHours(0, 0, 0, 0)
-  return d.getTime()
-}
+// Calendar arithmetic in the browser's time zone, as `Date`'s local setters did it: a wall-clock time that doesn't
+// exist moves on, one that comes twice is the first (DateTime's "compatible").
+const zone = DateTime.zoneMakeLocal()
+const zoned = (t: number) => DateTime.makeZonedUnsafe(t, { timeZone: zone })
+const millis = DateTime.toEpochMillis
+
+/** `t`'s local wall-clock parts: `month` 1 to 12, `weekDay` 0 for Sunday. */
+export const partsOf = (t: number): DateTime.DateTime.PartsWithWeekday => DateTime.toParts(zoned(t))
+
+/** Local midnight of the day `t` is in. */
+export const startOfDay = (t: number) => millis(DateTime.startOf(zoned(t), "day"))
 
 /** Calendar days move by date, not 24h, so daylight saving changes don't shift them. */
-export function addDays(t: number, n: number) {
-  const d = new Date(t)
-  d.setDate(d.getDate() + n)
-  return d.getTime()
-}
+export const addDays = (t: number, n: number) => millis(DateTime.add(zoned(t), { days: n }))
 
-export function addMonths(t: number, n: number) {
-  const d = new Date(t)
-  d.setDate(1)
-  d.setMonth(d.getMonth() + n)
-  return d.getTime()
-}
+/** The first of the month `n` months from `t`'s, at `t`'s time of day. */
+export const addMonths = (t: number, n: number) => millis(DateTime.add(DateTime.setParts(zoned(t), { day: 1 }), { months: n }))
 
 /** Weeks start on Monday. */
 export function startOfWeek(t: number) {
-  const d = new Date(startOfDay(t))
-  return addDays(d.getTime(), -((d.getDay() + 6) % 7))
+  const d = startOfDay(t)
+  return addDays(d, -((partsOf(d).weekDay + 6) % 7))
 }
 
-export function startOfMonth(t: number) {
-  const d = new Date(startOfDay(t))
-  d.setDate(1)
-  return d.getTime()
-}
+export const startOfMonth = (t: number) => millis(DateTime.setParts(zoned(startOfDay(t)), { day: 1 }))
+
+/** Hour `h` of the day `t` is in, on the hour (local). */
+export const atHour = (t: number, h: number) => millis(DateTime.setParts(zoned(t), { hour: h, minute: 0, second: 0, millisecond: 0 }))
+
+/** Local midnight of a date (`month` 1 to 12), as `new Date(year, month - 1, day)` was; days and months past the end roll over. */
+export const localDay = (year: number, month: number, day: number) =>
+  millis(DateTime.makeZonedUnsafe({ year, month, day }, { timeZone: zone, adjustForTimeZone: true }))
+
+const pad2 = (n: number) => String(n).padStart(2, "0")
 
 /** Local "YYYY-MM-DD". */
 export function dayKey(t: number) {
-  const d = new Date(t)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  const d = partsOf(t)
+  return `${d.year}-${pad2(d.month)}-${pad2(d.day)}`
 }
 
 /** Cuts a span at each local midnight. */

@@ -1,4 +1,6 @@
 import { DocumentLabel, Weekday, type Automation, type Filter, type Action, type NewAutomation, type Trigger } from "@huntaway/contracts"
+import { nowMillis } from "../../../state/clock"
+import { isoOf, localMillis, localParts } from "../../ui"
 import { SIMPLE_FILTERS, valueText } from "./text"
 
 export const WEEKDAYS: ReadonlyArray<Weekday> = Weekday.literals
@@ -62,8 +64,16 @@ export interface Draft {
 const pad = (n: number) => String(n).padStart(2, "0")
 
 export const localInput = (iso: string) => {
-  const d = new Date(iso)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const d = localParts(iso)
+  return `${d.year}-${pad(d.month)}-${pad(d.day)}T${pad(d.hour)}:${pad(d.minute)}`
+}
+
+/** The time a `datetime-local` value names, in this browser's time zone, in milliseconds; NaN when it names none. */
+export const inputMillis = (value: string): number => {
+  const m = /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(value)
+  if (!m) return Number.NaN
+  const n = (i: number) => Number(m[i] ?? 0)
+  return localMillis({ year: n(1), month: n(2), day: n(3), hour: n(4), minute: n(5), second: n(6) })
 }
 
 export const listText = valueText
@@ -79,7 +89,7 @@ export function draftOf(a: Automation | null, routine = false): Draft {
     enabled: true,
     when: "daily",
     cron: "0 8 * * mon-fri",
-    at: localInput(new Date(Date.now() + 3600_000).toISOString()),
+    at: localInput(isoOf(nowMillis() + 3600_000)),
     every: 1,
     unit: "days",
     time: "09:00",
@@ -179,7 +189,7 @@ export function inputOf(d: Draft, existing: Automation | null): Mutable<NewAutom
             ? // As it was if it's unchanged, to the second, so the server doesn't take it for a new time.
               {
                 kind: "at",
-                at: existing?.trigger.kind === "at" && localInput(existing.trigger.at) === d.at ? existing.trigger.at : new Date(d.at).toISOString(),
+                at: existing?.trigger.kind === "at" && localInput(existing.trigger.at) === d.at ? existing.trigger.at : isoOf(inputMillis(d.at)),
               }
             : {
                 kind: "webhook",

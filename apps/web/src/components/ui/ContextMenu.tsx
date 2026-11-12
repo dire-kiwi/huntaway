@@ -1,5 +1,6 @@
 import { Check } from "lucide-react"
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { after } from "../../state/timers"
 
 /** `divider` puts a line above the item, to set it apart from the ones before. */
 export type MenuItem = { label: ReactNode; checked?: boolean | undefined; divider?: boolean | undefined; onSelect: () => void }
@@ -24,7 +25,7 @@ export function ContextMenu({ x, y, title, items, onClose }: { x: number; y: num
   useEffect(() => {
     // Closed after the event, so whatever else handles it (the side panel closing on a click
     // outside it) still sees the menu, marked data-modal, and leaves it alone.
-    const close = () => setTimeout(onClose)
+    const close = () => after(0, onClose)
     const onDown = (e: MouseEvent) => {
       if (!(e.target instanceof Node && ref.current?.contains(e.target))) close()
     }

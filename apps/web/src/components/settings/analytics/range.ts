@@ -1,6 +1,10 @@
-import { addDays, addMonths, startOfDay, startOfMonth, startOfWeek } from "./analytics"
+import { Schema } from "effect"
+import { nowMillis } from "../../../state/clock"
+import { addDays, addMonths, localDay, startOfDay, startOfMonth, startOfWeek } from "./analytics"
 
-export type Preset = "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "last_7" | "last_30" | "custom"
+/** A time range the page offers. */
+export const Preset = Schema.Literals(["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "last_7", "last_30", "custom"])
+export type Preset = typeof Preset.Type
 export const PRESETS: { id: Preset; label: string }[] = [
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
@@ -17,13 +21,15 @@ export const isPreset = (v: unknown): v is Preset => PRESETS.some((p) => p.id ==
 
 export type Range = { from: number; to: number }
 
-const parseDay = (s: string) => {
+/** Local midnight of a "YYYY-MM-DD" day. */
+export const parseDay = (s: string) => {
   const [y, m, d] = s.split("-").map(Number)
-  return new Date(y ?? 1970, (m || 1) - 1, d || 1).getTime()
+  return localDay(y ?? 1970, m || 1, d || 1)
 }
 
-export function presetRange(p: Preset, custom: { from: string; to: string }): Range {
-  const today = startOfDay(Date.now())
+/** The range preset `p` (or the custom days, both included) covers, on the day `now` is in. */
+export function presetRange(p: Preset, custom: { from: string; to: string }, now = nowMillis()): Range {
+  const today = startOfDay(now)
   const week = startOfWeek(today)
   const month = startOfMonth(today)
   switch (p) {

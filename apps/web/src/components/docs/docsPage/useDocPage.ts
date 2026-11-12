@@ -1,68 +1,32 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { ProfileId, type RenderedDocVersion } from "@huntaway/contracts"
-import { withDocImages } from "../docs"
-import { isTagged, rpc } from "../../../state/rpc"
-import { errorText } from "../../ui"
+import { useAtomValue } from "@effect/atom-react"
+import { useState } from "react"
+import type { RenderedDocVersion } from "@huntaway/contracts"
+import { errorText, isTagged } from "../../../state/mutation"
+import { docPageAtom, type PageKey } from "./reads"
 
-/** The version of the document that's shown, with the page of it the route names: loaded when either changes. */
-export function useDocPage({
-  hostId,
-  profileId,
-  slug,
-  version,
-  page,
-  base,
-}: {
-  hostId: string | undefined
-  profileId: string | undefined
-  slug: string
-  version: number | undefined
-  page: string
-  base: string
-}) {
-  const [shown, setShown] = useState<RenderedDocVersion | null>(null)
-  const [error, setError] = useState<{ text: string; missingPage?: boolean; missingVersion?: boolean } | null>(null)
-  const seq = useRef(0)
+/** Why the page isn't shown: a page or a version that isn't there, which the view offers a way out of. */
+export interface PageError {
+  readonly text: string
+  readonly missingPage?: boolean
+  readonly missingVersion?: boolean
+}
 
-  const loadPage = useCallback(() => {
-    if (!hostId || !profileId) return
-    const n = ++seq.current
-    // A document without an index page opens at its first page.
-    rpc(hostId, "docs.version", {
-      profile_id: ProfileId.make(profileId),
-      slug,
-      version: version ?? null,
-      path: page,
-      first: page === "",
-      base_url: base,
-    })
-      // Its images, which the page's frame can't fetch itself.
-      .then(async (r) => {
-        const [first] = r.pages
-        const withImages =
-          first === undefined || first.html === null ? first : Object.assign({}, first, { html: await withDocImages(first.html, hostId, profileId) })
-        return { ...r, pages: withImages === undefined ? [] : [withImages] }
-      })
-      .then(
-        (r) => {
-          if (n !== seq.current) return
-          setShown(r)
-          setError(null)
-        },
-        (e: unknown) => {
-          if (n !== seq.current) return
-          const missing = isTagged(e, "NotFound") && "what" in e && typeof e.what === "string" ? e.what : undefined
-          // A version that isn't there isn't a page that isn't.
-          if (missing === "version") return setError({ text: `Version ${version} not found.`, missingVersion: true })
-          const which = version === undefined ? "This document" : `Version ${version} of this document`
-          setError({
-            text: missing !== undefined ? `${which} has no page “${page || "index"}”.` : errorText(e),
-            missingPage: missing !== undefined && page !== "",
-          })
-        },
-      )
-  }, [hostId, profileId, slug, version, page, base])
-  useEffect(loadPage, [loadPage])
+/** What a page's read failed with, as the view says it. */
+function pageError(e: unknown, version: number | undefined, page: string): PageError {
+  const missing = isTagged(e, "NotFound") && "what" in e && typeof e.what === "string" ? e.what : undefined
+  // A version that isn't there isn't a page that isn't.
+  if (missing === "version") return { text: `Version ${version} not found.`, missingVersion: true }
+  const which = version === undefined ? "This document" : `Version ${version} of this document`
+  return { text: missing !== undefined ? `${which} has no page “${page || "index"}”.` : errorText(e), missingPage: missing !== undefined && page !== "" }
+}
 
-  return { shown, error, loadPage }
+/**
+ * The version of the document that's shown, with the page of it the route names: read when either changes. The page
+ * shown before stays until the next has been read (its menu and frame don't go blank in between).
+ */
+export function useDocPage(key: PageKey): { shown: RenderedDocVersion | null; error: PageError | null } {
+  const read = useAtomValue(docPageAtom(key))
+  const [last, setLast] = useState<RenderedDocVersion | null>(null)
+  if (read.shown !== undefined && read.shown !== last) setLast(read.shown)
+  return { shown: read.shown ?? last, error: "failure" in read ? pageError(read.failure, key.version, key.page) : null }
 }

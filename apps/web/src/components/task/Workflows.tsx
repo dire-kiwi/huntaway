@@ -1,12 +1,13 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react"
-import { mutations, workflowRunsAtom, type HostTask as Task, type ListView } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { mutate, workflowRunsAtom, type HostTask as Task, type ListView } from "@huntaway/client"
 import { TaskId, workflowWaitingAt, type TaskWorkflowRuns, type WorkflowId, type WorkflowNodeRun, type WorkflowRun } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Atom } from "effect/reactivity"
 import { AlertTriangle, CheckCircle2, CircleSlash, Loader2, MessageSquareText, Play, Square, Workflow as WorkflowIcon } from "lucide-react"
 import { useState, type ReactNode } from "react"
+import { useAction, useMutation } from "../../state/mutation"
 import { openTask } from "../../state/route"
-import { Button, errorText, timeAgo } from "../ui"
+import { Button, timeAgo } from "../ui"
 import { Markdown } from "./thread/Markdown"
 
 // Step 1 (docs/plan/09-frontend.md): a task's workflow runs are `workflowRunsAtom`, read while shown and again on
@@ -103,31 +104,13 @@ export function WorkflowTabView({ task, label }: { task: Task; label: string }) 
   )
 }
 
-/** Runs one of the task's workflows on it now, or stops a run, with the error it gave. */
-function useRunActions(task: Task) {
-  const runCall = useAtomSet(mutations.workflows.run, { mode: "promise" })
-  const stopCall = useAtomSet(mutations.workflows.stopRun, { mode: "promise" })
-  const run = (id: WorkflowId) => runCall({ host: task.host_id, payload: { id, task_id: TaskId.make(task.id) } })
-  const stop = (r: WorkflowRun) => stopCall({ host: task.host_id, payload: { id: r.id } })
-  return { run, stop }
-}
+/** Runs one of the task's workflows on it now, or stops a run. */
+const runWorkflow = (task: Task, id: WorkflowId) => mutate("workflows.run", task.host_id, { id, task_id: TaskId.make(task.id) })
+const stopRun = (task: Task, r: WorkflowRun) => mutate("workflows.stopRun", task.host_id, { id: r.id })
 
 function RunBlock({ task, run, label, only }: { task: Task; run: WorkflowRun; label: string; only: ReadonlyArray<string> }) {
   const steps = run.graph.nodes.flatMap((n) => (n.kind === "agent" && n.tab === label && only.includes(n.id) ? [n] : []))
-  const [err, setErr] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const calls = useRunActions(task)
-  const act = async (fn: () => Promise<unknown>) => {
-    setBusy(true)
-    setErr(null)
-    try {
-      await fn()
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [{ busy, error: err }, act] = useAction()
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-faint">
@@ -137,7 +120,7 @@ function RunBlock({ task, run, label, only }: { task: Task; run: WorkflowRun; la
         {run.detail && run.state === "stopped" && <span>· {run.detail}</span>}
         <span className="ml-auto flex gap-1.5">
           {run.state === "running" ? (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(() => calls.stop(run))}>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(stopRun(task, run))}>
               <Square size={10} fill="currentColor" /> Stop
             </Button>
           ) : (
@@ -147,7 +130,7 @@ function RunBlock({ task, run, label, only }: { task: Task; run: WorkflowRun; la
                 variant="ghost"
                 disabled={busy || task.running}
                 title={task.running ? "Wait for the agent to finish" : "Run the workflow on this task again"}
-                onClick={() => void act(() => calls.run(run.workflow_id))}
+                onClick={() => void act(runWorkflow(task, run.workflow_id))}
               >
                 {busy ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run again
               </Button>
@@ -199,19 +182,11 @@ function RunBlock({ task, run, label, only }: { task: Task; run: WorkflowRun; la
 export function WorkflowsList({ task }: { task: Task }) {
   const data = useWorkflowRuns(task)
   const [busy, setBusy] = useState<string | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const calls = useRunActions(task)
+  const [{ error: err }, runCall] = useMutation("workflows.run")
   if (!data?.workflows.length) return null
-  const run = async (id: WorkflowId) => {
+  const run = (id: WorkflowId) => {
     setBusy(id)
-    setErr(null)
-    try {
-      await calls.run(id)
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(null)
-    }
+    void runCall(task.host_id, { id, task_id: TaskId.make(task.id) }).then(() => setBusy(null))
   }
   return (
     <div className="space-y-1.5 text-[12.5px]">
@@ -239,7 +214,7 @@ export function WorkflowsList({ task }: { task: Task }) {
                 aria-label={`Run ${w.name}`}
                 disabled={busy === w.id || task.running}
                 title={task.running ? "Wait for the agent to finish" : "Run it on this task now"}
-                onClick={() => void run(w.id)}
+                onClick={() => run(w.id)}
               >
                 {busy === w.id ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run
               </Button>

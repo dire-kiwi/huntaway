@@ -8,16 +8,19 @@
 // Diffs are highlighted, unified or side by side (`|`), and lines in them can be commented on for the agent (`n`,
 // or a line's comment button): the comments wait in a review at the bottom, and in the thread's composer, until
 // they're sent (see lineComments.ts).
+import { useAtom } from "@effect/atom-react"
 import { clsx } from "clsx"
 import { Loader2 } from "lucide-react"
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
-import type { HostTask as Task } from "@huntaway/client"
+import { invalidateGroups, type HostTask as Task } from "@huntaway/client"
 import type { Turn } from "@huntaway/contracts"
+import { runExit } from "../../state/mutation"
+import { after } from "../../state/timers"
 import { untracked } from "./diffs"
 import { clearReview, commentLines, editComment, openDraft, useReview, type CommentLines, type CommentSource } from "./lineComments"
 import { hasTurns, useTurns } from "../task/turns"
-import { CommentsContext, type CommentsApi, type Layout } from "./DiffLines"
+import { CommentsContext, type CommentsApi } from "./DiffLines"
 import { RewindDialog } from "../task/Rewind"
 import { rewound } from "../task/thread/Composer"
 import { ContextMenu, type MenuItem } from "../ui"
@@ -30,16 +33,13 @@ import { useFileDiffs } from "./git/useFileDiffs"
 import { useGitActions } from "./git/useGitActions"
 import { useGitKeys } from "./git/useGitKeys"
 import { useGitSelection } from "./git/useGitSelection"
-import { useGitStatus } from "./git/useGitStatus"
+import { useGitReads, useGitStatus } from "./git/useGitStatus"
 import { useShownDiffs } from "./git/useShownDiffs"
 import { useStaging } from "./git/useStaging"
-import { NOT_UTF8, SIDES, stageRows, STAGED, toggled, UNSTAGED, type Dialog, type Option, type Pane, type Side } from "./git/model"
+import { layoutAtom, NOT_UTF8, SIDES, stageRows, STAGED, toggled, UNSTAGED, type Dialog, type Option, type Pane, type Side } from "./git/model"
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for changes/"): every host on this server has the Changes tab's git
 // methods, so the old view of a host from before them (the branch's whole diff alone) is gone.
-
-/** Unified or split diffs, kept in this browser. */
-const LAYOUT_KEY = "ia.changes.layout"
 
 export function ChangesView({ task }: { task: Task }) {
   return <GitView key={task.id} task={task} />
@@ -64,18 +64,23 @@ function GitView({ task }: { task: Task }) {
   const root = useRef<HTMLDivElement>(null)
   const [focused, setFocused] = useState(false)
   const [narrow, setNarrow] = useState(false)
-  const [layout, setLayout] = useState<Layout>(() => (localStorage.getItem(LAYOUT_KEY) === "split" ? "split" : "unified"))
+  const [layout, setLayout] = useAtom(layoutAtom)
   const focusRoot = useCallback(() => root.current?.focus({ preventScroll: true }), [])
+  // What's being done (a change), while the polls wait.
+  const [busy, setBusy] = useState<string | null>(null)
+  const reads = useGitReads(busy !== null)
+  // Everything the tab reads, again (`R`): the host's `git.*` queries.
+  const refresh = () => void runExit(invalidateGroups(h, ["git"]))
 
-  const { status, loadErr, tick, askedTick, refresh } = useGitStatus(task, busyRef)
+  const { status, loadErr } = useGitStatus(task, reads)
   const sel = useGitSelection(status, turns.data?.turns)
   const { side, setSide, inMain, setInMain, fileRow, setCollapsed, setFileKey, setCommitSha, setStashSha, setTurnN } = sel
   const target = side === "files" ? fileRow : undefined
-  const d = useFileDiffs(h, id, target, tick)
+  const d = useFileDiffs(h, id, target, reads)
   const staging = useStaging(target, d, sel, focusRoot)
   const { paneFile, hasPane, activePane, cur, anchor, setAnchor, hunkMode, setHunkMode } = staging
-  const shown = useShownDiffs(h, id, sel, status, askedTick)
-  const actions = useGitActions({ h, id, status, refresh, busyRef, sel, target, diffs: d, staging, setDialog, setFlash, setRewinding })
+  const shown = useShownDiffs(h, id, sel, reads)
+  const actions = useGitActions({ h, id, status, busy, setBusy, busyRef, sel, target, staging, setDialog, setFlash, setRewinding })
 
   // Comments for the agent: the task's review, the draft to focus, and the lines picked in a patch (see PatchView).
   const review = useReview(h, id)
@@ -134,8 +139,7 @@ function GitView({ task }: { task: Task }) {
   }, [])
   useEffect(() => {
     if (!flash || flash.error) return undefined
-    const t = setTimeout(() => setFlash(null), 4000)
-    return () => clearTimeout(t)
+    return after("4 seconds", () => setFlash(null))
   }, [flash])
 
   const focusSide = (s: Side) => {
@@ -154,9 +158,7 @@ function GitView({ task }: { task: Task }) {
     setInMain(true)
   }
   const toggleLayout = () => {
-    const next = layout === "split" ? "unified" : "split"
-    setLayout(next)
-    localStorage.setItem(LAYOUT_KEY, next)
+    setLayout(layout === "split" ? "unified" : "split")
   }
   const layoutOption: Option = { key: "|", label: layout === "split" ? "Unified" : "Split", run: toggleLayout }
 
@@ -232,8 +234,7 @@ function GitView({ task }: { task: Task }) {
   // Off the jump once the diffs it's in have come and it isn't there (outdated, or folded away).
   useEffect(() => {
     if (!jump) return undefined
-    const t = setTimeout(() => setJump(null), 3000)
-    return () => clearTimeout(t)
+    return after("3 seconds", () => setJump(null))
   }, [jump])
   const discardReview = () =>
     setDialog({
@@ -350,7 +351,8 @@ function GitView({ task }: { task: Task }) {
           onDone={(r, convo) => {
             rewound(task, r, convo)
             setFlash({ text: `Rewound to before turn ${rewinding.turn}: ${r.written} restored, ${r.removed} removed` })
-            void refresh()
+            // What the rewind restored (task/Rewind.tsx calls `checkpoints.rewind` itself, not as a mutation that would).
+            refresh()
           }}
         />
       )}

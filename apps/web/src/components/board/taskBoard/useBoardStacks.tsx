@@ -1,26 +1,26 @@
 import { useMemo, useState } from "react"
-import { useAtomSet } from "@effect/atom-react"
-import { mutations, type HostTask as Task } from "@huntaway/client"
+import { useAtom } from "@effect/atom-react"
+import { Atom } from "effect/reactivity"
+import { type HostTask as Task } from "@huntaway/client"
 import { TaskId, type Status } from "@huntaway/contracts"
 import { board } from "../../../state/board"
+import { exitError, useMutation } from "../../../state/mutation"
+import { stacksAtom, stackViewsAtom } from "../../../state/prefs"
 
-import { errorText, StatusIcon, type MenuItem } from "../../ui"
+import { StatusIcon, type MenuItem } from "../../ui"
 import { showsStatus, type BoardQuery, type SortKey } from "../boardQuery"
 import { stackTitle, type OnStackMenu } from "../StackCard"
-import {
-  columnEntries,
-  groupStacks,
-  isGathered,
-  loadStackViews,
-  mergeCheck,
-  saveStackViews,
-  withAll,
-  withStack,
-  type MergeCheck,
-  type Stack,
-  type StackViews,
-} from "../stacks"
+import { columnEntries, groupStacks, isGathered, mergeCheck, withAll, withStack, type MergeCheck, type Stack, type StackViews } from "../stacks"
 import type { DropTarget } from "./model"
+
+/** Which stacks are gathered, in this browser: the switch (`ia.board.stacks`) and the ones set on their own. */
+const stackViewsKept = Atom.writable(
+  (get): StackViews => ({ gathered: get(stacksAtom) !== "spread", own: get(stackViewsAtom) }),
+  (ctx, v: StackViews) => {
+    ctx.set(stacksAtom, v.gathered ? "gathered" : "spread")
+    ctx.set(stackViewsAtom, v.own)
+  },
+)
 
 /** Whether stack `st` can merge as a whole (API 153): every host on this server can. */
 const checkOf = (st: Stack): MergeCheck | null => mergeCheck(st, board.get().tasks)
@@ -50,16 +50,12 @@ export function useBoardStacks({
   /** Whether the board shows its columns without rows of pens: only there are stacks gathered. */
   kanban: boolean
 }) {
-  const [views, setViews] = useState<StackViews>(loadStackViews)
-  const changeViews = (v: StackViews) => {
-    setViews(v)
-    saveStackViews(v)
-  }
+  const [views, changeViews] = useAtom(stackViewsKept)
   // A gathered stack's menu, where it was opened, and the stack being dragged or edited.
   const [menu, setMenu] = useState<{ x: number; y: number; key: string } | null>(null)
   const [dragStack, setDragStack] = useState<Stack | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
-  const mergeStackCall = useAtomSet(mutations.tasks.mergeStack, { mode: "promise" })
+  const [, mergeStackCall] = useMutation("tasks.mergeStack")
 
   const stacks = useMemo(() => groupStacks(tasks), [tasks])
   const gathered = useMemo(() => (kanban ? stacks.filter((st) => isGathered(views, st)) : []), [kanban, stacks, views])
@@ -82,17 +78,16 @@ export function useBoardStacks({
   const inGathered = (t: Task) => gathered.some((st) => st.tasks.includes(t))
 
   /** Moves every open level of the stack's main line to Ready for merge, to merge as one run (API 153); or says why not. */
-  const mergeStack = async (st: Stack, setErr: (msg: string | null) => void) => {
+  const mergeStack = (st: Stack, setErr: (msg: string | null) => void) => {
     const check = checkOf(st)
     if (!check) return
     if (!check.ok) return setErr(`The stack can't merge yet. ${check.reason}`)
     setErr(null)
-    try {
-      // The levels as moved come back as events.
-      await mergeStackCall({ host: st.bottom.host_id, payload: { id: TaskId.make(st.bottom.id) } })
-    } catch (e) {
-      setErr(`Couldn't merge the stack: ${errorText(e)}`)
-    }
+    // The levels as moved come back as events.
+    void mergeStackCall(st.bottom.host_id, { id: TaskId.make(st.bottom.id) }).then((exit) => {
+      const failed = exitError(exit)
+      if (failed !== null) setErr(`Couldn't merge the stack: ${failed}`)
+    })
   }
   const onMenu: OnStackMenu = (e, st, button) => {
     e.preventDefault()
@@ -115,7 +110,7 @@ export function useBoardStacks({
                   {!check.ok && <span className="max-w-64 pl-[21px] text-[11.5px] whitespace-normal text-faint">{check.reason}</span>}
                 </span>
               ),
-              onSelect: () => void mergeStack(st, setErr),
+              onSelect: () => mergeStack(st, setErr),
             },
           ]
         : []),

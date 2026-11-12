@@ -35,8 +35,8 @@ export const boardColumnAtom = Atom.family((board: string) => storedBare(`ia.boa
 /** Stacks gathered into one card or spread out (`ia.board.stacks`). */
 export const stacksAtom = storedBare("ia.board.stacks", Schema.Literals(["gathered", "spread"]), "gathered")
 
-/** Each stack's own view where it differs (`ia.board.stackViews`). */
-export const stackViewsAtom = stored("ia.board.stackViews", Schema.Record(Schema.String, Schema.Literals(["gathered", "spread"])), {})
+/** The stacks gathered (true) or spread (false) on their own since the switch was last flipped (`ia.board.stackViews`). */
+export const stackViewsAtom = stored("ia.board.stackViews", Schema.Record(Schema.String, Schema.Boolean), {})
 
 /** The triage view's closed sections (`ia.triage.closed`). */
 export const triageClosedAtom = stored("ia.triage.closed", Keys, ["start", "working"])

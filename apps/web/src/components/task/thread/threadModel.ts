@@ -4,32 +4,102 @@
 
 import type { Subagent } from "./subagentView"
 
-/**
- * The agent's tool input and the board's own metadata, which the rows read as the old ones did (step 1,
- * docs/plan/09-frontend.md): they are `Schema.Unknown` on the wire by design, and step 2 gives the rows their types.
- */
-// oxlint-disable-next-line typescript/no-explicit-any -- the rows read the tool input and metadata loosely until step 2
-export type Any = any
-
 export interface ToolResult {
   content: string
   isError: boolean
 }
 
-export type Call = { id: string; name: string; input: Any; result?: ToolResult | undefined }
+/** A tool call: its input is the agent's (`Schema.Unknown` on the wire), read through fields.ts by the rows that show it. */
+export type Call = { id: string; name: string; input: unknown; result?: ToolResult | undefined }
+
+/**
+ * What a permission prompt's card reads: the board's record of the request (its `metadata`, permissions/Permissions.ts
+ * on the server), or, for a request from before it, what the request says (itemModel.ts).
+ */
+export interface PromptData {
+  readonly request_id: string
+  /** pending, allowed, denied or expired (answered, for a question from before the board's record). */
+  readonly status: string
+  readonly tool_name: string
+  /** The call it asks about, which says the subagent that asked. */
+  readonly tool_use_id?: string | undefined
+  /** One of the board's own approvals: `project`, `delete_task`, `automation` or `workflow`. */
+  readonly kind?: string | undefined
+  readonly agent?: string | undefined
+  /** The tool's input (a question's questions, a plan's plan, an approval's change). */
+  readonly input: unknown
+  /** The approval rule that asks first (API 115). */
+  readonly rule?: { readonly tool: string } | undefined
+  /** When one from a routine run is denied if nobody answers it. */
+  readonly expires_at?: string | undefined
+  /** What the user said with their answer. */
+  readonly note?: string | undefined
+  /** Answered by message, after its run had ended. */
+  readonly late?: true | undefined
+  /** A plan sent back: what should change. */
+  readonly feedback?: string | undefined
+  /** The mode a plan's approval carried on in. */
+  readonly mode?: string | undefined
+  /** The answers given, question by question. */
+  readonly answers?: ReadonlyArray<ReadonlyArray<string>> | undefined
+}
+
+/** An option of a board question. */
+export interface QuestionOption {
+  readonly label: string
+  readonly description: string | undefined
+}
+
+/** A question asked with the board's request_user_input (or the board's own merge approval): its card. */
+export interface QuestionData {
+  readonly question: string
+  readonly options: ReadonlyArray<QuestionOption>
+  readonly multi_select: boolean
+  readonly allow_other: boolean
+  /** pending, answered, replied, replaced or expired. */
+  readonly status: string
+  readonly answer?: { readonly choices: ReadonlyArray<string>; readonly text: string | null } | undefined
+  readonly merge_approval?: true | undefined
+}
+
+/** A turn's end, as Claude's result message has it. */
+export interface ResultData {
+  readonly subtype: string
+  readonly is_error: boolean
+  readonly interrupted?: true | undefined
+  readonly duration_ms?: number | undefined
+  readonly num_turns?: number | undefined
+  readonly total_cost_usd?: number | undefined
+}
+
+/** A compaction: what started it, and the context's tokens before and after. */
+export interface CompactMeta {
+  readonly trigger?: string | undefined
+  readonly pre_tokens?: number | undefined
+  readonly post_tokens?: number | undefined
+}
+
+/** A routine's report (API 110). */
+export interface ReportData {
+  readonly automation?: string | undefined
+  readonly task_id?: string | undefined
+  readonly key?: string | undefined
+  readonly outcome?: string | undefined
+  readonly text?: string | undefined
+}
 
 export type Item =
   | { type: "user"; key: string; text: string; auto?: boolean | undefined; steered?: boolean | undefined }
   | { type: "event"; key: string; level: string; text: string; detail?: string | null | undefined }
-  | { type: "permission"; key: string; data: Any }
-  | { type: "question"; key: string; id: number; data: Any }
+  | { type: "permission"; key: string; data: PromptData }
+  | { type: "question"; key: string; id: number; data: QuestionData }
   | { type: "text"; key: string; text: string }
   | { type: "thinking"; key: string; text: string }
   | { type: "tools"; key: string; calls: Call[] }
-  | { type: "result"; key: string; data: Any }
-  | { type: "compact"; key: string; meta: Any; summary?: string | undefined; result?: Any }
+  | { type: "result"; key: string; data: ResultData }
+  | { type: "compact"; key: string; meta: CompactMeta; summary?: string | undefined; result?: ResultData | undefined }
   /** A routine's report, posted in the assistant's thread (API 110). */
-  | { type: "report"; key: string; data: Any }
+  | { type: "report"; key: string; data: ReportData }
 
 export interface ThreadModel {
   items: Item[]

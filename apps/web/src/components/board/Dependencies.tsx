@@ -1,12 +1,11 @@
 import { clsx } from "clsx"
 import { Clock, Link2, X } from "lucide-react"
-import { useState } from "react"
 import { useShallow } from "../boardHelpers"
 import { dependencyQueued, isMerged, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
 import { openTask } from "../../state/route"
 
-import { CARD_BADGE, errorText, StatusIcon, Wide } from "../ui"
-import { rpc } from "../../state/rpc"
+import { CARD_BADGE, StatusIcon, Wide } from "../ui"
+import { useMutation } from "../../state/mutation"
 import { TaskId } from "@huntaway/contracts"
 import { useBoard } from "../../state/board"
 
@@ -69,11 +68,8 @@ export function Dependencies({ task, project }: { task: Task; project?: Project 
         .toSorted((a, b) => b.number - a.number),
     ),
   )
-  const [err, setErr] = useState<string | null>(null)
-  const save = (ids: string[]) => {
-    setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { depends_on: ids.map((i) => TaskId.make(i)) } }).catch((e: unknown) => setErr(errorText(e)))
-  }
+  const [{ error: err }, update] = useMutation("tasks.update")
+  const save = (ids: string[]) => void update(task.host_id, { id: task.id, patch: { depends_on: ids.map((i) => TaskId.make(i)) } })
   const unmet = deps.filter((t) => !isMerged(t))
 
   return (

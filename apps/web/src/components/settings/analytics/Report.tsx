@@ -1,8 +1,9 @@
 import { clsx } from "clsx"
 import { ChevronDown } from "lucide-react"
 import { useState, type ReactNode } from "react"
-import { addDays, dayKey, hm, HOUR, splitByDay, type Activity, type AEvent, type AProject, type TaskTotals } from "./analytics"
+import { addDays, dayKey, hm, HOUR, partsOf, splitByDay, type Activity, type AEvent, type AProject, type TaskTotals } from "./analytics"
 import { Swatch, useTip } from "../chart"
+import { localeDateString, localeString } from "../../ui/dates"
 import { type View } from "./useView"
 import { projectOf, colorOf, clock, openTask, Legend, EVENT_LABEL, todayKey } from "./shared"
 import { DayTimeline } from "./DayTimeline"
@@ -93,7 +94,7 @@ function DailyChart({ view }: { view: View }) {
                 className="group flex h-full min-w-0 flex-1 cursor-default flex-col-reverse gap-[2px] rounded-sm hover:bg-white/[0.03]"
                 {...bind(() => (
                   <>
-                    <div className="mb-1 font-medium">{new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}</div>
+                    <div className="mb-1 font-medium">{localeDateString(d, { weekday: "short", day: "numeric", month: "short" })}</div>
                     {segs.length === 0 && <div className="text-faint">No activity</div>}
                     {segs.map(({ p, ms }) => (
                       <div key={p.id} className="flex items-center gap-1.5">
@@ -119,14 +120,11 @@ function DailyChart({ view }: { view: View }) {
         </div>
       </div>
       <div className="mt-1 flex gap-[2px] pl-9">
-        {days.map((d, i) => {
-          const date = new Date(d)
-          return (
-            <div key={d} className={clsx("min-w-0 flex-1 text-center text-[10.5px] tabular-nums", dayKey(d) === today ? "text-fg" : "text-faint")}>
-              {i % every === 0 ? (days.length <= 7 ? date.toLocaleDateString(undefined, { weekday: "short", day: "numeric" }) : date.getDate()) : ""}
-            </div>
-          )
-        })}
+        {days.map((d, i) => (
+          <div key={d} className={clsx("min-w-0 flex-1 text-center text-[10.5px] tabular-nums", dayKey(d) === today ? "text-fg" : "text-faint")}>
+            {i % every === 0 ? (days.length <= 7 ? localeDateString(d, { weekday: "short", day: "numeric" }) : partsOf(d).day) : ""}
+          </div>
+        ))}
       </div>
       {shown.length > 0 && <Legend projects={shown} />}
       {node}
@@ -134,8 +132,7 @@ function DailyChart({ view }: { view: View }) {
   )
 }
 
-const when = (t: number | null) =>
-  t === null ? "" : new Date(t).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+const when = (t: number | null) => (t === null ? "" : localeString(t, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }))
 
 export function TaskTable({ view }: { view: View }) {
   const a = view.data
@@ -278,7 +275,7 @@ export function PromptLog({ events, a, open: initiallyOpen = false, title = "Pro
                   className="flex w-full items-start gap-3 bg-panel/60 px-3 py-2 text-left hover:bg-raised"
                 >
                   <span className="w-28 shrink-0 pt-px text-[11.5px] text-faint tabular-nums">
-                    {multiDay ? new Date(e.at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : clock(e.at)}
+                    {multiDay ? localeString(e.at, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : clock(e.at)}
                   </span>
                   <Swatch color={colorOf(a, e.taskId)} className="mt-1" />
                   <span className="w-24 shrink-0 truncate pt-px font-mono text-[11.5px] text-faint">{t?.kind === "scratch" ? "chat" : t?.key}</span>

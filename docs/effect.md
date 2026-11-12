@@ -143,6 +143,14 @@ rely on that anywhere. Instead:
   the browser's storage, with a schema.
 - **No `useEffect` to fetch.** An effect in a component is for the DOM (focus, measurement, a terminal). Data
   loading is an atom mounted by the component that needs it.
+- **How, as built** (docs/plan/09-frontend.md, Step 2 as done): a read is `useAtomValue(query("git.status", host,
+  payload, { refresh?, focus? }))` from `@huntaway/client`, drawn with `<Loading>` or `resultValue`/`resultError`; it is
+  read again when a mutation of its group runs on its host, or when what `triggers` in `packages/client/src/invalidate.ts`
+  picks from the host's board changes. A change is `useMutation("tasks.update")` or, for a few calls in order,
+  `useAction()` running an `Effect` of `mutate(...)` (`apps/web/src/state/mutation.ts`): their state (busy, the failure
+  by tag) is the component's, their run the page's, so a dialog closed mid-save doesn't interrupt the call. Module code
+  that isn't a component uses `runExit`. The time now is `useNow(step)`/`nowMillis()` (`state/clock.ts`), a DOM timer
+  `after`/`every` (`state/timers.ts`).
 
 ## Tests
 
@@ -169,8 +177,11 @@ TypeScript rules above, `import/no-cycle`, and the package boundaries as `no-res
 `denyWarnings` makes any warning fail. The overrides: the Effect-native rules are off for plain TypeScript
 (`packages/shared`, `apps/server/src/hooks`, and the desktop shell's frame, preload and shared decisions in
 `apps/desktop/src/{boot,preload,shared}`) and for config files; `strict-effect-provide` and `process-env` are off for
-entry points, tests and `packages/testing`; the kept components get the React hook rules and leave async handlers,
-`Date` and DOM timers alone.
+entry points, tests and `packages/testing`; the components get the React hook rules and are otherwise as strict as the
+rest (step 2 of docs/plan/09-frontend.md): their times are `DateTime` (`components/ui/dates.ts`, `state/clock.ts`), their
+DOM timers `state/timers.ts`, their handlers start mutations rather than being `async`. The one exception is
+`components/docs/docFrame.ts`, whose comment script runs as source inside a document's sandboxed frame, where there is
+no Effect: `global-timers` is off for it.
 
 `tsconfig.base.json` holds the language service's options, which the lint reads too: `allowedUnstableApis` names every
 unstable module this code base builds on (anything else unstable is an error, so a new one is a reviewed change to
@@ -230,6 +241,8 @@ These cover what a lint rule cannot see. Everything a rule can see is in [Lintin
 Every lint suppression in the code base, with its reason. The structural test `suppressions.test.ts` counts the
 suppressions in the sources and fails when the count differs from the number of rows here.
 
-| File                                                                    | Rule                         | Why                                                                                                                                                                                                                                                                                  |
-| ----------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/web/src/components/task/thread/threadModel.ts` (`type Any = any`) | `typescript/no-explicit-any` | The thread's rows read an agent's tool input and the board's metadata as the old components did (both are `Schema.Unknown` on the wire by design): every row file uses this one alias, until step 2 gives the rows their types (docs/plan/09-frontend.md, Step 1 as done for task/). |
+None. The last one (`type Any = any` in the thread's rows) went with step 2 of the frontend, which gave the rows their
+types (`components/task/thread/fields.ts`).
+
+| File | Rule | Why |
+| ---- | ---- | --- |

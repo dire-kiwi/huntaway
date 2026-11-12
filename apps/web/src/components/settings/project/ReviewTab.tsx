@@ -8,10 +8,9 @@ import { DEFAULT_REVIEWER, InheritPicker, ReviewerList, reviewerLabel, Summarize
 import { Field, Input, Toggle } from "../../ui"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
-// Step 1 (docs/plan/09-frontend.md). Every host has every setting here, so the old API gates and the single summarizer
-// are gone, and subprojects' pull requests with subprojects. The project's workflows (6.6) are named in
-// `WorkflowsNote`. The skills a
-// summarizer picks from are the agent tools' (6.4).
+// Every host has every setting here, so the old API gates and the single summarizer are gone, and subprojects' pull
+// requests with subprojects (docs/plan/09-frontend.md). The project's workflows (6.6) are named in `WorkflowsNote`. The
+// skills a summarizer picks from are the agent tools' (6.4).
 
 const isWatch = Schema.is(WatchPullRequests)
 

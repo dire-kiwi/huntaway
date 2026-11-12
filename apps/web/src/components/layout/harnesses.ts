@@ -1,3 +1,5 @@
+import { nowMillis } from "../../state/clock"
+
 // The agents a new task's prompt can go to (IA-227): each `!` token in the new task dialog names a harness, an agent
 // config (Claude Code or Codex) and one of its models, and the dialog makes a task for each, as t3code starts a
 // thread for each model picked. `!opus !gpt-5.5` makes two tasks from one prompt.
@@ -102,7 +104,7 @@ export const sameHarness = (a: Harness | undefined, b: Harness) => !!a && a.conf
 /** An id for the tasks made from one prompt (crypto.randomUUID needs a secure context, which a LAN board may not be). */
 export const newFanoutId = () => {
   const random = crypto.getRandomValues(new Uint32Array(2))
-  return `${Date.now().toString(36)}-${Array.from(random, (n) => n.toString(36))
+  return `${nowMillis().toString(36)}-${Array.from(random, (n) => n.toString(36))
     .join("")
     .slice(0, 8)}`
 }

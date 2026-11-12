@@ -1,17 +1,19 @@
 import { type ReactNode } from "react"
-import { dayKey, hm, NEUTRAL, SCRATCH, type Activity, type AEvent, type AProject, type ATask, type Span } from "./analytics"
+import { atHour, dayKey, hm, NEUTRAL, SCRATCH, type Activity, type AEvent, type AProject, type ATask, type Span } from "./analytics"
+import { nowMillis } from "../../../state/clock"
 import { navigate } from "../../../state/route"
+import { localeTimeString } from "../../ui/dates"
 import { Swatch } from "../chart"
 
 export const projectOf = (a: Activity, taskId: string): AProject =>
   a.projects[a.tasks[taskId]?.projectId ?? SCRATCH] ?? a.projects[SCRATCH] ?? { id: SCRATCH, name: "No project", key: "No project", color: NEUTRAL }
 export const colorOf = (a: Activity, taskId: string) => projectOf(a, taskId)?.color ?? NEUTRAL
-export const hourLabel = (day: number, h: number) => new Date(new Date(day).setHours(h, 0, 0, 0)).toLocaleTimeString([], { hour: "numeric" })
+export const hourLabel = (day: number, h: number) => localeTimeString(atHour(day, h), { hour: "numeric" }, [])
 /** Each item with its place in the list, for what has no other identity (a lane of runs). */
 export const numbered = <T,>(list: ReadonlyArray<T>): Array<{ n: number; value: T }> => list.map((value, n) => ({ n, value }))
 /** Today's day key, for marking today. */
-export const todayKey = () => dayKey(Date.now())
-export const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+export const todayKey = () => dayKey(nowMillis())
+export const clock = (t: number) => localeTimeString(t, { hour: "numeric", minute: "2-digit" }, [])
 
 export function openTask(t: ATask | undefined) {
   if (!t) return

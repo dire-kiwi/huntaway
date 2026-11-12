@@ -1,12 +1,10 @@
 import { useAtomValue } from "@effect/atom-react"
-import { approvalSeqAtom, type HostTask as Task } from "@huntaway/client"
+import { query, type HostTask as Task } from "@huntaway/client"
 import { ProfileId, type ApprovalAction } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { useBoard } from "../../state/board"
 import { navigate } from "../../state/route"
-import { useRpc } from "../../state/rpc"
-import { useLoaded } from "../changes/git/useLoaded"
-import { Ago } from "../ui"
+import { Ago, resultError, resultValue } from "../ui"
 
 const OUTCOME_STYLE: Record<ApprovalAction["outcome"], string> = {
   pending: "bg-st-attention/10 text-st-attention",
@@ -41,17 +39,13 @@ function outcomeText(a: ApprovalAction) {
 /**
  * The assistant's Actions tab (6.7): every call its rules asked about or turned away, newest first, with what it was
  * called with, how it ended and who answered (`approvalRules.log`). It reads the log again on the profile's
- * `approval_log` events.
+ * `approval_log` events (invalidate.ts).
  */
 export function ActionLog({ task }: { task: Task }) {
-  const rpc = useRpc()
   const tasks = useBoard((s) => s.tasks)
-  const changed = useAtomValue(approvalSeqAtom(task.host_id, "log", task.profile_id))
-  const read = useLoaded(`${task.host_id}\u0000${task.profile_id}\u0000${changed}`, () =>
-    rpc(task.host_id, "approvalRules.log", { profile_id: ProfileId.make(task.profile_id) }),
-  )
-  const log = read?.value ?? null
-  const error = read?.error ?? null
+  const read = useAtomValue(query("approvalRules.log", task.host_id, { profile_id: ProfileId.make(task.profile_id) }))
+  const log = resultValue(read) ?? null
+  const error = resultError(read)
 
   return (
     <div className="h-full overflow-y-auto">

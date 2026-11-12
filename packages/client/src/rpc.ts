@@ -27,6 +27,10 @@ export type Methods = {
   }
 }
 
+/** What any method answers, and fails with. */
+export type AnySuccess = Methods[keyof Methods]["success"]
+export type AnyError = Methods[keyof Methods]["error"]
+
 /** What a call can fail with: its own errors, the session's and the connection's, and a host that cannot be reached. */
 export type CallError<M extends keyof Methods> = Methods[M]["error"] | Unavailable
 
@@ -51,10 +55,24 @@ const callOn = <M extends keyof Methods>(
   method: M,
   payload: Methods[M]["payload"],
 ): Effect.Effect<Methods[M]["success"], CallError<M>, AtomRegistry.AtomRegistry> =>
-  Effect.flatMap(Atom.getResult(runtime, { suspendOnWaiting: true }), (context) => {
-    const client: unknown = Context.get(context, HostClient)
-    return isCall(client) ? client(method, payload) : Effect.die(new Error("the host's RPC client is not a function"))
+  Effect.flatMap(Atom.getResult(runtime, { suspendOnWaiting: true }), (context) => callWith(Context.get(context, HostClient), method, payload))
+
+/**
+ * Calls a method chosen at run time on the host whose runtime this runs in (a query's atom, keyed by method and
+ * payload): its answer is the method's, which the query's typed accessor names.
+ */
+export const callOnClient = (method: keyof Methods, payload: unknown): Effect.Effect<AnySuccess, AnyError, HostClient> =>
+  Effect.gen(function* () {
+    const client: unknown = yield* HostClient
+    return yield* isLooseCall(client) ? client(method, payload) : Effect.die(new Error("the host's RPC client is not a function"))
   })
+
+const callWith = <M extends keyof Methods>(
+  client: unknown,
+  method: M,
+  payload: Methods[M]["payload"],
+): Effect.Effect<Methods[M]["success"], Methods[M]["error"]> =>
+  isCall(client) ? client(method, payload) : Effect.die(new Error("the host's RPC client is not a function"))
 
 /** The flat client, for a method chosen at run time. */
 type Call = <M extends keyof Methods>(method: M, payload: Methods[M]["payload"]) => Effect.Effect<Methods[M]["success"], Methods[M]["error"]>
@@ -64,3 +82,7 @@ type Call = <M extends keyof Methods>(method: M, payload: Methods[M]["payload"])
  * pick from; `Call` is the same, per method (both are derived from the contract).
  */
 const isCall = (client: unknown): client is Call => typeof client === "function"
+
+/** The same, for a method and payload that are only known at run time (the payload is checked by the client's schema). */
+const isLooseCall = (client: unknown): client is (method: keyof Methods, payload: unknown) => Effect.Effect<AnySuccess, AnyError> =>
+  typeof client === "function"

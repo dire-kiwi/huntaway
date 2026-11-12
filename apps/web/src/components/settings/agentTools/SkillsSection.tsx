@@ -1,9 +1,11 @@
 import { clsx } from "clsx"
 import { Plus, Trash2 } from "lucide-react"
+import { Exit } from "effect"
 import { useState, type ReactNode } from "react"
 import type { ProjectAgentTools as AgentTools, Skill } from "@huntaway/contracts"
-import { Button, errorText, Field, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle } from "../../ui"
-import { Section, OtherList } from "./parts"
+import { useAction } from "../../../state/mutation"
+import { Button, Field, Modal, ModalFooter, SUBMIT_KEYS, Textarea, Toggle } from "../../ui"
+import { Section, OtherList, type Save } from "./parts"
 
 const SKILL_TEMPLATE = `---
 name: my-skill
@@ -33,7 +35,7 @@ export function SkillsSection({
   onToggleOther: (name: string, on: boolean) => void
   onToggle: (s: Skill, enabled: boolean) => void
   onDelete: (s: Skill) => void
-  onSave: (skill: Skill | null, content: string) => Promise<void>
+  onSave: Save<[skill: Skill | null, content: string]>
 }) {
   const [editing, setEditing] = useState<Skill | "new" | null>(null)
   const own = new Set(tools.skills.map((s) => s.name))
@@ -80,31 +82,16 @@ export function SkillsSection({
   )
 }
 
-export function SkillEditor({
-  skill,
-  onSave,
-  onClose,
-}: {
-  skill: Skill | null
-  onSave: (skill: Skill | null, content: string) => Promise<void>
-  onClose: () => void
-}) {
+export function SkillEditor({ skill, onSave, onClose }: { skill: Skill | null; onSave: Save<[skill: Skill | null, content: string]>; onClose: () => void }) {
   const [content, setContent] = useState(skill?.content ?? SKILL_TEMPLATE)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const save = async () => {
-    setBusy(true)
-    setErr(null)
-    try {
-      await onSave(skill, content)
-      onClose()
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+  const [{ busy, error: err }, run] = useAction()
+  const save = () => {
+    void run(onSave(skill, content)).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   return (
-    <Modal title={skill ? `Edit ${skill.name}` : "New skill"} onClose={onClose} onSubmit={() => void save()} width="max-w-3xl">
+    <Modal title={skill ? `Edit ${skill.name}` : "New skill"} onClose={onClose} onSubmit={() => save()} width="max-w-3xl">
       <div className="space-y-3">
         <Field
           label="SKILL.md"
@@ -124,7 +111,7 @@ export function SkillEditor({
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={busy} onClick={() => void save()}>
+            <Button variant="primary" disabled={busy} onClick={() => save()}>
               {skill ? "Save skill" : "Add skill"}
             </Button>
           </div>

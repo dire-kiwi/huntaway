@@ -1,5 +1,7 @@
+import { Cause, Effect, Exit, Schema } from "effect"
+import { type AtomRegistry } from "effect/reactivity"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { keyPrefix, withAttachments, type HostTask as Task } from "@huntaway/client"
+import { type CallError, keyPrefix, mutate, withAttachments, type HostTask as Task } from "@huntaway/client"
 import { AgentConfigId, HostId, ProfileId, type Status } from "@huntaway/contracts"
 import { newFanoutId, sameHarness, type Harness } from "../harnesses"
 
@@ -11,10 +13,17 @@ import type { EditorText } from "./useEditorText"
 import type { Options } from "./useOptions"
 import type { Tokens } from "./useTokens"
 import type { Opened, Origin, Where } from "./useWhere"
-import { rpc } from "../../../state/rpc"
-import { errorText } from "../../ui"
+import { errorText, exitError, useAction } from "../../../state/mutation"
 
 export type Submit = ReturnType<typeof useSubmit>
+
+/** A task as made on `host`, with the host, as the board has it. */
+const on =
+  (host: string) =>
+  <T extends object>(made: T) => ({ ...made, host_id: HostId.make(host) })
+
+/** Where the dialog would put it isn't a project, a group or a profile's scratch tasks. */
+class NoProject extends Schema.TaggedError<NoProject, { readonly brand: unique symbol }>()("NoProject", { message: Schema.String }) {}
 
 /**
  * Creating the task (or a task for each harness), and what follows: with "Add another", the next one's draft where
@@ -45,7 +54,7 @@ export function useSubmit(p: {
   const { attach, links, setLinks, hasContent, linking } = p.kept
   const { start, worktree, addAnother, setStartPref, setWorktree } = p.options
   const { submitBlock, modelsLoading } = p.blocks
-  const [busy, setBusy] = useState(false)
+  const [{ busy }, run] = useAction()
   const [err, setErr] = useState<string | null>(null)
   // The last task created while "Add another" is on, so there's feedback that it went through (its key as it was made,
   // as the dialog may have moved since).
@@ -98,7 +107,7 @@ export function useSubmit(p: {
   // Ctrl+Enter in an `in:` being typed takes it as it is first (and what it brings, from the next render on), so what's
   // created is what the text says.
   const [settling, setSettling] = useState(0)
-  const submit = async () => {
+  const submit = () => {
     if (heldBack) {
       setClosedAt(heldBack.start)
       setSettling(1)
@@ -106,65 +115,58 @@ export function useSubmit(p: {
     }
     if (!hasContent || busy || attach.uploading || submitBlock) return
     if (modelsLoading) return setWhenLoaded(true)
-    setBusy(true)
     setErr(null)
-    // A task for each harness, one after another, so a failure leaves the rest to try again.
-    const tasks: Task[] = []
     const fanoutId = pending ? pending.id : fanout ? newFanoutId() : null
     const shared = fanoutId ? { fanout_id: fanoutId } : {}
-    try {
-      // One after another (each waits for the one before), so a failure leaves the rest to try again.
-      const makeFrom = async (i: number): Promise<{ run: Harness; error: unknown } | null> => {
-        const run = runs[i]
-        if (!run) return null
-        // The server titles it from the description.
-        const runEffort = efforts && pickedEffort && runEfforts(run).includes(pickedEffort) ? pickedEffort : undefined
-        const common = {
-          ...(labelling && labels.length ? { labels } : {}),
-          description: withAttachments(text, attach.files),
-          start,
-          status,
-          ...(run.model ? { model: run.model } : {}),
-          ...(runEffort ? { effort: runEffort } : {}),
-          ...(pickConfig ? { claude_config_id: AgentConfigId.make(run.config) } : {}),
-          ...(linking && links.length ? { external_links: links } : {}),
-          ...shared,
-        }
-        try {
-          const made = noProject
-            ? await rpc(target.host_id, "tasks.create", { task: { ...common, profile_id: ProfileId.make(target.profile_id) } })
-            : asGroup && group
-              ? await rpc(target.host_id, "tasks.create", { task: { ...common, profile_id: ProfileId.make(target.profile_id), group } })
-              : project
-                ? await rpc(project.host_id, "tasks.create", {
-                    task: {
-                      ...common,
-                      project_id: project.id,
-                      use_worktree: worktree,
-                      ...(taskType ? { task_type: taskType } : {}),
-                      ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
-                      ...(startFrom !== undefined && codeTask ? { start_from: fromTask ? `task:${fromTask.id}` : startFrom } : {}),
-                      ...(mergesInto ? { merges_into: mergesInto.id } : {}),
-                    },
-                  })
-                : null
-          if (!made) throw new Error("Pick a project for it")
-          tasks.push({ ...made, host_id: HostId.make(noProject || (asGroup && group) ? target.host_id : (project?.host_id ?? target.host_id)) })
-        } catch (error) {
-          return { run, error }
-        }
-        return makeFrom(i + 1)
+    /** Makes the task for harness `h`, with the host it was made on, as the board has it. */
+    const make = (h: Harness): Effect.Effect<Task, CallError<"tasks.create"> | NoProject, AtomRegistry.AtomRegistry> => {
+      // The server titles it from the description.
+      const runEffort = efforts && pickedEffort && runEfforts(h).includes(pickedEffort) ? pickedEffort : undefined
+      const common = {
+        ...(labelling && labels.length ? { labels } : {}),
+        description: withAttachments(text, attach.files),
+        start,
+        status,
+        ...(h.model ? { model: h.model } : {}),
+        ...(runEffort ? { effort: runEffort } : {}),
+        ...(pickConfig ? { claude_config_id: AgentConfigId.make(h.config) } : {}),
+        ...(linking && links.length ? { external_links: links } : {}),
+        ...shared,
       }
-      const failed = await makeFrom(0)
+      if (noProject)
+        return mutate("tasks.create", target.host_id, { task: { ...common, profile_id: ProfileId.make(target.profile_id) } }).pipe(
+          Effect.map(on(target.host_id)),
+        )
+      if (asGroup && group)
+        return mutate("tasks.create", target.host_id, { task: { ...common, profile_id: ProfileId.make(target.profile_id), group } }).pipe(
+          Effect.map(on(target.host_id)),
+        )
+      if (!project) return Effect.fail(new NoProject({ message: "Pick a project for it" }))
+      return mutate("tasks.create", project.host_id, {
+        task: {
+          ...common,
+          project_id: project.id,
+          use_worktree: worktree,
+          ...(taskType ? { task_type: taskType } : {}),
+          ...(deps && dependsOn.length ? { depends_on: dependsOn } : {}),
+          ...(startFrom !== undefined && codeTask ? { start_from: fromTask ? `task:${fromTask.id}` : startFrom } : {}),
+          ...(mergesInto ? { merges_into: mergesInto.id } : {}),
+        },
+      }).pipe(Effect.map(on(project.host_id)))
+    }
+    /** What follows once they're made, or some of them: `failed` is the first that wasn't, which the rest wait behind. */
+    const done = (tasks: Task[], failed: { run: Harness; error: unknown } | null) => {
       if (failed) {
-        if (!tasks.length) throw failed.error
+        if (!tasks.length) {
+          setErr(errorText(failed.error))
+          return
+        }
         // Those made are taken out of the text, so trying again makes the others.
-        const done = runs.slice(0, tasks.length)
-        untoken((t) => t.prefix === "!" && done.some((h) => sameHarness(harnessOf(t.value), h)))
+        const made = runs.slice(0, tasks.length)
+        untoken((t) => t.prefix === "!" && made.some((h) => sameHarness(harnessOf(t.value), h)))
         const keys = tasks.map((t) => `${keyPrefix(t, inProject)}-${t.number}`)
         setPending({ id: fanoutId, made: [...(pending?.made ?? []), ...keys], efforts: effortList })
         setErr(`Made ${keys.join(", ")}, but not the one with ${runLabel(failed.run)}: ${errorText(failed.error)}`)
-        setBusy(false)
         return
       }
       setPending(null)
@@ -184,7 +186,10 @@ export function useSubmit(p: {
       // Where it went is where the next one starts, where there's a choice.
       if (projects?.length) localStorage.setItem(PROJECT_KEY, prefId)
       localStorage.removeItem(draft)
-      if (!addAnother) return onClose()
+      if (!addAnother) {
+        onClose()
+        return
+      }
       const made = { key: tasks.map((t) => `${keyPrefix(t, inProject)}-${t.number}`).join(", "), title: tasks[0]?.title ?? "" }
       setCreated(made)
       // The dialog starts there now too, as it would opened again, so the next one's draft is kept there. A draft
@@ -202,11 +207,26 @@ export function useSubmit(p: {
         edit(kept && `${kept} `, kept ? kept.length + 1 : 0)
         setLinks([])
       }
-      setBusy(false)
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
     }
+    // A task for each harness, one after another (each waits for the one before), so a failure leaves the rest to try
+    // again.
+    void run(
+      Effect.gen(function* () {
+        const tasks: Task[] = []
+        for (const h of runs) {
+          const made = yield* Effect.exit(make(h))
+          if (Exit.isFailure(made)) {
+            done(tasks, { run: h, error: Cause.squash(made.cause) })
+            return
+          }
+          tasks.push(made.value)
+        }
+        done(tasks, null)
+      }),
+    ).then((exit) => {
+      const failed = exitError(exit)
+      if (failed !== null) setErr(failed)
+    })
   }
 
   // Created once the models it waits for are in, if it was asked for meanwhile (and the text hasn't changed since).
@@ -224,7 +244,7 @@ export function useSubmit(p: {
   useEffect(() => {
     if (!loadedNow) return
     setWhenLoaded(false)
-    void submitNow.current()
+    submitNow.current()
   }, [loadedNow, setWhenLoaded])
 
   // Each render while it settles: once where the text sends it has brought its options (a move takes one more
@@ -239,7 +259,7 @@ export function useSubmit(p: {
       return
     }
     setSettling(0)
-    void submitNow.current()
+    submitNow.current()
   }, [settling])
 
   return { busy, err, created, submit, whenLoaded }

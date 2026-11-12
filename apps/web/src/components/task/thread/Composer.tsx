@@ -22,7 +22,7 @@ import { useTouch } from "../../../narrow"
 import type { RewindResult } from "@huntaway/contracts"
 import { composerDraftAtom, composerDraftKey, composerUnsavedAtom } from "../../../state/drafts"
 import { registry } from "../../../state/registry"
-import { rpc } from "../../../state/rpc"
+import { exitError, useMutation } from "../../../state/mutation"
 import { errorText } from "../../ui"
 import { lineRange, removeComments, useReview, withComments, type LineComment } from "../../changes/lineComments"
 import { AttachButton, AttachmentList, DraftAttachments, useAttachmentDraft } from "../Attachments"
@@ -121,6 +121,7 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
   const unqueue$ = useAtomSet(unqueueMessage(ref))
   const unqueueErr = failureOf(useAtomValue(unqueueMessage(ref)))
   const [err, setErr] = useState<string | null>(null)
+  const [, stop] = useMutation("tasks.stop")
   const textarea = useRef<HTMLTextAreaElement>(null)
   // Set by Escape, so the next Shift+Tab leaves the field rather than cycling the permission mode.
   const tabLeaves = useRef(false)
@@ -331,7 +332,10 @@ export function Composer({ task, placeholder, onSend }: { task: Task; placeholde
                 <button
                   onClick={() => {
                     setErr(null)
-                    rpc(task.host_id, "tasks.stop", { id: task.id }).catch((e: unknown) => setErr(`Couldn't stop the agent: ${errorText(e)}`))
+                    void stop(task.host_id, { id: task.id }).then((exit) => {
+                      const why = exitError(exit)
+                      if (why !== null) setErr(`Couldn't stop the agent: ${why}`)
+                    })
                   }}
                   title={stopTitle(task, canSteer)}
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-fg hover:bg-white/15 narrow:h-9 narrow:w-9"

@@ -1,24 +1,24 @@
 import type { HostAgentConfig, HostProfile, HostProject } from "@huntaway/client"
 import type { Usage, UsageLimit } from "@huntaway/contracts"
+import { nowMillis } from "../../state/clock"
+import { localeString, millisOf } from "./dates"
 
 // Usage limits as the board shows them (the old src/usageConfigs.ts): when a limit resets, which configs the sidebar's
 // usage panel shows, and when a config is running low.
 
 /** How long until `iso`: "21m", "3h 5m", or a weekday and time further out; "now" once it's past. */
 export function resetsIn(iso: string, now: number): string {
-  const at = new Date(iso)
-  const ms = at.getTime() - now
+  const ms = millisOf(iso) - now
   if (Number.isNaN(ms)) return ""
   if (ms <= 0) return "now"
   const min = Math.ceil(ms / 60000)
   if (min < 60) return `${min}m`
   if (min < 24 * 60) return `${Math.floor(min / 60)}h${min % 60 ? ` ${min % 60}m` : ""}`
-  return at.toLocaleString(undefined, { weekday: "short", hour: "numeric" })
+  return localeString(iso, { weekday: "short", hour: "numeric" })
 }
 
 /** The time `iso` is, in full: "Sun 2 Nov, 6:30 pm". */
-export const resetTime = (iso: string): string =>
-  new Date(iso).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+export const resetTime = (iso: string): string => localeString(iso, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
 
 /**
  * The configs whose usage the sidebar shows for the profile named `profile`: those set to show it
@@ -45,7 +45,7 @@ export const WARN_AT = 80
 
 /** "resets in 2h 10m", or "resets Tue 6 PM" further out. */
 export function resetsPhrase(iso: string, now: number): string {
-  const ms = new Date(iso).getTime() - now
+  const ms = millisOf(iso) - now
   if (Number.isNaN(ms)) return ""
   if (ms <= 0) return "has reset"
   return ms < 24 * 3600_000 ? `resets in ${resetsIn(iso, now)}` : `resets ${resetsIn(iso, now)}`
@@ -67,9 +67,9 @@ export interface UsageAlert {
  * from its accounts instead: the pool has room while any account does, so it's the alert of the account with the most
  * room, taking each account's limit with the least left.
  */
-export function usageAlert(u: Pick<Usage, "limits" | "out_until" | "accounts"> | undefined, now = Date.now()): UsageAlert | null {
+export function usageAlert(u: Pick<Usage, "limits" | "out_until" | "accounts"> | undefined, now = nowMillis()): UsageAlert | null {
   if (!u) return null
-  const live = (iso: string | null | undefined): boolean => !iso || new Date(iso).getTime() > now
+  const live = (iso: string | null | undefined): boolean => !iso || millisOf(iso) > now
   const when = (iso: string | null | undefined): string => (iso ? ` · ${resetsPhrase(iso, now)}` : "")
   if (u.out_until && live(u.out_until)) return { level: "out", text: `Out of usage${when(u.out_until)}`, short: "out of usage", until: u.out_until }
   // The limit with the least left, of those that haven't reset since they were read.

@@ -2,11 +2,14 @@ import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm"
 import { Loader2, RotateCcw, Square, SquareTerminal, TerminalSquare, X } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
-import type { HostTask as Task } from "@huntaway/client"
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react"
+import { Exit } from "effect"
+import { useEffect, useRef, useState } from "react"
+import { mutate, query, type HostTask as Task } from "@huntaway/client"
 import type { TerminalStatus, TerminalTool } from "@huntaway/contracts"
-import { rpc } from "../../state/rpc"
-import { Button, copyText, errorText, parseJson, toJson } from "../ui"
+import { exitError, useAction } from "../../state/mutation"
+import { after } from "../../state/timers"
+import { Button, copyText, parseJson, resultError, resultValue, toJson } from "../ui"
 
 /**
  * A task's tmux session on its host, in xterm.js. The session lives on the host, so leaving
@@ -68,24 +71,20 @@ export function TerminalPane(props: Props) {
 
 function Pane({ task, active, tool, onClose, again }: Props & { again: () => void }) {
   const toolId = tool?.id
-  const [status, setStatus] = useState<TerminalStatus | null>(null)
+  const statusAtom = query("terminal.status", task.host_id, { task_id: task.id, tool: toolId ?? null })
+  const read = useAtomValue(statusAtom)
+  // Read again as the connection changes (it runs once attached, and may have ended).
+  const loadStatus = useAtomRefresh(statusAtom)
+  const failed = resultError(read)
+  // Unreachable for a moment (e.g. restarting): keep what we knew and let the socket retry.
+  const status: TerminalStatus | null =
+    resultValue(read) ?? (failed === null ? null : { available: false, running: false, cwd: null, reason: failed, tool: null })
   const [conn, setConn] = useState<Conn>({ state: "connecting" })
   const box = useRef<HTMLDivElement>(null)
   const view = useRef<{ term: XTerm; fit: FitAddon } | null>(null)
   const available = status?.available
-
-  // Read again as the connection changes (it runs once attached, and may have ended).
-  const loadStatus = useCallback(
-    () =>
-      rpc(task.host_id, "terminal.status", { task_id: task.id, tool: toolId ?? null })
-        .then(setStatus)
-        // Unreachable for a moment (e.g. restarting): keep what we knew and let the socket retry.
-        .catch((e: unknown) => setStatus((s) => s ?? { available: false, running: false, cwd: null, reason: errorText(e), tool: null })),
-    [task.host_id, task.id, toolId],
-  )
-  useEffect(() => {
-    void loadStatus()
-  }, [loadStatus])
+  // The ticket for each connection, and ending the session.
+  const [, run] = useAction()
 
   useEffect(() => {
     const el = box.current
@@ -95,14 +94,14 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
       disposed: boolean
       ws: WebSocket | null
       retries: number
-      retryTimer: ReturnType<typeof setTimeout> | undefined
+      cancelRetry: (() => void) | undefined
       unacked: number
-      ackTimer: ReturnType<typeof setTimeout> | undefined
+      cancelAck: (() => void) | undefined
       frame: number
-    } = { disposed: false, ws: null, retries: 0, retryTimer: undefined, unacked: 0, ackTimer: undefined, frame: 0 }
+    } = { disposed: false, ws: null, retries: 0, cancelRetry: undefined, unacked: 0, cancelAck: undefined, frame: 0 }
     const changed = (c: Conn) => {
       setConn(c)
-      void loadStatus()
+      loadStatus()
     }
     const encoder = new TextEncoder()
     const cleanups: (() => void)[] = []
@@ -111,15 +110,15 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
       if (at.ws?.readyState === WebSocket.OPEN) at.ws.send(data)
     }
     const flushAck = () => {
-      clearTimeout(at.ackTimer)
-      at.ackTimer = undefined
+      at.cancelAck?.()
+      at.cancelAck = undefined
       if (at.unacked > 0) send(toJson({ type: "ack", bytes: at.unacked }))
       at.unacked = 0
     }
     const ack = (n: number) => {
       at.unacked += n
       if (at.unacked >= 32 << 10) flushAck()
-      else at.ackTimer ??= setTimeout(flushAck, 5)
+      else at.cancelAck ??= after(5, flushAck)
     }
 
     // Created once the font is in, since xterm measures it only once, and a frame later:
@@ -203,22 +202,20 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
           if (at.retries >= 6) return changed({ state: "error", message })
           at.retries++
           setConn({ state: "connecting" })
-          at.retryTimer = setTimeout(
-            () => {
-              term.reset()
-              connect()
-            },
-            Math.min(250 * 2 ** at.retries, 2000),
-          )
+          at.cancelRetry = after(Math.min(250 * 2 ** at.retries, 2000), () => {
+            term.reset()
+            connect()
+          })
           return undefined
         }
         const attach = (ticket: string) => {
           const sock = new WebSocket(terminalUrl(ticket, term.cols, term.rows))
           sock.binaryType = "arraybuffer"
           at.ws = sock
-          let stable: ReturnType<typeof setTimeout> | undefined
+          let unstable: (() => void) | undefined
           sock.addEventListener("open", () => {
-            stable = setTimeout(() => (at.retries = 0), 5000)
+            // Attached for a while: a drop after that starts its retries over.
+            unstable = after("5 seconds", () => (at.retries = 0))
             send(toJson({ type: "resize", cols: term.cols, rows: term.rows }))
           })
           sock.addEventListener("message", (e: MessageEvent<unknown>) => {
@@ -236,7 +233,7 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
             term.write(bytes, () => ack(bytes.length))
           })
           sock.addEventListener("close", (e) => {
-            clearTimeout(stable)
+            unstable?.()
             if (at.disposed || at.ws !== sock) return
             at.ws = null
             at.unacked = 0
@@ -249,10 +246,11 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
         const connect = () => {
           refit()
           setConn({ state: "connecting" })
-          rpc(task.host_id, "terminal.open", { task_id: task.id, tool: toolId ?? null }).then(
-            ({ ticket }) => !at.disposed && attach(ticket),
-            (e: unknown) => !at.disposed && retry(errorText(e)),
-          )
+          void run(mutate("terminal.open", task.host_id, { task_id: task.id, tool: toolId ?? null })).then((exit) => {
+            if (at.disposed) return
+            if (Exit.isSuccess(exit)) attach(exit.value.ticket)
+            else retry(exitError(exit) ?? "Can't reach the terminal")
+          })
         }
         connect()
       })
@@ -261,12 +259,12 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
     return () => {
       at.disposed = true
       cancelAnimationFrame(at.frame)
-      clearTimeout(at.retryTimer)
-      clearTimeout(at.ackTimer)
+      at.cancelRetry?.()
+      at.cancelAck?.()
       at.ws?.close()
       cleanups.forEach((f) => f())
     }
-  }, [available, task.host_id, task.id, toolId, loadStatus])
+  }, [available, task.host_id, task.id, toolId, loadStatus, run])
 
   // Coming back to the tab, or once attached: the size may have changed while it was hidden.
   const attached = conn.state === "open"
@@ -281,11 +279,8 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
     return () => cancelAnimationFrame(frame)
   }, [active, attached])
 
-  const restart = () => {
-    void rpc(task.host_id, "terminal.kill", { task_id: task.id, tool: toolId ?? null })
-      .catch(() => {})
-      .then(again)
-  }
+  const kill = () => run(mutate("terminal.kill", task.host_id, { task_id: task.id, tool: toolId ?? null }))
+  const restart = () => void kill().then(again)
 
   if (status && !status.available)
     return (
@@ -323,13 +318,7 @@ function Pane({ task, active, tool, onClose, again }: Props & { again: () => voi
             <X size={12} /> Close
           </Button>
         ) : (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={conn.state !== "open"}
-            onClick={() => void rpc(task.host_id, "terminal.kill", { task_id: task.id, tool: toolId ?? null }).catch(() => {})}
-            title="End the tmux session"
-          >
+          <Button size="sm" variant="ghost" disabled={conn.state !== "open"} onClick={() => void kill()} title="End the tmux session">
             <Square size={11} /> End
           </Button>
         )}

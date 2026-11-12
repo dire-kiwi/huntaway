@@ -3,14 +3,16 @@ import { Plus, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { defaultAgentHost, profileConfigLabel, profileNames } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
 import { Button, Modal, useConfirm } from "../../ui"
 import { ProfileForm, usesAsana } from "./ProfileForm"
+import { useMutation } from "../../../state/mutation"
 
-// Step 1 (docs/plan/09-frontend.md). A profile has agent configs on every host, so the old "Copy login" for a profile
-// with a folder of its own is gone: logins are copied from Settings → Agent configs.
+// A profile has agent configs on every host (docs/plan/09-frontend.md), so the old "Copy login" for a profile with a
+// folder of its own is gone: logins are copied from Settings → Agent configs.
 
 export function ProfilesPanel() {
+  // The confirm dialog shows why a delete was refused.
+  const [, deleteProfile] = useMutation("profiles.delete")
   const profiles = useBoard((s) => s.profiles)
   const hosts = useBoard((s) => s.hosts)
   const claudeConfigs = useBoard((s) => s.claudeConfigs)
@@ -64,7 +66,7 @@ export function ProfilesPanel() {
                         body: `Delete profile "${p.name}" on ${hostName(p.host_id)}, with all its projects and tasks there?`,
                         action: "Delete profile",
                         danger: true,
-                        onConfirm: () => rpc(p.host_id, "profiles.delete", { id: p.id }),
+                        onConfirm: () => deleteProfile(p.host_id, { id: p.id }),
                       })
                     }
                   >

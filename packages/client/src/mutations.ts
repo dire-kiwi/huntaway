@@ -1,5 +1,6 @@
 import { Atom } from "effect/reactivity"
-import { callRpc, type CallError, type Methods } from "./rpc.ts"
+import { mutate } from "./queries.ts"
+import type { CallError, Methods } from "./rpc.ts"
 
 /** What a mutation is run with: the host to call and the method's payload. */
 export interface MutationArg<M extends keyof Methods> {
@@ -11,7 +12,7 @@ export interface MutationArg<M extends keyof Methods> {
 export type Mutation<M extends keyof Methods> = Atom.AtomResultFn<MutationArg<M>, Methods[M]["success"], CallError<M>>
 
 const mutation = <M extends keyof Methods>(method: M): Mutation<M> =>
-  Atom.fn<MutationArg<M>>()((arg) => callRpc(arg.host, method, arg.payload), { concurrent: true })
+  Atom.fn<MutationArg<M>>()((arg) => mutate(method, arg.host, arg.payload), { concurrent: true })
 
 /**
  * The calls that change a host's board (docs/plan/09-frontend.md, Queries, mutations, invalidation). A mutation does
