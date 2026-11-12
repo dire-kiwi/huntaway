@@ -1,5 +1,9 @@
+import { type Effect, Exit } from "effect"
+import { type AtomRegistry } from "effect/reactivity"
 import { useState, type FormEvent } from "react"
-import { Button, errorText, Input, Modal, ModalFooter } from "../../ui"
+import { type CallError } from "@huntaway/client"
+import { useAction } from "../../../state/mutation"
+import { Button, Input, Modal, ModalFooter } from "../../ui"
 
 /** Names a new group, or renames one. */
 export function GroupNameModal({
@@ -10,28 +14,22 @@ export function GroupNameModal({
 }: {
   title: string
   initial: string
-  onSave: (name: string) => Promise<void>
+  /** What saving the name does: the dialog runs it, closes once it worked and shows why it didn't. */
+  onSave: (name: string) => Effect.Effect<void, CallError<"projects.update">, AtomRegistry.AtomRegistry>
   onClose: () => void
 }) {
   const [name, setName] = useState(initial)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const submit = async (e?: FormEvent) => {
+  const [{ busy, error: err }, run] = useAction()
+  const submit = (e?: FormEvent) => {
     e?.preventDefault()
     if (!name.trim() || busy) return
-    setBusy(true)
-    setErr(null)
-    try {
-      await onSave(name.trim())
-      onClose()
-    } catch (error) {
-      setErr(errorText(error))
-      setBusy(false)
-    }
+    void run(onSave(name.trim())).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   return (
-    <Modal title={title} onClose={onClose} onSubmit={() => void submit()} width="max-w-sm">
-      <form onSubmit={(e) => void submit(e)} className="space-y-4">
+    <Modal title={title} onClose={onClose} onSubmit={() => submit()} width="max-w-sm">
+      <form onSubmit={(e) => submit(e)} className="space-y-4">
         <Input autoFocus value={name} placeholder="Group name" maxLength={100} onChange={(e) => setName(e.target.value)} />
         <ModalFooter className="space-y-4">
           {err && <div className="text-xs text-red-400">{err}</div>}
