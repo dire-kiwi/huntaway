@@ -1,18 +1,9 @@
+import { useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
+import { Effect } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { ExternalLink } from "lucide-react"
-import {
-  Children,
-  createContext,
-  isValidElement,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent,
-  type ReactNode,
-  type RefObject,
-} from "react"
+import { Children, createContext, isValidElement, useContext, useEffect, useMemo, useRef, type MouseEvent, type ReactNode, type RefObject } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { GUIDE_PAGES, guideLink, headings, isGuidePage, loadGuidePage, namedPage, REPO_URL, slug } from "../../guide"
@@ -104,28 +95,17 @@ const components: Components = {
   ),
 }
 
+/** A page's markdown (null for one the guide hasn't got, or that didn't load), read while it's open. */
+const guidePage = Atom.family((page: string) =>
+  Atom.make(Effect.tryPromise({ try: () => loadGuidePage(page), catch: () => null }).pipe(Effect.orElseSucceed(() => null))),
+)
+
 /** The guide (docs/guide), a page at a time, with its pages and the open page's sections beside it. */
 export function Guide({ page: wanted }: { page?: string | undefined }) {
   const page = wanted ?? GUIDE_PAGES[0].page
-  const [text, setText] = useState<{ page: string; markdown: string | null } | null>(null)
   const main = useRef<HTMLElement>(null)
-
-  useEffect(() => {
-    const req = { live: true }
-    loadGuidePage(page).then(
-      (markdown) => {
-        if (req.live) setText({ page, markdown })
-      },
-      () => {
-        if (req.live) setText({ page, markdown: null })
-      },
-    )
-    return () => {
-      req.live = false
-    }
-  }, [page])
-
-  const loaded = text?.page === page ? text.markdown : undefined
+  const text = useAtomValue(guidePage(page))
+  const loaded = AsyncResult.isSuccess(text) ? text.value : undefined
   // Once the page is in, to the heading the link named (`/guide/workflows#column`).
   useEffect(() => {
     if (loaded != null) scrollTo(window.location.hash.slice(1) || undefined, main.current)

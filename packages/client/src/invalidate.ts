@@ -1,4 +1,4 @@
-import { Context, Effect } from "effect"
+import { Context, Effect, Hash } from "effect"
 import { Atom, type AtomRegistry, Reactivity } from "effect/reactivity"
 import { TaskId } from "@huntaway/contracts"
 import { docsKey, type HostBoard } from "./board/hostBoard.ts"
@@ -48,6 +48,11 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   "docs.hostedStatus": (board, p) => docsSeq(board, "site", p.profile_id),
   // A task's skills are its config's (the old SkillMenu's cache was per config).
   "tasks.skills": (board, p) => board.tasks.get(p.id)?.claude_config_id ?? "",
+  // A project's system prompt is made from its settings and the host's default mode (anyone's change to either).
+  "projects.systemPrompt": (board, p) => {
+    const project = board.projects.find((x) => x.id === p.id)
+    return `${project ? Hash.hash(project) : ""}:${board.settings.default_permission_mode ?? ""}`
+  },
 }
 
 /** The key a host's group is invalidated by. */

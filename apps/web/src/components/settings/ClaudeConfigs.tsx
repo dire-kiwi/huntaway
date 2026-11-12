@@ -1,32 +1,40 @@
-import { AGENTS, agentInfo, agentOf, canRunAgents, usageKey, type Board, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
+import { AGENTS, agentInfo, agentOf, canRunAgents, mutate, usageKey, type Board, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
 import { HostId, type Agent, type AgentConfig, type AgentConfigPatch } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import { Copy, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useShallow } from "../boardHelpers"
-import { useBoard } from "../../state/board"
-import { rpc } from "../../state/rpc"
-import { Button, errorText, Field, Input, Modal, ModalFooter, useAsyncAction, useConfirm } from "../ui"
+import { board, useBoard } from "../../state/board"
+import { exitError, runExit, useAction, useMutation } from "../../state/mutation"
+import { Button, Field, Input, Modal, ModalFooter, useConfirm } from "../ui"
 import { usageAlert } from "../ui/usageConfigs"
 import { CopyLoginModal, type CopyRequest } from "./hosts/CopyLoginModal"
-import { hubRpc } from "./hosts/hub"
 
-// Step 1 (docs/plan/09-frontend.md). Copying a config's login to another host is 6.11's hosts/CopyLoginModal, given the
-// board's hosts that run agents and the hub's `hub.hosts.copyConfig` (`CopyLogin` below).
+// Copying a config's login to another host is 6.11's hosts/CopyLoginModal, given the board's hosts that run agents and
+// the hub's `hub.hosts.copyConfig` (`CopyLogin` below).
 
 /** The proxy fields a config's change sends. */
 type ProxyFields = Pick<AgentConfigPatch, "api_url" | "api_key" | "management_key">
 
-/** Copies a config's login through the hub (`hub.hosts.copyConfig`), giving the entries copied. */
-const copyLogin = async (r: CopyRequest) => {
-  const done = await hubRpc("hub.hosts.copyConfig", {
+/** Rejects with why `exit` failed, for what shows a rejected promise's error (a confirm, the copy dialog). */
+const orReject = <A, E>(exit: Exit.Exit<A, E>): Promise<A> =>
+  Exit.isSuccess(exit) ? Promise.resolve(exit.value) : Promise.reject(new Error(exitError(exit) ?? "Stopped."))
+
+/** Copies a config's login through the hub (`hub.hosts.copyConfig`, on the board's own host), giving the entries copied. */
+const copyLogin = (r: CopyRequest): Promise<{ readonly files: ReadonlyArray<string> }> => {
+  const hub = board.get().localHostId
+  if (hub === null) return Promise.reject(new Error("This board's own host isn't known yet."))
+  const payload = {
     config: r.config,
     from_host: HostId.make(r.from_host),
     to_host: HostId.make(r.to_host),
     overwrite: r.overwrite,
     ...(r.config_dir === undefined ? {} : { config_dir: r.config_dir }),
-  })
-  return { files: done.files ?? [] }
+  }
+  return runExit(mutate("hub.hosts.copyConfig", hub, payload))
+    .then(orReject)
+    .then((done) => ({ files: done.files ?? [] }))
 }
 
 /** Copying a config's login and settings to another host that runs agents and is connected, through the hub. */
@@ -88,14 +96,9 @@ function ConfigRow({
     const u = s.usage[usageKey(config.host_id, config.id)]
     return !!u && !u.error && u.limits.length > 0 && !u.limits.some((l) => l.id === "session")
   })
-  const [err, setErr] = useState<string | null>(null)
-  const set = async (patch: { show_usage?: boolean; restart_window?: boolean }): Promise<void> => {
-    setErr(null)
-    try {
-      await rpc(config.host_id, "configs.update", { id: config.id, patch })
-    } catch (e) {
-      setErr(errorText(e))
-    }
+  const [{ error: err }, update] = useMutation("configs.update")
+  const set = (patch: { show_usage?: boolean; restart_window?: boolean }): void => {
+    void update(config.host_id, { id: config.id, patch })
   }
   const confirm = useConfirm()
   const remove = (): void => {
@@ -105,7 +108,7 @@ function ConfigRow({
       body: `Delete the config "${config.name}"? The directory itself stays.${used}`,
       action: "Delete config",
       danger: true,
-      onConfirm: () => rpc(config.host_id, "configs.delete", { id: config.id }),
+      onConfirm: () => runExit(mutate("configs.delete", config.host_id, { id: config.id })).then(orReject),
     })
   }
   return (
@@ -126,7 +129,7 @@ function ConfigRow({
                 : "Check this login's plan limits and show what's left in the sidebar, for the profiles that use it. Off on new hosts, so copies of a login don't all ask."
             }
           >
-            <input type="checkbox" className="accent-accent" checked={config.show_usage} onChange={(e) => void set({ show_usage: e.target.checked })} />
+            <input type="checkbox" className="accent-accent" checked={config.show_usage} onChange={(e) => set({ show_usage: e.target.checked })} />
             Show usage
           </label>
         )}
@@ -138,7 +141,7 @@ function ConfigRow({
               "When this login's 5-hour session window ends, start the next one right away with a one-word prompt (Haiku, or a low-effort Codex turn), so a new window is always running. Only plans with a 5-hour limit are sent anything."
             }
           >
-            <input type="checkbox" className="accent-accent" checked={config.restart_window} onChange={(e) => void set({ restart_window: e.target.checked })} />
+            <input type="checkbox" className="accent-accent" checked={config.restart_window} onChange={(e) => set({ restart_window: e.target.checked })} />
             Restart 5h window
           </label>
         )}
@@ -304,7 +307,7 @@ function ConfigForm({
   // The keys are never sent back: blank keeps the saved one.
   const [apiKey, setApiKey] = useState("")
   const [managementKey, setManagementKey] = useState("")
-  const { busy, error: err, run } = useAsyncAction()
+  const [{ busy, error: err }, run] = useAction()
   const setAgent = (a: Agent): void => {
     // Follow the agent while the directory is still the default one.
     if (!initial && dir === defaultDir(agent)) setDir(defaultDir(a))
@@ -327,10 +330,11 @@ function ConfigForm({
     }
   }
   const submit = (): void => {
-    void run(async () => {
-      const config = { name: name.trim(), config_dir: dir.trim(), agent, ...proxyFields() }
-      const c = initial ? await rpc(hostId, "configs.update", { id: initial.id, patch: config }) : await rpc(hostId, "configs.create", { config })
-      onDone(c)
+    // A double press while it's saving does nothing, as before.
+    if (busy) return
+    const config = { name: name.trim(), config_dir: dir.trim(), agent, ...proxyFields() }
+    void run(initial ? mutate("configs.update", hostId, { id: initial.id, patch: config }) : mutate("configs.create", hostId, { config })).then((exit) => {
+      if (Exit.isSuccess(exit)) onDone(exit.value)
     })
   }
   return (

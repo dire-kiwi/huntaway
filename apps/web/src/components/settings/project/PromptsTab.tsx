@@ -1,11 +1,10 @@
-import { AGENTS, LABELS, type DocumentType, type HostProject as Project } from "@huntaway/client"
-import { Agent, type DefaultPrompts, type SystemPromptOptions, type SystemPromptPreview as Preview } from "@huntaway/contracts"
+import { useAtomValue } from "@effect/atom-react"
+import { AGENTS, LABELS, query, type DocumentType, type HostProject as Project } from "@huntaway/client"
+import { Agent, type DefaultPrompts, type SystemPromptOptions } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Schema } from "effect"
-import { useEffect, useState } from "react"
-import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
-import { errorText, Textarea, Toggle } from "../../ui"
+import { useState } from "react"
+import { resultError, resultValue, Textarea, Toggle } from "../../ui"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 /** A prompt a project can have its own of. */
@@ -45,11 +44,9 @@ const PROMPTS: { field: PromptField; label: string; hint: string }[] = [
 /** The instructions in the prompts the board sends as a task moves across it: the host's default
  * until the project has its own. */
 function ProjectPrompts({ project, onChange }: { project: ProjectForm; onChange: (field: PromptField, v: string | null) => void }) {
-  const [defaults, setDefaults] = useState<DefaultPrompts | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  useEffect(() => {
-    rpc(project.host_id, "host.defaultPrompts", undefined).then(setDefaults, (e: unknown) => setErr(errorText(e)))
-  }, [project.host_id])
+  const result = useAtomValue(query("host.defaultPrompts", project.host_id, undefined))
+  const defaults = resultValue(result)
+  const err = resultError(result)
   return (
     <div className="space-y-5">
       {err && <div className="text-xs text-red-400">Couldn&apos;t load the default prompts: {err}</div>}
@@ -96,36 +93,21 @@ function SystemPromptPreview({ project }: { project: Project }) {
   const [runtime, setRuntime] = useState<Agent | null>(null)
   // Unset until it's switched, the thread's mode is the one it inherits (the project's, else the host's).
   const [plan, setPlan] = useState<boolean | null>(null)
-  const [preview, setPreview] = useState<Preview | null>(null)
-  const [err, setErr] = useState<string | null>(null)
   const worktrees = worktree ?? (project.use_worktrees && project.is_git)
-  // Its default mode goes into it: read again when it changes.
-  const hostSettings = useBoard((s) => s.hostSettings[project.host_id])
-  useEffect(() => {
-    if (!hostSettings) return undefined
-    const req = { live: true }
-    const options: SystemPromptOptions = {
-      type,
-      labels,
-      ...(type === "task" ? { worktree: worktrees } : {}),
-      ...(runtime ? { runtime } : {}),
-      ...(plan === null ? {} : { permission_mode: plan ? "plan" : "default" }),
-    }
-    rpc(project.host_id, "projects.systemPrompt", { id: project.id, options }).then(
-      (p) => {
-        if (!req.live) return
-        setPreview(p)
-        setErr(null)
-      },
-      (e: unknown) => {
-        if (req.live) setErr(errorText(e))
-      },
-    )
-    return () => {
-      req.live = false
-    }
-    // Again when the project or the host's default mode changes, as they go into it.
-  }, [project, hostSettings, type, labels, worktrees, runtime, plan])
+  const options: SystemPromptOptions = {
+    type,
+    labels,
+    ...(type === "task" ? { worktree: worktrees } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(plan === null ? {} : { permission_mode: plan ? "plan" : "default" }),
+  }
+  // Read again when the project or the host's default mode changes, as they go into it (invalidate.ts).
+  const result = useAtomValue(query("projects.systemPrompt", project.host_id, { id: project.id, options }))
+  const err = resultError(result)
+  // The last preview stays while other options are read.
+  const read = resultValue(result)
+  const [preview, setPreview] = useState(read)
+  if (read !== undefined && read !== preview) setPreview(read)
   const shownRuntime = runtime ?? preview?.runtime ?? "claude"
   return (
     <div className="space-y-2.5 border-t border-line pt-5">

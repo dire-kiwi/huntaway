@@ -1,17 +1,18 @@
 import { STATUSES, type HostProject as Project } from "@huntaway/client"
 import type { ProjectPatch } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import { Bot, GitBranch, Loader2, MessageSquareText, Puzzle, ScanSearch, SlidersHorizontal, SquareTerminal, Workflow, Zap } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { groupNames } from "../../../projectGroups"
 import { useBoard } from "../../../state/board"
+import { exitError, useMutation } from "../../../state/mutation"
 import { navigate } from "../../../state/route"
-import { rpc } from "../../../state/rpc"
 import { ArchiveProjectModal } from "../ArchivedProjects"
 import { ProjectAgentTools } from "../AgentTools"
 import { ProjectAutomations } from "../Automations"
 import { ProjectWorkflows } from "../Workflows"
-import { Button, ConfirmModal, errorText, MenuButton } from "../../ui"
+import { Button, ConfirmModal, MenuButton } from "../../ui"
 import { toJson } from "../../ui/json"
 import { AgentsTab } from "./AgentsTab"
 import { GeneralTab } from "./GeneralTab"
@@ -20,7 +21,7 @@ import { ReviewTab } from "./ReviewTab"
 import { ProjectStatusScripts } from "./StatusScriptsTab"
 import { WorktreesTab } from "./WorktreesTab"
 
-// Step 1 (docs/plan/09-frontend.md). Every host has every tab, so the old API gates are gone. The tabs that are other
+// Every host has every tab, so the old API gates are gone (docs/plan/09-frontend.md). The tabs that are other
 // areas' are theirs: Skills and MCP (6.4), Automations (6.5), Workflows (6.6).
 
 /** A project's fields as the form edits them. */
@@ -131,8 +132,11 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
   // the tabs, and saved together.
   const [edits, setEdits] = useState<Partial<ProjectForm>>({})
   const [saved, setSaved] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ busy: saving, error: saveError }, update] = useMutation("projects.update")
+  // Discard hides the last save's error until the next save.
+  const [discarded, setDiscarded] = useState(false)
+  const err = discarded ? null : saveError
+  const [, remove] = useMutation("projects.delete")
   const [confirm, setConfirm] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [moveRepo, setMoveRepo] = useState(false)
@@ -150,9 +154,8 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
   const repoChanged = "repo_path" in edits && edits.repo_path?.trim() !== project.repo_path
   const changed = (k: keyof Project): boolean => k in edits && !sameValue(edits[k], project[k])
   const unsaved = tabs.filter((t) => t.fields.some(changed))
-  const save = async (): Promise<void> => {
-    setErr(null)
-    setSaving(true)
+  const save = (): void => {
+    setDiscarded(false)
     const { host_id: _host, ...fields } = edits
     const patch: { -readonly [K in keyof ProjectPatch]: ProjectPatch[K] } = Object.assign({}, fields)
     if (repoChanged && moveRepo) patch.move_repo = true
@@ -162,22 +165,18 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
     if ("github_account" in patch) patch.github_account = patch.github_account || null
     if ("pr_preview_url" in patch) patch.pr_preview_url = patch.pr_preview_url?.trim() || null
     if ("claude_config_ids" in patch) patch.claude_config_ids = patch.claude_config_ids?.length ? patch.claude_config_ids : null
-    try {
-      await rpc(project.host_id, "projects.update", { id: project.id, patch })
+    void update(project.host_id, { id: project.id, patch }).then((exit) => {
+      if (!Exit.isSuccess(exit)) return
       // Keeps anything changed while it was saving; the project as saved comes with its event.
       setEdits((e) => Object.fromEntries(Object.entries(e).filter(([k, v]) => v !== Reflect.get(edits, k))))
       setMoveRepo(false)
       setSaved(true)
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setSaving(false)
-    }
+    })
   }
   const discard = (): void => {
     setEdits({})
     setMoveRepo(false)
-    setErr(null)
+    setDiscarded(true)
     setSaved(false)
   }
   // The save bar is on the sections saved with it, and on the others while there's something to save.
@@ -263,7 +262,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
         <footer className="shrink-0 border-t border-line">
           {/* Lined up with the open tab: past the tabs' width and the gap after them. */}
           <div className="mx-auto flex max-w-4xl items-center gap-3 px-6 py-3 narrow:px-4 md:pl-64">
-            <Button variant="primary" disabled={saving || !unsaved.length} onClick={() => void save()}>
+            <Button variant="primary" disabled={saving || !unsaved.length} onClick={save}>
               {saving && <Loader2 size={13} className="animate-spin" />} Save changes
             </Button>
             {unsaved.length > 0 && (
@@ -289,10 +288,14 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
           action="Delete project"
           danger
           width="max-w-lg"
-          onConfirm={async () => {
-            await rpc(project.host_id, "projects.delete", { id: project.id })
-            navigate({ name: "home" }, true)
-          }}
+          onConfirm={() =>
+            remove(project.host_id, { id: project.id }).then((exit) => {
+              // The dialog shows why it failed, as it does a rejected confirm.
+              if (!Exit.isSuccess(exit)) return Promise.reject(new Error(exitError(exit) ?? "Not deleted."))
+              navigate({ name: "home" }, true)
+              return undefined
+            })
+          }
           onClose={() => setConfirm(false)}
         />
       )}

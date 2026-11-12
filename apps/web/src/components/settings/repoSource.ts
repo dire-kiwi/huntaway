@@ -1,4 +1,4 @@
-// Step 1 (6.11): the new project dialog's GitHub tab's helpers, unchanged.
+// The new project dialog's GitHub tab's helpers (6.11).
 import type { GithubRepo } from "@huntaway/contracts"
 
 /** A profile's clone folder when it hasn't picked one: `~/<name>`, as the server has it (db::default_clone_dir). */

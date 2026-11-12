@@ -1,10 +1,11 @@
 import type { HostProject as Project } from "@huntaway/client"
 import type { MergedWorktreeResult } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import { Loader2 } from "lucide-react"
 import { useState } from "react"
-import { rpc } from "../../../state/rpc"
-import { Button, errorText, Field, Input, Textarea, Toggle } from "../../ui"
+import { useMutation } from "../../../state/mutation"
+import { Button, Field, Input, Textarea, Toggle } from "../../ui"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 /** The Worktrees tab: whether tasks get worktrees, where, what each gets from the repository, and its scripts. */
@@ -96,25 +97,18 @@ export function WorktreesTab({ project, form, set }: { project: Project; form: P
 /** Removes the worktrees of the project's done tasks whose work is merged and that have nothing
  * uncommitted, then lists what it did with each done task's worktree. */
 function RemoveMergedWorktrees({ project }: { project: Project }) {
-  const [busy, setBusy] = useState(false)
+  const [{ busy, error: err }, remove] = useMutation("projects.removeMergedWorktrees")
   const [results, setResults] = useState<ReadonlyArray<MergedWorktreeResult> | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const run = async (): Promise<void> => {
-    setBusy(true)
-    setErr(null)
-    try {
-      setResults(await rpc(project.host_id, "projects.removeMergedWorktrees", { id: project.id }))
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
+  const run = (): void => {
+    void remove(project.host_id, { id: project.id }).then((exit) => {
+      if (Exit.isSuccess(exit)) setResults(exit.value)
+    })
   }
   const removed = results?.filter((r) => r.removed).length ?? 0
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-3">
-        <Button size="sm" disabled={busy} onClick={() => void run()}>
+        <Button size="sm" disabled={busy} onClick={run}>
           {busy && <Loader2 size={12} className="animate-spin" />} Remove merged worktrees
         </Button>
         {results && (
