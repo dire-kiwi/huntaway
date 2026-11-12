@@ -22,6 +22,30 @@ describe("import-legacy", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
+  it.effect("an import whose files fail to copy leaves neither a board.db nor an import.json", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const tmp = yield* fs.makeTempDirectoryScoped()
+      yield* Effect.scoped(makeLegacyBoard(`${tmp}/old`))
+      yield* fs.makeDirectory(`${tmp}/old/attachments/a1`, { recursive: true })
+      yield* fs.writeFileString(`${tmp}/old/attachments/a1/file.txt`, "x")
+      // A file where the attachments folder goes: copying it fails.
+      yield* fs.makeDirectory(`${tmp}/new`)
+      yield* fs.writeFileString(`${tmp}/new/attachments`, "in the way")
+      const exit = yield* Effect.exit(importLegacy(options(`${tmp}/old`, `${tmp}/new`)))
+      expect(exit._tag).toBe("Failure")
+      expect(yield* fs.exists(`${tmp}/new/board.db`)).toBe(false)
+      expect(yield* fs.exists(`${tmp}/new/board.db.partial`)).toBe(false)
+      expect(yield* fs.exists(`${tmp}/new/import.json`)).toBe(false)
+      // So a new try is not refused for a board.db, once what was in the way is gone.
+      yield* fs.remove(`${tmp}/new/attachments`)
+      const again = yield* importLegacy(options(`${tmp}/old`, `${tmp}/new`))
+      expect(again.passes).toBe(true)
+      expect(yield* fs.exists(`${tmp}/new/import.json`)).toBe(true)
+      expect(yield* fs.readFileString(`${tmp}/new/attachments/a1/file.txt`)).toBe("x")
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+
   it.effect("refuses a folder that already has a board.db", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem

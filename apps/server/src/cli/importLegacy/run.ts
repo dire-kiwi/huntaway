@@ -296,6 +296,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
   const copy = path.join(to, "legacy-copy.db")
   const partial = path.join(to, "board.db.partial")
   const reportFile = path.join(to, "import-report.json")
+  const recordFile = path.join(to, IMPORT_FILE)
   yield* copyOldDatabase(oldFile, copy, rehearsal)
   const removeCopy = Effect.forEach([copy, `${copy}-wal`, `${copy}-shm`], (f) => fs.remove(f, { force: true }), { concurrency: 1, discard: true }).pipe(
     Effect.ignore,
@@ -341,9 +342,9 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
         )
       }),
     )
-    yield* fs.rename(partial, boardFile)
-    for (const f of [`${partial}-wal`, `${partial}-shm`]) yield* fs.remove(f, { force: true })
-    yield* copyFiles(from, to, rehearsal, boardFile, now)
+    // `board.db` appears last, once the files and `import.json` are there: a folder with a board but no record would
+    // start as an acting board (no guard, no read-only server), and a new try would be refused for its `board.db`.
+    yield* copyFiles(from, to, rehearsal, partial, now)
     const record: ImportRecord = {
       from,
       at: Timestamp.make(now),
@@ -351,15 +352,18 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
       rehearsal,
       database,
     }
-    yield* fs.writeFileString(path.join(to, IMPORT_FILE), `${yield* encodeRecord(record)}\n`, { mode: 0o600 })
+    yield* fs.writeFileString(recordFile, `${yield* encodeRecord(record)}\n`, { mode: 0o600 })
+    for (const f of [`${partial}-wal`, `${partial}-shm`]) yield* fs.remove(f, { force: true })
+    yield* fs.rename(partial, boardFile)
   })
+  // A failed import leaves no board and no record (what it copied stays, and a new try copies it again).
+  const undo = Effect.forEach([partial, `${partial}-wal`, `${partial}-shm`, recordFile], (f) => fs.remove(f, { force: true }), {
+    concurrency: 1,
+    discard: true,
+  }).pipe(Effect.ignore)
   yield* (checkOnly ? checkAlone : importAll).pipe(
     Effect.ensuring(removeCopy),
-    Effect.onError(() =>
-      Effect.forEach([partial, `${partial}-wal`, `${partial}-shm`], (f) => fs.remove(f, { force: true }), { concurrency: 1, discard: true }).pipe(
-        Effect.ignore,
-      ),
-    ),
+    Effect.onError(() => (checkOnly ? Effect.void : undo)),
   )
   const result = yield* report.get
   yield* fs.writeFileString(reportFile, `${yield* encodeReport(result)}\n`, { mode: 0o600 })
@@ -371,7 +375,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
  * and `ssh/` (not in a rehearsal, which gets an identity of its own on first start), attachments, skill sources, and
  * the folders of runs that ended in the last 14 days.
  */
-const copyFiles = Effect.fnUntraced(function* (from: string, to: string, rehearsal: boolean, boardFile: string, now: string) {
+const copyFiles = Effect.fnUntraced(function* (from: string, to: string, rehearsal: boolean, board: string, now: string) {
   const fs = yield* FileSystem.FileSystem
   if (!rehearsal) {
     for (const name of ["host_id", "auth_token", "hub_token"]) {
@@ -381,7 +385,7 @@ const copyFiles = Effect.fnUntraced(function* (from: string, to: string, rehears
   }
   yield* copyOver(from, to, "attachments")
   yield* copyOver(from, to, "skill-sources")
-  const recent = yield* using(sqliteAt(boardFile, true))(
+  const recent = yield* using(sqliteAt(board, true))(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       return yield* sql<{

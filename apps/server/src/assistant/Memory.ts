@@ -84,11 +84,12 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
 
       const locked = (dir: string) => locks.withLock(["workspace", dir])
       // An imported board's assistants keep their workspaces in the old folder, where their sessions ran (docs/plan/
-      // 11-migration.md: worktrees and work folders stay where they are): the one other place a workspace may be.
-      const importedFrom = Option.map(
-        yield* readImportRecord(dataDir.root).pipe(Effect.orElseSucceed(() => Option.none<ImportRecord>())),
-        (record) => record.from,
-      )
+      // 11-migration.md: worktrees and work folders stay where they are): the one other place a workspace may be. Not on
+      // a rehearsal, which changes nothing outside its own folder: opening a workspace makes and seeds it, and the old
+      // folder there is the live board's.
+      const imported = yield* readImportRecord(dataDir.root).pipe(Effect.orElseSucceed(() => Option.none<ImportRecord>()))
+      const importedFrom = Option.map(imported, (record) => record.from)
+      const rehearsal = Option.isSome(imported) && imported.value.rehearsal
 
       const checked = Effect.fn("Memory.checked")(function* (assistant: Task) {
         if (assistant.kind !== "task" || assistant.task_type !== "assistant") {
@@ -96,6 +97,12 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
         }
         const own = `assistants/${assistant.id}`
         const inOldFolder = Option.isSome(importedFrom) && assistant.work_dir === `${importedFrom.value}/${own}`
+        if (inOldFolder && rehearsal) {
+          return yield* new Unavailable({
+            what: "assistant workspace",
+            reason: "the assistant's workspace is in the old board's folder, which a rehearsal leaves alone",
+          })
+        }
         if (assistant.work_dir !== own && assistant.work_dir !== `${dataDir.root}/${own}` && !inOldFolder) {
           return yield* new Unavailable({
             what: "assistant workspace",

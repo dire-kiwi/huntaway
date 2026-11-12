@@ -190,6 +190,9 @@ What was decided where the plan was silent or turned out wrong:
   so the importer copies the database (a byte copy of a stopped server's file and its `-wal`; for a rehearsal an online
   backup through a read-only connection) into the new folder as `legacy-copy.db`, reads that, and deletes it. The
   throwaway switch checked the old folder byte for byte afterwards.
+- **`board.db` appears last.** The files are copied and `import.json` written first, and `board.db.partial` is
+  renamed only then; a failure on the way removes the partial board and the record. A folder with a board and no
+  record would start as an acting board, past the guard.
 - **A row is checked twice.** The new row against the schema the server reads it with (a failure: the row is not
   written), and each JSON column strictly against its value's schema (listed under `json`: the row is written, and the
   server reads the value as its default). Then the board's foreign keys are checked; a row that points at nothing is a
@@ -218,7 +221,8 @@ What was decided where the plan was silent or turned out wrong:
 - **Where an imported thread works.** A task's own `work_dir` is now its working folder on the new server too (the
   old `documents.work_dir`: scratch tasks, document tasks from before labels, pen threads), and an assistant's
   workspace may be `<old folder>/assistants/<id>` when `import.json` names that old folder (`Memory.checked`), so their
-  sessions are found where they ran. Group tasks and project-less review threads with no `work_dir` worked in the old
+  sessions are found where they ran. Not on a rehearsal: opening a workspace makes and seeds it, so a rehearsal refuses
+  an assistant whose workspace is in the old folder (`Unavailable`), and the rehearsal's service test has one. Group tasks and project-less review threads with no `work_dir` worked in the old
   profile scratch folder and now work in the new one: their sessions start afresh.
 - `repo_root` is the repository's fingerprint, not a path, and is copied as it is.
 - The 200-thread sample is `scripts/compare-threads.mjs`, run with an old test server on a copy and a new test server

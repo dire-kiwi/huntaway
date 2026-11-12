@@ -53,6 +53,8 @@ export interface ImportedFolder {
 const TOKEN = "test-token"
 const OLD_TOKEN = "old-board-token"
 const AT = "2026-11-12T01:02:03.000Z"
+/** The imported profile's assistant. */
+const ASSISTANT = TaskId.make("a-imported")
 
 /** An imported folder, a rehearsal's (`rehearsal: true`) or a switch's; everything in temp folders for the scope. */
 export const importedFolder = (options: { readonly rehearsal: boolean }) =>
@@ -106,6 +108,22 @@ export const importedFolder = (options: { readonly rehearsal: boolean }) =>
           created_at: AT,
           updated_at: AT,
         })
+        // The profile's assistant, its workspace in the old folder as the old server keeps it (relative to the folder),
+        // with only some of its memory files: opening it on the new board would make and seed the rest there.
+        yield* old.insert("tasks", {
+          id: ASSISTANT,
+          profile_id: profile,
+          project_id: null,
+          number: 1,
+          title: "Assistant",
+          title_pinned: 1,
+          task_type: "assistant",
+          work_dir: `assistants/${ASSISTANT}`,
+          thread_source: "items",
+          last_activity_at: AT,
+          created_at: AT,
+          updated_at: AT,
+        })
         yield* old.insert("threads", { task_id: task, seq: 1, created_at: AT })
         yield* old.insert("thread_items", {
           task_id: task,
@@ -118,6 +136,8 @@ export const importedFolder = (options: { readonly rehearsal: boolean }) =>
         })
       }),
     )
+    yield* fs.makeDirectory(`${oldDir}/assistants/${ASSISTANT}`, { recursive: true }).pipe(Effect.orDie)
+    yield* fs.writeFileString(`${oldDir}/assistants/${ASSISTANT}/MEMORY.md`, "# Memory\n").pipe(Effect.orDie)
     // A rehearsal's folder has a token of its own (it copies none of the old host's); a switch takes the old board's.
     yield* fs.writeFileString(`${dataDir}/auth_token`, `${TOKEN}\n`, { mode: 0o600 }).pipe(Effect.orDie)
     const result = yield* importLegacy({
