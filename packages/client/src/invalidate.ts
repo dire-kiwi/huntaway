@@ -1,4 +1,4 @@
-import { Context, Effect } from "effect"
+import { Context, Effect, Hash } from "effect"
 import { Atom, type AtomRegistry, Reactivity } from "effect/reactivity"
 import { TaskId } from "@huntaway/contracts"
 import type { HostBoard } from "./board/hostBoard.ts"
@@ -35,6 +35,11 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
   "git.taskDiff": (board, p) => taskState(board, p.id),
+  // A project's system prompt is made from its settings and the host's default mode (anyone's change to either).
+  "projects.systemPrompt": (board, p) => {
+    const project = board.projects.find((x) => x.id === p.id)
+    return `${project ? Hash.hash(project) : ""}:${board.settings.default_permission_mode ?? ""}`
+  },
 }
 
 /** The key a host's group is invalidated by. */
