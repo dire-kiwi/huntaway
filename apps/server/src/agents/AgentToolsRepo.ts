@@ -70,7 +70,8 @@ const OverridesRow = Schema.Struct({
   disabled_mcp_servers: JsonColumn(Strings, []),
   seen: JsonColumn(Schema.Record(Schema.String, Schema.Unknown), {}),
 })
-const ThreadToolsRow = Schema.Struct({ skills: JsonColumn(Strings, []), disabled_mcp_servers: JsonColumn(Strings, []) })
+/** A thread's own tools' row as the repository reads it (the importer checks what it writes with it). */
+export const ThreadToolsRow = Schema.Struct({ skills: JsonColumn(Strings, []), disabled_mcp_servers: JsonColumn(Strings, []) })
 const IdRow = Schema.Struct({ id: Schema.String })
 
 const skillRows = rowsOf(SkillRowSchema)
