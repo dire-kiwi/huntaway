@@ -1,15 +1,15 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect } from "effect"
+import { Cause, Effect, Exit } from "effect"
 import type { Atom } from "effect/reactivity"
 import { AttachmentId } from "@huntaway/contracts"
-import { type Board as BoardView, boardAtom, tokenAtom, transportAtom } from "@huntaway/client"
+import { type Board as BoardView, boardAtom, callRpc, type Methods, mutate, tokenAtom, transportAtom } from "@huntaway/client"
 import { changed, board as fakeBoard } from "../../browser/fake/builders"
 import { fakeHost } from "../../browser/fake/host"
 import { board } from "../../../src/state/board"
 import { registry } from "../../../src/state/registry"
-import { isTagged, rpc } from "../../../src/state/rpc"
+import { isTagged, runExit } from "../../../src/state/mutation"
 
-// The component checks' fake host (tests/browser/fake), under the page's own registry and `rpc`, without a browser:
+// The component checks' fake host (tests/browser/fake), under the page's own registry and `runExit`, without a browser:
 // what mount.tsx does, and what a check then relies on.
 
 /** Waits for `atom` to hold a value `pass` accepts. */
@@ -41,14 +41,18 @@ const setUp = Effect.acquireRelease(
 
 const loaded = (b: BoardView) => b.loaded
 
-/** What a promise rejected with. */
-const rejection = (call: () => Promise<unknown>): Effect.Effect<unknown> =>
-  Effect.promise(() =>
-    call().then(
-      () => undefined,
-      (e: unknown) => e,
-    ),
-  )
+/** A call run as the page runs one (`runExit` through the registry): its exit. Task calls are mutations. */
+const call = <M extends keyof Methods>(host: string, method: M, payload: Methods[M]["payload"]) =>
+  Effect.promise(() => runExit(method.startsWith("tasks.") ? mutate(method, host, payload) : callRpc(host, method, payload)))
+
+/** What a call answered (failing the check if it failed). */
+const answer = <A, E>(exit: Exit.Exit<A, E>): A => {
+  if (Exit.isSuccess(exit)) return exit.value
+  throw new Error(`the call failed: ${Cause.pretty(exit.cause)}`)
+}
+
+/** What a call failed with (undefined if it didn't). */
+const failure = <A, E>(exit: Exit.Exit<A, E>): unknown => (Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined)
 
 describe("the fake host", () => {
   it.live("serves the board to the page, signed in and connected, and its events after", () =>
@@ -67,25 +71,25 @@ describe("the fake host", () => {
     }).pipe(Effect.scoped),
   )
 
-  it.live("answers rpc's task calls as the server does, and keeps what was sent", () =>
+  it.live("answers the page's task calls as the server does, and keeps what was sent", () =>
     Effect.gen(function* () {
       const { b, task, host } = yield* setUp
       yield* until(boardAtom, loaded)
-      const updated = yield* Effect.promise(() => rpc(b.host.id, "tasks.update", { id: task.id, patch: { status: "in_progress", todos_override: true } }))
+      const updated = answer(yield* call(b.host.id, "tasks.update", { id: task.id, patch: { status: "in_progress", todos_override: true } }))
       expect(updated.status).toBe("in_progress")
       expect(host.sent("tasks.update")).toEqual([{ id: task.id, patch: { status: "in_progress", todos_override: true } }])
       // The answer is not put on the board: the event that follows it is.
       yield* until(boardAtom, (x) => x.tasks[task.id]?.status === "in_progress")
       expect(board.get().tasks[task.id]?.status).toBe("in_progress")
-      const made = yield* Effect.promise(() => rpc(b.host.id, "tasks.create", { task: { project_id: b.demo.id, title: "Second" } }))
+      const made = answer(yield* call(b.host.id, "tasks.create", { task: { project_id: b.demo.id, title: "Second" } }))
       yield* until(boardAtom, (x) => x.tasks[made.id]?.title === "Second")
     }).pipe(Effect.scoped),
   )
 
-  it.live("rpc rejects with the tagged error a host fails with", () =>
+  it.live("a call fails with the tagged error a host fails with", () =>
     Effect.gen(function* () {
       const { b } = yield* setUp
-      const e = yield* rejection(() => rpc(b.host.id, "tasks.get", { id: "NOPE-1" }))
+      const e = failure(yield* call(b.host.id, "tasks.get", { id: "NOPE-1" }))
       expect(isTagged(e, "NotFound")).toBe(true)
       expect(isTagged(e, "Conflict")).toBe(false)
     }).pipe(Effect.scoped),
@@ -94,14 +98,14 @@ describe("the fake host", () => {
   it.live("a call it does not expect fails, and is kept to fail the check, unless allowed", () =>
     Effect.gen(function* () {
       const { b, host } = yield* setUp
-      yield* rejection(() => rpc(b.host.id, "pens.list", { profile_id: b.me.id }))
+      expect(failure(yield* call(b.host.id, "pens.list", { profile_id: b.me.id }))).toBeDefined()
       expect(host.missed).toEqual(["pens.list"])
       host.allow(/^attachments\./)
-      yield* rejection(() => rpc(b.host.id, "attachments.get", { id: AttachmentId.make("a"), name: "x" }))
+      expect(failure(yield* call(b.host.id, "attachments.get", { id: AttachmentId.make("a"), name: "x" }))).toBeDefined()
       expect(host.missed).toEqual(["pens.list"])
       // A handler of the check's own answers it.
       host.on("pens.list", () => [])
-      expect(yield* Effect.promise(() => rpc(b.host.id, "pens.list", { profile_id: b.me.id }))).toEqual([])
+      expect(answer(yield* call(b.host.id, "pens.list", { profile_id: b.me.id }))).toEqual([])
     }).pipe(Effect.scoped),
   )
 })

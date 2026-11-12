@@ -1,5 +1,4 @@
-import { useAtomMount, useAtomValue } from "@effect/atom-react"
-import { Cause, Effect, Exit, Schema } from "effect"
+import { Cause, Effect, Exit } from "effect"
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity"
 import { type CallError, type Methods, mutate } from "@huntaway/client"
 import { useCallback, useState } from "react"
@@ -9,17 +8,9 @@ import { registry } from "./registry"
 // handler, its state (waiting, the failure by tag) the component's own. What it changes comes back as the board's
 // events, and the queries of its group are read again (invalidate.ts); its answer is not written anywhere.
 
-/** A component's action failed: `failure` is what it failed with (a host's tagged error, mostly). */
-class ActionFailed extends Schema.TaggedError<ActionFailed, { readonly brand: unique symbol }>()("ActionFailed", { failure: Schema.Unknown }) {}
-
-const isActionFailed = Schema.is(ActionFailed)
-
-/** What a component's action runs: the effect it was given, its exit already passed to whoever waits for it. */
-type Job = Effect.Effect<void, ActionFailed, AtomRegistry.AtomRegistry>
-
 /**
- * Runs `effect` through the page's registry (no runtime of its own) and gives its exit: for module-level code (the
- * notifier, push) that is not a component. The promise never rejects.
+ * Runs `effect` through the page's registry (no runtime of its own) and gives its exit: what `useAction` runs, and what
+ * module-level code that is not a component (the notifier, push) calls with. The promise never rejects.
  */
 export function runExit<A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>): Promise<Exit.Exit<A, E>> {
   const { promise, resolve } = Promise.withResolvers<Exit.Exit<A, E>>()
@@ -46,31 +37,22 @@ export function failureOf(result: AsyncResult.AsyncResult<unknown, unknown>): un
 /**
  * A component's own action: `run(effect)` runs an effect (one call, or a few in order) and resolves with its exit,
  * never rejecting; `state` is whether it is running and why it failed. Runs don't wait for each other, and `busy` is
- * true while any runs. The state is this component's, not shared with others running the same calls.
+ * true while any runs. The state is this component's, not shared with others running the same calls; a run is the
+ * page's, not the component's, so it goes on when the component goes (a dialog closed while its save is on its way, a
+ * set of tasks still being made): interrupting it would interrupt the call on the host too.
  */
 export function useAction(): readonly [ActionState, <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>) => Promise<Exit.Exit<A, E>>] {
-  const [fn] = useState(() => Atom.fn<Job>()((job) => job, { concurrent: true }))
-  useAtomMount(fn)
-  const result = useAtomValue(fn)
-  const run = useCallback(
-    <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>): Promise<Exit.Exit<A, E>> => {
-      const { promise, resolve } = Promise.withResolvers<Exit.Exit<A, E>>()
-      registry.set(
-        fn,
-        Effect.exit(effect).pipe(
-          Effect.tap((exit) => Effect.sync(() => resolve(exit))),
-          Effect.flatMap((exit) =>
-            Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause) ? Effect.void : Effect.fail(new ActionFailed({ failure: Cause.squash(exit.cause) })),
-          ),
-        ),
-      )
-      return promise
-    },
-    [fn],
-  )
-  const failed = failureOf(result)
-  const failure = isActionFailed(failed) ? failed.failure : failed
-  return [{ busy: result.waiting, error: failure === undefined ? null : errorText(failure), failure }, run]
+  const [own, setOwn] = useState<{ readonly running: number; readonly failure: unknown }>({ running: 0, failure: undefined })
+  const run = useCallback(<A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>): Promise<Exit.Exit<A, E>> => {
+    setOwn((s) => ({ running: s.running + 1, failure: undefined }))
+    return runExit(effect).then((exit) => {
+      const failed = Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+      setOwn((s) => ({ running: s.running - 1, failure: failed ? Cause.squash(exit.cause) : s.failure }))
+      return exit
+    })
+  }, [])
+  const { running, failure } = own
+  return [{ busy: running > 0, error: failure === undefined ? null : errorText(failure), failure }, run]
 }
 
 /**
