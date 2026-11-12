@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
+import { Context, type Duration, Effect, FileSystem, Layer, Option, Path, Schedule, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Invalid, Project, ProjectId } from "@huntaway/contracts"
 import type { Conflict, NewProject, ProfileId, ProjectPatch, Timestamp } from "@huntaway/contracts"
@@ -77,6 +77,11 @@ export interface ProjectsShape {
   readonly delete: (id: ProjectId) => Effect.Effect<void, ProjectNotFound | Conflict>
   /** Read `is_git` and `has_commits` from its folder again; emits `project` when they changed. */
   readonly refreshGit: (id: ProjectId) => Effect.Effect<Project, ProjectNotFound>
+  /**
+   * `refreshGit` for every project (`all`), or only those that want worktrees and weren't ready for them (`unready`): what
+   * the old board read from the folder on every read of a project. The `gitSweeper` loop runs it.
+   */
+  readonly refreshGits: (which: "all" | "unready") => Effect.Effect<void>
   // 6.11: relocation (`git/Relocation`) and the fingerprint recorder.
   /**
    * `update` with a new folder: under the project's lock, the rest of the patch is checked (written and rolled back),
@@ -388,6 +393,12 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
         )
       })
 
+      const refreshGits = Effect.fn("Projects.refreshGits")(function* (which: "all" | "unready") {
+        const ids = which === "all" ? (yield* repo.folders).map((p) => p.id) : yield* repo.unready
+        // One deleted meanwhile has nothing to refresh.
+        yield* Effect.forEach(ids, (id) => Effect.ignore(refreshGit(id)), { concurrency: 1, discard: true })
+      })
+
       // ---- 6.11: relocation and fingerprints ----
 
       const relocate = <E>(id: ProjectId, patch: ProjectPatch, move: (before: Project) => Effect.Effect<Relocated, E>) =>
@@ -454,6 +465,7 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
         preview,
         delete: remove,
         refreshGit,
+        refreshGits,
         relocate,
         fingerprint: (dir) => fingerprint(dir),
         repoRoot: repo.repoRoot,
@@ -478,4 +490,28 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
       )
     }),
   )
+
+  /**
+   * The git facts' sweep (docs/plan/04-database.md: `is_git` and `has_commits` are columns): a project that wants worktrees
+   * and isn't ready for them every `UNREADY_SWEEP` (its board says so until it is, as the old setup view looked again
+   * every 3 s), and every project every `GIT_SWEEP`. A change is a `project` event, so the board follows.
+   */
+  static readonly gitSweeper = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const projects = yield* Projects
+      const sweep = (which: "all" | "unready", every: Duration.Input) =>
+        projects.refreshGits(which).pipe(
+          Effect.catchCause((cause) => Effect.logWarning("refreshing the projects' git facts", cause)),
+          Effect.repeat(Schedule.spaced(every)),
+          Effect.forkScoped,
+        )
+      yield* sweep("unready", UNREADY_SWEEP)
+      yield* sweep("all", GIT_SWEEP)
+    }),
+  )
 }
+
+/** How often a project waiting to be ready for worktrees is looked at again. */
+export const UNREADY_SWEEP = "3 seconds"
+/** How often every project's git facts are read again. */
+export const GIT_SWEEP = "5 minutes"

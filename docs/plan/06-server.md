@@ -160,7 +160,10 @@ and moving worktrees and sessions with it.
   (`LaunchFacts.claude`/`codex`, before the project is read) wait on. No polling. `isMoving` is for tests.
 - **Fingerprints.** `Worktrees.setup` records the project's fingerprint once its folder is a repository (the old
   `record_fingerprint`). `Projects.recorder` (Main's `ProjectLoops`, beside `RunLoops`/`PrLoops`, so tests run a pass
-  themselves) records them at start and hourly.
+  themselves) records them at start and hourly. Beside it since 9.2, `Projects.gitSweeper` reads `is_git` and
+  `has_commits` again (`refreshGits`, over `ProjectRepo.unready`): every 3 s for a project that wants worktrees and
+  isn't ready for them, every 5 minutes for all, so a folder that becomes a repository gets worktrees (nothing read them
+  again after a project was made).
 - **Tests.** `git/Relocation.test.ts` has every case of the old `git/relocate/tests.test.ts` and the old
   `worktree_files.test.ts` case that moved a repository with its links. Changed: the two key races can't be interleaved
   as the old ones were (the key is checked where it's stored): one key goes to one project whichever commits first, and

@@ -128,7 +128,7 @@ indexes and JSON shapes. The new schema is that, with these changes. A table not
 | `settings` key `approval_rules:<profile id>` | `profiles.approval_rules` (JSON, null = the defaults)                                          |
 | `settings` keys holding secrets (`vapid_private_key`, `telemetry_password`); `links.token`; `automations.token`/`secret`; `agent_configs.api_key`/`management_key`; `profiles.asana_token`; docs-site tokens | Stay where they are, but only their repository selects them, and it returns `Redacted` values. No general-purpose query reads those columns, and no wire schema has a field for them |
 | `mcp_calls.status` default `pending`  | `executing` or `done` only                                                                            |
-| `projects.is_git`, `has_commits` (read from disk on every row) | Columns, refreshed when the project is read for a run, on a `git` action and by a slow sweep |
+| `projects.is_git`, `has_commits` (read from disk on every row) | Columns, refreshed when the project is read for a run, on a `git` action and by a slow sweep. As built (9.2): on create and update, and by `Projects.gitSweeper` (Main's `ProjectLoops`): every 3 s for a project that wants worktrees and isn't ready for them (the old setup view looked again as often), every 5 minutes for all |
 
 ### New
 

@@ -643,8 +643,8 @@ export const AutomationLoops = Scheduler.loop
 export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
 
 /** Every area's services, and their loops. */
-/** 6.11: the fingerprint recorder: what each project's folder is, until its history is known (now, then hourly). */
-export const ProjectLoops = Projects.recorder
+/** 6.11: the fingerprint recorder (what each project's folder is, until its history is known: now, then hourly); 9.2: the git facts' sweep. */
+export const ProjectLoops = Layer.mergeAll(Projects.recorder, Projects.gitSweeper)
 
 export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, PlatformLoops, Terminals.reaper /* 6.1 */).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),

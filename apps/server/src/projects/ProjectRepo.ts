@@ -85,6 +85,8 @@ export interface ProjectRepoShape {
   readonly unrecorded: Effect.Effect<ReadonlyArray<{ readonly id: ProjectId; readonly repo_path: string; readonly repo_root: string | null }>>
   /** Records `root` as what the project's folder is, unless the project has moved to another folder meanwhile. */
   readonly recordRoot: (id: ProjectId, repoPath: string, root: string) => Effect.Effect<void>
+  /** The projects not archived that want worktrees and whose folder wasn't ready for them when last looked at. */
+  readonly unready: Effect.Effect<ReadonlyArray<ProjectId>>
 }
 
 /** The `projects` table. */
@@ -152,6 +154,11 @@ export class ProjectRepo extends Context.Service<ProjectRepo, ProjectRepoShape>(
           SELECT id, repo_path, repo_root FROM projects WHERE repo_root IS NULL OR repo_root IN ('', 'git')`.pipe(Effect.orDie),
         recordRoot: (id, repoPath, root) =>
           sql`UPDATE projects SET repo_root = ${root} WHERE id = ${id} AND repo_path = ${repoPath}`.pipe(Effect.asVoid, Effect.orDie),
+        unready: sql<{ readonly id: ProjectId }>`
+          SELECT id FROM projects WHERE use_worktrees = 1 AND (is_git = 0 OR has_commits = 0) AND archived_at IS NULL`.pipe(
+          Effect.map((rows) => rows.map((r) => r.id)),
+          Effect.orDie,
+        ),
       })
     }),
   )

@@ -120,6 +120,29 @@ describe("Projects", () => {
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 
+  // 9.2 (newTaskTokens' "a repository that becomes git's after the board loads gets worktrees"): nothing read the git
+  // facts again after a project was made, so a folder that became a repository never got worktrees.
+  it.live("the git sweep reads again the folders not ready for worktrees, or every project's, and says what changed", () =>
+    Effect.gen(function* () {
+      const { projects, profile, dir, make } = yield* setup
+      const later = yield* make("later")
+      const plain = yield* projects.create({ profile_id: profile.id, repo_path: `${dir}/plain`, use_worktrees: false })
+      for (const p of [later, plain]) {
+        yield* git(p.repo_path, ["init", "-q"])
+        yield* git(p.repo_path, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first"])
+      }
+      const facts = (p: Project) => Effect.map(projects.get(p.id), (q) => [q.is_git, q.has_commits])
+      const watch = yield* (yield* Events).watch(undefined)
+      yield* projects.refreshGits("unready")
+      assert.deepStrictEqual(yield* facts(later), [true, true])
+      assert.deepStrictEqual(yield* facts(plain), [false, false], "one that doesn't want worktrees waits for the slow sweep")
+      const [event] = yield* watch.live.pipe(Stream.take(1), Stream.runCollect)
+      assert.deepStrictEqual(event?.type === "project" ? [event.project.id, event.project.is_git] : null, [later.id, true])
+      yield* projects.refreshGits("all")
+      assert.deepStrictEqual(yield* facts(plain), [true, true])
+    }).pipe(Effect.scoped, Effect.provide(TestBoard())),
+  )
+
   // no_project_can_have_the_assistants_key, and keys derived clear of the profile's
   it.live("no project can have the assistant's key; a derived key steers clear of the profile's", () =>
     Effect.gen(function* () {
