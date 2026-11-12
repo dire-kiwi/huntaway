@@ -49,6 +49,18 @@ const noEffect = {
   message: "Plain TypeScript: the hooks load this per tool call, so it does not import effect.",
 }
 
+/** The component folders still as step 1 left them (see the override below). */
+const stepOne = [
+  "apps/web/src/components/board/**",
+  "apps/web/src/components/changes/**",
+  "apps/web/src/components/docs/**",
+  "apps/web/src/components/layout/**",
+  "apps/web/src/components/settings/**",
+  "apps/web/src/components/task/**",
+  "apps/web/src/components/ui/**",
+  "apps/web/src/components/boardHelpers.ts",
+]
+
 export default defineConfig({
   fmt: {
     printWidth: 160,
@@ -140,16 +152,18 @@ export default defineConfig({
           "react/exhaustive-deps": "error",
           // Off: the components use React's automatic JSX runtime (`"jsx": "react-jsx"`), which needs no React in scope.
           "react/react-in-jsx-scope": "off",
-          // Event handlers and DOM timers.
-          "effecttsgo/async-function": "off",
-          "effecttsgo/global-date": "off",
-          "effecttsgo/global-timers": "off",
           "no-restricted-imports": restrict([
             noTesting,
             { group: ["effect/rpc", "effect/rpc/*", "effect/http", "effect/http/*"], message: "Components read atoms; they do not call the server." },
             { group: ["@huntaway/client/*"], message: "Components use @huntaway/client's public atoms and types only." },
           ]),
         },
+      },
+      // Step 1 of the components (docs/plan/09-frontend.md): what is still as step 1 left it keeps async handlers, `Date`
+      // and DOM timers. A folder leaves this list when step 2 has moved it onto atoms, and the list goes with the last.
+      {
+        files: stepOne,
+        rules: { "effecttsgo/async-function": "off", "effecttsgo/global-date": "off", "effecttsgo/global-timers": "off" },
       },
       // Entry points provide layers and read the environment.
       {
