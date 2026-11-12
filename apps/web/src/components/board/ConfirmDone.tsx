@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react"
-import { taskKey, type HostTask as Task } from "@huntaway/client"
+import { Exit } from "effect"
+import { callRpc, taskKey, type HostTask as Task } from "@huntaway/client"
 import type { Resolution } from "@huntaway/contracts"
-import { rpc } from "../../state/rpc"
+import { useAction } from "../../state/mutation"
 import { useProject } from "../boardHelpers"
 import { Button, Modal, ModalFooter, prLabel, RESOLUTION_LABELS } from "../ui"
 import { keyList, openIncomingNow } from "./MergesInto"
@@ -15,31 +16,32 @@ import { openLevelsNow } from "./StackedOn"
  */
 export function useConfirmDone() {
   const [asking, setAsking] = useState<{ task: Task; resolution: Resolution; incoming: Task[]; levels: Task[]; answer: (go: boolean) => void } | null>(null)
-  const confirmDone = useCallback(async (task: Task, resolution: Resolution = "done") => {
-    if (task.status === "done") return true
-    const incoming = openIncomingNow(task.id)
-    // And the stack levels on it.
-    const levels = openLevelsNow(task.id)
-    const ask = () => {
-      const { promise, resolve: answer } = Promise.withResolvers<boolean>()
-      setAsking((before) => {
-        // Asked about another task meanwhile: that move doesn't happen.
-        before?.answer(false)
-        return { task, resolution, incoming, levels, answer }
-      })
-      return promise
-    }
-    // Closed without being merged: the tasks merging into it wait for you.
-    if (resolution !== "done") return incoming.length || levels.length ? ask() : true
-    // With Done, whether the task's work is merged (its branch, or its pull request on GitHub). A check that fails
-    // doesn't stop the move.
-    if (task.kind !== "task" || !task.project_id || task.task_type) return true
-    const unmerged = await rpc(task.host_id, "tasks.unmerged", { id: task.id }).then(
-      (r) => r.unmerged,
-      () => false,
-    )
-    return unmerged ? ask() : true
-  }, [])
+  // The check of the task's work, a read made as it's moved (not a query: it's asked again each time).
+  const [, check] = useAction()
+  const confirmDone = useCallback(
+    (task: Task, resolution: Resolution = "done"): Promise<boolean> => {
+      if (task.status === "done") return Promise.resolve(true)
+      const incoming = openIncomingNow(task.id)
+      // And the stack levels on it.
+      const levels = openLevelsNow(task.id)
+      const ask = () => {
+        const { promise, resolve: answer } = Promise.withResolvers<boolean>()
+        setAsking((before) => {
+          // Asked about another task meanwhile: that move doesn't happen.
+          before?.answer(false)
+          return { task, resolution, incoming, levels, answer }
+        })
+        return promise
+      }
+      // Closed without being merged: the tasks merging into it wait for you.
+      if (resolution !== "done") return incoming.length || levels.length ? ask() : Promise.resolve(true)
+      // With Done, whether the task's work is merged (its branch, or its pull request on GitHub). A check that fails
+      // doesn't stop the move.
+      if (task.kind !== "task" || !task.project_id || task.task_type) return Promise.resolve(true)
+      return check(callRpc(task.host_id, "tasks.unmerged", { id: task.id })).then((exit) => (Exit.isSuccess(exit) && exit.value.unmerged ? ask() : true))
+    },
+    [check],
+  )
   const close = (go: boolean) => {
     asking?.answer(go)
     setAsking(null)

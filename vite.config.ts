@@ -51,9 +51,6 @@ const noEffect = {
 
 /** The component files still as step 1 left them (see the override below), by the part of step 2 that takes them off. */
 const stepOne = [
-  // board/ and boardHelpers.ts
-  "apps/web/src/components/board/**",
-  "apps/web/src/components/boardHelpers.ts",
   // docs/: what runs inside the sandboxed page frame, as source, where Effect's timers aren't (its selection debounce)
   "apps/web/src/components/docs/docFrame.ts",
   // changes/

@@ -1,7 +1,8 @@
+import { useAtom } from "@effect/atom-react"
 import { useLayoutEffect, useRef, useState, type UIEvent } from "react"
-import { Status } from "@huntaway/contracts"
-import { Schema } from "effect"
-import { columnKey } from "./model"
+import type { Status } from "@huntaway/contracts"
+import { boardColumnAtom } from "../../../state/prefs"
+import { after } from "../../../state/timers"
 
 /** The columns' elements that have been scrolled to a column once: after that they scroll smoothly. */
 const shownColumns = new WeakSet<HTMLElement>()
@@ -19,10 +20,10 @@ export function useBoardColumn({
   count: (status: Status) => number
   total: number
 }) {
-  const [column, setColumn] = useState<Status | null>(() => {
-    const kept = localStorage.getItem(columnKey(boardKey))
-    return Schema.is(Status)(kept) ? kept : null
-  })
+  // The one picked, kept in this browser (`ia.board.column.<board>`); until then, the one settled on below (not kept).
+  const [picked, setPicked] = useAtom(boardColumnAtom(boardKey))
+  const [settled, setColumn] = useState<Status | null>(null)
+  const column = picked ?? settled
 
   // The narrow layout's board shows one column at a time, picked above it or by swiping sideways: the one picked
   // last, while it's shown. Until one is picked, what needs attention, or else the first column with tasks.
@@ -43,11 +44,8 @@ export function useBoardColumn({
    * busy phone it can take a while to get going, and a column it had barely left took back over (HA-92). Without
    * scrollend (Safari before 26), until the scroll has had time to end.
    */
-  const scrollingTo = useRef<{ index: number; timer?: ReturnType<typeof setTimeout> | undefined } | null>(null)
-  const pickColumn = (s: Status) => {
-    setColumn(s)
-    localStorage.setItem(columnKey(boardKey), s)
-  }
+  const scrollingTo = useRef<{ index: number; cancel?: (() => void) | undefined } | null>(null)
+  const pickColumn = (s: Status) => setPicked(s)
   useLayoutEffect(() => {
     const el = columnsEl
     if (!el || columnIndex < 0) return
@@ -58,8 +56,11 @@ export function useBoardColumn({
     const left = columnIndex * el.clientWidth
     if (Math.abs(el.scrollLeft - left) <= 1) return
     if (smooth) {
-      clearTimeout(scrollingTo.current?.timer)
-      scrollingTo.current = { index: columnIndex, timer: "onscrollend" in window ? undefined : setTimeout(() => (scrollingTo.current = null), 800) }
+      scrollingTo.current?.cancel?.()
+      scrollingTo.current = {
+        index: columnIndex,
+        cancel: "onscrollend" in window ? undefined : after(800, () => (scrollingTo.current = null)),
+      }
     }
     el.scrollTo({ left, behavior: smooth ? "smooth" : "instant" })
   }, [columnIndex, columnsEl])

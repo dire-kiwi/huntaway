@@ -19,20 +19,12 @@ export const VIEWS = [
   { id: "graph", label: "Graph", icon: Network, title: "Graph view: which tasks led to which, and what waits on what" },
 ] as const
 export type BoardView = (typeof VIEWS)[number]["id"]
-export const isView = (v: string | null): v is BoardView => VIEWS.some((x) => x.id === v)
-export const VIEW_KEY = "ia.boardView"
+// The view, the sort, whether Backlog and Archived are open and the narrow layout's column are kept in this browser
+// as state/prefs.ts has them (`boardViewAtom`, `boardSortAtom`, `backlogAtom`, `archivedSectionAtom`, `boardColumnAtom`).
 // How wide a board has to be for every view's name to show in the view switch (see `labelled` in ViewToggle).
 export const WIDE_VIEWS = 1500
-// Whether the kanban board's Backlog column is open (it starts collapsed), on this client.
-export const BACKLOG_KEY = "ia.board.backlog"
-// Whether the list view's Archived section is open (it starts collapsed), on this client.
-export const ARCHIVED_KEY = "ia.board.archived"
 // How wide a board has to be for its search, filter and sort controls to go in its header (see TaskBoard).
 export const WIDE_BOARD = 1180
-// How the boards sort their tasks, on this client.
-export const SORT_KEY = "ia.board.sort"
-// The column each board shows in the narrow layout (one at a time), on this client.
-export const columnKey = (board: string) => `ia.board.column.${board}`
 // Each board's search and filters, in this tab (so they last over a reload, and don't stay on forever).
 export const queryKey = (board: string) => `ia.board.query.${board}`
 
