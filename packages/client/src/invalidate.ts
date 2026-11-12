@@ -2,7 +2,6 @@ import { Context, Effect, Hash } from "effect"
 import { Atom, type AtomRegistry, Reactivity } from "effect/reactivity"
 import { TaskId } from "@huntaway/contracts"
 import { docsKey, type HostBoard } from "./board/hostBoard.ts"
-import type { HostBoard } from "./board/hostBoard.ts"
 import { isAssistant } from "./logic/assistant.ts"
 import type { Methods } from "./rpc.ts"
 
@@ -56,6 +55,8 @@ const fanoutState = (board: HostBoard, id: string): string => {
     .filter((t) => t.fanout_id === fanout)
     .map((t) => `${t.id}:${t.status}:${t.running}:${t.worktree_state}`)
     .join(",")
+}
+
 /** Whether a profile's assistant is running a turn (its memory changes with its turns). */
 const assistantRunning = (board: HostBoard, profile: string): string => {
   for (const t of board.tasks.values()) if (t.profile_id === profile && isAssistant(t)) return String(t.running)
@@ -91,7 +92,6 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   "admin.status": (board) => board.boot,
   // What a host's settings sync lists changes with its settings (the old SettingsSyncRow read it again on them).
   "settingsSync.get": (board) => Hash.hash(board.settings),
-  "git.taskDiff": (board, p) => taskState(board, p.id),
   // 6.7: a profile's approval rules and action log, on its `approval_rules` and `approval_log` events.
   "approvalRules.get": (board, p) => board.approvalRules.get(`rules ${p.profile_id}`) ?? 0,
   "approvalRules.log": (board, p) => board.approvalRules.get(`log ${p.profile_id}`) ?? 0,
