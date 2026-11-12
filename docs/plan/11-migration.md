@@ -305,9 +305,9 @@ in a temp folder; every reading RPC is called and every changing RPC is attempte
 folder must be byte for byte what they were, the recording `Proc` must have seen only the allowed git commands, and
 the recording `HttpClient` nothing.
 
-As built in 9.1 (HE-8): `apps/server/src/ReadOnlyMain.test.ts`, over `@huntaway/testing`'s `importedFolder` (until the
-importer converts boards, a board built with the server's own services on a file database, with `import.json` written
-beside it; the seam is that one function). The RPCs come from the contract: every read with a payload from the test's
+As built in 9.1 (HE-8): `apps/server/src/ReadOnlyMain.test.ts`, over `@huntaway/testing`'s `importedFolder`: an old board made
+from the old schema, its task's worktree in the old folder, imported with `import-legacy --rehearsal --check` (or for the
+guard's switch case without `--rehearsal`). The RPCs come from the contract: every read with a payload from the test's
 table (a read without one fails the test), every change with none, through the RPC server in process without
 serialization, so `Auth` sees each. The recording is under the read-only server: the machine's spawner and an HTTP
 client the read-only graph must replace. A second case gives the handlers an `Auth` that lets everything through and
