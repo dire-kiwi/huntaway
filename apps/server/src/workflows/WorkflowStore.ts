@@ -23,7 +23,7 @@ import type { RunState } from "./graph.ts"
 
 const EMPTY_GRAPH: WorkflowGraph = { nodes: [], edges: [] }
 
-const WorkflowRow = Schema.Struct({
+export const WorkflowRow = Schema.Struct({
   id: WorkflowId,
   project_id: ProjectId,
   name: Schema.String,
@@ -33,7 +33,7 @@ const WorkflowRow = Schema.Struct({
   updated_at: Timestamp,
 })
 
-const RunRow = Schema.Struct({
+export const RunRow = Schema.Struct({
   id: WorkflowRunId,
   workflow_id: WorkflowId,
   task_id: TaskId,

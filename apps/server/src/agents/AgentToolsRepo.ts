@@ -31,7 +31,7 @@ export interface ThreadTools {
 
 const Strings = Schema.Array(Schema.String)
 
-const SkillRowSchema = Schema.Struct({
+export const SkillRowSchema = Schema.Struct({
   id: SkillId,
   project_id: Schema.NullOr(ProjectId),
   name: Schema.String,
@@ -42,7 +42,7 @@ const SkillRowSchema = Schema.Struct({
   created_at: Schema.String,
   updated_at: Schema.String,
 })
-const ServerRowSchema = Schema.Struct({
+export const ServerRowSchema = Schema.Struct({
   id: McpServerId,
   project_id: Schema.NullOr(ProjectId),
   name: Schema.String,
@@ -52,7 +52,7 @@ const ServerRowSchema = Schema.Struct({
   created_at: Schema.String,
   updated_at: Schema.String,
 })
-const SourceRowSchema = Schema.Struct({
+export const SourceRowSchema = Schema.Struct({
   id: SkillSourceId,
   url: Schema.String,
   git_ref: Schema.NullOr(Schema.String),
@@ -64,8 +64,8 @@ const SourceRowSchema = Schema.Struct({
   notes: JsonColumn(Strings, []),
   created_at: Schema.String,
 })
-const SwitchRow = Schema.Struct({ scope_id: Schema.String, item_id: Schema.String, enabled: Bit })
-const OverridesRow = Schema.Struct({
+export const SwitchRow = Schema.Struct({ scope_id: Schema.String, item_id: Schema.String, enabled: Bit })
+export const OverridesRow = Schema.Struct({
   disabled_skills: JsonColumn(Strings, []),
   disabled_mcp_servers: JsonColumn(Strings, []),
   seen: JsonColumn(Schema.Record(Schema.String, Schema.Unknown), {}),

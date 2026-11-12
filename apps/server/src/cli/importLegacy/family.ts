@@ -23,8 +23,8 @@ export interface ImportContext {
   readonly now: string
 }
 
-/** A row as it is written: column name to the value SQLite stores. */
-export type NewRow = Readonly<Record<string, ColumnValue>>
+/** A row as it is written: column name to the value SQLite stores (bytes for a BLOB column). */
+export type NewRow = Readonly<Record<string, ColumnValue | Uint8Array>>
 
 /** How one new table's rows are checked before they are written. */
 export interface TableCheck {
