@@ -38,13 +38,15 @@ terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
-lifecycle     Reactor · Recovery · Board · Demo
+board         Board
+lifecycle     Reactor · Recovery · Demo
 transports    rpc/* · http/* · mcp/transport/*
 ```
 
 As built in M1 (HE-3): `hooks/` sits below everything and `prompts/` right after `platform/` (the structural test
 needs every folder placed). `lifecycle/Board` (the board snapshot and `board.watch`) reads every area, so it is in
-`lifecycle/`. `Pens` uses `Tasks` (a pen's thread is deleted with it) and `Tasks` uses `PenRepo`. `Profiles` and
+`lifecycle/`. (9.1, HE-8: it moved to an area of its own, `board/`, just above `lifecycle/`: the read-only server serves
+`board.watch`, and its imports must reach nothing under `lifecycle/`.) `Pens` uses `Tasks` (a pen's thread is deleted with it) and `Tasks` uses `PenRepo`. `Profiles` and
 `Projects` delete what hangs off them with SQL in their repositories, because they sit above `Tasks`; when runs,
 worktrees and terminals exist (M2 on), those deletes move up to `lifecycle/` or go through the reactor.
 
@@ -1247,6 +1249,47 @@ areas. It is made of the same services with four differences, and steps 4 to 6 a
 `host.info` reports `read_only: true`. The test that holds this is in
 [11-migration.md](11-migration.md#rehearsal); a structural test also fails if `ReadOnlyMain`'s imports reach a
 module under `lifecycle/` or a loop's layer.
+
+#### As built in 9.1 (HE-8)
+
+- **`ImportGuard`** (`platform/ImportGuard.ts`) is built by `bin.ts`'s `serve` over `ServerConfig` alone, before
+  anything else: no `import.json`, the board as usual; `rehearsal: true`, `ReadOnlyMain`; otherwise it fails with a
+  `StartupError` naming the process ids that have `<from>/<database>` open (`ImportRecord.processesWithOpen`) and saying
+  to stop the old server for good, or to stop this one and start only the old one. An `import.json` that does not read
+  is a `StartupError` too: a damaged rehearsal record must not start a board that acts.
+- **Listening address.** `--host`/`HUNTAWAY_HOST` has no default in the flags any more (`serveArgs`): the board takes
+  `0.0.0.0`, a rehearsal `127.0.0.1`, unless one was given.
+- **`ReadOnlyMain.ts`** is a second composition root (an entry point for the lint, as `Main.ts`). It builds the same
+  services as `Main.ts`, area by area, and none of their loops (pruners, sweepers, watchers, `UsageWindow.loop`,
+  `Scheduler.loop`, `Push.watcher`, `Projects.recorder`, `Telemetry.exporter`, `Lag.ticker`…), none of the layers that
+  register one area with another (`*.registered`, `AssistantHooks`, `Approvals.projectsDeleted`), no
+  `Profiles.ensureFromConfig`, and nothing of hosts, terminals, desktop, update, MCP, webhooks, the reactor, recovery
+  or the demo. `Supervisor` is left out too: the launcher is not told a rehearsal started, so it does not restart one
+  that crashed. `CodexQueries.readOnly` starts no Codex; `About.readOnly` reads the guard's record.
+- **Handlers**: the board's own handler layers for every group that has a read (so a read answers exactly as on the
+  board), between `refuseAll` (a handler for every RPC that dies with `RefusedOnReadOnly`: what an RPC without a read
+  handler meets, which the service test catches) and `refuseChanges` (the same over every RPC that is not a read, so
+  a change that got past `Auth` still meets a handler that does nothing). Groups with no read (`admin`, `desktop`,
+  `link`, `settingsSync`, `telemetry`, `terminal`, `tools`) are only refused, so nothing they need is built. `public.*`
+  and `hub.hosts.*` have read-only handlers of their own (`rpc/readOnly.ts`): the open token is never given, and the
+  directory is this host with any linked host offline; `hub.hosts.openRelay` is `Invalid`.
+- **`AuthReadOnly`** (`rpc/AuthLive.ts`): only the board token, as `read`. The hub token and a hub's sealed sessions are
+  `Unauthorized`: a rehearsal accepts no links.
+- **Processes**: `ReadOnlySpawner` (`platform/ReadOnly.ts`) is the spawner of the whole read-only graph (`Git`,
+  `Worktrees`, `Gh`, the shim… spawn without `Proc`), over the machine's; `Proc.readOnly` checks the same before it
+  runs. Both take git only, under `GIT_OPTIONAL_LOCKS=0`, with the plan's subcommands plus what the Changes tab, a
+  task's diff and the branch facts read: `rev-list`, `ls-tree`, and the reading forms of `stash` (`list`, `show`),
+  `worktree list`, `remote` (names, `get-url`; not `remote show`, which asks the remote), `symbolic-ref` (one
+  argument) and `config` (a key's value, the list). Before the subcommand only `-C`, a few printing options and a short
+  list of `-c` settings that turn things off (`core.fsmonitor=false`, `core.hooksPath=/dev/null`…) pass; after it,
+  `--output`, `--ext-diff` and `--exec*` do not. Everything else fails as `PermissionDenied` (`ProcFailed` through
+  `Proc`, "unavailable: … not run on a read-only server"), which each caller answers as it answers a command that
+  failed. `Proc.run`'s error type stays `ProcFailed` rather than the contract's `Unavailable`: callers match on it.
+- **Network**: `RefusingHttpClient` replaces whatever client the environment has.
+- **Structural test**: `tests/structure/read-only.test.ts` walks the graph for `lifecycle/`, and finds every loop's
+  layer from the sources (a class's static whose initialiser forks, `Effect.forkScoped`/`forkIn`/`forkDetach`/
+  `forkChild`, within at most the layer's own generator) and fails if a file of the graph names one. What it cannot
+  see: a loop a layer starts through a function the graph calls under another name.
 
 ## The CLI
 

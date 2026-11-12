@@ -8,10 +8,12 @@ import { StartupError } from "./StartupError.ts"
  * the one place the server's own environment is read.
  */
 export const serveFlags = {
+  // No default here: a rehearsal (a read-only server) listens on 127.0.0.1 unless told otherwise, any other on 0.0.0.0
+  // (`serveArgs`).
   host: Flag.String("host").pipe(
-    Flag.withDescription("Address to listen on"),
+    Flag.withDescription("Address to listen on (default 0.0.0.0; 127.0.0.1 for a read-only rehearsal)"),
     Flag.withFallbackConfig(Config.String("HUNTAWAY_HOST")),
-    Flag.withDefault("0.0.0.0"),
+    Flag.optional,
   ),
   port: Flag.Int("port").pipe(
     Flag.withDescription("Port to listen on (0 picks a free one)"),
@@ -163,7 +165,19 @@ export const SERVE_ENV = [
 /** Over the server's own environment (`extendEnv`), what removes `SERVE_ENV` from a child's. */
 const AGENT_ENV: Readonly<Record<string, undefined>> = Object.fromEntries(SERVE_ENV.map((name) => [name, undefined]))
 
-/** What the CLI parsed from `serveFlags`. */
+/** What the CLI parsed from `serveFlags`: the address only if `--host` or `HUNTAWAY_HOST` gave one. */
+export type ServeFlags = Omit<ServeArgs, "host"> & { readonly host: Option.Option<string> }
+
+/** The default listening address. */
+export const DEFAULT_HOST = "0.0.0.0"
+
+/** `flags` with the address they give, else `defaultHost` (`DEFAULT_HOST`; a rehearsal's is 127.0.0.1). */
+export const serveArgs = (flags: ServeFlags, defaultHost: string = DEFAULT_HOST): ServeArgs => ({
+  ...flags,
+  host: Option.getOrElse(flags.host, () => defaultHost),
+})
+
+/** `serveFlags` with the address resolved. */
 export interface ServeArgs {
   readonly host: string
   readonly port: number

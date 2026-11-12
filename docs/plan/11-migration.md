@@ -283,6 +283,11 @@ one of them is not enough:
 1. **Sessions.** Every session gets the scope `read` and no other, whatever token it presents. The `Auth`
    middleware then refuses every RPC that changes anything with `Forbidden`, as for any missing scope.
    `host.info` says `read_only: true` and the UI shows a banner with the board's name and when it was imported.
+   **The board token is still required** (9.1): read-only narrows a session's scopes, it does not open the board. There
+   is no open token on a rehearsal, whatever `--open-token` says, and the hub token and relayed sessions are refused (it
+   accepts no links). A rehearsal **listens on 127.0.0.1 unless told otherwise** (`--host`, `HUNTAWAY_HOST`): the
+   board's default of `0.0.0.0` does not apply to it. `host.info`'s `rehearsal` is `{ from, imported_at }`, the old
+   folder standing for the board's name (a rehearsal keeps no identity of the old host's).
 2. **Nothing is started.** No loop from the start-up list, no reactor, no `Recovery` reconcilers
    (`Merges`, `Dependencies`, `Reviews`, `WorkflowEngine.resume`, `Restack.resume`), no scheduler, automations, PR
    or merged watcher, pruners, sweepers, terminal reaper, usage, update checks, push, telemetry or settings sync.
@@ -290,13 +295,25 @@ one of them is not enough:
 3. **`Proc`.** Its read-only layer runs one program, `git`, with a fixed list of reading subcommands (`status`,
    `diff`, `log`, `show`, `rev-parse`, `merge-base`, `for-each-ref`, `ls-files`, `cat-file`) under
    `GIT_OPTIONAL_LOCKS=0`, so the Changes tab and history draw. Anything else fails with `Unavailable`: an agent,
-   the shim, tmux, `gh`, `ssh`, a script, a writing git command. Code reached by mistake cannot act.
+   the shim, tmux, `gh`, `ssh`, a script, a writing git command. Code reached by mistake cannot act. (As built, 9.1:
+   the Changes tab's status also reads `rev-list`, `stash list`, `remote` and `config <key>`, so the list has those
+   reading forms too, and `ls-tree`; the whole list is in [06-server.md](06-server.md#a-read-only-server).)
 4. **The network.** The `HttpClient` layer fails every request, and no outgoing socket is opened.
 
 A service test holds it: a board imported with `--rehearsal` from a fixture whose paths point at a real repository
 in a temp folder; every reading RPC is called and every changing RPC is attempted; then the repository and the old
 folder must be byte for byte what they were, the recording `Proc` must have seen only the allowed git commands, and
 the recording `HttpClient` nothing.
+
+As built in 9.1 (HE-8): `apps/server/src/ReadOnlyMain.test.ts`, over `@huntaway/testing`'s `importedFolder` (until the
+importer converts boards, a board built with the server's own services on a file database, with `import.json` written
+beside it; the seam is that one function). The RPCs come from the contract: every read with a payload from the test's
+table (a read without one fails the test), every change with none, through the RPC server in process without
+serialization, so `Auth` sees each. The recording is under the read-only server: the machine's spawner and an HTTP
+client the read-only graph must replace. A second case gives the handlers an `Auth` that lets everything through and
+checks that every change dies in its handler without acting. `tests/e2e/rehearsal.test.ts` starts the launcher on a
+rehearsal folder (127.0.0.1 with no `--host`, `Unauthorized` without the token, `read_only`, `Forbidden` for
+`tasks.create`) and on a switch's folder while a process holds the old database open (exit 1, the guard's sentence).
 
 **What a rehearsal cannot show**, because showing it would be acting: a session resuming, a terminal, a worktree
 being made, a merge. Those are tried on a board made to be thrown away: the old repository's

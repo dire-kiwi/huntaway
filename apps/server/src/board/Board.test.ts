@@ -7,7 +7,7 @@ import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { Board } from "./Board.ts"
-import { Reactor } from "./Reactor.ts"
+import { Reactor } from "../lifecycle/Reactor.ts"
 
 const kinds = (messages: ReadonlyArray<BoardMessage>) => messages.map((m) => (m.type === "task" ? `task:${m.task.title}` : m.type))
 

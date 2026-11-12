@@ -78,6 +78,11 @@ export const HostInfo = Schema.Struct({
   capabilities: Schema.Array(Schema.String),
   /** A rehearsal: a server over an imported copy of the old board, which changes nothing outside its data folder. */
   read_only: Schema.Boolean,
+  /**
+   * On a rehearsal (`read_only`), the board it is a copy of: the old server's data folder it was imported from, and when
+   * (9.1; docs/plan/11-migration.md, Rehearsal). Absent elsewhere, and from hosts older than it.
+   */
+  rehearsal: Schema.optional(Schema.Struct({ from: Schema.String, imported_at: Timestamp })),
   commit: Schema.NullOr(Schema.String),
   updates_from: Schema.NullOr(UpdatesFrom),
   /** It can run agents, and which agents' CLIs it has. */

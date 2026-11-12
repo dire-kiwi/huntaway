@@ -1,6 +1,7 @@
 import { Context, Duration, Effect, Layer, Schema, Stream } from "effect"
 import type { PlatformError, Scope } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { isReadingGit, refusedCommand } from "./ReadOnly.ts"
 
 /** What is kept of a command's output, per stream. */
 export const MAX_OUTPUT = 16 * 1024 * 1024
@@ -44,36 +45,54 @@ const collect = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>)
  * Agents do not run through this: they run under ia-shim and outlive the server.
  */
 export class Proc extends Context.Service<Proc, ProcShape>()("huntaway-server/platform/Proc") {
-  static readonly layer = Layer.effect(
-    Proc,
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-      const run = Effect.fn("Proc.run")(function* (command: string, args: ReadonlyArray<string>, options: RunOptions = {}) {
-        const name = [command, ...args].join(" ").slice(0, 200)
-        const once: Effect.Effect<ProcResult, PlatformError.PlatformError, Scope.Scope> = Effect.gen(function* () {
-          const handle = yield* spawner.spawn(
-            ChildProcess.make(command, args, {
-              ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-              ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
-              ...(options.stdin === undefined ? {} : { stdin: Stream.make(new TextEncoder().encode(options.stdin)) }),
-            }),
-          )
-          const [stdout, stderr, code] = yield* Effect.all([collect(handle.stdout), collect(handle.stderr), handle.exitCode], { concurrency: 3 })
-          return { code: Number(code), stdout, stderr }
-        })
-        return yield* once.pipe(
-          Effect.scoped,
-          Effect.mapError((e) => new ProcFailed({ command: name, reason: e.message })),
-          Effect.timeoutOrElse({
-            duration: options.timeout ?? "60 seconds",
-            orElse: () =>
-              Effect.fail(
-                new ProcFailed({ command: name, reason: `timed out after ${Duration.format(Duration.fromInputUnsafe(options.timeout ?? "60 seconds"))}` }),
-              ),
+  /** Over the environment's spawner. */
+  static readonly make = Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+    const run = Effect.fn("Proc.run")(function* (command: string, args: ReadonlyArray<string>, options: RunOptions = {}) {
+      const name = [command, ...args].join(" ").slice(0, 200)
+      const once: Effect.Effect<ProcResult, PlatformError.PlatformError, Scope.Scope> = Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(command, args, {
+            ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+            ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
+            ...(options.stdin === undefined ? {} : { stdin: Stream.make(new TextEncoder().encode(options.stdin)) }),
           }),
         )
+        const [stdout, stderr, code] = yield* Effect.all([collect(handle.stdout), collect(handle.stderr), handle.exitCode], { concurrency: 3 })
+        return { code: Number(code), stdout, stderr }
       })
-      return Proc.of({ run })
+      return yield* once.pipe(
+        Effect.scoped,
+        Effect.mapError((e) => new ProcFailed({ command: name, reason: e.message })),
+        Effect.timeoutOrElse({
+          duration: options.timeout ?? "60 seconds",
+          orElse: () =>
+            Effect.fail(
+              new ProcFailed({ command: name, reason: `timed out after ${Duration.format(Duration.fromInputUnsafe(options.timeout ?? "60 seconds"))}` }),
+            ),
+        }),
+      )
+    })
+    return Proc.of({ run })
+  })
+
+  static readonly layer = Layer.effect(Proc, Proc.make)
+
+  /**
+   * A read-only server's (docs/plan/06-server.md, A read-only server): `git` with a reading subcommand
+   * (`platform/ReadOnly.ts`) under `GIT_OPTIONAL_LOCKS=0`; anything else fails without starting, as unavailable on a
+   * read-only server. It is built over the read-only spawner, which refuses the same for what spawns without `Proc`.
+   */
+  static readonly readOnly = Layer.effect(
+    Proc,
+    Effect.gen(function* () {
+      const proc = yield* Proc.make
+      return Proc.of({
+        run: (command, args, options = {}) =>
+          isReadingGit(command, args)
+            ? proc.run(command, args, { ...options, env: { ...options.env, GIT_OPTIONAL_LOCKS: "0" } })
+            : Effect.fail(new ProcFailed({ command: [command, ...args].join(" ").slice(0, 200), reason: `unavailable: ${refusedCommand(command, args)}` })),
+      })
     }),
   )
 }
