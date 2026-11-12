@@ -8,6 +8,8 @@ import { installServiceCommand } from "./cli/installService.ts"
 // 6.7: the Google consent step for the assistant's Google server.
 import { googleAuthCommand } from "./cli/googleAuth.ts"
 import { rpcCommand } from "./cli/rpc.ts"
+// 9.1: the importer of an old board.
+import { importLegacyCommand } from "./cli/importLegacy.ts"
 import { sshHostCommand } from "./cli/sshHost.ts"
 import { Releases } from "./update/Releases.ts"
 import { Supervisor } from "./update/Supervisor.ts"
@@ -91,6 +93,7 @@ const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
     serveCommand,
     tokenCommand,
     rpcCommand,
+    importLegacyCommand,
     sshHostCommand,
     installServiceCommand,
     // 6.9

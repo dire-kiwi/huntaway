@@ -14,3 +14,5 @@ export * from "./fakePush.ts"
 // 6.3
 export * from "./fakeDocsSite.ts"
 export * from "./fakeClickHouse.ts"
+// 9.1: an old board for the importer.
+export * from "./legacyBoard.ts"
