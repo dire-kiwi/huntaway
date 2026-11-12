@@ -2,6 +2,7 @@ import { Context, Effect } from "effect"
 import { Atom, type AtomRegistry, Reactivity } from "effect/reactivity"
 import { TaskId } from "@huntaway/contracts"
 import type { HostBoard } from "./board/hostBoard.ts"
+import { isAssistant } from "./logic/assistant.ts"
 import type { Methods } from "./rpc.ts"
 
 // What reads a query again (docs/plan/09-frontend.md, Queries, mutations, invalidation). A component never refetches
@@ -30,11 +31,26 @@ const taskState = (board: HostBoard, id: string): string => {
   return t ? `${t.running}:${t.worktree_state}` : ""
 }
 
+/** Whether a profile's assistant is running a turn (its memory changes with its turns). */
+const assistantRunning = (board: HostBoard, profile: string): string => {
+  for (const t of board.tasks.values()) if (t.profile_id === profile && isAssistant(t)) return String(t.running)
+  return ""
+}
+
 /** Per method, what of the board a query of it is read again on (none: only mutations and its own refresh). */
 export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
   "git.taskDiff": (board, p) => taskState(board, p.id),
+  // 6.7: a profile's approval rules and action log, on its `approval_rules` and `approval_log` events.
+  "approvalRules.get": (board, p) => board.approvalRules.get(`rules ${p.profile_id}`) ?? 0,
+  "approvalRules.log": (board, p) => board.approvalRules.get(`log ${p.profile_id}`) ?? 0,
+  // A task's documents (the assistant's brief), as one of them changes (its `document_at`).
+  "tasks.document": (board, p) => board.tasks.get(p.id)?.document_at ?? "",
+  // The assistant's memory, as a turn of its starts and ends (it may have changed its files).
+  "assistant.memory": (board, p) => assistantRunning(board, p.profile_id),
+  "assistant.memoryFile": (board, p) => assistantRunning(board, p.profile_id),
+  "assistant.memoryHistory": (board, p) => assistantRunning(board, p.profile_id),
 }
 
 /** The key a host's group is invalidated by. */
