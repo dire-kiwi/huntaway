@@ -21,7 +21,7 @@ import { Identity } from "./platform/Identity.ts"
 import { Listening } from "./platform/Listening.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
 import { releaseBuild, ServerConfig, serveArgs, serveFlags, VERSION } from "./platform/ServerConfig.ts"
-import type { ServeArgs, ServeFlags } from "./platform/ServerConfig.ts"
+import type { ServeFlags } from "./platform/ServerConfig.ts"
 // 9.1: the guard over an imported folder, and the read-only server a rehearsal is served by.
 import { ImportGuard } from "./platform/ImportGuard.ts"
 import { readOnlyServerLayer } from "./ReadOnlyMain.ts"
@@ -52,13 +52,16 @@ const ready = (port: number, identity: Identity["Service"]) =>
  */
 const serve = (flags: ServeFlags) =>
   Effect.gen(function* () {
-    const guard = yield* Effect.service(ImportGuard).pipe(Effect.provide(ImportGuard.layer.pipe(Layer.provide(ServerConfig.layerFrom(serveArgs(flags))))))
+    // The configuration is read once: it takes the launcher's restart file out of the environment as it does.
+    const config = yield* ServerConfig
+    const guard = yield* Effect.service(ImportGuard).pipe(Effect.provide(ImportGuard.layer))
+    if (!guard.readOnly) return yield* serveBoard
     // A rehearsal listens on this machine only unless `--host` (or HUNTAWAY_HOST) says otherwise.
-    return yield* guard.readOnly ? serveReadOnly(serveArgs(flags, "127.0.0.1"), guard) : serveBoard(serveArgs(flags))
-  })
+    return yield* serveReadOnly(guard).pipe(Effect.provideService(ServerConfig, Option.isSome(flags.host) ? config : { ...config, host: "127.0.0.1" }))
+  }).pipe(Effect.provide(ServerConfig.layerFrom(serveArgs(flags))))
 
 /** A rehearsal (`ReadOnlyMain`): it reads, starts nothing, changes nothing outside its folder, and calls nothing on the network. */
-const serveReadOnly = (args: ServeArgs, guard: ImportGuard["Service"]) =>
+const serveReadOnly = (guard: ImportGuard["Service"]) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig
     yield* exitFallback
@@ -72,28 +75,27 @@ const serveReadOnly = (args: ServeArgs, guard: ImportGuard["Service"]) =>
     )
     yield* ready(port, identity)
     return yield* Effect.never
-  }).pipe(Effect.scoped, Effect.provide(ServerConfig.layerFrom(args)))
+  }).pipe(Effect.scoped)
 
-const serveBoard = (args: ServeArgs) =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig
-    yield* exitFallback
-    const context = yield* Layer.build(serverLayer(config))
-    const server = Context.get(context, HttpServer.HttpServer)
-    const identity = Context.get(context, Identity)
-    // Only now, listening with the hubs dialled and discovery answering, has a release come up: it becomes current (the
-    // old server settled after listen, dial-out and discovery). One that fails before this stays `trying`, and the next
-    // start marks it bad and goes back (Releases.execInstalled).
-    yield* Context.get(context, Releases).settle
-    const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
-    // What runs are told to reach the server on: the port the listener got (`--port 0` asks for a free one).
-    yield* Context.get(context, Listening).bound(port)
-    yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
-    yield* ready(port, identity)
-    // From now on the launcher starts the server again if it crashes (step 6).
-    yield* Context.get(context, Supervisor).started
-    return yield* Effect.never
-  }).pipe(Effect.scoped, Effect.provide(ServerConfig.layerFrom(args)))
+const serveBoard = Effect.gen(function* () {
+  const config = yield* ServerConfig
+  yield* exitFallback
+  const context = yield* Layer.build(serverLayer(config))
+  const server = Context.get(context, HttpServer.HttpServer)
+  const identity = Context.get(context, Identity)
+  // Only now, listening with the hubs dialled and discovery answering, has a release come up: it becomes current (the
+  // old server settled after listen, dial-out and discovery). One that fails before this stays `trying`, and the next
+  // start marks it bad and goes back (Releases.execInstalled).
+  yield* Context.get(context, Releases).settle
+  const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
+  // What runs are told to reach the server on: the port the listener got (`--port 0` asks for a free one).
+  yield* Context.get(context, Listening).bound(port)
+  yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
+  yield* ready(port, identity)
+  // From now on the launcher starts the server again if it crashes (step 6).
+  yield* Context.get(context, Supervisor).started
+  return yield* Effect.never
+}).pipe(Effect.scoped)
 
 const serveCommand = Command.make("serve", serveFlags, serve).pipe(Command.withDescription("Run the board's server (the default)"))
 
