@@ -164,7 +164,7 @@ export function UsagePanel({ profile }: { profile: string | undefined }) {
                   {u.accounts && u.accounts.length > 0 && (
                     <div
                       className="space-y-0.5 border-l border-line pl-1.5"
-                      title="The proxy's accounts: each row above is the account's that resets first, unless it has used none"
+                      title="The proxy's accounts: each row above is the account's that resets first, of those that can still serve it, unless it has used none"
                     >
                       {u.accounts.map((a) => (
                         <AccountRow key={a.name} account={a} now={now} />
