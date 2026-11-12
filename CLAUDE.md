@@ -1,11 +1,10 @@
 # Huntaway on Effect
 
-Huntaway, a kanban board for orchestrating Claude Code and Codex agents, written again as one Effect v4 program. The old
-code (`dire-kiwi/huntaway`) is the specification of behaviour, not of structure. **[docs/plan/](docs/plan/README.md)
-is the plan** and the specification of this port: its pages say where everything goes, its
+Huntaway, a kanban board for orchestrating Claude Code and Codex agents, written again as one Effect v4 program.
+**[docs/plan/](docs/plan/README.md) is the plan** and the specification: its pages say where everything goes, its
 [inventory](docs/plan/inventory/README.md) is the checklist of behaviour, and
-[13-milestones.md](docs/plan/13-milestones.md) is the list of tasks. Where the plan is silent or turns out wrong,
-decide the way the old behaviour points and update the plan page in the same pull request.
+[13-milestones.md](docs/plan/13-milestones.md) is the list of tasks. Where the plan is silent or turns out wrong, decide
+and update the plan page in the same pull request.
 
 ## How code is written
 
@@ -30,7 +29,9 @@ the web and a model remember is v3, and the names differ (`Context.Service`, `Ef
 - This project's work is tracked on the Huntaway board (project `huntaway-effect`, keys `HE-<n>`).
 - A task that changes code gets one pull request into `main`: commit, push the task branch, open it with the gh tools'
   `pr_create`, and put its link in your summary. Use the `gh` MCP server's tools, not `gh` in Bash.
-- A pull request says, per plan task, what it did, what it left out and why, and what it did not verify.
+- Open the pull request with a title and a body that says what to try.
+- Commit messages: a short subject of about 72 characters or fewer ending with `(HE-<n>)`, e.g.
+  `Short commit and PR guidance in CLAUDE.md (HE-5)`, with any detail in the body.
 - When asked to merge: its checks passed on its head commit (`pr_checks`), GitHub reports no conflicts, then
   `pr_merge` as it stands. Don't merge `main` into the branch first unless it conflicts.
 
