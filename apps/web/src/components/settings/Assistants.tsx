@@ -1,6 +1,6 @@
 // Each profile's assistant's connections, in Settings (6.7): Google, on the host its assistant runs on (see
-// assistantHome). Telegram is dropped (docs/plan/14-dropped-and-open.md). An assistant on another host (and its uplink
-// note) is M7's (7.4): until then it is on the page's own host.
+// assistantHome), which says which host it's on when that's another (7.4), and whether its agents may use this board
+// (the link's `uplink`). Telegram is dropped (docs/plan/14-dropped-and-open.md).
 import { useMemo } from "react"
 import { useBoard } from "../../state/board"
 import { profileNames } from "../boardHelpers"
@@ -27,6 +27,7 @@ export function AssistantsPanel() {
 function AssistantCard({ profile }: { profile: string }) {
   const home = useAssistantHome(profile)
   const host = useBoard((s) => s.hosts.find((h) => h.id === home?.hostId))
+  const board = useBoard((s) => s.hosts.find((h) => h.local))
   if (!home) return null
   return (
     <div role="group" aria-label={`${profile}'s assistant`} className="rounded-xl border border-line">
@@ -35,6 +36,13 @@ function AssistantCard({ profile }: { profile: string }) {
         {host && !host.local && <span className="font-normal text-faint"> · on {host.name}</span>}
       </div>
       <div className="space-y-5 p-4">
+        {host && !host.local && (
+          <div className="text-[12.5px] text-muted">
+            {host.uplink
+              ? `Its agents can use ${board?.name ?? "this board"}'s projects and tasks, with the access their profile has here.`
+              : `Its agents can't use ${board?.name ?? "this board"}'s projects and tasks. Let them in Settings → Hosts (${host.name}).`}
+          </div>
+        )}
         {home.unavailable || !home.profileId ? (
           <div className="text-[12.5px] text-muted">{unavailableNote(profile, host?.name ?? "its host", home.unavailable ?? "no_profile")}</div>
         ) : (

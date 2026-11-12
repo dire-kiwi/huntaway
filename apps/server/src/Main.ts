@@ -107,6 +107,7 @@ import { SettingsSyncExchange } from "./hosts/SettingsSyncExchange.ts"
 import { SettingsSyncRepo } from "./hosts/SettingsSyncRepo.ts"
 import { Ssh } from "./hosts/Ssh.ts"
 import { Uplink } from "./hosts/Uplink.ts"
+import { AssistantHost } from "./hosts/AssistantHost.ts"
 import { LinkStreamRoute } from "./http/linkStream.ts"
 import { RelayRoute } from "./http/relay.ts"
 // 6.3: documents.
@@ -453,6 +454,7 @@ const HostLinksLive = Uplink.otherHosts.pipe(
 /** The rest of the hosts area, over the board's MCP area: the directory, the relay, tools called from other hosts, settings sync, discovery. */
 const HostsLive = Layer.mergeAll(
   Links.layer,
+  AssistantHost.layer,
   Relay.layer,
   HostTools.served,
   SettingsSyncExchange.layer,

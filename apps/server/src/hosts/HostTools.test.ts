@@ -26,7 +26,7 @@ import type { LinkMode } from "./LinkRepo.ts"
 //
 // Dropped, with why: `a_host_that_dials_in_under_a_dialled_hosts_id_isnt_taken_for_it`'s tunnel refusal and the
 // assistant's routed requests (the refusal is `LinkConnections`', tested in tests/e2e/hosts.test.ts; the assistant on
-// its host is 6.7's); `…_is_dropped_when_it_becomes_an_assistant_host` (`LinkConnections`', in the e2e hosts test);
+// its host is in tests/e2e/hosts-assistant.test.ts); `…_is_dropped_when_it_becomes_an_assistant_host` (`LinkConnections`', in the e2e hosts test);
 // `a_host_that_dials_in_takes_the_hub_as_an_up_link_too` and `a_hub_the_host_links_itself_is_asked_the_usual_way…` (which
 // hubs a host asks: `Uplink.otherHosts` over live connections, in the e2e test); `an_up_link_goes_with_its_connection`
 // is in Uplink.test.ts.

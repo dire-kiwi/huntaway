@@ -480,7 +480,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   Changed from the old checks: a tab of another area is waited for by its heading; `reviewerOptions` types its skills;
   `summarizers` no longer reads the single `summarizer`; `guide` opens the workflows page by its address (the old check
   followed the Workflows tab's link, 6.6's); the shortcut moved is the search field's (Triage isn't on this server).
-  Not ported: `databaseFile` (dropped), `worktreeSetup` (the board's setup thread, not a settings panel), `devices`
+  Not ported: `databaseFile` (dropped), `worktreeSetup` (the board's setup thread, not a settings panel: ported in HE-8 with `task/WorktreeSetup.tsx` in place of the board), `devices`
   (deferred), and the settings checks of other areas (`telemetry`, `skillSources`, `agentTools`, `automations`,
   `workflows*`, `githubClone`, `githubCreate`). With HE-6's parts: `hostRelease`, `hostUpdate`, `releaseUpdate` (the
   old `release-update`) and `nearbyHosts`, with `tests/ui/servers.mjs` answering `admin.*`, `hub.hosts.pushUpdate` and
@@ -754,10 +754,11 @@ thing to prove (T3 Code ships an Expo 58 app on Effect 4, which is good evidence
   go through `changes/git/useLoaded` with the trigger in the key; a memory file is read again through its `fetchFile`,
   which changes with the file's modified time; the Ctrl+S handler's ref is written in a layout effect; the rules
   dialog's rows have ids of their own, and a diff's lines are keyed by their text and its occurrence.
-- **Left for M7 (7.4).** A profile's assistant on another host: `assistantHome`'s offline and no-profile notes stay,
-  but the uplink note, the old `{ here: true }` and the Routines tab's "left behind" routines (`LeftBehind`) are gone.
+- **A profile's assistant on another host (7.4, HE-8).** `assistantHome`'s offline and no-profile notes, the settings
+  card's uplink note, `assistant.get` with `here: true` on the host it found, and the Routines tab's "left behind"
+  routines (`task/RoutinesLeftBehind.tsx`, the old `LeftBehind`, one line in `Routines.tsx`) are back.
 - **Checks.** `tests/ui/assistant.test.mjs` (every old case; the held save is `assistant.writeMemoryFile` held with
   `routeRpc`, and "Ctrl+S on today's empty log saves nothing" counts the page's calls), `brief.test.mjs` (every old
   case; the brief and the ratings answered with `routeRpc`) and `routines.test.mjs` (both old cases, on
   `--fake-claude`: a run makes its thread only where agents run, so the report is the fake agent's, not a failure).
-  Not ported: `assistantHost.test.mjs` (M7) and `reminders.test.mjs` (a task's reminders, not the assistant's).
+  `assistantHost.test.mjs` came with 7.4 (HE-8). Not ported: `reminders.test.mjs` (a task's reminders, not the assistant's).
