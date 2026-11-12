@@ -2,7 +2,8 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { SqlSchema } from "effect/sql"
 import { Db } from "../platform/Db.ts"
 
-const SettingRow = Schema.Struct({ key: Schema.String, value: Schema.String })
+/** A `settings` row. */
+export const SettingRow = Schema.Struct({ key: Schema.String, value: Schema.String })
 
 export interface SettingsRepoShape {
   /** Every row of `settings`, by key. */
