@@ -1,5 +1,7 @@
+import { useAtomValue } from "@effect/atom-react"
+import { Atom } from "effect/reactivity"
 import { useSyncExternalStore } from "react"
-import { createStore } from "./smallStore"
+import { registry } from "./state/registry"
 
 /**
  * The narrow layout, for phones: below this width the sidebar is a drawer, a board shows one column at a time and a
@@ -25,11 +27,24 @@ function useMedia(query: string) {
 export const useNarrow = () => useMedia(NARROW_QUERY)
 export const useTouch = () => useMedia(TOUCH_QUERY)
 
-/** Whether the narrow layout's sidebar drawer is open. */
-export const useDrawer = createStore<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({
-  open: false,
-  setOpen: (open) => set({ open }),
-}))
+/** Whether the narrow layout's sidebar drawer is open (the page's own state). */
+export const drawerOpenAtom: Atom.Writable<boolean> = Atom.make(false).pipe(Atom.keepAlive)
+
+interface DrawerState {
+  readonly open: boolean
+  readonly setOpen: (open: boolean) => void
+}
+
+const drawer = (open: boolean): DrawerState => ({ open, setOpen: (next) => registry.set(drawerOpenAtom, next) })
+
+function useDrawerOf<U>(selector: (d: DrawerState) => U): U {
+  return useAtomValue(drawerOpenAtom, (open) => selector(drawer(open)))
+}
+
+/** The drawer, read with a selector (`useDrawer((d) => d.open)`), and `useDrawer.getState().setOpen(…)` outside React. */
+export const useDrawer: { <U>(selector: (d: DrawerState) => U): U; getState: () => DrawerState } = Object.assign(useDrawerOf, {
+  getState: () => drawer(registry.get(drawerOpenAtom)),
+})
 
 /** iOS and iPadOS, which zoom in on a field whose text is smaller than 16px when it's focused. */
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
