@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { BoardRpcs, Invalid } from "@huntaway/contracts"
 import { PullRequests } from "../github/PullRequests.ts"
-import { Board } from "../lifecycle/Board.ts"
+import { Board } from "../board/Board.ts"
 
 export const BoardHandlers = BoardRpcs.toLayer(
   Effect.gen(function* () {

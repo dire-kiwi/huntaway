@@ -2,8 +2,8 @@ import { Console, Effect, Layer } from "effect"
 import { Command } from "effect/cli"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Proc } from "../platform/Proc.ts"
-import { ServerConfig, serveFlags } from "../platform/ServerConfig.ts"
-import type { ServeArgs } from "../platform/ServerConfig.ts"
+import { ServerConfig, serveArgs, serveFlags } from "../platform/ServerConfig.ts"
+import type { ServeArgs, ServeFlags } from "../platform/ServerConfig.ts"
 import { StartupError } from "../platform/StartupError.ts"
 import { installFromCli, keptEnv } from "../update/Service.ts"
 import { Systemd } from "../update/Systemd.ts"
@@ -23,8 +23,9 @@ const listening = (port: number) =>
     )
   })
 
-const install = (args: ServeArgs) =>
+const install = (flags: ServeFlags) =>
   Effect.gen(function* () {
+    const args = serveArgs(flags)
     const context = yield* Layer.build(
       Layer.mergeAll(Systemd.layer, FetchHttpClient.layer).pipe(Layer.provideMerge(Proc.layer), Layer.provideMerge(ServerConfig.layerFrom(args))),
     )

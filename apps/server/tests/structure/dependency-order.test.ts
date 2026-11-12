@@ -40,6 +40,8 @@ const order: ReadonlyArray<ReadonlyArray<string>> = [
   ["desktop"],
   ["update"],
   ["analytics"],
+  // The board's subscription, which reads every area (moved out of lifecycle/ in 9.1, so a read-only server serves it).
+  ["board"],
   ["lifecycle"],
   // The transports.
   ["rpc", "http", "mcp/transport", "cli"],

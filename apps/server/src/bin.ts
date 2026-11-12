@@ -20,8 +20,11 @@ import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
 import { Listening } from "./platform/Listening.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
-import { releaseBuild, ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
-import type { ServeArgs } from "./platform/ServerConfig.ts"
+import { releaseBuild, ServerConfig, serveArgs, serveFlags, VERSION } from "./platform/ServerConfig.ts"
+import type { ServeArgs, ServeFlags } from "./platform/ServerConfig.ts"
+// 9.1: the guard over an imported folder, and the read-only server a rehearsal is served by.
+import { ImportGuard } from "./platform/ImportGuard.ts"
+import { readOnlyServerLayer } from "./ReadOnlyMain.ts"
 
 // The entry point (docs/plan/06-server.md, The CLI): `huntaway [serve] [flags]`, `huntaway token [--hub]`,
 // `huntaway --version`. The launcher (bin/huntaway) runs this file; the hooks have entry files of their own.
@@ -32,10 +35,49 @@ const ReadyLine = Schema.fromJsonString(Schema.Struct({ port: Schema.Int, token:
 /** Shutdown waits this long for its finalizers, then the process exits regardless. */
 const SHUTDOWN_FALLBACK = "2 seconds"
 
-const serve = (args: ServeArgs) =>
+/** Shutdown's fallback: once the scope starts closing, the process exits within `SHUTDOWN_FALLBACK` regardless. */
+const exitFallback = Effect.addFinalizer(() =>
+  Effect.sleep(SHUTDOWN_FALLBACK).pipe(Effect.andThen(Effect.sync(() => process.exit(0))), Effect.forkDetach, Effect.asVoid),
+)
+
+/** What the desktop shell and the test scripts read, once the server listens: `HUNTAWAY_READY {"port":…,"token":…}`. */
+const ready = (port: number, identity: Identity["Service"]) =>
+  Effect.flatMap(Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) }), (line) =>
+    Console.log(`HUNTAWAY_READY ${line}`),
+  )
+
+/**
+ * Startup step 1 (docs/plan/06-server.md, Startup): `ImportGuard`, before the identity and the database are built. A
+ * rehearsal folder is served read-only, and a switch's refuses to start while the old server has its database open.
+ */
+const serve = (flags: ServeFlags) =>
+  Effect.gen(function* () {
+    const guard = yield* Effect.service(ImportGuard).pipe(Effect.provide(ImportGuard.layer.pipe(Layer.provide(ServerConfig.layerFrom(serveArgs(flags))))))
+    // A rehearsal listens on this machine only unless `--host` (or HUNTAWAY_HOST) says otherwise.
+    return yield* guard.readOnly ? serveReadOnly(serveArgs(flags, "127.0.0.1"), guard) : serveBoard(serveArgs(flags))
+  })
+
+/** A rehearsal (`ReadOnlyMain`): it reads, starts nothing, changes nothing outside its folder, and calls nothing on the network. */
+const serveReadOnly = (args: ServeArgs, guard: ImportGuard["Service"]) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig
-    yield* Effect.addFinalizer(() => Effect.sleep(SHUTDOWN_FALLBACK).pipe(Effect.andThen(Effect.sync(() => process.exit(0))), Effect.forkDetach, Effect.asVoid))
+    yield* exitFallback
+    const context = yield* Layer.build(readOnlyServerLayer(config).pipe(Layer.provide(ImportGuard.layerOf(guard.record))))
+    const server = Context.get(context, HttpServer.HttpServer)
+    const identity = Context.get(context, Identity)
+    const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
+    yield* Context.get(context, Listening).bound(port)
+    yield* Effect.logInfo(
+      `read-only rehearsal of ${guard.record?.from ?? "an imported board"}: listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`,
+    )
+    yield* ready(port, identity)
+    return yield* Effect.never
+  }).pipe(Effect.scoped, Effect.provide(ServerConfig.layerFrom(args)))
+
+const serveBoard = (args: ServeArgs) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig
+    yield* exitFallback
     const context = yield* Layer.build(serverLayer(config))
     const server = Context.get(context, HttpServer.HttpServer)
     const identity = Context.get(context, Identity)
@@ -47,8 +89,7 @@ const serve = (args: ServeArgs) =>
     // What runs are told to reach the server on: the port the listener got (`--port 0` asks for a free one).
     yield* Context.get(context, Listening).bound(port)
     yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
-    const line = yield* Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) })
-    yield* Console.log(`HUNTAWAY_READY ${line}`)
+    yield* ready(port, identity)
     // From now on the launcher starts the server again if it crashes (step 6).
     yield* Context.get(context, Supervisor).started
     return yield* Effect.never
