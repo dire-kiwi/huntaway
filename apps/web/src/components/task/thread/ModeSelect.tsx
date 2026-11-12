@@ -3,10 +3,10 @@ import type { PermissionMode } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Ban, Check, ChevronDown, Map as MapIcon, Pencil, ShieldOff, ShieldQuestion, Sparkles } from "lucide-react"
 import { useState, type ReactNode } from "react"
-import { rpc } from "../../../state/rpc"
+import { useMutation } from "../../../state/mutation"
 import { useBoard } from "../../../state/board"
 import { useProject } from "../../boardHelpers"
-import { errorText, useDismiss } from "../../ui"
+import { useDismiss } from "../../ui"
 
 const MODE_STYLE: Record<PermissionMode, { icon: ReactNode; className: string }> = {
   default: { icon: <ShieldQuestion size={12} />, className: "text-muted" },
@@ -27,20 +27,13 @@ export function useModeControl(task: Task) {
   // Where the inherited mode comes from, for the reset entry.
   const source = project?.permission_mode ? "project default" : hostMode ? "host default" : "default"
   const mode = task.permission_mode ?? inherited
-  const [err, setErr] = useState<string | null>(null)
-  const setMode = async (m: PermissionMode | null) => {
-    setErr(null)
-    try {
-      await rpc(task.host_id, "tasks.update", { id: task.id, patch: { permission_mode: m } })
-    } catch (e) {
-      setErr(errorText(e))
-    }
-  }
+  const [{ error }, update] = useMutation("tasks.update")
+  const setMode = (m: PermissionMode | null): void => void update(task.host_id, { id: task.id, patch: { permission_mode: m } })
   const cycle = () => {
     const i = CYCLE.indexOf(mode)
-    void setMode(CYCLE[(i + 1) % CYCLE.length] ?? "default")
+    setMode(CYCLE[(i + 1) % CYCLE.length] ?? "default")
   }
-  return { mode, inherited, source, overridden: task.permission_mode != null, setMode, cycle, err }
+  return { mode, inherited, source, overridden: task.permission_mode != null, setMode, cycle, err: error }
 }
 
 export function ModeSelect({ control, running }: { control: ReturnType<typeof useModeControl>; running: boolean }) {
@@ -51,7 +44,7 @@ export function ModeSelect({ control, running }: { control: ReturnType<typeof us
 
   const pick = (m: PermissionMode | null) => {
     setOpen(false)
-    void setMode(m)
+    setMode(m)
   }
   const inheritedLabel = PERMISSION_MODES.find((m) => m.id === inherited)?.label
 

@@ -1,18 +1,20 @@
-import { useAtomSet } from "@effect/atom-react"
-import { mutations, PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
-import { TaskId, type PermissionMode } from "@huntaway/contracts"
+import { PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
+import { ProjectChange, ProjectCreation, TaskDeletion, TaskId, WorkflowChange, type PermissionMode } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Option, Predicate, Schema } from "effect"
 import { Check, ChevronRight, FolderPlus, Map as MapIcon, MessageCircleQuestion, Send, ShieldAlert, Trash2, Workflow as WorkflowIcon, X } from "lucide-react"
 import { memo, useEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from "react"
 import { useBoard } from "../../../state/board"
+import { useAction, useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
-import { Button, Textarea, useAsyncAction } from "../../ui"
+import { Button, Textarea } from "../../ui"
 import { ProjectChangeDetail, ProjectCreationDetail, TaskDeletionDetail } from "./approvalDetails"
+import { fieldsOf, listOf, stringOf } from "./fields"
 import { Markdown } from "./Markdown"
 import { workflowGraph, WorkflowChangeDetail } from "./workflowChange"
 import { graphText } from "../../settings/workflows/text"
-import { usePromptAnswers } from "./promptAnswers"
-import type { Any } from "./threadModel"
+import { answerPrompt } from "./promptAnswers"
+import type { PromptData, QuestionData } from "./threadModel"
 
 // What the thread's requests carry, drawn as the old cards drew them (task/Questions.tsx and task/Approvals.tsx), and
 // answered from them (plan task 3.3) with the host's `permissions.answer`: Claude's questions (picked with a click or
@@ -42,31 +44,23 @@ interface AskedQuestion {
 const str = (x: unknown): string => (typeof x === "string" ? x : "")
 
 /** The questions of a question prompt's data, in a shape the cards can trust whatever the agent sent. */
-export function questionsOf(data: Any): AskedQuestion[] {
-  const list = data?.input?.questions
-  if (!Array.isArray(list)) return []
-  return list
-    .filter((q: Any) => q && typeof q === "object")
-    .map((q: Any) => ({
+export function questionsOf(data: PromptData): AskedQuestion[] {
+  return listOf(fieldsOf(data.input).questions)
+    .flatMap((q) => (typeof q === "object" && q !== null ? [fieldsOf(q)] : []))
+    .map((q) => ({
       question: str(q.question) || "(no question)",
       header: str(q.header) || undefined,
-      options: (Array.isArray(q.options) ? q.options : [])
-        .map((o: Any): AskedOption =>
-          typeof o === "string"
-            ? { label: o, description: undefined, preview: undefined }
-            : { label: str(o?.label), description: str(o?.description) || undefined, preview: str(o?.preview) || undefined },
-        )
-        .filter((o: AskedOption) => o.label),
+      options: listOf(q.options)
+        .map((o): AskedOption => {
+          if (typeof o === "string") return { label: o, description: undefined, preview: undefined }
+          const f = fieldsOf(o)
+          return { label: str(f.label), description: str(f.description) || undefined, preview: str(f.preview) || undefined }
+        })
+        .filter((o) => o.label),
       multiSelect: q.multiSelect === true,
       isOther: typeof q.isOther === "boolean" ? q.isOther : undefined,
       isSecret: q.isSecret === true,
     }))
-}
-
-/** The answers the user gave, question by question, once they have. */
-function askedAnswers(data: Any): string[][] | undefined {
-  const a = data?.answers
-  return Array.isArray(a) ? a.map((x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean) : [])) : undefined
 }
 
 /** A plan's title: its first line if that's a heading, without a leading "Plan:". */
@@ -96,8 +90,8 @@ function withoutTitle(plan: string): string {
 }
 
 /** A workflow's approval: `automation` in approvals lists, and `workflow` in the thread message that asks it. */
-export const isWorkflowApproval = (a: Any): boolean =>
-  (a?.kind === "automation" || a?.kind === "workflow") && !!a.input && typeof a.input === "object" && "workflow" in a.input
+export const isWorkflowApproval = (a: PromptData): boolean =>
+  (a.kind === "automation" || a.kind === "workflow") && Predicate.isReadonlyObject(a.input) && "workflow" in a.input
 
 // ---------- keys 1–9 ----------
 
@@ -285,7 +279,7 @@ export const AskCard = memo(function AskCard({
   movedOn,
 }: {
   id: number
-  data: Any
+  data: PromptData
   hostId: string
   from?: ReactNode
   movedOn: boolean
@@ -297,9 +291,8 @@ export const AskCard = memo(function AskCard({
   const open = data.status === "pending" || late
   const [drafts, setDrafts] = useState<Draft[]>(() => questions.map(() => ({ picked: [], other: "" })))
   const [current, setCurrent] = useState(0)
-  const { busy, error, run } = useAsyncAction()
+  const [{ busy, error }, run] = useAction()
   const ref = useRef<HTMLDivElement>(null)
-  const respond = usePromptAnswers(hostId)
   // A typed answer goes with the options ticked, or in place of the one picked.
   const answerOf = (q: AskedQuestion, d: Draft) => {
     const typed = d.other.trim() ? [d.other.trim()] : []
@@ -307,8 +300,8 @@ export const AskCard = memo(function AskCard({
   }
   const answers = questions.map((q, i) => answerOf(q, drafts[i] ?? { picked: [], other: "" }))
   const complete = answers.every((a) => a.length > 0)
-  const submit = (list = answers) => void run(() => respond(data.request_id, { decision: "allow", answers: list }))
-  const dismiss = () => void run(() => respond(data.request_id, { decision: "deny", message: DISMISSED }))
+  const submit = (list = answers) => void run(answerPrompt(hostId, data.request_id, { decision: "allow", answers: list }))
+  const dismiss = () => void run(answerPrompt(hostId, data.request_id, { decision: "deny", message: DISMISSED }))
   const set = (i: number, d: Partial<Draft>) => setDrafts((all) => all.map((x, j) => (j === i ? { ...x, ...d } : x)))
   const pick = (i: number, label: string) => {
     const q = questions[i]
@@ -328,7 +321,7 @@ export const AskCard = memo(function AskCard({
     const o = questions[current]?.options[n - 1]
     if (o) pick(current, o.label)
   })
-  const shown = askedAnswers(data)
+  const shown = data.answers
   const asker = codex ? "Codex" : "Claude"
   const header = open
     ? `${asker} ${questions.length === 1 ? "asks" : `asks ${questions.length} questions`}`
@@ -449,28 +442,23 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({
   movedOn,
 }: {
   id: number
-  data: Any
+  data: QuestionData
   hostId: string
   taskId: string
   movedOn: boolean
 }) {
-  const options: AskedOption[] = (Array.isArray(data.options) ? data.options : [])
-    .map((o: Any) =>
-      typeof o === "string"
-        ? { label: o, description: undefined, preview: undefined }
-        : { label: str(o?.label), description: str(o?.description) || undefined, preview: undefined },
-    )
-    .filter((o: AskedOption) => o.label)
-  const multi = !!data.multi_select
-  const other = data.allow_other !== false
+  const options: AskedOption[] = data.options
+    .filter((o) => o.label)
+    .map((o) => ({ label: o.label, description: o.description || undefined, preview: undefined }))
+  const multi = data.multi_select
+  const other = data.allow_other
   const pending = data.status === "pending" && !movedOn
   const [picked, setPicked] = useState<string[]>([])
   const [text, setText] = useState("")
-  const { busy, error, run } = useAsyncAction()
+  const [{ busy, error }, answerQuestion] = useMutation("threads.answerQuestion")
   const ref = useRef<HTMLDivElement>(null)
-  const answerQuestion = useAtomSet(mutations.threads.answerQuestion, { mode: "promise" })
   const answer = (choices: string[], typed: string) =>
-    void run(() => answerQuestion({ host: hostId, payload: { task_id: TaskId.make(taskId), request_id: `legacy:${id}`, choices, text: typed.trim() || null } }))
+    void answerQuestion(hostId, { task_id: TaskId.make(taskId), request_id: `legacy:${id}`, choices, text: typed.trim() || null })
   const pick = (label: string) => {
     if (busy) return
     if (!multi) answer([label], "")
@@ -480,7 +468,7 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({
     const o = options[n - 1]
     if (o) pick(o.label)
   })
-  const answered: { choices?: string[]; text?: string | null } = data.answer ?? {}
+  const answered: { readonly choices?: ReadonlyArray<string>; readonly text?: string | null } = data.answer ?? {}
   const shown = pending ? picked : (answered.choices ?? [])
   const canSend = multi ? picked.length > 0 || !!text.trim() : !!text.trim()
   // The board's own question, whether to merge: answering it is the decision, not a message to the agent (M4).
@@ -564,7 +552,7 @@ export const BoardQuestionCard = memo(function BoardQuestionCard({
 
 /** Modes a thread can carry on in once its plan's approved, as Claude Code offers them. */
 const AFTER_PLAN: PermissionMode[] = ["default", "acceptEdits", "auto", "bypassPermissions"]
-const modeLabel = (m: PermissionMode) => PERMISSION_MODES.find((x) => x.id === m)?.label ?? m
+const modeLabel = (m: string) => PERMISSION_MODES.find((x) => x.id === m)?.label ?? m
 
 /**
  * A plan presented with ExitPlanMode: the plan as Markdown, **Approve** (which takes the thread out of Plan mode, into
@@ -578,13 +566,13 @@ export const PlanCard = memo(function PlanCard({
   from,
   movedOn,
 }: {
-  data: Any
+  data: PromptData
   hostId: string
   taskId: string
   from?: ReactNode
   movedOn: boolean
 }) {
-  const plan: string = typeof data.input?.plan === "string" ? data.input.plan : ""
+  const plan = stringOf(fieldsOf(data.input).plan) ?? ""
   const late = data.status === "expired" && !movedOn
   const open = data.status === "pending" || late
   const task = useBoard((s) => s.tasks[taskId])
@@ -603,16 +591,15 @@ export const PlanCard = memo(function PlanCard({
     setExpanded(open)
   }
   const [feedback, setFeedback] = useState<string | null>(null)
-  const { busy, error, run } = useAsyncAction()
+  const [{ busy, error }, run] = useAction()
   const form = useRef<HTMLDivElement>(null)
   const asking = feedback !== null
   // Its buttons may be under the composer.
   useEffect(() => {
     if (asking) form.current?.scrollIntoView({ block: "nearest" })
   }, [asking])
-  const respond = usePromptAnswers(hostId)
-  const approve = () => void run(() => respond(data.request_id, { decision: "allow", mode }))
-  const keepPlanning = () => void run(() => respond(data.request_id, { decision: "deny", feedback: feedback?.trim() ?? "" }))
+  const approve = () => void run(answerPrompt(hostId, data.request_id, { decision: "allow", mode }))
+  const keepPlanning = () => void run(answerPrompt(hostId, data.request_id, { decision: "deny", feedback: feedback?.trim() ?? "" }))
   const title = planTitle(plan)
   return (
     <Frame pending={open} label="Plan from the agent">
@@ -750,21 +737,20 @@ function ApprovalCard({
   detail,
   summary,
 }: {
-  data: Any
+  data: PromptData
   hostId: string
   title: ReactNode
-  deletion?: boolean
-  icon?: typeof ShieldAlert
+  deletion?: boolean | undefined
+  icon?: typeof ShieldAlert | undefined
   detail?: ReactNode
-  summary?: string
+  summary?: string | undefined
 }) {
   const pending = data.status === "pending"
   const [open, setOpen] = useState(false)
-  const respond = usePromptAnswers(hostId)
-  const { busy, error, run } = useAsyncAction()
-  const decide = (decision: "allow" | "deny") => void run(() => respond(data.request_id, { decision }))
+  const [{ busy, error }, run] = useAction()
+  const decide = (decision: "allow" | "deny") => void run(answerPrompt(hostId, data.request_id, { decision }))
   const Icon = icon ?? (deletion ? Trash2 : ShieldAlert)
-  const shortly = summary ?? data.input?.reason
+  const shortly = summary ?? stringOf(fieldsOf(data.input).reason)
   return (
     <div
       className={clsx(
@@ -802,9 +788,17 @@ function ApprovalCard({
   )
 }
 
-const taskName = (t: Any): string => (t ? `${t.key ?? ""}${t.key && t.title ? " " : ""}${t.title ?? ""}` : "")
+// What the board's own approvals ask, as the server asks it (its `Approvals`, and the snapshot's `approvals` read it
+// with the same Schemas): an input that doesn't read shows the card without its detail.
+const deletionOf = Schema.decodeUnknownOption(TaskDeletion)
+const creationOf = Schema.decodeUnknownOption(ProjectCreation)
+const projectChangeOf = Schema.decodeUnknownOption(ProjectChange)
+const workflowChangeOf = Schema.decodeUnknownOption(WorkflowChange)
 
-export function TaskDeletionCard({ data, hostId }: { data: Any; hostId: string }) {
+const taskName = (t: { readonly key: string; readonly title: string } | undefined): string => (t ? `${t.key}${t.key && t.title ? " " : ""}${t.title}` : "")
+
+export function TaskDeletionCard({ data, hostId }: { data: PromptData; hostId: string }) {
+  const deletion = Option.getOrUndefined(deletionOf(data.input))
   return (
     <ApprovalCard
       data={data}
@@ -812,17 +806,17 @@ export function TaskDeletionCard({ data, hostId }: { data: Any; hostId: string }
       deletion
       title={
         <>
-          Delete the task <span className="font-medium">{taskName(data.input?.delete)}</span>
+          Delete the task <span className="font-medium">{taskName(deletion?.delete)}</span>
         </>
       }
-      detail={<TaskDeletionDetail deletion={data.input} />}
+      detail={deletion ? <TaskDeletionDetail deletion={deletion} /> : undefined}
     />
   )
 }
 
-export function ProjectChangeCard({ data, hostId }: { data: Any; hostId: string }) {
-  const name = data.input?.project?.name
+export function ProjectChangeCard({ data, hostId }: { data: PromptData; hostId: string }) {
   if (data.tool_name === "create_project") {
+    const creation = Option.getOrUndefined(creationOf(data.input))
     return (
       <ApprovalCard
         data={data}
@@ -830,41 +824,43 @@ export function ProjectChangeCard({ data, hostId }: { data: Any; hostId: string 
         icon={FolderPlus}
         title={
           <>
-            Add the project <span className="font-medium">{name}</span>
+            Add the project <span className="font-medium">{creation?.project.name}</span>
           </>
         }
-        detail={<ProjectCreationDetail creation={data.input} />}
-        summary={data.input?.repo_path}
+        detail={creation ? <ProjectCreationDetail creation={creation} /> : undefined}
+        summary={creation?.repo_path}
       />
     )
   }
-  const changes: Any[] = Array.isArray(data.input?.changes) ? data.input.changes : []
+  const change = Option.getOrUndefined(projectChangeOf(data.input))
   return (
     <ApprovalCard
       data={data}
       hostId={hostId}
       title={
         <>
-          Change the project <span className="font-medium">{name}</span>
+          Change the project <span className="font-medium">{change?.project.name}</span>
         </>
       }
-      detail={<ProjectChangeDetail change={data.input} />}
-      summary={changes.map((c) => c.field).join(", ")}
+      detail={change ? <ProjectChangeDetail change={change} /> : undefined}
+      summary={(change?.changes ?? []).map((c) => c.field).join(", ")}
     />
   )
 }
 
-export function AutomationChangeCard({ data, hostId }: { data: Any; hostId: string }) {
-  return <ApprovalCard data={data} hostId={hostId} title={data.input?.op === "delete" ? "Delete an automation?" : "Approve an automation?"} />
+export function AutomationChangeCard({ data, hostId }: { data: PromptData; hostId: string }) {
+  return <ApprovalCard data={data} hostId={hostId} title={fieldsOf(data.input).op === "delete" ? "Delete an automation?" : "Approve an automation?"} />
 }
 
 const WORKFLOW_CARD: Record<string, string> = { create: "Add the workflow", update: "Change the workflow", delete: "Delete the workflow" }
 
 /** A workflow an agent asked to create, change or delete, in its thread: its steps (and what changes) while it waits or once opened. */
-export function WorkflowChangeCard({ data, hostId }: { data: Any; hostId: string }) {
-  const op: string = data.input?.op ?? "create"
-  const w = data.input?.workflow
+export function WorkflowChangeCard({ data, hostId }: { data: PromptData; hostId: string }) {
+  const change = Option.getOrUndefined(workflowChangeOf(data.input))
+  const op = change?.op ?? "create"
+  const w = change?.workflow
   const graph = workflowGraph(w)
+  const project = change?.project.name ?? ""
   return (
     <ApprovalCard
       data={data}
@@ -874,11 +870,11 @@ export function WorkflowChangeCard({ data, hostId }: { data: Any; hostId: string
       title={
         <>
           {WORKFLOW_CARD[op] ?? "Change the workflow"} <span className="font-medium">{w?.name}</span>
-          {op === "create" ? ` to ${data.input?.project?.name ?? ""}` : ` in ${data.input?.project?.name ?? ""}`}
+          {op === "create" ? ` to ${project}` : ` in ${project}`}
         </>
       }
-      detail={w ? <WorkflowChangeDetail change={data.input} /> : undefined}
-      summary={data.input?.reason || (graph ? graphText(graph) : undefined)}
+      detail={change ? <WorkflowChangeDetail change={change} /> : undefined}
+      summary={change?.reason || (graph ? graphText(graph) : undefined)}
     />
   )
 }

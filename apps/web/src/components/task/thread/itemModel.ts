@@ -12,7 +12,21 @@
 
 import type { Item as ThreadItem, Snapshot, ThreadRequest, ToolCall } from "@huntaway/contracts"
 import type { Subagent, SubagentStatus } from "./subagentView"
-import { reuseItems, shallowEqual, type Any, type Call, type Item, type ThreadModel, type ToolResult } from "./threadModel"
+import { fieldsOf, listOf, numberOf, shown, stringOf, type Fields } from "./fields"
+import {
+  reuseItems,
+  shallowEqual,
+  type Call,
+  type CompactMeta,
+  type Item,
+  type PromptData,
+  type QuestionData,
+  type QuestionOption,
+  type ReportData,
+  type ResultData,
+  type ThreadModel,
+  type ToolResult,
+} from "./threadModel"
 
 /** `legacy:<message id>[:<block>]`: the message an item came from, and the key of the row made of it. */
 const LEGACY = /^legacy:(\d+)(?::(.+))?$/
@@ -47,12 +61,16 @@ function cache<T>(): (of: object, make: () => T) => T {
     return v
   }
 }
-const once = cache<Any>()
 const onceCall = cache<Call>()
 const onceResult = cache<ToolResult>()
+const onceTurn = cache<ResultData>()
+const onceCompact = cache<CompactMeta>()
+const oncePrompt = cache<PromptData>()
+const onceQuestion = cache<QuestionData>()
+const onceReport = cache<ReportData>()
 
-/** The board's own facts on an item or request (its `metadata`), read loosely as the old rows read them. */
-const meta = (x: { readonly metadata?: Readonly<Record<string, unknown>> }): Any => x.metadata ?? {}
+/** The board's own facts on an item or request (its `metadata`), read through fields.ts. */
+const meta = (x: { readonly metadata?: Readonly<Record<string, unknown>> }): Fields => x.metadata ?? {}
 
 const callOf = (it: ToolCall): Call =>
   onceCall(it, () => {
@@ -69,24 +87,44 @@ const resultOf = (it: ToolCall): ToolResult | undefined => {
 
 /** A turn's end as the result row reads it (as Claude's result message has it). */
 const resultData = (it: Extract<ThreadItem, { type: "turn_result" }>) =>
-  once(it, () => {
-    const md: Any = meta(it)
-    const d: Any = { subtype: md.subtype ?? (it.ok ? "success" : "error"), is_error: !it.ok }
-    if (it.interrupted) d.interrupted = true
-    if (it.duration_ms != null) d.duration_ms = it.duration_ms
-    if (md.num_turns != null) d.num_turns = md.num_turns
-    if (md.total_cost_usd != null) d.total_cost_usd = md.total_cost_usd
-    return d
+  onceTurn(it, (): ResultData => {
+    const md = meta(it)
+    return {
+      subtype: stringOf(md.subtype) ?? (it.ok ? "success" : "error"),
+      is_error: !it.ok,
+      ...(it.interrupted ? { interrupted: true } : {}),
+      ...(it.duration_ms != null ? { duration_ms: it.duration_ms } : {}),
+      ...optional("num_turns", numberOf(md.num_turns)),
+      ...optional("total_cost_usd", numberOf(md.total_cost_usd)),
+    }
   })
 
+/** `{ [key]: value }`, or nothing when there is no value. */
+function optional<K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> {
+  const out: Partial<Record<K, V>> = {}
+  if (value !== undefined) out[key] = value
+  return out
+}
+
 const compactMeta = (it: Extract<ThreadItem, { type: "compaction" }>) =>
-  once(it, () => {
-    const m: Any = {}
-    if (it.trigger) m.trigger = it.trigger
-    if (it.tokens_before != null) m.pre_tokens = it.tokens_before
-    const after = meta(it).post_tokens
-    if (after != null) m.post_tokens = after
-    return m
+  onceCompact(it, (): CompactMeta => ({
+    ...(it.trigger ? { trigger: it.trigger } : {}),
+    ...(it.tokens_before != null ? { pre_tokens: it.tokens_before } : {}),
+    ...optional("post_tokens", numberOf(meta(it).post_tokens)),
+  }))
+
+/** A routine's report: what the board put on its notice, or its text. */
+const reportData = (it: Extract<ThreadItem, { type: "notice" }>) =>
+  onceReport(it, (): ReportData => {
+    if (!it.metadata) return { text: it.text }
+    const md = it.metadata
+    return {
+      automation: stringOf(md.automation),
+      task_id: stringOf(md.task_id),
+      key: stringOf(md.key),
+      outcome: stringOf(md.outcome),
+      text: stringOf(md.text),
+    }
   })
 
 /** A permission request's status as the board keeps it, for a request from before its metadata (converter 2). */
@@ -98,35 +136,58 @@ function statusOf(r: ThreadRequest): string {
   return "expired"
 }
 
+/** The answers shown on a question's card, question by question. */
+const answersOf = (x: unknown): ReadonlyArray<ReadonlyArray<string>> | undefined =>
+  Array.isArray(x) ? listOf(x).map((a) => listOf(a).flatMap((s) => (typeof s === "string" && s !== "" ? [s] : []))) : undefined
+
+/** A permission prompt's card as the board stored it (the request's metadata), with the tool's input. */
+function promptOf(r: ThreadRequest, md: Fields, input: unknown): PromptData {
+  const rule = fieldsOf(md.rule)
+  return {
+    request_id: stringOf(md.request_id) ?? r.id,
+    status: stringOf(md.status) ?? statusOf(r),
+    tool_name: stringOf(md.tool_name) ?? "",
+    input,
+    ...optional("tool_use_id", stringOf(md.tool_use_id)),
+    ...optional("kind", stringOf(md.kind)),
+    ...optional("agent", stringOf(md.agent)),
+    ...(md.rule === undefined ? {} : { rule: { tool: shown(rule.tool) } }),
+    ...optional("expires_at", stringOf(md.expires_at)),
+    ...optional("note", stringOf(md.note)),
+    ...(md.late === true ? { late: true } : {}),
+    ...optional("feedback", stringOf(md.feedback)),
+    ...optional("mode", stringOf(md.mode)),
+    ...optional("answers", answersOf(md.answers)),
+  }
+}
+
 /** A permission prompt's message data (what the board stored, in its metadata), which its card reads. */
 const promptData = (r: ThreadRequest) =>
-  once(r, (): Any => {
-    if (r.metadata) {
-      // Its message's id is the board's, not the message's.
-      const md: Any = { ...r.metadata }
-      delete md.message_id
-      return r.type === "permission" ? { ...md, input: r.input } : md
-    }
+  oncePrompt(r, (): PromptData => {
+    // Its message's id is the board's, not the message's.
+    if (r.metadata) return promptOf(r, r.metadata, r.type === "permission" ? r.input : r.metadata.input)
     // Kept before the board's record was (converter 2): what the request says.
-    const d: Any = { request_id: r.id, status: statusOf(r) }
-    if (r.tool_call_id) d.tool_use_id = r.tool_call_id
+    const base = { request_id: r.id, status: statusOf(r), ...(r.tool_call_id ? { tool_use_id: r.tool_call_id } : {}) }
     // (The board's own approvals are `app` requests named by their tool alone.)
-    if (r.type === "permission") Object.assign(d, { tool_name: r.kind === "app" ? r.name : toolName(r), input: r.input })
-    else if (r.type === "plan") Object.assign(d, { tool_name: "ExitPlanMode", input: { plan: r.plan } })
-    else {
-      const qs = r.questions.map((q) => ({ question: q.question, header: q.header, options: q.options ?? [], multiSelect: !!q.multi_select }))
-      Object.assign(d, { tool_name: "AskUserQuestion", input: { questions: qs } })
-    }
-    return d
+    if (r.type === "permission") return { ...base, tool_name: r.kind === "app" ? r.name : toolName(r), input: r.input }
+    if (r.type === "plan") return { ...base, tool_name: "ExitPlanMode", input: { plan: r.plan } }
+    const qs = r.questions.map((q) => ({ question: q.question, header: q.header, options: q.options ?? [], multiSelect: !!q.multi_select }))
+    return { ...base, tool_name: "AskUserQuestion", input: { questions: qs } }
   })
 
+/** A board question's options, as its card and its answer read them. */
+const optionsOf = (x: unknown): ReadonlyArray<QuestionOption> =>
+  listOf(x).map((o) =>
+    typeof o === "string" ? { label: o, description: undefined } : { label: shown(fieldsOf(o).label), description: stringOf(fieldsOf(o).description) },
+  )
+
 /** What a board question's resolution says of its card: its status, and the answer given. */
-function boardQuestionState(r: Extract<ThreadRequest, { type: "question" }>, md: Any): Any {
+function boardQuestionState(r: Extract<ThreadRequest, { type: "question" }>, options: ReadonlyArray<QuestionOption>): Pick<QuestionData, "status" | "answer"> {
   const res = r.resolution
   if (!res) return { status: "pending" }
   if (res.outcome === "answer") {
     const given = Object.values(res.answers ?? {})[0] ?? []
-    const labels = new Set((Array.isArray(md.options) ? md.options : []).map((o: Any) => (typeof o === "string" ? o : o?.label)))
+    const labels = new Set(options.map((o) => o.label))
     const choices = given.filter((a) => labels.has(a))
     const typed = given.filter((a) => !labels.has(a))
     return { status: "answered", answer: { choices, text: typed.length ? typed.join("\n") : null } }
@@ -135,19 +196,39 @@ function boardQuestionState(r: Extract<ThreadRequest, { type: "question" }>, md:
   return { status: why.startsWith("Replaced") ? "replaced" : why.startsWith("Expired") ? "expired" : "replied" }
 }
 
+/** An answer a board question's card was given, as its metadata keeps it. */
+function answerOf(x: unknown): QuestionData["answer"] {
+  if (x === undefined || x === null) return undefined
+  const a = fieldsOf(x)
+  return { choices: listOf(a.choices).flatMap((c) => (typeof c === "string" ? [c] : [])), text: stringOf(a.text) ?? null }
+}
+
 /** A question asked with the board's request_user_input: its message data. */
 const questionData = (r: Extract<ThreadRequest, { type: "question" }>) =>
-  once(r, (): Any => {
+  onceQuestion(r, (): QuestionData => {
     if (r.metadata) {
-      const md: Any = { ...r.metadata }
-      delete md.message_id
+      const md = r.metadata
+      const options = optionsOf(md.options)
       // The board's card keeps its state in the request (permissions/Questions.ts): open is pending, an answer answered
       // (the picks, then what was typed), a cancellation replied, replaced or expired, as its message says.
-      if (md.status === undefined) Object.assign(md, boardQuestionState(r, md))
-      return md
+      const state = md.status === undefined ? boardQuestionState(r, options) : { status: shown(md.status), ...optional("answer", answerOf(md.answer)) }
+      return {
+        question: shown(md.question),
+        options,
+        multi_select: !!md.multi_select,
+        allow_other: md.allow_other !== false,
+        ...state,
+        ...(md.merge_approval === true ? { merge_approval: true } : {}),
+      }
     }
     const [q] = r.questions
-    return { question: q.question, options: q.options ?? [], multi_select: !!q.multi_select, allow_other: q.allow_other !== false, status: statusOf(r) }
+    return {
+      question: q.question,
+      options: (q.options ?? []).map((o) => ({ label: o.label, description: o.description })),
+      multi_select: !!q.multi_select,
+      allow_other: q.allow_other !== false,
+      status: statusOf(r),
+    }
   })
 
 /** Whether a request is one of the board's own questions (request_user_input, a merge approval), not a permission prompt. */
@@ -195,7 +276,7 @@ class Rows {
       case "notice":
         // Claude Code's "[Request interrupted…]": nothing's drawn for it.
         if (it.code === "interrupted") return
-        if (it.code === "routine_report") return this.push({ type: "report", key, data: it.metadata ?? { text: it.text } })
+        if (it.code === "routine_report") return this.push({ type: "report", key, data: reportData(it) })
         // An API error Claude Code gave as the assistant's text (the board's own events have no code).
         if (it.code) return this.push({ type: "text", key: `${key}.0`, text: it.text })
         this.push({ type: "event", key, level: it.level === "warning" ? "warn" : it.level, text: it.text, detail: it.detail ?? null })
@@ -240,26 +321,26 @@ function before(r: ThreadRequest, rid: number | undefined, it: ThreadItem): bool
 /** The subagent that a subagent's call shows. */
 function subagentOf(it: ToolCall, running: boolean, waiting: Set<string>): Subagent {
   const s = it.subagent
-  const input: Any = it.input ?? {}
+  const input = fieldsOf(it.input)
   let status: SubagentStatus =
     s?.status ?? (it.status === "running" || it.status === "pending" ? "running" : it.status === "completed" ? "completed" : "failed")
   // One that never said it ended, in a run that has: stopped with it.
   if (!running && status === "running") status = "stopped"
   // What its task_started said it's doing, over its call's input (a forked Skill's has neither).
-  const said: Any = it.metadata ?? {}
+  const said = meta(it)
   const prompt = said.prompt ?? input.prompt
   const sub: Subagent = {
     id: it.id,
-    description: said.description ?? it.title ?? input.description ?? "",
+    description: stringOf(said.description) ?? it.title ?? stringOf(input.description) ?? "",
     prompt: typeof prompt === "string" ? prompt : "",
     background: !!(s?.background ?? input.run_in_background),
     status,
     startedAt: it.created_at ?? "",
     parent: it.parent_id ?? null,
   }
-  const type = s?.agent_type ?? input.subagent_type
+  const type = s?.agent_type ?? stringOf(input.subagent_type)
   if (type) sub.agentType = type
-  const model = s?.model ?? input.model
+  const model = s?.model ?? stringOf(input.model)
   if (model) sub.model = model
   if (s?.activity) sub.activity = s.activity
   if (s?.summary) sub.summary = s.summary

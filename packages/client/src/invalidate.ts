@@ -1,7 +1,7 @@
 import { Context, Effect } from "effect"
 import { Atom, type AtomRegistry, Reactivity } from "effect/reactivity"
 import { TaskId } from "@huntaway/contracts"
-import type { HostBoard } from "./board/hostBoard.ts"
+import { docsKey, type HostBoard } from "./board/hostBoard.ts"
 import type { Methods } from "./rpc.ts"
 
 // What reads a query again (docs/plan/09-frontend.md, Queries, mutations, invalidation). A component never refetches
@@ -35,6 +35,8 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
   "git.taskDiff": (board, p) => taskState(board, p.id),
+  // A document is published, moved, relabelled or deleted: its profile's `docs` event (the old useDocsChanged).
+  "docs.get": (board, p) => board.docs.get(docsKey("docs", p.profile_id)) ?? 0,
 }
 
 /** The key a host's group is invalidated by. */
