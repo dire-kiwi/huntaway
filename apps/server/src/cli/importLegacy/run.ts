@@ -1,5 +1,5 @@
 import { SqliteClient } from "@effect/sql-sqlite-node"
-import { Context, DateTime, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
+import { Context, DateTime, Effect, FileSystem, Layer, Option, Path, Predicate, Schema } from "effect"
 import type { Scope } from "effect"
 import { SqlClient } from "effect/sql"
 import { Timestamp } from "@huntaway/contracts"
@@ -145,6 +145,12 @@ const preconditions = Effect.fnUntraced(function* (old: OldDb, options: ImportOp
 /** A task's key in the old database, for the report: its project's key and number, else its id. */
 export const taskKeySql = `CASE WHEN p.key IS NOT NULL THEN p.key || '-' || t.number ELSE t.id END`
 
+/** What SQLite said about a statement that failed (a constraint's name, say), else the error's own message. */
+const sqliteMessage = (e: { readonly message: string; readonly reason?: unknown }): string => {
+  const cause = Predicate.hasProperty(e.reason, "cause") ? e.reason.cause : undefined
+  return Predicate.hasProperty(cause, "message") && typeof cause.message === "string" ? cause.message : e.message
+}
+
 const quoteName = (name: string) => `"${name.replaceAll('"', '""')}"`
 
 /** The writer of the new board's rows: each checked, then inserted in batches. */
@@ -176,7 +182,7 @@ const makeWriter = (sql: SqlClient.SqlClient, report: Report) => {
                   .pipe(
                     Effect.as(true),
                     Effect.catchTag("SqlError", (e) =>
-                      Effect.as(report.failure(table, check.key(row), `insert: ${String(e.cause ?? e.message)}`.slice(0, 500)), false),
+                      Effect.as(report.failure(table, check.key(row), `insert: ${sqliteMessage(e)}`.slice(0, 500)), false),
                     ),
                   )
                 if (ok) n++
