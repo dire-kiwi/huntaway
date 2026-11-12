@@ -16,8 +16,9 @@
 #                      else ~/.local/share/huntaway)
 #   --data-dir <dir>   the new server's (default $HUNTAWAY_DATA_DIR, else ~/.local/share/huntaway-effect)
 #   --rehearse         import a snapshot into a fresh folder under $TMPDIR as a rehearsal (read-only) and stop there
-#   --undo <dir>       put the board set aside in <dir> (a replaced-<time> folder) back in the new folder, in place of
-#                      the import (the old server's folder was never written, so it starts as it was)
+#   --undo <dir>       put the board set aside in <dir> (a replaced-<time> folder) back in the data folder it is in, in
+#                      place of the import (only a replaced-* folder directly inside the data folder is taken; the old
+#                      server's folder was never written, so it starts as it was)
 #   --force            live runs are recorded as interrupted rather than refused
 #   --yes              don't ask before the switch
 #
@@ -29,7 +30,7 @@ data_home=${XDG_DATA_HOME:-$HOME/.local/share}
 from=${HUNTAWAY_OLD_DATA_DIR:-}
 to=${HUNTAWAY_DATA_DIR:-$data_home/huntaway-effect}
 bin=${HUNTAWAY_BIN:-$root/apps/server/bin/huntaway}
-rehearse=0 force=() yes=0 undo=
+rehearse=0 force=() yes=0 undo= to_given=0
 # What `import-legacy --replace` sets aside, and so what an import wrote in its place (REPLACED_FILES in
 # apps/server/src/cli/importLegacy/run.ts).
 replaced_files=(board.db board.db-wal board.db-shm import.json import-report.json host_id auth_token hub_token ssh
@@ -39,7 +40,7 @@ usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [[ $# -gt 0 ]]; do
   case $1 in
     --from) from=$2; shift 2 ;;
-    --data-dir) to=$2; shift 2 ;;
+    --data-dir) to=$2; to_given=1; shift 2 ;;
     --rehearse) rehearse=1; shift ;;
     --undo) undo=$2; shift 2 ;;
     --force) force=(--force); shift ;;
@@ -57,6 +58,23 @@ holders() {
 }
 
 if [[ -n $undo ]]; then
+  # Only a replaced-* folder directly inside the data folder, which is then the folder it goes back into: anything else
+  # (the data folder itself, a folder of another data folder's) would have the board here deleted with nothing put back.
+  [[ -d $undo ]] || { echo "switch-board.sh: there is no folder $undo" >&2; exit 1; }
+  undo="$(cd "$undo" && pwd -P)"
+  parent="$(dirname "$undo")"
+  if [[ $(basename "$undo") != replaced-* ]]; then
+    echo "switch-board.sh: $undo isn't a replaced-<time> folder (--undo takes the folder import-legacy --replace set a board aside in)" >&2
+    exit 1
+  fi
+  if [[ $to_given == 1 ]]; then
+    [[ -d $to ]] || { echo "switch-board.sh: there is no folder $to" >&2; exit 1; }
+    if [[ $(cd "$to" && pwd -P) != "$parent" ]]; then
+      echo "switch-board.sh: $undo isn't in $to: a replaced-<time> folder goes back into the data folder it is in ($parent)" >&2
+      exit 1
+    fi
+  fi
+  to=$parent
   [[ -f $undo/board.db ]] || { echo "switch-board.sh: $undo has no board.db: it isn't a folder --replace set a board aside in" >&2; exit 1; }
   if [[ -f $to/board.db && -n $(holders "$to/board.db") ]]; then
     echo "switch-board.sh: processes $(holders "$to/board.db")have $to/board.db open: stop the new server first" >&2

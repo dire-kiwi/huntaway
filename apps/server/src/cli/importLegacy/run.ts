@@ -442,12 +442,14 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
     for (const f of [`${partial}-wal`, `${partial}-shm`]) yield* fs.remove(f, { force: true })
     yield* fs.rename(partial, boardFile)
   })
-  // A failed import leaves no board and no record (what it copied stays, and a new try copies it again); a board it was
-  // replacing is put back as it was.
+  // A failed import leaves no board and no record (what it copied stays, and a new try copies it again). With
+  // `--replace` over a board, the record there is that board's until it is set aside: a failure before then (the old
+  // database refused, say) leaves it, and one after puts the whole board back as it was.
   const undo = Effect.gen(function* () {
-    yield* Effect.forEach([partial, `${partial}-wal`, `${partial}-shm`, recordFile], (f) => fs.remove(f, { force: true }), { concurrency: 1, discard: true })
+    yield* Effect.forEach([partial, `${partial}-wal`, `${partial}-shm`], (f) => fs.remove(f, { force: true }), { concurrency: 1, discard: true })
     const set = replaced.current
     if (set !== null) yield* putBack(to, set.folder, set.moved)
+    else if (!(replace && hasBoard)) yield* fs.remove(recordFile, { force: true })
   }).pipe(Effect.ignore)
   yield* (checkOnly ? checkAlone : importAll).pipe(
     Effect.ensuring(removeCopy),

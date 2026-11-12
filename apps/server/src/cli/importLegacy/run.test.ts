@@ -232,4 +232,27 @@ describe("import-legacy", () => {
       expect((yield* fs.readFileString(`${tmp}/new/host_id`)).trim()).toBe("host-b")
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
+
+  it.effect("--replace refused by the old database leaves the board and its import.json as they were", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const tmp = yield* fs.makeTempDirectoryScoped()
+      yield* oldBoardWith(`${tmp}/a`, "host-a", "Board A")
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const old = yield* makeLegacyBoard(`${tmp}/b`, { hostId: "host-b" })
+          yield* old.run(`PRAGMA foreign_keys = OFF`)
+          yield* old.insert("runs", { id: "old-live-run", task_id: "t1", status: "running", created_at: "2026-01-01T00:00:00.000Z" })
+        }),
+      )
+      yield* importLegacy({ ...options(`${tmp}/a`, `${tmp}/new`), rehearsal: true })
+      const record = yield* fs.readFileString(`${tmp}/new/import.json`)
+      const error = yield* Effect.flip(importLegacy({ ...options(`${tmp}/b`, `${tmp}/new`), replace: true }))
+      expect(error._tag === "StartupError" ? error.reason : error.message).toContain("old-live-run")
+      expect(yield* fs.readFileString(`${tmp}/new/import.json`)).toBe(record)
+      const profiles = yield* onBoard<{ readonly name: string }>(`${tmp}/new`, `SELECT name FROM profiles`)
+      expect(profiles.map((p) => p.name)).toEqual(["Board A"])
+      expect((yield* fs.readDirectory(`${tmp}/new`)).filter((n) => n.startsWith("replaced-"))).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
 })

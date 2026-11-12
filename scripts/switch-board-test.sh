@@ -69,7 +69,21 @@ check "over a board: worktrees stay" "$(test -d "$tmp/new/projects/j1/worktrees/
 check "over a board: the board set aside" "$(profiles "$aside")" "Board A"
 check "over a board: its identity and runs set aside" "$(cat "$aside/host_id") $(test -d "$aside/runs/r1" && echo runs)" "host-a runs"
 
-switch --undo "$aside" || { cat "$tmp/out"; exit 1; }
+# --undo takes only a replaced-* folder directly inside the data folder, and puts it back there.
+board_files="$(ls "$tmp/new" | sort | tr '\n' ' ')"
+if switch --undo "$tmp/new"; then got=done; else got=refused; fi
+check "--undo of the data folder itself: refused" "$got" refused
+mkdir -p "$tmp/other/replaced-x" && cp "$tmp/new/board.db" "$tmp/other/replaced-x/"
+if switch --undo "$tmp/other/replaced-x"; then got=done; else got=refused; fi
+check "--undo of another data folder's: refused" "$got" refused
+mkdir -p "$tmp/new/not-replaced" && cp "$tmp/new/board.db" "$tmp/new/not-replaced/"
+if switch --undo "$tmp/new/not-replaced"; then got=done; else got=refused; fi
+check "--undo of a folder not named replaced-*: refused" "$got" refused
+rm -rf "$tmp/new/not-replaced"
+check "a refused --undo leaves the board as it was" "$(profiles "$tmp/new") $(ls "$tmp/new" | sort | tr '\n' ' ')" "Board B $board_files"
+
+# Without --data-dir, the folder the replaced-* folder is in.
+TMPDIR=$tmp HUNTAWAY_DATA_DIR=$tmp/elsewhere bash "$script" --undo "$aside" --yes > "$tmp/out" 2>&1 || { cat "$tmp/out"; exit 1; }
 check "--undo: the board back" "$(profiles "$tmp/new")" "Board A"
 check "--undo: its identity back" "$(cat "$tmp/new/host_id") $(cat "$tmp/new/auth_token")" "host-a token-host-a"
 check "--undo: its runs back" "$(test -d "$tmp/new/runs/r1" && echo yes)" yes
