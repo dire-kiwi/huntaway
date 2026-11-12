@@ -109,12 +109,13 @@ for (const id of tasks) {
   }
   if ((before.requests ?? []).length !== (after.requests ?? []).length)
     differences.push(`${(after.requests ?? []).length} requests, old ${(before.requests ?? []).length}`)
-  results.push({ task: id, items: a.length, differences })
+  results.push({ task: id, items: a.length, newItems: b.length, differences })
 }
 const differing = results.filter((r) => r.differences.length > 0)
-if (asJson) console.log(JSON.stringify({ compared: results.length, differing }, null, 2))
+const items = results.reduce((n, r) => n + r.items, 0)
+if (asJson) console.log(JSON.stringify({ compared: results.length, items, differing }, null, 2))
 else {
   for (const r of differing) console.log(`${r.task}: ${r.differences.join("; ")}`)
-  console.log(`${results.length} threads compared, ${differing.length} differ`)
+  console.log(`${results.length} threads compared (${items} old items), ${differing.length} differ`)
 }
 process.exit(differing.length === 0 ? 0 : 1)
