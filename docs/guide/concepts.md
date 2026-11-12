@@ -585,9 +585,9 @@
   the `projects.setupThread` RPC method (with an optional `message` for the agent) makes a task in
   the project, without a worktree, whose agent looks at the folder, makes it a repository with a
   `.gitignore` and a first commit, and offers to put it on GitHub, asking before anything hard to
-  undo. The project keeps it as `setup_task_id`, so asking again gives the same thread. The old
-  board showed this thread in place of such a project's board, with _Start setup thread_ and _Use
-  without worktrees_; the new board doesn't show that page yet. Projects list `has_commits` beside
+  undo. The project keeps it as `setup_task_id`, so asking again gives the same thread. The board
+  shows this thread in place of such a project's board, with _Start setup thread_ and _Use
+  without worktrees_, and looks at the folder again every 3 s until it's ready. Projects list `has_commits` beside
   `is_git`.
 
 - **Starting from elsewhere**: a task's worktree can start from something other than the

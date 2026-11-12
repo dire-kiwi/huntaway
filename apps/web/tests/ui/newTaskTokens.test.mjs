@@ -8,10 +8,10 @@
 // - HA-93: the old check held the profile board's `GET /profiles/<id>/projects` and clicked New task before they came.
 //   The projects now come in the board's one snapshot (`board.watch`), which is what is held here (routeRpc); until it
 //   comes there is no New task to click, so the check is that, then the draft as before.
-// - "a repository that becomes git's after the board loads": the old board showed the project's setup thread until the
-//   folder was ready, and looked again every 3 s (on a clock 10 times as fast). The setup thread is a cut on this board
-//   (docs/plan/13-milestones.md), which shows a notice instead; the server now reads a not-ready folder again every 3 s
-//   (`Projects.gitSweeper`), so the check waits for the notice to go.
+// - "a repository that becomes git's after the board loads": the old board showed the project's setup page until the
+//   folder was ready, and looked again every 3 s (on a clock 10 times as fast). Here the setup page (task/WorktreeSetup)
+//   asks again with `projects.get` every 3 s and the server reads a not-ready folder again as often
+//   (`Projects.gitSweeper`), on the real clock, so the check waits for the page to go.
 // - The two cases with another host checked that a draft's uploaded files stay on the host its `in:` sends it to.
 //   Attachments in New task are a cut on this board (docs/plan/13-milestones.md), so they check where the draft goes
 //   and its text, without files. They share one linked host rather than starting one each.
@@ -321,11 +321,11 @@ test("a repository that becomes git's after the board loads gets worktrees", asy
   assert.equal(later.is_git, false)
   // Steps of 15 s: the server's look is every 3 s, which a busy runner can make longer.
   await withBrowser(server, { timeout: 15000 }, async (ui) => {
-    await ui.run([`goto /p/${later.id}`, "wait isn't ready for worktrees yet"])
+    await ui.run([`goto /p/${later.id}`, "wait Start setup thread"])
     gitRepo(dir)
-    // Once the server has seen the repository (it looks again every 3 s), the board says nothing of it, and a new task
-    // gets a worktree.
-    await ui.run(["gone isn't ready for worktrees yet", "click New task", "wait Own git worktree", "type Plain task", "press Control+Enter", "gone Reads as"])
+    // Once the server has seen the repository (it looks again every 3 s), the board is back, and a new task gets a
+    // worktree.
+    await ui.run(["gone Start setup thread", "click New task", "wait Own git worktree", "type Plain task", "press Control+Enter", "gone Reads as"])
   })
   const plain = (await tasksOf({ _tag: "ByProject", project_id: later.id })).find((t) => t.description === "Plain task")
   assert.equal(plain?.use_worktree, true)

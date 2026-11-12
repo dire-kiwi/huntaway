@@ -236,10 +236,10 @@ How a gathered card goes with the rest of the board:
 - **Archived and filtered-out levels:** an archived level stays in the list view's _Archived_ section and on the
   card's bar; a level the filters leave out is still on the bar, and counted as not matching.
 
-The old board's **pens thread** (a conversation at the end of the tab bar that arranged the pens for you) and each
-pen's **own thread** (one that worked on that pen's tasks) aren't on the new server yet: the tab bar has no buttons for
-them. An old board's come over with its import, keyed `S-<n>` among the profile's scratch tasks, and run on the
-profile's **Threads agent** (Settings → Profiles); a pen's own thread is titled _Pen: <name>_, renamed with its pen and
+The **pens thread** (_Pens thread_, at the end of the tab bar: a conversation that arranges the pens for you) and each
+pen's **own thread** (_<pen> thread_ on the pen's tab, or _Open its thread_ in its menu: one that works on that pen's
+tasks, in a folder of its own for its notes) are made the first time they're opened. They run on the profile's
+**Threads agent** (Settings → Profiles); an old board's come over with its import. A pen's own thread is titled _Pen: <name>_, renamed with its pen and
 deleted with it, and in it `create_task` puts new tasks in the pen and `list_tasks` lists the pen's tasks unless it's
 told otherwise. Any agent can arrange pens with the pen tools (`list_pens`, `create_pen`, `update_pen`, `delete_pen`,
 and `pen` on `create_task`, `update_task` and `list_tasks`; `create_pen` and `update_pen` take `active`, and
