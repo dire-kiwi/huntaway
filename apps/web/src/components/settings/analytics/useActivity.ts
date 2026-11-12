@@ -1,69 +1,75 @@
-import { useEffect, useEffectEvent, useState } from "react"
-import { loadActivity, loadContext, loadTokens, type Activity, type ContextData, type Rules } from "./analytics"
-import { useBoard } from "../../../state/board"
-import { errorText, toJson } from "../../ui"
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react"
+import { Atom } from "effect/reactivity"
+import { query } from "@huntaway/client"
+import { nowMillis } from "../../../state/clock"
+import { isoOf } from "../../ui/dates"
 import { type TokenData } from "../tokenStatsData"
+import { activityOf, contextOf, paddedFrom, tokensOf, type Activity, type ContextData, type Rules } from "./analytics"
+import { gather, type Gathered, notGathered, type Target, targetsAtom, useGathered } from "./gather"
 import { type Range } from "./range"
 
-/** What a read gave, and for which `want` (null: to read again). */
-interface Fetched<T> {
-  want: string | null
-  data: T | null
-  error: string | null
+// The Analytics page's reads: each tab's report from every connected host's profiles, one query per profile and range
+// (shared, and kept ten seconds after the tab stops showing it), merged by a derived atom. A host or profile that comes
+// or goes changes the targets, and so what is read.
+
+interface Key {
+  readonly from: number
+  readonly to: number
+  readonly targets: ReadonlyArray<Target>
 }
 
-/**
- * What `load` gives, read whenever `want` changes while `enabled`, and again when `enabled` turns back on. The last
- * data (and error) stays while it reads; `loading` is while it reads.
- */
-function useFetched<T>(want: string, enabled: boolean, load: () => Promise<T>) {
-  const [got, setGot] = useState<Fetched<T>>({ want: null, data: null, error: null })
-  // Turned off, what was read is out of date: turning it on reads again.
-  if (!enabled && got.want !== null) setGot({ ...got, want: null })
-  const loading = enabled && got.want !== want
-  const read = useEffectEvent(load)
-  useEffect(() => {
-    if (!loading) return undefined
-    let cancelled = false
-    read().then(
-      (data) => {
-        if (!cancelled) setGot({ want, data, error: null })
-      },
-      (e: unknown) => {
-        if (!cancelled) setGot((g) => ({ ...g, want, error: errorText(e) }))
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [loading, want])
-  return { data: got.data, loading, error: got.error }
+/** Every profile's activity (only the idle gap changes what's asked; the lead-in is applied afterwards). */
+const activityAtom = Atom.family((key: Key & { readonly idleMin: number }) =>
+  gather(
+    key.targets,
+    (t) => query("analytics.report", t.host, { profile_id: t.profileId, from: isoOf(paddedFrom(key.from, key)), to: isoOf(key.to) }),
+    (answered, errors) => activityOf(key.from, key.to, answered, errors, nowMillis()),
+  ),
+)
+
+const contextAtom = Atom.family((key: Key) =>
+  gather(
+    key.targets,
+    (t) => query("analytics.contextStats", t.host, { profile_id: t.profileId, from: isoOf(key.from), to: isoOf(key.to) }),
+    (answered, errors) => contextOf(key.from, key.to, answered, errors),
+  ),
+)
+
+const tokensAtom = Atom.family((key: Key) =>
+  gather(
+    key.targets,
+    (t) => query("analytics.tokenStats", t.host, { profile_id: t.profileId, from: isoOf(key.from), to: isoOf(key.to) }),
+    (answered, errors) => tokensOf(key.from, key.to, answered, errors),
+  ),
+)
+
+/** What a tab shows: the last data while it's read again, and `reload` to read it again now. */
+export interface Loaded<T> extends Gathered<T> {
+  readonly reload: () => void
 }
 
-/** The profiles and hosts on the board, which change what a report has. */
-function useBoardKey() {
-  const profilesKey = useBoard((s) => s.profiles.map((p) => `${p.host_id}:${p.id}`).join(","))
-  const hostsKey = useBoard((s) => s.hosts.map((h) => `${h.id}:${h.connected}`).join(","))
-  return `${profilesKey}|${hostsKey}`
+/** `atom` while `enabled` (nothing is read otherwise), the last of what it gathered kept. */
+function useLoaded<T>(atom: Atom.Atom<Gathered<T>>, enabled: boolean): Loaded<T> {
+  const shown = enabled ? atom : notGathered
+  const got = useGathered<T>(shown)
+  const reload = useAtomRefresh(shown)
+  return { ...got, reload }
 }
 
-export function useActivity(range: Range, rules: Rules, enabled: boolean) {
-  const boardKey = useBoardKey()
-  const [nonce, setNonce] = useState(0)
-  // Only the idle gap changes what's fetched; the lead-in is applied afterwards.
-  const want = toJson([range.from, range.to, rules.idleMin, boardKey, nonce])
-  const { data, loading, error } = useFetched<Activity>(want, enabled, () => loadActivity(range.from, range.to, rules))
-  return { data, loading, error, reload: () => setNonce((n) => n + 1) }
+/** Every profile's activity in `range`: a profile's is picked out once active time is worked out (useView). */
+export function useActivity(range: Range, rules: Rules, enabled: boolean): Loaded<Activity> {
+  const targets = useAtomValue(targetsAtom(null))
+  return useLoaded(activityAtom({ from: range.from, to: range.to, idleMin: rules.idleMin, targets }), enabled)
 }
 
-export function useContext(range: Range, profile: string | null, enabled: boolean, nonce: number) {
-  const boardKey = useBoardKey()
-  const want = toJson([range.from, range.to, profile, boardKey, nonce])
-  return useFetched<ContextData>(want, enabled, () => loadContext(range.from, range.to, profile))
+/** The context sizes of `profile`'s turns (every profile's when it's null) in `range`. */
+export function useContext(range: Range, profile: string | null, enabled: boolean): Loaded<ContextData> {
+  const targets = useAtomValue(targetsAtom(profile))
+  return useLoaded(contextAtom({ from: range.from, to: range.to, targets }), enabled)
 }
 
-export function useTokens(range: Range, profile: string | null, enabled: boolean, nonce: number) {
-  const boardKey = useBoardKey()
-  const want = toJson([range.from, range.to, profile, boardKey, nonce])
-  return useFetched<TokenData>(want, enabled, () => loadTokens(range.from, range.to, profile))
+/** The tokens of `profile`'s runs (every profile's when it's null) in `range`. */
+export function useTokens(range: Range, profile: string | null, enabled: boolean): Loaded<TokenData> {
+  const targets = useAtomValue(targetsAtom(profile))
+  return useLoaded(tokensAtom({ from: range.from, to: range.to, targets }), enabled)
 }

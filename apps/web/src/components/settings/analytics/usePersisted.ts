@@ -1,23 +1,14 @@
-import { useState } from "react"
-import { parseJson, toJson } from "../../ui"
+import { useAtom } from "@effect/atom-react"
+import type { Atom } from "effect/reactivity"
 
-/** A choice kept in the browser under `key`, `initial` until one is made; a kept value `is` doesn't accept is `initial`. */
-export function usePersisted<T>(key: string, initial: T, is: (v: unknown) => v is T): [T, (v: T) => void] {
-  const [v, setV] = useState<T>(() => {
-    try {
-      const stored = parseJson(localStorage.getItem(key))
-      return typeof stored === "object" && stored !== null && "value" in stored && is(stored.value) ? stored.value : initial
-    } catch {
-      return initial
-    }
-  })
-  const set = (next: T) => {
-    setV(next)
-    try {
-      localStorage.setItem(key, toJson({ value: next }))
-    } catch {
-      // Private mode: the choice just isn't remembered.
-    }
-  }
-  return [v, set]
+/**
+ * What the page keeps of a choice: `{"value": …}` under its `ia.analytics.*` key, as the old page kept it (a `stored`
+ * atom of `Schema.NullOr(Schema.Struct({ value }))`); null until one is made.
+ */
+export type Kept<T> = { readonly value: T } | null
+
+/** The choice kept in `atom`, `initial` until one is made, and how to make one. */
+export function usePersisted<T>(atom: Atom.Writable<Kept<T>>, initial: T): [T, (v: T) => void] {
+  const [kept, setKept] = useAtom(atom)
+  return [kept === null ? initial : kept.value, (value: T) => setKept({ value })]
 }

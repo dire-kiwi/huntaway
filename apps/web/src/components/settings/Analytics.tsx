@@ -3,6 +3,7 @@ import { Schema } from "effect"
 import { ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { addDays, addMonths, dayKey, hm, SCRATCH, startOfDay, startOfMonth, startOfWeek, toCsv, type Rules } from "./analytics/analytics"
+import { nowMillis } from "../../state/clock"
 import { navigate } from "../../state/route"
 import { profileNames } from "../boardHelpers"
 import { useBoard } from "../../state/board"
@@ -10,9 +11,10 @@ import { ContextStats } from "../task/ContextStats"
 import { POOR_HIT, POOR_HIT_MIN, tokens } from "./tokenStatsData"
 import { TokenStats } from "./TokenStats"
 import { DiskUsage } from "./DiskUsage"
-import { Button, download, IconButton, MenuButton } from "../ui"
-import { isPreset, type Preset, PRESETS, type Range, presetRange } from "./analytics/range"
+import { Button, download, IconButton, localeDateString, MenuButton } from "../ui"
+import { isPreset, Preset, PRESETS, type Range, presetRange } from "./analytics/range"
 import { usePersisted } from "./analytics/usePersisted"
+import { stored } from "../../state/storage"
 import { useActivity, useContext, useTokens } from "./analytics/useActivity"
 import { useView } from "./analytics/useView"
 import { Report } from "./analytics/Report"
@@ -20,27 +22,31 @@ import { MonthGrid, WeekGrid, DayDetail } from "./analytics/Calendar"
 
 const selectClass = "h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] text-fg outline-none"
 
-type Tab = "report" | "calendar" | "context" | "tokens" | "disk"
-type CalMode = "month" | "week"
-// What the page keeps of its choices, as they're read back.
-const isTab = Schema.is(Schema.Literals(["report", "calendar", "context", "tokens", "disk"]))
-const isCalMode = Schema.is(Schema.Literals(["month", "week"]))
-const isCustom = Schema.is(Schema.Struct({ from: Schema.String, to: Schema.String }))
-const isRules = Schema.is(Schema.Struct({ idleMin: Schema.Finite, leadMin: Schema.Finite }))
+const Tab = Schema.Literals(["report", "calendar", "context", "tokens", "disk"])
+type Tab = typeof Tab.Type
+const CalMode = Schema.Literals(["month", "week"])
+type CalMode = typeof CalMode.Type
 
-const fmtDay = (t: number) => new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+// What the page keeps of its choices, under the old keys and in the old format (usePersisted.ts).
+const tabAtom = stored("ia.analytics.tab", Schema.NullOr(Schema.Struct({ value: Tab })), null)
+const presetAtom = stored("ia.analytics.preset", Schema.NullOr(Schema.Struct({ value: Preset })), null)
+const customAtom = stored("ia.analytics.custom", Schema.NullOr(Schema.Struct({ value: Schema.Struct({ from: Schema.String, to: Schema.String }) })), null)
+const rulesAtom = stored("ia.analytics.rules", Schema.NullOr(Schema.Struct({ value: Schema.Struct({ idleMin: Schema.Finite, leadMin: Schema.Finite }) })), null)
+const calModeAtom = stored("ia.analytics.calMode", Schema.NullOr(Schema.Struct({ value: CalMode })), null)
+
+const fmtDay = (t: number) => localeDateString(t, { day: "numeric", month: "short", year: "numeric" })
 
 /** The Analytics page, of profile `profile` (by name) or, when it's null, of every profile. */
 export function Analytics({ profile }: { profile: string | null }) {
   const profiles = useBoard((s) => s.profiles)
   const names = useMemo(() => profileNames(profiles), [profiles])
   const loaded = useBoard((s) => s.loaded)
-  const [tab, setTab] = usePersisted<Tab>("ia.analytics.tab", "report", isTab)
-  const [preset, setPreset] = usePersisted<Preset>("ia.analytics.preset", "this_week", isPreset)
+  const [tab, setTab] = usePersisted<Tab>(tabAtom, "report")
+  const [preset, setPreset] = usePersisted<Preset>(presetAtom, "this_week")
   // The last seven days, until a range is picked.
-  const [lastWeek] = useState(() => ({ from: dayKey(addDays(Date.now(), -6)), to: dayKey(Date.now()) }))
-  const [custom, setCustom] = usePersisted<{ from: string; to: string }>("ia.analytics.custom", lastWeek, isCustom)
-  const [rules, setRules] = usePersisted<Rules>("ia.analytics.rules", { idleMin: 30, leadMin: 5 }, isRules)
+  const [lastWeek] = useState(() => ({ from: dayKey(addDays(nowMillis(), -6)), to: dayKey(nowMillis()) }))
+  const [custom, setCustom] = usePersisted<{ readonly from: string; readonly to: string }>(customAtom, lastWeek)
+  const [rules, setRules] = usePersisted<Rules>(rulesAtom, { idleMin: 30, leadMin: 5 })
   const [project, setProject] = useState("all")
   // A profile's projects are its own.
   const [projectsOf, setProjectsOf] = useState(profile)
@@ -52,9 +58,9 @@ export function Analytics({ profile }: { profile: string | null }) {
   useEffect(() => {
     if (profile !== null && loaded && !names.includes(profile)) navigate({ name: "analytics" }, true)
   }, [profile, loaded, names])
-  const [calMode, setCalMode] = usePersisted<CalMode>("ia.analytics.calMode", "month", isCalMode)
-  const [anchor, setAnchor] = useState(() => startOfDay(Date.now()))
-  const [selected, setSelected] = useState<number | null>(() => startOfDay(Date.now()))
+  const [calMode, setCalMode] = usePersisted<CalMode>(calModeAtom, "month")
+  const [anchor, setAnchor] = useState(() => startOfDay(nowMillis()))
+  const [selected, setSelected] = useState<number | null>(() => startOfDay(nowMillis()))
 
   const range = useMemo<Range>(() => {
     if (tab === "report" || tab === "context" || tab === "tokens") return presetRange(preset, custom)
@@ -68,12 +74,9 @@ export function Analytics({ profile }: { profile: string | null }) {
   }, [tab, preset, custom, calMode, anchor])
 
   const activity = useActivity(range, rules, tab === "report" || tab === "calendar")
-  const [contextNonce, setContextNonce] = useState(0)
-  const context = useContext(range, profile, tab === "context", contextNonce)
-  const [tokensNonce, setTokensNonce] = useState(0)
-  const tokenStats = useTokens(range, profile, tab === "tokens", tokensNonce)
-  const { data, error, loading } = tab === "context" ? context : tab === "tokens" ? tokenStats : activity
-  const reload = tab === "context" ? () => setContextNonce((n) => n + 1) : tab === "tokens" ? () => setTokensNonce((n) => n + 1) : activity.reload
+  const context = useContext(range, profile, tab === "context")
+  const tokenStats = useTokens(range, profile, tab === "tokens")
+  const { data, loading, reload } = tab === "context" ? context : tab === "tokens" ? tokenStats : activity
   const view = useView(activity.data, rules, profile, project)
   const projects = data ? Object.values(data.projects).filter((p) => p.id !== SCRATCH && (profile === null || p.profile === profile)) : []
 
@@ -185,8 +188,8 @@ export function Analytics({ profile }: { profile: string | null }) {
                   size="sm"
                   variant="ghost"
                   onClick={() => {
-                    setAnchor(startOfDay(Date.now()))
-                    setSelected(startOfDay(Date.now()))
+                    setAnchor(startOfDay(nowMillis()))
+                    setSelected(startOfDay(nowMillis()))
                   }}
                 >
                   Today
@@ -196,7 +199,7 @@ export function Analytics({ profile }: { profile: string | null }) {
                 </IconButton>
                 <span className="text-[13px] font-medium">
                   {calMode === "month"
-                    ? new Date(anchor).toLocaleDateString(undefined, { month: "long", year: "numeric" })
+                    ? localeDateString(anchor, { month: "long", year: "numeric" })
                     : rangeLabel({ from: startOfWeek(anchor), to: addDays(startOfWeek(anchor), 7) })}
                 </span>
               </>
@@ -248,7 +251,6 @@ export function Analytics({ profile }: { profile: string | null }) {
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto max-w-6xl space-y-6 p-6">
-              {error && <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-[12.5px] text-red-300">{error}</div>}
               {data?.errors.map((e) => (
                 <div key={e} className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12.5px] text-amber-200">
                   {e}
@@ -270,16 +272,16 @@ export function Analytics({ profile }: { profile: string | null }) {
               {tab === "tokens" ? (
                 <p className="text-[11.5px] leading-relaxed text-faint">
                   Tokens are counted from each agent run's output once it ends, for the model that used them (subagents' included), and go to the day the run
-                  started. A review or summary thread's tokens count towards the task it's for, and a subproject's tasks' towards the subproject. Tokens are
-                  uncached input, cache reads and writes, and output. Cost is what Claude Code reports; Codex doesn't say. Runs from before this version are
-                  counted from the output the board still keeps (two weeks of it); older runs show only what they cost, marked *. Reviews count each reviewer's
-                  verdict in a round once. A task's first round and its rounds of fixes are all of its rounds, those outside the range too, for the tasks
-                  reviewed in it; a round found issues if any of its reviewers did. Minor issues are listed by reviews from this version on; earlier ones count
-                  as noting minor issues when their summary mentions some. Follow-ups are tasks the reviewed task's agent created after such a review. The cache
-                  hit rate is the share of the input fed to models (uncached input, cache reads and writes) that was read from the prompt cache; a thread under{" "}
-                  {Math.round(POOR_HIT * 100)}% on {tokens(POOR_HIT_MIN)} or more is flagged, as its cache was written or missed more than read. Which cache
-                  writes went to (1 hour or 5 minutes) is kept from this version on, for Claude: older runs' are unknown, and Codex doesn't say. What the cache
-                  saved isn't shown, as the board doesn't keep models' prices (Claude Code reports only the cost).
+                  started. A review or summary thread's tokens count towards the task it's for. Tokens are uncached input, cache reads and writes, and output.
+                  Cost is what Claude Code reports; Codex doesn't say. Runs from before this version are counted from the output the board still keeps (two
+                  weeks of it); older runs show only what they cost, marked *. Reviews count each reviewer's verdict in a round once. A task's first round and
+                  its rounds of fixes are all of its rounds, those outside the range too, for the tasks reviewed in it; a round found issues if any of its
+                  reviewers did. Minor issues are listed by reviews from this version on; earlier ones count as noting minor issues when their summary mentions
+                  some. Follow-ups are tasks the reviewed task's agent created after such a review. The cache hit rate is the share of the input fed to models
+                  (uncached input, cache reads and writes) that was read from the prompt cache; a thread under {Math.round(POOR_HIT * 100)}% on{" "}
+                  {tokens(POOR_HIT_MIN)} or more is flagged, as its cache was written or missed more than read. Which cache writes went to (1 hour or 5 minutes)
+                  is kept from this version on, for Claude: older runs' are unknown, and Codex doesn't say. What the cache saved isn't shown, as the board
+                  doesn't keep models' prices (Claude Code reports only the cost).
                 </p>
               ) : tab === "context" ? (
                 <p className="text-[11.5px] leading-relaxed text-faint">
