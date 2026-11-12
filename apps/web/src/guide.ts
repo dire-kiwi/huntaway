@@ -1,8 +1,7 @@
-// The guide (docs/guide/*.md) shown in the app: its pages, their headings, and where their links go. The pages are the
-// old repository's, copied as they were (docs/plan/13-milestones.md, 9.3 brings them into line), so their links out of
-// the guide still go to its files there.
+// The guide (docs/guide/*.md) shown in the app: its pages, their headings, and where their links go. A link out of the
+// guide goes to the file in this repository on GitHub; one to the old repository's files is written out in full.
 
-/** The guide's pages in the README's order, with the names the app lists them under. */
+/** The guide's pages in order, with the names the app lists them under. */
 export const GUIDE_PAGES = [
   { page: "board", title: "Using the board" },
   { page: "concepts", title: "Concepts" },
@@ -14,11 +13,12 @@ export const GUIDE_PAGES = [
   { page: "server", title: "Running a server" },
   { page: "hosts", title: "Hosts" },
   { page: "desktop", title: "The desktop app and releases" },
+  { page: "switching", title: "Switching from the old server" },
   { page: "mobile", title: "Phones" },
 ] as const
 
 /** Where the guide's links to the rest of the repository (READMEs, design notes) go. */
-export const REPO_URL = "https://github.com/dire-kiwi/huntaway/blob/master/"
+export const REPO_URL = "https://github.com/dire-kiwi/huntaway-effect/blob/main/"
 
 export const isGuidePage = (page: string): boolean => GUIDE_PAGES.some((p) => p.page === page)
 

@@ -22,7 +22,7 @@ made once with the old server stopped for good, and a [rehearsal](#rehearsal), w
 | In the old folder                                               | What the importer does                                                                           |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `huntaway-2.db` (and `-wal`, `-shm`)                            | Reads it once, read-only, into the new folder's `board.db`                                       |
-| `host_id`, `auth_token`, `hub_token`, `ssh/`                    | Copies them, so links between hosts and bookmarked board URLs stay valid, and the tmux server's name (made from the host id) is the same. Not in a rehearsal |
+| `host_id`, `auth_token`, `hub_token`, `ssh/`                    | Copies them, so links between hosts and bookmarked board URLs stay valid. Not in a rehearsal. (The tmux server is not the same: the new server's is `tmux -S <data dir>/tmux.sock`, not the old `-L ia-<host>`; see below) |
 | `attachments/`, `skill-sources/`                                | Copies them: the server finds these by id under its own folder                                   |
 | Worktrees (`projects/<id>/worktrees/…`), scratch folders, document folders (`documents/<id>`), assistant workspaces | **Leaves them where they are.** Every path the database holds is written as an absolute path: `worktree_path` already is; a `work_dir` relative to the old folder, a project's `worktrees_root` and `scratch_path`, and the profile scratch folder a project-less thread worked in are made absolute |
 | `runs/<id>/`                                                    | Copies the folders of runs that ended in the last 14 days (token counts and failure tails are read from them); older ones are due for pruning anyway |
@@ -40,7 +40,10 @@ Why paths are kept rather than files moved:
   across later is `git worktree move` behind a command of its own, not part of the switch.
 
 Outside both folders, nothing changes: repositories, branches `ia/…`, refs under `refs/huntaway/`, agent config
-folders and their sessions, and running tmux sessions.
+folders and their sessions. Running tmux sessions keep running, but on the old server's tmux server (`-L ia-<host>`):
+the new one keeps its terminals on a socket in its own folder (6.1, `terminal/tmux.ts`), so after the switch a task's
+terminal is a new shell and the old session is left to the user (corrected in 9.3: the plan had the tmux server
+carried with the host id).
 
 ## The importer
 
@@ -181,7 +184,7 @@ After writing, and on its own against an existing pair of files, the importer co
 4. Start the new server **on the old server's port** (`--port 7878`). A browser's storage belongs to an address, so
    on the same address the token, drafts and preferences under the `ia.*` keys are still there; on another port the
    board asks for its token again and starts with empty drafts.
-5. Open a task, send a message (the session resumes), open its terminal (the tmux session is still there), look at
+5. Open a task, send a message (the session resumes), open its terminal (a new tmux session: the old one stays on the old tmux server), look at
    the Changes tab, check a webhook automation fires.
 
 **Going back**: stop the new server, start the old one on its folder. Nothing there was written, so it is as it was
@@ -262,8 +265,9 @@ through the read-only board, and the throwaway switch once.
 
 The old and new servers cannot link to each other. A fleet is moved together: stop every host, import each, start
 each. Links are imported with the tokens they hold, and the identity files are copied, so the hosts find each
-other again without re-linking. A host that cannot be moved at the same time shows as "needs an update" on the hub
-until it is.
+other again without re-linking. A host that cannot be moved at the same time shows as offline on the hub until it
+is: "needs an update" is for a host whose `link.hello` names another protocol, and an old server answers no
+`link.hello` at all, so its link never connects (`LinkConnections`; corrected in 9.3).
 
 ## After the switch
 

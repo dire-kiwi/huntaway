@@ -5,8 +5,9 @@ the board, column by column, and the steps between the columns (reviews, summari
 task's agent). Agents can read and change them too, with the board's `list_workflows`, `create_workflow`,
 `update_workflow`, `delete_workflow` and `run_workflow` tools (a change other than turning one off asks you first).
 
-This page covers hosts from API 132 (HA-276). Older hosts have a start node that runs when a task enters a column, and
-a _Move task_ step, instead of column nodes and values; see [the end of this page](#workflows-from-before-column-nodes).
+A workflow is drawn with column nodes, one for each column it takes the task through. Workflows from the old board,
+from before column nodes, are converted when it's imported; see
+[the end of this page](#workflows-from-before-column-nodes).
 
 ## Workflows instead of the board's default
 
@@ -20,18 +21,16 @@ Each project chooses at the top of its _Workflows_ settings whether its workflow
 - **On**: tasks entering a column start the workflows that are on, which take them across the board. A column no
   workflow has a step for keeps the board's handling: without an In progress step, say, the agent starts with the
   project's start prompt and the task moves to In review when it's done. But the _Review_ tab's automatic reviews,
-  rounds of fixes and summaries don't run (from API 144, HA-277), the tab doesn't show them, and tasks don't have the
+  rounds of fixes and summaries don't run, the tab doesn't show them, and tasks don't have the
   board's own _Review_ and _Summary_ tabs (with _Review now_ and _Summarise_): a workflow's steps review and summarise
   instead, in tabs of their own (an agent step with the tab _Review_ gives tasks a _Review_ tab). They all come back if
-  the project stops using workflows. (Hosts before API 144 still run them until a workflow that's on has an In review
-  step.)
+  the project stops using workflows.
 
 Turning it on moves the _Review_ tab's reviews into a workflow of their own, _Review and summarise_ (or _Review_,
 with summaries off), as the _From the Review tab_ preset draws it: In review → _Changed?_ → the project's reviewers (or
 the profile's), whose issues go to _Send to the task's agent_ for its rounds of fixes, and with summaries on its
 summarizers (or the profile's) once they pass. Nothing moves with the automatic review off, or when a workflow that's on
-has an In review step that does something already (a prompt, or steps after it). A host updated to API 144 does the
-same once for the projects that had it on already.
+has an In review step that does something already (a prompt, or steps after it).
 
 A project that had a workflow on that starts on a column (a start on a column or on the agent finishing) before this
 setting existed has it on, so its workflows go on running. One whose workflows only run by hand has it off.
@@ -159,8 +158,8 @@ A column of the board: In progress, In review, Ready for merge, Needs attention,
 - **What happens next**: the board adds a line to the prompt saying how the agent says it's done, and what it does then,
   from the steps after `done` up to the next column, when they go well. For example: "When you're done, end your turn
   with a summary of what you did. The board then pushes your branch and opens its pull request (so don't open one
-  yourself) and moves the task to In review." The editor shows it under _Added to the prompt_. Wire `what happens next`
-  somewhere (into a compose template, say) and it goes only there. While an _Open a PR_ step follows In progress's
+  yourself) and moves the task to In review." The editor shows it under _What the agent is sent_. Wire
+  `what happens next` somewhere (into a compose template, say) and it goes only there. While an _Open a PR_ step follows In progress's
   `done`, the agent's instructions also stop telling it to push and open a pull request itself (not while it merges,
   when it pushes what the merge needs).
 
@@ -225,7 +224,7 @@ skill on what the steps before it wrote, add an _Agent_ and give it the instruct
   (`disabled_mcp_servers`).
 - **Work only on what the steps before it wrote** (`input_only`): it isn't told where the task's work is, only what the
   steps before it said, so it can process a summary (with a skill, say) in a fresh context.
-- **Keep its conversation from one run to the next** (`keep_conversation`, hosts from API 140): each run goes on from
+- **Keep its conversation from one run to the next** (`keep_conversation`): each run goes on from
   the conversation its thread had the last time the step ran, rather than starting a new one, so a reviewer remembers
   the rounds before (what it found, and what it read). It's told the work may have changed since, and to read it as it
   is now. A step whose agent, model or effort changed starts a new thread, and so a new conversation.
@@ -233,7 +232,7 @@ skill on what the steps before it wrote, add an _Agent_ and give it the instruct
 ### A/B test
 
 Takes one of its paths at random, each as likely as its weight says: to compare two reviewers, say, or two prompts, on
-the same kind of work. Hosts from API 140.
+the same kind of work.
 
 | Socket         | Kind    | Is                                           |
 | -------------- | ------- | -------------------------------------------- |
@@ -361,7 +360,8 @@ the last review's issues in the prompt and in the reviewer's recheck.
 
 ## Workflows from before column nodes
 
-Workflows saved before HA-276 keep working. Their start on a column (or on the agent finishing, which is In progress) is
-read as that column's node, and their _Move task_ steps as lines into a column. Two changes in how they run: a start on
+Workflows saved on the old board before HA-276 keep working: importing the board converts them. Their start on a column
+(or on the agent finishing, which is In progress) becomes that column's node, and their _Move task_ steps lines into a
+column; a graph an agent gives in the old shape is read the same way. Two changes in how they run: a start on
 In progress or Ready for merge now runs once the agent's work there is done, or the task is merged, rather than as the
 task enters the column; and a moved-to column with steps after it starts a run of its own there.

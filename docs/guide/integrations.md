@@ -2,7 +2,7 @@
 
 ## Asana tasks
 
-A task can be linked to the Asana tasks it's for (API 57): **Link Asana task…** under Asana in
+A task can be linked to the Asana tasks it's for: **Link Asana task…** under Asana in
 the task's sidebar, or **Link Asana task** in the New task form, opens a dialog that searches the
 user's Asana workspaces as you type (with nothing typed, the tasks Asana ranks first for them)
 or finds the task whose link is pasted. Picking one in the New task form with nothing written
@@ -11,32 +11,32 @@ mark on the task's card, and its agent's first prompt lists them after the descr
 
 Asana is reached with a personal access token per profile, kept on the host (Settings → Profiles
 → Edit, or the dialog asks for one the first time). Saving it checks it with Asana; the board only
-ever sees who it belongs to (`asana_user`). `PATCH /profiles/{id}` takes `asana_token` (null
-disconnects), `GET /profiles/{id}/asana/tasks?q=` searches, and tasks take `external_links`
-(`[{provider: "asana", id, url, title}]`) when they're created and in `PATCH /tasks/{id}`.
-`IA_ASANA_URL` points the host at another Asana API, such as a fake one for testing.
+ever sees who it belongs to (`asana_user`). `profiles.update` takes `asana_token` (null
+disconnects), `profiles.asanaTasks` searches, and tasks take `external_links`
+(`[{provider: "asana", id, url, title}]`) in `tasks.create` and `tasks.update`.
+`HUNTAWAY_ASANA_URL` points the host at another Asana API, such as a fake one for testing.
 
-A profile that doesn't use Asana can turn it off (API 60): **Link tasks to Asana tasks** under
-Asana in Settings → Profiles → Edit, or `asana_enabled: false` in `POST /profiles` and
-`PATCH /profiles/{id}`. Profiles have it on until it's turned off. Off, the New task form and the
+A profile that doesn't use Asana can turn it off: **Link tasks to Asana tasks** under
+Asana in Settings → Profiles → Edit, or `asana_enabled: false` in `profiles.create` and
+`profiles.update`. Profiles have it on until it's turned off. Off, the New task form and the
 task sidebar leave Asana out (a task linked before still lists its links in the sidebar, so they
 can be removed), and the host won't search Asana for it. Its token is kept for when it's on again.
 
 ## Automations
 
-A project's automations (API 63, in its settings under _Automations_; agents' tools for them, API 67) put work on the board by
+A project's automations (in its settings under _Automations_) put work on the board by
 themselves: recurring work such as a weekly dependency update, and events from outside such as a
 new GitHub issue to triage. Each one has a trigger and an action, can be switched on and off, and
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (API 110:
-  five fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in
-  the host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
-  `*`, such as `*/2`, and either of them otherwise); a moment (**at**, API 110: it runs once, late if
+  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (five
+  fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in the
+  host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
+  `*`, such as `*/2`, and either of them otherwise); a moment (**at**: it runs once, late if
   the server was down then, and turns itself off); or a **webhook**: a POST to
   `/api/hooks/<id>/<token>` on the host.
-- **Before each run** (API 110): **active hours** (a scheduled run outside them waits for them to
+- **Before each run**: **active hours** (a scheduled run outside them waits for them to
   start, and a delivery outside them is skipped; not for _at_, nor Run now; a schedule none of
   whose times fall in them is refused), a **precheck** (a bash
   command run first, in the project's folder or the assistant's workspace, for up to 2 minutes:
@@ -125,8 +125,8 @@ project's schedules don't run until it's unarchived. Each automation's run goes 
 one's slow precheck doesn't hold up the others; one that comes due again before its last run is
 over waits for it.
 
-**Routines** (API 110) are a profile's automations, on the assistant's **Routines** tab
-(`/api/profiles/<id>/automations`): they have no project, and their one action is
+**Routines** are a profile's automations, on the assistant's **Routines** tab
+(`automations.list` with `profile_id`): they have no project, and their one action is
 `message_assistant`, which wakes the profile's assistant. By default (`mode: fresh`) each run works
 in a thread of its own under the assistant (`task_type` `routine`, `parent_id` the assistant, keyed
 `A-<n>` after it), in the assistant's workspace with its config, model, permission mode, skills and
@@ -152,16 +152,16 @@ routines by default), for the caller's own profile only, and changing one asks t
 automation. The assistant is told to make "remind me…" an _at_ routine. Deleting the assistant
 stops and deletes its routine threads first.
 
-**The morning brief** (API 113) is a routine template: the assistant's **Brief** tab sets it up at the
-time and on the days you pick (weekdays at 7:30 by default; `POST
-/api/profiles/<id>/assistant/brief` with `{time, weekdays}`), as a routine called _Morning brief_ in a
+**The morning brief** is a routine template: the assistant's **Brief** tab sets it up at the
+time and on the days you pick (weekdays at 7:30 by default; `assistant.addBrief`
+with `{time, weekdays}`), as a routine called _Morning brief_ in a
 fresh thread, which you can change like any other. Its run reads today's calendar, unread and starred
 mail, Drive files changed since yesterday (through the Google server, see _Google for the assistant_)
 and what needs your attention or is ready to review on your boards (through the board's tools), writes
 `brief.html` and `brief.json` in the assistant's workspace, and replies with a short summary, which is
 posted in the assistant's thread as its report and pushed to the devices with routine reports on. The
-board keeps the brief as the assistant's `brief` document, one version a day (`GET
-/api/tasks/<id>/document?label=brief`), out of the workspace's git history and the Memory tab, and the
+board keeps the brief as the assistant's `brief` document, one version a day (`tasks.document`
+with `label: "brief"`), out of the workspace's git history and the Memory tab, and the
 Brief tab shows it, with the earlier days to pick from. Its message says where Google stands as the run
 starts (`{{google}}`: _connected as …_, or _not connected:_ and why), so a run without Google says so
 at the top of the brief and its summary rather than failing quietly. Its message tells it to only read
@@ -172,37 +172,36 @@ by, in its own words, and a line saying what it is), which the host checks and c
 day's brief (`items` in the document). The Brief tab lists them beside the brief, with a 👍 and 👎 each:
 a rating becomes a line under _Morning brief preferences_ in `MEMORY.md` (`- More like this — mail:
 Newsletters from Substack (rated 2026-11-04)`), committed as yours, one line per kind of item and topic
-and the last 30 kept, and every run of the assistant reads it, the brief's included (`POST
-/api/profiles/<id>/assistant/brief/feedback` with `{rating: "up" | "down" | "clear", kind, topic}`).
-Pressing it again takes it back. The brief's page has no part in the ratings: it's shown in a frame
-that runs no scripts and is sent nothing, with its refreshes, frames and handlers taken out and nothing
+and the last 30 kept, and every run of the assistant reads it, the brief's included
+(`assistant.briefFeedback` with `{rating: "up" | "down" | "clear", kind, topic}`). Pressing it again takes it back.
+The brief's page has no part in the ratings: it's shown in a frame that runs no scripts and is sent nothing, with its refreshes, frames and handlers taken out and nothing
 loaded from elsewhere (no tracking pixels), and links open in a new tab; only the board's own buttons
 rate, so what the run wrote from your mail can't rate items into memory.
 
 **Reaching the webhook.** The board usually listens on localhost or a LAN, where GitHub can't
 reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the project:
 
-- **A tunnel or proxy** that serves only that path from `http://127.0.0.1:7878`: a Cloudflare
+- **A tunnel or proxy** that serves only that path from `http://127.0.0.1:7879`: a Cloudflare
   tunnel whose ingress rule matches `^/api/hooks/`, Tailscale Funnel on that path, or a reverse
-  proxy on a public machine with a `location /api/hooks/` block. The rest of the API still needs
-  the board's token, but there's no need to publish it.
-- **A hub** doesn't pass webhooks on to its linked hosts: its links carry the board's API calls,
-  not raw deliveries with their headers, so the URL has to reach the project's own host.
+  proxy on a public machine with a `location /api/hooks/` block. The rest of the board still needs
+  its token, but there's no need to publish it.
+- **A hub** doesn't pass webhooks on to its linked hosts: its relay carries the board's RPC
+  sockets, not raw deliveries with their headers, so the URL has to reach the project's own host.
 
 Set the host's public address in a webhook's settings (_This host's public address_, the
 host setting `public_url`), and the settings show the full URL to give GitHub. In GitHub's
 webhook settings, pick the events to send, `application/json` (or the default form encoding),
 and the same secret.
 
-The API: `GET`/`POST /projects/{id}/automations` (`{name, trigger, action, enabled, secret}`;
-the list comes with the host's `time_zone`), `GET`/`PATCH`/`DELETE /automations/{id}` (`PATCH`
-also takes `rotate_token: true`; a blank `secret` removes it), `POST /automations/{id}/run`
-(`{payload, event}` for a test delivery) and `GET /automations/{id}/runs`. A trigger is
-`{kind: "interval", every_minutes}`, `{kind: "daily", time: "HH:MM", weekdays: ["mon", …]}` or
-`{kind: "webhook", filters: [{path, op, value}], coalesce_seconds, coalesce_key}`; an action
-`{kind: "create_task", title, description, task_type, claude_config_id, model, effort, status,
-start}` or `{kind: "send_to_task", task_id, message}`. Changes and runs are broadcast as
-`automations_changed` events.
+The RPC methods: `automations.list` and `automations.create` (with `project_id`, or `profile_id` for routines;
+`automation` is `{name, trigger, action, enabled, secret}`, and the list comes with the host's `time_zone`),
+`automations.get`, `automations.update` (also `rotate_token: true`; a blank `secret` removes it), `automations.delete`,
+`automations.run` (`{payload, event}` for a test delivery) and `automations.runs`. A trigger is
+`{kind: "interval", every_minutes}`, `{kind: "daily", time: "HH:MM", weekdays: ["mon", …]}`, `{kind: "cron", expr}`,
+`{kind: "at", at}` or `{kind: "webhook", filters: [{path, op, value}], coalesce_seconds, coalesce_key}`; an action
+`{kind: "create_task", title, description, task_type, claude_config_id, model, effort, status, start}`,
+`{kind: "send_to_task", task_id, message}` or (a routine's) `{kind: "message_assistant", message, mode}`. Changes and
+runs are broadcast as `automations_changed` events.
 
 ## Workflows
 

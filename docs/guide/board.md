@@ -1,13 +1,12 @@
 # Using the board
 
-The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar
-of how many of its tasks are in progress (blue), need attention (amber), in review (purple) and
-merging or waiting to merge (pink), leaving out the columns with none. Clicking one opens the
-**profile's board**: all of its tasks together, from every project and every host that has the
-profile, with its group and scratch tasks. Its _New task_ form picks the project, or makes a
-scratch task: type `in:` and a project's key (`in:HA`), `in:none` for a scratch task in no project or `in:group`
-for a group task (this was `@HA` until HA-303). Below the profiles, _Guide_ opens this guide in the app, a page at a
-time, with the open page's sections beside it.
+The board shows every profile at once. The sidebar lists the profiles at the top, each with a bar of how many of its
+tasks are in progress (blue), need attention (amber), in review (purple) and merging or waiting to merge (pink), leaving
+out the columns with none. Clicking one opens the **profile's board**: all of its tasks together, from every project and
+every host that has the profile, with its group and scratch tasks. Its _New task_ form picks the project, or makes a
+scratch task: type `in:` and a project's key (`in:HA`), `in:none` for a scratch task in no project or `in:group` for a
+group task (this was `@HA` on the old board until HA-303). Below the profiles, _Guide_ opens this guide in the app, a
+page at a time, with the open page's sections beside it.
 
 Typing `@` in a task's message box or the _New task_ form's description (HA-303) lists projects and tasks to mention:
 those on the profile's own board first, then those of the profiles that let its agents in. What follows the `@` filters
@@ -37,20 +36,20 @@ task that published it, which opens from there. A document opens on its pages, a
 `/docs/<profile>/d/<slug>/`: a menu of them (nested by their paths), the page, and a picker of its
 versions with each one's message. Links between pages open them there, in the same version; links out
 open in a new tab. Pages come rendered from their host and show in a sandboxed frame, as plans do.
-Their images (HA-327, API 147: AVIFs the host keeps, see _Docs_ in [agents.md](agents.md)) are fetched by the board
+Their images (HA-327: AVIFs the host keeps, see _Docs_ in [agents.md](agents.md)) are fetched by the board
 and given to the frame as data: URLs; remote images aren't shown.
 Local documents collect no answers yet, so their form fields (`<Approval />`, inputs) are read-only.
-Selecting text in a page offers **Comment** (HA-302, API 134), as on the hosted site: it quotes the text in the
+Selecting text in a page offers **Comment** (HA-302), as on the hosted site: it quotes the text in the
 **Comments** panel beside the page, where you leave a comment for the agent. A comment belongs to the version it was
 made on: the panel lists the page's comments, highlighted in the page (clicking one scrolls to it), each with Edit and
 Delete, and below them those on other pages and versions. **Send to the agent** sends the unsent ones, as one message,
 to the task that published the document (its latest version's, while it's on the board and not in an archived project);
 an edited comment is unsent again. Agents can also read them with the docs server's `get_feedback`. The header's comment
 button hides the panel. Comments stay on the host: publishing to hosted docs doesn't take them.
-A task's thread links each document it published to its page here. Docs is there for a profile with
-a connected host that has it (API 124), and lists the documents of every host the profile is on.
+A task's thread links each document it published to its page here. Docs lists the documents of every host the profile
+is on.
 
-Docs is a tree of folders (HA-290, API 130), as on the hosted site: folders first, then documents, each by name, and
+Docs is a tree of folders (HA-290), as on the hosted site: folders first, then documents, each by name, and
 each document one entry however many pages it has. A document an agent publishes goes in a folder named after its
 task's project (a task with no project's at the top level) unless the agent gives another; documents from before
 folders were filed the same way, by the task that published their first version. A folder closes and opens with a
@@ -61,7 +60,7 @@ inside it, to the new path. A folder is there while a document is in it, and mov
 address. A later publish leaves a document where it is. On a profile on several hosts, each host's documents are a tree
 of their own, under its name.
 
-Documents can be published to a hosted docs site (HA-282, API 125): [dire-kiwi/docs](https://github.com/dire-kiwi/docs),
+Documents can be published to a hosted docs site (HA-282): [dire-kiwi/docs](https://github.com/dire-kiwi/docs),
 https://docs.nest.dire.nz by default, where they can be read and shared. **Connect to hosted docs** at the top of
 Docs connects the profile: **Sign in** shows a code and a link to the site, where you sign in, check the code and
 choose **Allow** (the OAuth device flow; the host waits for it), or paste a personal access token from the site's
@@ -76,7 +75,7 @@ To try it against a local site, run `DOCS_DEV_LOGIN=1 cargo run` in a checkout o
 its `frontend`, see its README), and connect to `http://localhost:3000`.
 
 Add a project with the **+** by the _Projects_ heading. Its _Folder_ tab picks a folder on the
-host (a repository, or a new folder that's created for it). Its _GitHub_ tab (API 55) clones a
+host (a repository, or a new folder that's created for it). Its _GitHub_ tab clones a
 repository instead: it lists the ones gh can reach on the host as the profile's GitHub account (see
 _GitHub accounts_), or gh's active account when it has none: those the account owns, collaborates
 on or has contributed to, most recently pushed first. Typing filters them and also searches its
@@ -89,11 +88,10 @@ its clone folder per host in Settings → Profiles → Edit (`clone_dir`); it's 
 (`~/work`, `~/personal`) until it's set. A folder that's already a clone of the repository is added as it
 is, unless it's one of the profile's projects already. A clone that fails (its checkout too) is
 taken away again, and a request for a folder that's being cloned into waits for that clone to be
-added first. The dialog remembers which tab was used last. `GET /github-repos?account=&q=` lists or
-searches the repositories and `POST /profiles/{id}/projects/clone` (`repo`, `repo_path`, `name`,
-`key`) clones one and adds it.
+added first. The dialog remembers which tab was used last. The `profiles.githubRepos` RPC method lists or searches
+the repositories and `projects.clone` (`repo`, `repo_path`, `name`, `key`) clones one and adds it.
 
-The _Folder_ tab can also **create a GitHub repository** for the folder (API 102): tick _Create a GitHub
+The _Folder_ tab can also **create a GitHub repository** for the folder: tick _Create a GitHub
 repository for it_, pick _Private_ (the default) or _Public_, and optionally an owner (an organization;
 the profile's GitHub account by default) and a repository name (the folder's by default). The
 repository is made with `gh repo create` as the profile's GitHub account and becomes the folder's `origin`.
@@ -101,8 +99,8 @@ A folder that isn't a git repository yet is made one (a folder that doesn't exis
 repository's commits are pushed; one that already has an `origin`, or is only a subfolder of a repository,
 is turned down, and a repository that can't be made leaves the folder as it was. A push that fails
 after the repository is made still adds the project (`github.push_error` says why).
-`POST /profiles/{id}/projects/github` (`repo_path`, `visibility`: `public` or `private`, `repo_name`,
-`owner`, `name`, `key`) does it and returns the project with `github: {full_name, pushed, push_error}`.
+The `projects.createOnGithub` RPC method (`repo_path`, `visibility`: `public` or `private`, `repo_name`, `owner`,
+`name`, `key`) does it and returns the project with `github: {full_name, pushed, push_error}`.
 
 The sidebar lists projects in alphabetical order, with each group in its place by its own name
 and its projects in order inside it. Right-click a project and pick _Add to favorites_ to list it
@@ -111,7 +109,7 @@ out of its group, whose row stays while it has group tasks even if all its proje
 _Remove from favorites_ puts it back. Favorites are saved in this browser.
 
 Rename a project, change its key or point it at a moved repository folder in its settings (or
-with the `update_project` tool, API 45). After a key change the old task keys (e.g. `OS-2`) still
+with the `update_project` tool). After a key change the old task keys (e.g. `OS-2`) still
 find their tasks, and no other project can take them. A new repository path must be the same
 repository (told by its worktrees, the commits its history started from, or its tasks' branches);
 _Move the folder there_ (`move_repo`) moves the folder itself, with the project's agents stopped.
@@ -133,7 +131,7 @@ favorite shows it again. A hidden project is only left out of the sidebar: its t
 profile's and its group's boards. Hidden projects are saved in this browser.
 
 Archive a project you're done with by right-clicking it and picking _Archive…_, or with _Archive
-project_ in its settings (API 46). It goes off the board for every browser: out of the sidebar, its
+project_ in its settings. It goes off the board for every browser: out of the sidebar, its
 profile's and group's boards, and out of agents' `list_projects` (and `list_tasks` with `project_id='all'`).
 It takes no new tasks and its agents don't start (messages, other agents' `send_to_task`, reviews
 and idle compaction are refused; tasks waiting for their dependencies or a merge slot keep
@@ -147,11 +145,11 @@ tabs (or the card's menu): in an hour, tomorrow morning, next Monday or at a tim
 note on what for. Tasks with reminders are listed under _Reminders_, soonest first; once one comes
 round it shows as due, counted on the section's heading, until you clear it or set a new time
 (right-click it in the sidebar). Agents can do both too, with `starred`, `remind_at` (a delay
-like `2h`, or a time) and `reminder` on `create_task` and `update_task` (API 48). Stars and
+like `2h`, or a time) and `reminder` on `create_task` and `update_task`. Stars and
 reminders are saved on the task's host; which of the two sections are collapsed is saved in this
 browser.
 
-**Pens** (API 127) gather tasks from any of a profile's projects, and its tasks in no project, into
+**Pens** gather tasks from any of a profile's projects, and its tasks in no project, into
 named sets: the work you're on today, a feature that spans projects, or tasks you've parked to
 come back to in a few days. The profile's board shows them as tabs over its columns: _All_, with
 every task, then a tab for each active pen, in the pens' order, each with how many
@@ -161,7 +159,7 @@ the lasso, the selection bar's _Pen_ does it to all of them), by dropping its ca
 tab, or by making it on that tab; _Out of …_ in its menu, or dropping it on _All_, takes it out.
 The **+** after the tabs makes a pen. Right-click a tab (or click it again once it's open) to
 rename, recolour, mark inactive (or active), move or delete it; deleting a pen leaves its tasks on
-the board, in no pen. Each pen is **active** or **inactive** (API 131; a new pen is active): an
+the board, in no pen. Each pen is **active** or **inactive** (a new pen is active): an
 inactive pen keeps its tasks but has no tab, and inactive pens are listed under _N inactive_ at the
 end of the tab bar, which marks one active again.
 
@@ -173,9 +171,9 @@ has. Click a row's header to collapse it to just the header (the board remembers
 browser); its **+** makes a task in that pen. A card dropped in a row's column moves to that column
 and goes in that pen, and one dropped on a row's header goes in its pen.
 
-Each pen has a **colour** (API 129): a new one gets one the profile's other pens don't have, and
+Each pen has a **colour**: a new one gets one the profile's other pens don't have, and
 _Colour…_ in its tab's menu changes it. A card whose task is in a pen has a small label over it
-with the pen's name in its colour, on project and subproject boards and on the profile board's
+with the pen's name in its colour, on project boards and on the profile board's
 _All_ tab (not on the pen's own tab); clicking the label opens the pen's tab.
 
 **Stack cards** (HA-388, part of HA-386): on the kanban board, the tasks of a stack (stack levels, see _Stack levels
@@ -187,11 +185,11 @@ at least two tasks, and merged levels stay in it as its history. The card shows:
 
 - _Stack_ (or _Stack #12_ when it's on GitHub), how many levels it has and how many beside it, and a dot while any of
   their agents works.
-- The stack's title and description (API 152): a model writes them from the levels' titles and descriptions as the
+- The stack's title and description: a model writes them from the levels' titles and descriptions as the
   stack forms or its levels change, kept on the bottom task (`stack_title`, `stack_description`). _Edit its title and
   description…_ in the card's menu changes them by hand, which pins them (`stack_pinned`); _Write them again_ there has
-  the model write them again (`PATCH /api/tasks/{id}/stack` with `title`, `description` or `regenerate`). Until
-  they're written, and on a host from before, the card has the bottom task's title and no description.
+  the model write them again (the `tasks.updateStack` RPC method with `title`, `description` or `regenerate`). Until
+  they're written, the card has the bottom task's title and no description.
 - What's wrong (a level that needs your attention, failed checks, a restack conflict, a level waiting for you to say
   where it goes), what its landing waits on (the lowest open level of its main line: "“…” lands next: it passed
   review"), how many merges wait for your approval, and while it merges as a whole, how far that's got (how many of its main line's levels are merged). The card names
@@ -210,11 +208,11 @@ The **Stacks gathered** switch in the board's top bar (shown when the board has 
 at once, and a stack spread or gathered on its own since then stays so. Both are kept in this browser
 (`ia.board.stacks` and `ia.board.stackViews`, by the stack's bottom task), for every board.
 
-**Merging a whole stack** (API 153): once every open level of the main line is in review with its review passed (or
+**Merging a whole stack**: once every open level of the main line is in review with its review passed (or
 none, and its agent not running) or already in _Ready for merge_, at least one is in review, no open task merges into
 one of them (_Merges into_) and the lowest isn't held (its task below was closed without being merged, or deleted),
 drag the card to _Ready for merge_, or pick _Merge the stack_ in its menu. That moves them all there
-(`POST /api/tasks/{id}/merge-stack`) to merge bottom first as one run of the merge queue. Until then the card says
+(`tasks.mergeStack`) to merge bottom first as one run of the merge queue. Until then the card says
 which levels aren't through review yet, and dropping it on _Ready for merge_ or picking _Merge the stack_ says why
 not; the other columns refuse it (moving several tasks at once is too easy by accident: spread the stack to move a
 level). Tasks beside the stack aren't part of it, and land on their own.
@@ -237,36 +235,18 @@ How a gathered card goes with the rest of the board:
 - **Phone:** the card shows in its column, and its menu button (…) stands in for dragging it.
 - **Archived and filtered-out levels:** an archived level stays in the list view's _Archived_ section and on the
   card's bar; a level the filters leave out is still on the bar, and counted as not matching.
-- **Hosts before stack levels** (API 142) have no stack cards. A host before API 152 has no stack titles to show or
-  edit, and one before API 153 can't merge a whole stack: its card can't be dragged, and has no _Merge the stack_.
 
-The **pens thread** at the end of the tab bar is a conversation that arranges the pens for you:
-tell it "today I'm on the login fix and the pricing page, and park the release notes" and its
-agent finds those tasks, puts them in pens (making them as needed), and marks the pens you're not
-on inactive. It's one lasting thread per profile (keyed `S-<n>` among its scratch tasks), in no project
-and off the board's columns; like the assistant, it never goes to review or merge. Any agent can
-do the same with the pen tools (`list_pens`, `create_pen`, `update_pen`, `delete_pen`, and `pen`
-on `create_task`, `update_task` and `list_tasks`; `create_pen` and `update_pen` take `active`, and
-`list_pens` says whether each pen is active). Pens are kept on each host, per profile; a profile's board spanning hosts merges them by
-name, and a task on a host without the pen yet makes it there as it moves in. `GET`/`POST
-/profiles/{id}/pens`, `PATCH`/`DELETE /pens/{id}` (with `active`; a host before API 131 has `hidden`,
-its opposite, which the API still returns and takes for older boards), `pen` (a name) or `pen_id` on `PATCH /tasks/{id}`,
-and `GET /profiles/{id}/pens-thread` (see `apps/server/src/api/pens.ts`).
-
-Each pen also has a **thread of its own** (API 128): open it with _<pen> thread_ at the end of the
-tab bar while the pen's tab is shown, or _Open its thread_ in the tab's menu. Its agent works on
-that pen's tasks: ask it how the pen's work is going, have it add tasks to the pen, start or chase
-them, or keep notes on what the pen is for (in a file in its folder). It's told the pen's name, id
-and tasks as they are when each of its runs starts, and its `create_task` puts new tasks in the
-pen and its `list_tasks` lists the pen's tasks unless it's told otherwise. It's made the first time
-it's opened, keyed `S-<n>` among the scratch tasks like the pens thread, and like it stays open,
-off the board's columns, never going to review or merge. It's titled _Pen: <name>_ and renamed with
-its pen, and deleting the pen deletes its thread (a pen's own thread can't delete its pen). The
-pens thread is still the one for arranging the pens as a whole. On a board spanning hosts, a tab
-opens the thread of its pen on the board's own host if it has one there. `GET /pens/{id}/thread`
-makes or finds it; a pen's `thread_id` says which it is. The pens thread and pens' own threads run
-on the profile's **Threads agent** (Settings → Profiles, API 138), or its default config; one that
-has a conversation keeps its config until `/new` starts another.
+The old board's **pens thread** (a conversation at the end of the tab bar that arranged the pens for you) and each
+pen's **own thread** (one that worked on that pen's tasks) aren't on the new server yet: the tab bar has no buttons for
+them. An old board's come over with its import, keyed `S-<n>` among the profile's scratch tasks, and run on the
+profile's **Threads agent** (Settings → Profiles); a pen's own thread is titled _Pen: <name>_, renamed with its pen and
+deleted with it, and in it `create_task` puts new tasks in the pen and `list_tasks` lists the pen's tasks unless it's
+told otherwise. Any agent can arrange pens with the pen tools (`list_pens`, `create_pen`, `update_pen`, `delete_pen`,
+and `pen` on `create_task`, `update_task` and `list_tasks`; `create_pen` and `update_pen` take `active`, and
+`list_pens` says whether each pen is active). Pens are kept on each host, per profile; a profile's board spanning hosts
+merges them by name, and a task on a host without the pen yet makes it there as it moves in. The `pens.*` RPC methods
+(`pens.list`, `pens.create`, `pens.update` with `active`, `pens.delete`) and `pen` (a name) or `pen_id` on
+`tasks.update` do the same; a pen's `thread_id` says which task is its own thread.
 
 A group's _New task_ form can also start a **group task** (pick _Group task_ in its project
 picker). It isn't in any project: it sits on the group's board (keyed `G-<n>`, numbered across
@@ -278,7 +258,7 @@ repositories readable, and follows its group when the group is renamed. A group 
 projects are all ungrouped or deleted stays in the sidebar (in italics) while it has group
 tasks, so they can still be opened, resumed and deleted.
 
-Any task can have **labels** (API 71): **Plan**, **Artifact** and **Diagram**, each asking its
+Any task can have **labels**: **Plan**, **Artifact** and **Diagram**, each asking its
 agent for a document besides its other work. Add them in the _New task_ form by typing `/plan`,
 `/artifact` or `/diagram` (several at once work), in the task's details under _Labels_ (they can
 be added and taken off at any time; the agent hears of a change the next time it starts), or
@@ -293,8 +273,8 @@ card shows how many of those are done. Each label gets a tab in the task, before
 showing its document as the agent writes it: HTML in a sandboxed frame (its scripts run, but it
 can't reach the board or other hosts: see below), a diagram drawn in the board with zoom, an SVG
 download and a button that sends a parse error back to the agent. Reply under the document to ask
-for changes. The board keeps a version from each turn that changed the file (`GET /tasks/{id}/document?label=plan`, with
-`&version=N` for an earlier one), and the task opens on its first label's document once there's
+for changes. The board keeps a version from each turn that changed the file (the `tasks.document` RPC method, with
+`label`, and `version` for an earlier one), and the task opens on its first label's document once there's
 one to read. The board's _Type_ filter finds tasks by their labels too.
 
 An HTML document's frame has a Content-Security-Policy that lets it load only scripts, styles and
@@ -317,10 +297,9 @@ off. The desktop app does none of them: it makes no connection or lookup for a f
 preconnect link, and it takes WebRTC away in every frame. Browsers other than Chrome and Chromium
 weren't checked.
 
-Before API 71, plan, artifact and diagram were types of task whose agents made only the document,
-in the task's own folder, with no worktree, review or merge. Tasks made as one have it as their
-label since, and keep working that way: _Ready for merge_ marks them done. A host before API 71
-still makes a task of that type when the board gives a new task one label (and refuses several).
+Before labels, the old board had plan, artifact and diagram as types of task whose agents made only the document,
+in the task's own folder, with no worktree, review or merge. Tasks made as one have it as their label since, and keep
+working that way: _Ready for merge_ marks them done.
 
 A plan's agent asks what it needs to know as questions in the plan (`<ia-question>`: a choice of
 one or several, a dropdown, or text, with an optional free-text _Other_, and any named form field
@@ -330,18 +309,12 @@ changes the plan, or the board is reloaded (_Reset_ puts back the plan's own). *
 sends them to the agent as a message, each question with its answer, and it updates the plan
 with them. An earlier version's questions are shown but can't be answered.
 
-A **scratch task** (pick **Scratch** in the _New task_ form, or pass `type: "scratch"` to
-`create_task`) is for whatever you ask its agent: questions, trying things out, or planning and
-running work with the board tools. Its agent works in the task's own folder
-(`<data dir>/documents/<task id>`). On a profile's board it starts out in no project (API 47): it
-sits on that board, keyed `S-<n>` (numbered across the profile; no project can use the key `S`, and
-one that had it moves to `SP`), with no repository. The form's project picker (_No project_, or a
-project) moves it, and on a project's or subproject's board it's in that project (API 51, or with
-`project_id` or `subproject` on `create_task`): numbered with the project's tasks, its agent reads
-the repository (and the subproject's worktree) without changing it, and the tasks it creates go in
-the subproject. A scratch task in a subproject isn't part of the subproject's work, so the
-subproject's column and progress leave it out, and the subproject is merged without waiting for
-it. Like a document task it has no worktree, review or merge: moving it to _Ready for merge_
-marks it done. Scratch tasks replace the scratch chats of earlier versions:
-those became done scratch tasks (in no project, whichever project they were in) that keep
-working in their old folder, so their conversations carry on.
+A **scratch task** (pick **Scratch** in the _New task_ form, or pass `type: "scratch"` to `create_task`) is for whatever
+you ask its agent: questions, trying things out, or planning and running work with the board tools. Its agent works in
+the task's own folder (`<data dir>/documents/<task id>`). On a profile's board it starts out in no project: it sits on
+that board, keyed `S-<n>` (numbered across the profile; no project can use the key `S`, and one that had it moves to
+`SP`), with no repository. The form's project picker (_No project_, or a project) moves it, and on a project's board
+it's in that project (or with `project_id` on `create_task`): numbered with the project's tasks, its agent reads the
+repository without changing it. Like a document task it has no worktree, review or merge: moving it to _Ready for merge_
+marks it done. Scratch tasks replace the scratch chats of earlier versions: those became done scratch tasks (in no
+project, whichever project they were in) that keep working in their old folder, so their conversations carry on.

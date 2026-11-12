@@ -7,7 +7,8 @@ A thread whose config is a Codex one runs `huntaway codex-run` under ia-shim ins
 thread, sends the prompt, steers messages sent meanwhile into the turn (`turn/steer`), and exits
 when its input ends with no turn going. Codex's events are kept in the run's
 output as they are, and the server writes them into the thread's items as they come (see
-[docs/threads.md](../threads.md), "Codex writes items directly"), shown like Claude's: commands as Bash calls, file
+[docs/threads.md](https://github.com/dire-kiwi/huntaway/blob/master/docs/threads.md), "Codex writes items directly", in
+the old repository), shown like Claude's: commands as Bash calls, file
 changes as diffs, the plan as a todo list, MCP calls under their server's name. The board's
 tools (as Codex dynamic tools), the project's MCP servers and skills, `/compact`, steering, stopping (`turn/interrupt`), queued messages and
 reviews work the same.
@@ -79,7 +80,8 @@ your next message at once.
   the agent says it waits on (its `background_wait` tool, for a long build or test run).
 - **Each shell has a Stop of its own**, which ends it and leaves the agent be (Claude Code's `stop_task`). Once none is
   left, the run ends as it would have without them. The run's own Stop says **Stop all** then: it ends the run, and the
-  background work with it.
+  background work with it. The banner's own Stop buttons (a shell's and a server's) aren't wired up on the new board
+  yet: they say so.
 - **The agent is told what stopped.** When a run ends with background work going (a Stop, a restart that couldn't follow
   the run, the run killed), or you stop a shell, the agent's next prompt starts with a note listing it (up to ten), once,
   so it doesn't tell you a dev server is up when it isn't.
@@ -102,51 +104,39 @@ threads it spawns): their parent does. The tools:
 `delete_task` (once the user confirms), `get_project`, `update_project` (a project's settings), `create_project`,
 `request_user_input`, `wait` (block until something happens, showing the task as waiting; see
 _Waiting_), `background_wait` (keep the task working while a background command it waits on runs; see _Background work
-and dev servers_), and the pen tools (API 127, see _Pens_ in [Using the board](board.md)): `list_pens`,
+and dev servers_), and the pen tools (see _Pens_ in [Using the board](board.md)): `list_pens`,
 `create_pen`, `update_pen` and `delete_pen`, with `pen` on `create_task`, `update_task` and
 `list_tasks`; a pen is active (a tab on the board) or inactive, `active` on `create_pen`,
-`update_pen` and `list_pens` (API 131, in place of `hidden`; a linked host before that is told
-to update when asked to change it); in a pen's own thread (API 128), `create_task` defaults `pen`
+`update_pen` and `list_pens`; in a pen's own thread, `create_task` defaults `pen`
 to its pen (for tasks on its own profile's board, on its host; an empty `pen` is none) and
-`list_tasks` with no `project_id`, `pen` or `subproject` lists its pen's tasks. Review threads
-also get `submit_review`. `create_task` and `update_task` take `merges_into` (API 133, see
+`list_tasks` with no `project_id` or `pen` lists its pen's tasks. Review threads
+also get `submit_review`. `create_task` and `update_task` take `merges_into` (see
 _Merging into another task_ in [Concepts](concepts.md)), and task summaries show `merges_into` and
-`merging_into_it`. `create_task` takes `subproject` to add the task to an existing subproject
-(agents in a subproject add to theirs by default); new subprojects can't be made any more, so
-`is_subproject` and `type: "subproject"` are gone (API 133). `list_tasks` takes `subproject`.
-`create_task` and `update_task` take `start_from` (API 96, see _Starting from elsewhere_), and task
+`merging_into_it`. Subprojects are gone: `merges_into` replaces them, and an old board's subprojects import as ordinary tasks.
+`create_task` and `update_task` take `start_from` (see _Starting from elsewhere_), and task
 summaries say what a task started from. `create_task` starts the new task's agent unless it's given
-`start: false` (API 137; before, only with `start: true`), which agents pass when the user asks for a
+`start: false`, which agents pass when the user asks for a
 task not to be started; a task created with a status other than `todo` or `in_progress` (`backlog`,
 `done`) only starts with `start: true`. `update_task` moving a `todo` or `backlog` task that hasn't run yet to
 `in_progress` starts its agent too, as dragging it there does. (The board's _New task_ dialog
 works as before.) `create_task` and `update_task` take the task's `model` (an alias such as `fable`,
 `opus`, `sonnet` or `haiku`, a full Claude model id, or a Codex model for a task on a Codex config)
-and `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max` or `ultra`), checked as the API
-checks them (API 151); left out, the project's, profile's or board's default is used, and on
+and `effort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max` or `ultra`), checked as the board
+checks them; left out, the project's, profile's or board's default is used, and on
 `update_task` an empty string clears either. Agents set them only when the user asks or the task
 calls for it. As with the thread's model picker, a change applies from the agent's next run, and
-task summaries show a task's own `model` and `effort`. A linked host from before API 151 is refused
-calls that set them.
+task summaries show a task's own `model` and `effort`.
 
-From API 59, helpers that advertise `get_task_field` receive a bounded overview from `get_task`:
-small fields stay inline, `field_lengths` lists every available field's length, and
-`omitted_fields` names those left out. Values over
-1,000 serialized bytes are omitted, with a 6,000-byte budget for inline values in total. Read
-any field with `get_task_field`, for example
-`{"task_id":"IA-132","field":"last_message","offset":0,"limit":2000}`. Follow its
-`next_offset` until it is null. Offsets and lengths count Unicode characters, starting at zero;
-the default limit is 2,000 and the maximum is 4,000. String fields return plain text in
-`content`; other fields (such as `review` and `created_tasks`) return pretty JSON, including
-`null` for a null value, with `format` saying `text` or `json`. Pages reflect the current field
-value, so a task changing between calls may change them. Both tools use the same profile access
-and task-key resolution as other board tools. The helper opts in with `task_fields: true` in
-the internal MCP request, which is carried through forwarded requests outside the tool arguments.
-Older helpers and linked hosts omit it and keep receiving full details, so upgrading only the
-serving host does not hide content from callers that cannot use `get_task_field`. For newer
-helpers reading linked hosts before API 59, the calling host summarizes or slices the legacy
-`get_task` response before returning it to the agent. On a task in a stack (see _Stack levels_ in
-[Concepts](concepts.md)), `get_task` has the stack's `stack_title` and `stack_description` (API 152).
+`get_task` gives a bounded overview of a task: small fields stay inline, `field_lengths` lists every available field's
+length, and `omitted_fields` names those left out. Values over 1,000 serialized bytes are omitted, with a 6,000-byte
+budget for inline values in total. Read any field with `get_task_field`, for example
+`{"task_id":"IA-132","field":"last_message","offset":0,"limit":2000}`. Follow its `next_offset` until it is null.
+Offsets and lengths count Unicode characters, starting at zero; the default limit is 2,000 and the maximum is 4,000.
+String fields return plain text in `content`; other fields (such as `review` and `created_tasks`) return pretty JSON,
+including `null` for a null value, with `format` saying `text` or `json`. Pages reflect the current field value, so a
+task changing between calls may change them. Both tools use the same profile access and task-key resolution as other
+board tools. On a task in a stack (see _Stack levels_ in [Concepts](concepts.md)), `get_task` has the stack's
+`stack_title` and `stack_description`.
 
 Each run also gets the `gh` MCP server, also served by the board, which runs the GitHub CLI for the
 agent. MCP servers run outside Claude Code's Bash sandbox, where `gh` and `git push` often can't
@@ -195,7 +185,7 @@ selections, with `version` and `since`; form fields collect no answers here, so 
 agents are told to ask in the thread instead. Sharing (`share_document`) isn't there. Its tools run without asking (in `--allowedTools`, or approved
 in Codex's config), and agents are told to publish write-ups there and give the user the URL it
 returns: `<board>/docs/<profile id>/d/<slug>/` (the host's _Public URL_, or its own address), with
-`-/v/<n>/` for a version. The board reads them at `/api/profiles/{id}/docs` (API 124), and shows
+`-/v/<n>/` for a version. The board reads them with the `docs.*` RPC methods, and shows
 them on the profile's Docs page (see [board.md](board.md)), with links built from its own address. A project
 can turn the server off (its runs then have no `docs` server at all, nor the note about it), or
 replace it with its own named `docs`.
@@ -213,20 +203,18 @@ documents use it, and it's deleted with the last document that does. Image data 
 toward a page's 1,000,000 bytes, and the docs server takes requests of up to 64 MB (the other
 servers 32 MB). A version has the images of its publish; with `mode: "merge"` it also keeps the
 previous version's images that its pages still show. On the board a page's images come from
-`GET /api/profiles/{id}/doc_images/{sha256}` (API 147), which the board gives the page's sandboxed
+`docs.image` (by the image's SHA-256), which the board gives the page's sandboxed
 frame as data: URLs: the frame can't fetch with the board's token, and its policy still refuses
 anything remote, remote images included. _Publish_ to the docs site sends the version's AVIFs as
 the site's `images`.
 
-**Computer use.** On a host where it's turned on, runs also get the `desktop` MCP server (HA-273):
-the agent sees and uses the host's own desktop (native apps' windows) through
-[Cua Driver](https://github.com/trycua/cua) (MIT). It's off by default. On the host's page
-(Settings → Hosts → the host), _Computer use_ has **Install Cua Driver**, which downloads the
-release Huntaway pins (`desktop.ts`'s `VERSION`; Cua marks every driver release a prerelease) from
-GitHub, checks its size and SHA-256, and unpacks it into `<data dir>/cua-driver/<version>/`;
-**Check**, which starts the driver and shows what it may do; and the switch that lets the host's
-agents use it, from their next run. `IA_CUA_DRIVER` runs another build instead, and a `cua-driver`
-on PATH is used when none is installed.
+**Computer use.** On a host where it's turned on, runs also get the `desktop` MCP server (HA-273): the agent sees and
+uses the host's own desktop (native apps' windows) through [Cua Driver](https://github.com/trycua/cua) (MIT). It's off
+by default. On the host's page (Settings → Hosts → the host), _Computer use_ has **Install Cua Driver**, which downloads
+the release Huntaway pins (`apps/server/src/desktop/cua.ts`'s `CUA_VERSION`; Cua marks every driver release a
+prerelease) from GitHub, checks its size and SHA-256, and unpacks it into `<data dir>/cua-driver/<version>/`; **Check**,
+which starts the driver and shows what it may do; and the switch that lets the host's agents use it, from their next
+run. `HUNTAWAY_CUA_DRIVER` runs another build instead, and a `cua-driver` on PATH is used when none is installed.
 
 - The server runs one `cua-driver mcp` for the host (on Linux it owns the driver's runtime), started
   when an agent first needs it and stopped after 10 minutes without a call. It needs the graphical
@@ -249,8 +237,8 @@ on PATH is used when none is installed.
   again.
 - The task panel's monitor button (shown when the host has computer use on) opens a view beside the
   thread: the window the agent last read or acted on, live while the driver runs (a capture that
-  leaves the agent's snapshot alone), and what it did there. `GET /api/desktop/frame?task_id=` and
-  `GET /api/tasks/{id}/desktop` (capability `desktop`) are what it reads; paired devices can't.
+  leaves the agent's snapshot alone), and what it did there. The `desktop.frame` and
+  `desktop.ops` RPC methods are what it reads.
 - Agents share the host's one keyboard, pointer and focus with whoever is at it, so they're told to
   keep to the background and leave the desktop as they found it. On Hyprland, Cua's background input
   needs its experimental plugin; without it the driver refuses background input, and an agent can
@@ -290,8 +278,8 @@ would put the token in the thread), `config get` of a host's settings (with `-h`
 thread's permission mode. gh's command has to come first (only `--help` and `--version` may come
 before it), and so does `alias`'s and `config`'s subcommand. An account that isn't signed in to gh fails the tool call
 (and a `wait` with a command, without running it) with a message saying so, and the host skips its
-own lookups. `GET /github-accounts` lists the accounts gh is signed in to on a host
-(API 50), and profiles and projects take `github_account` (a login, or `HOST/LOGIN` for a GitHub
+own lookups. The `profiles.githubAccounts` RPC method lists the accounts gh is signed in to on a host,
+and profiles and projects take `github_account` (a login, or `HOST/LOGIN` for a GitHub
 Enterprise host; null for the default). Agents can't change it with `update_project`.
 
 **How runs reach the board's MCP servers.** The board serves both servers itself, so a run has no
@@ -299,7 +287,7 @@ MCP helper process of its own.
 
 A Claude run that takes input (every run but a `/compact`) has the board's tools as an in-process
 ("SDK") MCP server of Claude Code's, over its control protocol, as its permission prompts are (HA-221,
-`apps/server/src/agent/runner/requests.ts`). The run's input starts with an `initialize` control
+`apps/server/src/mcp/transport/control.ts`). The run's input starts with an `initialize` control
 request that registers the `huntaway` server (`sdkMcpServers`), with no time limit on its calls and
 none moved to the background, and gives Claude Code its handshake's results (`sdkMcpServerManifests`:
 its `initialize` and `tools/list`, the reviewers' tools for a review thread), so it needn't ask for
@@ -318,9 +306,7 @@ turn was interrupted, or a tool call beside it failed) isn't answered: a `wait` 
 that `delete_task` or `update_project` asked for expires, so it can't be given once the agent has
 moved on. Claude Code says so with a `notifications/cancelled` MCP message (`mcp_message`) naming the
 call's JSON-RPC id, which the board finds among the run's open calls in `mcp_calls`; a permission
-prompt it gives up on is a `control_cancel_request` instead. Such runs are run format 4,
-which an older build that's rolled back to stops rather than follow, as it couldn't answer their
-calls.
+prompt it gives up on is a `control_cancel_request` instead.
 
 Older Codex sessions and compactions reach the board's tools over MCP's streamable HTTP transport, and every
 run reaches the `gh` and `docs` servers that way, at `/api/mcp/<run id>/huntaway`, `/api/mcp/<run id>/gh` and `/api/mcp/<run id>/docs` on
@@ -336,15 +322,9 @@ Each tool call is answered as a server-sent event stream that starts with an eve
 `retry` time of 5 seconds). When the stream breaks, as a server restart does, Claude Code and
 Codex reconnect with that id (`Last-Event-ID`) and get the call's answer on the new stream: the
 board's call picks up where it was (a permission prompt or `wait` carries on, a finished call
-answers what it recorded, and a call the restart cut short says so, as for a retried helper's
-call). A `gh` call's output is lost if the server restarted while it ran, and the agent is told
+answers what it recorded, and a call the restart cut short says so). A `gh` call's output is lost if the server restarted while it ran, and the agent is told
 it may or may not have taken effect. Claude Code tries twice, 5 seconds apart, before it gives
 the call up (the agent then sees that it failed); a restart takes a second or two. Codex keeps
 trying, with backoff. Claude Code also drops a call 90 seconds after its connection broke unless
 the call has made progress since, so the streams send progress notifications every 20 seconds
 (and as soon as a client reconnects).
-
-Runs used to start `huntaway mcp` and `huntaway gh-mcp` stdio helpers of their own (before HA-180, or with
-`IA_MCP_STDIO=1`), which called `/api/internal/mcp`: HA-225 removed them. Each was a Node process of about 90 MB (RSS)
-under the TypeScript server; with five agents running on a test server, each agent's processes came to 424 MB RSS
-(242 MB PSS) with the helpers and 239 MB (159 MB PSS) without (HA-180).
