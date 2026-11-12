@@ -37,11 +37,11 @@ export function failureOf(result: AsyncResult.AsyncResult<unknown, unknown>): un
 /**
  * A component's own action: `run(effect)` runs an effect (one call, or a few in order) and resolves with its exit,
  * never rejecting; `state` is whether it is running and why it failed. Runs don't wait for each other, and `busy` is
- * true while any runs. The state is this component's, not shared with others running the same calls; a run is the
+ * true while any runs; `clear()` forgets the last failure. The state is this component's, not shared with others running the same calls; a run is the
  * page's, not the component's, so it goes on when the component goes (a dialog closed while its save is on its way, a
  * set of tasks still being made): interrupting it would interrupt the call on the host too.
  */
-export function useAction(): readonly [ActionState, <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>) => Promise<Exit.Exit<A, E>>] {
+export function useAction(): readonly [ActionState, <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>) => Promise<Exit.Exit<A, E>>, () => void] {
   const [own, setOwn] = useState<{ readonly running: number; readonly failure: unknown }>({ running: 0, failure: undefined })
   const run = useCallback(<A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>): Promise<Exit.Exit<A, E>> => {
     setOwn((s) => ({ running: s.running + 1, failure: undefined }))
@@ -51,8 +51,10 @@ export function useAction(): readonly [ActionState, <A, E>(effect: Effect.Effect
       return exit
     })
   }, [])
+  // Forgets the last failure (an error the user has dismissed, or that a later save made moot).
+  const clear = useCallback(() => setOwn((s) => (s.failure === undefined ? s : { ...s, failure: undefined })), [])
   const { running, failure } = own
-  return [{ busy: running > 0, error: failure === undefined ? null : errorText(failure), failure }, run]
+  return [{ busy: running > 0, error: failure === undefined ? null : errorText(failure), failure }, run, clear]
 }
 
 /**
