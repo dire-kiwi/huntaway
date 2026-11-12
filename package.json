@@ -11,7 +11,7 @@
     "test": "vp test",
     "test:e2e": "pnpm --filter huntaway-server test:e2e",
     "test:ui": "pnpm --filter huntaway-web test:ui",
-    "test:scripts": "sh scripts/install-release-host-test.sh && bash scripts/install-test.sh && bash scripts/copy-live-board-test.sh",
+    "test:scripts": "sh scripts/install-release-host-test.sh && bash scripts/install-test.sh && bash scripts/copy-live-board-test.sh && bash scripts/switch-board-test.sh",
     "dev": "pnpm --filter huntaway-web dev",
     "build": "pnpm --filter huntaway-web build",
     "desktop": "pnpm --filter huntaway-desktop start"
