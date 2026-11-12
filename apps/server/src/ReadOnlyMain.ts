@@ -412,7 +412,8 @@ export const ReadOnlyRoutes = Layer.mergeAll(ReadOnlyRpc, HealthRoute, ApiNotFou
 
 /**
  * The whole read-only server, on `config.host` (which `bin.ts` makes 127.0.0.1 unless `--host` or `HUNTAWAY_HOST` was
- * given): it binds once every service is built, as the board does. `guard` is `ImportGuard`'s answer.
+ * given): it binds once every service is built, as the board does. It needs `ServerConfig` and `ImportGuard` (the
+ * guard's answer) from the caller.
  */
 export const readOnlyServerLayer = (config: ServerConfig["Service"]) =>
   HttpRouter.serve(ReadOnlyRoutes, { disableListenLog: true, disableLogger: true }).pipe(
