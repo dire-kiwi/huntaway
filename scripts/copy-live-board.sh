@@ -7,7 +7,8 @@
 #
 # Carried over from the old repository's script of the same name (dire-kiwi/huntaway at f2298f0c), with one more step:
 #   1. It snapshots the old board's database with SQLite's online backup through a read-only connection (the old server
-#      may be running), into a folder of its own inside the test server's data dir.
+#      may be running), into a folder of its own beside the test server's data dir, <data dir>-legacy-source (the
+#      importer refuses an old folder inside the new one; test-server.sh stop removes it with the data dir).
 #   2. It scrubs the snapshot as the old script did, so the test server leaves the old board's things alone: no runs to
 #      pick up, no repositories or worktrees (their paths are moved under /nonexistent), no setup or status scripts, no
 #      agent config folders, no Asana tokens, no Telegram bots, no pending prompts, no linked hosts, no automations, no
@@ -118,9 +119,10 @@ grep -qE -- '--no-agents|fake-claude' "$dir/launch" ||
 [[ "$(cd "$dir" && pwd -P)" != "$(cd "$live" && pwd -P)" ]] || { echo "that's the old board's data dir" >&2; exit 1; }
 
 src="$(live_db)"
-source_dir=$dir/legacy-source
+source_dir=$dir-legacy-source
 rm -rf "$source_dir"
 mkdir -p "$source_dir"
+touch "$source_dir/.huntaway-legacy-source"
 snapshot=$source_dir/$(basename "$src")
 sqlite3 -readonly "$src" ".backup '$snapshot'"
 scrub "$snapshot"

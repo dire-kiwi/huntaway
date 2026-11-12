@@ -294,6 +294,8 @@ stop() {
   [[ -S $dir/tmux.sock ]] && command -v tmux >/dev/null && tmux -S "$dir/tmux.sock" kill-server 2>/dev/null || true
   # A process the server started (a git command) may still be writing in it for a moment: "Directory not empty".
   rm -rf "$dir" 2>/dev/null || { sleep 0.5; rm -rf "$dir"; }
+  # The snapshot copy-live-board.sh imported from, beside the data dir.
+  [[ -f $dir-legacy-source/.huntaway-legacy-source ]] && rm -rf "$dir-legacy-source"
   [[ $(readlink "$latest" 2>/dev/null) == "$dir/env" ]] && rm -f "$latest"
   echo "stopped; removed $dir"
 }
