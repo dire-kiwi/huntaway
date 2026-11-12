@@ -16,3 +16,5 @@ export * from "./fakeDocsSite.ts"
 export * from "./fakeClickHouse.ts"
 // 9.1: an old board for the importer.
 export * from "./legacyBoard.ts"
+// 9.1: an imported folder (a rehearsal's or a switch's), for the guard and the read-only server.
+export * from "./rehearsal.ts"

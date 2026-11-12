@@ -367,7 +367,7 @@ export const ReadOnlyServed = PublicRpcs.merge(
  * RPC that is not a read (later layers win). Groups with no read (admin, desktop, links, settings sync, telemetry,
  * terminals, tools) are only refused, so nothing they would need is built.
  */
-export const ReadOnlyHandlers = Layer.mergeAll(
+export const ReadOnlyRpcHandlers = Layer.mergeAll(
   refuseAll(ReadOnlyServed),
   ReadOnlyPublicHandlers,
   HostHandlers,
@@ -396,7 +396,10 @@ export const ReadOnlyHandlers = Layer.mergeAll(
   AssistantHandlers,
   WorkflowHandlers,
   refuseChanges(ReadOnlyServed),
-).pipe(Layer.provideMerge(AuthReadOnly))
+)
+
+/** The handlers behind `Auth.readOnly`: the board token, narrowed to `read`. */
+export const ReadOnlyHandlers = ReadOnlyRpcHandlers.pipe(Layer.provideMerge(AuthReadOnly))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`, as on the board. */
 export const ReadOnlyRpc = Layer.mergeAll(
