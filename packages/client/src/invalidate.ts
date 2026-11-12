@@ -1,7 +1,7 @@
 import { Context, Effect } from "effect"
 import { Atom, type AtomRegistry, Reactivity } from "effect/reactivity"
 import { TaskId } from "@huntaway/contracts"
-import type { HostBoard } from "./board/hostBoard.ts"
+import { docsKey, type HostBoard } from "./board/hostBoard.ts"
 import type { Methods } from "./rpc.ts"
 
 // What reads a query again (docs/plan/09-frontend.md, Queries, mutations, invalidation). A component never refetches
@@ -30,11 +30,22 @@ const taskState = (board: HostBoard, id: string): string => {
   return t ? `${t.running}:${t.worktree_state}` : ""
 }
 
+/** The number of the host's latest `docs` / `doc_comments` / `docs_site` event about a profile (and document). */
+const docsSeq = (board: HostBoard, kind: "docs" | "comments" | "site", profile: string, slug = ""): number => board.docs.get(docsKey(kind, profile, slug)) ?? 0
+
 /** Per method, what of the board a query of it is read again on (none: only mutations and its own refresh). */
 export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
   "git.taskDiff": (board, p) => taskState(board, p.id),
+  // 6.3: the Docs page reads a profile's documents again on its `docs` events, and on `docs_site` (their published
+  // state is the site's); a document's comments on its `doc_comments`; the latest version (not a numbered one) on `docs`.
+  "docs.list": (board, p) => `${docsSeq(board, "docs", p.profile_id)}:${docsSeq(board, "site", p.profile_id)}`,
+  "docs.get": (board, p) => `${docsSeq(board, "docs", p.profile_id)}:${docsSeq(board, "site", p.profile_id)}`,
+  "docs.labels": (board, p) => docsSeq(board, "docs", p.profile_id),
+  "docs.version": (board, p) => (p.version === null ? docsSeq(board, "docs", p.profile_id) : 0),
+  "docs.comments": (board, p) => docsSeq(board, "comments", p.profile_id, p.slug),
+  "docs.hostedStatus": (board, p) => docsSeq(board, "site", p.profile_id),
 }
 
 /** The key a host's group is invalidated by. */

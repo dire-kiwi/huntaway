@@ -1,9 +1,13 @@
 // The dialog a home's tree asks for a folder's path with: to move a document, or to rename a folder.
 import { Loader2 } from "lucide-react"
+import { Exit, type Effect } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
 import { useId, useState } from "react"
-import { Button, ErrorBox, Field, Input, Modal, ModalFooter, useAsyncAction } from "../../ui"
+import type { CallError } from "@huntaway/client"
+import { useAction } from "../../../state/mutation"
+import { Button, ErrorBox, Field, Input, Modal, ModalFooter } from "../../ui"
 
-/** A dialog that asks for a folder's path, suggesting the folders there are. */
+/** A dialog that asks for a folder's path, suggesting the folders there are; `onSave`'s change closes it once it's made. */
 export function FolderDialog({
   title,
   initial,
@@ -11,7 +15,6 @@ export function FolderDialog({
   action,
   hint,
   onSave,
-  onDone,
   onClose,
 }: {
   title: string
@@ -19,18 +22,15 @@ export function FolderDialog({
   folders: string[]
   action: string
   hint: string
-  onSave: (folder: string) => Promise<unknown>
-  onDone: () => void
+  onSave: (folder: string) => Effect.Effect<unknown, CallError<"docs.update" | "docs.renameFolder">, AtomRegistry.AtomRegistry>
   onClose: () => void
 }) {
   const [folder, setFolder] = useState(initial)
-  const run = useAsyncAction()
+  const [run, start] = useAction()
   const listId = useId()
   const save = () =>
-    void run.run(async () => {
-      await onSave(folder)
-      onDone()
-      onClose()
+    void start(onSave(folder)).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
     })
   return (
     <Modal title={title} onClose={onClose} onSubmit={save} width="max-w-md">
