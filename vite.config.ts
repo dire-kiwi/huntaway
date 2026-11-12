@@ -57,7 +57,6 @@ const stepOne = [
   "apps/web/src/components/layout/**",
   "apps/web/src/components/settings/**",
   "apps/web/src/components/task/**",
-  "apps/web/src/components/ui/**",
   "apps/web/src/components/boardHelpers.ts",
 ]
 

@@ -7,6 +7,8 @@ import { fromLocalInput, isDue, nextDue, reminderLabel, reminderPresets, toLocal
 
 import { Button, ContextMenu, errorText, IconButton, Input, Modal, ModalFooter, Wide, type MenuItem } from "../ui"
 import { rpc } from "../../state/rpc"
+import { nowMillis } from "../../state/clock"
+import { isoOf, millisOf } from "../ui/dates"
 
 /** Whether the task's host can star it and set reminders on it: every host on this server can. */
 export function useCanMark(task: Task | undefined): boolean {
@@ -54,10 +56,10 @@ export function useReminderClock(tasks: ReadonlyArray<Task>) {
 export function reminderItems(task: Task, onPick: () => void, onError: (msg: string) => void, divider = false): MenuItem[] {
   const save = (patch: Parameters<typeof saveMarks>[1]) => saveMarks(task, patch).catch((e: unknown) => onError(errorText(e)))
   return [
-    ...reminderPresets(new Date()).map((p, i) => ({
+    ...reminderPresets(nowMillis()).map((p, i) => ({
       label: `Remind me ${p.label.charAt(0).toLowerCase()}${p.label.slice(1)}`,
       divider: divider && i === 0,
-      onSelect: () => save({ remind_at: p.at.toISOString() }),
+      onSelect: () => save({ remind_at: isoOf(p.at) }),
     })),
     { label: "Remind me at…", onSelect: onPick },
     ...(task.remind_at ? [{ label: "Clear reminder", onSelect: () => save({ remind_at: null }) }] : []),
@@ -73,7 +75,7 @@ export const starItem = (task: Task, onError: (msg: string) => void, divider = f
 
 /** Sets the task's reminder to a time picked, with a note on what it's for. */
 export function ReminderModal({ task, onClose }: { task: Task; onClose: () => void }) {
-  const [at, setAt] = useState(() => toLocalInput(task.remind_at ? new Date(task.remind_at) : (reminderPresets(new Date())[2]?.at ?? new Date())))
+  const [at, setAt] = useState(() => toLocalInput(task.remind_at ? millisOf(task.remind_at) : (reminderPresets(nowMillis())[2]?.at ?? nowMillis())))
   const [note, setNote] = useState(task.reminder ?? "")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)

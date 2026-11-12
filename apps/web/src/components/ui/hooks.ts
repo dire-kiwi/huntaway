@@ -1,27 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { errorText } from "../../state/mutation"
 
-/** A string field of an error, if it has a non-empty one. */
-const textOf = (e: object, key: string): string | undefined => {
-  const v: unknown = Reflect.get(e, key)
-  return typeof v === "string" && v !== "" ? v : undefined
-}
-
-/**
- * An error's message, for showing. A host's tagged errors (`NotFound`, `Invalid`, `Conflict`, `Unavailable`…) have no
- * message of their own: what they say is in their fields.
- */
-export const errorText = (e: unknown): string => {
-  if (typeof e === "object" && e !== null && "_tag" in e && typeof e._tag === "string") {
-    const [what, id, field, reason, detail] = ["what", "id", "field", "reason", "detail"].map((k) => textOf(e, k))
-    if (e._tag === "NotFound") return `No ${what ?? "such thing"}${id ? ` ${id}` : ""} here.`
-    if (e._tag === "Invalid") return field ? `${field}: ${reason ?? "not valid"}` : (reason ?? "Not valid.")
-    if (e._tag === "Conflict") return detail ?? reason ?? "It conflicts with the board as it is now."
-    if (e._tag === "Unavailable") return `${what ? `${what.charAt(0).toUpperCase()}${what.slice(1)}: ` : ""}${reason ?? "not available"}`
-    const own = e instanceof Error ? e.message : ""
-    return own || reason || detail || e._tag
-  }
-  return e instanceof Error ? e.message : String(e)
-}
+// An error's message, for showing: state/mutation.ts's.
+export { errorText }
 
 /**
  * Runs an action that calls the API (a button's), keeping whether it's running and what it failed with: show `error`
@@ -40,21 +21,24 @@ export function useAsyncAction() {
       mounted.current = false
     }
   }, [])
-  const run = useCallback(async (fn: () => unknown) => {
-    if (running.current) return false
+  const run = useCallback((fn: () => unknown): Promise<boolean> => {
+    if (running.current) return Promise.resolve(false)
     running.current = true
     setBusy(true)
     setError(null)
-    try {
-      await fn()
-      return true
-    } catch (e) {
-      if (mounted.current) setError(errorText(e))
-      return false
-    } finally {
-      running.current = false
-      if (mounted.current) setBusy(false)
-    }
+    return Promise.resolve()
+      .then(fn)
+      .then(
+        () => true,
+        (e: unknown) => {
+          if (mounted.current) setError(errorText(e))
+          return false
+        },
+      )
+      .finally(() => {
+        running.current = false
+        if (mounted.current) setBusy(false)
+      })
   }, [])
   return { busy, error, setError, run }
 }

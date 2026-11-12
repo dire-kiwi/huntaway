@@ -6,6 +6,7 @@ import type { AgentWait, Resolution, Status, WaitPr } from "@huntaway/contracts"
 
 /** What a wait on a pull request watches for besides its being merged or closed. */
 type PrWaitEvent = WaitPr["events"][number]
+import { localeString, localeTimeString } from "./dates"
 import { ActivityTime } from "./time"
 
 export const STATUS_COLOR: Record<Status, string> = {
@@ -141,7 +142,7 @@ export function ProgressCount({ progress, word = "done" }: { progress: { done: n
  * The one state at the right of a card's status bar, with the time: the task needing you, its agent working
  * (or merging) or waiting, or how a done task ended. Otherwise just the time.
  */
-const at = (iso: string) => new Date(iso).toLocaleString()
+const at = (iso: string) => localeString(iso)
 
 export function CardState({ task }: { task: Task }) {
   const wait = agentWaiting(task)
@@ -213,7 +214,7 @@ export function RunState({ task }: { task: Task }) {
 export function waitTitle(w: AgentWait) {
   return [
     w.reason || "Waiting",
-    `until ${new Date(w.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+    `until ${localeTimeString(w.until, { hour: "numeric", minute: "2-digit" }, [])}`,
     w.tasks?.length ? `or until ${w.tasks.map((t) => t.key).join(", ")} ${w.tasks.length === 1 ? "moves" : "move"} on` : null,
     w.command ? `or until \`${w.command}\` exits` : null,
     w.pull_request ? `or until ${w.pull_request.repo}#${w.pull_request.number} ${prWaitNews(w.pull_request.events)}` : null,

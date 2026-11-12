@@ -1,4 +1,4 @@
-import { type Duration, Effect, Schedule } from "effect"
+import { Duration, Effect, Schedule } from "effect"
 import { Atom } from "effect/reactivity"
 import { registry } from "./registry"
 
@@ -24,9 +24,14 @@ function start(effect: Effect.Effect<void>): () => void {
   }
 }
 
-/** Calls `f` once after `duration` (`after("1.5 seconds", () => setCopied(false))`); the returned function cancels it. */
+/**
+ * Calls `f` once after `duration` (`after("1.5 seconds", () => setCopied(false))`); the returned function cancels it.
+ * `after(0, f)` waits for the browser's next task, as `setTimeout(f)` did (a zero sleep only yields to other fibers),
+ * so what handles the event being dispatched now still sees the page as it was.
+ */
 export function after(duration: Duration.Input, f: () => void): () => void {
-  return start(Effect.sleep(duration).pipe(Effect.andThen(Effect.sync(f))))
+  const millis = Math.max(1, Duration.toMillis(Duration.fromInputUnsafe(duration)))
+  return start(Effect.sleep(millis).pipe(Effect.andThen(Effect.sync(f))))
 }
 
 /** Calls `f` every `duration` (the first time after one); the returned function stops it. */

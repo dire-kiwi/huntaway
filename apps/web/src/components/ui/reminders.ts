@@ -1,4 +1,5 @@
 import type { HostTask as Task } from "@huntaway/client"
+import { isoOf, localMillis, localParts, millisOf } from "./dates"
 
 /** The tasks in the sidebar's Starred section: by project, in the order of `projectIds` (the sidebar's), then by number. */
 export function starredTasks(tasks: ReadonlyArray<Task>, projectIds: ReadonlyArray<string>): Task[] {
@@ -28,43 +29,44 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 /** When a reminder is, briefly: "in 12m", "in 5h", "Tue 09:00", "12 Nov", or "due" once it has come round. */
 export function reminderLabel(iso: string, now: number) {
-  const at = new Date(iso)
-  const ms = at.getTime() - now
+  const ms = millisOf(iso) - now
   if (ms <= 0) return "due"
+  const at = localParts(iso)
   const mins = Math.round(ms / 60_000)
   if (mins < 60) return `in ${Math.max(1, mins)}m`
   if (ms < 12 * 3600_000) return `in ${Math.round(ms / 3600_000)}h`
-  if (ms < 6 * 86400_000) return `${DAYS[at.getDay()]} ${pad(at.getHours())}:${pad(at.getMinutes())}`
-  return `${at.getDate()} ${MONTHS[at.getMonth()]}`
+  if (ms < 6 * 86400_000) return `${DAYS[at.weekDay]} ${pad(at.hour)}:${pad(at.minute)}`
+  return `${at.day} ${MONTHS[at.month - 1]}`
 }
 
-/** 9:00 on the day `days` after `from`'s, in local time. */
-function morning(from: Date, days: number) {
-  const d = new Date(from)
-  d.setDate(d.getDate() + days)
-  d.setHours(9, 0, 0, 0)
-  return d
+/** 9:00 on the day `days` after `from`'s, in local time (milliseconds). */
+function morning(from: number, days: number) {
+  const d = localParts(from)
+  return localMillis({ year: d.year, month: d.month, day: d.day + days, hour: 9, minute: 0, second: 0, millisecond: 0 })
 }
 
-/** The quick choices for a reminder, from `now`. */
-export function reminderPresets(now: Date): { label: string; at: Date }[] {
+/** The quick choices for a reminder, from `now` (milliseconds; so is each one's `at`). */
+export function reminderPresets(now: number): { label: string; at: number }[] {
   // Monday, a week from today if that's a Monday.
-  const toMonday = (8 - now.getDay()) % 7 || 7
+  const toMonday = (8 - localParts(now).weekDay) % 7 || 7
   return [
-    { label: "In 1 hour", at: new Date(now.getTime() + 3600_000) },
-    { label: "In 3 hours", at: new Date(now.getTime() + 3 * 3600_000) },
+    { label: "In 1 hour", at: now + 3600_000 },
+    { label: "In 3 hours", at: now + 3 * 3600_000 },
     { label: "Tomorrow at 9:00", at: morning(now, 1) },
     { label: "Next Monday at 9:00", at: morning(now, toMonday) },
   ]
 }
 
-/** A time as a `datetime-local` input's value, in local time. */
-export function toLocalInput(d: Date) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+/** A time (milliseconds) as a `datetime-local` input's value, in local time. */
+export function toLocalInput(at: number) {
+  const d = localParts(at)
+  return `${d.year}-${pad(d.month)}-${pad(d.day)}T${pad(d.hour)}:${pad(d.minute)}`
 }
 
-/** A `datetime-local` input's value as an ISO time, or null if it isn't one. */
+/** A `datetime-local` input's value (a wall-clock time here) as an ISO time, or null if it isn't one. */
 export function fromLocalInput(v: string) {
-  const d = new Date(v)
-  return v && !Number.isNaN(d.getTime()) ? d.toISOString() : null
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(v)
+  if (!m) return null
+  const [year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0] = m.slice(1).map((n) => Number(n ?? 0))
+  return isoOf(localMillis({ year, month, day, hour, minute, second, millisecond: 0 }))
 }

@@ -2,6 +2,7 @@ import { clsx } from "clsx"
 import { Check, CircleX, GitBranch, GitPullRequest } from "lucide-react"
 import { useEffect, useState } from "react"
 import { failedChecks, type HostTask as Task } from "@huntaway/client"
+import { after } from "../../state/timers"
 import { usePreviewUp } from "./preview"
 
 /** A task in review with a preview URL: polled while shown, the dot is green once it answers 200. */
@@ -52,8 +53,7 @@ export function BranchIcon({ branch, className }: { branch: string; className?: 
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return undefined
-    const t = setTimeout(() => setCopied(false), 1200)
-    return () => clearTimeout(t)
+    return after("1.2 seconds", () => setCopied(false))
   }, [copied])
   return (
     <button
