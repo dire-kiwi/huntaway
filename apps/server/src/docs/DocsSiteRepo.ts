@@ -23,7 +23,7 @@ export interface DocsSiteConnection {
   readonly connected_at: Timestamp
 }
 
-const ConnectionRow = Schema.Struct({
+export const ConnectionRow = Schema.Struct({
   profile_id: ProfileId,
   site_url: Schema.String,
   kind: Schema.Literals(["oauth", "token"]),
@@ -34,7 +34,7 @@ const ConnectionRow = Schema.Struct({
   connected_at: Timestamp,
 })
 
-const PublishedRow = Schema.Struct({
+export const PublishedRow = Schema.Struct({
   site_url: Schema.String,
   remote_slug: Schema.String,
   remote_version: Schema.Int,

@@ -90,7 +90,9 @@ export const checkImport = Effect.fnUntraced(function* (old: OldDb, board: SqlCl
   // here too, so the check fails on it whatever the report says.
   for (const [oldTable, table, credential] of ONE_FOR_ONE) {
     if (!old.tables.has(oldTable) || !newTables.has(table)) continue
-    const before = num((yield* old.query(`SELECT count(*) AS n FROM "${oldTable}"`))[0]?.["n"])
+    // Expo subscriptions wait for the phone app (not imported).
+    const where = oldTable === "push_subscriptions" && old.columns(oldTable).has("kind") ? ` WHERE kind <> 'expo'` : ""
+    const before = num((yield* old.query(`SELECT count(*) AS n FROM "${oldTable}"${where}`))[0]?.["n"])
     const after = num((yield* q(`SELECT count(*) AS n FROM "${table}"`))[0]?.["n"])
     const expected = credential === true && ctx.rehearsal ? 0 : before
     if (after !== expected) problem(table, "*", `${after} rows, expected ${expected} (old ${oldTable}: ${before})`)

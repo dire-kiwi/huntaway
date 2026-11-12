@@ -51,7 +51,7 @@ export interface StoredRun extends Omit<AutomationRun, "task"> {
   readonly payload: string | null
 }
 
-const AutomationRow = Schema.Struct({
+export const AutomationRow = Schema.Struct({
   id: AutomationId,
   profile_id: ProfileId,
   project_id: Schema.NullOr(ProjectId),
@@ -75,7 +75,7 @@ const isAutomationRow = Schema.is(AutomationRow)
 
 const toAutomation = (r: typeof AutomationRow.Type): StoredAutomation => ({ ...r, trigger: storedTrigger(r.trigger), action: storedAction(r.action) })
 
-const RunRow = Schema.Struct({
+export const RunRow = Schema.Struct({
   id: Schema.String,
   automation_id: AutomationId,
   source: RunSource,

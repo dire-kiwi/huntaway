@@ -25,7 +25,7 @@ export interface Doc {
   readonly labels: ReadonlyArray<string>
 }
 
-const DocRow = Schema.Struct({
+export const DocRow = Schema.Struct({
   id: DocId,
   profile_id: ProfileId,
   slug: Schema.String,
@@ -50,7 +50,7 @@ export const VersionRow = Schema.Struct({
 export interface VersionRow extends Schema.Schema.Type<typeof VersionRow> {}
 
 const PageSummaryRow = Schema.Struct({ path: Schema.String, title: Schema.String, format: DocFormat, position: Schema.Int })
-const PageRow = Schema.Struct({ ...PageSummaryRow.fields, source: Schema.String })
+export const PageRow = Schema.Struct({ ...PageSummaryRow.fields, source: Schema.String })
 /** A page with its source. */
 export interface DocPage extends Schema.Schema.Type<typeof PageRow> {}
 
@@ -67,10 +67,10 @@ const ImageRow = Schema.Struct({ name: Schema.String, sha256: Schema.String, byt
 /** A version's image, without its bytes. */
 export interface DocImage extends Schema.Schema.Type<typeof ImageRow> {}
 
-const ImageRef = Schema.Struct({ name: Schema.String, sha256: Schema.String })
-const ImageData = Schema.Struct({ data: Schema.Uint8Array })
+export const ImageRef = Schema.Struct({ name: Schema.String, sha256: Schema.String })
+export const ImageData = Schema.Struct({ data: Schema.Uint8Array })
 
-const CommentRow = Schema.Struct({
+export const CommentRow = Schema.Struct({
   id: Schema.Int,
   version: Schema.Int,
   page: Schema.String,

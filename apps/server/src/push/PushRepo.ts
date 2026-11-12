@@ -15,7 +15,8 @@ export interface Subscription extends PushDevice {
   readonly auth: string
 }
 
-const Row = Schema.Struct({
+/** A `push_subscriptions` row. */
+export const SubscriptionRow = Schema.Struct({
   id: PushSubscriptionId,
   endpoint: Schema.String,
   kind: Schema.String,
@@ -39,13 +40,13 @@ export const storedEvents = (text: string): PushEvents =>
     onSome: (patch) => mergedEvents(MISSING_EVENTS, patch),
   })
 
-const fromRow = (r: typeof Row.Type): Subscription => ({
+const fromRow = (r: typeof SubscriptionRow.Type): Subscription => ({
   ...r,
   kind: isKind(r.kind) ? r.kind : "web",
   events: storedEvents(r.events),
 })
 
-const found = <E>(o: Effect.Effect<Option.Option<typeof Row.Type>, E>) =>
+const found = <E>(o: Effect.Effect<Option.Option<typeof SubscriptionRow.Type>, E>) =>
   o.pipe(
     Effect.map((r) => (Option.isSome(r) ? fromRow(r.value) : null)),
     Effect.orDie,
@@ -92,11 +93,19 @@ export class PushRepo extends Context.Service<PushRepo, PushRepoShape>()("huntaw
     PushRepo,
     Effect.gen(function* () {
       const { sql } = yield* Db
-      const all = SqlSchema.findAll({ Request: Schema.Void, Result: Row, execute: () => sql`SELECT * FROM push_subscriptions ORDER BY created_at, id` })
-      const one = SqlSchema.findOneOption({ Request: Schema.String, Result: Row, execute: (id) => sql`SELECT * FROM push_subscriptions WHERE id = ${id}` })
+      const all = SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: SubscriptionRow,
+        execute: () => sql`SELECT * FROM push_subscriptions ORDER BY created_at, id`,
+      })
+      const one = SqlSchema.findOneOption({
+        Request: Schema.String,
+        Result: SubscriptionRow,
+        execute: (id) => sql`SELECT * FROM push_subscriptions WHERE id = ${id}`,
+      })
       const byEndpointRow = SqlSchema.findOneOption({
         Request: Schema.String,
-        Result: Row,
+        Result: SubscriptionRow,
         execute: (endpoint) => sql`SELECT * FROM push_subscriptions WHERE endpoint = ${endpoint}`,
       })
       return PushRepo.of({
