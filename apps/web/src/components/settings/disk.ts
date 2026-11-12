@@ -1,9 +1,10 @@
 import { Status, type DiskReport as DiskUsageReport, type DiskSize } from "@huntaway/contracts"
 import { Schema } from "effect"
+import { Atom } from "effect/reactivity"
+import { query } from "@huntaway/client"
 import { NEUTRAL, PALETTE } from "./analytics/analytics"
-import { board } from "../../state/board"
-import { rpc } from "../../state/rpc"
-import { errorText } from "../ui"
+import { type Answered, gather, type Target } from "./analytics/gather"
+import { nowMillis } from "../../state/clock"
 
 /**
  * Disk usage analytics: what each host reports its projects' repositories, worktrees, scratch
@@ -72,56 +73,60 @@ export interface Reclaimed {
   bytes: number
 }
 
-/** What `profile`'s projects take up, or every profile's when it's null. A host's database holds every profile's data, so it's only counted for every profile. */
-export async function loadDisk(profile: string | null = null): Promise<Disk> {
-  const s = board.get()
+/**
+ * What `profile`'s projects take up (every profile's when it's null), from each host's report on each of its profiles.
+ * A host's database holds every profile's data, so it's only counted for every profile.
+ */
+export function diskOf(profile: string | null, reports: ReadonlyArray<Answered<DiskUsageReport>>, errors: Array<string>): Disk {
   const out: Disk = {
     projects: [],
     scratch: 0,
     runs: 0,
     filesystems: [],
-    errors: [],
+    errors,
     elapsedMs: 0,
   }
-  const reports = await Promise.all(
-    s.hosts
-      .filter((h) => h.connected)
-      .flatMap((h) => {
-        const profiles = s.profiles.filter((p) => p.host_id === h.id && (profile === null || p.name === profile))
-        return profiles.map(async (p) => {
-          try {
-            return { host: h, report: await rpc(h.id, "analytics.diskUsage", { profile_id: p.id }) }
-          } catch (e) {
-            out.errors.push(`${h.name}: ${errorText(e)}`)
-            return null
-          }
-        })
-      }),
-  )
   let slot = 0
   const seenFs = new Set<string>()
-  for (const r of reports) {
-    if (!r) continue
+  for (const { target, report } of reports) {
     // Colour follows the project in creation order, as on the activity tabs.
-    for (const p of r.report.projects) out.projects.push(project(p, r.host.id, r.host.name, PALETTE[slot++] ?? NEUTRAL))
-    out.scratch += r.report.scratch.bytes
-    out.runs += r.report.runs?.bytes ?? 0
-    out.elapsedMs = Math.max(out.elapsedMs, r.report.elapsed_ms)
+    for (const p of report.projects) out.projects.push(project(p, target.host, target.hostName, PALETTE[slot++] ?? NEUTRAL))
+    out.scratch += report.scratch.bytes
+    out.runs += report.runs?.bytes ?? 0
+    out.elapsedMs = Math.max(out.elapsedMs, report.elapsed_ms)
     // Every profile on a host reports the same disk.
-    if (r.report.filesystem && !seenFs.has(r.host.id)) {
-      seenFs.add(r.host.id)
+    if (report.filesystem && !seenFs.has(target.host)) {
+      seenFs.add(target.host)
       out.filesystems.push({
-        hostName: r.host.name,
-        ...r.report.filesystem,
-        database: profile === null ? (r.report.database ?? null) : null,
-        backups: profile === null ? (r.report.backups ?? null) : null,
-        runsKeptDays: r.report.runs_kept_days ?? null,
+        hostName: target.hostName,
+        ...report.filesystem,
+        database: profile === null ? (report.database ?? null) : null,
+        backups: profile === null ? (report.backups ?? null) : null,
+        runsKeptDays: report.runs_kept_days ?? null,
       })
     }
   }
   out.projects.sort((a, b) => b.total - a.total)
   return out
 }
+
+/** A measurement, and when it came back. */
+export interface Measured {
+  readonly disk: Disk
+  readonly at: number
+}
+
+/**
+ * What `profile`'s projects take up on `targets`. Kept for as long as the page is open (measuring walks every folder,
+ * so coming back to the tab shows the last measurement), and read again when asked to or when worktrees are removed.
+ */
+export const diskAtom = Atom.family((key: { readonly profile: string | null; readonly targets: ReadonlyArray<Target> }) =>
+  gather(
+    key.targets,
+    (t) => query("analytics.diskUsage", t.host, { profile_id: t.profileId }),
+    (answered, errors): Measured => ({ disk: diskOf(key.profile, answered, errors), at: nowMillis() }),
+  ).pipe(Atom.keepAlive),
+)
 
 const isStatus = Schema.is(Status)
 

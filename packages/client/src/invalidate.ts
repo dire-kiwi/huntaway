@@ -19,6 +19,8 @@ export type GroupOf<M extends string> = M extends `${infer G}.${string}` ? G : n
 export const invalidates: { readonly [M in keyof Methods]?: ReadonlyArray<GroupOf<keyof Methods>> } = {
   "checkpoints.rewind": ["git"],
   "checkpoints.cancelRewind": ["git"],
+  // Removing worktrees frees disk space: the host's disk usage is measured again (the old Disk tab's Reclaim space).
+  "projects.removeMergedWorktrees": ["analytics"],
 }
 
 /** What a query reads again on, as picked from its host's board: it is read again whenever the value changes. */
