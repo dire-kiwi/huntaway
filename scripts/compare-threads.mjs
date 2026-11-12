@@ -42,7 +42,7 @@ const canonical = (value) => {
     return Object.fromEntries(
       Object.keys(value)
         .filter((k) => !DROPPED.has(k) && value[k] !== undefined)
-        .sort()
+        .toSorted()
         .map((k) => [k, canonical(value[k])]),
     )
   return value
