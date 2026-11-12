@@ -385,3 +385,27 @@ layer(TestBoard({ dataDir: via }))("Assistant, on a data folder reached through 
     }),
   )
 })
+
+// HE-8: on a board imported from an old one (`import.json`), an assistant keeps its workspace in the old data folder,
+// where its sessions ran; that folder's `assistants/<id>` is its own, and no other folder outside the board's is.
+const importedInto = mkdtempSync(`${tmpdir()}/huntaway-imported-`)
+const oldFolder = mkdtempSync(`${tmpdir()}/huntaway-old-`)
+writeFileSync(
+  `${importedInto}/import.json`,
+  json({ from: oldFolder, at: "2026-11-12T00:00:00.000Z", old_host_id: "old-host", rehearsal: false, database: "huntaway-2.db" }),
+)
+
+layer(TestBoard({ dataDir: importedInto }))("Assistant, on an imported board", (it) => {
+  it.effect("its workspace in the old data folder is its own; one elsewhere is refused", () =>
+    Effect.gen(function* () {
+      const memory = yield* Memory
+      const p = yield* profile("p")
+      const { task: a } = yield* opened(p)
+      const at = (workDir: string) => ({ ...a, work_dir: workDir })
+      assert.strictEqual(yield* memory.checked(at(`${oldFolder}/assistants/${a.id}`)), `${oldFolder}/assistants/${a.id}`)
+      assert.isTrue(existsSync(`${oldFolder}/assistants/${a.id}`))
+      const elsewhere = mkdtempSync(`${tmpdir()}/huntaway-elsewhere-`)
+      assert.strictEqual((yield* Effect.flip(memory.checked(at(`${elsewhere}/assistants/${a.id}`))))._tag, "Unavailable")
+    }),
+  )
+})

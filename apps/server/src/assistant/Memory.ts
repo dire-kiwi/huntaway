@@ -2,6 +2,8 @@ import { Context, DateTime, Effect, FiberSet, FileSystem, Layer, Option, Result 
 import { Conflict, Invalid, NotFound, Unavailable } from "@huntaway/contracts"
 import type { MemoryCommit, MemoryDiff, MemoryFileContent, MemoryOverview, MemoryWrite, Task, TaskId } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
+import { readImportRecord } from "../platform/ImportRecord.ts"
+import type { ImportRecord } from "../platform/ImportRecord.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { Proc } from "../platform/Proc.ts"
 import { memory as memoryPrompt, memoryNotLoaded, MEMORY_CAP, MEMORY_CAP_BYTES, MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
@@ -81,20 +83,27 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
       const today = Effect.map(DateTime.now, (now) => dayIn(now, zone))
 
       const locked = (dir: string) => locks.withLock(["workspace", dir])
+      // An imported board's assistants keep their workspaces in the old folder, where their sessions ran (docs/plan/
+      // 11-migration.md: worktrees and work folders stay where they are): the one other place a workspace may be.
+      const importedFrom = Option.map(
+        yield* readImportRecord(dataDir.root).pipe(Effect.orElseSucceed(() => Option.none<ImportRecord>())),
+        (record) => record.from,
+      )
 
       const checked = Effect.fn("Memory.checked")(function* (assistant: Task) {
         if (assistant.kind !== "task" || assistant.task_type !== "assistant") {
           return yield* new Unavailable({ what: "assistant workspace", reason: `${assistant.id} isn't an assistant` })
         }
         const own = `assistants/${assistant.id}`
-        if (assistant.work_dir !== own && assistant.work_dir !== `${dataDir.root}/${own}`) {
+        const inOldFolder = Option.isSome(importedFrom) && assistant.work_dir === `${importedFrom.value}/${own}`
+        if (assistant.work_dir !== own && assistant.work_dir !== `${dataDir.root}/${own}` && !inOldFolder) {
           return yield* new Unavailable({
             what: "assistant workspace",
             reason: `the assistant's folder isn't its own workspace ("${assistant.work_dir ?? ""}")`,
           })
         }
         // The data folder itself may be a symlink; the folders under it may not.
-        let dir = dataDir.root
+        let dir = inOldFolder ? importedFrom.value : dataDir.root
         for (const part of ["assistants", assistant.id]) {
           dir = `${dir}/${part}`
           yield* ws.realDir(dir)
