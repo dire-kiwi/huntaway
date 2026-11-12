@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer } from "effect"
+import { Effect, FileSystem, Layer } from "effect"
 import { Headers } from "effect/http"
 import { RpcMiddleware, RpcTest } from "effect/rpc"
 import { Auth, HostRpcGroup, ProjectId, ProjectRpcs } from "@huntaway/contracts"
@@ -31,6 +31,22 @@ describe("the Prompts tab's RPCs", () => {
         assert.strictEqual(defaults.start_prompt, "Start working on this task.")
         assert.isTrue(defaults.review_prompt.startsWith("Look for correctness problems"), defaults.review_prompt)
         assert.isTrue(defaults.merge_prompt.startsWith("Commit any outstanding work"), defaults.merge_prompt)
+      }),
+    ),
+  )
+
+  it.effect("projects.get looks at the folder again, as the setup page asks while it isn't ready", () =>
+    run(
+      Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(ProjectRpcs)
+        const me = yield* (yield* Profiles).create({ name: "me" })
+        const repo = yield* gitRepo
+        const project = yield* (yield* Projects).create({ profile_id: me.id, name: "Web", key: "WEB", repo_path: repo })
+        assert.deepStrictEqual([project.is_git, project.has_commits], [true, true])
+        // Its repository goes (the folder stays): the next read says so.
+        yield* (yield* FileSystem.FileSystem).remove(`${repo}/.git`, { recursive: true })
+        const read = yield* client["projects.get"]({ id: project.id })
+        assert.deepStrictEqual([read.is_git, read.has_commits], [false, false])
       }),
     ),
   )

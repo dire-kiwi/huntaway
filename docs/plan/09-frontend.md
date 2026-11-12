@@ -476,7 +476,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   Changed from the old checks: a tab of another area is waited for by its heading; `reviewerOptions` types its skills;
   `summarizers` no longer reads the single `summarizer`; `guide` opens the workflows page by its address (the old check
   followed the Workflows tab's link, 6.6's); the shortcut moved is the search field's (Triage isn't on this server).
-  Not ported: `databaseFile` (dropped), `worktreeSetup` (the board's setup thread, not a settings panel), `devices`
+  Not ported: `databaseFile` (dropped), `worktreeSetup` (the board's setup thread, not a settings panel: ported in HE-8 with `task/WorktreeSetup.tsx` in place of the board), `devices`
   (deferred), and the settings checks of other areas (`telemetry`, `skillSources`, `agentTools`, `automations`,
   `workflows*`, `githubClone`, `githubCreate`). With HE-6's parts: `hostRelease`, `hostUpdate`, `releaseUpdate` (the
   old `release-update`) and `nearbyHosts`, with `tests/ui/servers.mjs` answering `admin.*`, `hub.hosts.pushUpdate` and

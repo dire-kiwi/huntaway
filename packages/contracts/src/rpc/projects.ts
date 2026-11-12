@@ -28,6 +28,7 @@ export class ProjectRpcs extends RpcGroup.make(
     success: Schema.Array(Project),
     error: NotFound,
   }).annotate(RequiredScope, "read"),
+  /** The project, its folder looked at again (`is_git`, `has_commits`; a change is the `project` event too). */
   Rpc.make("projects.get", { payload: { id: ProjectId }, success: Project, error: NotFound }).annotate(RequiredScope, "read"),
   /** A project on a folder of this host (made if missing). */
   Rpc.make("projects.create", { payload: { project: NewProject }, success: Project, error: Schema.Union([NotFound, Invalid, Conflict]) }).annotate(
