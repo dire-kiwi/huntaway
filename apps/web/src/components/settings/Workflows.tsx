@@ -1,12 +1,14 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react"
+import { useAtomValue } from "@effect/atom-react"
 import { GuideLink } from "./Guide"
-import { mutations, workflowsAtom, type HostProject as Project } from "@huntaway/client"
+import { mutate, workflowsAtom, type HostProject as Project } from "@huntaway/client"
 import { ProjectId, type Workflow, type WorkflowGraph } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Plus, Trash2, Workflow as WorkflowIcon } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
-import { Button, errorText, Toggle, useConfirm } from "../ui"
+import { useAction } from "../../state/mutation"
+import { Button, Toggle, useConfirm } from "../ui"
+import { rejectFailure } from "./agentTools/parts"
 import { PRESETS, type Preset, type PresetSource } from "./workflows/presets"
 import { graphText } from "./workflows/text"
 import { WorkflowEditor } from "./workflows/WorkflowEditor"
@@ -20,14 +22,13 @@ export function ProjectWorkflows({ project }: { project: Project }) {
   const hostId = project.host_id
   const view = useAtomValue(workflowsAtom({ host_id: hostId, project_id: project.id }))
   const list = view.data
-  const [err, setErr] = useState<string | null>(null)
   // `replacesBoard`: creating it (on) switches the project to use workflows instead of the board's default.
   const [editing, setEditing] = useState<{ workflow: Workflow | null; name: string; graph: WorkflowGraph; replacesBoard: boolean } | null>(null)
   // Who reviews and summarises its tasks: its own, or else its profile's.
   const profile = useBoard((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id))
-  const updateProject = useAtomSet(mutations.projects.update, { mode: "promise" })
-  const updateWorkflow = useAtomSet(mutations.workflows.update, { mode: "promise" })
-  const deleteWorkflow = useAtomSet(mutations.workflows.delete, { mode: "promise" })
+  // A switch's failure shows under the list until the next change; a delete's shows in its dialog.
+  const [{ error: err }, act] = useAction()
+  const [, runConfirmed] = useAction()
   const confirm = useConfirm()
   const settings: PresetSource = {
     auto_review: project.auto_review,
@@ -37,17 +38,8 @@ export function ProjectWorkflows({ project }: { project: Project }) {
     summarizers: project.summarizers.length ? project.summarizers : (profile?.summarizers ?? []),
   }
   // The project, its workflows and the lists that show them change with the events that follow.
-  const act = async (fn: () => Promise<unknown>) => {
-    setErr(null)
-    try {
-      await fn()
-    } catch (e) {
-      setErr(errorText(e))
-    }
-  }
   /** Whether the project's workflows take its tasks across the board, instead of the board's own handling. */
-  const switchToWorkflows = (on: boolean) =>
-    act(() => updateProject({ host: hostId, payload: { id: ProjectId.make(project.id), patch: { use_workflows: on } } }))
+  const switchToWorkflows = (on: boolean) => act(mutate("projects.update", hostId, { id: ProjectId.make(project.id), patch: { use_workflows: on } }))
   const start = (p: Preset) =>
     setEditing({ workflow: null, name: p.name === "Blank" ? "" : (p.title ?? p.name), graph: p.graph(settings), replacesBoard: p.replacesBoard === true })
   const edit = (w: Workflow) => setEditing({ workflow: w, name: w.name, graph: w.graph, replacesBoard: false })
@@ -80,11 +72,7 @@ export function ProjectWorkflows({ project }: { project: Project }) {
         <div className="divide-y divide-line/70 rounded-md border border-line/70">
           {list.map((w) => (
             <div key={w.id} className="flex items-center gap-3 px-3 py-2">
-              <Toggle
-                checked={w.enabled}
-                onChange={(enabled) => void act(() => updateWorkflow({ host: hostId, payload: { id: w.id, patch: { enabled } } }))}
-                label=""
-              />
+              <Toggle checked={w.enabled} onChange={(enabled) => void act(mutate("workflows.update", hostId, { id: w.id, patch: { enabled } }))} label="" />
               <button type="button" className="min-w-0 flex-1 text-left" onClick={() => edit(w)}>
                 <div className={clsx("flex items-center gap-1.5 text-[13px]", !w.enabled && "text-faint")}>
                   <WorkflowIcon size={13} className="shrink-0 text-muted" />
@@ -105,7 +93,7 @@ export function ProjectWorkflows({ project }: { project: Project }) {
                     body: `Delete the workflow "${w.name}"? Its runs stop, and their output goes from the tasks' tabs.`,
                     action: "Delete workflow",
                     danger: true,
-                    onConfirm: () => deleteWorkflow({ host: hostId, payload: { id: w.id } }),
+                    onConfirm: () => runConfirmed(mutate("workflows.delete", hostId, { id: w.id })).then(rejectFailure),
                   })
                 }
               >
