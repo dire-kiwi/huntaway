@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import type { GitStatus } from "@huntaway/contracts"
 import { hasUnstaged } from "../diffs"
 import { turnLabel, turnStat, type useTurns } from "../../task/turns"
-import type { MenuItem } from "../../ui"
+import { localeString, millisOf, type MenuItem } from "../../ui"
 import { FilesList, List, Panel } from "./Panels"
 import type { GitActions } from "./useGitActions"
 import type { GitSelection } from "./useGitSelection"
@@ -157,7 +157,7 @@ export function SidePanels({
           render={(c, i) => (
             <div
               className={clsx("flex gap-2 px-1.5", status.merge_base && !c.on_branch && i > 0 && commits[i - 1]?.on_branch && "border-t border-line")}
-              title={`${c.subject}\n${c.author}, ${new Date(c.time * 1000).toLocaleString()}`}
+              title={`${c.subject}\n${c.author}, ${localeString(c.time * 1000)}`}
             >
               <span className={clsx("shrink-0", c.unpushed ? "text-red-400" : status.merge_base && !c.on_branch ? "text-emerald-500" : "text-amber-300")}>
                 {short(c.sha)}
@@ -250,7 +250,7 @@ export function SidePanels({
                     <span className="text-emerald-400">+{t.stats.additions}</span> <span className="text-red-400">−{t.stats.deletions}</span>
                   </span>
                 )}
-                <span className="shrink-0 text-faint">{ago(Date.parse(t.at) / 1000)}</span>
+                <span className="shrink-0 text-faint">{ago(millisOf(t.at) / 1000)}</span>
               </div>
             )}
           />,

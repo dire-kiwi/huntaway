@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Loader2, MessageSquare, X } from "lucide-rea
 import { useState } from "react"
 import { runningAgentSteers, type HostTask as Task } from "@huntaway/client"
 import { dropDraft, lineRange, removeComments, sendComments, type CommentLines, type Review } from "../lineComments"
+import { exitError, useAction } from "../../../state/mutation"
 import { Button } from "../../ui"
 
 /**
@@ -23,18 +24,17 @@ export function ReviewBar({
   onError: (text: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [sending, setSending] = useState(false)
+  const [{ busy: sending }, run] = useAction()
   const { comments, drafts } = review
   if (!comments.length && !drafts.length) return null
   // Every host on this server takes messages while the agent is running: steered, or queued.
   const queue = task.running && (!runningAgentSteers(task) || !!task.queued_message)
-  const send = async () => {
-    setSending(true)
-    const end = await sendComments(task, comments)
-    setSending(false)
-    if (end.error !== undefined) onError(`Couldn't send the comments: ${end.error}`)
-    else setOpen(false)
-  }
+  const send = () =>
+    void run(sendComments(task, comments)).then((exit) => {
+      const failed = exitError(exit)
+      if (failed !== null) onError(`Couldn't send the comments: ${failed}`)
+      else setOpen(false)
+    })
   const unfinished = drafts.filter((d) => !d.of)
   return (
     <div className="shrink-0 border-t border-line font-sans text-[12px]" data-review>
@@ -99,7 +99,7 @@ export function ReviewBar({
             title={queue ? "Queued: the agent gets them when it finishes" : "Sends them to the agent as one message"}
 
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void send()}
+            onClick={send}
           >
             {sending && <Loader2 size={12} className="animate-spin" />}
             {queue ? "Queue for the agent" : "Send to the agent"}

@@ -209,35 +209,42 @@ styleId(FG, 0)
 // The worker's global scope: the DOM's types don't have it, and `{ transfer }` is the options both have.
 const answer = (message: unknown) => self.postMessage(message, { transfer: [] })
 
-self.addEventListener("message", (e: MessageEvent<{ id: number; lang: string; texts: string[] }>) => void highlight(e.data))
+self.addEventListener("message", (e: MessageEvent<{ id: number; lang: string; texts: string[] }>) => highlight(e.data))
 
-async function highlight({ id, lang, texts }: { id: number; lang: string; texts: string[] }) {
-  try {
-    const grammar = GRAMMARS[lang]
-    if (!grammar) throw new Error(`no grammar for ${lang}`)
-    const h = await (highlighter ??= createHighlighterCore({ themes: [THEME], langs: [], engine: createJavaScriptRegexEngine({ forgiving: true }) }))
-    if (!loaded.has(lang))
-      loaded.set(
-        lang,
-        grammar().then((m) => h.loadLanguage(m.default)),
-      )
-    await loaded.get(lang)
-    const lines = texts.map((text) =>
-      h.codeToTokensBase(text, { lang, theme: "huntaway", tokenizeMaxLineLength: MAX_LINE_LENGTH, tokenizeTimeLimit: 200 }).map((line) => {
-        // Tokens next to each other in the same style as one run.
-        const runs: [number, number][] = []
-        for (const t of line) {
-          const style = styleId(t.color, t.fontStyle)
-          const last = runs.at(-1)
-          if (last && last[1] === style) last[0] += t.content.length
-          else runs.push([t.content.length, style])
-        }
-        return runs
-      }),
-    )
-    answer({ id, lines, styles })
-  } catch {
-    // Left plain.
+/** The highlighter, with `lang`'s grammar loaded (each grammar once). */
+function highlighterFor(lang: string, grammar: Grammar): Promise<HighlighterCore> {
+  return (highlighter ??= createHighlighterCore({ themes: [THEME], langs: [], engine: createJavaScriptRegexEngine({ forgiving: true }) })).then((h) => {
+    const loading = loaded.get(lang) ?? grammar().then((m) => h.loadLanguage(m.default))
+    loaded.set(lang, loading)
+    return loading.then(() => h)
+  })
+}
+
+function highlight({ id, lang, texts }: { id: number; lang: string; texts: string[] }) {
+  const grammar = GRAMMARS[lang]
+  // Left plain, when there's no grammar for it or highlighting failed.
+  if (!grammar) {
     answer({ id })
+    return
   }
+  void highlighterFor(lang, grammar)
+    .then((h) => answer({ id, lines: lines(h, lang, texts), styles }))
+    .catch(() => answer({ id }))
+}
+
+/** Each text's lines, as runs of characters in one style. */
+function lines(h: HighlighterCore, lang: string, texts: string[]) {
+  return texts.map((text) =>
+    h.codeToTokensBase(text, { lang, theme: "huntaway", tokenizeMaxLineLength: MAX_LINE_LENGTH, tokenizeTimeLimit: 200 }).map((line) => {
+      // Tokens next to each other in the same style as one run.
+      const runs: [number, number][] = []
+      for (const t of line) {
+        const style = styleId(t.color, t.fontStyle)
+        const last = runs.at(-1)
+        if (last && last[1] === style) last[0] += t.content.length
+        else runs.push([t.content.length, style])
+      }
+      return runs
+    }),
+  )
 }

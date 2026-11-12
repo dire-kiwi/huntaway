@@ -4,31 +4,47 @@
 // pull requests if asked. It opens over the page (`?task=<id>&compare`, see router.ts) from a card's model badge or
 // menu, or the task's details. The narrow layout shows them one at a time.
 //
-// Step 1 (docs/plan/09-frontend.md, "Step 1 as done for 6.11"): `tasks.fanout` and `tasks.pickFanout` for the facts and
-// the pick, `git.taskDiff` for each one's diff; what changes arrives as events.
-import { STATUSES, taskKey, type HostTask as Task } from "@huntaway/client"
-import type { DiffResult, FanoutFacts, PickOutcome } from "@huntaway/contracts"
+// The facts are a `tasks.fanout` query and each one's diff a `git.taskDiff` query, read again as the tasks change on the
+// board (invalidate.ts); the pick is the `tasks.pickFanout` mutation, and what it changes arrives as events.
+import { RegistryContext, useAtom, useAtomValue } from "@effect/atom-react"
+import { Exit, Schema } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
+import { query, STATUSES, taskKey, type HostTask as Task } from "@huntaway/client"
+import { TaskId, type DiffResult, type FanoutFacts, type PickOutcome } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { AlertTriangle, ChevronDown, ChevronRight, Columns3, GitCompareArrows, Loader2, PanelTop, RefreshCw, X } from "lucide-react"
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { parseDiff, type FileDiff } from "./diffs"
-import { useLoaded } from "./git/useLoaded"
 import { useNarrow } from "../../narrow"
+import { useMutation } from "../../state/mutation"
 import { closeCompare, openTask } from "../../state/route"
 import { isShortcut } from "../../shortcuts"
 import { useBoard } from "../../state/board"
-import { rpc } from "../../state/rpc"
+import { storedBare } from "../../state/storage"
 import { BranchView, LayoutToggle } from "./git/Patches"
+import { layoutAtom } from "./git/model"
 import type { Layout } from "./DiffLines"
 import { harnessLabels, useConfigsOf, useFanout } from "../board/Fanout"
 import { ReviewVerdict } from "../task/Review"
-import { Button, cost, duration, errorText, IconButton, Modal, ModalFooter, PrIcon, RESOLUTION_LABELS, RunningDot, StatusIcon, useClock } from "../ui"
+import {
+  Button,
+  cost,
+  duration,
+  IconButton,
+  Modal,
+  ModalFooter,
+  PrIcon,
+  RESOLUTION_LABELS,
+  resultError,
+  resultValue,
+  RunningDot,
+  StatusIcon,
+  useClock,
+} from "../ui"
 
-/** Side by side or one at a time, kept in this browser. */
+/** Side by side or one at a time, kept in this browser. One at a time follows the Changes tab's unified or split. */
 type Mode = "side" | "one"
-const MODE_KEY = "ia.compare.mode"
-/** The Changes tab's unified or split diffs, which one at a time follows. */
-const LAYOUT_KEY = "ia.changes.layout"
+const modeAtom = storedBare<Mode, "side">("ia.compare.mode", Schema.Literals(["side", "one"]), "side")
 
 const statusLabel = (t: Task) =>
   t.status === "done" && t.resolution ? RESOLUTION_LABELS[t.resolution] : (STATUSES.find((s) => s.id === t.status)?.label ?? t.status)
@@ -89,42 +105,60 @@ function Header({ title, children }: { title: ReactNode; children?: ReactNode })
   )
 }
 
-/** The facts the host has of each (API 81): fetched again when one of them changes, and when asked. */
-function useFacts(task: Task, tasks: Task[], tick: number) {
-  const sig = tasks.map((t) => `${t.id}:${t.status}:${t.running}:${t.worktree_state}`).join(",")
-  const loaded = useLoaded(`${task.host_id}\n${task.id}\n${sig}\n${tick}`, () =>
-    rpc(task.host_id, "tasks.fanout", { id: task.id }).then((r) => ({
-      byId: Object.fromEntries(r.map((x): [string, FanoutFacts] => [x.id, x])),
-      at: Date.now(),
-    })),
-  )
-  return { facts: loaded?.value ?? null, error: loaded?.error ?? null }
+/**
+ * The facts the host has of each (API 81), by task: read again when one of them moves, starts or stops, or its
+ * worktree changes (invalidate.ts), after a pick, and when asked. `at` is when they came.
+ */
+const factsQuery = (t: Task) => query("tasks.fanout", t.host_id, { id: t.id })
+
+const byIdOf = (list: ReadonlyArray<FanoutFacts>): Record<string, FanoutFacts> => Object.fromEntries(list.map((x): [string, FanoutFacts] => [x.id, x]))
+
+function useFacts(task: Task) {
+  const result = useAtomValue(factsQuery(task))
+  const error = resultError(result)
+  const list = error === null ? resultValue(result) : undefined
+  const byId = useMemo(() => (list ? byIdOf(list) : null), [list])
+  const at = AsyncResult.isSuccess(result) ? result.timestamp : 0
+  return { facts: byId ? { byId, at } : null, error }
 }
 
-/** Each one's diff against its base branch, fetched again when it changes (its agent finished, its worktree went) and when asked. */
-function useDiffs(tasks: Task[], tick: number) {
-  const [diffs, setDiffs] = useState<Record<string, DiffResult>>({})
-  const asked = useRef<Record<string, string>>({})
-  const latest = useRef<Record<string, number>>({})
-  const keyOf = (t: Task) => `${t.id}:${t.status}:${t.running}:${t.worktree_state}:${t.branch ?? ""}:${tick}`
-  const sig = tasks.map(keyOf).join(",")
-  // Each one whose key changed is asked again; only its latest answer is kept.
-  const askChanged = useEffectEvent(() => {
-    for (const t of tasks) {
-      if (asked.current[t.id] === keyOf(t)) continue
-      asked.current[t.id] = keyOf(t)
-      const n = (latest.current[t.id] ?? 0) + 1
-      latest.current[t.id] = n
-      const set = (d: DiffResult) => {
-        if (latest.current[t.id] === n) setDiffs((m) => ({ ...m, [t.id]: d }))
-      }
-      void rpc(t.host_id, "git.taskDiff", { id: t.id }).then(set, (e: unknown) => set({ available: false, reason: errorText(e) }))
+/** The tasks' hosts and ids, as one key: "host\nid" each, a line apart. */
+const siblingsKey = (tasks: ReadonlyArray<Task>) => tasks.map((t) => `${t.host_id}\n${t.id}`).join("\n")
+const siblingsOf = (key: string): Array<readonly [string, TaskId]> => {
+  const parts = key === "" ? [] : key.split("\n")
+  return parts.flatMap((host, i) => (i % 2 === 0 ? [[host, TaskId.make(parts[i + 1] ?? "")] as const] : []))
+}
+const diffQuery = (host: string, id: TaskId) => query("git.taskDiff", host, { id })
+
+/**
+ * Each one's diff against its base branch (a `git.taskDiff` query each), by task: read again when it changes (its agent
+ * finished, its worktree went, its column or branch changed: invalidate.ts) and when asked (refreshing this reads all
+ * of them again).
+ */
+const diffsAtom = Atom.family((key: string) =>
+  Atom.readable(
+    (get) => siblingsOf(key).map(([host, id]) => [id, get(diffQuery(host, id))] as const),
+    (refresh) => {
+      for (const [host, id] of siblingsOf(key)) refresh(diffQuery(host, id))
+    },
+  ),
+)
+
+/** Each one's diff once it's come (the one before while it's read again), or why it couldn't be read. */
+function useDiffs(tasks: ReadonlyArray<Task>) {
+  const atom = diffsAtom(siblingsKey(tasks))
+  const results = useAtomValue(atom)
+  const diffs = useMemo(() => {
+    const out: Record<string, DiffResult> = {}
+    for (const [id, result] of results) {
+      const error = resultError(result)
+      const value = resultValue(result)
+      if (error !== null) out[id] = { available: false, reason: error }
+      else if (value) out[id] = value
     }
-  })
-  useEffect(() => {
-    if (sig !== "") askChanged()
-  }, [sig])
-  return diffs
+    return out
+  }, [results])
+  return { diffs, atom }
 }
 
 function Compare({ task }: { task: Task }) {
@@ -132,25 +166,27 @@ function Compare({ task }: { task: Task }) {
   const configs = useConfigsOf(tasks)
   const labels = harnessLabels(tasks, configs)
   const narrow = useNarrow()
-  const [modeChoice, setModeChoice] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) === "one" ? "one" : "side"))
+  const [modeChoice, setMode] = useAtom(modeAtom)
   const mode: Mode = narrow ? "one" : modeChoice
-  const setMode = (m: Mode) => {
-    localStorage.setItem(MODE_KEY, m)
-    setModeChoice(m)
+  const [layout, setLayout] = useAtom(layoutAtom)
+  const toggleLayout = () => setLayout(layout === "split" ? "unified" : "split")
+  const { facts, error } = useFacts(task)
+  const { diffs, atom: diffsOf } = useDiffs(tasks)
+  const registry = useContext(RegistryContext)
+  // "Load the diffs again": the facts too, as the old button did.
+  const loadAgain = () => {
+    registry.refresh(factsQuery(task))
+    registry.refresh(diffsOf)
   }
-  const [layout, setLayout] = useState<Layout>(() => (localStorage.getItem(LAYOUT_KEY) === "split" ? "split" : "unified"))
-  const toggleLayout = () => {
-    const l = layout === "split" ? "unified" : "split"
-    localStorage.setItem(LAYOUT_KEY, l)
-    setLayout(l)
+  const [picking, setPicking] = useState<Task | null>(null)
+  // What's uncommitted, running or pushed now, not as of when the view opened: read again for the dialog.
+  const startPick = (t: Task) => {
+    registry.refresh(factsQuery(t))
+    setPicking(t)
   }
-  const [tick, setTick] = useState(0)
-  const { facts, error } = useFacts(task, tasks, tick)
-  const diffs = useDiffs(tasks, tick)
   const files = useMemo(() => Object.fromEntries(Object.entries(diffs).map(([id, d]) => [id, d.available ? parseDiff(d.patch ?? "") : []])), [diffs])
   const [shownId, setShown] = useState<string>(task.id)
   const shown = tasks.find((t) => t.id === shownId) ?? tasks[0] ?? task
-  const [picking, setPicking] = useState<Task | null>(null)
   const keyOf = taskKey
   const labelOf = (t: Task) => labels[tasks.indexOf(t)] ?? ""
 
@@ -201,7 +237,7 @@ function Compare({ task }: { task: Task }) {
       diff={diffs[t.id]}
       files={files[t.id]}
       picked={!notDone(t) && tasks.every((o) => o === t || notDone(o))}
-      onPick={() => setPicking(t)}
+      onPick={() => startPick(t)}
       wide={wide}
     />
   )
@@ -250,7 +286,7 @@ function Compare({ task }: { task: Task }) {
             <LayoutToggle layout={layout} onToggle={toggleLayout} />
           </span>
         )}
-        <IconButton title="Load the diffs again" aria-label="Load the diffs again" onClick={() => setTick((n) => n + 1)}>
+        <IconButton title="Load the diffs again" aria-label="Load the diffs again" onClick={loadAgain}>
           <RefreshCw size={14} />
         </IconButton>
       </Header>
@@ -311,14 +347,7 @@ function Compare({ task }: { task: Task }) {
         </div>
       )}
       {picking && (
-        <PickDialog
-          picked={picking}
-          others={tasks.filter((t) => t.id !== picking.id)}
-          taskKey={keyOf}
-          labelOf={labelOf}
-          onClose={() => setPicking(null)}
-          onPicked={() => setTick((n) => n + 1)}
-        />
+        <PickDialog picked={picking} others={tasks.filter((t) => t.id !== picking.id)} taskKey={keyOf} labelOf={labelOf} onClose={() => setPicking(null)} />
       )}
     </>
   )
@@ -512,51 +541,38 @@ function PickDialog({
   taskKey: key,
   labelOf,
   onClose,
-  onPicked,
 }: {
   picked: Task
   others: Task[]
   taskKey: (t: Task) => string
   labelOf: (t: Task) => string
   onClose: () => void
-  onPicked: () => void
 }) {
-  const [facts, setFacts] = useState<Record<string, FanoutFacts> | null>(null)
-  const [loadErr, setLoadErr] = useState<string | null>(null)
+  // What's uncommitted, running or pushed now, not as of when the view opened: read again as the dialog opened, and
+  // shown once that read has come.
+  const read = useAtomValue(factsQuery(picked))
+  const loadErr = resultError(read)
+  const fresh = AsyncResult.isSuccess(read) && !read.waiting ? read.value : undefined
+  const facts = useMemo(() => (fresh ? byIdOf(fresh) : null), [fresh])
   const [discard, setDiscard] = useState(false)
   const [deleteBranches, setDeleteBranches] = useState(false)
   const [closePrs, setClosePrs] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ busy, error: err }, pickFanout] = useMutation("tasks.pickFanout")
   const [results, setResults] = useState<ReadonlyArray<PickOutcome> | null>(null)
-  // What's uncommitted, running or pushed now, not as of when the view opened.
-  useEffect(() => {
-    void rpc(picked.host_id, "tasks.fanout", { id: picked.id }).then(
-      (r) => setFacts(Object.fromEntries(r.map((x): [string, FanoutFacts] => [x.id, x]))),
-      (e: unknown) => setLoadErr(errorText(e)),
-    )
-  }, [picked.host_id, picked.id])
   const f = (t: Task) => facts?.[t.id]
   const dirty = others.filter((t) => (f(t)?.uncommitted_count ?? 0) > 0)
   const branches = others.filter((t) => f(t)?.branch)
   const prs = others.filter((t) => t.pr_url)
-  const pick = async () => {
+  // The pick reads the facts and the diffs again (its group's queries, and git's: invalidate.ts).
+  const pick = () => {
     if (busy || !facts) return
-    setBusy(true)
-    setErr(null)
-    try {
-      const r = await rpc(picked.host_id, "tasks.pickFanout", {
-        id: picked.id,
-        pick: { delete_branches: deleteBranches, close_prs: closePrs, discard_uncommitted: discard },
-      })
-      onPicked()
-      if (r.results.some((o) => o.notes.length)) setResults(r.results)
-      else onClose()
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-    }
+    void pickFanout(picked.host_id, { id: picked.id, pick: { delete_branches: deleteBranches, close_prs: closePrs, discard_uncommitted: discard } }).then(
+      (exit) => {
+        if (!Exit.isSuccess(exit)) return
+        if (exit.value.results.some((o) => o.notes.length)) setResults(exit.value.results)
+        else onClose()
+      },
+    )
   }
   const name = `${key(picked)} (${labelOf(picked)})`
   if (results)
@@ -584,7 +600,7 @@ function PickDialog({
       </Modal>
     )
   return (
-    <Modal title={`Pick ${name}?`} onClose={onClose} onSubmit={() => void pick()} width="max-w-lg">
+    <Modal title={`Pick ${name}?`} onClose={onClose} onSubmit={pick} width="max-w-lg">
       <div className="space-y-4 text-[13px]">
         <p className="text-muted">
           {key(picked)} stays as it is. {others.length === 1 ? "The other one is" : `The other ${others.length} are`} completed as{" "}
@@ -684,7 +700,7 @@ function PickDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy || !facts} onClick={() => void pick()}>
+          <Button variant="primary" disabled={busy || !facts} onClick={pick}>
             {busy && <Loader2 size={13} className="animate-spin" />} Pick {key(picked)}
           </Button>
         </ModalFooter>

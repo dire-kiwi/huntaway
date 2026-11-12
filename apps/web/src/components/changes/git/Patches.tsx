@@ -7,6 +7,7 @@ import { parseDiff, type FileDiff } from "../diffs"
 import { commentLines, type CommentSource } from "../lineComments"
 import { turnLabel } from "../../task/turns"
 import { CommentsContext, DiffLines, diffRows, type Layout, type PickHow } from "../DiffLines"
+import { localeString } from "../../ui"
 import { Note } from "./Panels"
 
 /** Each of a list's items with its place in it: for lines, which have no other identity, to key them by. */
@@ -188,7 +189,7 @@ export function CommitHead({ c }: { c: GitShown }) {
     <div className="mb-2 px-1.5">
       <div className="text-amber-300">commit {c.sha}</div>
       <div className="text-muted">
-        {c.author} &lt;{c.email}&gt; · {new Date((c.time ?? 0) * 1000).toLocaleString()}
+        {c.author} &lt;{c.email}&gt; · {localeString((c.time ?? 0) * 1000)}
       </div>
       <div className="mt-1 font-sans text-[13px] whitespace-pre-wrap text-fg">{c.message}</div>
     </div>
@@ -222,7 +223,7 @@ export function TurnView({ turn, shown, layout }: { turn: Turn; shown: { diff?: 
       <div className="line-clamp-6 font-sans text-[13px] whitespace-pre-wrap text-fg">{turn.text || "(no message)"}</div>
       <div className="text-faint">
         {turn.review_round ? `Review fixes, round ${turn.review_round} · ` : ""}
-        {turn.status === "stopped" ? "Stopped" : turn.status === "failed" ? "Failed" : "Ended"} {new Date(turn.at).toLocaleString()}
+        {turn.status === "stopped" ? "Stopped" : turn.status === "failed" ? "Failed" : "Ended"} {localeString(turn.at)}
       </div>
       {turn.stale && <div className="text-amber-300">A rewind went back to before this turn.</div>}
       {excluded.length > 0 && (
