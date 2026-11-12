@@ -1,9 +1,8 @@
+import { useAtom } from "@effect/atom-react"
 import { useMemo, useState } from "react"
 import type { GitStatus, Turn } from "@huntaway/contracts"
 import { fileRows } from "../diffs"
-import type { Side } from "./model"
-
-const TREE_KEY = "ia.changes.tree"
+import { treeAtom, type Side } from "./model"
 
 export type GitSelection = ReturnType<typeof useGitSelection>
 
@@ -15,7 +14,8 @@ export type GitSelection = ReturnType<typeof useGitSelection>
 export function useGitSelection(status: GitStatus | null, turns: ReadonlyArray<Turn> | undefined) {
   const [side, setSide] = useState<Side>("files")
   const [inMain, setInMain] = useState(false)
-  const [tree, setTree] = useState(() => localStorage.getItem(TREE_KEY) !== "flat")
+  const [treeKept, setTree] = useAtom(treeAtom)
+  const tree = treeKept !== "flat"
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [fileKey, setFileKey] = useState<string | null>(null)
   const [commitSha, setCommitSha] = useState<string | null>(null)
@@ -58,8 +58,7 @@ export function useGitSelection(status: GitStatus | null, turns: ReadonlyArray<T
     else if (s === "turns") setTurnN(turnList[i]?.n ?? null)
   }
   const setTreeMode = (t: boolean) => {
-    setTree(t)
-    localStorage.setItem(TREE_KEY, t ? "tree" : "flat")
+    setTree(t ? "tree" : "flat")
   }
 
   return {

@@ -19,6 +19,8 @@ export type GroupOf<M extends string> = M extends `${infer G}.${string}` ? G : n
 export const invalidates: { readonly [M in keyof Methods]?: ReadonlyArray<GroupOf<keyof Methods>> } = {
   "checkpoints.rewind": ["git"],
   "checkpoints.cancelRewind": ["git"],
+  // Picking one of a prompt's tasks completes the others and removes their worktrees: the compare view's diffs change.
+  "tasks.pickFanout": ["git"],
 }
 
 /** What a query reads again on, as picked from its host's board: it is read again whenever the value changes. */
@@ -30,11 +32,31 @@ const taskState = (board: HostBoard, id: string): string => {
   return t ? `${t.running}:${t.worktree_state}` : ""
 }
 
+/** A task's branch and column as well: what its diff against its base is taken from (the compare view's diffs). */
+const taskBranch = (board: HostBoard, id: string): string => {
+  const t = board.tasks.get(TaskId.make(id))
+  return t ? `${t.running}:${t.worktree_state}:${t.status}:${t.branch ?? ""}` : ""
+}
+
+/** The tasks made from the same prompt as `id` (it among them): each one's column, run and worktree. */
+const fanoutState = (board: HostBoard, id: string): string => {
+  const fanout = board.tasks.get(TaskId.make(id))?.fanout_id
+  if (!fanout) return ""
+  return [...board.tasks.values()]
+    .filter((t) => t.fanout_id === fanout)
+    .map((t) => `${t.id}:${t.status}:${t.running}:${t.worktree_state}`)
+    .join(",")
+}
+
 /** Per method, what of the board a query of it is read again on (none: only mutations and its own refresh). */
 export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
-  "git.taskDiff": (board, p) => taskState(board, p.id),
+  "git.taskDiff": (board, p) => taskBranch(board, p.id),
+  // A file's diffs too: its content can change while its state in the status doesn't (the old tab read them with it).
+  "git.diff": (board, p) => taskState(board, p.id),
+  // The compare view's facts, as one of the prompt's tasks moves, starts or stops, or its worktree changes.
+  "tasks.fanout": (board, p) => fanoutState(board, p.id),
 }
 
 /** The key a host's group is invalidated by. */

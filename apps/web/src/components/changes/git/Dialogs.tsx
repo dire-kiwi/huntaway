@@ -3,7 +3,7 @@ import { clsx } from "clsx"
 import { Loader2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Button, Input, isSubmitShortcut, Kbd, Modal, SUBMIT_KEYS, Textarea } from "../../ui"
-import { errText, noop, type Dialog, type MenuEntry, type Option } from "./model"
+import { noop, type Dialog, type MenuEntry, type Option } from "./model"
 
 /** The bar at the bottom: what can be done where you are (each one clickable), and what's going on. */
 export function OptionsBar({
@@ -117,27 +117,27 @@ function MessageDialog({ dialog, onClose }: { dialog: Extract<Dialog, { kind: "m
   useEffect(() => {
     onDraft?.(message)
   }, [onDraft, message])
-  const submit = async () => {
+  const submit = () => {
     if (!summary.trim() || saving) return
     setSaving(true)
     setErr(null)
-    try {
-      await dialog.submit(message)
-      onClose()
-    } catch (e) {
-      setErr(errText(e))
+    void dialog.submit(message).then((failed) => {
+      if (failed === null) return onClose()
+      setErr(failed)
       setSaving(false)
-    }
+    })
   }
   return (
-    <Modal title={dialog.title} onClose={onClose} onSubmit={() => void submit()} width="max-w-xl">
+    <Modal title={dialog.title} onClose={onClose} onSubmit={submit} width="max-w-xl">
       <div className="space-y-2" data-draft={summary || body ? "" : undefined}>
         <Input
           autoFocus
           value={summary}
           placeholder="Summary"
           onChange={(e) => setSummary(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !isSubmitShortcut(e) && void submit()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !isSubmitShortcut(e)) submit()
+          }}
           className="font-mono"
         />
         <Textarea value={body} placeholder="Description (optional)" rows={6} onChange={(e) => setBody(e.target.value)} className="font-mono text-[12.5px]" />
@@ -148,7 +148,7 @@ function MessageDialog({ dialog, onClose }: { dialog: Extract<Dialog, { kind: "m
           Enter in the summary or {SUBMIT_KEYS} to {dialog.yes.toLowerCase()}
         </span>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="primary" disabled={!summary.trim() || saving} onClick={() => void submit()}>
+        <Button variant="primary" disabled={!summary.trim() || saving} onClick={submit}>
           {saving && <Loader2 size={12} className="animate-spin" />} {dialog.yes}
         </Button>
       </div>

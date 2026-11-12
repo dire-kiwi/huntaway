@@ -32,6 +32,7 @@ import {
   type LineComment,
   type Review,
 } from "./lineComments"
+import { after } from "../../state/timers"
 import { Button } from "../ui"
 
 export type Layout = "unified" | "split"
@@ -111,8 +112,7 @@ function useSeen(ref: RefObject<HTMLElement | null>) {
     if (seen || !el) return undefined
     if (typeof IntersectionObserver === "undefined") {
       // From a timer, so not while the effect runs.
-      const t = setTimeout(() => setSeen(true))
-      return () => clearTimeout(t)
+      return after(0, () => setSeen(true))
     }
     const io = new IntersectionObserver(
       (es) => {

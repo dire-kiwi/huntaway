@@ -1,12 +1,19 @@
 // What the Changes tab's parts share: its panels, options and dialogs, a file's diffs as fetched, and helpers.
+import { Schema } from "effect"
 import type { ReactNode } from "react"
-import { TaskId, type GitCommit, type GitFile, type GitStash, type GitStatus, type Turn } from "@huntaway/contracts"
-import { rpc } from "../../../state/rpc"
+import type { GitCommit, GitFile, GitStash, GitStatus, Turn } from "@huntaway/contracts"
+import { nowMillis } from "../../../state/clock"
+import { storedBare } from "../../../state/storage"
 import { errorText } from "../../ui"
-import { hasStaged, hasUnstaged, linesStageable, untracked, type FileDiff, type FileRow } from "../diffs"
+import { linesStageable, type FileDiff, type FileRow } from "../diffs"
 import type { CommentSource } from "../lineComments"
-import { diffRows, type DiffRow } from "../DiffLines"
+import { diffRows, type DiffRow, type Layout } from "../DiffLines"
 import { turnStat } from "../../task/turns"
+
+/** Unified or split diffs, kept in this browser (the compare view's one at a time follows it too). */
+export const layoutAtom = storedBare<Layout, "unified">("ia.changes.layout", Schema.Literals(["unified", "split"]), "unified")
+/** The files panel as a tree (folders fold) or a flat list, kept in this browser. */
+export const treeAtom = storedBare("ia.changes.tree", Schema.Literals(["tree", "flat"]), "tree")
 
 export type Side = "status" | "files" | "commits" | "stash" | "turns"
 export const SIDES: Side[] = ["status", "files", "commits", "stash"]
@@ -40,7 +47,8 @@ export type Dialog =
       summary: string
       body: string
       yes: string
-      submit: (message: string) => Promise<unknown>
+      /** Commits with the message: resolves with why it failed, or null once it's done (it never rejects). */
+      submit: (message: string) => Promise<string | null>
       onDraft?: (message: string) => void
     }
   | { kind: "input"; title: string; placeholder: string; yes: string; submit: (text: string) => void }
@@ -70,7 +78,7 @@ export function nearestChange(f: FileDiff, rows: DiffRow[], i: number, dir: 1 | 
 
 export const short = (sha: string) => sha.slice(0, 8)
 export const ago = (secs: number) => {
-  const s = Math.max(0, Date.now() / 1000 - secs)
+  const s = Math.max(0, nowMillis() / 1000 - secs)
   return s < 60
     ? "now"
     : s < 3600
@@ -112,36 +120,6 @@ export function mainTitle(
 
 export const NO_DIFFS: FileDiffs = { key: "", unstaged: "", staged: "", tooLarge: false, unstagedPreview: "", stagedPreview: "", notUtf8: false }
 export const NOT_UTF8 = "This file isn't UTF-8 text, so its lines can't be staged one by one"
-
-export async function loadFileDiffs(h: string, id: string, r: FileRow): Promise<FileDiffs> {
-  const one = async (path: string, q: { staged?: boolean; untracked?: boolean }) => {
-    const d = await rpc(h, "git.diff", { id: TaskId.make(id), path, ...q })
-
-    return { patch: d.patch, tooLarge: !!d.too_large, preview: d.preview ?? "", notUtf8: !!d.not_utf8 }
-  }
-  const none = { patch: "", tooLarge: false, preview: "", notUtf8: false }
-  const path = rowPath(r)
-  const [u, s] = await Promise.all([
-    r.files.some((f) => hasUnstaged(f) && !untracked(f)) ? one(path, {}) : none,
-    r.files.some(hasStaged) ? one(path, { staged: true }) : none,
-  ])
-  // Untracked files, as if added (a folder's first few).
-  const added = await Promise.all(
-    r.files
-      .filter(untracked)
-      .slice(0, 20)
-      .map((f) => one(f.path, { untracked: true })),
-  )
-  return {
-    key: r.key,
-    unstaged: [u, ...added].map((d) => d.patch).join(""),
-    staged: s.patch,
-    tooLarge: [u, s, ...added].some((d) => d.tooLarge),
-    unstagedPreview: [u, ...added].map((d) => d.preview).join(""),
-    stagedPreview: s.preview,
-    notUtf8: [u, s, ...added].some((d) => d.notUtf8),
-  }
-}
 
 /** The working tree's diffs, for comments on their lines. */
 export const UNSTAGED: CommentSource = { key: "unstaged", label: "unstaged changes" }

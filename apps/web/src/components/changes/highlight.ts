@@ -228,21 +228,22 @@ function fromCache(file: FileDiff, lang: string): FileRuns | null {
 }
 
 /** Highlights the texts of a file's that aren't yet. Resolves false if they couldn't be. */
-async function highlightFile(file: FileDiff, lang: string): Promise<boolean> {
+function highlightFile(file: FileDiff, lang: string): Promise<boolean> {
   const todo = [...new Set(sidesOf(file).texts.filter((t) => t && !cached(lang, t)))]
-  if (!todo.length) return true
-  const lines = await call(lang, todo)
-  if (!lines) return false
-  todo.forEach((t, i) => {
-    const r = lines[i]
-    if (r) cache.set(cacheKey(lang, t), r)
+  if (!todo.length) return Promise.resolve(true)
+  return call(lang, todo).then((lines) => {
+    if (!lines) return false
+    todo.forEach((t, i) => {
+      const r = lines[i]
+      if (r) cache.set(cacheKey(lang, t), r)
+    })
+    // The least recently used go first.
+    for (const k of cache.keys()) {
+      if (cache.size <= CACHE_SIZE) break
+      cache.delete(k)
+    }
+    return true
   })
-  // The least recently used go first.
-  for (const k of cache.keys()) {
-    if (cache.size <= CACHE_SIZE) break
-    cache.delete(k)
-  }
-  return true
 }
 
 /** A style index as CSS (the same object each time, so lines that don't change don't re-render their runs). */
