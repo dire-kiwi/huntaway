@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react"
+import { useAtomValue } from "@effect/atom-react"
+import { AsyncResult, Atom } from "effect/reactivity"
+import { useState } from "react"
 import { useShallow } from "../../boardHelpers"
-import { agentOf, documentsOnly, isMerged, isScratch, LABELS, type HostTask as Task } from "@huntaway/client"
+import { agentOf, documentsOnly, isMerged, isScratch, LABELS, query, type QueryResult, type HostTask as Task } from "@huntaway/client"
 import { ProjectId, type DocumentLabel as DocumentType } from "@huntaway/contracts"
-import { rpc } from "../../../state/rpc"
 import { effortOptions, inheritedModel, isClaudeModel, modelOptions } from "../../../agents"
 import { harnessesOf, harnessWords, type Harness, type HarnessConfig, type HarnessWord } from "../harnesses"
 import { allValues, lastValue, removeTokens, stripTokens, type Token } from "../taskTokens"
@@ -15,6 +16,10 @@ import { DEFAULT_WORD, LABEL_WORDS, typeWord, type NewTaskType } from "./words"
 import { useBoard } from "../../../state/board"
 
 export type Tokens = ReturnType<typeof useTokens>
+
+/** No branches asked for (no `from:` typed). */
+const noBranches: Atom.Atom<QueryResult<"projects.branches">> = Atom.make(AsyncResult.initial())
+const noBranchList: ReadonlyArray<{ name: string; remote: boolean }> = []
 
 /**
  * What the description's tokens say: its type and labels, the tasks it waits for, what its worktree starts from, the
@@ -49,23 +54,13 @@ export function useTokens(where: Where, agent: AgentChoice, ed: EditorText, save
   const keyLike = (w: string) => new RegExp(`^${inProject?.key}-\\d+$`, "i").test(w)
   const fromWords = fromOk ? [...fromKeys, ...found.filter((t) => t.prefix === "from:" && !keyLike(t.word)).map((t) => t.word)] : []
   // The project's branches, for the list, once a `from:` is typed (`projects.branches`).
-  const [branches, setBranches] = useState<{ project: string; list: ReadonlyArray<{ name: string; remote: boolean }> } | null>(null)
   const fromTyped = fromOk && (found.some((t) => t.prefix === "from:") || ed.completing?.prefix === "from:")
   const branchHost = fromTyped ? inProject?.host_id : undefined
   const branchProject = fromTyped ? inProject?.id : undefined
-  useEffect(() => {
-    if (branchHost === undefined || branchProject === undefined) return undefined
-    let live = true
-    rpc(branchHost, "projects.branches", { id: ProjectId.make(branchProject) })
-      .then((list) => {
-        if (live) setBranches({ project: branchProject, list })
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [branchHost, branchProject])
-  const projectBranches = fromOk && branches && branches.project === inProject?.id ? branches.list : []
+  const branches = useAtomValue(
+    branchHost === undefined || branchProject === undefined ? noBranches : query("projects.branches", branchHost, { id: ProjectId.make(branchProject) }),
+  )
+  const projectBranches = AsyncResult.getOrElse(branches, () => noBranchList)
   // The task whose branch its work merges into (API 128), as `into:` and its key: an open code task in the project with
   // a branch of its own (or a worktree to make one).
   const intoOk = deps

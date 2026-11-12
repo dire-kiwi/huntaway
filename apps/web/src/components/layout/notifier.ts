@@ -16,8 +16,10 @@ import {
   stillApplies,
   taskEvent,
 } from "../../state/notify"
+import { nowMillis } from "../../state/clock"
 import { registry } from "../../state/registry"
 import { onNavigate, openTask } from "../../state/route"
+import { after, every } from "../../state/timers"
 
 // Tells the user of task changes on the boards the page shows (state/notify.ts says which): with system notifications
 // and a sound, from one tab of the browser, and keeps the count of tasks that need attention in the tab's title, its
@@ -102,7 +104,8 @@ function lead(): void {
   const beat = () => {
     try {
       const cur = read(KEY, Leader)
-      if (!cur || cur.tab === tab || Date.now() - cur.at > 6_000) write(KEY, Leader, { tab, at: Date.now() })
+      const now = nowMillis()
+      if (!cur || cur.tab === tab || now - cur.at > 6_000) write(KEY, Leader, { tab, at: now })
       return read(KEY, Leader)?.tab === tab
     } catch {
       return true
@@ -110,7 +113,7 @@ function lead(): void {
   }
   leader.leading = beat
   beat()
-  setInterval(beat, 2_000)
+  every("2 seconds", beat)
   window.addEventListener("pagehide", () => {
     try {
       if (read(KEY, Leader)?.tab === tab) window.localStorage.removeItem(KEY)
@@ -202,11 +205,11 @@ function present(t: HostTask, event: NotifyEvent): void {
   })
 }
 
-/** The tasks whose "ready to review" waits out its grace, by host and id. */
-const pending = new Map<string, ReturnType<typeof setTimeout>>()
+/** The tasks whose "ready to review" waits out its grace, by host and id: what cancels the wait. */
+const pending = new Map<string, () => void>()
 
 function cancel(key: string): void {
-  clearTimeout(pending.get(key))
+  pending.get(key)?.()
   pending.delete(key)
 }
 
@@ -220,11 +223,11 @@ function observe(prev: HostTask, next: HostTask): void {
   if (pending.has(key)) return
   pending.set(
     key,
-    setTimeout(() => {
+    after(REVIEW_GRACE_MS, () => {
       pending.delete(key)
       const cur = board.get().tasks[next.id]
       if (cur?.host_id === next.host_id && readyToCheck(cur)) present(cur, "review")
-    }, REVIEW_GRACE_MS),
+    }),
   )
 }
 
@@ -251,8 +254,9 @@ export function unlockSound(): void {
 export function chime(event: NotifyEvent): void {
   unlockSound()
   const audio = sound.audio
-  if (!audio || audio.state === "closed" || Date.now() - sound.chimed < 1_000) return
-  sound.chimed = Date.now()
+  const now = nowMillis()
+  if (!audio || audio.state === "closed" || now - sound.chimed < 1_000) return
+  sound.chimed = now
   const notes = event === "attention" ? [880, 660] : [660, 880]
   notes.forEach((f, i) => {
     const at = audio.currentTime + 0.02 + i * 0.16
@@ -277,7 +281,7 @@ const icon: {
 const count = { drawn: -1, title: "Huntaway" }
 
 /** The tab's icon with a badge of `n` on it (or as it was for 0). */
-async function setIcon(n: number): Promise<void> {
+function setIcon(n: number): void {
   const link = icon.current?.link ?? document.querySelector<HTMLLinkElement>('link[rel="icon"]')
   if (!link) return
   if (!icon.current) {
@@ -294,8 +298,14 @@ async function setIcon(n: number): Promise<void> {
     link.href = href
     return
   }
-  const image = await icon.current.image
-  if (count.drawn !== n) return // a later count took over meanwhile
+  void icon.current.image.then((image) => {
+    if (count.drawn !== n) return // a later count took over meanwhile
+    drawBadge(link, image, n)
+  })
+}
+
+/** Draws `image` with a badge of `n` on it as the tab's icon. */
+function drawBadge(link: HTMLLinkElement, image: HTMLImageElement | null, n: number): void {
   const canvas = document.createElement("canvas")
   canvas.width = canvas.height = 64
   const ctx = canvas.getContext("2d")
@@ -333,7 +343,7 @@ function showCount(): void {
   if (n === count.drawn) return
   count.drawn = n
   showTitle()
-  void setIcon(n)
+  setIcon(n)
   desktop()?.setBadgeCount?.(n)
 }
 

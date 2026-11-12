@@ -1,7 +1,10 @@
+import { useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
+import { Effect } from "effect"
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity"
 import { Bell, Smartphone, X } from "lucide-react"
-import { type ReactNode, useEffect, useEffectEvent, useState, useSyncExternalStore } from "react"
-import { ASSISTANT_PUSH_EVENTS, NOTIFY_EVENTS, PUSH_PROMPTS } from "@huntaway/client"
+import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react"
+import { ASSISTANT_PUSH_EVENTS, localHostIdAtom, NOTIFY_EVENTS, PUSH_PROMPTS, query, type QueryResult } from "@huntaway/client"
 import type { PushDevice, PushEvents, PushPrompts } from "@huntaway/contracts"
 import {
   NOTIFY_MODES,
@@ -13,12 +16,21 @@ import {
   type NotifyMode,
   type NotifySettings,
 } from "../../state/notify"
-import { hubRpc } from "../../state/rpc"
-import { Button, errorText, IconButton, timeAgo, Toggle } from "../ui"
+import { exitError, useAction } from "../../state/mutation"
+import { Button, IconButton, resultError, resultValue, timeAgo, Toggle } from "../ui"
 import { chime, inDesktopApp, notifyPermission, showNotification, unlockSound } from "./notifier"
-import { currentSubscription, pushSupport, subscribe, unsubscribe } from "./push"
+import { endpointAtom, onHub, pushSupport, subscribe, unsubscribe } from "./push"
 
 // Settings → Notifications (6.8): this browser's notifications (state/notify.ts, notifier.ts) and push to devices (push.ts).
+
+/** The devices the board pushes to (`hub.push.info` on the page's own server), once its host id is known. */
+const pushInfoAtom: Atom.Atom<QueryResult<"hub.push.info">> = Atom.make((get) => {
+  const host = get(localHostIdAtom)
+  return host === null ? AsyncResult.initial(true) : get(query("hub.push.info", host, undefined))
+})
+
+/** No endpoint to read: a browser without push. */
+const noEndpoint: Atom.Atom<AsyncResult.AsyncResult<string | null>> = Atom.make(AsyncResult.success(null))
 
 /** Saves `change` over this browser's notification settings. */
 const save = (change: Partial<NotifySettings>) => saveNotifySettings(Object.assign({}, notifySettings(), change))
@@ -46,16 +58,19 @@ export function NotificationsPanel() {
   }, [])
 
   // Browsers only ask from a click.
-  const enable = async () => {
-    const answer = await Notification.requestPermission().catch(() => "denied" as const)
-    setPermission(notifyPermission())
-    const mode = notifySettings().mode
-    if (answer === "granted" && !showsNotifications(mode)) save({ mode: mode === "sound" ? "both" : "notify" })
+  const enable = () => {
+    void Notification.requestPermission()
+      .catch(() => "denied" as const)
+      .then((answer) => {
+        setPermission(notifyPermission())
+        const mode = notifySettings().mode
+        if (answer === "granted" && !showsNotifications(mode)) save({ mode: mode === "sound" ? "both" : "notify" })
+      })
   }
   const pick = (mode: NotifyMode) => {
     save({ mode })
     unlockSound()
-    if (showsNotifications(mode) && permission === "default") void enable()
+    if (showsNotifications(mode) && permission === "default") enable()
   }
   const test = () => {
     if (playsSound(settings.mode)) chime("attention")
@@ -98,7 +113,7 @@ export function NotificationsPanel() {
               <PermissionNote permission={permission} />
             </div>
             {permission === "default" && (
-              <Button size="sm" variant="primary" onClick={() => void enable()}>
+              <Button size="sm" variant="primary" onClick={enable}>
                 Enable
               </Button>
             )}
@@ -142,47 +157,46 @@ export function NotificationsPanel() {
  */
 function PushPanel() {
   const support = pushSupport()
-  const [devices, setDevices] = useState<ReadonlyArray<PushDevice> | null>(null)
+  // The devices, read when the panel opens and again after each change (the hub's `hub.*` mutations).
+  const info = useAtomValue(pushInfoAtom)
   // This browser's subscription's endpoint, which tells its device from the others.
-  const [endpoint, setEndpoint] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const endpointResult = useAtomValue(support === "ok" ? endpointAtom : noEndpoint)
+  const endpoint = resultValue(endpointResult) ?? null
+  const [{ busy }, run] = useAction()
+  const [, runUpdate] = useAction()
+  const [failed, setErr] = useState<string | null>(null)
+  const err = failed ?? resultError(info) ?? resultError(endpointResult)
   const [tested, setTested] = useState<string | null>(null)
-  // The devices, read when the panel opens and again after each change.
-  const load = () =>
-    void Promise.all([hubRpc("hub.push.info", undefined), support === "ok" ? currentSubscription() : null]).then(
-      ([{ subscriptions }, sub]) => {
-        setDevices(subscriptions)
-        setEndpoint(sub?.endpoint ?? null)
-      },
-      (e: unknown) => setErr(errorText(e)),
-    )
-  const loadFirst = useEffectEvent(load)
-  useEffect(() => loadFirst(), [])
+  // A device's events as just picked, shown until the devices are read again (of: the events they were picked over).
+  const [edited, setEdited] = useState<ReadonlyMap<string, { readonly of: PushEvents; readonly events: PushEvents }>>(() => new Map())
+  const read = resultValue(info)?.subscriptions
+  const devices = read?.map((d) => {
+    const picked = edited.get(d.id)
+    return picked && picked.of === d.events ? Object.assign({}, d, { events: picked.events }) : d
+  })
   const mine = devices?.find((d) => d.endpoint === endpoint)
   const others = devices?.filter((d) => d !== mine) ?? []
-  const run = async (f: () => Promise<unknown>) => {
-    setBusy(true)
+  /** Runs a change of the devices, then reads this browser's subscription again (the devices are read again by the hub's mutations). */
+  const change = <E,>(effect: Effect.Effect<unknown, E, AtomRegistry.AtomRegistry>, onDone?: () => void) => {
     setErr(null)
     setTested(null)
-    try {
-      await f()
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(false)
-      load()
-    }
+    void run(Effect.ensuring(effect, Atom.refresh(endpointAtom))).then((exit) => {
+      const why = exitError(exit)
+      if (why !== null) setErr(why)
+      else onDone?.()
+    })
   }
   const setEvents = (d: PushDevice, events: PushEvents) => {
-    setDevices((ds) => ds?.map((x) => (x.id === d.id ? Object.assign({}, x, { events }) : x)) ?? null)
-    hubRpc("hub.push.update", { id: d.id, events }).catch((e: unknown) => setErr(errorText(e)))
-  }
-  const test = (d: PushDevice) =>
-    run(async () => {
-      await hubRpc("hub.push.test", { id: d.id })
-      setTested(d.id)
+    const of = read?.find((x) => x.id === d.id)?.events
+    if (of) setEdited((m) => new Map(m).set(d.id, { of, events }))
+    void runUpdate(onHub("hub.push.update", { id: d.id, events })).then((exit) => {
+      const why = exitError(exit)
+      if (why !== null) setErr(why)
     })
+  }
+  const test = (d: PushDevice) => change(onHub("hub.push.test", { id: d.id }), () => setTested(d.id))
+  // Browsers only ask for the permission from a click.
+  const turnOn = () => change(subscribe(Notification.requestPermission()))
 
   return (
     <div className="mt-4 space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted" aria-label="Push">
@@ -205,10 +219,10 @@ function PushPanel() {
             <span className="min-w-0 flex-1 text-fg">
               On for this device <span className="text-faint">· {mine.name}</span>
             </span>
-            <Button size="sm" disabled={busy} onClick={() => void test(mine)}>
+            <Button size="sm" disabled={busy} onClick={() => test(mine)}>
               <Bell size={13} /> Send a test
             </Button>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => unsubscribe(mine))}>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(unsubscribe(mine))}>
               Turn off
             </Button>
           </div>
@@ -217,7 +231,7 @@ function PushPanel() {
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
-          <Button size="sm" variant="primary" disabled={busy || !devices} onClick={() => void run(subscribe)}>
+          <Button size="sm" variant="primary" disabled={busy || !devices} onClick={turnOn}>
             Turn on push for this device
           </Button>
           {typeof Notification !== "undefined" && Notification.permission === "denied" && (
@@ -237,13 +251,13 @@ function PushPanel() {
                   {d.kind === "expo" && <span className="text-faint"> · Huntaway app (its pushes wait for the app)</span>}
                 </span>
                 <span className="shrink-0 text-faint">{d.last_sent_at ? `last sent ${timeAgo(d.last_sent_at)}` : `added ${timeAgo(d.created_at)}`}</span>
-                <Button size="sm" variant="ghost" disabled={busy} onClick={() => void test(d)} title={`Send ${d.name || "it"} a test notification`}>
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => test(d)} title={`Send ${d.name || "it"} a test notification`}>
                   Test
                 </Button>
                 <IconButton
                   title={`Stop pushing to ${d.name || "this device"}`}
                   disabled={busy}
-                  onClick={() => void run(() => hubRpc("hub.push.unsubscribe", { id: d.id }))}
+                  onClick={() => change(onHub("hub.push.unsubscribe", { id: d.id }))}
                 >
                   <X size={14} />
                 </IconButton>

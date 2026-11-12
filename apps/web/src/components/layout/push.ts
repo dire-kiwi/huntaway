@@ -1,6 +1,9 @@
+import { Effect, Option, Schema } from "effect"
+import { Atom, type AtomRegistry } from "effect/reactivity"
+import { callHub, type CallError, hubHealthAtom, type Methods, mutate } from "@huntaway/client"
 import type { PushDevice, PushEventsPatch } from "@huntaway/contracts"
+import { errorText, runExit } from "../../state/mutation"
 import { navigate, openTask } from "../../state/route"
-import { hubRpc } from "../../state/rpc"
 import { notifySettings } from "../../state/notify"
 import { inDesktopApp } from "./notifier"
 
@@ -58,18 +61,33 @@ export function deviceName(): string {
   return `${installed() ? "Huntaway" : browser}${os ? ` on ${os}` : ""}`
 }
 
+/** The browser said no, or its push service failed: `message` says what happened, as the browser put it. */
+export class PushFailed extends Schema.TaggedError<PushFailed, { readonly brand: unique symbol }>()("PushFailed", { message: Schema.String }) {}
+
+/** A browser's promise (the service worker's, its push manager's), its rejection a `PushFailed`. */
+const browser = <A>(f: () => Promise<A>): Effect.Effect<A, PushFailed> => Effect.tryPromise({ try: f, catch: (e) => new PushFailed({ message: errorText(e) }) })
+
+/**
+ * Calls `method` on the page's own server, the hub, by its host id: so its `hub.*` queries (the devices) are read again
+ * once it has run.
+ */
+export const onHub = <M extends keyof Methods>(method: M, payload: Methods[M]["payload"]) =>
+  Atom.getResult(hubHealthAtom).pipe(Effect.flatMap((health) => mutate(method, health.host_id, payload)))
+
 /** The service worker's registration, if it's running (without waiting long for one that won't). */
-async function registration(): Promise<ServiceWorkerRegistration | null> {
-  if (!("serviceWorker" in navigator)) return null
-  const timeout = Promise.withResolvers<null>()
-  setTimeout(() => timeout.resolve(null), 5_000)
-  return Promise.race([navigator.serviceWorker.ready, timeout.promise])
-}
+const registration: Effect.Effect<ServiceWorkerRegistration | null> = Effect.suspend(() =>
+  "serviceWorker" in navigator
+    ? Effect.promise(() => navigator.serviceWorker.ready).pipe(Effect.timeoutOption("5 seconds"), Effect.map(Option.getOrNull))
+    : Effect.succeed(null),
+)
 
 /** This browser's push subscription, if it has one. */
-export async function currentSubscription(): Promise<PushSubscription | null> {
-  return (await registration())?.pushManager.getSubscription() ?? null
-}
+export const currentSubscription: Effect.Effect<PushSubscription | null, PushFailed> = Effect.flatMap(registration, (reg) =>
+  reg ? browser(() => reg.pushManager.getSubscription()) : Effect.succeed(null),
+)
+
+/** This browser's subscription's endpoint, which tells its device from the others: read again after a change here. */
+export const endpointAtom = Atom.make(Effect.map(currentSubscription, (sub) => sub?.endpoint ?? null))
 
 const fromB64 = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0))
 
@@ -95,60 +113,66 @@ function noteSent(endpoint: string | null): void {
 }
 
 /** Sends subscription `sub` to the board; `events` are the device's to start with (it keeps its own otherwise). */
-async function send(sub: PushSubscription, events?: PushEventsPatch): Promise<PushDevice> {
-  const keys = sub.toJSON().keys ?? {}
-  const device = await hubRpc("hub.push.subscribe", {
-    endpoint: sub.endpoint,
-    keys: { p256dh: keys["p256dh"] ?? "", auth: keys["auth"] ?? "" },
-    name: deviceName(),
-    ...(events && { events }),
+const send = (sub: PushSubscription, events?: PushEventsPatch) =>
+  Effect.gen(function* () {
+    const keys = sub.toJSON().keys ?? {}
+    const device = yield* onHub("hub.push.subscribe", {
+      endpoint: sub.endpoint,
+      keys: { p256dh: keys["p256dh"] ?? "", auth: keys["auth"] ?? "" },
+      name: deviceName(),
+      ...(events && { events }),
+    })
+    noteSent(sub.endpoint)
+    return device
   })
-  noteSent(sub.endpoint)
-  return device
-}
 
-/** Turns push on for this device (asking the browser's permission first): with the events this browser notifies of. */
-export async function subscribe(): Promise<PushDevice> {
-  if ((await Notification.requestPermission()) !== "granted") throw new Error("The browser wasn't allowed to show the board's notifications.")
-  const reg = await registration()
-  if (!reg) throw new Error("The board's service worker isn't running in this browser; reload the page and try again.")
-  const { public_key } = await hubRpc("hub.push.info", undefined)
-  let sub = await reg.pushManager.getSubscription()
-  if (sub && !sameKey(sub, public_key)) {
-    await sub.unsubscribe()
-    sub = null
-  }
-  sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64(public_key) })
-  return send(sub, notifySettings().events)
-}
+/**
+ * Turns push on for this device: with the events this browser notifies of. `asked` is the browser's answer to the
+ * permission asked for in the click (browsers only ask from one).
+ */
+export const subscribe = (
+  asked: Promise<NotificationPermission>,
+): Effect.Effect<PushDevice, PushFailed | CallError<"hub.push.info"> | CallError<"hub.push.subscribe">, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    if ((yield* browser(() => asked)) !== "granted") return yield* new PushFailed({ message: "The browser wasn't allowed to show the board's notifications." })
+    const reg = yield* registration
+    if (!reg) return yield* new PushFailed({ message: "The board's service worker isn't running in this browser; reload the page and try again." })
+    const { public_key } = yield* callHub("hub.push.info", undefined)
+    const had = yield* browser(() => reg.pushManager.getSubscription())
+    const kept = had && !sameKey(had, public_key) ? yield* browser(() => had.unsubscribe()).pipe(Effect.as(null)) : had
+    const sub = kept ?? (yield* browser(() => reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64(public_key) })))
+    return yield* send(sub, notifySettings().events)
+  })
 
 /** Turns push off for this device: the browser's subscription, and the board's copy of it (`device`). */
-export async function unsubscribe(device: PushDevice | undefined): Promise<void> {
-  await (await currentSubscription())?.unsubscribe()
-  noteSent(null)
-  if (device) await hubRpc("hub.push.unsubscribe", { id: device.id })
-}
+export const unsubscribe = (device: PushDevice | undefined): Effect.Effect<void, PushFailed | CallError<"hub.push.unsubscribe">, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    const sub = yield* currentSubscription
+    if (sub) yield* browser(() => sub.unsubscribe())
+    noteSent(null)
+    if (device) yield* onHub("hub.push.unsubscribe", { id: device.id })
+  })
 
 /**
  * When the page opens, sends the board this browser's subscription if its push service replaced the one it had (see
  * sw.js), with that one's events. One the board dropped otherwise (removed from another device) is turned off here too.
  */
-async function resend(): Promise<void> {
+const resend = Effect.gen(function* () {
   if (pushSupport() !== "ok" || Notification.permission !== "granted") return
-  const sub = await currentSubscription()
+  const sub = yield* currentSubscription
   if (!sub) return
-  const { public_key, subscriptions } = await hubRpc("hub.push.info", undefined)
+  const { public_key, subscriptions } = yield* callHub("hub.push.info", undefined)
   if (subscriptions.some((d) => d.endpoint === sub.endpoint)) return
   const sent = window.localStorage.getItem(SENT_KEY)
   const old = subscriptions.find((d) => d.endpoint === sent)
   if (sent && sent !== sub.endpoint && sameKey(sub, public_key)) {
-    await send(sub, old?.events ?? notifySettings().events)
-    if (old) await hubRpc("hub.push.unsubscribe", { id: old.id })
+    yield* send(sub, old?.events ?? notifySettings().events)
+    if (old) yield* onHub("hub.push.unsubscribe", { id: old.id })
   } else {
-    await sub.unsubscribe()
+    yield* browser(() => sub.unsubscribe())
     noteSent(null)
   }
-}
+})
 
 /** A message from the service worker: a tapped notification's task or page, to open in this window. */
 function opened(data: unknown): void {
@@ -168,5 +192,6 @@ export function startPush(): void {
   if (!("serviceWorker" in navigator) || !window.isSecureContext || inDesktopApp()) return
   navigator.serviceWorker.register("/sw.js").catch(() => {})
   navigator.serviceWorker.addEventListener("message", (e) => opened(e.data))
-  resend().catch(() => {})
+  // Whatever fails here is tried again on the next load.
+  void runExit(resend)
 }

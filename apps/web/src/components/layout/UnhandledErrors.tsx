@@ -1,6 +1,6 @@
 import { CircleAlert, X } from "lucide-react"
 import { useEffect, useState } from "react"
-
+import { after } from "../../state/timers"
 import { IconButton } from "../ui"
 
 /**
@@ -12,7 +12,7 @@ export function UnhandledErrors() {
   useEffect(() => {
     const onRejection = (e: PromiseRejectionEvent) => {
       const r: unknown = e.reason
-      // A call's failure is a tagged error (state/rpc.ts); Unauthorized signs out instead.
+      // A call that rejects gives its tagged error; Unauthorized signs out instead.
       if (typeof r !== "object" || r === null || !("_tag" in r) || typeof r._tag !== "string") return
       const tag = r._tag
       if (tag === "Unauthorized") return
@@ -26,8 +26,7 @@ export function UnhandledErrors() {
   }, [])
   useEffect(() => {
     if (!error) return undefined
-    const id = setTimeout(() => setError(null), 10_000)
-    return () => clearTimeout(id)
+    return after("10 seconds", () => setError(null))
   }, [error])
   if (!error) return null
   return (
