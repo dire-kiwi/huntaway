@@ -1,13 +1,11 @@
 import { useMemo, useState } from "react"
 import { useAtom } from "@effect/atom-react"
-import { Schema } from "effect"
 import { Atom } from "effect/reactivity"
 import { type HostTask as Task } from "@huntaway/client"
 import { TaskId, type Status } from "@huntaway/contracts"
 import { board } from "../../../state/board"
 import { exitError, useMutation } from "../../../state/mutation"
-import { stacksAtom } from "../../../state/prefs"
-import { stored } from "../../../state/storage"
+import { stacksAtom, stackViewsAtom } from "../../../state/prefs"
 
 import { StatusIcon, type MenuItem } from "../../ui"
 import { showsStatus, type BoardQuery, type SortKey } from "../boardQuery"
@@ -15,15 +13,12 @@ import { stackTitle, type OnStackMenu } from "../StackCard"
 import { columnEntries, groupStacks, isGathered, mergeCheck, withAll, withStack, type MergeCheck, type Stack, type StackViews } from "../stacks"
 import type { DropTarget } from "./model"
 
-/** The stacks gathered (true) or spread (false) on their own since the switch was last flipped (`ia.board.stackViews`). */
-const ownViewsAtom = stored("ia.board.stackViews", Schema.Record(Schema.String, Schema.Boolean), {})
-
 /** Which stacks are gathered, in this browser: the switch (`ia.board.stacks`) and the ones set on their own. */
 const stackViewsKept = Atom.writable(
-  (get): StackViews => ({ gathered: get(stacksAtom) !== "spread", own: get(ownViewsAtom) }),
+  (get): StackViews => ({ gathered: get(stacksAtom) !== "spread", own: get(stackViewsAtom) }),
   (ctx, v: StackViews) => {
     ctx.set(stacksAtom, v.gathered ? "gathered" : "spread")
-    ctx.set(ownViewsAtom, v.own)
+    ctx.set(stackViewsAtom, v.own)
   },
 )
 
