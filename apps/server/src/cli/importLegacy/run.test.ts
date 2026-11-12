@@ -30,7 +30,7 @@ describe("import-legacy", () => {
       yield* fs.makeDirectory(`${tmp}/new`)
       yield* fs.writeFileString(`${tmp}/new/board.db`, "")
       const error = yield* Effect.flip(importLegacy(options(`${tmp}/old`, `${tmp}/new`)))
-      expect(error.reason).toContain("has a board.db already")
+      expect(error._tag === "StartupError" ? error.reason : error.message).toContain("has a board.db already")
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
@@ -66,7 +66,7 @@ describe("import-legacy", () => {
         }),
       )
       const error = yield* Effect.flip(importLegacy(options(`${tmp}/old`, `${tmp}/new`)))
-      expect(error.reason).toContain("PRJ-7")
+      expect(error._tag === "StartupError" ? error.reason : error.message).toContain("PRJ-7")
       expect(yield* fs.exists(`${tmp}/new/board.db`)).toBe(false)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
