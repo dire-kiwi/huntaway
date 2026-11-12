@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react"
 import type { HostProject as Project } from "@huntaway/client"
 import type { Automation } from "@huntaway/contracts"
 import { useBoard } from "../../../state/board"
-import { Button, Toggle, timeAgo } from "../../ui"
+import { Button, localeString, Toggle, timeAgo } from "../../ui"
 import { type TimeZone, triggerText, timeUntil, localTime } from "./text"
 import { RunStatus, RunHistory } from "./RunHistory"
 
@@ -129,7 +129,7 @@ export function AutomationRow({
           <span>{webhook ? "No deliveries yet" : "Hasn't run yet"}</span>
         )}
         {a.enabled && a.next_run_at && (
-          <span className="ml-auto shrink-0" title={new Date(a.next_run_at).toLocaleString()}>
+          <span className="ml-auto shrink-0" title={localeString(a.next_run_at)}>
             Next {timeUntil(a.next_run_at)} ({localTime(a.next_run_at)})
           </span>
         )}

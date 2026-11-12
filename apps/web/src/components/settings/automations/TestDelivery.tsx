@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react"
-import { Option, Schema } from "effect"
+import { Exit, Option, Schema } from "effect"
 import { automationRunsAtom } from "@huntaway/client"
 import type { Automation, AutomationRun } from "@huntaway/contracts"
 import { Play } from "lucide-react"
 import { useState } from "react"
-import { useRpc } from "../../../state/rpc"
-import { Button, errorText, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, useDraft } from "../../ui"
+import { useMutation } from "../../../state/mutation"
+import { Button, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, Textarea, useDraft } from "../../ui"
 import { RunStatus, RunTask } from "./RunHistory"
 
 const PrettyJson = Schema.fromJsonString(Schema.Unknown, { space: 2 })
@@ -16,32 +16,30 @@ const EXAMPLE = { action: "opened", issue: { number: 1, title: "An issue", body:
 
 /** Sends a webhook automation a delivery from the board, to try its filters and templates. */
 export function TestDelivery({ hostId, automation, onClose }: { hostId: string; automation: Automation; onClose: () => void }) {
-  const rpc = useRpc()
   const latest = useAtomValue(automationRunsAtom({ host_id: hostId, automation_id: automation.id }))
   const loaded = latest.data !== null || latest.failed !== null
   const delivery = latest.data?.latest_delivery ?? null
   // It starts from the latest delivery the automation got, once that's read.
   const { draft: event, setDraft: setEvent } = useDraft(loaded ? (delivery?.event ?? "issues") : "")
   const { draft: body, setDraft: setBody } = useDraft<string | null>(loaded ? pretty(delivery?.body ?? EXAMPLE) : null)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [sending, run] = useMutation("automations.run")
+  const busy = sending.busy
+  // Why the body can't be sent, else why the last send failed.
+  const [invalid, setErr] = useState<string | null>(null)
+  const err = invalid ?? sending.error
   const [result, setResult] = useState<AutomationRun | null>(null)
-  const send = async () => {
+  const send = () => {
     setErr(null)
     setResult(null)
     const parsed = parse(body ?? "{}")
     if (Option.isNone(parsed)) return setErr("The body isn't valid JSON.")
     const payload = parsed.value
-    setBusy(true)
-    try {
-      setResult(await rpc(hostId, "automations.run", { id: automation.id, payload, event }))
-    } catch (e) {
-      setErr(errorText(e))
-    }
-    setBusy(false)
+    void run(hostId, { id: automation.id, payload, event }).then((exit) => {
+      if (Exit.isSuccess(exit)) setResult(exit.value)
+    })
   }
   return (
-    <Modal title={`Test ${automation.name}`} onClose={onClose} onSubmit={() => void send()} width="max-w-2xl">
+    <Modal title={`Test ${automation.name}`} onClose={onClose} onSubmit={() => send()} width="max-w-2xl">
       <div className="space-y-3">
         <div className="text-[12px] text-faint">
           Runs it now with this delivery, through its filters (but not its secret, duplicate check or coalescing), whether or not it's on. It starts from the
@@ -67,7 +65,7 @@ export function TestDelivery({ hostId, automation, onClose }: { hostId: string; 
             <Button variant="ghost" onClick={onClose}>
               Close
             </Button>
-            <Button variant="primary" disabled={busy || body === null} onClick={() => void send()}>
+            <Button variant="primary" disabled={busy || body === null} onClick={() => send()}>
               <Play size={12} /> Send test delivery
             </Button>
           </div>
