@@ -18,6 +18,7 @@ import { Events } from "../platform/Events.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { ProjectRepo } from "../projects/ProjectRepo.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import { deriveColumns } from "../tasks/decide.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
 import { Dependencies, isMerged } from "../tasks/Dependencies.ts"
@@ -176,6 +177,8 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
       const configRepo = yield* AgentConfigRepo
       const fs = yield* FileSystem.FileSystem
       const checkpoints = yield* Checkpoints
+      // 6.9
+      const telemetry = yield* Telemetry
       // The launches being prepared, by task: a stop interrupts one.
       const launches = yield* FiberMap.make<TaskId>()
       // The runs that may write their task's documents folder (they started with labels): a `/plan` is steered only
@@ -235,8 +238,24 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
           // Once the shim is asked to start, it is let finish: a stop meanwhile reaps what it started.
           yield* Effect.uninterruptible(shim.spawn(run.id, prepared.spec))
           yield* runs.setPhase(run.id, "running")
+          // 6.9: telemetry's `run_start`.
+          const info = prepared.runStart
+          if (info !== undefined) {
+            const { runtime, model, effort, permission_mode, resume } = info
+            yield* telemetry.taskEvent(run.task_id, {
+              event: "run_start",
+              run_id: run.id,
+              kind: run.kind,
+              runtime,
+              model,
+              effort,
+              attrs: { permission_mode, resume },
+            })
+          }
           // 4.3: the conversation rollback a rewind asked for is done with (made, or for another session).
           yield* checkpoints.rewound(run.task_id, prepared.rewind ?? null)
+          // 6.7: the assistant's routines' reports it started with are read.
+          if (prepared.started !== undefined) yield* prepared.started
           // Preparing is over: from here a stop goes to the agent, and messages sent meanwhile go to it now.
           yield* input.writeSteers(run.task_id)
           const started = yield* runs.get(run.id)
@@ -298,6 +317,8 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
             }
             const combined = combine([...taken, ...(message === null ? [] : [rowOf(message)])])
             const run = yield* runs.insert({ id: runId, task_id: id, kind, created_at: at })
+            // 6.5: the automation runs whose messages it starts with are its, for their cost.
+            yield* runs.chargeAutomationRuns(run.id, combined.automationRuns)
             const writeNo = explain === undefined ? yield* record(before, kind, combined, message) : yield* explain(before)
             // The message its first turn starts with (checkpoints).
             if (writeNo !== null) yield* runs.update(run.id, { write_no: writeNo })

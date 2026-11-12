@@ -110,6 +110,12 @@ export const serveFlags = {
     Flag.withFallbackConfig(Config.String("HUNTAWAY_RELEASE_UPDATES")),
     Flag.optional,
   ),
+  // 6.9: telemetry's ClickHouse when the host's settings have none.
+  telemetryUrl: Flag.String("telemetry-url").pipe(
+    Flag.withDescription("The ClickHouse telemetry goes to while the host's settings have none (http://USER:PASSWORD@HOST:8123/DATABASE)"),
+    Flag.withFallbackConfig(Config.String("HUNTAWAY_TELEMETRY_URL")),
+    Flag.optional,
+  ),
 }
 
 /**
@@ -144,6 +150,12 @@ export const SERVE_ENV = [
   "HUNTAWAY_NO_DISCOVERY",
   "HUNTAWAY_SSH_BIN",
   "HUNTAWAY_GH_BIN",
+  // 6.11: where Asana's API is (a fake one for a test server).
+  "HUNTAWAY_ASANA_URL",
+  // 6.10: the Cua Driver to run, the release to install, and a screen said to be locked or not (tests).
+  "HUNTAWAY_CUA_DRIVER",
+  "HUNTAWAY_CUA_DRIVER_RELEASE",
+  "HUNTAWAY_DESKTOP_LOCKED",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -175,6 +187,7 @@ export interface ServeArgs {
   readonly sourceDir?: Option.Option<string>
   readonly updateFrom?: Option.Option<string>
   readonly releaseUpdates?: Option.Option<string>
+  readonly telemetryUrl?: Option.Option<string>
 }
 
 export interface ServerConfigShape {
@@ -265,7 +278,28 @@ export interface ServerConfigShape {
   readonly configHome: string
   /** `XDG_RUNTIME_DIR`, else `/run/user/<uid>`: what `systemctl --user` needs to find the user's manager. */
   readonly runtimeDir: string | null
+  /** 6.11: Asana's API (`HUNTAWAY_ASANA_URL`, default Asana's own); a test points it at a fake. Tests have none by default. */
+  readonly asanaUrl: string
+  /** 6.10: `HUNTAWAY_CUA_DRIVER`, the Cua Driver to run instead of one installed or on PATH (`desktop/CuaDriver`). Tests give the fake. */
+  readonly cuaDriver: string | null
+  /** 6.10: `HUNTAWAY_CUA_DRIVER_RELEASE` (JSON), the release the host's page installs instead of the pinned one (a fake download in tests). */
+  readonly cuaRelease: CuaReleaseConfig | null
+  /** 6.10: `HUNTAWAY_DESKTOP_LOCKED` (`1` or `0`), whether the screen is locked, instead of asking the session (tests). */
+  readonly desktopLocked: boolean | null
+  /** 6.9: `--telemetry-url`/`HUNTAWAY_TELEMETRY_URL`, used while the host's settings name no ClickHouse. */
+  readonly telemetryUrl: string | null
+  /** 6.9: the server's environment makes Claude Code export telemetry of its own (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`). */
+  readonly ownTelemetryEnv: boolean
+  /** 6.9: `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, the agents' default config folders when a config names none. */
+  readonly claudeConfigDir: string | null
+  readonly codexHome: string | null
+  /** 6.9: a stall of the event loop this long (ms) or longer is logged (`HUNTAWAY_LAG_LOG_MS`, default 250; 0: none). */
+  readonly lagLogMs: number
 }
+
+/** 6.10: a Cua Driver release archive: where it is, and what it must be. */
+export const CuaReleaseConfig = Schema.Struct({ version: Schema.String, url: Schema.String, bytes: Schema.Int, sha256: Schema.String })
+export type CuaReleaseConfig = typeof CuaReleaseConfig.Type
 
 /** What a release package says of itself in `build.json`, beside its launcher. */
 const ReleaseBuild = Schema.fromJsonString(Schema.Struct({ version: Schema.String, commit: Schema.optional(Schema.NullOr(Schema.String)) }))
@@ -398,6 +432,15 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const sshBin = yield* Config.String("HUNTAWAY_SSH_BIN").pipe(Config.option)
         const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""))
         const cacheHome = yield* Config.String("XDG_CACHE_HOME").pipe(Config.withDefault(""))
+        const asanaUrl = yield* Config.String("HUNTAWAY_ASANA_URL").pipe(Config.withDefault("https://app.asana.com/api/1.0"))
+        // 6.10: computer use's overrides.
+        const cuaDriver = yield* Config.String("HUNTAWAY_CUA_DRIVER").pipe(Config.option)
+        const cuaRelease = yield* Config.schema(Schema.fromJsonString(CuaReleaseConfig), "HUNTAWAY_CUA_DRIVER_RELEASE").pipe(Config.option)
+        const desktopLocked = yield* Config.String("HUNTAWAY_DESKTOP_LOCKED").pipe(Config.option)
+        // 6.9
+        const claudeConfigDir = yield* Config.String("CLAUDE_CONFIG_DIR").pipe(Config.option)
+        const codexHome = yield* Config.String("CODEX_HOME").pipe(Config.option)
+        const lagLogMs = yield* Config.Number("HUNTAWAY_LAG_LOG_MS").pipe(Config.withDefault(250))
         const expand = (path: string) => (path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path)
         const profiles = args.profiles.flatMap((pair) => {
           const at = pair.indexOf("=")
@@ -428,6 +471,20 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           agentEnv: AGENT_ENV,
           tmpDir: tmpDir.length > 1 && tmpDir.endsWith("/") ? tmpDir.slice(0, -1) : tmpDir,
           taskTmpRoot: null,
+          asanaUrl,
+          cuaDriver: Option.getOrNull(
+            Option.map(
+              Option.filter(cuaDriver, (p) => p !== ""),
+              expand,
+            ),
+          ),
+          cuaRelease: Option.getOrNull(cuaRelease),
+          desktopLocked: Option.getOrNull(
+            Option.map(
+              Option.filter(desktopLocked, (v) => v !== ""),
+              (v) => v === "1",
+            ),
+          ),
           hubs: Option.match(args.hub ?? Option.none(), {
             onNone: () => [],
             onSome: (list) =>
@@ -440,6 +497,14 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           noDiscovery: args.noDiscovery ?? false,
           sshBin: Option.getOrElse(sshBin, () => "ssh"),
           ...(yield* updateConfig(args, home, Option.getOrNull(exe), expand)),
+          // 6.9
+          telemetryUrl: args.telemetryUrl === undefined ? null : Option.getOrNull(args.telemetryUrl),
+          ownTelemetryEnv: Object.entries(process.env).some(
+            ([k, v]) => (k === "CLAUDE_CODE_ENABLE_TELEMETRY" || k.startsWith("OTEL_")) && v !== undefined && v !== "",
+          ),
+          claudeConfigDir: Option.getOrNull(Option.map(claudeConfigDir, expand)),
+          codexHome: Option.getOrNull(Option.map(codexHome, expand)),
+          lagLogMs: Number.isFinite(lagLogMs) && lagLogMs >= 0 ? lagLogMs : 250,
         })
       }),
     )
@@ -475,6 +540,12 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         agentEnv: AGENT_ENV,
         tmpDir: config.dataDir,
         taskTmpRoot: `${config.dataDir}/task-tmp`,
+        // Never Asana's own: a test gives its fake's.
+        asanaUrl: "http://127.0.0.1:9/no-asana-in-tests",
+        // 6.10: never this machine's desktop, nor a download from GitHub: a test gives the fake driver and its own release.
+        cuaDriver: `${config.dataDir}/no-cua-driver-in-tests`,
+        cuaRelease: { version: "0.0.0-none", url: "http://127.0.0.1:1/no-downloads-in-tests", bytes: 1, sha256: "0".repeat(64) },
+        desktopLocked: false,
         hubs: [],
         hubToken: null,
         noDiscovery: true,
@@ -498,6 +569,12 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         cwd: config.dataDir,
         configHome: `${config.dataDir}/config`,
         runtimeDir: null,
+        // 6.9
+        telemetryUrl: null,
+        ownTelemetryEnv: false,
+        claudeConfigDir: null,
+        codexHome: null,
+        lagLogMs: 250,
         ...config,
       }),
     )

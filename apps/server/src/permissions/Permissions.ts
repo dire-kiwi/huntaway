@@ -506,7 +506,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
 
       // ---- deciding ----
 
-      /** Whether the call writes the thread's own documents folder (a labelled task's, a scratch or document thread's). */
+      /** Whether the call writes the thread's own folder (a labelled task's, a scratch or document thread's, the assistant's workspace). */
       const writesOwnFolder = Effect.fnUntraced(function* (task: Task, tool: string, input: unknown) {
         const kind = threadKindOf(task)
         if (task.kind !== "task" || !(task.labels.length > 0 || OWN_FOLDER.has(kind._tag)) || !WRITES.has(tool)) return false
@@ -514,8 +514,19 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         // A `..`, or a symlink in the folder, could lead back out of it.
         if (typeof file !== "string" || !file.startsWith("/") || file.split("/").includes("..")) return false
         const f = yield* resolved(file)
-        const d = yield* resolved(dataDir.documents(task.id))
-        return f !== null && d !== null && (f === d || f.startsWith(d.endsWith("/") ? d : `${d}/`))
+        if (f === null) return false
+        // 6.7: the assistant's workspace is its own too, and its routine threads' (their `work_dir`, in the data folder).
+        const workspace =
+          (task.task_type === "assistant" || task.task_type === "routine") && task.work_dir !== null
+            ? task.work_dir.startsWith("/")
+              ? task.work_dir
+              : `${dataDir.root}/${task.work_dir}`
+            : null
+        for (const own of [dataDir.documents(task.id), ...(workspace === null ? [] : [workspace])]) {
+          const d = yield* resolved(own)
+          if (d !== null && (f === d || f.startsWith(d.endsWith("/") ? d : `${d}/`))) return true
+        }
+        return false
       })
 
       /** A path with its symlinks resolved as far as it exists; null for a symlink that leads nowhere, or an error on the way. */

@@ -1,7 +1,7 @@
-import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Redacted, Result, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Invalid, LinkId, ProfileId } from "@huntaway/contracts"
-import type { AgentConfigId, Conflict, NewProfile, Profile, ProfilePatch } from "@huntaway/contracts"
+import type { AgentConfigId, AsanaTask, Conflict, NewProfile, Profile, ProfilePatch } from "@huntaway/contracts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
@@ -10,6 +10,9 @@ import { ServerConfig } from "../platform/ServerConfig.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { AgentConfigRepo } from "./AgentConfigRepo.ts"
 import { AgentConfigs } from "./AgentConfigs.ts"
+// 6.11: connecting Asana, and a profile's Asana search.
+import { Asana, AsanaOff, asanaLabel, taskGid } from "./Asana.ts"
+import type { AsanaFailed } from "./Asana.ts"
 import {
   asciiLower,
   blank,
@@ -49,6 +52,11 @@ export interface ProfilesShape {
    * has that name in any case, which is left as it is (the old `ensure_profile`). The profile it made, if it made one.
    */
   readonly ensure: (name: string, dir: string) => Effect.Effect<Option.Option<Profile>>
+  /**
+   * 6.11: the Asana tasks the profile's token finds for `q` (a search, or a task's URL: none for one the token can't
+   * see). Refused while Asana is off for it or it isn't connected.
+   */
+  readonly asanaTasks: (id: ProfileId, q: string) => Effect.Effect<ReadonlyArray<AsanaTask>, ProfileNotFound | AsanaOff | AsanaFailed>
 }
 
 /** Profiles: one person's board on this host, with the agent configs its threads can use. */
@@ -65,6 +73,7 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
       const dataDir = yield* DataDir
       const identity = yield* Identity
       const config = yield* ServerConfig
+      const asana = yield* Asana
       const fs = yield* FileSystem.FileSystem
       const random = yield* SecureRandom.SecureRandom
 
@@ -126,10 +135,12 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
       })
 
       const update = Effect.fn("Profiles.update")(function* (id: ProfileId, patch: ProfilePatch) {
-        // Connecting Asana checks the token with Asana, which arrives with Asana (a later milestone): only disconnecting is taken now.
-        if (blank(patch.asana_token) !== null) {
-          return yield* new Invalid({ field: "asana_token", reason: "connecting Asana isn't available on this server yet" })
-        }
+        // A token is checked with Asana first, which names who it's for; null or blank disconnects.
+        const asanaToken = blank(patch.asana_token)
+        const asanaUser =
+          asanaToken === null
+            ? null
+            : asanaLabel(yield* asana.me(asanaToken).pipe(Effect.mapError((e) => new Invalid({ field: "asana_token", reason: e.message }))))
         const assistantHost = patch.assistant_host === undefined ? undefined : yield* checkAssistantHost(patch.assistant_host)
         const githubAccount = yield* ifGiven(patch.github_account, checkGithubAccount)
         const cloneDir = yield* ifGiven(patch.clone_dir, (v) => checkCloneDir(v, config.home))
@@ -162,7 +173,7 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
               agent_access: patch.agent_access === undefined ? undefined : checkAgentAccess(name ?? current.name, patch.agent_access),
               github_account: githubAccount,
               clone_dir: cloneDir,
-              ...(patch.asana_token === undefined ? {} : { asana_token: null, asana_user: null }),
+              ...(patch.asana_token === undefined ? {} : { asana_token: asanaToken, asana_user: asanaUser }),
               asana_enabled: patch.asana_enabled,
               limit_wait: patch.limit_wait,
               limit_switch: patch.limit_switch,
@@ -219,7 +230,19 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
         return made
       })
 
-      return Profiles.of({ list: repo.list, get: getProfile, create, update, delete: remove, ensure })
+      const asanaTasks = Effect.fn("Profiles.asanaTasks")(function* (id: ProfileId, q: string) {
+        const profile = yield* getProfile(id)
+        if (!profile.asana_enabled) return yield* new AsanaOff({ reason: `Asana is turned off for the ${profile.name} profile (Settings → Profiles)` })
+        const token = yield* repo.asanaToken(id)
+        if (token === null) return yield* new AsanaOff({ reason: `the ${profile.name} profile isn't connected to Asana` })
+        const found = yield* Effect.result(asana.search(Redacted.value(token), q))
+        if (Result.isSuccess(found)) return found.success
+        // A task's URL that the token can't see finds nothing.
+        if (found.failure.kind === "NotFound" && taskGid(q.trim()) !== null) return []
+        return yield* found.failure
+      })
+
+      return Profiles.of({ list: repo.list, get: getProfile, create, update, delete: remove, ensure, asanaTasks })
     }),
   )
 

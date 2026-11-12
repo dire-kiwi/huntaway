@@ -130,7 +130,12 @@ export const McpControlRegistered = Layer.effectDiscard(
           : Effect.void,
       cancel: (run, requestId) => control.cancel(run, requestId),
     })
-    // gh's server is served (4.4); docs' (6.3) and the desktop's (6.10) come with their areas.
-    yield* requests.provideServers({ manifest: control.manifest, served: Effect.succeed({ gh: true, docs: false, desktop: false }) })
+    // gh's server is served (4.4), and docs' (6.3); the desktop's (6.10) while its gate says so (computer use on, a driver
+    // to run).
+    const servers = yield* McpServers
+    yield* requests.provideServers({
+      manifest: control.manifest,
+      served: Effect.map(servers.serves("desktop"), (desktop) => ({ gh: true, docs: true, desktop })),
+    })
   }),
 )

@@ -26,9 +26,10 @@ export function usePageShortcuts(active: string | undefined) {
       const current = at.current
       if (current === undefined || !names.includes(current)) return
       if (!step) {
-        // The assistant is not yet on this server (it has no Assistant row in the sidebar).
+        // As the sidebar has no Assistant row for a profile without one.
         if (!assistantHome(profiles, hosts, current)) return
-        return
+        e.preventDefault()
+        return navigate({ name: "assistant", profile: current })
       }
       if (names.length < 2) return
       e.preventDefault()

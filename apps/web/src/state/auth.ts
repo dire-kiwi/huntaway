@@ -29,6 +29,12 @@ function save(key: string, value: string | null): void {
   }
 }
 
+/**
+ * Whether this board hands out its token (a PR preview, a test server with `--open-token`): its agents and demo tasks
+ * would notify alongside the user's own board, from a board they're only trying (6.8).
+ */
+export const isOpenBoard = (): boolean => load(OPEN_KEY) === "1"
+
 /** The websocket URL of this page's server's RPC: `/api/rpc` on the page's own host (vite proxies it in dev). */
 export const rpcUrl = (location: Pick<Location, "protocol" | "host">): string => `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/rpc`
 

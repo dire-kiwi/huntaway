@@ -10,6 +10,7 @@ import type {
   Profile,
   Project,
   ProfileId,
+  ProjectId,
   Task,
   TaskId,
   Usage,
@@ -61,6 +62,25 @@ export interface HostBoard {
    * which what shows its turns reads them again on.
    */
   readonly checkpoints: ReadonlyMap<TaskId, number>
+  /**
+   * 6.5: by owner (a project's id, or a profile's for its routines) and by automation, the number of the latest
+   * `automations_changed` event about it, which what shows them reads them again on.
+   */
+  readonly automations: ReadonlyMap<string, number>
+  /**
+   * 6.3: the number of the latest event about a profile's documents (`docs <profile>`), a document's comments
+   * (`comments <profile> <slug>`) and a profile's docs site (`site <profile>`), which the Docs page reads them again on.
+   */
+  readonly docs: ReadonlyMap<string, number>
+  /**
+   * 6.7: the number of the latest `approval_rules` and `approval_log` event about a profile (`rules <profile>`,
+   * `log <profile>`), which the assistant's rules and action log read them again on.
+   */
+  readonly approvalRules: ReadonlyMap<string, number>
+  /** 6.6: by project, the number of the latest `workflows_changed` about it, which its workflows are read again on. */
+  readonly workflows: ReadonlyMap<ProjectId, number>
+  /** 6.6: by task, the number of the latest `workflow_runs_changed` about it, which its workflow runs are read again on. */
+  readonly workflowRuns: ReadonlyMap<TaskId, number>
 }
 
 const noSettings: HostSettings = {
@@ -90,6 +110,11 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   approvals: [],
   restart: null,
   checkpoints: new Map(),
+  automations: new Map(),
+  docs: new Map(),
+  approvalRules: new Map(),
+  workflows: new Map(),
+  workflowRuns: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -179,6 +204,9 @@ function reuseApprovals(h: HostId, prev: ReadonlyArray<HostApproval>, next: Read
   )
 }
 
+/** 6.3: the key of `HostBoard.docs` for a profile's documents, a document's comments, or a profile's docs site. */
+export const docsKey = (kind: "docs" | "comments" | "site", profile: string, slug = ""): string => `${kind} ${profile} ${slug}`
+
 /** A numbered event, applied unless the board has it already. */
 function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly type: "hello" | "resync" }>): HostBoard {
   const h = board.host_id
@@ -247,9 +275,32 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       return next
     case "checkpoints":
       return { ...next, checkpoints: new Map(board.checkpoints).set(message.task_id, message.seq) }
+    case "automations_changed": {
+      const automations = new Map(board.automations)
+      automations.set(message.project_id ?? message.profile_id, message.seq)
+      automations.set(message.automation_id, message.seq)
+      return { ...next, automations }
+    }
+    // 6.3
+    case "docs":
+      return { ...next, docs: new Map(board.docs).set(docsKey("docs", message.profile_id), message.seq) }
+    case "doc_comments":
+      return { ...next, docs: new Map(board.docs).set(docsKey("comments", message.profile_id, message.slug), message.seq) }
+    case "docs_site":
+      return { ...next, docs: new Map(board.docs).set(docsKey("site", message.profile_id), message.seq) }
+    // 6.7
+    // 6.6
+    case "workflows_changed":
+      return { ...next, workflows: new Map(board.workflows).set(message.project_id, message.seq) }
+    case "workflow_runs_changed":
+      return { ...next, workflowRuns: new Map(board.workflowRuns).set(message.task_id, message.seq) }
     case "approval_rules":
+      return { ...next, approvalRules: new Map(board.approvalRules).set(`rules ${message.profile_id}`, message.seq) }
     case "approval_log":
-      // A profile's approval rules and action log are read where Settings shows them, not kept in the board.
+      return { ...next, approvalRules: new Map(board.approvalRules).set(`log ${message.profile_id}`, message.seq) }
+    // 6.8: for push; the board has nothing of them.
+    case "assistant_reply":
+    case "routine_report":
       return next
     default:
       // A kind this version does not know (a newer host's): its number is taken, as nothing in it applies.

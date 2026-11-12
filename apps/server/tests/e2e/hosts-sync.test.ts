@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer, Option, Stream } from "effect"
+import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect"
 import { RpcClient } from "effect/rpc"
 import { HostRpcs, HubRpcs, LinkId, PublicRpcs } from "@huntaway/contracts"
 import type { Host, HostId, HostSettings } from "@huntaway/contracts"
@@ -9,8 +9,8 @@ import { startServer } from "./launch.ts"
 
 // Settings sync and discovery between whole servers (docs/plan/08-hosts.md, Discovery, SSH, settings sync): a hub links
 // a host, both switch sync on, and a setting changed on either reaches the other through the hub's exchange; a hub finds
-// the hosts its linked hosts link (the mesh), and a config copy stops before the target is touched until config archives
-// come. Test servers run with --no-discovery: no mDNS, no Tailscale.
+// the hosts its linked hosts link (the mesh), and copies a config's login from one host to another (refused before the
+// target is touched when there is nothing to copy). Test servers run with --no-discovery: no mDNS, no Tailscale.
 
 const BoardRpcs = PublicRpcs.merge(HostRpcs, HubRpcs)
 
@@ -86,7 +86,7 @@ describe("settings sync and discovery, whole servers", () => {
   )
 
   it.live(
-    "a hub finds the hosts its linked hosts link, and a config copy stops before the target until config archives come",
+    "a hub finds the hosts its linked hosts link, and copies a config's login to one",
     () =>
       Effect.gen(function* () {
         const hubServer = yield* startServer(SERVE)
@@ -115,14 +115,30 @@ describe("settings sync and discovery, whole servers", () => {
         yield* linkTo(hub, cServer.port, cServer.token, cId)
         assert.deepStrictEqual((yield* hub("hub.hosts.discover", undefined)).hosts, [])
 
-        // A config the source has, to a host that has none of that name: refused before anything is made there.
+        // A config with nothing to copy, to a host that has none of that name: refused before anything is made there.
         yield* hub("configs.create", { config: { name: "work", config_dir: "/claude/work" } })
         const before = (yield* b("configs.list", undefined)).length
-        const copied = yield* Effect.flip(hub("hub.hosts.copyConfig", { from_host: hubId, to_host: bId, config: "work" }))
-        assert.strictEqual(copied._tag, "Unavailable")
+        const empty = yield* Effect.flip(hub("hub.hosts.copyConfig", { from_host: hubId, to_host: bId, config: "work" }))
+        assert.strictEqual(empty._tag, "Invalid")
         assert.strictEqual((yield* b("configs.list", undefined)).length, before)
         const missing = yield* Effect.flip(hub("hub.hosts.copyConfig", { from_host: bId, to_host: hubId, config: "work" }))
         assert.strictEqual(missing._tag, "NotFound")
+
+        // One with a login: made on B in the folder given, with its files; again only with overwrite.
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* Path.Path
+        const from = yield* fs.makeTempDirectoryScoped()
+        const to = path.join(yield* fs.makeTempDirectoryScoped(), "home")
+        yield* fs.writeFileString(path.join(from, ".credentials.json"), '{"token":"t"}')
+        yield* fs.writeFileString(path.join(from, "settings.json"), "{}")
+        yield* hub("configs.create", { config: { name: "home", config_dir: from } })
+        const copied = yield* hub("hub.hosts.copyConfig", { from_host: hubId, to_host: bId, config: "home", config_dir: to })
+        assert.deepStrictEqual([...(copied.files ?? [])].toSorted(), [".credentials.json", "settings.json"])
+        assert.strictEqual((yield* b("configs.list", undefined)).find((config) => config.name === "home")?.config_dir, to)
+        assert.strictEqual(yield* fs.readFileString(path.join(to, ".credentials.json")), '{"token":"t"}')
+        const again = yield* Effect.flip(hub("hub.hosts.copyConfig", { from_host: hubId, to_host: bId, config: "home" }))
+        assert.strictEqual(again._tag, "Invalid")
+        yield* hub("hub.hosts.copyConfig", { from_host: hubId, to_host: bId, config: "home", overwrite: true })
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     60_000,
   )

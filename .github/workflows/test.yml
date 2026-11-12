@@ -157,12 +157,19 @@ jobs:
         run: pnpm test:e2e
 
   # The browser checks in apps/web/tests/ui (`pnpm test:ui`, which builds the UI first) against test servers of this
-  # checkout, in Playwright's Chromium (the runners have no /usr/bin/chromium).
+  # checkout, in Playwright's Chromium (the runners have no /usr/bin/chromium). Split between three runners, each running
+  # 4 files at a time, as the old repository's were: a runner has 4 CPUs and Chromium keeps them busy, and with M6's
+  # checks (71 files) all of them on one runner, 8 at a time, timed steps out.
   ui:
+    name: ui (${{ matrix.shard }}/3)
     needs: tree
     if: needs.tree.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -179,13 +186,15 @@ jobs:
           pnpm exec playwright-core install chromium
 
       - name: pnpm test:ui
-        run: pnpm test:ui
+        run: pnpm test:ui --shard=${{ matrix.shard }}/3
+        env:
+          HUNTAWAY_UI_TEST_JOBS: "4"
 
       # What the page showed when a step failed (scripts/ui-check.mjs saves it).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: ui-check-failures
+          name: ui-check-failures-${{ matrix.shard }}
           path: /tmp/ui-check-*-failed.png
           if-no-files-found: ignore
           retention-days: 7

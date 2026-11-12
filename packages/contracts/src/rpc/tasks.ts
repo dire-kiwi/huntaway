@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
+import { TaskSkills } from "../agentTools.ts"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { TaskId } from "../ids.ts"
 import { Auth, RequiredScope } from "../session.ts"
@@ -134,4 +135,6 @@ export class TaskRpcs extends RpcGroup.make(
     RequiredScope,
     "read",
   ),
+  // 6.4: the skills its agent can be asked to use, for the composer's `/` menu (the old `GET /tasks/{id}/skills`).
+  Rpc.make("tasks.skills", { payload: { id: TaskId }, success: TaskSkills, error: NotFound }).annotate(RequiredScope, "read"),
 ).middleware(Auth) {}

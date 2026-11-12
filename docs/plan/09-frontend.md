@@ -281,7 +281,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   old ones on `hubRpc` (`settings/hosts/hub.ts`) and the query atoms; they load nothing in effects. Over SSH, the hub's
   key and nearby hosts answer `Unavailable` until 7.3 and 7.5, and say so.
 - **Cut with a note**: the row's Update (the hub pushing its code or release to a host) needs `hub.hosts.pushUpdate`,
-  which is not in the contract yet, and the host's restart state (`admin.status`): 8.1. A row's version line shows
+  which is not in the contract yet, and the host's restart state (`admin.status`): 8.1 (done there, and in 6.12). A row's version line shows
   `protocol` where it showed the API number. Copying a login between hosts is on the host page and Agent configs, which
   are 6.12's (its RPC, `hub.hosts.copyConfig`, is 7.5's).
 - **Checks**: `packages/client/test/hosts.test.ts` (an in-memory hub with two hosts; the relay socket's new ticket per
@@ -320,6 +320,19 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   isn't on this server. Unit tests: `tests/unit/changes/{diffs,lineComments,highlight}.test.ts`, every old case
   (`diffs` drives git through `node:child_process` as the old one did).
 
+### As built in 6.10 (HE-7): computer use
+
+- `settings/HostDesktop.tsx` (the old one: install, check, remove, the switch; `rpc(host, "desktop.*")`, polled every
+  15 s, every second while installing) is a component for the host page 6.12 brings; nothing mounts it yet.
+- `task/Desktop.tsx` (`useDesktopOn(hostId)` from `desktop.status`, cached a minute; `DesktopButton`; `DesktopPane`
+  polling `desktop.frame` every 700 ms and `desktop.ops` every 3 s) is in the task view: the button beside the tabs on a
+  host with computer use on and a driver, the pane beside the main area (half the width while wide, in its place when
+  narrow; it expands a side panel), the details column giving way. The browser's splitter isn't on this server, so the
+  share is fixed. The old capability check (`hostHas(host, DESKTOP)`) is gone.
+- Checks: `tests/ui/desktop.test.mjs` (`--fake-claude --fake-desktop`: a run's desktop calls over its own server, then
+  the pane shows the window and what it did; no button with computer use off) and `tests/ui/driver.test.mjs` (the old
+  checks of `scripts/ui-check.mjs`; its sandboxed frame is a page of the check's own until documents come, 6.2).
+
 ### As built in 4.8 (HE-5): web
 
 - **Wired** (the cuts M1/M2 left for merges and stacks), each through `@huntaway/client`'s mutations
@@ -341,6 +354,243 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   too"); Up's "Lands after" and Low's "Landing after this"; `from:` listing the project's branch `main` (the tasks' own
   branches stand behind their keys); and, with `--fake-claude`, the approval card after the summary run, Approve
   deciding the merge ("approved", "Merge approved: …", and the merge request sent).
+
+### As built in 6.1 (HE-7): web
+
+- **The Terminal tab and the terminal tools** in the task view (`task/TaskView.tsx`, the old code back where step 1 cut
+  it): the tab on every task, the host's tools beside the tabs, terminals mounted from their first visit and kept while
+  the tab changes, a terminal tab in the side panel expanding it into the dialog, a tool taken out of the host's settings
+  ended. `task/Terminal.tsx` is the old pane: the socket is `/api/terminal/<ticket>` on the page's own server, with a
+  ticket from `terminal.open` asked for each connection (a ticket that can't be had is retried as a dropped socket is).
+  A terminal is still made once its font has loaded and a frame later, and reset before re-attaching; Restart and
+  Reconnect remount the pane (`key`), which the lint's effect rules asked for in place of an `attempt` dependency, and
+  the connection's mutable state is one object in the effect. xterm's styles are imported by `index.css`.
+- **Open tools** are `task/terminalTools.ts` (the old store on `smallStore`, `ia.openTools` in sessionStorage), kept
+  alive every 30 s once signed in (`App.tsx`). `settings/hosts/TerminalTools.tsx` (`TerminalToolsRow`) edits the host's
+  `terminal_tools` with `host.updateSettings`; the settings come with the board, so there is nothing to load. It is
+  mounted by the host page (6.12); it was checked by mounting it there for a moment.
+- **Checks**: `tests/ui/terminal.test.mjs` (the old checks, the status and ticket held with `routeRpc`, and a real tmux).
+
+### Step 1 as done for 6.11 (HE-7)
+
+- **Add project** is back in the sidebar (`layout/Sidebar.tsx`, "+"), opening `settings/NewProjectModal.tsx`: a folder
+  (`projects.create`, with the folder browser `settings/DirPicker.tsx` over `host.listDirs`, ported here though it is
+  6.12's), "Create a GitHub repository for it" (`projects.createOnGithub`; a repository made but not pushed says so and
+  waits for "Open project"), or the GitHub tab (`settings/GithubRepos.tsx`'s picker over `profiles.githubRepos`, then
+  `projects.clone`). `settings/repoSource.ts` keeps the old helpers and the `ia.newProjectSource` key. The old modal's
+  host picker and making the profile on another host are M7's: the project goes on the page's own host, in one of its
+  profiles.
+- **The compare view** (`changes/Compare.tsx`) mounts over the page from `App.tsx` on `?task=…&compare`, from a card's
+  model badge (`board/Fanout.tsx`), a card's menu ("Compare all N from its prompt") and the Details panel's Same prompt
+  section. Facts and the pick are `tasks.fanout` and `tasks.pickFanout`, each one's diff `git.taskDiff`; the facts go
+  through `changes/git/useLoaded`. `ReviewVerdict` is back in `task/Review.tsx` for it.
+- **Asana** (`task/ExternalLinks.tsx`): the Details panel's Asana section, the cards' link icons, and the New task
+  dialog's "Link Asana task" (`layout/newTask/OptionsRow.tsx`, `useDraft.ts`, `NewTaskModal.tsx`). The search is
+  `profiles.asanaTasks`; connecting is `profiles.update`'s `asana_token`. A search failing `Unavailable` (off, not
+  connected) or `External` "didn't accept the token" asks to connect again. `AsanaAccount` (connected as…, disconnect)
+  is exported for 6.12's profile form.
+- **`settings/hosts/CopyLoginModal.tsx`** is a component taking `hosts` (where a login can go) and `copy` (the hub's
+  `hosts.copyConfig`, 7.5, over `configs.exportArchive`/`importArchive`): 6.12's ClaudeConfigs and HostPage mount it
+  once those exist. A profile's own config folder is gone with `claude_config_dir`, so only a config is copied.
+- **Checks**: `tests/ui/{githubClone,githubCreate,compare,fanout,fanoutCodex,fanoutConfigs,asanaLinks}.test.mjs` and
+  `tests/unit/repoSource.test.ts`. The old `page.route` answers are `routeRpc` ones (`profiles.githubRepos`,
+  `projects.createOnGithub`, `configs.models`, a failing `tasks.create`), a held models call is checked with the calls
+  the page made rather than a sleep, and githubClone adds a list and clone through the fake gh. A set of configs' models
+  is asked for together (5.3's `configModelsAtom`), so the old "another config's come in first" can only be shown as
+  both loading. Dropped: asanaLinks' "moves between hosts before and after Asana links" (a second host, M7, and hosts
+  before API 57). `scripts/test-server.sh` gives the server `$HUNTAWAY_ASANA_URL` (a test's fake Asana), else an
+  address with nothing on it, so a test server never reaches Asana.
+
+### As built in 6.4 (HE-7): web
+
+- **Came over.** `settings/agentTools/GlobalAgentToolsPanel.tsx` (Settings → Skills and MCP, in place of its
+  placeholder), `SkillsSection.tsx`, `McpSection.tsx`, `SkillSources.tsx`, and `parts.tsx` (the old `AgentTools.tsx`'s
+  `Section`, `OtherList`, `describe` and McpSection's `serverSummary`, apart so the files don't import each other);
+  `settings/AgentTools.tsx` exports `ProjectAgentTools`, which 6.12's project settings mount under their Skills and MCP
+  tab; `settings/AgentStepTools.tsx` (with `stepToolChoices`) for 6.6's workflow inspector; `task/SkillMenu.tsx` works
+  (`tasks.skills`, kept a minute per task and config as before; `/compact`, `/plan` for a task, `/new`). Calls are
+  `rpc(host, "agentTools.…")`, read again after a change, as the old ones were. The project settings' Agents tab had no
+  agent-tools part.
+- **Changed.** Every host has sources, subfolders, `/plan` and `/new`, so the API checks are gone; the host picker waits
+  for M7 (the page's own host); the menu's state is adjusted during render and its list keyed by task and config
+  instead of a ref the lint refuses.
+- **Checks.** `tests/ui/skillSources.test.mjs` (the old one, and a global skill and server added, switched, refused and
+  deleted), `tests/ui/agentTools.test.mjs` (fast switch clicks, with `agentTools.updateProject` held by `routeRpc`; it
+  opens `/p/<id>/settings/tools`, so it passes once 6.12 mounts `ProjectAgentTools` there: run against a temporary
+  mount), and `messageBox.test.mjs`'s two dropped cases back (`/` and `$`). Not ported: `forkedSkills.test.mjs`, which
+  checks a forked Skill's subagent in the thread through the Agents list (not on this server) with the old translator's
+  messages, nothing of agent tools.
+
+### Step 1 as done for `settings/` (6.12, HE-7)
+
+- **What came over.** The Settings shell's conditions (Agent configs and Skills and MCP only with a host that runs
+  agents, Assistant with a profile, Archived projects with a profile), `ClaudeConfigs` (with `ConfigPicker`,
+  `ConfigSelect`, `ConfigUsageNote`, `AgentBadge`), `Usage` (the sidebar's usage panel, asking each host's `host.usage`
+  every 5 minutes; what comes back arrives as `usage` events), `hosts/ProfilesPanel`, `ProfileForm`, `profileFields`,
+  `AgentDefaults`, `TintField`, `Shortcuts`, `Guide` with `src/guide.ts` and `docs/guide/` (the old repository's pages,
+  copied byte for byte and bundled as the old app did, so no server route; their links out of the guide still go to the
+  old repository until 9.3 brings them into line), `Onboarding` (in place of App's note), `DirPicker`, `TemplateField`
+  with `src/templateCompletion.ts` (it reads a `TemplateGraph`, which 6.6's `WorkflowGraph` is), the `ArchivedProjects`
+  panel (the board's `archived`, so nothing is fetched), `repoSource`, `versions`, `uiVersion`, the `HostPage`, the
+  `ServerPanel` and `NetworkPanel`, and `project/*` (`ProjectSettings` and its General, Agents, Worktrees, Review,
+  Prompts and Status scripts tabs). `task/Reviewers.tsx`, which the profile form and the Review tab use, came with them.
+  `components/ui/usageConfigs.ts` has the rest of the old `usageConfigs.ts` (`usageConfigs`, `usageAlert`, `WARN_AT`,
+  `resetsPhrase`); `boardHelpers.ts` has `profileConfigLabel`.
+- **A new build.** `state/uiBuild.ts` reads the page the server serves at `/` through `effect/http`'s fetch client in an
+  atom runtime (`servedUiBuildAtom`); `useNewUiBuild` refreshes it on focus, on a reconnect and every 5 minutes, and the
+  sidebar's `ReloadButton` offers the reload.
+- **Decided where the old code had a host-version branch.** Every host has every setting: the API gates are gone, a
+  profile's and a project's summarizers are always a list, a profile always has configs (with none on the host yet, the
+  folder the profile form names is made its first config, named after the profile, as the old server did), and the
+  Agent defaults row reads the board's `hostSettings` rather than fetching (its "Keep threads as items" switch is gone
+  with threads on messages). The Prompts tab's preview has no Subproject type. Reviewers' and summarizers' optional
+  `name`, `prompt` and `skills` are left out when unset (`withField`), as the wire has them.
+- **Marked slots, for the areas that bring them.** Agent tools (6.4): the Skills and MCP project tab, and the skills a
+  reviewer or summarizer picks from (names are typed until then). Automations (6.5) and Workflows (6.6): their project
+  tabs, and the Review tab's note on which workflows take reviews over (it says what using workflows means until then).
+  6.11: gh's accounts in `GithubAccountSelect` (`profiles.githubAccounts`, a stub that lists none), config archives, and
+  connecting Asana (`AsanaAccount`). Terminal tools (6.1), Telemetry (6.9) and Desktop (6.10) are `Slot`s on the host
+  page.
+- **HE-6's parts, after it merged.** Settings → Server is the old one over `admin.status` (polled, and on focus) with
+  `host.info`'s machine and data folder: Rebuild & restart, Update to a deployed commit, the source checkout and the
+  deployment and their new commits, and under `settings/server/` the release checks (`Releases`: Check now, the
+  download, prereleases through `host.updateSettings`, Roll back), the desktop app's own update (`ShellNotice`, its
+  preload's `shellUpdateKind`/`updateShell` read with `Reflect` as notifier.ts does), and `RestartModal` (restart,
+  `admin.update`, `admin.updateRelease`, `admin.rollback`). This host's restart is followed by the board's `restart`
+  (its `restart` and `restart_log` events): where the old modal set the store's restart to "starting", it keeps the
+  board's restart as it was when it asked and shows "Starting…" until that changes. The sidebar has `UpdateButton`
+  again. The host page has `HostVersion`, settings sync (`hosts/SettingsSync.tsx` over `settingsSync.get` and
+  `resolve`, read again when the host's settings change), a linked host's `RemoteServer` and any host's `HostService`
+  (`server/RemoteServer.tsx`, polling that host's `admin.status` through the relay, as its events go down with it), and
+  Remove (`hub.hosts.remove`). `CopyLoginModal` is mounted from Agent configs and the host page's configs with the
+  board's connected hosts that run agents and `hub.hosts.copyConfig`, whose `files` are now the archive's entries (it
+  said how many) and which now copies through 6.11's archives (08-hosts.md). HE-6's row Update is the old one again:
+  it sends the hub's checkout as it is (`hosts/useUpdateCommit.ts`, the hub's `admin.status`), a release host only a
+  newer version, follows the host's phases by polling it, and ends on its new boot.
+- **Dropped.** Settings → Server's database line and Copy again, and the threads' batch rebuild (docs/plan/14: the
+  two-file database scheme, moving threads onto items). `Devices.tsx` and the paired phones under Network access, with
+  device pairing (14, Deferred).
+- **Checks.** `tests/ui/projectSettings`, `proxyConfig` (on `--fake-claude`: Agent configs need a host that runs
+  agents), `reviewerOptions`, `summarizers`, `systemPromptPreview`, `guide`, `settingsPanels` (the old `confirmErrors`'
+  refused profile delete through `routeRpc`, a shortcut's key, onboarding) and the unarchive half of `archiveProjects`.
+  Changed from the old checks: a tab of another area is waited for by its heading; `reviewerOptions` types its skills;
+  `summarizers` no longer reads the single `summarizer`; `guide` opens the workflows page by its address (the old check
+  followed the Workflows tab's link, 6.6's); the shortcut moved is the search field's (Triage isn't on this server).
+  Not ported: `databaseFile` (dropped), `worktreeSetup` (the board's setup thread, not a settings panel), `devices`
+  (deferred), and the settings checks of other areas (`telemetry`, `skillSources`, `agentTools`, `automations`,
+  `workflows*`, `githubClone`, `githubCreate`). With HE-6's parts: `hostRelease`, `hostUpdate`, `releaseUpdate` (the
+  old `release-update`) and `nearbyHosts`, with `tests/ui/servers.mjs` answering `admin.*`, `hub.hosts.pushUpdate` and
+  rewriting what the hub says of its hosts on the page's socket and the relays (where the old checks routed
+  `/api/admin`, `/api/h/<host>` and `/api/hosts`), and pushing `restart` events on the board stream; the linked hosts
+  are a second test server. New: `hostPage` (a config's login copied to a linked host for real, settings sync switched
+  on there, Remove). Not ported: hostUpdate's "the events socket reconnects at once when the network comes back"
+  (HA-38): the client's session retries on its own schedule and does not listen for `online`, which is
+  `packages/client`'s to decide. The old checks' `fastClock` is gone: the polls they sped up (1.5 s) fit in a step.
+
+### As built in 6.8 (HE-7): notifications and push
+
+- **`state/notify.ts`**: which changes notify (`taskEvent`, `stillApplies`, `notificationText`, `attentionCount`), the
+  settings under `ia.notifications` and own moves under `ia.movedHere` (noted by `boardHelpers.moveTask` before its
+  request), read from the browser's storage each time as the old ones were (another tab changes them). The DOM half is
+  `components/layout/notifier.ts` (one notifying tab by Web Lock or `ia.notifyLeader`, `ia.focusedTask`, the chime, the
+  count in the title, icon and the desktop app's badge, `setTitleProfile`), under the components' lint override for
+  timers and `Date`. Live changes come from the client's `onLiveTaskChange` (`board/live.ts`): `watchBoard` calls it
+  for a task event numbered after its `hello`, never for a snapshot or a replay after a reconnect.
+- **Push**: `components/layout/push.ts` (the old `push.ts`, calling `hub.push.*` through `state/rpc.ts`'s `hubRpc`),
+  `public/sw.js` without Allow and Deny, and `layout/Notifications.tsx` as the old one but its prompts hint. Both start
+  in `main.tsx`.
+- **Checks**: `tests/ui/push.test.mjs` (a `--fake-claude` server: the agent's permission prompt is the move that
+  pushes) and `tests/ui/notifications.test.mjs` (moves by `tasks.update` in place of the old fed websocket; a stopped run
+  through the fake agent). The harness's `withBrowser` takes `fullBrowser` again (the full Chromium: notifications,
+  service workers). Not ported: answering a prompt from its notification (deferred), a hub's linked hosts (M7).
+
+### Step 1 as done for a task's documents (6.2, HE-7)
+
+- **What came over.** The old `task/Document.tsx` (its view only: the labels' names and badges were `documentInfo.tsx`
+  already), `htmlFrame.ts`, `mermaid.ts`, `planAnswers.ts`, `planTheme.ts` and `planTheme.css`, under `task/`. The task
+  view's document tabs mount `DocumentView` in place of the placeholder (`task/view/TabContent.tsx`).
+- **Reads and calls.** The document is `taskDocumentAtom({ host_id, task_id, label, version })` in `@huntaway/client`
+  (`board/taskDocument.ts`, read again as the task's `document_at` changes, as the old view refetched on it). Sends (the
+  answers, "Ask the agent to fix it") are `rpc(host, "tasks.send", …)`; the old page-wide `ia-plan-answers` event is a
+  module-level set of listeners. The unsent answers are `loadPlanAnswers`/`savePlanAnswers` in `state/drafts.ts`, under
+  the old `ia.planAnswers:<host>:<task>` key, read from the browser's storage each time as before. The host-version check
+  for sending while the agent runs is gone.
+- **What the lint asked for.** The code that runs in a frame as source (`keepPlace`, `linksInNewTabs`, `noWebRtc`,
+  `iaForm`…) stays self-contained, so its helpers use a constant of their function rather than moving out of it; a
+  worker's URL goes into its script `encodeURIComponent`d rather than as JSON; the frame's document is set in a layout
+  effect (`setAttribute("srcdoc")`), which reads where it was scrolled to and the answers then, rather than in a memo
+  during render; `withPlanDiagrams` renders the diagrams side by side (Mermaid queues its renders itself).
+- **Checks.** `tests/ui/plan.test.mjs`, `planDiagrams.test.mjs`, `planTheme.test.mjs` and `documentCsp.test.mjs` (the
+  old ones), on the demo board (`--demo`), with `tests/ui/documents.mjs`: a document's contents and a send's answer are
+  given on the page's RPC websocket (`routeDocuments`; agents are off), and "a version written over" gets its `task`
+  event the same way. Skipped, with its reason in the file: "a touch held on the board doesn't let a plan open a link",
+  as on Chromium 155 the board's activation after the held touch didn't run out while the plan kept taking the focus.
+  `markdownImages.test.mjs` is about a task's description (Markdown), not its documents, and isn't ported here.
+
+### Step 1 as done for `docs/` (6.3, HE-7)
+
+- **What came over.** The old `components/docs/` whole (`DocsPage.tsx`, `DocComments.tsx`, `HostedDocs.tsx`,
+  `docFrame.ts`, `docsPage/*`), and the old `src/docs.ts` as `components/docs/docs.ts`; the sidebar's Docs entry
+  (`layout/sidebar/DocsEntry.tsx`, the old `ProfileEntries.tsx`'s half, as the assistant's is 6.7's); a thread's
+  "Open … in Docs" for a `publish_document` call (`task/thread/tools.tsx` `PublishedDoc`) and links to documents in
+  messages (`task/thread/DocLink.tsx`: they open in the board and show the document's title). `task/htmlFrame.ts` is
+  6.2's file, taken as it is (the frame's policy and its scripts).
+- **Calls and events.** `api.*` became `rpc(host, "docs.…", …)`; the old `onDocs`, `onDocsSite`, `onDocComments`
+  listeners are `useDocsChanged`, `useDocsSiteChanged` and `useDocCommentsChanged` (`docsPage/hooks.ts`), which
+  subscribe to `@huntaway/client`'s `docsSeqAtom` (a `docs` event names the profile, so the page reads again for any of
+  its documents). The host-version checks (`hasDocs`, `hasDocLabels`, `hasDocFolders`, `hasDocComments`,
+  `hasHostedDocs`) are gone: every host has them. The view and closed folders stay in `localStorage` under their old
+  keys (step 2 makes them atoms).
+- **Smaller changes the lint asked for.** The frame's source is set on the frame in a layout effect (as 6.2's
+  `Document.tsx` does), so where the reader was is read when it's drawn, not in a render; the comments' marks are a
+  memoised message posted in an effect; the functions that run inside the frame keep their helpers inside them (one
+  captures `document`, the context matcher is inlined).
+- **Checks.** `tests/ui/docs.test.mjs` (plus the board's `frame-src 'self'`), `docFolders`, `docLinks`, `docComments`
+  (on `--fake-claude`: sending starts DEMO-5's agent) and `hosted_docs` (a stub site in the check, as before), all on
+  `--demo`; `tests/ui/docs.mjs` writes documents into the test server's database as `threads.mjs` writes threads. Unit:
+  `tests/unit/docs.test.ts`, every old case. Not ported here: `documentCsp.test.mjs` (plans and artifacts, 6.2's) and
+  `markdownImages.test.mjs` (images in a task's Markdown). The old check's count of the page's HTTP requests for a
+  version is gone with HTTP.
+
+### Step 1 as done for workflows (6.6, HE-7)
+
+- **Files.** `settings/Workflows.tsx` (`ProjectWorkflows`: the list, its switch, the editor, "Use workflows") and
+  `settings/workflows/*` (the canvas editor, its inspectors, presets, text, geometry and hooks), `settings/TemplateField.tsx`
+  and `templateCompletion.ts` (as 6.12 copies them), `task/Workflows.tsx` (the `wf:` tabs, `WorkflowTabView`,
+  `WorkflowsList`, `useWorkflowRuns`, `workflowRunning`), `task/thread/workflowChange.tsx` (the approval card's detail,
+  reading the approval's graph with the contract's `WorkflowGraph`). The lists come from `workflowsAtom` and
+  `workflowRunsAtom` (`packages/client/src/board/workflows.ts`), read again on `workflows_changed` and
+  `workflow_runs_changed` as a task's turns are; changes are `mutations.workflows.*`, and nothing reloads after one.
+- **Gone.** `legacyGraph`, `set_status` and a start on a status, every API-version check (`COLUMN_WORKFLOWS_API`,
+  `AB_TEST_API`, `REVIEWS_IN_WORKFLOWS_API`). A node's field set to undefined is removed, never sent as null
+  (`patchNode`). A send step still shows only its `exhausted` port in the editor, as before.
+- **Where it mounts.** The project settings' Workflows tab (`/p/<id>/settings/workflows`): until 6.12 brings
+  `project/ProjectSettings.tsx` over, its placeholder renders `ProjectWorkflows` for that tab. `settings/AgentStepTools.tsx`
+  is a stub (the step's own skills and turned-off MCP servers, no project list to pick from) that 6.4 replaces;
+  `task/Reviewers.tsx` has only `ReviewerRow`, as 6.12's. The column preview says "The board's default start/merge
+  prompt." for a blank prompt until `host.defaultPrompts` (6.12) gives the text.
+- **Checks.** `tests/ui/workflows.test.mjs`, `workflowPresets.test.mjs`, `workflowWires.test.mjs` (the old ones on the
+  new harness, through `workflows.*`). Not ported: `graphPicks.test.mjs` (subprojects), the `/settings/review` and
+  `/guide/workflows` assertions (6.12's pages), the agent-tools picks of the skills case (6.4).
+
+### Step 1 as done for Analytics and Telemetry (6.9, HE-7)
+
+- **Files.** `components/settings/Analytics.tsx` (the page, in place of the scaffold's placeholder, same props),
+  `analytics/*` (Report, Calendar, DayTimeline, range, the hooks), `TokenStats.tsx`, `DiskUsage.tsx`, `disk.ts`,
+  `chart.tsx`, `Telemetry.tsx` (`HostTelemetry`), and `components/task/ContextStats.tsx` (the Context tab). The old
+  `src/analytics.ts`, `src/tokenStats.ts` and `src/contextStats.ts` moved under the components' lint override as
+  `components/settings/analytics/analytics.ts`, `components/settings/tokenStatsData.ts` and
+  `components/task/contextStatsData.ts` (names that differ from the components' only in case are avoided).
+- **Calls.** The fetching halves stay hand-written fan-outs over `rpc(host, "analytics.…", { profile_id, from, to })`
+  to every connected host, one profile at a time, as the old ones were (09's "one query per host, combined by a derived
+  atom" is step 2's); a host that fails is named in the page's warnings. The host-version gates are gone. Reclaiming
+  disk space is `projects.removeMergedWorktrees`. `HostTelemetry` polls `admin.telemetry` every 15 s and saves with
+  `admin.updateTelemetry`; until 6.12 brings the host page over, the scaffold's `HostPage` placeholder shows it.
+- **Not changed.** The reports still carry `subproject` (always false now), so the token tables' subproject grouping
+  stays as code that never runs; step 2 deletes it.
+- **Checks.** `tests/ui/telemetry.test.mjs` (a fake ClickHouse in the check, as before) and `tokenStats.test.mjs`
+  (the reports given on the RPC websocket with `routeRpc`; its subproject case is a task with its review thread);
+  `tests/unit/tokenStats.test.ts` and `contextStats.test.ts`, the old unit tests unchanged.
 
 ### Step 2: by hand, a feature folder at a time
 
@@ -469,3 +719,41 @@ thing to prove (T3 Code ships an Expo 58 app on Effect 4, which is good evidence
   fake agent, by visible text and roles, so they carry over with a new harness under them (`startServer`, an RPC
   call helper in place of `api()`). They are the port's parity suite for the UI: [10-testing.md](10-testing.md).
   Checks that injected events by intercepting `/api/ws` use a test server's `debug.emit` method instead.
+
+### Step 1 as done for automations (6.5, HE-7)
+
+- `components/settings/Automations.tsx` (`ProjectAutomations`) and `settings/automations/*` (the editor, row, run history,
+  test delivery, webhook and guard fields, `draft.ts`, `text.ts`), reading `automationsAtom` and `automationRunsAtom`
+  (`packages/client/src/board/automations.ts`, read again on the host board's `automations` map, which the
+  `automations_changed` event bumps by owner and by automation), writing through `useRpc()`. The old host-version gates
+  are gone. `TemplateField.tsx` is the workflows' (6.6).
+- Where it mounts is 6.12's: project settings' `automations` tab renders `<ProjectAutomations project={project} />`.
+  `tests/ui/automations.test.mjs` (the old three cases) passes with it mounted there, and is skipped (`MOUNTED`) until it is.
+  `task/Routines.tsx` is 6.7's: the editor and row take the owner (no project: a routine) as props.
+
+### Step 1 as done for the assistant (6.7, HE-7)
+
+- **What came over.** `task/AssistantPage.tsx` (`assistant.get`, then the task view of the task its event puts on the
+  board), `task/Memory.tsx`, `Brief.tsx`, `Routines.tsx`, `ActionLog.tsx`, `ApprovalRules.tsx` (the Rules section of the
+  assistant's details), `GoogleCard.tsx`, `settings/Assistants.tsx` (Google per profile; Telegram dropped, 14), the
+  sidebar's `layout/sidebar/AssistantEntry.tsx` (the old `ProfileEntries.tsx`'s other half), the `a` shortcut, the
+  Brief, Memory, Routines and Actions tabs (Memory, Brief and Routines as `preloadable` chunks), and tracked work's
+  "Remove from the list" and "Clear done" (`tasks.removeTracked`). The old `src/assistant.ts` hooks are
+  `task/assistant.ts`. Calls are `rpc(host, "assistant.…" | "approvalRules.…" | "automations.…")`; the brief is
+  `tasks.document` with label `brief` (its `items` beside it); routines are 6.5's `automationsAtom` for the profile.
+- **Client.** `HostBoard.approvalRules` keeps the latest `approval_rules`/`approval_log` event per profile and
+  `approvalSeqAtom(host, "rules" | "log", profile)` reads it, which the rules and the action log read again on (as
+  `docsSeqAtom`); `ruleFor` and `RULE_DECISIONS` (over `@huntaway/shared`'s `decide`) are in `logic/assistant.ts`.
+- **A routine's thread**, which the board's snapshot leaves out, is asked for with `tasks.get` from the connected hosts
+  when its page or dialog opens and it isn't on the board (`task/view/useSoughtTask.ts`), until an event puts it there.
+- **What the lint asked for.** Reads that follow an event or a time (the log, the rules, the brief, a file's history)
+  go through `changes/git/useLoaded` with the trigger in the key; a memory file is read again through its `fetchFile`,
+  which changes with the file's modified time; the Ctrl+S handler's ref is written in a layout effect; the rules
+  dialog's rows have ids of their own, and a diff's lines are keyed by their text and its occurrence.
+- **Left for M7 (7.4).** A profile's assistant on another host: `assistantHome`'s offline and no-profile notes stay,
+  but the uplink note, the old `{ here: true }` and the Routines tab's "left behind" routines (`LeftBehind`) are gone.
+- **Checks.** `tests/ui/assistant.test.mjs` (every old case; the held save is `assistant.writeMemoryFile` held with
+  `routeRpc`, and "Ctrl+S on today's empty log saves nothing" counts the page's calls), `brief.test.mjs` (every old
+  case; the brief and the ratings answered with `routeRpc`) and `routines.test.mjs` (both old cases, on
+  `--fake-claude`: a run makes its thread only where agents run, so the report is the fake agent's, not a failure).
+  Not ported: `assistantHost.test.mjs` (M7) and `reminders.test.mjs` (a task's reminders, not the assistant's).

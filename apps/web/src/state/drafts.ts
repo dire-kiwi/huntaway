@@ -6,7 +6,7 @@ import { stored, storedBare } from "./storage"
 
 // User work that must not be lost, and the new task dialog's remembered choices (inventory 10, section 3.3), under the
 // old keys. The new task dialog (layout/newTask), the task's composer and the Changes tab's line comments (4.2) keep
-// drafts here; plan answers' drafts come with their component (M6).
+// drafts here, and the plan view (6.2) its unsent answers.
 
 /** A file attached to a draft: enough to fetch it again. */
 const AttachmentRef = Schema.Struct({ id: Schema.String, name: Schema.String, path: Schema.String })
@@ -164,3 +164,49 @@ export const lineReviewAtom = Atom.family((key: string) =>
     },
   ).pipe(Atom.keepAlive),
 )
+
+/** A plan question's value, as its frame reads and restores it: what's chosen or typed, and an "Other" choice's text. */
+export const PlanValue = Schema.Struct({ v: Schema.Array(Schema.String), o: Schema.optional(Schema.String) })
+export type PlanValue = typeof PlanValue.Type
+
+/** The answers to a plan's questions not sent yet, by the question's name. */
+export type PlanAnswers = Record<string, PlanValue>
+
+const PlanAnswersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown))
+const decodePlanAnswers = Schema.decodeUnknownOption(PlanAnswersJson)
+const encodePlanAnswers = Schema.encodeOption(PlanAnswersJson)
+
+/** The key a task's plan answers are kept under (`ia.planAnswers:<host>:<task>`), as the old plan view kept them. */
+export const planAnswersKey = (hostId: string, taskId: string): string => `ia.planAnswers:${hostId}:${taskId}`
+
+/**
+ * The answers to a task's plan's questions the user hasn't sent yet (6.2), read from the browser's storage each time:
+ * kept there only, so every view of the task (switching tabs makes another) and a send started from an earlier one
+ * agree on them. `read` makes each stored value a `PlanValue` (planAnswers.ts), as they come from a page the agent wrote.
+ */
+export function loadPlanAnswers(hostId: string, taskId: string, read: (value: unknown) => PlanValue): PlanAnswers {
+  let raw: string | null = null
+  try {
+    raw = window.localStorage.getItem(planAnswersKey(hostId, taskId))
+  } catch {
+    return {}
+  }
+  return Option.match(decodePlanAnswers(raw ?? "{}"), {
+    onNone: () => ({}),
+    onSome: (saved) => Object.fromEntries(Object.entries(saved).map(([name, value]) => [name, read(value)])),
+  })
+}
+
+/** Keeps a task's unsent plan answers (none removes them). Storage full or turned off: they last while the task is open. */
+export function savePlanAnswers(hostId: string, taskId: string, answers: PlanAnswers): void {
+  try {
+    if (Object.keys(answers).length > 0)
+      window.localStorage.setItem(
+        planAnswersKey(hostId, taskId),
+        Option.getOrElse(encodePlanAnswers(answers), () => "{}"),
+      )
+    else window.localStorage.removeItem(planAnswersKey(hostId, taskId))
+  } catch {
+    // Storage full or unavailable: the answers still last while the task is open.
+  }
+}

@@ -1,16 +1,22 @@
-import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { NodeHttpServer, NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Console, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { Command, Flag } from "effect/cli"
-import { Mac, SecureRandom } from "effect/crypto"
-import { HttpServer } from "effect/http"
+import { createServer } from "node:http"
+import { Digest, Mac, SecureRandom } from "effect/crypto"
+import { FetchHttpClient, HttpServer } from "effect/http"
 import { installServiceCommand } from "./cli/installService.ts"
+// 6.7: the Google consent step for the assistant's Google server.
+import { googleAuthCommand } from "./cli/googleAuth.ts"
 import { rpcCommand } from "./cli/rpc.ts"
 import { sshHostCommand } from "./cli/sshHost.ts"
 import { Releases } from "./update/Releases.ts"
 import { Supervisor } from "./update/Supervisor.ts"
+// 6.9
+import { telemetryCommand } from "./cli/telemetry.ts"
 import { serverLayer } from "./Main.ts"
 import { DataDir } from "./platform/DataDir.ts"
 import { Identity } from "./platform/Identity.ts"
+import { Listening } from "./platform/Listening.ts"
 import { InfoAndAbove, LoggingLive } from "./platform/Logging.ts"
 import { releaseBuild, ServerConfig, serveFlags, VERSION } from "./platform/ServerConfig.ts"
 import type { ServeArgs } from "./platform/ServerConfig.ts"
@@ -36,6 +42,8 @@ const serve = (args: ServeArgs) =>
     // start marks it bad and goes back (Releases.execInstalled).
     yield* Context.get(context, Releases).settle
     const port = server.address._tag === "UnixPathAddress" ? 0 : server.address.port
+    // What runs are told to reach the server on: the port the listener got (`--port 0` asks for a free one).
+    yield* Context.get(context, Listening).bound(port)
     yield* Effect.logInfo(`listening on ${HttpServer.formatAddress(server.address)} (host ${identity.hostId}, data ${Context.get(context, DataDir).root})`)
     const line = yield* Schema.encodeEffect(ReadyLine)({ port, token: identity.tokenGiven ? null : Redacted.value(identity.token) })
     yield* Console.log(`HUNTAWAY_READY ${line}`)
@@ -79,7 +87,17 @@ const tokenCommand = Command.make(
 
 const huntaway = Command.make("huntaway", serveFlags, serve).pipe(
   Command.withDescription("Huntaway: a kanban board for orchestrating Claude Code and Codex agents"),
-  Command.withSubcommands([serveCommand, tokenCommand, rpcCommand, sshHostCommand, installServiceCommand]),
+  Command.withSubcommands([
+    serveCommand,
+    tokenCommand,
+    rpcCommand,
+    sshHostCommand,
+    installServiceCommand,
+    // 6.9
+    telemetryCommand,
+    // 6.7: Node's HTTP server on the loopback, for the browser's way back.
+    googleAuthCommand((port) => NodeHttpServer.layer(createServer, { port, host: "127.0.0.1" })),
+  ]),
 )
 
 const program =
@@ -90,6 +108,16 @@ const program =
 
 program.pipe(
   Effect.catchTag("StartupError", (e) => Console.error(`huntaway: ${e.reason}`).pipe(Effect.andThen(Effect.sync(() => process.exit(1))))),
-  Effect.provide(Layer.mergeAll(NodeServices.layer, LoggingLive, InfoAndAbove)),
+  Effect.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      LoggingLive,
+      InfoAndAbove,
+      // 6.7: `google-auth`'s token request and PKCE.
+      FetchHttpClient.layer,
+      SecureRandom.layerWebCrypto,
+      Digest.layerWebCrypto,
+    ),
+  ),
   NodeRuntime.runMain,
 )

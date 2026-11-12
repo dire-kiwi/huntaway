@@ -1,35 +1,81 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Effect, Layer } from "effect"
-import { Digest, Mac, SecureRandom } from "effect/crypto"
+import { Mac, SecureRandom } from "effect/crypto"
+// 6.8: Web Push's cryptography; 6.10: the SHA-256 of a Cua Driver download; 6.5: a signed webhook delivery's.
+import { Aead, Digest, Kdf, KeyAgreement, Signature } from "effect/crypto"
+import { createSocket } from "node:dgram"
+import { networkInterfaces } from "node:os"
 import { FetchHttpClient, HttpRouter } from "effect/http"
 import { RpcSerialization, RpcServer } from "effect/rpc"
 import type { SqlClient } from "effect/sql"
-import { createSocket } from "node:dgram"
 import { createServer } from "node:http"
-import { networkInterfaces } from "node:os"
 import {
+  // 6.4
+  AgentToolsRpcs,
+  // 6.9
+  AnalyticsRpcs,
+  TelemetryRpcs,
   ApprovalRulesRpcs,
+  // 6.11
+  AsanaRpcs,
+  ConfigArchiveRpcs,
+  FanoutRpcs,
+  GithubRepoRpcs,
   AttachmentRpcs,
+  // 6.5
+  AutomationRpcs,
+  // 6.7
+  AssistantRpcs,
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
+  DocRpcs,
+  // 6.10: computer use.
+  DesktopRpcs,
   GitRpcs,
   HostRpcGroup,
   HubHostRpcs,
   LinkRpcs,
+  AdminRpcs,
+  SettingsSyncRpcs,
+  ToolRpcs,
   PenRpcs,
   PermissionRpcs,
-  AdminRpcs,
   ProfileRpcs,
   ProjectRpcs,
   PublicRpcs,
-  SettingsSyncRpcs,
+  PushRpcs,
+  TaskDocumentRpcs,
   TaskRpcs,
+  // 6.1
+  TerminalRpcs,
   ThreadRpcs,
-  ToolRpcs,
+  WorkflowRpcs,
 } from "@huntaway/contracts"
+// 6.4: skills and MCP servers.
+import { AgentTools } from "./agents/AgentTools.ts"
+import { AgentToolsRepo } from "./agents/AgentToolsRepo.ts"
 import { ApprovalRules } from "./agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "./agents/ApprovalRulesRepo.ts"
+// 6.5: automations, the scheduler, webhooks and routines.
+import { AutomationApprovals } from "./automations/AutomationApprovals.ts"
+import { AutomationRepo } from "./automations/AutomationRepo.ts"
+import { Automations } from "./automations/Automations.ts"
+import { RoutineHost } from "./automations/RoutineHost.ts"
+import { Routines } from "./automations/Routines.ts"
+import { Scheduler } from "./automations/Scheduler.ts"
+import { Webhooks } from "./automations/Webhooks.ts"
+import { WebhookRoute } from "./http/webhooks.ts"
+import { AutomationHandlers } from "./rpc/automations.ts"
+// 6.7: the assistant.
+import { Assistant } from "./assistant/Assistant.ts"
+import { AssistantHooks } from "./assistant/AssistantHooks.ts"
+import { Brief } from "./assistant/Brief.ts"
+import { Google } from "./assistant/Google.ts"
+import { Memory } from "./assistant/Memory.ts"
+import { Tracked } from "./assistant/Tracked.ts"
+import { AssistantHandlers } from "./rpc/assistant.ts"
+import { AssistantLaunch } from "./runs/AssistantLaunch.ts"
 import { CodexQueriesLive } from "./agents/codex/CodexQueriesLive.ts"
 import { CodexQueries } from "./agents/CodexQueries.ts"
 import { ContextMeter } from "./agents/ContextMeter.ts"
@@ -63,6 +109,22 @@ import { Ssh } from "./hosts/Ssh.ts"
 import { Uplink } from "./hosts/Uplink.ts"
 import { LinkStreamRoute } from "./http/linkStream.ts"
 import { RelayRoute } from "./http/relay.ts"
+// 6.3: documents.
+import { DocImages } from "./docs/DocImages.ts"
+import { DocRepo } from "./docs/DocRepo.ts"
+import { Docs } from "./docs/Docs.ts"
+import { DocsRender } from "./docs/DocsRender.ts"
+import { DocsSiteRepo } from "./docs/DocsSiteRepo.ts"
+import { HostedDocs } from "./docs/HostedDocs.ts"
+import { DocsTools } from "./mcp/tools/docs.ts"
+import { DocHandlers } from "./rpc/docs.ts"
+// 6.10: computer use.
+import { CuaDriver } from "./desktop/CuaDriver.ts"
+import { CuaInstall } from "./desktop/CuaInstall.ts"
+import { Desktop } from "./desktop/Desktop.ts"
+import { DesktopClaims } from "./desktop/DesktopClaims.ts"
+import { DesktopOpRepo } from "./desktop/DesktopOpRepo.ts"
+import { DesktopTools } from "./desktop/DesktopTools.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
@@ -70,11 +132,16 @@ import { Git } from "./git/Git.ts"
 import { Gh } from "./github/Gh.ts"
 import { GhStacks } from "./github/GhStacks.ts"
 import { GithubRemote } from "./github/GithubRemote.ts"
+// 6.11: adding a project from GitHub.
+import { GithubRepos } from "./github/GithubRepos.ts"
 import { GitHubAccessStacked } from "./github/GitHubAccessLive.ts"
 import { PrWatch } from "./github/PrWatch.ts"
 import { PrWatchRepo } from "./github/PrWatchRepo.ts"
 import { PullRequests } from "./github/PullRequests.ts"
 import { Restack } from "./git/Restack.ts"
+// 6.11: relocation.
+import { Relocation } from "./git/Relocation.ts"
+import { RelocationRepo } from "./git/RelocationRepo.ts"
 import { StatusScripts } from "./git/StatusScripts.ts"
 import { TaskBase } from "./git/TaskBase.ts"
 import { Worktrees } from "./git/Worktrees.ts"
@@ -86,8 +153,10 @@ import { Db } from "./platform/Db.ts"
 import { Events } from "./platform/Events.ts"
 import { Identity } from "./platform/Identity.ts"
 import { KeyedLock } from "./platform/KeyedLock.ts"
+import { Listening } from "./platform/Listening.ts"
 import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
+import { Secrets } from "./platform/Secrets.ts"
 import type { ServerConfig } from "./platform/ServerConfig.ts"
 import { Board } from "./lifecycle/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
@@ -116,6 +185,9 @@ import { RecoveryLive } from "./lifecycle/Recovery.ts"
 import { ReviewRepo } from "./review/ReviewRepo.ts"
 import { Reviews } from "./review/Reviews.ts"
 import { ReviewStats } from "./review/ReviewStats.ts"
+// 6.11: fan-outs.
+import { Fanout } from "./review/Fanout.ts"
+import { FanoutRepo } from "./review/FanoutRepo.ts"
 import { Summaries } from "./review/Summaries.ts"
 import { DevServers } from "./runs/DevServers.ts"
 import { AgentRequests } from "./runs/AgentRequests.ts"
@@ -134,31 +206,34 @@ import { SetupThread } from "./runs/SetupThread.ts"
 import { TaskDeletion } from "./runs/TaskDeletion.ts"
 import { Runs } from "./runs/Runs.ts"
 import { RunWaits } from "./runs/RunWaits.ts"
+import { TurnHooks } from "./runs/TurnHooks.ts"
+import { TaskDocumentRepo } from "./docs/TaskDocumentRepo.ts"
+import { TaskDocuments } from "./docs/TaskDocuments.ts"
 import { Shim } from "./runs/Shim.ts"
 import { AgentConfigRepo } from "./profiles/AgentConfigRepo.ts"
 import { AgentConfigs } from "./profiles/AgentConfigs.ts"
+// 6.11: Asana, config archives.
+import { Asana } from "./profiles/Asana.ts"
+import { ConfigArchives } from "./profiles/ConfigArchives.ts"
 import { ProfileRepo } from "./profiles/ProfileRepo.ts"
 import { Profiles } from "./profiles/Profiles.ts"
 import { Usage } from "./profiles/Usage.ts"
 import { ProjectRepo } from "./projects/ProjectRepo.ts"
 import { Projects } from "./projects/Projects.ts"
+// 6.4
+import { AgentToolsHandlers } from "./rpc/agentTools.ts"
 import { ApprovalRulesHandlers } from "./rpc/approvalRules.ts"
+// 6.11
+import { AsanaHandlers } from "./rpc/asana.ts"
+import { ConfigArchiveHandlers } from "./rpc/configArchives.ts"
+import { FanoutHandlers } from "./rpc/fanout.ts"
+import { GithubRepoHandlers } from "./rpc/githubRepos.ts"
 import { AttachmentHandlers } from "./rpc/attachments.ts"
 import { AuthLive } from "./rpc/AuthLive.ts"
 import { BoardHandlers } from "./rpc/board.ts"
-import { CheckpointHandlers } from "./rpc/checkpoints.ts"
-import { GitHandlers } from "./rpc/git.ts"
-import { HostHandlers } from "./rpc/host.ts"
 import { HubHostHandlers } from "./rpc/hub.ts"
 import { LinkHandlers } from "./rpc/link.ts"
-import { PenHandlers } from "./rpc/pens.ts"
-import { PermissionHandlers } from "./rpc/permissions.ts"
-import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
-import { ProjectHandlers } from "./rpc/projects.ts"
-import { PublicHandlers } from "./rpc/public.ts"
 import { SettingsSyncHandlers } from "./rpc/settingsSync.ts"
-import { TaskHandlers } from "./rpc/tasks.ts"
-import { ThreadHandlers } from "./rpc/threads.ts"
 import { AdminHandlers } from "./rpc/admin.ts"
 import { Releases } from "./update/Releases.ts"
 import { Restarts } from "./update/Restarts.ts"
@@ -168,6 +243,23 @@ import { Systemd } from "./update/Systemd.ts"
 import { HostUpdates } from "./update/HostUpdates.ts"
 import { Updater } from "./update/Updater.ts"
 import { ToolHandlers } from "./rpc/tools.ts"
+import { CheckpointHandlers } from "./rpc/checkpoints.ts"
+// 6.10: computer use.
+import { DesktopHandlers } from "./rpc/desktop.ts"
+import { GitHandlers } from "./rpc/git.ts"
+import { HostHandlers } from "./rpc/host.ts"
+import { PenHandlers } from "./rpc/pens.ts"
+import { TaskDocumentHandlers } from "./rpc/taskDocuments.ts"
+import { PermissionHandlers } from "./rpc/permissions.ts"
+import { ConfigHandlers, ProfileHandlers } from "./rpc/profiles.ts"
+import { ProjectHandlers } from "./rpc/projects.ts"
+import { PublicHandlers } from "./rpc/public.ts"
+import { PushHandlers } from "./rpc/push.ts"
+import { Push } from "./push/Push.ts"
+import { PushRepo } from "./push/PushRepo.ts"
+import { WebPush } from "./push/WebPush.ts"
+import { TaskHandlers } from "./rpc/tasks.ts"
+import { ThreadHandlers } from "./rpc/threads.ts"
 import { About } from "./settings/About.ts"
 import { Folders } from "./settings/Folders.ts"
 import { HostSettings } from "./settings/HostSettings.ts"
@@ -185,6 +277,27 @@ import { Tasks } from "./tasks/Tasks.ts"
 import { ThreadReaders } from "./threads/ThreadReaders.ts"
 import { Threads } from "./threads/Threads.ts"
 import { ThreadStore } from "./threads/ThreadStore.ts"
+// 6.9: the agents' own OpenTelemetry, telemetry and the event loop, analytics and disk usage.
+import { OtlpRoute } from "./http/otlp.ts"
+import { Lag } from "./platform/Lag.ts"
+import { Telemetry } from "./platform/Telemetry.ts"
+import { Analytics } from "./analytics/Analytics.ts"
+import { AnalyticsRepo } from "./analytics/AnalyticsRepo.ts"
+import { Disk } from "./analytics/Disk.ts"
+import { AnalyticsHandlers } from "./rpc/analytics.ts"
+import { TelemetryHandlers } from "./rpc/telemetry.ts"
+// 6.1: terminals.
+import { TerminalRoute } from "./http/terminal.ts"
+import { TerminalHandlers } from "./rpc/terminal.ts"
+import { Pty } from "./terminal/Pty.ts"
+import { Terminals } from "./terminal/Terminals.ts"
+// 6.6
+import { WorkflowFacts } from "./agents/WorkflowFacts.ts"
+import { WorkflowHandlers } from "./rpc/workflows.ts"
+import { WorkflowEngine } from "./workflows/WorkflowEngine.ts"
+import { Workflows } from "./workflows/Workflows.ts"
+import { WorkflowApprovals } from "./workflows/WorkflowApprovals.ts"
+import { WorkflowStore } from "./workflows/WorkflowStore.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -195,7 +308,11 @@ import { ThreadStore } from "./threads/ThreadStore.ts"
  * reads Anthropic's usage endpoint). `db` is swapped for tests.
  */
 export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
-  Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer).pipe(
+  // 6.9: the logs tee over telemetry, over the event loop's measurements.
+  Telemetry.logs.pipe(Layer.provideMerge(Telemetry.layer), Layer.provideMerge(Lag.layer), Layer.provideMerge(PlatformBase(db)))
+
+const PlatformBase = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E, R>) =>
+  Layer.mergeAll(Events.layer, Changes.layer, KeyedLock.layer, Proc.layer, Migrations.layer, FetchHttpClient.layer, Listening.layer, Secrets.layer).pipe(
     Layer.provideMerge(Backup.layer),
     Layer.provideMerge(db),
     Layer.provideMerge(Identity.layer),
@@ -203,6 +320,9 @@ export const platformLayer = <E, R>(db: Layer.Layer<Db | SqlClient.SqlClient, E,
     Layer.provideMerge(Releases.execInstalled.pipe(Layer.provideMerge(Supervisor.layer))),
     Layer.provideMerge(DataDir.layer),
     Layer.provideMerge(Mac.layerWebCrypto),
+    // 6.8: Web Push's cryptography; 6.10, 6.5 and 6.3: SHA-256 (a Cua Driver download, a signed webhook delivery, a
+    // document's image).
+    Layer.provideMerge(Layer.mergeAll(KeyAgreement.layerWebCrypto, Kdf.layerWebCrypto, Aead.layerWebCrypto, Signature.layerWebCrypto, Digest.layerWebCrypto)),
     Layer.provideMerge(SecureRandom.layerWebCrypto),
   )
 
@@ -211,9 +331,10 @@ export const PlatformLive = platformLayer(Db.layer)
 // Step 4: every area, bottom up. Each line provides the ones above it.
 const SettingsLive = Layer.mergeAll(About.layer, HostSettings.layer, Folders.layer).pipe(Layer.provideMerge(SettingsRepo.layer))
 const ProfilesLive = Profiles.ensureFromConfig.pipe(
-  Layer.provideMerge(Layer.mergeAll(Profiles.layer, Usage.layer)),
+  Layer.provideMerge(Layer.mergeAll(Profiles.layer, Usage.layer, ConfigArchives.layer)),
   Layer.provideMerge(AgentConfigs.layer),
-  Layer.provideMerge(Layer.mergeAll(ProfileRepo.layer, AgentConfigRepo.layer)),
+  // 6.11: Asana (connecting a profile, its search) and config archives.
+  Layer.provideMerge(Layer.mergeAll(ProfileRepo.layer, AgentConfigRepo.layer, Asana.layer)),
   Layer.provideMerge(SettingsLive),
 )
 const ProjectsLive = Projects.layer.pipe(Layer.provideMerge(ProjectRepo.layer), Layer.provideMerge(ProfilesLive))
@@ -235,6 +356,8 @@ const ThreadsLive = Threads.pruner.pipe(
 const GitLive = Restack.layer.pipe(
   // 4.8: restacking stack levels, over their worktrees.
   Layer.provideMerge(Layer.mergeAll(Worktrees.layer, StatusScripts.layer, ChangesTab.layer)),
+  // 6.11: a project's folder moved or followed, which a worktree setup holds where it is.
+  Layer.provideMerge(Relocation.layer.pipe(Layer.provideMerge(RelocationRepo.layer))),
   Layer.provideMerge(Layer.mergeAll(TaskBase.layer, Checkpoints.layer)),
   Layer.provideMerge(Layer.mergeAll(GitHubAccessStacked, CheckpointRepo.layer)),
   // 4.8: GitHub's stacks, which `GitHubAccess` offers the restack (it needs only `Gh` and the task rows).
@@ -247,7 +370,7 @@ const GitLive = Restack.layer.pipe(
  * The github area: gh as one account (`Gh`, on the git line), where a task's pull request goes (`GithubRemote`), reading
  * pull requests and what agents were told of them (`PrWatch`), and a task's pull request (`PullRequests`, 4.5).
  */
-const GithubLive = Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer).pipe(
+const GithubLive = Layer.mergeAll(GithubRemote.layer, PrWatch.layer, PullRequests.layer, GithubRepos.layer).pipe(
   Layer.provideMerge(PrWatchRepo.layer),
   Layer.provideMerge(GitLive),
 )
@@ -270,9 +393,14 @@ const agentsLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1,
     ),
     // 4.8: stack titles, over the same model as task titles.
     Layer.provideMerge(StackTitles.layer),
+    // 6.4: skills and MCP servers (Prompts reads a project's gh switch), over Codex's skills.
+    Layer.provideMerge(AgentTools.layer),
+    Layer.provideMerge(AgentToolsRepo.layer),
     Layer.provideMerge(
       Layer.mergeAll(ApprovalRulesRepo.layer, TokenRepo.layer, ContextStatsRepo.layer, SideCalls.layer, StackTitleRepo.layer, models.titles, models.window),
     ),
+    // 6.6: what the prompts, a run's end and the merge queue read of a task's workflows (the workflows area registers it).
+    Layer.provideMerge(WorkflowFacts.layer),
     // A Codex config's titles are asked of Codex, as its models are (5.3).
     Layer.provideMerge(models.codex),
     Layer.provideMerge(GithubLive),
@@ -289,7 +417,7 @@ const RunsArea = Runs.layer.pipe(
   Layer.provideMerge(RunFollower.layer),
   // The line handler: Codex runs' lines to the Codex handler (5.2), the others to Claude's.
   Layer.provideMerge(CodexOutput.pipe(Layer.provide(ClaudeOutput))),
-  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer)),
+  Layer.provideMerge(Layer.mergeAll(RunInput.layer, AgentRequests.layer, RunWaits.layer, TurnHooks.layer, AssistantLaunch.layer /* 6.7 */)),
   Layer.provideMerge(BackgroundWork.layer),
   Layer.provideMerge(Shim.layer),
   Layer.provideMerge(Layer.mergeAll(RunRepo.layer, RunDir.layer)),
@@ -301,7 +429,7 @@ const RunsArea = Runs.layer.pipe(
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   Layer.mergeAll(McpControlRegistered, McpCodexRegistered).pipe(
-    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools)),
+    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools, DocsTools /* 6.3 */)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
@@ -345,8 +473,23 @@ const PermissionsLive = Layer.mergeAll(Permissions.sweeper, Permissions.register
   Layer.provideMerge(PermissionRepo.layer),
 )
 
+/**
+ * 6.5: a project's automations and a profile's routines, taking webhook deliveries, and the scheduler (whose loop is
+ * `AutomationLoops`). What routines need of the assistant is `RoutineHost`, which the assistant area (6.7) registers with.
+ */
+const AutomationsLive = Layer.mergeAll(Scheduler.layer, Webhooks.layer, AutomationApprovals.layer).pipe(
+  Layer.provideMerge(Automations.layer),
+  Layer.provideMerge(Routines.layer),
+  Layer.provideMerge(Layer.mergeAll(AutomationRepo.layer, RoutineHost.layer)),
+)
+
 /** The review area (4.6): reviews, summaries of the changes, and what reviewers reported. */
-const ReviewLive = Reviews.layer.pipe(Layer.provideMerge(Layer.mergeAll(Summaries.layer, ReviewStats.layer)), Layer.provideMerge(ReviewRepo.layer))
+const ReviewLive = Reviews.layer.pipe(
+  // 6.11: comparing and picking among tasks made from one prompt.
+  Layer.provideMerge(Fanout.layer),
+  Layer.provideMerge(Layer.mergeAll(Summaries.layer, ReviewStats.layer)),
+  Layer.provideMerge(Layer.mergeAll(ReviewRepo.layer, FanoutRepo.layer)),
+)
 
 /**
  * What a board call needs of the areas built after `ToolCalls`' (`McpHooks`): `Wait`'s `callMade` (any call but `wait`
@@ -368,40 +511,31 @@ export const BoardHooks = Layer.effect(
 )
 
 /**
- * The update area: the restart job, rebuilds and a hub's push (`Updater`), release updates, the systemd service. The
- * launcher (`Supervisor`) is the platform's, for the hand-over at startup. Outside the process: `Systemd`, git through
- * `Proc`, GitHub through the HTTP client.
+ * 6.10: computer use: the host's one Cua Driver, who drives the desktop, the journal, installing the driver, and the
+ * `desktop` MCP server's tools, which it registers with the MCP area below it (desktop sits below mcp in the
+ * dependency order, so mcp/ doesn't import it).
  */
-const UpdateLive = Updater.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(Releases.layer, Service.layer)),
-  Layer.provideMerge(Layer.mergeAll(Restarts.layer, Systemd.layer, Digest.layerWebCrypto)),
+const DesktopLive = DesktopTools.pipe(
+  Layer.provideMerge(Desktop.layer),
+  Layer.provideMerge(CuaInstall.layer),
+  Layer.provideMerge(Layer.mergeAll(CuaDriver.layer, DesktopClaims.layer, DesktopOpRepo.layer)),
 )
 
-/** Every area's services, with `models` for the board's own model calls. */
-export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
-  // The demo board is seeded once every area is built, before Recovery runs.
-  Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
-    Layer.provideMerge(DemoLive),
-    // A hub's Update of a linked host: over the hosts' connections and the updater.
-    Layer.provideMerge(HostUpdates.layer),
-    // Hosts: links, the relay, tools across hosts (M7).
-    Layer.provideMerge(HostsLive),
-    // Restarts, updates, releases and the service (8.1, 8.2): Recovery settles a release that has come up.
-    Layer.provideMerge(UpdateLive),
-    // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
-    Layer.provideMerge(mcpLayer(BoardHooks)),
-    // The links' connections, which the board's calls go to other hosts through.
-    Layer.provideMerge(HostLinksLive),
-    // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
-    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
-    // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
-    Layer.provideMerge(Layer.mergeAll(InReview.layer, MergedWatcher.layer)),
+/**
+ * The areas of M2 to M5 over the agents area: runs and their ends, permissions, reviews, the merge queue and pull
+ * requests. `areasLayer` puts M6's on top (a `pipe` takes twenty steps at most).
+ */
+const runAreasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
+  // Pull requests' news for agents in review, Fix broken checks, and pull requests merged or closed on GitHub (4.5).
+  Layer.mergeAll(InReview.layer, MergedWatcher.layer).pipe(
     // The merge queue and its gate (4.7): the gh tools ask the gate before a merge; the gate decides approval cards, and
     // the merge area reads `Tasks.update`'s git and GitHub facts (both registered below the areas they serve).
     Layer.provideMerge(Layer.mergeAll(Merges.registered, MergeGate.registered)),
     // 4.8: where held tasks go now, a whole stack's merge, and the agent asked to restack.
     Layer.provideMerge(Layer.mergeAll(Merges.layer, MergeTargets.layer)),
     Layer.provideMerge(MergeGate.layer),
+    // 6.5: automations and routines, over the runs, tasks and approvals they use.
+    Layer.provideMerge(AutomationsLive),
     // Reviews and summaries (4.6), over the runs they start.
     Layer.provideMerge(ReviewLive),
     Layer.provideMerge(PermissionsLive),
@@ -413,6 +547,79 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(Layer.mergeAll(TaskDeletion.layer, SetupThread.layer)),
     Layer.provideMerge(RunsArea),
     Layer.provideMerge(agentsLayer(models)),
+  )
+
+/**
+ * The update area: the restart job, rebuilds and a hub's push (`Updater`), release updates, the systemd service. The
+ * launcher (`Supervisor`) is the platform's, for the hand-over at startup. Outside the process: `Systemd`, git through
+ * `Proc`, GitHub through the HTTP client.
+ */
+const UpdateLive = Updater.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Releases.layer, Service.layer)),
+  Layer.provideMerge(Layer.mergeAll(Restarts.layer, Systemd.layer)),
+)
+
+/** 6.8: push, watching the board's events for what devices want. */
+const PushLive = Push.watcher.pipe(Layer.provideMerge(Push.layer), Layer.provideMerge(Layer.mergeAll(PushRepo.layer, WebPush.layer)))
+
+/**
+ * 6.7: the profile's assistant: its memory (the workspace and its history), the brief, Google and tracked work, and what
+ * it registers with the areas above it (routines, launches, turns' ends).
+ */
+const AssistantLive = AssistantHooks.pipe(
+  Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer)),
+  Layer.provideMerge(Assistant.layer),
+  Layer.provideMerge(Memory.layer),
+)
+
+/** 6.6: workflows: changing them, and the engine (registered with the agents area's `WorkflowFacts`) over its store. */
+const WorkflowsLive = WorkflowApprovals.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(Workflows.layer, WorkflowEngine.registered)),
+  Layer.provideMerge(WorkflowEngine.layer),
+  Layer.provideMerge(WorkflowStore.layer),
+)
+
+/** 6.3: the docs area: published documents, their images, and publishing them to a hosted docs site. */
+const DocsLive = Docs.layer.pipe(
+  Layer.provideMerge(HostedDocs.layer),
+  Layer.provideMerge(Layer.mergeAll(DocRepo.layer, DocsSiteRepo.layer, DocImages.layer, DocsRender.layer)),
+)
+
+/** Every area's services, with `models` for the board's own model calls. */
+export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
+  // The demo board is seeded once every area is built, before Recovery runs.
+  Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
+    Layer.provideMerge(DemoLive),
+    // 6.9: a profile's analytics and disk usage.
+    Layer.provideMerge(Layer.mergeAll(Analytics.layer, Disk.layer).pipe(Layer.provideMerge(AnalyticsRepo.layer))),
+    // A hub's Update of a linked host: over the hosts' connections and the updater.
+    Layer.provideMerge(HostUpdates.layer),
+    // Hosts: links, the relay, tools across hosts (M7).
+    Layer.provideMerge(HostsLive),
+    // Restarts, updates, releases and the service (8.1, 8.2): Recovery settles a release that has come up.
+    Layer.provideMerge(UpdateLive),
+    // 6.1: terminals (a tmux session per task and per terminal tool), ended with a worktree's teardown.
+    Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
+    // 6.10: computer use, over the MCP area it registers its server with.
+    Layer.provideMerge(DesktopLive),
+    // 6.8: push, watching the board's events for what devices want.
+    Layer.provideMerge(PushLive),
+    // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
+    Layer.provideMerge(mcpLayer(BoardHooks)),
+    // The links' connections, which the board's calls go to other hosts through.
+    Layer.provideMerge(HostLinksLive),
+    // The waits, and the approval of a wait's command (a `Bash` prompt, `Permissions`').
+    Layer.provideMerge(Layer.mergeAll(Wait.layer, CommandApproval.layerPermissions)),
+    // 6.6: workflows: changing them, and the engine (registered with the agents area's `WorkflowFacts`) over its store.
+    Layer.provideMerge(WorkflowsLive),
+    // 6.7: the assistant, over documents (its brief) and automations (its routines).
+    Layer.provideMerge(AssistantLive),
+    // 6.3: documents, which the docs server's tools call.
+    Layer.provideMerge(DocsLive),
+    // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
+    Layer.provideMerge(TaskDocuments.registered.pipe(Layer.provideMerge(TaskDocuments.layer), Layer.provideMerge(TaskDocumentRepo.layer))),
+    // M2 to M5's areas.
+    Layer.provideMerge(runAreasLayer(models)),
   )
 
 /** Every area's services. */
@@ -429,14 +636,28 @@ export const RunLoops = Layer.mergeAll(Runs.limitResets, Compaction, DevServers.
  */
 export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
 
+/** 6.5: the automations' scheduler (a pass every 5 s, pruning every hour). Not in `areasLayer`: tests run `Scheduler.tick`. */
+export const AutomationLoops = Scheduler.loop
+
+/** 6.9: the telemetry exporter (with the minute's metrics) and the event loop's ticker. Not in tests, as `RunLoops`. */
+export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
+
 /** Every area's services, and their loops. */
-export const AreasLive = Layer.mergeAll(RunLoops, PrLoops).pipe(
+/** 6.11: the fingerprint recorder: what each project's folder is, until its history is known (now, then hourly). */
+export const ProjectLoops = Projects.recorder
+
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, PlatformLoops, Terminals.reaper /* 6.1 */).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
 )
 
 /** The groups served (`HostRpcs` once every area has its handlers). One line per area. */
 export const Served = PublicRpcs.merge(
   HostRpcGroup,
+  HubHostRpcs,
+  LinkRpcs,
+  SettingsSyncRpcs,
+  AdminRpcs,
+  ToolRpcs,
   ProfileRpcs,
   ConfigRpcs,
   ProjectRpcs,
@@ -447,19 +668,43 @@ export const Served = PublicRpcs.merge(
   ApprovalRulesRpcs,
   ThreadRpcs,
   PermissionRpcs,
-  HubHostRpcs,
-  LinkRpcs,
-  SettingsSyncRpcs,
-  AdminRpcs,
-  ToolRpcs,
   CheckpointRpcs,
   GitRpcs,
+  // 6.3
+  DocRpcs,
+  // 6.1
+  TerminalRpcs,
+  // 6.11
+  AsanaRpcs,
+  ConfigArchiveRpcs,
+  FanoutRpcs,
+  GithubRepoRpcs,
+  // 6.10: computer use.
+  DesktopRpcs,
+  // 6.4
+  AgentToolsRpcs,
+  // 6.9
+  TelemetryRpcs,
+  AnalyticsRpcs,
+  PushRpcs,
+  TaskDocumentRpcs,
+  // 6.5
+  AutomationRpcs,
+  // 6.7
+  AssistantRpcs,
+  // 6.6
+  WorkflowRpcs,
 )
 
 /** Their handlers. One line per area. */
 export const HandlersLive = Layer.mergeAll(
   PublicHandlers,
   HostHandlers,
+  HubHostHandlers,
+  LinkHandlers,
+  SettingsSyncHandlers,
+  AdminHandlers,
+  ToolHandlers,
   ProfileHandlers,
   ConfigHandlers,
   ProjectHandlers,
@@ -470,13 +715,32 @@ export const HandlersLive = Layer.mergeAll(
   ApprovalRulesHandlers,
   ThreadHandlers,
   PermissionHandlers,
-  HubHostHandlers,
-  LinkHandlers,
-  SettingsSyncHandlers,
-  AdminHandlers,
-  ToolHandlers,
   CheckpointHandlers,
   GitHandlers,
+  // 6.3
+  DocHandlers,
+  // 6.1
+  TerminalHandlers,
+  // 6.11
+  AsanaHandlers,
+  ConfigArchiveHandlers,
+  FanoutHandlers,
+  GithubRepoHandlers,
+  // 6.10: computer use.
+  DesktopHandlers,
+  // 6.4
+  AgentToolsHandlers,
+  // 6.9
+  TelemetryHandlers,
+  AnalyticsHandlers,
+  PushHandlers,
+  TaskDocumentHandlers,
+  // 6.5
+  AutomationHandlers,
+  // 6.7
+  AssistantHandlers,
+  // 6.6
+  WorkflowHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
@@ -492,6 +756,10 @@ export const RoutesLive = Layer.mergeAll(
   RelayRoute,
   LinkStreamRoute,
   McpHttpRoute,
+  OtlpRoute /* 6.9 */,
+  TerminalRoute /* 6.1 */,
+  // 6.5: automations' webhooks.
+  WebhookRoute,
   ApiNotFound,
   StaticUi,
   HttpRouter.cors({ maxAge: 86400 }),

@@ -1,4 +1,4 @@
-import { Context, Effect, Fiber, FileSystem, Layer, Option, Schema } from "effect"
+import { Context, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import type { Conflict, MergedWorktreeResult, ProfileId, Project, ProjectId, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
@@ -20,11 +20,14 @@ import { TaskTmp } from "../tasks/TaskTmp.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Git } from "./Git.ts"
 import { GitHubAccess } from "./GitHubAccess.ts"
-import { expandHome, slugify, truncate } from "./paths.ts"
+// 6.11: a setup holds the project's folder where it is.
+import { Relocation } from "./Relocation.ts"
+import { expandHome, truncate } from "./paths.ts"
 import { startRef, TaskBase } from "./TaskBase.ts"
 import type { WorktreeFailed } from "./worktree/failed.ts"
 import { fail, fromGit, orFail, within } from "./worktree/failed.ts"
 import { bringIn, reportEvent } from "./worktree/files.ts"
+import { folderName } from "./worktree/folder.ts"
 import { noStrays, removableByHand, uncommitted } from "./worktree/remove.ts"
 import { runScript, SCRIPT_LIMIT, scriptEnv } from "./worktree/scripts.ts"
 import type { Picked } from "./worktree/start.ts"
@@ -32,6 +35,8 @@ import { setMergeBase } from "./worktree/start.ts"
 import { upstreamName } from "./worktree/upstream.ts"
 
 export { WorktreeFailed } from "./worktree/failed.ts"
+// 6.11: in a module of its own, which `Relocation` reads too.
+export { folderName } from "./worktree/folder.ts"
 
 /** Asked by hand (`idle`), while an agent works in the worktree: its task's own, or a reviewer's. */
 export class AgentInWorktree extends Schema.TaggedError<AgentInWorktree, { readonly brand: unique symbol }>()("AgentInWorktree", {}) {
@@ -94,30 +99,14 @@ export interface WorktreesShape {
   readonly recover: Effect.Effect<void>
   /** Hold the task's worktree lock (`["worktree", task]`) around `effect`: what 4.8's restack takes too. */
   readonly withLock: (task: TaskId) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  /**
+   * 6.1: what runs in a worktree that is about to go, before its teardown script: an area below this one registers it
+   * (`Terminals` ends the task's terminals, which would be left in a deleted folder).
+   */
+  readonly beforeTeardown: (hook: (task: TaskId) => Effect.Effect<void>) => Effect.Effect<void>
 }
 
 const kept = (why: string): Removal => ({ _tag: "Kept", why })
-
-/**
- * The name of a task's worktree folder in the project's worktrees folder. A task that had a worktree before (removed once
- * merged, say) gets its folder back, named after its branch (even if the project's key has changed since), so its
- * agent's conversation, which is kept by folder, carries on even if the task was renamed.
- */
-export const folderName = (project: Pick<Project, "key" | "former_keys">, task: Pick<Task, "branch" | "title" | "number">): string => {
-  let fromBranch: string | null = null
-  if (task.branch !== null) {
-    for (const k of [project.key, ...project.former_keys]) {
-      const prefix = `ia/${k.toLowerCase()}-`
-      if (task.branch.startsWith(prefix)) {
-        fromBranch = task.branch.slice(prefix.length)
-        break
-      }
-    }
-  }
-  if (fromBranch !== null && fromBranch !== "" && !fromBranch.includes("/")) return fromBranch
-  const slug = slugify(task.title, 40)
-  return slug === "" ? `${task.number}` : `${task.number}-${slug}`
-}
 
 /**
  * A task's worktree (docs/plan/06-server.md, Git; inventory 04, sections 2.2, 2.4–2.6): setting it up, tearing it down
@@ -138,6 +127,7 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
       const profilesService = yield* Profiles
       const threads = yield* Threads
       const locks = yield* KeyedLock
+      const relocation = yield* Relocation
       const leftovers = yield* Leftovers
       const checkpoints = yield* Checkpoints
       const taskTmp = yield* TaskTmp
@@ -147,6 +137,8 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
       const scope = yield* Effect.scope
       const scripts = { spawner, agentEnv: config.agentEnv }
+      // 6.1: what areas below this one end in a worktree before it goes (`beforeTeardown`).
+      const teardownHooks = yield* Ref.make<ReadonlyArray<(task: TaskId) => Effect.Effect<void>>>([])
 
       const withLock = (task: TaskId) => locks.withLock(["worktree", task])
       const exists = (path: string) => fs.exists(path).pipe(Effect.orElseSucceed(() => false))
@@ -193,7 +185,11 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
       const setupWithin = (id: TaskId, inside: ReadonlyArray<TaskId>): Effect.Effect<Task, WorktreeFailed | TaskNotFound> =>
         inside.includes(id)
           ? fail("its worktree can't be set up: the tasks it starts from start from it")
-          : withLock(id)(Effect.suspend(() => setupLocked(id, [...inside, id])))
+          : // 6.11: not from the repository folder the project is moving from, and the folder stays put until the worktree is stored.
+            Effect.flatMap(repo.get(id), (t) => {
+              const locked = withLock(id)(Effect.suspend(() => setupLocked(id, [...inside, id])))
+              return t?.project_id == null ? locked : relocation.hold(t.project_id)(locked)
+            })
 
       /** `setup` while holding the task's worktree lock: whatever another setup did before is seen here. */
       const setupLocked = Effect.fnUntraced(function* (id: TaskId, inside: ReadonlyArray<TaskId>) {
@@ -201,6 +197,8 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
         if (task.worktree_state === "ready" && task.worktree_path !== null && (yield* exists(task.worktree_path))) return task
         const dir = home(project.repo_path)
         if (!(yield* g.isRepo(dir))) return yield* fail(`${project.repo_path} is not a git repository`)
+        // 6.11: it may have become one since the board last looked, or have its first commits.
+        yield* projectsService.recordFingerprint(project.id)
         const root = home(project.worktrees_root)
         yield* g.run(dir, ["worktree", "prune"]).pipe(Effect.ignore)
         const hasBranch = (b: string) => Effect.map(g.run(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${b}`]), (o) => o.ok)
@@ -325,7 +323,8 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
             yield* noStrays(g, wt)
           }
           yield* write(id, { worktree_state: "tearing_down" })
-          // M6: its terminals are killed here (`Terminals.killAll`), as they'd be left in a deleted folder.
+          // 6.1: its terminals are killed here (`Terminals.killAll`, registered), as they'd be left in a deleted folder.
+          for (const hook of yield* Ref.get(teardownHooks)) yield* hook(id)
           // And the test servers its agents started from it, which would run on with their build gone.
           yield* leftovers
             .stopTask({ tmp: [taskTmp.dir(task)], worktrees: [wt], data_dir: dataDir.root, tmp_root: taskTmp.root }, `task ${id}`)
@@ -566,6 +565,7 @@ export class Worktrees extends Context.Service<Worktrees, WorktreesShape>()("hun
         deleteProfile,
         recover: recover(),
         withLock: (task) => withLock(task),
+        beforeTeardown: (hook) => Ref.update(teardownHooks, (hooks) => [...hooks, hook]),
       })
     }),
   )

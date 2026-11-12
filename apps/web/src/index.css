@@ -1,6 +1,8 @@
 @import "tailwindcss";
 /* The monospace font (the old main.tsx imported it). */
 @import "@fontsource-variable/jetbrains-mono/wght.css";
+/* 6.1: xterm's own styles, for the task's terminals (the old Terminal.tsx imported them). */
+@import "@xterm/xterm/css/xterm.css";
 @plugin "@tailwindcss/typography";
 
 /* The narrow layout, for phones (see NARROW_QUERY in narrow.ts). */

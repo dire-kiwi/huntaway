@@ -2,12 +2,13 @@ import { Context, DateTime, Effect, Layer } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { SqlClient } from "effect/sql"
 import type { AgentConfigId, TaskId } from "@huntaway/contracts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import type { Spent } from "./tokens/calls.ts"
 import { sorted, splitColumns, total } from "./tokens/counts.ts"
 
 // The tokens of the board's own model calls that are not runs (huntaway's agent/tokens/calls.ts), in `call_usage`:
 // task titles (`Titles`) and the prompts that restart 5-hour windows (`UsageWindow`). Each call is counted as it ends,
-// from what its reply says it used. Telemetry's `side_call` joins with `Telemetry`.
+// from what its reply says it used. Each also goes to telemetry as a `side_call` (6.9).
 
 export type SideCallPurpose = "title" | "window"
 
@@ -26,6 +27,7 @@ export class SideCalls extends Context.Service<SideCalls, SideCallsShape>()("hun
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const random = yield* SecureRandom.SecureRandom
+      const telemetry = yield* Telemetry
 
       const record = Effect.fn("SideCalls.record")(function* (purpose: SideCallPurpose, task: TaskId | null, config: AgentConfigId | null, spent: Spent) {
         const at = DateTime.formatIso(yield* DateTime.now)
@@ -41,6 +43,22 @@ export class SideCalls extends Context.Service<SideCalls, SideCallsShape>()("hun
             WHERE ${task} IS NULL OR EXISTS (SELECT 1 FROM tasks WHERE id = ${task})`.pipe(
             Effect.catchCause((cause) => Effect.logWarning(`tokens: purpose=${purpose} keeping a model call's tokens`, cause)),
           )
+          // 6.9: telemetry's `side_call`: a task's call with its task, a config's with the first profile that sends and has it.
+          const row = {
+            ts: at,
+            event: "side_call",
+            kind: purpose,
+            runtime: spent.runtime,
+            model,
+            input_tokens: n.input,
+            output_tokens: n.output,
+            cache_read_tokens: n.cache_read,
+            cache_write_tokens: n.cache_write,
+            reasoning_tokens: n.reasoning,
+            cost_usd: spent.runtime === "claude" ? n.cost : 0,
+          }
+          if (task !== null) yield* telemetry.taskEvent(task, row)
+          else if (config !== null) yield* telemetry.configEvent(config, row)
         }
       })
 

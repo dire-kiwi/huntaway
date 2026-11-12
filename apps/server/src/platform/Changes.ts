@@ -9,6 +9,8 @@ export type Actor =
   | { readonly _tag: "Agent"; readonly task_id: TaskId | null }
   | { readonly _tag: "Automation"; readonly automation_id: string }
   | { readonly _tag: "Board" }
+  /** 6.6: a step of workflow run `run`, which `chain` runs in a row started by workflows' moves led to. */
+  | { readonly _tag: "Workflow"; readonly run: string; readonly chain: number }
 
 export const Actor = {
   user: { _tag: "User" } as Actor,
@@ -82,6 +84,27 @@ export type Change =
       readonly task: TaskId
       readonly text: string
       readonly reason: string
+    }
+  | {
+      /**
+       * 6.6: a task's agent's run ended with its work in a workflow's column done, the task held there for it (`due`:
+       * the column node, and the run waiting at it if any); or its merging agent said it's merged (`mergeFinished`) for
+       * its workflow to move it to Done (`RunEnds`). The reactor hands it to `WorkflowEngine`.
+       */
+      readonly _tag: "WorkflowWorkDone"
+      readonly task: TaskId
+      readonly due: { readonly workflow_id: string; readonly node: string; readonly run_id: string | null } | null
+      readonly mergeFinished: boolean
+    }
+  | {
+      /**
+       * 6.6: a workflow run ended (done or stopped), unless it stopped because the task's agent started again: a task it
+       * was holding in its column moves on (`WorkflowEngine.release`). `why` says why it couldn't go on, if so.
+       */
+      readonly _tag: "WorkflowRunSettled"
+      readonly run: string
+      readonly task: TaskId
+      readonly why: string | null
     }
   | {
       /** A project's settings changed (`projects/Projects.update`): its tasks follow what they take from them (4.5: previews). */

@@ -1,40 +1,30 @@
 import { isAssistant, isGroupTask, isRoutine } from "@huntaway/client"
 import { clsx } from "clsx"
-import { useEffect, type ReactNode } from "react"
+import { lazy, Suspense, useEffect } from "react"
 import { activeProfile, loadActiveProfile } from "./activeProfile"
 import { Board, GroupBoard, ProfileBoard } from "./components/board/Board"
 import { profileNames, useProfileName } from "./components/boardHelpers"
 import { Sidebar } from "./components/layout/Sidebar"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
+import { DocsPage } from "./components/docs/DocsPage"
+import { Analytics } from "./components/settings/Analytics"
+import { Guide } from "./components/settings/Guide"
+import { HostPage } from "./components/settings/HostPage"
+import { Onboarding } from "./components/settings/Onboarding"
+import { ProjectSettings } from "./components/settings/project/ProjectSettings"
 import { Settings } from "./components/settings/Settings"
 import { TokenScreen } from "./components/settings/TokenScreen"
+import { AssistantPage } from "./components/task/AssistantPage"
 import { TaskModal, TaskPanel, TaskView } from "./components/task/TaskView"
-import { MenuButton } from "./components/ui"
+// 6.1
+import { startToolKeepalive } from "./components/task/terminalTools"
 import { useDrawer, useNarrow } from "./narrow"
-import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl, type Route } from "./router"
+import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
 import { navigate, usePanel, useRoute, useTaskModal } from "./state/route"
 
-/** What a page or panel of a later milestone shows on this server until its components come over. */
-function NotYet({ what, children }: { what: string; children?: ReactNode }) {
-  return (
-    <div className="p-8 text-[13px] text-muted">
-      <div className="mb-1 text-[14px] font-semibold text-fg">{what}</div>
-      Not yet on this server.
-      {children}
-    </div>
-  )
-}
-
-/** Pages whose components come over in later steps (docs/plan/13-milestones.md). */
-const LATER: Partial<Record<Route["name"], string>> = {
-  assistant: "The assistant",
-  docs: "Documents",
-  projectSettings: "Project settings",
-  analytics: "Analytics",
-  guide: "The guide",
-  host: "Hosts",
-}
+// 6.11: the compare view of the tasks made from one prompt, in a chunk of its own.
+const CompareView = lazy(() => import("./components/changes/Compare").then((m) => ({ default: m.CompareView })))
 
 export function App() {
   const authed = useBoard((s) => s.authed)
@@ -46,6 +36,10 @@ export function App() {
   const routeTask = useBoard((s) => (route.name === "task" ? s.tasks[route.taskId] : undefined))
   const narrow = useNarrow()
   const drawerOpen = useDrawer((d) => d.open)
+  // 6.1: the terminal tools this board has open are kept while the app is open.
+  useEffect(() => {
+    if (authed) startToolKeepalive()
+  }, [authed])
 
   // Home is the board of the profile picked last (or the first one), which has every one of its tasks.
   const homeProfile = activeProfile(profileNames(profiles), loadActiveProfile())
@@ -89,23 +83,12 @@ export function App() {
 
   if (authed === false) return <TokenScreen />
   if (authed === null) return null
-  // The old board's onboarding (settings/Onboarding) comes with settings/; until then a board with no profile says so.
-  // A board with none of its own can still link hosts that have some.
+  // A board with none of its own can still link hosts that have some (Settings → Hosts, M7).
   if (profiles.length === 0) {
     if (!loaded) return null
-    if (route.name === "settings") return <Settings tab={route.tab} />
-    return (
-      <NotYet what="This board has no profiles yet">
-        {" Add one with the settings, once they're here, or link a host that has some in "}
-        <button type="button" className="text-accent hover:underline" onClick={() => navigate({ name: "settings", tab: "hosts" })}>
-          Settings → Hosts
-        </button>
-        .
-      </NotYet>
-    )
+    return route.name === "settings" ? <Settings tab={route.tab} /> : <Onboarding />
   }
 
-  const later = LATER[route.name]
   return (
     <div className="relative flex h-full">
       {narrow ? (
@@ -132,18 +115,21 @@ export function App() {
           {route.name === "board" && <Board projectId={route.projectId} />}
           {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
           {route.name === "task" && <TaskView taskId={route.taskId} />}
+          {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
+          {route.name === "docs" && <DocsPage key={route.profile} route={route} />}
+          {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
           {route.name === "settings" && <Settings tab={route.tab} />}
-          {later !== undefined && (
-            <>
-              <div className="flex h-12 items-center border-b border-line px-3">
-                <MenuButton />
-              </div>
-              <NotYet what={later} />
-            </>
-          )}
+          {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
+          {route.name === "guide" && <Guide page={route.page} />}
+          {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
         </div>
         {panel && hasPanel(route) && <TaskPanel panel={panel} />}
       </div>
+      {panel?.compare === true && hasPanel(route) && (
+        <Suspense fallback={null}>
+          <CompareView taskId={panel.taskId} />
+        </Suspense>
+      )}
       {modal !== null && <TaskModal key={modal} taskId={modal} />}
       <UnhandledErrors />
     </div>

@@ -12,11 +12,17 @@ import { isMerged } from "../tasks/checks.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Permissions } from "../permissions/Permissions.ts"
 import { Changes } from "../platform/Changes.ts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import type { Change } from "../platform/Changes.ts"
 import { Reviews } from "../review/Reviews.ts"
 import { RunEnds } from "../runs/RunEnds.ts"
+import { Routines } from "../automations/Routines.ts"
 import { Runs } from "../runs/Runs.ts"
 import { TaskTmp } from "../tasks/TaskTmp.ts"
+// 6.1
+import { Terminals } from "../terminal/Terminals.ts"
+import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
+import { Workflows } from "../workflows/Workflows.ts"
 
 export interface ReactorShape {
   /** Waits until every change offered so far has been handled. Tests wait on this instead of sleeping. */
@@ -49,12 +55,22 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
       const mergeTargets = yield* MergeTargets
       const restack = yield* Restack
       const ghStacks = yield* GhStacks
+      // 6.1
+      const terminals = yield* Terminals
+      const routines = yield* Routines
+      // 6.6
+      const engine = yield* WorkflowEngine
+      const workflows = yield* Workflows
+      // 6.9
+      const telemetry = yield* Telemetry
 
       const handle = Effect.fn("Reactor.handle")(function* (change: Change) {
         // A run's end (docs/plan/07-agents.md, When a run ends): its task's column, under its lock, then what follows
         // as for any change of the task (the `TaskChanged` it offers).
         if (change._tag === "RunExited") {
           yield* runEnds.ended(change)
+          // 6.5: what the automation runs whose messages it took in cost, and a routine thread's report.
+          yield* routines.runEnded(change)
           // What its agent took in of the branch it's stacked on, and the tasks stacked on it of its own (4.1).
           yield* taskBase.keepStarts(change.task)
           // 4.8: a restack its agent (or a reviewer) held off is done now that none is in its worktree.
@@ -70,16 +86,32 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         // outcome (a round of fixes, the task left for the user, or summaries).
         if (change._tag === "ReviewFinished") {
           yield* reviews.finished(change.thread, change.run, change.outcome, change.attention)
+          // 6.6: a workflow's agent step's thread: its step's output, and the run goes on.
+          yield* engine.stepEnded(change.thread, change.run, change.outcome, change.attention)
+          return
+        }
+        // 6.6: the workflow column that held the task goes on from there, or its workflow moves the merged task to Done.
+        if (change._tag === "WorkflowWorkDone") {
+          yield* engine.workDone(change)
+          return
+        }
+        // 6.6: a workflow run ended: a task it held in its column moves on.
+        if (change._tag === "WorkflowRunSettled") {
+          yield* engine.release(change.run, change.why)
           return
         }
         // 4.6: the agent is changing the work under review: its review and summaries in progress stop.
         if (change._tag === "PromptStarted") {
           yield* reviews.supersede(change.task)
+          // 6.6: so do its workflows' runs, but those waiting for its work at a column.
+          yield* engine.supersede(change.task)
           return
         }
         // 4.5: a project's preview template changed: its tasks' previews follow it.
         if (change._tag === "ProjectChanged") {
           yield* pullRequests.followPreviews(change.before, change.after)
+          // 6.6: a project that starts using workflows has its Review tab's reviews moved into one.
+          if (change.after.use_workflows && !change.before.use_workflows) yield* workflows.moveReviewSettings(change.after)
           return
         }
         const task = change.after ?? change.before
@@ -105,6 +137,8 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
         // prompts is told they expired, and requests to delete it expire (it is deleted anyway).
         if (change.after === null) {
           yield* taskTmp.deleted(task.id)
+          // 6.1: its terminals end with it.
+          yield* terminals.killAll(task.id)
           yield* permissions.expireFor({ _tag: "Task", task: task.id })
           yield* permissions.expireFor({ _tag: "DeletionsOf", task: task.id })
         } else {
@@ -112,15 +146,30 @@ export class Reactor extends Context.Service<Reactor, ReactorShape>()("huntaway-
           if (change.before !== null && change.before.permission_mode !== change.after.permission_mode) yield* permissions.applyMode(change.after.id)
           // Done: the tasks stacked on it keep where they took its branch up to, which may well be deleted now (4.1).
           if (moved && change.after.status === "done") yield* taskBase.keepStarts(change.after.id)
+          // 6.1: Done, its terminals end.
+          if (moved && change.after.status === "done") yield* terminals.killAll(change.after.id)
           // 4.8: a pull request set (or changed): linked into a stack on GitHub with the one below, in the background.
           if (change.after.pr_url !== null && change.before?.pr_url !== change.after.pr_url) yield* ghStacks.link(change.after.id)
           // The project's status scripts for the move, in the background, one task's in order (4.1).
           if (moved && change.before !== null) yield* statusScripts.changed(change.after, change.before.status)
+          // 6.9: telemetry's `task_status`.
+          if (moved && change.before !== null) {
+            const { kind, status, resolution } = change.after
+            yield* telemetry.taskEvent(change.after.id, {
+              event: "task_status",
+              kind,
+              status,
+              outcome: resolution ?? "",
+              attrs: { from: change.before.status },
+            })
+          }
           // Done with no agent left in it, its temp folder goes (in the background); it may be a review thread's run ending.
           if (moved || change.before?.running !== change.after.running) yield* taskTmp.changed(change.after)
           // 4.6: a task that entered In review (or whose run ended there) is reviewed, if a review is due.
           const ended = change.before?.running === true && !change.after.running
           if (change.after.kind === "task" && change.after.status === "in_review" && (moved || ended)) yield* reviews.reconcile(change.after.id)
+          // 6.6: the task entered a column: runs waiting at the one it left stop, and its new column's workflows start.
+          if (moved) yield* engine.onStatus(change)
           // An unpinned title catches up with what was said since.
           if (change.before?.title_pinned === true && !change.after.title_pinned) yield* titles.refreshLater(change.after.id)
         }

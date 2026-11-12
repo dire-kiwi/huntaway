@@ -10,6 +10,7 @@ import { targetLabel, targetOfUrl, targetUrl } from "../github/prWatch/target.ts
 import type { Target } from "../github/prWatch/target.ts"
 import { Actor } from "../platform/Changes.ts"
 import { nowTimestamp } from "../platform/columns.ts"
+import { Telemetry } from "../platform/Telemetry.ts"
 import { Runs } from "../runs/Runs.ts"
 import type { TaskColumns } from "../tasks/decide.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
@@ -59,6 +60,7 @@ export class MergedWatcher extends Context.Service<MergedWatcher, MergedWatcherS
       const worktrees = yield* Worktrees
       const runs = yield* Runs
       const threads = yield* Threads
+      const telemetry = yield* Telemetry
       // The last error of each account and host, so a read that keeps failing is logged once.
       const failing = yield* Ref.make<ReadonlyMap<string, string>>(new Map())
 
@@ -92,6 +94,8 @@ export class MergedWatcher extends Context.Service<MergedWatcher, MergedWatcherS
         const done = yield* changeIf(t, () => ({ status: "done", resolution: "done", attention_reason: null, waiting: false }))
         if (!done) return false
         yield* threads.notice(t.id, "info", `PR #${target.number} was merged on GitHub, so the task is done.`, targetUrl(target)).pipe(Effect.ignore)
+        // 6.9: telemetry's `merge`, merged.
+        yield* telemetry.taskEvent(t.id, { event: "merge", outcome: "merged", attrs: { pr: target.number } })
         // As moving it to Done does, the reactor carries the rest: the tasks waiting on it start; restacking the levels on
         // it (4.8), the next merge (4.7), workflows (6.6) and its terminals (6.1) join it there with their areas.
         const removed = yield* Effect.result(worktrees.removeIfMerged(t.id, true))

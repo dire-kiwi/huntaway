@@ -12,6 +12,7 @@ import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/
 import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
 import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
 import { Button, errorText, PrIcon, PreviewDot, showsPreview, Toggle } from "../../../ui"
+import { LinkedTasks, usesAsana } from "../../ExternalLinks"
 import { TitleSection } from "../Title"
 import type { Mode } from "../layout"
 import { AgentSection } from "./AgentSection"
@@ -24,14 +25,18 @@ import { StartFromRow } from "./StartFromRow"
 import { StatusSection } from "./StatusSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
 import { TrackedWork } from "./TrackedWork"
+// 6.7
+import { RulesSection } from "../../ApprovalRules"
+// 6.6
+import { useWorkflowRuns, WorkflowsList } from "../../Workflows"
 
-// Step 1 (docs/plan/09-frontend.md). Cut until their areas come, each with the smallest edit: the Asana links
-// (ExternalLinks, 6.11), the assistant's approval rules (ApprovalRules, settings: 3.6 and 6.12), the task's workflows
-// (Workflows, 6.6). Subprojects were a legacy branch and are gone. The stack sections "Stacked on" and "Landing after
-// this" are back (stacks, 4.8).
+// Step 1 (docs/plan/09-frontend.md). Subprojects were a legacy branch and are gone. The task's workflows (6.6), the
+// assistant's approval rules (6.7), the stack sections "Stacked on" and "Landing after this" (4.8) and the Asana links
+// (6.11) are back.
 
 export function Details({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
   const project = useProject(task.project_id)
+  const asana = usesAsana(useBoard((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)))
   // A group task has no repository, so nothing to review, merge or depend on. A plan, artifact or
   // diagram has no branch to merge either.
   const groupTask = isGroupTask(task)
@@ -74,6 +79,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
   const { confirmDone, dialog: doneDialog } = useConfirmDone()
   // What its work merges into (API 128): a code task in a project, which merge as they did.
   const incoming = useIncoming(task.id)
+  const workflows = useWorkflowRuns(task)
   // The stack levels on it, and the one it's stacked on (API 142), apart from what it merges into.
   const levels = useLevels(task.id)
   const mergeable = task.kind === "task" && !!task.project_id && !groupTask && !docsOnly && !scratch && !lasting && !task.parent_id
@@ -90,6 +96,13 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
 
       {/* The assistant's is the conversation itself. */}
       {!assistant && <DescriptionSection task={task} />}
+
+      {/* With Asana turned off for the profile, only to show (and unlink) the links it has. */}
+      {task.kind === "task" && ((asana && !lasting) || task.external_links.length > 0) && (
+        <Section title="Asana">
+          <LinkedTasks task={task} canLink={asana} />
+        </Section>
+      )}
 
       {task.fanout_id && <FanoutSection task={task} />}
 
@@ -132,6 +145,12 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
+      {assistant && (
+        <Section title="Rules" collapsible="rules">
+          <RulesSection task={task} />
+        </Section>
+      )}
+
       {task.kind === "task" && !groupTask && !scratch && !lasting && (
         <Section title="Depends on">
           <Dependencies task={task} project={project} />
@@ -152,6 +171,12 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
             }}
           />
           {errs.preview && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{errs.preview}</div>}
+        </Section>
+      )}
+
+      {!!workflows?.workflows.length && (
+        <Section title="Workflows">
+          <WorkflowsList task={task} />
         </Section>
       )}
 

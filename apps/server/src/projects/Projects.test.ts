@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Stream } from "effect"
+import { Deferred, Effect, Fiber, FileSystem, Stream } from "effect"
 import { AgentConfigId, ProfileId } from "@huntaway/contracts"
 import type { Project, Reviewer } from "@huntaway/contracts"
 import { git, gitRepo, tempDir, TestBoard } from "@huntaway/testing"
@@ -64,6 +64,28 @@ describe("project keys", () => {
 })
 
 describe("Projects", () => {
+  it.live("a folder's move and the write that records it aren't cut in two when the caller goes", () =>
+    Effect.gen(function* () {
+      const { projects, dir, make } = yield* setup
+      const fs = yield* FileSystem.FileSystem
+      const p = yield* make("before")
+      const to = `${dir}/after`
+      const renamed = yield* Deferred.make<void>()
+      // A move that renames the folder, then takes a while (as copying sessions does) before it's done.
+      const move = () =>
+        Effect.gen(function* () {
+          yield* fs.rename(p.repo_path, to)
+          yield* Deferred.succeed(renamed, undefined)
+          yield* Effect.sleep("200 millis")
+          return { repo_path: to, worktrees_root: null, scratch_path: null, repo_root: yield* projects.fingerprint(to) }
+        })
+      const fiber = yield* Effect.forkChild(projects.relocate(p.id, { repo_path: to, move_repo: true }, move), { startImmediately: true })
+      yield* Deferred.await(renamed)
+      // The RPC's client goes away mid-move: the interrupt waits for the project to say where the folder is now.
+      yield* Fiber.interrupt(fiber)
+      assert.strictEqual((yield* projects.get(p.id)).repo_path, to)
+    }).pipe(Effect.scoped, Effect.provide(TestBoard())),
+  )
   it.live("creates a project on a repository: its branch, its git facts, its folders, and a project event", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -309,7 +331,7 @@ describe("Projects", () => {
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 
-  it.live("leaves relocation for later: a new folder for a project is refused", () =>
+  it.live("leaves a new folder to Relocation: a plain update refuses it", () =>
     Effect.gen(function* () {
       const { projects, dir, make } = yield* setup
       const p = yield* make("x")

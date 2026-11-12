@@ -23,6 +23,9 @@
 //                and GH_REPO, whether it had a token in its environment (`envToken`), its GH_CONFIG_DIR and the
 //                modes of that folder and its hosts.yml (`configModes`, octal), and the keyring's bus (`dbus`).
 //
+// 6.11 (fake-gh-repos.ts): `api user/repos`, `user/orgs`, `search/repositories`, the GraphQL repositories an account
+// contributed to, `repo clone` (from a repository's `source` folder), `repo create`, `config get git_protocol`.
+//
 // What it answers: `--version`; `auth token|status`; `pr create|view|list|checks|diff|comment|edit|merge|close`;
 // `issue view|list|create|comment`; `run list|view`; `repo view`; `api` for `user`, `repos/O/R`, `repos/O/R/pulls/N`
 // (GET, PATCH), `.../pulls/N/merge` (PUT), `.../pulls/N/merge-async` (PUT, then GET of its id), `repos/O/R/stacks/N`,
@@ -38,6 +41,8 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs"
 
 import type { Account, Check, Issue, Json, Pull, Repo, State } from "./fake-gh-state.ts"
+// 6.11: repositories as an account sees them, cloning and creating them.
+import { contributedQuery, gitProtocol, repoClone, repoCreate, reposApi } from "./fake-gh-repos.ts"
 
 const NOW = "2026-11-12T00:00:00Z"
 const env = process.env
@@ -115,6 +120,11 @@ const BOOLEAN = new Set([
   "admin",
   "force",
   "silent",
+  // 6.11: repo create's.
+  "private",
+  "public",
+  "internal",
+  "push",
 ])
 const SHORT: Record<string, string> = { R: "repo", X: "method", f: "raw-field", F: "field", q: "jq", b: "body", t: "title", B: "base", s: "state", L: "limit" }
 
@@ -700,7 +710,7 @@ const apiCommand = (state: State, as: Account | null, p: Parsed): string => {
   const fields = fieldsOf(p)
   const method = (one(p, "method") ?? (Object.keys(fields).length > 0 ? "POST" : "GET")).toUpperCase()
   const out = (v: unknown) => shown({ positional: [], flags: new Map(p.flags.has("jq") ? [["jq", p.flags.get("jq") ?? []]] : []) }, v, pickFields)
-  if (endpointGiven === "graphql") return out(graphql(state, as, p))
+  if (endpointGiven === "graphql") return out(contributedQuery(state, as, str(fields["query"])) ?? graphql(state, as, p))
   let endpoint = endpointGiven.replace(/^\//, "")
   if (endpoint.includes("{owner}") || endpoint.includes("{repo}")) {
     const [owner, name] = ownerName(repoOf(state, p)).split("/")
@@ -709,6 +719,9 @@ const apiCommand = (state: State, as: Account | null, p: Parsed): string => {
   const host = one(p, "hostname")
   const keyOf = (o: string, r: string) => (host === null || host === "github.com" ? `${o}/${r}` : `${host}/${o}/${r}`)
   if (endpoint === "user") return out({ login: as?.login ?? "" })
+  // 6.11: the repositories an account can clone, its organizations, a search.
+  const listed = reposApi(state, as, endpoint, fields)
+  if (listed !== undefined) return out(listed)
   // GitHub stacks (4.8): POST `repos/O/R/stacks` makes one of `pull_requests` (bottom first); POST `…/stacks/N/add`
   // puts more on its top; POST `…/stacks/N/unstack` takes every pull request out of it.
   const st = /^repos\/([^/]+)\/([^/]+)\/stacks(?:\/(\d+)\/(add|unstack))?$/.exec(endpoint)
@@ -814,6 +827,9 @@ const authCommand = (state: State, sub: string | undefined, p: Parsed): string =
 }
 
 const repoCommand = (state: State, sub: string | undefined, p: Parsed): string => {
+  // 6.11: cloning and creating a repository.
+  if (sub === "clone") return repoClone(state, { fail, repoKey }, p.positional)
+  if (sub === "create") return repoCreate(state, { fail, repoKey }, actingAs(state), p.positional, p.flags)
   if (sub !== "view") return fail(`unknown command "${sub ?? ""}" for "gh repo"`)
   const key = p.positional[2] === undefined ? repoOf(state, p) : (repoKey(p.positional[2]) ?? fail("bad repository"))
   const repo = repoIn(state, key)
@@ -844,6 +860,8 @@ const answer = (state: State): string => {
   const [command, sub] = argv
   const p = parseArgs(argv, command === "api")
   if (command === "auth") return authCommand(state, sub, p)
+  // 6.11: the protocol gh clones with.
+  if (command === "config" && sub === "get" && p.positional[2] === "git_protocol") return gitProtocol(state, one(p, "host"))
   const as = actingAs(state)
   switch (command ?? "") {
     case "pr":

@@ -14,11 +14,12 @@ import {
   taskLabels,
   type DocumentType,
 } from "@huntaway/client"
+import type { TerminalTool } from "@huntaway/contracts"
 import { clsx } from "clsx"
-import { ChevronLeft, ChevronRight, Clock, Folder, Play, Square, X } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { ChevronLeft, ChevronRight, Clock, Folder, Play, Square, Workflow as WorkflowIcon, X } from "lucide-react"
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { boardTaskUrl, groupTaskUrl, href, profileTaskUrl, type Panel } from "../../router"
-import { closeTask, closeTaskModal, navigate } from "../../state/route"
+import { closeTask, closeTaskModal, navigate, setPanelExpanded } from "../../state/route"
 import { board, useBoard } from "../../state/board"
 import { rpc } from "../../state/rpc"
 import { isGroupTask, useHost, useProfileName, useProject } from "../boardHelpers"
@@ -36,14 +37,30 @@ import { TabContent } from "./view/TabContent"
 import { TitleEditor } from "./view/Title"
 import { ReviewDot } from "./Review"
 import { ReviewThreadView } from "./view/ReviewThreadView"
+import { useOpenTools } from "./terminalTools"
+// 6.10: the desktop view.
+import { DesktopButton, DesktopPane, useDesktopOn } from "./Desktop"
+// 6.7: a routine's thread, which the board's snapshot leaves out.
+import { useSoughtTask } from "./view/useSoughtTask"
+// 6.6: a workflow's tabs and runs.
+import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowTabs } from "./Workflows"
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
-// left out here, each with a note: the terminal and its tools (M6), the browser pane and the desktop view (M6),
-// workflows' tabs (6.6), the assistant's brief, memory, routines and
-// action log (M6), finding a routine's thread on other hosts (M6), and the Agents pill (layout/AgentsPill, with the
-// assistant's and the layout's later pieces). Subprojects are a legacy branch, deleted.
+// left out here, each with a note: the browser pane (M6; the desktop view, 6.10, has a fixed half of the width until the
+// browser's splitter comes),
+// and the Agents pill (layout/AgentsPill, with the layout's later pieces). Subprojects are a
+// legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
+// are 6.7's.
 
 const isLabel = (t: Tab): t is DocumentType => LABELS.some((l) => l === t)
+
+// 6.1: the terminal and the host's terminal tools. xterm is large; load it with the first terminal.
+const TerminalPane = lazy(() => import("./Terminal").then((m) => ({ default: m.TerminalPane })))
+const NO_TOOLS: readonly TerminalTool[] = []
+/** A terminal tool's tab. */
+const toolTab = (id: string) => `tool:${id}`
+/** A terminal or a terminal tool: shown expanded, without the details column. */
+const isTerminalTab = (t: Tab) => t === "terminal" || t.startsWith("tool:")
 
 /** A task beside the board, taking half the width, or expanded into a dialog over it; in the narrow layout, over the whole screen. */
 export function TaskPanel({ panel }: { panel: Panel }) {
@@ -143,7 +160,9 @@ export function TaskModal({ taskId }: { taskId: string }) {
 }
 
 export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mode }) {
-  const task = useBoard((s) => s.tasks[taskId])
+  const boardTask = useBoard((s) => s.tasks[taskId])
+  const sought = useSoughtTask(taskId, !!boardTask)
+  const task = boardTask ?? sought.task
   const loaded = useBoard((s) => s.loaded)
   const project = useProject(task?.project_id)
   const host = useHost(task?.host_id)
@@ -153,15 +172,39 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const narrow = useNarrow()
   const canMark = useCanMark(task)
   const [markErr, setMarkErr] = useState<string | null>(null)
+  // 6.1: the host's terminal tools, and which of them this board has open for the task.
+  const tools = useBoard((s) => (task ? s.hostSettings[task.host_id]?.terminal_tools : undefined)) ?? NO_TOOLS
+  const allOpen = useOpenTools((s) => s.open)
+  const openIds = useMemo(() => allOpen.filter((o) => o.taskId === taskId && o.hostId === task?.host_id).map((o) => o.toolId), [allOpen, taskId, task?.host_id])
+  // 6.10: the desktop view (HA-273), beside the main area, on a host whose agents may use its desktop.
+  const [desktop, setDesktop] = useState(false)
+  const desktopOn = useDesktopOn(task?.host_id)
+  // 6.6: the task's workflow runs.
+  const workflows = useWorkflowRuns(task)
   // The opening tab is picked when the task opens (or once it's loaded), not again as its status moves on.
   const found = !!task
   const [tab, setTab] = useState<Tab>(() => openingTab(task))
+  // Terminals are mounted from their first visit on, so switching tabs keeps the connection.
+  const [mounted, setMounted] = useState<Tab[]>([])
   const [shownFor, setShownFor] = useState({ taskId, found })
   if (shownFor.taskId !== taskId || shownFor.found !== found) {
     setShownFor({ taskId, found })
-    setTab(openingTab(board.get().tasks[taskId]))
+    setTab(openingTab(board.get().tasks[taskId] ?? sought.task))
+    setMounted([])
     if (shownFor.taskId !== taskId) setMarkErr(null)
-  }
+  } else if (isTerminalTab(tab) && !mounted.includes(tab)) setMounted([...mounted, tab])
+  // A tool taken out of the host's settings: end what's left of it. Only against the host's own current list, which the
+  // board has while the host is connected (a disconnected host's tools aren't gone).
+  const connected = host?.connected
+  const hostTools = connected ? tools : undefined
+  useEffect(() => {
+    if (!task || !hostTools) return
+    for (const id of openIds)
+      if (!hostTools.some((t) => t.id === id)) {
+        rpc(task.host_id, "terminal.kill", { task_id: task.id, tool: id }).catch(() => {})
+        useOpenTools.getState().closeTool({ hostId: task.host_id, taskId: task.id, toolId: id })
+      }
+  }, [task, hostTools, openIds])
   // A subagent's thread stays shown while the task is open: closing it (or opening another) goes back to the main thread.
   useEffect(() => () => useSubagentView.getState().show(taskId, null), [taskId])
   // Wide enough for the details column: their tab is gone, and the thread shows instead. Not
@@ -176,7 +219,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             <PanelButtons mode={mode} />
           </div>
         )}
-        <div className="p-8 text-muted">{loaded ? "Task not found." : "Loading task…"}</div>
+        <div className="p-8 text-muted">{loaded && !sought.seeking ? "Task not found." : "Loading task…"}</div>
       </div>
     )
   // A reviewer's, summarizer's or workflow step's thread has a view of its own, beside the review it's working on.
@@ -196,21 +239,43 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const labels = taskLabels(task)
   const docsOnly = documentsOnly(task)
   const tabs: Tab[] = [...labels, ...(group !== undefined || scratch || assistant || routine || pensThread || docsOnly ? ["thread"] : ["thread", "changes"])]
-  // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (6.6).
-  // Unless one of the board's is still running, from before it switched.
+  // 6.7: the assistant's morning brief, its memory files and routines.
+  if (assistant) tabs.push("brief", "memory", "routines")
+  // A project that uses workflows has no reviews of the board's (HA-277): a workflow's steps add their own tabs (a
+  // Review one, say). Unless one of the board's is still running, from before it switched.
   const boardReviews = !project?.use_workflows || task.review?.state === "running"
   const reviews = task.kind === "task" && group === undefined && !docsOnly && !scratch && !assistant && !routine && !pensThread && boardReviews
   if (reviews) tabs.push("review")
   // Once there's a summary, or a review that passed to summarise: the tabs fit a phone's width until then.
   const summaries = reviews && (task.summaries.length > 0 || task.review?.state === "passed")
   if (summaries) tabs.push("summary")
+  // A tab for each the task's workflow steps show their output in.
+  if (task.kind === "task") tabs.push(...workflowTabs(workflows).map(workflowTab))
+  // 6.7: the assistant's action log: what its approval rules asked about or blocked.
+  if (assistant) tabs.push("actions")
+  tabs.push("terminal")
   if (!wide) tabs.push("details")
   // Until the render above drops it, a details tab while wide shows the thread beside the column.
-  // A label taken off shows the thread instead; so does a tab this task hasn't got (review, summary, a workflow's).
-  const shown = (wide && tab === "details") || (isLabel(tab) && !labels.includes(tab)) || !tabs.includes(tab) ? "thread" : tab
+  // A label taken off shows the thread instead; so does a tab this task hasn't got (review, summary, a workflow's). A
+  // terminal tool's tab is the tools' own.
+  const shown = (wide && tab === "details") || (isLabel(tab) && !labels.includes(tab)) || (!tabs.includes(tab) && !tab.startsWith("tool:")) ? "thread" : tab
   const docShown = labels.find((l) => l === shown)
   const key = `${keyPrefix(task, project)}-${task.number}`
-  const selectTab = (t: Tab) => setTab(t)
+  // A terminal needs the room: from the side panel it expands into the dialog.
+  const selectTab = (t: Tab) => {
+    if (isTerminalTab(t) && mode === "panel") setPanelExpanded(true)
+    setTab(t)
+  }
+  const showTool = (t: TerminalTool) => {
+    useOpenTools.getState().openTool({ hostId: task.host_id, taskId: task.id, toolId: t.id })
+    selectTab(toolTab(t.id))
+  }
+  const endTool = (t: TerminalTool) => {
+    rpc(task.host_id, "terminal.kill", { task_id: task.id, tool: t.id }).catch(() => {})
+    useOpenTools.getState().closeTool({ hostId: task.host_id, taskId: task.id, toolId: t.id })
+    setMounted((m) => m.filter((x) => x !== toolTab(t.id)))
+    if (tab === toolTab(t.id)) setTab("thread")
+  }
   // From another board (a group's or profile's), its own board opens with this task still beside it.
   const toProject = () => {
     if (group !== undefined) navigate(mode === "page" ? href({ name: "group", hostId: task.host_id, group }) : groupTaskUrl(task.host_id, group, task.id))
@@ -220,6 +285,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
     else if (project) navigate(mode === "page" ? href({ name: "board", projectId: project.id }) : boardTaskUrl(project.id, task.id))
   }
 
+  // 6.10: it needs the room.
+  const toggleDesktop = () => {
+    if (!desktop && mode === "panel") setPanelExpanded(true)
+    setDesktop(!desktop)
+  }
+
   // Errors show under the header, with the marks'.
   const stop = () => {
     setMarkErr(null)
@@ -227,9 +298,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   }
 
   // Starts or stops the agent: last of the controls, or on a phone in the title row, where it isn't scrolled off with them.
-  // Stopping the task also stops its review and summaries, so it can be stopped while only those run (and its
-  // workflows, with 6.6).
-  const reviewing = task.review?.state === "running" || task.summaries.some((s) => s.state === "running")
+  // Stopping the task also stops its review, summaries and workflows, so it can be stopped while only those run.
+  const reviewing = task.review?.state === "running" || task.summaries.some((s) => s.state === "running") || workflowRunning(workflows)
   const run =
     task.running || reviewing ? (
       <Button
@@ -240,7 +310,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             ? "Stop the agent's run, and the background work it left going with it (the banner above the message field stops just that). The agent is told what stopped with your next message."
             : task.running
               ? stopTitle(task, runningAgentSteers(task))
-              : "Stop the review and the summaries"
+              : "Stop the review, the summaries and the task's workflows"
         }
       >
         <Square size={11} fill="currentColor" /> {backgroundIdle(task) ? "Stop all" : "Stop"}
@@ -284,10 +354,36 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             )}
           >
             {t === "review" && <ReviewDot task={task} />}
-            {t}
+            {isWorkflowTab(t) ? (
+              <span className="flex items-center gap-1 normal-case" title="A workflow's tab">
+                <WorkflowIcon size={11} className="text-faint" />
+                {t.slice(3)}
+              </span>
+            ) : (
+              t
+            )}
           </button>
         ))}
       </div>
+      {tools.length > 0 && (
+        <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5" title="Terminal tools (Settings → host)">
+          {tools.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => showTool(t)}
+              title={openIds.includes(t.id) ? `${t.command} (open)` : `Open ${t.command} in a terminal`}
+              className={clsx(
+                "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-[12px]",
+                tab === toolTab(t.id) ? "bg-raised text-fg" : "text-muted hover:text-fg",
+              )}
+            >
+              {openIds.includes(t.id) && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
+              {t.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {desktopOn && <DesktopButton open={desktop} onClick={toggleDesktop} />}
       {!narrow && run}
     </>
   )
@@ -365,11 +461,33 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
         )}
       </header>
       <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
+        {/* Too narrow for both: the desktop takes the main area's place. */}
+        <main className={clsx("min-w-0 flex-1", desktop && !wide && "hidden")}>
+          {mounted.includes("terminal") && (
+            <div className={clsx("h-full", tab !== "terminal" && "hidden")}>
+              <Suspense fallback={null}>
+                <TerminalPane task={task} active={tab === "terminal"} />
+              </Suspense>
+            </div>
+          )}
+          {tools
+            .filter((t) => openIds.includes(t.id) && mounted.includes(toolTab(t.id)))
+            .map((t) => (
+              <div key={t.id} className={clsx("h-full", tab !== toolTab(t.id) && "hidden")}>
+                <Suspense fallback={null}>
+                  <TerminalPane task={task} tool={t} active={tab === toolTab(t.id)} onClose={() => endTool(t)} />
+                </Suspense>
+              </div>
+            ))}
           <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} onShowThread={() => setTab("thread")} />
         </main>
-        {/* A document, and the changes' panels, get the room. */}
-        {wide && !docShown && shown !== "changes" && (
+        {desktop && (
+          <div className={clsx("min-w-0", wide ? "w-1/2 shrink-0" : "flex-1")}>
+            <DesktopPane key={`${task.host_id}:${task.id}`} task={task} onClose={() => setDesktop(false)} />
+          </div>
+        )}
+        {/* A document, the changes' panels and the terminals get the room; so do the desktop, the memory and the brief. */}
+        {wide && !desktop && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && !isTerminalTab(tab) && (
           <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
         )}
       </div>

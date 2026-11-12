@@ -5,7 +5,12 @@ import { Thread } from "../Thread"
 import { Composer } from "../thread/Composer"
 import { WithHeldChoice } from "../../board/MergesInto"
 import { Details } from "./details/Details"
+import { DocumentView } from "../Document"
 import { ChangeSummaryView, ReviewSummary } from "../Review"
+// 6.7
+import { ActionLog } from "../ActionLog"
+// 6.6
+import { isWorkflowTab, WorkflowTabView } from "../Workflows"
 import type { Mode, Tab } from "./layout"
 
 // What empty threads show. The same elements every time, so the (memoized) thread doesn't redraw for them.
@@ -35,16 +40,14 @@ const PEN_EMPTY = (
   </div>
 )
 
-// The tabs kept in chunks of their own (4.2: Changes; Memory, Brief, Routines and the review's patch come with their
-// milestones), loaded once the task view is open so the first open of the tab doesn't wait for them.
+// The tabs kept in chunks of their own (4.2: Changes; 6.7: Memory, Brief, Routines; the review's patch comes with its
+// milestone), loaded once the task view is open so the first open of the tab doesn't wait for them.
 const ChangesView = preloadable(() => import("../../changes/Changes").then((m) => m.ChangesView))
+const MemoryView = preloadable(() => import("../Memory").then((m) => m.MemoryView))
+const BriefView = preloadable(() => import("../Brief").then((m) => m.BriefView))
+const Routines = preloadable(() => import("../Routines").then((m) => m.Routines))
 export function preloadTabs() {
-  ChangesView.preload()
-}
-
-/** What a tab of a later milestone shows on this server until its view comes over. */
-function NotYet({ what }: { what: string }) {
-  return <div className="p-8 text-[13px] text-muted">{what} not yet on this server.</div>
+  for (const c of [ChangesView, MemoryView, BriefView, Routines]) c.preload()
 }
 
 /**
@@ -88,9 +91,9 @@ export function TabContent({
         />
       </WithHeldChoice>
     )
-  // A document has a composer of its own, for asking for changes to it: documents come with M6 (task/Document.tsx).
-  if (docShown) return <NotYet what="Its document is" />
-  const content = tabView(task, mode, tab, shown)
+  // A document has a composer of its own, for asking for changes to it (6.2).
+  if (docShown) return <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />
+  const content = tabView(task, mode, tab, shown, onShowThread)
   if (!content) return null
   // Every other tab keeps the thread's composer under it, and a message sent from it shows the thread (HA-334).
   return (
@@ -105,12 +108,14 @@ export function TabContent({
 
 /**
  * What a tab other than the thread or a document shows above the composer: the Changes tab (changes/Changes.tsx), the
- * review and the summary (task/Review.tsx). A workflow's tabs come with workflows (6.6); the assistant's memory, brief,
- * routines and action log with the assistant (M6).
+ * review and the summary (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
+ * brief, routines and action log (6.7).
  */
-function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab): ReactNode {
+function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, onShowThread: () => void): ReactNode {
   return shown === "memory" ? (
-    <NotYet what="The assistant's memory is" />
+    <Suspense fallback={null}>
+      <MemoryView key={`${task.host_id}:${task.id}`} task={task} onShowThread={onShowThread} />
+    </Suspense>
   ) : tab === "changes" ? (
     <Suspense fallback={null}>
       <ChangesView task={task} />
@@ -123,14 +128,22 @@ function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab): ReactNode {
     <div className="h-full overflow-y-auto p-4">
       <ChangeSummaryView task={task} />
     </div>
-  ) : shown.startsWith("wf:") ? (
-    <NotYet what="Workflows are" />
+  ) : isWorkflowTab(shown) ? (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-3xl px-5 py-5">
+        <WorkflowTabView task={task} label={shown.slice(3)} />
+      </div>
+    </div>
   ) : shown === "actions" ? (
-    <NotYet what="The action log is" />
+    <ActionLog task={task} />
   ) : shown === "brief" ? (
-    <NotYet what="The morning brief is" />
+    <Suspense fallback={null}>
+      <BriefView key={`${task.host_id}:${task.id}`} assistant={task} />
+    </Suspense>
   ) : shown === "routines" ? (
-    <NotYet what="Routines are" />
+    <Suspense fallback={null}>
+      <Routines assistant={task} />
+    </Suspense>
   ) : shown === "details" ? (
     <Details key={task.id} task={task} mode={mode} className="h-full overflow-y-auto" />
   ) : null

@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { Conflict, Invalid, NotFound, Session, TaskRpcs, Unavailable } from "@huntaway/contracts"
 import type { ConflictReason, Task, TaskId } from "@huntaway/contracts"
 import { Actor } from "../platform/Changes.ts"
+import { AgentTools } from "../agents/AgentTools.ts"
 import { ContextMeter } from "../agents/ContextMeter.ts"
 import { StackTitles } from "../agents/StackTitles.ts"
 import { PullRequests } from "../github/PullRequests.ts"
@@ -10,7 +11,9 @@ import { InReview } from "../review/InReview.ts"
 import type { FixChecksRefused } from "../review/InReview.ts"
 import { DevServers } from "../runs/DevServers.ts"
 import { Questions } from "../permissions/Questions.ts"
+import { Push } from "../push/Push.ts"
 import { Reviews } from "../review/Reviews.ts"
+import { WorkflowEngine } from "../workflows/WorkflowEngine.ts"
 import { Summaries } from "../review/Summaries.ts"
 import type { ReviewRefused } from "../review/model.ts"
 import { Runs } from "../runs/Runs.ts"
@@ -67,6 +70,7 @@ const fixRefused = (e: FixChecksRefused) =>
 export const TaskHandlers = TaskRpcs.toLayer(
   Effect.gen(function* () {
     const tasks = yield* Tasks
+    const push = yield* Push
     const refs = yield* TaskRefs
     const runs = yield* Runs
     const deletion = yield* TaskDeletion
@@ -76,12 +80,14 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const stackTitles = yield* StackTitles
     const targets = yield* MergeTargets
     const reviews = yield* Reviews
+    const workflowEngine = yield* WorkflowEngine
     const summaries = yield* Summaries
     /** The task after a review or summary started, or as it is when there was nothing to start. */
     const orTask = (id: TaskId) => (t: Task | null) => (t !== null ? Effect.succeed(t) : tasks.get(id))
     const reviewErrors = { TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused, ReviewRefused: reviewRefused }
     const inReview = yield* InReview
     const pullRequests = yield* PullRequests
+    const agentTools = yield* AgentTools
     return TaskRpcs.of({
       "tasks.list": ({ filter }) => tasks.list(filter).pipe(Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound })),
       "tasks.get": ({ id }) => refs.resolve(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, TaskRefAmbiguous: notFound.TaskRefAmbiguous })),
@@ -92,8 +98,11 @@ export const TaskHandlers = TaskRpcs.toLayer(
           Effect.catchTags({ ProjectNotFound: notFound.ProjectNotFound, ProfileNotFound: notFound.ProfileNotFound }),
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused }),
         ),
+      // A move the user makes doesn't push them a notification of it (6.8): noted before the change, whose event follows.
       "tasks.update": ({ id, patch }) =>
-        Effect.flatMap(actor, (by) => tasks.update(id, patch, by)).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
+        Effect.flatMap(actor, (by) =>
+          Effect.andThen(patch.status === undefined ? Effect.void : push.noteMove(id, patch.status), tasks.update(id, patch, by)),
+        ).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       // Its run is stopped at once and its queue dropped first, then its worktree goes (`TaskDeletion`).
       "tasks.delete": ({ id, delete_branch }) =>
         Effect.flatMap(actor, (by) => deletion.delete(id, { deleteBranch: delete_branch ?? false }, by)).pipe(
@@ -109,7 +118,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
       "tasks.stop": ({ id }) =>
         Effect.gen(function* () {
           yield* tasks.get(id)
-          return yield* reviews.stopTask(id)
+          // 6.6: the agent, its review and summaries (`Reviews.stopTask`), and its workflow runs.
+          return yield* workflowEngine.stopTask(id)
         }).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
       "tasks.review": ({ id }) => reviews.start(id, true).pipe(Effect.flatMap(orTask(id)), Effect.catchTags(reviewErrors)),
       "tasks.extendReview": ({ id }) => reviews.extend(id).pipe(Effect.catchTags(reviewErrors)),
@@ -152,6 +162,8 @@ export const TaskHandlers = TaskRpcs.toLayer(
           Effect.map((unmerged) => ({ unmerged })),
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound }),
         ),
+      // 6.4: the skills for the composer's `/` menu.
+      "tasks.skills": ({ id }) => agentTools.taskSkills(id).pipe(Effect.catchTags({ TaskNotFound: notFound.TaskNotFound })),
     })
   }),
 )

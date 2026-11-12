@@ -28,6 +28,7 @@ const facts = (over: Partial<FinishFacts> = {}): FinishFacts => ({
   configName: "Work",
   mergeHeld: null,
   mergesToDone: false,
+  finishDue: null,
   planOnly: false,
   nudged: false,
   endOfMergeQueue: 9,
@@ -146,10 +147,51 @@ describe("decideFinish", () => {
 
   it("a compaction never moves the card, and says when it stopped or failed", () => {
     const compact = { kind: "compact", attention: null, finished: false } as const
-    assert.deepStrictEqual(decideFinish(facts({ run: compact })), { notices: [], columns: { running: false }, sendQueued: true, nudge: null })
+    assert.deepStrictEqual(decideFinish(facts({ run: compact })), {
+      notices: [],
+      columns: { running: false },
+      sendQueued: true,
+      nudge: null,
+      workDone: false,
+      mergeFinished: false,
+    })
     assert.deepStrictEqual(decideFinish(facts({ run: compact, outcome: Outcome.failed("x") })).notices, [
       { level: "error", text: "Compacting failed", detail: "x" },
     ])
     assert.deepStrictEqual(decideFinish(facts({ run: compact, outcome: Outcome.cancelled })).notices, [{ level: "warning", text: "Compacting stopped" }])
+  })
+
+  // 6.6: the workflow column whose work this was takes the task on (huntaway's runner/output.ts `finish_due`).
+  it("a workflow column holds the task for its run, or needs attention when the agent didn't say its work was done", () => {
+    const due = { status: "in_progress" as const, asksFinish: false }
+    const held = decideFinish(facts({ finishDue: due }))
+    assert.deepStrictEqual([held.columns.status, held.columns.attention_reason, held.workDone], [undefined, null, true])
+    // One that waits for finish_work: without it, Needs attention; with it, held.
+    const asks = { ...due, asksFinish: true }
+    const unfinished = decideFinish(facts({ finishDue: asks }))
+    assert.deepStrictEqual(
+      [unfinished.columns.status, unfinished.columns.attention_reason, unfinished.workDone],
+      ["needs_attention", "The agent ended its turn without saying its work in In progress is done (with finish_work)", false],
+    )
+    assert.isTrue(decideFinish(facts({ finishDue: asks, run: { kind: "prompt", attention: null, finished: true } })).workDone)
+    // A plan that waits for the user isn't the work yet; a todo list held over it asks its agent first.
+    const plan = decideFinish(facts({ finishDue: asks, planOnly: true }))
+    assert.deepStrictEqual([plan.columns.status, plan.columns.attention_reason, plan.workDone], ["needs_attention", PLAN_READY, false])
+    const todos = decideFinish(facts({ finishDue: due, task: { ...task, todos: [todo("Add tests", "pending")] } }))
+    assert.deepStrictEqual([todos.columns.status, todos.workDone, todos.nudge?.length], [undefined, false, 1])
+    // A failure or a question isn't the work done.
+    assert.isFalse(decideFinish(facts({ finishDue: due, outcome: Outcome.failed("x") })).workDone)
+    assert.isFalse(decideFinish(facts({ finishDue: due, run: { kind: "prompt", attention: "Which one?", finished: false } })).workDone)
+  })
+
+  it("a merge its workflow moves to Done: finished leaves the queue for it; not said, it needs attention", () => {
+    const merging = { ...task, status: "ready_for_merge" as const, merging: true }
+    const said = decideFinish(facts({ task: merging, mergesToDone: true, run: { kind: "prompt", attention: null, finished: true } }))
+    assert.deepStrictEqual([said.columns.status, said.columns.merging, said.mergeFinished], [undefined, false, true])
+    const not = decideFinish(facts({ task: merging, mergesToDone: true }))
+    assert.deepStrictEqual(
+      [not.columns.status, not.columns.attention_reason, not.mergeFinished],
+      ["needs_attention", "The agent finished without saying the task is merged (with finish_work)", false],
+    )
   })
 })

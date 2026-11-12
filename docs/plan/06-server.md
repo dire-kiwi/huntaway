@@ -17,10 +17,10 @@ platform      ServerConfig · DataDir · Identity · Db · Migrations · Backup 
               Secrets · Telemetry · Lag
 settings      HostSettings
 profiles      Profiles · AgentConfigs · Usage
-projects      Projects · Relocation
+projects      Projects
 tasks         TaskRepo · Tasks · TaskRefs · Pens · Attachments · TaskTmp · Leftovers
 threads       ThreadStore · Threads · ThreadReaders
-git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts
+git           Git · Worktrees · TaskBase · ChangesTab · Checkpoints · Restack · StatusScripts · Relocation
 github        Gh · PullRequests · PrWatch · GithubRepos · GhStacks
 agents        AgentCli · ClaudeDriver · CodexDriver · Prompts · AgentTools · ApprovalRules · ContextMeter · Tokens · SideCalls · Titles · UsageWindow
 runs          RunRepo · RunDir · Shim · RunFollower · Runs · BackgroundWork · DevServers · Compaction
@@ -110,11 +110,69 @@ tail and publishes it. A subscriber that cannot keep up is cut off with `resync`
 | `Usage`         | Plan limits per config (Anthropic's usage endpoint, Codex's rate limits, a proxy's accounts), "out until", tasks waiting for a reset. In memory, with the durable part on the task |
 | `UsageWindow`   | Restarting a 5-hour window with a throwaway prompt. In `agents/` (2.8): it runs `claude` and records a side call, as `Titles` does         |
 
+#### As built in 6.11 (HE-7): Asana and config archives
+
+- **Asana** is `profiles/Asana.ts` (`me`, `task`, `search`; `taskGid` and `asanaLabel` pure), the old `integrations/asana.ts`
+  over `HttpClient` (15 s), its address `ServerConfig.asanaUrl` (`HUNTAWAY_ASANA_URL`, in `SERVE_ENV`; tests have none
+  unless they give the fake's). `Profiles.update` checks an `asana_token` with Asana (`Invalid` `asana_token` with Asana's
+  words when it's turned down) and stores `asana_user` ("Name (email)"); `Profiles.asanaTasks` is the search
+  (`profiles.asanaTasks`, `AsanaRpcs`, `read`): `Unavailable` (`asana`) when it's off or not connected (the old 409s),
+  `External` (`Asana`) for Asana's failures (the old 502), and none for a task URL the token can't see. The fake is
+  `packages/testing/bin/fake-asana.ts` (`fakeAsana` in `src/`); `scripts/test-server.sh` gives a test server
+  `$HUNTAWAY_ASANA_URL` or an address that answers nothing.
+- **Config archives** are `profiles/ConfigArchives.ts`: `exportArchive(id)` and `importArchive(id, archive, overwrite)`
+  (`configs.exportArchive`, `configs.importArchive`, `ConfigArchiveRpcs`, scope `admin`, the old board-only), `tar czf -`/`xzf
+  -` through `ChildProcessSpawner` with the old entry lists, strict base64 (`decodeArchive`), the folder made 0700, a login
+  there `Conflict` `in_use` unless `overwrite`. Plain calls of one host: copying a config between hosts (7.5, HE-6's
+  `copyConfig`) exports on one and imports on the other. **Decided**: an archive is bounded by the RPC's 16 MiB message
+  (about 12 MiB of tar), not the old route's 256 MiB; the old profile archive (`/profiles/{id}/claude-config`, a
+  profile's own `claude_config_dir`) is gone with that column (configs have it).
+
 ### Projects — [inventory 07](inventory/07-server-root-api.md), [04](inventory/04-git-review.md)
 
 `Projects`: create (a folder, a clone, a new GitHub repository), keys and former keys, settings, archive, delete.
 Changes to one project are serialised by its lock. `Relocation`: recognising a moved repository by its fingerprint
 and moving worktrees and sessions with it.
+
+#### As built in 6.11 (HE-7): Relocation
+
+- **Where.** `git/Relocation.ts` (`Relocation`), not `projects/`: it needs the tasks' rows, git, the worktrees' linked
+  folders (`git/worktree/files.ts` `relink`) and `folderName` (moved to `git/worktree/folder.ts`, re-exported by
+  `Worktrees.ts`), and `Worktrees` holds the folder through it. Its rows besides the projects' are `git/RelocationRepo.ts`
+  (a project's tasks and review threads, the tasks working in a folder, the config folder a conversation started in
+  from `runs`). `Projects` keeps what is the project's: `relocate(id, patch, move)` (under the project's lock: the rest of
+  the patch written and rolled back first, then `move`, then the change stored with the new paths, which are stored
+  alone if the change then fails), `fingerprint`, `repoRoot`, `recordFingerprint(s)` and the `recorder` loop; a plain
+  `update` still refuses a new folder. `ProjectRepo` gained `repoRoot`, `folders`, `unrecorded`, `recordRoot` (only
+  where `repo_path` is still the one looked at).
+- **What it does** is the old `relocate.ts` step for step: `update(id, patch)` (`projects.update`'s handler and an
+  agent's approved `update_project`) checks the folder (`check`: absolute; with `move_repo` the old refusals, `Conflict`
+  `in_use` for another project on it or a setup holding it, `agent_running` for a running agent; else the same
+  repository by its worktrees, its root commits with the shallow-clone ancestor check, or its tasks' branches, all
+  `Invalid` `repo_path` with the old texts), moves it (`rename`, the EXDEV hint), rewrites tasks' `worktree_path` and
+  scratch chats' `work_dir` through `Tasks.change`, runs `git worktree repair`, fixes `.git`/`gitdir` and submodule links
+  by hand, relinks linked folders, copies Claude transcripts newer-only keeping their times (Codex threads skipped), and
+  returns the paths that moved with it and the new fingerprint. `Approvals` checks a new `repo_path` with
+  `Relocation.check` before asking (`Projects.preview` now shows the path as given).
+- **Moving and holding** are a `Ref` in the service: a move marks the project moving (a `Deferred` its waiters await)
+  and is refused while a setup holds the folder; `hold(project)` (around `Worktrees.setup`'s lock, nested setups
+  included) waits for a move under way, then counts itself in; `settled(project)` is what both launches
+  (`LaunchFacts.claude`/`codex`, before the project is read) wait on. No polling. `isMoving` is for tests.
+- **Fingerprints.** `Worktrees.setup` records the project's fingerprint once its folder is a repository (the old
+  `record_fingerprint`). `Projects.recorder` (Main's `ProjectLoops`, beside `RunLoops`/`PrLoops`, so tests run a pass
+  themselves) records them at start and hourly.
+- **Tests.** `git/Relocation.test.ts` has every case of the old `git/relocate/tests.test.ts` and the old
+  `worktree_files.test.ts` case that moved a repository with its links. Changed: the two key races can't be interleaved
+  as the old ones were (the key is checked where it's stored): one key goes to one project whichever commits first, and
+  a rename meanwhile waits for the move under the project's lock; "a change that can't be stored" uses `review_rounds: 99`
+  (`use_worktrees: null` doesn't decode); the setup hold uses named pipes, not a polling script. The recorder's hourly
+  timing isn't tested (its pass is). The 4.1 note "Not here: relocation's hold on the project's folder during a setup"
+  above is done by this.
+
+As built in 6.12 (HE-7), for the project settings' Prompts tab: `projects.systemPrompt` (`{ id, options }`, the old
+`GET /projects/{id}/system-prompt`'s query as `SystemPromptOptions`; `NotFound`) is `Prompts.preview`, already built in
+2.5; `host.defaultPrompts` gives `PROJECT_PROMPT_DEFAULTS` (`prompts/projectDefaults.ts`) as `DefaultPrompts`, the texts
+themselves, with no service to ask. Both read scope; `rpc/projects.test.ts` calls them in process.
 
 ### Tasks — [inventory 07](inventory/07-server-root-api.md) (7.7–7.9), [09](inventory/09-data-model.md)
 
@@ -412,7 +470,68 @@ As built in 4.5 (HE-5):
   `hasWorkToMerge`, read before the task's lock) are 4.7's, with the other merge facts; linking GitHub stacks when
   `pr_url` is set is 4.8's (`GhStacks`).
 
+#### As built in 6.11 (HE-7): `GithubRepos`
+
+- **Files.** `github/GithubRepos.ts` (the old `integrations/github.ts` and `api/projects.ts`' clone and create) and
+  `github/repos/model.ts` (pure: `checkRepo`, `checkName`, `searchQuery`, `restRepo`/`graphqlRepo`, `latestFirst`, `ghError`,
+  `accountsFromStatus`). The wire is `packages/contracts/src/rpc/githubRepos.ts` (`GithubRepoRpcs`): `profiles.githubAccounts`
+  and `profiles.githubRepos {account?, q?}` (`read`; gh's failures are the list's `error`, as before), `projects.clone
+  {clone}` and `projects.createOnGithub {project}` (`settings`; the latter answers `{project, github}` rather than the
+  project with `github` in it). gh's failures are `External` (`GitHub`); a folder that is the profile's project already is
+  `Conflict` `in_use`.
+- **How gh runs.** Through `Gh.gh` as the profile's account (gh's active one without), which gains `plain` (no
+  `UNSANDBOXED_GIT`: the board's own clone and push are the user's git, hooks and all, as the old `gh_vars`) and `env`.
+  Lists: `api user`, three pages of `user/repos`, the `repositoriesContributedTo` query, a search among the login and its
+  organizations (kept 5 minutes in a `Ref`, on the clock). Clone 60 min, create 15 min, `config get git_protocol` 10 s;
+  gh's process group goes when it's over its time (the spawner's default).
+- **Folders.** The old `FOLDERS` is a `KeyedLock` key, `["folder", <folder>]` (the folder however it's written: each part
+  resolved as it would be once made). The clone or creation and the project's adding run in the service's `FiberSet`
+  under it, so they carry on when the caller goes, and a second request for the folder waits and finds the project. The
+  key is checked before anything is made, and again as the project is added. A failed clone or creation takes away only
+  what it made (the old rollback rules).
+- **The fake gh** (`packages/testing/bin/fake-gh-repos.ts`): `api user/repos`, `user/orgs`, `search/repositories`, the
+  contributed query, `repo clone` (from a repository's `source` folder; `cloneFails`, `cloneBreaks: checkout | after`),
+  `repo create` (adds the repository, `created`/`private`/`pushed`; `createFails`, `pushFails`), `config get git_protocol`
+  (`gitProtocol` by host). Repositories have `description`, `private`, `fork`, `archived`, `pushed_at`, `collaborators`,
+  `contributors`; the state has `orgs`.
+- **Tests.** `github/repos/model.test.ts` and `github/GithubRepos.test.ts` (the old `integrations/github.test.ts` and the
+  GitHub cases of `api/projects.test.ts`, on the fake). Not ported: two creations interleaved in one new folder (the old
+  `slow-fails`, which needs a gh paused mid-call; the rule it checks, parents taken away only while empty, is in the
+  folders-above case) and the old `fake_gh_create`'s real push to a bare repository (the fake records the push).
+
 ### Agents, runs, permissions, board tools — [07-agents.md](07-agents.md)
+
+#### As built in 6.4 (HE-7): `AgentTools`
+
+- **Files.** `agents/AgentTools.ts` (the service), `agents/AgentToolsRepo.ts` (the six tables' rows: `agent_skills`,
+  `agent_mcp_servers`, `agent_tool_switches`, `project_agent_tools`, `skill_sources`, and `thread_tools` read for a
+  thread's skills and the servers a workflow step turns off; no migration), `agents/agentTools/validation.ts` (the old
+  checks and their messages: frontmatter, `SKILL.md`, a server's name and config, others' skill names, what to clone),
+  `effective.ts` (what's on: own, then global by switch, then a thread's extra skills; `google` never for a project; the
+  `/` menu's rules; merging what a run reported), `files.ts` (`discover`, `copySkill`, `syncSkills`: links never
+  followed or copied), `sourcePlan.ts` (a fresh clone's effect on a source's skills, as a plan the repository carries out
+  in one transaction: matched by folder then by name, renames in two steps), `taskSkills.ts` (a Claude task's skills:
+  folders, plugins' installations, synced descriptions, aliases).
+- **Methods.** `global`, `project`, `updateProject`, `setSwitch`, `addSkill`/`updateSkill`/`removeSkill`,
+  `addServer`/`updateServer`/`removeServer` (owner `null` for the host's), `addSource`/`updateSource`/`removeSource`
+  (one at a time: a `Semaphore`; git through `Git` with `GIT_ALLOW_PROTOCOL`, ssh in batch mode, 180 s), `forRun(task)`
+  (skills written, then `RunTools`), `preview(task)` (the same unwritten), `recordSeen(task, init)` (database only: the
+  Claude line handler calls it in the `init` line's transaction), `taskSkills(task)` (Codex's from `CodexQueries.skills`),
+  `removeThreadSkills`. Errors: `ToolInvalid`, `ToolNotFound`, `ToolConflict`, `SourceFailed`; `rpc/agentTools.ts` maps
+  them to `Invalid`, `NotFound`, `Conflict` (`duplicate_name`) and `External` (`git`).
+- **RPCs.** The `agentTools` group (`get`, `project`, `updateProject`, `setSwitch`, `addSource`, `updateSource`,
+  `removeSource`, `addSkill`, `updateSkill`, `removeSkill`, `addServer`, `updateServer`, `removeServer`; the project-scoped
+  routes are the same methods with a `project_id`), `tasks.skills`. Nothing is emitted, as before: the settings read again
+  after a change.
+- **Where runs get them.** `LaunchFacts` gives `forRun(task)` to both launches (it was `noRunTools`); `Prompts` tells a
+  run of the gh server unless its project has its own `gh` or turns it off (`usesServer(preview(task), "gh", true)`;
+  `docsTools` is 6.3's, the same way); `TaskDeletion` removes a deleted task's review threads' skill folders.
+- **Decided.** A task's config for `seen` and the `/` menu is its own, else (no conversation yet) its first available,
+  as `LaunchFacts` picks it; `recordSeen` keys by the task's `claude_config_id` (written at launch). The `/` menu reads a
+  task's cwd as the old `skill_places` did (a ready worktree, else the repository), its documents folder and its group's
+  repositories as added folders. Skill, server and source ids are branded in `contracts/agentTools.ts` (not `ids.ts`).
+- **Left for others.** The assistant's `google` server helpers (`add_global_mcp_server`, `set_profile_switch`) are
+  `addServer` and `setSwitch` (6.7); writing a workflow step's `thread_tools.disabled_mcp_servers` is 6.6's.
 
 ### Review — [inventory 04](inventory/04-git-review.md) (2.12–2.13, 2.18–2.19)
 
@@ -472,6 +591,23 @@ is safe to call at any time.
   `StatusSection` and `TaskCard`. Not ported: `ReviewVerdict` (only the fan-out compare view used it, 2.18 `Fanout`).
 - **Not here.** `Fanout` (2.18) and the merge gate's approval summary (4.7); a workflow's verdict step (`submit_review`
   from a `task_type=workflow` thread, 6.6); the analytics report of `review_stats` (6.x).
+
+#### As built in 6.11 (HE-7): `Fanout`
+
+- `review/Fanout.ts` (`facts`, `pick`; the old `review/fanout.ts`) and `review/FanoutRepo.ts` (siblings by profile and
+  `fanout_id`, run time). The wire is `packages/contracts/src/rpc/fanout.ts` (`FanoutRpcs`): `tasks.fanout {id}` (`read`;
+  the facts as an array, not the old `{tasks}`) and `tasks.pickFanout {id, pick}` (`git`); a task not made from one prompt
+  with others, or with none, is `Invalid` `fanout_id`; picking one completed as not done is `Conflict` `changed_meanwhile`.
+- A pick is one at a time (a `Semaphore`). The others' runs and their reviewers' are aborted (`Runs.abort`), their
+  prompts expired, and waited for by polling (`FanoutStopWait`, a `Context.Reference`: 20 s every 200 ms; tests shorten
+  it) until neither a run is live nor the task is marked `running` (the run's end is written to the task after it exits,
+  HA-51). Then `Tasks.update` to Done/not done as the board, `gh pr close` as the task's account through `Gh.gh`,
+  `Worktrees.teardown` (forced only with `discard_uncommitted`; kept with commits on no branch), the pushed copy deleted
+  (only under its own name, HA-341) and the branch, cleared on the task through `Tasks.change`. Notes go to the threads.
+- **Tests.** `review/Fanout.test.ts` (the old `review/fanout.test.ts`). Not ported: `an_agent_at_work_is_stopped_…`
+  (a live run; `Runs.abort` is the runs area's, and the wait is the case of one that doesn't stop) and
+  `a_task_is_completed_only_once_the_runner_has_written_its_runs_end` (a hook between the run's exit and its end on the
+  task; here the pick waits on the task's `running` too, which the run's end clears).
 
 ### Merge — [inventory 04](inventory/04-git-review.md) (2.14–2.17)
 
@@ -629,6 +765,51 @@ with their tests. A run's state is one row rewritten under the run's lock, so co
 instead of relying on nothing awaiting. The engine never moves a task itself: it calls `Tasks.change` and lets the
 reactor carry the consequences, which removes the old `MOVING`, `CHAIN` and `QUIET` guards against its own echoes.
 
+#### As built in 6.6 (HE-7): `WorkflowEngine`, `Workflows`, the workflow tools
+
+- **Files.** `workflows/graph.ts` (pure: the model's questions — ports, wires, `agentWorks`, `afterDone`, `afterMerge`,
+  `opensPr`, `upstream` — and a run as a value: `plan`, `settle`, `reachable`, `endNodes`, the reasons a run leaves a
+  task where it is, `pickPath`, `keptPath`, `changedSince`, and the values: `render`, `inputValue`, `outputValue`,
+  `columnText` over a `ValueSource` with the earlier runs read beside it), `workflows/check.ts` (`checkGraph`,
+  `checkName`, `cycle`, `dataCycle`), `workflows/read.ts` (a graph an agent gives, read leniently: defaults, null as not
+  given, the old `trigger on status|finished` and `set_status` as column nodes), `workflows/reviewSettings.ts`
+  (`reviewSettingsGraph`, `hasReviewStep`), `WorkflowStore` (the two tables and `thread_tools.disabled_mcp_servers`),
+  `Workflows` (CRUD, a column with the agent's work in one workflow that's on, `moveReviewSettings`), `WorkflowEngine`
+  with its parts in `workflows/engine/` (`start.ts`: start, `onStatus`, `onFinished`, `onMergeFinished`, `resume`;
+  `advance.ts`: the loop and the board's own steps — condition, A/B test, send, an edge into a column, `open_pr`;
+  `agentStep.ts`: the step's thread, `submit`, `stepEnded`; `stop.ts`: `stopRun`, `release`, `unheld`, `mergeLeft`;
+  `facts.ts`: what `WorkflowFacts` reads), `WorkflowApprovals` (the tools' asking), `mcp/tools/workflows.ts`, and
+  `rpc/workflows.ts` (`workflows.*`, contract `packages/contracts/src/rpc/workflows.ts`, types in `workflow.ts`).
+- **Locks.** `KeyedLock` gains `["workflows", task]` (one start per task at a time: the old global `STARTING`) and
+  `["workflowRun", run]` (a run's row read and rewritten by one at a time, `withRun`); neither is held across a step's
+  work (a push, an agent's start), as the old engine didn't hold `STARTING` while advancing.
+- **No echo guards.** A move a step makes is `Tasks.update` with the new `Actor` `Workflow { run, chain }`; the reactor's
+  `TaskChanged` (status moved) calls `WorkflowEngine.onStatus`, which stops runs waiting at a column the task left and
+  starts the new column's workflows in the engine's `FiberSet` (the reactor isn't held up by a push). `CHAIN` is the
+  move's `chain` + 1 (still stopping at `MAX_CHAIN` = 10); `MOVING` is gone; `QUIET` is "a move a run that has ended
+  made back into the column it started at doesn't start it again" (`release`'s move to In review carries its run).
+- **Changes.** `WorkflowWorkDone { task, due, mergeFinished }` (from `RunEnds`, after the column is written: the column
+  that held the task goes on, `onFinished`; or the merging agent said it's merged, `onMergeFinished`) and
+  `WorkflowRunSettled { run, task, why }` (from the engine when a run ends or is stopped for good: `release`). A workflow
+  step's thread's `ReviewFinished` goes to `stepEnded` (and `Reviews.finished` ignores it); `PromptStarted` also
+  `supersede`s (runs but those waiting at a column); `ProjectChanged` (now also offered when `use_workflows` turns on)
+  moves the Review tab's reviews into a workflow. Recovery calls `resume` after the reviews' reconcile.
+- **`WorkflowFacts`** (`agents/WorkflowFacts.ts`, a seam the engine registers, as `MergeFacts`): `startInstructions`
+  and `boardOpensPr` for `Prompts`, `finishDue`, `mergeFinish` and `withDueFinish` for `RunEnds` (its new facts:
+  `finishDue`, and `mergesToDone` read for real), `mergeInstructions` and `mergeFinish` for the merge request
+  (`MergeRequestInput.workflow`). `decideFinish` gains the old `finish_due` rows: held for the column (`workDone`), or
+  "The agent ended its turn without saying its work in … is done (with finish_work)"; a plan waiting for the user and an
+  unfinished todo list come first.
+- **Decided.** The task's Stop is `WorkflowEngine.stopTask` (it calls `Reviews.stopTask`, then stops the workflow runs,
+  "Workflow stopped"); `tasks.stop`'s handler calls it. A run by hand refused says `Conflict` (`changed_meanwhile`, the
+  old 409 text as detail) or `Invalid` (a task of another project). A column clash is `Conflict` `in_use`. Agent-step
+  threads are made with `ReviewRepo.insertThread` (`task_type` `workflow`). Workflow events say "read again":
+  `workflows_changed { project_id, workflow_id }` and `workflow_runs_changed { task_id }` (the client's `workflowsAtom`
+  and `workflowRunsAtom` read them again, as turns are). The board tools' `graph` parameter keeps the old JSON Schema
+  (its enums refuse the old kinds an agent could still name there; stored rows are converted by the importer).
+- **Not here.** The one-time startup move of every `use_workflows` project's reviews (`workflows_reviews_moved`:
+  [14-dropped-and-open.md](14-dropped-and-open.md)); telemetry of runs (6.9).
+
 ### Automations — [inventory 06](inventory/06-integrations.md) (2.3)
 
 `Scheduler` (a five-second tick that claims a due run in one conditional transaction before doing anything; no
@@ -636,11 +817,104 @@ backfill), `Webhooks` (the check order: token, rate limit, signature, enabled, p
 answered 202 before the action runs), `Routines`, `Automations`. Cron and time-zone arithmetic use `Cron` and
 `DateTime` from `effect` in place of the hand-rolled versions, with the old DST cases as tests.
 
+#### As built in 6.5 (HE-7)
+
+- **Files** (`automations/`): `schedule.ts` (pure: the host's zone, `Cron` with the old five fields, `@daily`-style
+  aliases and Sunday as 7; a daily time is a `Cron` too; `align`, active hours, `at`), `model.ts` (the checks, with the
+  old texts as `Invalid`'s reasons), `delivery.ts` (templates, filters, untrusted-data wrapping), `stored.ts` (rows read
+  leniently: left-out fields take their defaults, a label as `task_type` is a label), `AutomationRepo.ts`,
+  `Automations.ts` (CRUD, what the board shows, Run now, runs; `act.ts` the guards and the action, `receive.ts` a
+  delivery's checks, dedupe and coalescing in one transaction), `Scheduler.ts` (`startDue`/`tick`, `markInterrupted`,
+  `prune`; `Scheduler.loop` is `Main`'s `AutomationLoops`, outside `areasLayer` so tests tick it), `Webhooks.ts` (token,
+  rate, then `receive`; the answers' statuses), `Routines.ts`, `RoutineHost.ts`, `precheck.ts`,
+  `AutomationApprovals.ts` (the board tools' asking). The route is `http/webhooks.ts` (`POST /api/hooks/:id/:token`, 1 MiB,
+  413 past it); the tools `mcp/tools/automations.ts`; the RPCs `automations.*` (one `list` for a project's or a
+  profile's, by `project_id` or `profile_id`). Event `automations_changed {project_id, profile_id, automation_id}`.
+- **Time.** The zone is `DateTime.CurrentTimeZone` if the layer has one (tests: Pacific/Auckland, whose rules the old
+  tests made by hand), else `DateTime.zoneMakeLocal()`. `Cron.next` alone runs a time in a DST gap as long after the gap
+  as it was into it (3:30 for a 2:30 that doesn't exist); `cronNext` moves it to the gap's end (3:00), as before. A
+  repeated time runs at its first, once (`Cron`'s default). The rate limit and every timestamp are on `Clock`.
+- **Decided.** Costs: the run that takes an automation's message in is charged with it as it's registered or steered
+  (`RunRepo.chargeAutomationRuns`, from `Runs.register` and `RunInput.steered`); the reactor's `RunExited` step calls
+  `Routines.runEnded` after `RunEnds.ended` (the cost split, and a routine thread's report). A report is a notice with
+  code `routine_report` and the old report as its metadata (`Threads.report`); read is `metadata.read`
+  (`Threads.updateItem`). The old `STARTING` and `IN_FLIGHT` sets are `Ref`s; a claim taken before a database error is
+  given up (the old test). A routine thread is a `TaskRepo.insert` of family `assistant` (it isn't on the board: no
+  `Changes` offer). The routine whose assistant runs elsewhere is refused `Conflict` (`in_use`) on create, and fails
+  its runs, with the old text (the link's name is its id until M7). The approval input has every key the contract's
+  `AutomationChange` has (null where the old one left a key out).
+- **What 6.7 adds.** The assistant area sits below automations, so routines reach it through `RoutineHost`: 6.7 calls
+  `RoutineHost.register({ assistant, workspace, google })` when its layer is built (`assistant`: get or create the
+  profile's assistant; `workspace`: its checked workspace, no symlinks; `google`: the `{{google}}` line). Until then the
+  profile's existing assistant row is used and none is made. 6.7 also prefaces the assistant's prompt with
+  `Routines.unreadReports(assistant)` and calls `Routines.markRead` once its agent has started with them (the old
+  launch's `unread_reports`/`mark_read`), and ports `task/Routines.tsx` (the editor and row take the owner as props).
+- **Not here.** Telemetry's `automation_run` event (6.9); deleting the assistant's routine threads with it and refusing a
+  thread under an assistant being deleted (the assistant is never deleted here; 6.7, with its profile); the read-only
+  server's not mounting the route (`ReadOnlyMain` doesn't exist yet).
+
 ### Documents and docs — [inventory 02](inventory/02-agent-support.md) (2.7–2.8)
 
 `TaskDocuments` (a plan, artifact or diagram a task's agent writes, a version per turn, answers sent back),
 `Docs` (published documents: versions, folders, labels, comments), `DocImages` (AVIF conversion with `sharp`),
 `HostedDocs` (publishing to a docs site).
+
+As built in 6.2 (HE-7), `docs/TaskDocuments.ts` (+ `TaskDocumentRepo.ts`, the `documents` table of the initial schema):
+
+- **Following the runs**: `runs/TurnHooks` (new, in the runs area, `register(hook)`, `toolDone(task)`, `turnEnded(task)`),
+  as the areas below `runs/` register with `AgentRequests`: the Claude line handler calls `toolDone` after a `user` line
+  with a `tool_result` and `turnEnded` after a turn's `result`, the Codex one on `ToolDone` and `TurnEnded`, both after
+  the line's commit; `RunEnds.ended` calls `turnEnded` first of all (what a stopped or failed run wrote is kept before
+  the plan rule reads `documents` in `Checkpoints.planOnly`). `TaskDocuments.registered` registers `follow` and
+  `turnEnded`.
+- **Keeping** (`keepOne`, the old `keep_one`): the file's size and modification time (ms) as a stamp in a `Ref` (lost on
+  a restart, as `SEEN` was), a read outside the transaction, then one transaction that reads the latest version and
+  updates the open one or inserts the next; the end of a turn closes every open version of the task (a label taken off
+  mid-turn included); a change writes `document_at` and emits the task. Over 5 MiB isn't kept, and the turn's end says
+  so as a `warning` notice in the thread. One keep at a time (a semaphore), as the old synchronous ones were.
+  `keepFile(task, label, file, { endOfTurn, daily })` is the same for a file that isn't a label's: the assistant's brief
+  (6.7) with `daily` (one version a day in the host's time zone, `DateTime.zoneMakeLocal`).
+- **`tasks.document`** (`TaskDocumentRpcs`, a group of its own in `packages/contracts/src/rpc/taskDocuments.ts`, scope
+  `read`): `{ id, label?, version? }` → `TaskDocument { label, file, versions, version, content }`; `NotFound` for the
+  task, or a version (`what: "version"`). Its label is a `DocumentLabel`: the brief's (`brief`, with its `items`) is
+  6.7's to add.
+- **Deleting**: a `task_deleted` event removes the task's folder; a `project_deleted` one sweeps `documents/` of the
+  folders whose task is gone (a project's deletion emits no event per task).
+- **Demo**: the old demo's diagram, plan and artifact tasks, each with its file written and its turn ended.
+- **Already there before 6.2**: the prompts (`agents/Prompts`, `prompts/labels.ts`…), `/plan` (`runs/Runs`), writing the
+  own folder without asking (`Permissions`; the old case is now in `Permissions.test.ts`), the labels' checks
+  (`tasks/decide.ts`). Plan answers are the user's message (`tasks.send`), as before: nothing on the server.
+- **Tests**: `docs/TaskDocuments.test.ts` (the old `documents.test.ts` cases for versions, labels and the turn's end; the
+  5 MiB notice; `tasks.document`; the daily document; removal and the sweep), the Codex edit's case in
+  `runs/codex/output.test.ts`, a tool result's in `runs/claude/output.test.ts`, the demo's in `lifecycle/Demo.test.ts`.
+
+As built in 6.3 (HE-7), published documents:
+
+- **Services** (`docs/`): `DocRepo` (docs, versions, pages, labels, images, comments) and `DocsSiteRepo` (the docs
+  site's clients, connections and publish records; tokens read as `Redacted`); `DocsRender`, the hosted app's renderer
+  (`@dire-kiwi/docs-render` 0.2.0, WebAssembly) loaded once on first use; `DocImages` (`take`: the `images` argument and
+  the pages' inline `data:` images, `convert`: `sharp` to AVIF one at a time, `sha256` on `effect/crypto`'s `Digest`,
+  which `platformLayer` now provides); `Docs` (the board's reads and changes, the comments and sending them, and each
+  docs tool's answer; a publish's body is `docs/publish.ts`); `HostedDocs` (the device flow, pasted tokens, renewals,
+  publishing). Rules that read no state are `docRules.ts` (slugs, labels and their spelling, the label tree, folder
+  renames, the comments' message) and `imageRules.ts` (names, signatures, inline images, code spans, `<img>` refs), each
+  the old function's cases as tests. `--demo`'s "Rollout plan" is `Docs.seedDemo` (`docs/demo.ts`), called from
+  `lifecycle/Demo.ts`.
+- **The wire**: `docs.*` (05-protocol.md's list; payloads by `profile_id` and `slug`, a version by its number, null the
+  latest). Scopes: reads `read`; moving, relabelling, deleting, renaming folders, publishing and the docs site
+  `settings`; comments and sending them `operate` (they send a message to an agent, as `tasks.send` does). Events `docs
+  {profile_id, slug, deleted?}`, `doc_comments {profile_id, slug}`, `docs_site {profile_id}`; `@huntaway/client` keeps
+  the latest of each per profile (`HostBoard.docs`, `docsSeqAtom`), which the Docs page reads again on. A rendered
+  page's `<img>` keeps the old route's address (`/api/profiles/<id>/doc_images/<sha>`) as a marker the page swaps for
+  `docs.image`'s data, as there is no such HTTP route. New `ConflictReason`s: `not_connected`, `no_task`,
+  `nothing_to_send`; `KeyedLock` has `["docs", …]` (a profile's renewal, a document's publishes).
+- **Decided**: errors are the contract's (`Invalid` was 400, `External` 502, `Conflict` 409), with the old messages as
+  their text. A docs site under test is the fake of `packages/testing` (`fakeDocsSite`, an HTTP server in the process);
+  its tests run on the live clock with the intervals shortened (`DocsSiteTiming`, a reference), as they talk to a socket.
+  Sending comments goes through `Runs.send` as the board (`source: "board"`): on a host that runs no agents it is
+  refused (`Unavailable`), where the old server kept the message.
+- **Not here**: a project's own `docs` server or one turned off (6.4: the prompt's docs note is given whenever the board
+  serves it); the old 10-minute memory of docs answers (calls are in `mcp_calls`, 3.1).
 
 ### Assistant — [inventory 02](inventory/02-agent-support.md) (2.12)
 
@@ -648,11 +922,82 @@ answered 202 before the action runs), `Routines`, `Automations`. Cron and time-z
 git folder outside it, no symlinks, a lock per workspace), `Tracked`, `Brief`. Google stays a set-up helper around
 an MCP server.
 
+#### As built in 6.7 (HE-7)
+
+- **Files** (`assistant/`): `Assistant.ts` (get or make the profile's assistant in one transaction that looks first;
+  `send` settles open questions; `open` = refused elsewhere, checked, seeded, with history; the memory API's methods;
+  `whoseWorkspace`), `Memory.ts` (`checked`, `ensure`, `forRun`, `turnEnded` in a `FiberSet` with `idle` for tests, the
+  API's reads and writes) over `memory/workspace.ts` (git with the old environment and `-c` options, gitlinks dropped,
+  `O_NOFOLLOW` opens, the list) and `memory/text.ts` (seeds, `cap`, paths, days on `DateTime`, git's output, the import
+  message), `Brief.ts` (`add`, `feedback`, `document`, `keep`) over `briefText.ts`, `Google.ts` (`status`, `setup`,
+  `line`, the refresh-token check over `HttpClient`) over `googleText.ts`, `Tracked.ts` (`remove`; the list's rules were
+  `tracked.ts`, now `trackedList.ts`), `AssistantHooks.ts` (what it registers). `cli/googleAuth.ts` is `huntaway
+  google-auth`: Node's HTTP server on the loopback is given by `bin.ts`, which also provides `FetchHttpClient`,
+  `SecureRandom` and `Digest`.
+- **Reaching up.** `runs/AssistantLaunch` (new, as `TurnHooks`): `workspace(task)` gives the assistant's and its routine
+  threads' cwd (refused, `WorkspaceRefused`, when it isn't its own) and memory, which `LaunchFacts` passes to
+  `Prompts.system` (`RunTold.memory`, last) for both agents and to a task's terminal (`workEnv`); `reports(task)` is the
+  routines' unread reports in front of a prompt run's text, marked read by `Prepared.started` once the agent is spawned
+  (`Runs.launch`). `TurnHooks.turnEnded(task, end?)` gained `end` (`{ compact }`, from the line handlers; none from a
+  run's end): a turn of the assistant or a routine thread keeps the brief (also after each tool call) and commits the
+  workspace; the assistant's own non-compaction turn emits `assistant_reply`. `RoutineHost.register` gets the assistant
+  (made if need be), its checked workspace and `Google.line`. `Routines.finished` emits `routine_report` after posting.
+  `Permissions` lets the assistant and its routine threads write its workspace without asking.
+- **The wire.** The `assistant` group (`contracts/rpc/assistant.ts`): `get`, `send`, `memory`, `memoryFile`,
+  `writeMemoryFile`, `memoryHistory`, `memoryDiff`, `restoreMemory`, `importMemory`, `google`, `setupGoogle`,
+  `addBrief`, `briefFeedback`, and `tasks.removeTracked`; types in `contracts/assistant.ts`. `tasks.document` takes
+  `TaskDocumentLabel` (`brief` too) and gives the brief's `items`. Errors: `NotFound`, `Invalid`, `Conflict` (`in_use`
+  for an assistant elsewhere, `changed_meanwhile` for a stale save), `Unavailable` (a workspace that isn't its own, git
+  failing, an assistant host before M7).
+- **Decided.** A new assistant's `work_dir` is `assistants/<id>` (relative, as before); `checked` takes that or the
+  importer's absolute form. Its config is the profile's `assistant_config_id` if it still has it, else its first.
+  A routine thread's turn commits the workspace too (the old server waited for the assistant's next turn). The brief's
+  document is refused (`NotFound`) for any task but the assistant.
+- **Left out.** The assistant on a host of its own (`on_its_host`, `check_host`, the hub's proxying): 7.4; until then
+  `get`/`send` for a profile that names another host is `Unavailable` ("offline"), and its memory, Google and brief are
+  `Conflict` unless this host has its assistant. Moving a workspace's own `.git` (HA-160): dropped
+  (14-dropped-and-open.md).
+- **Tests**: `assistant/Memory.test.ts` (real git in temp folders), `memory/text.test.ts`, `Assistant.test.ts`,
+  `Brief.test.ts`, `briefText.test.ts`, `Google.test.ts` (a token endpoint of the test's own), `googleText.test.ts`,
+  `cli/googleAuth.test.ts` (the flow with the test as the browser), the workspace's case in `Permissions.test.ts`.
+
 ### Push — [inventory 06](inventory/06-integrations.md) (2.4)
 
 `Push` subscribes to `Events` and decides, per event and per subscription, what notifies (the seven rules), and
 sends by Web Push (VAPID, RFC 8291). With Telegram gone, `AssistantReplied` is emitted by `Assistant` itself. Expo
 push and answering from a lock screen wait for the phone app.
+
+#### As built in 6.8 (HE-7)
+
+- **Files.** `push/Push.ts` (subscriptions and the watcher), `push/PushRepo.ts` (`push_subscriptions`), `push/WebPush.ts`
+  (the VAPID key and one delivery over `HttpClient`, 30 s), `push/crypto.ts` (RFC 8291 `aes128gcm` and the RFC 8292
+  token on `effect/crypto`: `KeyAgreement`, `Kdf`, `Aead`, `Signature`, `Digest`, whose WebCrypto layers `Main`'s platform
+  provides; checked against RFC 8291's example), `push/rules.ts` (the rules and texts as plain functions). No migration.
+- **`Secrets`** (`platform/Secrets.ts`, the smallest one): `get` and `getOrMake` over the `settings` table, as
+  `Redacted`. The VAPID key is `vapid_key`, a JWK `{d, x, y}`: WebCrypto can't import the old bare scalar
+  (`vapid_private_key`) without its public point, so the importer converts it (11-migration.md).
+- **The watcher** (`Push.watcher`, in `areasLayer`, so tests have it) subscribes to `Events`, takes every task and pending
+  prompt as a baseline (nothing about them notifies), and handles each event in order; after `resync`, again from a
+  fresh baseline. Task events notify by `taskEvent` (attention, review after 5 s still so, merge, done). **Prompts** are
+  found on the task's own event (a prompt's raise writes the task's attention in its transaction): each pending prompt of
+  a task in Needs attention not seen before is pushed once (body from `promptText`, never the tool's input, tag
+  `<host>:<task>:<request>`), and the devices it went to aren't told the task needs attention while it waits; a task
+  whose run ended lets its prompts go. **Replies and reports** are two new board events, `assistant_reply {task_id,
+  profile_id}` (for 6.7's `Assistant` to emit at the end of a turn) and `routine_report {id, task_id, automation,
+  outcome, text}` (for 6.5's `Routines` to emit as it posts a report); the web client ignores both. Sends run in the
+  background, one device at a time; `noted` changes a subscription only while it has the endpoint the push went to.
+  `Push.idle` is for tests.
+- **Own moves.** The `tasks.update` handler calls `Push.noteMove` before a status change (the old hub endpoints' place):
+  any RPC move is the user's own, so `huntaway rpc tasks.update` doesn't push either; agents', automations' and the
+  board's moves do. 15 s, on `Clock`.
+- **RPCs**: `hub.push.info` (`read`), `subscribe`, `update`, `unsubscribe`, `test` (`operate`; `test` fails with
+  `External` `push` and why, the old 502). In `HostRpcs` until `HubRpcs` exists (M7). Web subscriptions only: `kind`
+  `expo` isn't taken.
+- **Left out**: Expo push, its receipts, device ownership and answer tokens (the phone app, 14-dropped-and-open.md);
+  linked hosts' events and `hosts_changed` readiness (M7); `IA_PUSH_SUBJECT` (dropped).
+- **Tests**: `push/crypto.test.ts`, `push/rules.test.ts`, `push/Push.test.ts` against `packages/testing`'s
+  `fakePushService` (a push service on 127.0.0.1 that keeps what it's sent) and `pushDevice` (a browser's keys,
+  decrypting on `node:crypto`).
 
 ### Terminal<a id="terminal"></a> — [inventory 05](inventory/05-hosts-update.md) (2.5)
 
@@ -661,12 +1006,79 @@ tool sessions, the reaper. `Pty`: the pseudo-terminal that attaches to a session
 server uses an inline Python helper. Keep that helper in M6 and replace it with a 60-line Rust binary beside the
 shim (`ia-pty`) if Python proves a burden on a release host. Flow control by acknowledgements (384 KiB) is kept.
 
+#### As built in 6.1 (HE-7): `Terminals`, `Pty`
+
+- **The tmux server is the data folder's own, by its socket's path**: every tmux command is `tmux -S <data
+  dir>/tmux.sock …` (`terminal/tmux.ts`), never `-L` and never without one, so it is never the default server, the live
+  board's (the old server's `-L ia-<host>`) or another test server's, and `TMUX` in the server's environment can't send a
+  command to the tmux it runs in. A test records every tmux the service and the pty run and checks each. A data folder
+  whose path is too long for a socket (over 103 bytes) has no terminals and says why. Session names stay `ia-<task>` and
+  `ia-<task>~<tool>`. `scripts/test-server.sh stop` ends the tmux server of the data folder it removes.
+- **`Terminals`** (`terminal/Terminals.ts`): `status`, `open` (a ticket), `serve`, `kill`, `killAll`, `keepalive`, `reap`,
+  and the reaper (`Terminals.reaper`, every 30 s, in `AreasLive` beside the other loops). A session is made where the
+  task's agent works with its config's environment (`LaunchFacts.workEnv`, added: the worktree while it is there, else
+  the repository or the profile's scratch folder; `CLAUDE_CONFIG_DIR` or `CODEX_HOME` and the proxy), `TMPDIR` the task's
+  temp folder until it is done, tmux's environment the agents' (`SERVE_ENV` removed) without `TMUX`. Leases and tickets
+  are `Ref`s of the service. The reaper also ends the sessions of tasks that are gone (deleted with a project or a
+  profile, or while the server was down), which the old server left.
+- **The socket** is `GET /api/terminal/<ticket>?cols=&rows=` (`http/terminal.ts`), as 05-protocol.md has it, not the old
+  `/tasks/<id>/terminal/ws` with the board token: `terminal.open` (scope `terminal`) gives a ticket for the task and tool,
+  single use, for a minute. A bad ticket is a 403, a task that's gone a 404, no tmux a 503, before the upgrade. The relay
+  (`terminal/attach.ts`, tested on the test clock with a socket and a pty in memory) is the old one: `ready`, output as
+  binary frames until 384 KiB is unacknowledged, `ping` every 15 s, a board that answered one and then went silent for a
+  minute closed (1001). There is no websocket-level ping: `Socket` has none, and the old one only fed proxies.
+- **RPCs**: `terminal.status`, `open`, `kill`, `keepalive` (`packages/contracts/src/rpc/terminal.ts`, with
+  `TerminalStatus` and the control frames' schemas). The status always has `cwd`, `reason` and `tool` (null for none).
+- **Who ends a task's terminals**: the reactor on Done and on deletion (`TaskDeletion`'s note), and a worktree's
+  teardown before its script (`Worktrees.beforeTeardown`, added to the git area for areas below it to register with:
+  `Terminals.registered`). A project or profile deleted with its tasks is left to the reaper.
+- **Left out**: the assistant's workspace and a documents-only task's folder as a terminal's place (they come with their
+  areas: the terminal opens where `LaunchFacts` puts their agent until then); a relayed terminal on another host (M7,
+  `hub.hosts.openRelay`). The pty is still the Python helper (`terminal/Pty.ts`); `ia-pty` was not needed.
+
 ### Desktop, update, analytics — [inventory 05](inventory/05-hosts-update.md), [07](inventory/07-server-root-api.md)
 
 `CuaDriver` and `DesktopClaims` (computer use: one driver process, one task at a time, an operation journal).
 `Supervisor` (the restart file and exit 75), `Updater` (rebuild from a checkout, follow a deployment, take a bundle
 from a hub), `Releases` (check GitHub, download, verify, stage, try, settle, roll back; `app/state.json` shared with
 the desktop shell), `Service` (the systemd user unit with `KillMode=process`). `Analytics`, `Disk`.
+
+#### As built in 6.10 (HE-7): computer use
+
+- **`desktop/`** (below `mcp/`): `CuaDriver` (the one `cua-driver mcp`: found from `HUNTAWAY_CUA_DRIVER`, the newest
+  `<data>/cua-driver/<v>/cua-driver`, or PATH; started by the first call that needs it, under a semaphore; stopped after
+  10 minutes idle by a `FiberHandle` sleep, on the test clock; stopping closes stdin, then the process's scope (a child of
+  the layer's, so a server that stops kills it) after 5 s; the stdio client is `driverProcess.ts`, shaped as
+  `agents/codex/rpc.ts`; the session's variables come from the server's `Config`, else `systemctl --user
+  show-environment`, else a `wayland-N` socket; the lock from logind and `pgrep`, kept 2 s), `DesktopClaims` (holder
+  and viewer targets in `Ref`s, lease 120 s), `DesktopOpRepo` (the journal; `boot` is `Events.boot`; **decided**: a
+  second call with an `op_id` already there is found in the insert's transaction, not by matching SQLite's UNIQUE
+  message), `CuaInstall` (download through `HttpClient`, size refused as it passes, SHA-256 with `effect/crypto`'s
+  `Digest` over the whole archive in memory, `tar -t` checked before `tar -x`, unpacked aside then renamed, older versions
+  removed, the driver stopped; `settled` waits for the install going), `Desktop` (the page's and the viewer's: status,
+  on/off, install, uninstall, stop, check, `frame` with a 400 ms cache, `ops`), `DesktopTools` and `tools.ts` (the
+  server's 11 tools, word for word, through `ToolCalls`; refusals and the driver's failures are error results with the
+  old words, not `ToolError`'s `Error: …`). Pure parts in `cua.ts` (the pinned 0.41.3 archives, `sessionEnv`,
+  `forAgent`, `actSummary`).
+- **How runs get the server**: `McpServers` has `serveWhen(server, gate)` and `serves(server)`; `DesktopTools`
+  registers its tools and the gate (computer use on and a driver found), and `mcp/transport/control.ts`'s
+  `served.desktop` asks it at each launch. `LaunchFacts` reads `served` once and gives the system prompt `desktopHost`
+  (`RunTold.desktopHost`), so the desktop note appears exactly when `mcp.json` has the server.
+- **Configuration** (`ServerConfig`, all three in `SERVE_ENV`): `HUNTAWAY_CUA_DRIVER` (`cuaDriver`),
+  `HUNTAWAY_CUA_DRIVER_RELEASE` (JSON `cuaRelease`, a fake download), `HUNTAWAY_DESKTOP_LOCKED` (`desktopLocked`; when
+  set, the session and the lock aren't asked of the machine). `layerTest` names a driver that isn't there, a release on
+  an unreachable port and an unlocked screen, so no test reaches this machine's desktop or GitHub.
+  `scripts/test-server.sh --fake-desktop` runs `packages/testing/bin/fake-cua-driver` (logging to
+  `<data>/fake-cua.log`); tests use `fakeCuaDriver` (a folder with the call log and a `fail` file).
+- **RPCs**: the `desktop` group (05-protocol.md): `status`, `frame`, `ops` are `terminal`; `setEnabled`, `install`
+  (`Unavailable` with no release for the platform), `uninstall` (`Conflict` `in_use` while installing), `stop`, `check`
+  are `admin`. No events: the page and the viewer poll, as before.
+- **Changed**: an argument a desktop tool doesn't have is refused (`ToolCalls`' argument check), where the old server
+  dropped it; `act` loses `destructiveHint` and `initialize` its `title` (`McpServers` gives `readOnlyHint` only); the
+  answers kept 10 minutes for a reconnect are `mcp_calls`' (07-agents.md).
+- **Not here**: no host capability names computer use (the task view asks `desktop.status`; capabilities come with M7's
+  hosts). Not run: a real Cua Driver, a real screen lock, a real download from GitHub, Claude Code or Codex taking the
+  server's schemas.
 
 As built in 8.1 and 8.2 (`apps/server/src/update/`):
 
@@ -711,6 +1123,47 @@ As built in 8.1 and 8.2 (`apps/server/src/update/`):
   this checkout from a fake GitHub on a free port, updates onto it through the launcher, refuses one that fails its
   smoke test, marks bad one that never comes up (started again, the server runs the good one), and rolls back to the
   server the host was installed as.
+
+#### As built in 6.9 (HE-7): `Telemetry`, `Lag`, `Analytics`, `Disk`
+
+- **Files.** `platform/Telemetry.ts` (the outbox, the exporter's loop, the config and status, the agents' variables, the
+  logs tee's logger and its queue, the minute's metrics), `platform/TelemetryRepo.ts` (its settings, the password as a
+  `Redacted`, the outbox, a task's and a profile's columns), `platform/telemetry/{clickhouse,schema,otlp,backfill}.ts`
+  (the HTTP client over `HttpClient`, the old schema unchanged, the OTLP mapping and the runs' variables, backfill's
+  rows), `platform/Lag.ts`, `http/otlp.ts` (`POST /api/otlp/<run>/v1/<signal>`, the run's secret from
+  `Identity.isRunSecret`), `analytics/{Analytics,Disk,AnalyticsRepo}.ts`, `cli/telemetry.ts` (`init`, `test`,
+  `backfill`), `rpc/{telemetry,analytics}.ts`; contracts `rpc/telemetry.ts` (`admin.telemetry`, `updateTelemetry`,
+  `testTelemetry`, `eventLoop`, all `admin`) and `rpc/analytics.ts` (`report`, `contextStats`, `tokenStats`,
+  `diskUsage`, `read`); `@huntaway/testing`'s `fakeClickHouse`. `--telemetry-url` (`HUNTAWAY_TELEMETRY_URL`) and
+  `HUNTAWAY_LAG_LOG_MS` are in `ServerConfig`, with the server environment's own OTEL variables and `CLAUDE_CONFIG_DIR`/
+  `CODEX_HOME`; the CLI reads `HUNTAWAY_TELEMETRY_PASSWORD` (the old `IA_TELEMETRY_PASSWORD`).
+- **Layers.** `Telemetry`, `Lag` and the logs tee (`Telemetry.logs`, a logger beside the stderr one) are in
+  `platformLayer`, so every area can send; nothing sends unless the host has a ClickHouse. The exporter's loop (flush
+  every 10 s, or at once at 1000 rows, backing off on failures), the minute's metrics and `server_start`
+  (`Telemetry.exporter`), and the 20 ms ticker (`Lag.ticker`) are `PlatformLoops` in `AreasLive`, not in tests, which
+  flush and sample themselves. The logger can't run an effect, so it queues lines (at the host's level, never the
+  `telemetry` module's) and the loop puts them in the outbox, at most 100 a second.
+- **Events sent** (each where its fact is recorded): `task_status` (the reactor, on a status move), `run_start`
+  (`Runs`, once the shim started the agent; `LaunchFacts` says its runtime, model, effort and mode), `run_usage` and
+  `run_end` (`Tokens`, once a run is counted), `side_call` (`SideCalls`; a window restart with the first profile that
+  sends and has the config), `permission` (`ApprovalRules`: decided at once, or when a prompt is settled, with its
+  wait), `review` (`ReviewStats`), `merge` requested (`Merges`) and merged (`MergedWatcher`), `board_tool`
+  (`ToolCalls`, only for a call that began once the host sent), `telemetry_dropped`, `server_start`. Not here:
+  `automation_run` (6.5: `Telemetry.profileEvent`), `link_up`/`link_down` (M7), `server_update` (M8), and `error`
+  (the old crash handler's: this server has none; its error lines go to `logs`). A board tool call resumed after a
+  restart is judged by when this delivery recorded it, not when it first began.
+- **Decided.** Telemetry is in the platform, so its row columns (a task's key and title, a profile's flags) are read
+  with SQL of its own over the areas' tables. The password stays in `settings.telemetry_password` (stored as typed),
+  read only by `TelemetryRepo`, as `04-database.md` says for secrets; there is no `Secrets` service yet. `PATCH`'s
+  checks are `Invalid { field, reason }`. The gzip of a batch and the gunzip of an agent's body are the web streams
+  (`CompressionStream`), as Node's modules are the entry points'. `Lag` measures the ticker's lateness with
+  `Clock.currentTimeNanos` into a histogram of its own (no `monitorEventLoopDelay`); the routes' times on the thread and
+  a stall's "busy" label are gone (requests are fibers that interleave), and so is `route_ms`; the stall log line and
+  `GET /api/debug/event-loop` (now `admin.eventLoop`) remain. `Disk` walks folders with the asynchronous `FileSystem`
+  (`lstat`, blocks, hard links once), not in a worker; the disk's size and free space come from `df -Pk`. Analytics'
+  reads run on the board's connection (no worker either: `04-database.md`'s "slow reads go to a worker" is not built).
+  A finished run's folder is reported kept 14 days (`Disk.RUNS_KEPT_DAYS`), the old constant. The CLI does not ask for
+  a password on a terminal.
 
 ## Hook commands<a id="hook-commands"></a>
 

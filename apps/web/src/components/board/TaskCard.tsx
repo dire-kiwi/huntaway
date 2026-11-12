@@ -48,6 +48,7 @@ import { useNarrow, useTouch } from "../../narrow"
 import { resetsIn, resetTime } from "../ui/usageConfigs"
 import { useBoard } from "../../state/board"
 import { ReviewBadge } from "../task/Review"
+import { ExternalLinkIcon } from "../task/ExternalLinks"
 
 /** How many of the tasks a group task or a plan created are done. */
 export type Progress = { done: number; total: number }
@@ -317,13 +318,15 @@ export const TaskCard = memo(function TaskCard({
       )}
       {wait && <WaitReason wait={wait} className="mt-1 line-clamp-2 text-[12px] leading-snug text-muted" />}
       {!!task.todos?.length && <CardTodos todos={task.todos} />}
-      {(task.branch || task.pr_url || task.cost_usd > 0 || showsPreview(task)) && (
+      {(task.branch || task.pr_url || task.external_links.length > 0 || task.cost_usd > 0 || showsPreview(task)) && (
         <div className="mt-2 flex items-center gap-2 text-[11px] text-faint">
           {showsPreview(task) && task.preview_url && <PreviewDot url={task.preview_url} host={task.host_id} label />}
           {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
           {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
           <ChecksMark task={task} />
-          {/* Its Asana links (task/ExternalLinks) come with Asana on this server. */}
+          {task.external_links.map((l) => (
+            <ExternalLinkIcon key={l.id} link={l} />
+          ))}
           {cost(task.cost_usd) && <span className="ml-auto shrink-0">{cost(task.cost_usd)}</span>}
         </div>
       )}
@@ -392,6 +395,9 @@ export const TaskRow = memo(function TaskRow({
         {task.branch && <BranchIcon branch={task.branch} className={task.worktree_state === "ready" ? "text-muted" : ""} />}
         {task.pr_url && <PrIcon url={task.pr_url} className="text-muted" />}
         <ChecksMark task={task} />
+        {task.external_links.map((l) => (
+          <ExternalLinkIcon key={l.id} link={l} />
+        ))}
         <AgentIcon task={task} />
         {cost(task.cost_usd) && <span>{cost(task.cost_usd)}</span>}
         <span className="w-14 text-right narrow:ml-auto narrow:w-auto narrow:shrink-0">

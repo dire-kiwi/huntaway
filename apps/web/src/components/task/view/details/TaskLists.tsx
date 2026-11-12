@@ -1,10 +1,10 @@
 import { backgroundIdle, taskKey, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
-import { Hourglass, MonitorPlay } from "lucide-react"
+import { GitCompareArrows, Hourglass, MonitorPlay } from "lucide-react"
 import { useMemo } from "react"
 import { inGroupTaskGroup } from "../../../../projectGroups"
 import { useBoard } from "../../../../state/board"
-import { openTask } from "../../../../state/route"
+import { openCompare, openTask } from "../../../../state/route"
 import { isGroupTask } from "../../../boardHelpers"
 import { harnessLabels, useConfigsOf, useFanout } from "../../../board/Fanout"
 import { GroupTaskBadge, useCreatedProgress } from "../../../board/TaskCard"
@@ -12,15 +12,25 @@ import { cost, RunningDot, StatusIcon } from "../../../ui"
 import { TaskTypeBadge } from "../../documentInfo"
 import { Section } from "./Section"
 
-/** The tasks made from the same prompt (IA-227), with what each runs with. Comparing them (changes/Compare) comes with
- *  fan-out (6.11): it reads and picks through the fan-out methods (`tasks.fanout`), which 4.2 left for it. */
+/** The tasks made from the same prompt (IA-227), with what each runs with, to compare them (changes/Compare, 6.11). */
 export function FanoutSection({ task }: { task: Task }) {
   const tasks = useFanout(task)
   const configs = useConfigsOf(tasks)
   if (tasks.length < 2) return null
   const labels = harnessLabels(tasks, configs)
   return (
-    <Section title="Same prompt">
+    <Section
+      title="Same prompt"
+      right={
+        <button
+          className="flex items-center gap-1 text-[11.5px] text-faint hover:text-fg"
+          onClick={() => openCompare(task.id)}
+          title="Compare their work side by side, and pick one"
+        >
+          <GitCompareArrows size={12} /> Compare all {tasks.length}
+        </button>
+      }
+    >
       <div className="-mx-1 space-y-0.5">
         {tasks.map((t, i) => (
           <button

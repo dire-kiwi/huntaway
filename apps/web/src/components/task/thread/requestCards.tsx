@@ -2,13 +2,15 @@ import { useAtomSet } from "@effect/atom-react"
 import { mutations, PERMISSION_MODES, takesTypedAnswer } from "@huntaway/client"
 import { TaskId, type PermissionMode } from "@huntaway/contracts"
 import { clsx } from "clsx"
-import { Check, ChevronRight, FolderPlus, Map as MapIcon, MessageCircleQuestion, Send, ShieldAlert, Trash2, X } from "lucide-react"
+import { Check, ChevronRight, FolderPlus, Map as MapIcon, MessageCircleQuestion, Send, ShieldAlert, Trash2, Workflow as WorkflowIcon, X } from "lucide-react"
 import { memo, useEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from "react"
 import { useBoard } from "../../../state/board"
 import { useProject } from "../../boardHelpers"
 import { Button, Textarea, useAsyncAction } from "../../ui"
 import { ProjectChangeDetail, ProjectCreationDetail, TaskDeletionDetail } from "./approvalDetails"
 import { Markdown } from "./Markdown"
+import { workflowGraph, WorkflowChangeDetail } from "./workflowChange"
+import { graphText } from "../../settings/workflows/text"
 import { usePromptAnswers } from "./promptAnswers"
 import type { Any } from "./threadModel"
 
@@ -856,6 +858,27 @@ export function AutomationChangeCard({ data, hostId }: { data: Any; hostId: stri
   return <ApprovalCard data={data} hostId={hostId} title={data.input?.op === "delete" ? "Delete an automation?" : "Approve an automation?"} />
 }
 
+const WORKFLOW_CARD: Record<string, string> = { create: "Add the workflow", update: "Change the workflow", delete: "Delete the workflow" }
+
+/** A workflow an agent asked to create, change or delete, in its thread: its steps (and what changes) while it waits or once opened. */
 export function WorkflowChangeCard({ data, hostId }: { data: Any; hostId: string }) {
-  return <ApprovalCard data={data} hostId={hostId} title={data.input?.op === "delete" ? "Delete a workflow?" : "Approve a workflow?"} />
+  const op: string = data.input?.op ?? "create"
+  const w = data.input?.workflow
+  const graph = workflowGraph(w)
+  return (
+    <ApprovalCard
+      data={data}
+      hostId={hostId}
+      deletion={op === "delete"}
+      icon={op === "delete" ? Trash2 : WorkflowIcon}
+      title={
+        <>
+          {WORKFLOW_CARD[op] ?? "Change the workflow"} <span className="font-medium">{w?.name}</span>
+          {op === "create" ? ` to ${data.input?.project?.name ?? ""}` : ` in ${data.input?.project?.name ?? ""}`}
+        </>
+      }
+      detail={w ? <WorkflowChangeDetail change={data.input} /> : undefined}
+      summary={data.input?.reason || (graph ? graphText(graph) : undefined)}
+    />
+  )
 }

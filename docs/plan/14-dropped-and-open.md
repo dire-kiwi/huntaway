@@ -22,7 +22,12 @@ versions or old data, or a leftover of the Rust port. If one of these should sta
 | `--broker*` flags, `ssh-host --name/--no-start`, `/profiles/{id}/scratch`, `/profiles/{id}/claude-config` (and with it `profile` in `hub.hosts.copyConfig`) | Removed features kept as no-ops                        | —                                                         |
 | The serde emulation: `_from_json` readers that reproduce Rust's error texts, sorted-key JSON, `hidden()` fields, 422 texts | The Rust port                         | —                                                         |
 | The test seams: `IN_TEST`, `when`/`reached`, `*_BIN` variables read by the code, shortened constants | Tests without layers or a test clock                       | —                                                         |
+| `IA_PUSH_SUBJECT` (6.8): the VAPID `sub` a board names to push services                          | Naming someone other than the project's page                    | — (the subject is the project's GitHub page; a `ServerConfig` flag if wanted) |
 | The hand-written cron and time-zone arithmetic                                                   | `Cron` and `DateTime` do it                                     | —                                                         |
+| Moving an assistant workspace's own `.git` beside it (HA-160), on its first open (6.7)          | Workspaces from before HA-160                                   | The old server moved each one it opened; one never opened since keeps its `.git` in the workspace, which the board leaves alone (its history starts again beside it) |
+| The one-time startup move of the Review tab's reviews into a workflow for projects that used workflows before HA-277 (`move_all_review_settings`, setting `workflows_reviews_moved`) (6.6) | Boards from before HA-277 | Ran on the old board before its import |
+| `Lag`'s time on the thread per HTTP route (`lag.record`, `busy_with`), a stall's "busy" label and telemetry's `route_ms` metric (6.9) | Finding the route that held the one thread | Requests are fibers that interleave here, so a route's share of the thread can't be measured; the stall log and the delay histogram stay |
+| `huntaway telemetry` asking for a password on a terminal (6.9)                                   | Typing an admin's password                                      | `HUNTAWAY_TELEMETRY_PASSWORD` or the URL give it; a script never waits on a prompt |
 
 What is **not** dropped, although it carries an old name: `ia-shim`, branches `ia/…`, `refs/huntaway/…`, the script
 variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names `ia-…`, and the item id prefix
@@ -35,6 +40,13 @@ the lock screen (`/api/push-answer`), the Jest set-up. The old app keeps working
 switched and cannot reach one that has. Sessions and scopes are designed with a device's place in them, and
 `packages/client` is kept free of browser APIs, so the app can be built on this later
 ([09-frontend.md](09-frontend.md#the-phone-app)).
+
+With it, Settings → Network access's paired phones (the old `settings/Devices.tsx`): the panel keeps the board's URL
+and token (6.12).
+
+As built in 6.8: the `expo` subscriptions a board has are listed in Settings and kept, not pushed to (a test push says
+so); `push_answer_tokens` stays in the schema, unused; a push carries no `answer`, and the service worker has no Allow
+or Deny. The `IA_EXPO_*` variables and the receipt loop wait with Expo push.
 
 ## Decisions taken in this plan
 
@@ -71,6 +83,10 @@ Each could have gone another way. They are listed so that a different answer is 
 4. **Who writes prompts.** The plan copies every prompt word for word. Prompt changes wait until after the switch.
 5. **Moving worktrees out of the old folder.** After the switch they stay where they are. A command to move a
    project's worktrees into the new folder is possible and is not planned.
+6. **Reconnecting when the network comes back.** The old page's events socket reconnected at once on the browser's
+   `online` event (HA-38) rather than waiting out its back-off (up to 32 s). The client's sessions retry on their own
+   schedule and do not listen for it; its check (the old hostUpdate's third case) is not ported (6.12, HE-7). It
+   belongs to `packages/client`'s sessions if it is wanted.
 
 ## Risks
 
@@ -116,6 +132,22 @@ read or reasoned, not run.
   run view --job N --log-failed` and `gh pr view` were run against the fake GitHub only, which answers them from its own
   model of a pull request (the shapes are the old code's, which ran against GitHub). Not run: a real Claude Code agent
   waiting on a pull request, a wake with a real agent, a preview on another host than the board's.
+- Adding a project from GitHub, and Asana, against the real services (6.11, HE-7): `gh repo clone`, `gh repo create`
+  (with its push), the repositories' listing and search, and `gh auth status --json=hosts` were run against the fake gh
+  only (the arguments and answers are the old code's, which ran against GitHub); Asana's `users/me`, typeahead and task
+  reads against the fake Asana only. A config archive moved between two real hosts waits for 7.5's copy.
+- M6's outside services (HE-7) against fakes only: web push (a fake push service that decrypts, not FCM, Mozilla or
+  Apple; headless Chromium's push manager is a stand-in), ClickHouse and the agents' OTLP export, a hosted docs site,
+  Google's sign-in, a webhook sender, the Cua Driver (the fake driver; no real screen, lock or download). No real Claude
+  Code or Codex run was given the `docs` or `desktop` servers' tools, a project's own skills and MCP servers, an
+  assistant's workspace or a workflow's agent step: the launch specs and prompts are tested, not a real agent using them.
+- HA-274's check that a touch held on the board doesn't let a plan open a link (`tests/ui/documentCsp.test.mjs`) is
+  skipped (6.2, HE-7): on headless Chromium 155 the board's activation after a touch sent over the DevTools protocol
+  outlasts its 5 s while the plan's frame keeps the focus, so the frame's request opens after `ACTIVATION_MS`. The
+  logic is the old `htmlFrame.ts`'s, unchanged; whether a real touch on a real Chromium behaves the same is not known.
+- A test server started without its fakes reads the real home folder, as the old one did: gh without `--fake-gh` is the
+  real gh (6.11's check read a real account's repository list once), the composer's `/` menu lists `~/.claude/skills`
+  for a task with no config (6.4), and the assistant's Google card looks at `~/.google_workspace_mcp` (6.7). Only reads.
 - The size and time of the board snapshot on a real board; the cost of decoding 2,848 task rows. Measured at M2 (HE-4) on
   synthetic data of that size, not a real board: 5.5 MB in 154 ms (the old client's 15 loads: 5.7 MB, 65 ms);
   [10-testing.md](10-testing.md#measurements).

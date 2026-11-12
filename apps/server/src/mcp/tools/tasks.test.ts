@@ -512,6 +512,18 @@ describe("task tools", () => {
         "get_project",
         "update_project",
         "create_project",
+        // 6.5
+        "list_automations",
+        "create_automation",
+        "update_automation",
+        "delete_automation",
+        "run_automation",
+        // 6.6
+        "list_workflows",
+        "create_workflow",
+        "update_workflow",
+        "delete_workflow",
+        "run_workflow",
       ])
       // Every tool's input is a JSON Schema object: Claude Code drops the whole server's list when one isn't.
       for (const tool of yield* servers.tools("huntaway", false)) {

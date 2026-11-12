@@ -75,7 +75,8 @@ export class HubHostRpcs extends RpcGroup.make(
   Rpc.make("hub.hosts.remove", { payload: { id: LinkId } }).annotate(RequiredScope, "admin"),
   Rpc.make("hub.hosts.copyConfig", {
     payload: CopyConfig,
-    success: Schema.Struct({ ok: Schema.Boolean, files: Schema.NullOr(Schema.Int) }),
+    /** The entries copied (the archive's `files`). */
+    success: Schema.Struct({ ok: Schema.Boolean, files: Schema.NullOr(Schema.Array(Schema.String)) }),
     error: Schema.Union([Invalid, NotFound, HostOffline, Unavailable]),
   }).annotate(RequiredScope, "admin"),
   /** Send this hub's code (or release) to a linked host, which updates and restarts (its `admin.update`). */

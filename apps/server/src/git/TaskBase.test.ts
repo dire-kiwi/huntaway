@@ -6,6 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { git, tempDir, TestBoard } from "@huntaway/testing"
 import type { NewTask, Project, Task, TaskId, TaskPatch } from "@huntaway/contracts"
 import { Reactor } from "../lifecycle/Reactor.ts"
+import { Restack } from "./Restack.ts"
 import { Actor } from "../platform/Changes.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { Projects } from "../projects/Projects.ts"
@@ -27,7 +28,7 @@ import { isGithubCom, remoteRepo } from "./worktree/remote.ts"
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null"
 process.env["GIT_CONFIG_NOSYSTEM"] = "1"
 
-type Env = Worktrees | TaskBase | Tasks | Projects | Profiles | Threads | Git | Reactor | TaskDeletion
+type Env = Worktrees | TaskBase | Tasks | Projects | Profiles | Threads | Git | Reactor | TaskDeletion | Restack
 type Needs = Env | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
 
 /** The whole board, with the git area's own `TaskBase` and `Worktrees` built over a fake GitHub, and `options`. */
@@ -70,7 +71,13 @@ const make = (project: Project, title: string, more: Partial<NewTask> = {}) =>
 const setUp = (id: TaskId) => Effect.flatMap(Worktrees, (w) => w.setup(id))
 const getTask = (id: TaskId) => Effect.flatMap(Tasks, (tasks) => tasks.get(id)).pipe(Effect.orDie)
 const patchTask = (id: TaskId, patch: TaskPatch) => Effect.flatMap(Tasks, (tasks) => tasks.update(id, patch, Actor.user))
-const done = (id: TaskId) => Effect.flatMap(Tasks, (tasks) => tasks.change(id, () => ({ status: "done" }), Actor.board)).pipe(Effect.orDie)
+/** Moves a task to Done and waits for the reactor, which keeps the starts of the tasks stacked on it (`keepStarts`) before
+ * anything deletes its branch, as a move to Done is followed by the reactor on the board. */
+const done = (id: TaskId) =>
+  Effect.flatMap(Tasks, (tasks) => tasks.change(id, () => ({ status: "done" }), Actor.board)).pipe(
+    Effect.orDie,
+    Effect.andThen(Effect.flatMap(Reactor, (r) => r.idle)),
+  )
 const failure = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.map(Effect.flip(effect), (e) => ("reason" in e && typeof e.reason === "string" ? e.reason : e._tag))
 const log = (id: TaskId) =>
@@ -300,92 +307,97 @@ describe("a task's diff", () => {
 })
 
 describe("where a branch starts", () => {
-  it.live("from the latest base", () =>
-    run(
-      Effect.gen(function* () {
-        const base = yield* TaskBase
-        const { repo, other, project } = yield* stackingRepo
-        // Someone else pushes to master.
-        const push = (file: string) => Effect.andThen(commitFile(other, file), Effect.andThen(git(other, ["push", "-q", "origin", "HEAD"]), rev(other, "HEAD")))
-        // A task's worktree: the task, the commit it starts from, whether its branch tracks anything, and its log. It has
-        // nothing of its own to show or merge.
-        const task = (title: string, baseBranch: string | null) =>
-          Effect.gen(function* () {
-            const made = yield* make(project, title)
-            if (baseBranch !== null) yield* patchTask(made.id, { base_branch: baseBranch }).pipe(Effect.orDie)
-            const t = yield* setUp(made.id)
-            const wt = t.worktree_path ?? ""
-            const tracks = (yield* (yield* Git).run(wt, ["rev-parse", "--abbrev-ref", "@{upstream}"])).ok
-            assert.isFalse(yield* hasWork(t), title)
-            const d = yield* diff(t.id)
-            assert.deepStrictEqual([d.merge_base, d.commits, d.patch], [yield* rev(wt, "HEAD"), "", ""], title)
-            return { t, head: yield* rev(wt, "HEAD"), tracks, log: yield* log(t.id) }
-          })
-        const compared = (b: string) => base.compareRef(repo, b)
+  it.live(
+    "from the latest base",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const base = yield* TaskBase
+          const { repo, other, project } = yield* stackingRepo
+          // Someone else pushes to master.
+          const push = (file: string) =>
+            Effect.andThen(commitFile(other, file), Effect.andThen(git(other, ["push", "-q", "origin", "HEAD"]), rev(other, "HEAD")))
+          // A task's worktree: the task, the commit it starts from, whether its branch tracks anything, and its log. It has
+          // nothing of its own to show or merge.
+          const task = (title: string, baseBranch: string | null) =>
+            Effect.gen(function* () {
+              const made = yield* make(project, title)
+              if (baseBranch !== null) yield* patchTask(made.id, { base_branch: baseBranch }).pipe(Effect.orDie)
+              const t = yield* setUp(made.id)
+              const wt = t.worktree_path ?? ""
+              const tracks = (yield* (yield* Git).run(wt, ["rev-parse", "--abbrev-ref", "@{upstream}"])).ok
+              assert.isFalse(yield* hasWork(t), title)
+              const d = yield* diff(t.id)
+              assert.deepStrictEqual([d.merge_base, d.commits, d.patch], [yield* rev(wt, "HEAD"), "", ""], title)
+              return { t, head: yield* rev(wt, "HEAD"), tracks, log: yield* log(t.id) }
+            })
+          const compared = (b: string) => base.compareRef(repo, b)
 
-        // The main checkout is on master, with a change in the way of pulling it.
-        let latest = yield* push("notes")
-        yield* write(`${repo}/notes`, "mine")
-        let r = yield* task("Dirty", null)
-        assert.strictEqual(r.head, latest, r.log)
-        assert.strictEqual(yield* compared("master"), "origin/master")
-        assert.isFalse(r.tracks)
-        assert.include(r.log, "Branching from origin/master, 1 commit ahead of master, which couldn't be fast-forwarded")
-        assert.include(r.log, "(from origin/master)")
-        assert.notStrictEqual(yield* rev(repo, "master"), latest)
+          // The main checkout is on master, with a change in the way of pulling it.
+          let latest = yield* push("notes")
+          yield* write(`${repo}/notes`, "mine")
+          let r = yield* task("Dirty", null)
+          assert.strictEqual(r.head, latest, r.log)
+          assert.strictEqual(yield* compared("master"), "origin/master")
+          assert.isFalse(r.tracks)
+          assert.include(r.log, "Branching from origin/master, 1 commit ahead of master, which couldn't be fast-forwarded")
+          assert.include(r.log, "(from origin/master)")
+          assert.notStrictEqual(yield* rev(repo, "master"), latest)
 
-        // Clean, it's pulled.
-        yield* git(repo, ["checkout", "-q", "notes"])
-        latest = yield* push("b")
-        r = yield* task("Clean", null)
-        assert.deepStrictEqual([r.head, yield* rev(repo, "master")], [latest, latest])
-        assert.strictEqual(yield* compared("master"), "master")
-        assert.include(r.log, "Pulled master from origin/master (2 new commits)")
+          // Clean, it's pulled.
+          yield* git(repo, ["checkout", "-q", "notes"])
+          latest = yield* push("b")
+          r = yield* task("Clean", null)
+          assert.deepStrictEqual([r.head, yield* rev(repo, "master")], [latest, latest])
+          assert.strictEqual(yield* compared("master"), "master")
+          assert.include(r.log, "Pulled master from origin/master (2 new commits)")
 
-        // Local commits that aren't pushed are kept.
-        yield* git(repo, ["commit", "-q", "--allow-empty", "-m", "local"])
-        const local = yield* rev(repo, "master")
-        r = yield* task("Ahead", null)
-        assert.strictEqual(r.head, local, r.log)
-        assert.strictEqual(yield* compared("master"), "master")
+          // Local commits that aren't pushed are kept.
+          yield* git(repo, ["commit", "-q", "--allow-empty", "-m", "local"])
+          const local = yield* rev(repo, "master")
+          r = yield* task("Ahead", null)
+          assert.strictEqual(r.head, local, r.log)
+          assert.strictEqual(yield* compared("master"), "master")
 
-        // Diverged: the upstream, where its pull request goes.
-        latest = yield* push("c")
-        r = yield* task("Diverged", null)
-        assert.strictEqual(r.head, latest)
-        assert.strictEqual(yield* compared("master"), "origin/master")
-        assert.include(r.log, "master has diverged from origin/master; branching from origin/master, without the 1 commit only master has")
-        assert.strictEqual(yield* rev(repo, "master"), local)
+          // Diverged: the upstream, where its pull request goes.
+          latest = yield* push("c")
+          r = yield* task("Diverged", null)
+          assert.strictEqual(r.head, latest)
+          assert.strictEqual(yield* compared("master"), "origin/master")
+          assert.include(r.log, "master has diverged from origin/master; branching from origin/master, without the 1 commit only master has")
+          assert.strictEqual(yield* rev(repo, "master"), local)
 
-        // Pushed without -u, the branch of the same name on origin counts.
-        yield* git(repo, ["reset", "-q", "--hard", "origin/master"])
-        yield* git(repo, ["branch", "-q", "--unset-upstream"])
-        latest = yield* push("d")
-        r = yield* task("No upstream", null)
-        assert.strictEqual(r.head, latest, r.log)
-        assert.strictEqual(yield* compared("master"), "master")
+          // Pushed without -u, the branch of the same name on origin counts.
+          yield* git(repo, ["reset", "-q", "--hard", "origin/master"])
+          yield* git(repo, ["branch", "-q", "--unset-upstream"])
+          latest = yield* push("d")
+          r = yield* task("No upstream", null)
+          assert.strictEqual(r.head, latest, r.log)
+          assert.strictEqual(yield* compared("master"), "master")
 
-        // A base branch only on the remote.
-        yield* git(other, ["push", "-q", "origin", "HEAD:dev"])
-        r = yield* task("Remote only", "dev")
-        assert.strictEqual(r.head, latest, r.log)
-        assert.isTrue(!r.tracks && r.log.includes("(from origin/dev)"), r.log)
-        assert.strictEqual(yield* compared("dev"), "origin/dev")
-        // Its work shows up in its diff.
-        yield* commitFile(r.t.worktree_path ?? "", "feature")
-        const d = yield* diff(r.t.id)
-        assert.strictEqual(d.merge_base, latest)
-        assert.strictEqual((d.commits ?? "").split("\n").filter((l) => l !== "").length, 1)
-        assert.include(d.patch, "+++ b/feature")
+          // A base branch only on the remote.
+          yield* git(other, ["push", "-q", "origin", "HEAD:dev"])
+          r = yield* task("Remote only", "dev")
+          assert.strictEqual(r.head, latest, r.log)
+          assert.isTrue(!r.tracks && r.log.includes("(from origin/dev)"), r.log)
+          assert.strictEqual(yield* compared("dev"), "origin/dev")
+          // Its work shows up in its diff.
+          yield* commitFile(r.t.worktree_path ?? "", "feature")
+          const d = yield* diff(r.t.id)
+          assert.strictEqual(d.merge_base, latest)
+          assert.strictEqual((d.commits ?? "").split("\n").filter((l) => l !== "").length, 1)
+          assert.include(d.patch, "+++ b/feature")
 
-        // Unreachable, it goes by the last fetch.
-        yield* git(repo, ["remote", "set-url", "origin", `${repo}/../gone`])
-        yield* push("e")
-        r = yield* task("Offline", null)
-        assert.strictEqual(r.head, latest, r.log)
-        assert.include(r.log, "Could not fetch origin/master; branching from the copy fetched before")
-      }),
-    ),
+          // Unreachable, it goes by the last fetch.
+          yield* git(repo, ["remote", "set-url", "origin", `${repo}/../gone`])
+          yield* push("e")
+          r = yield* task("Offline", null)
+          assert.strictEqual(r.head, latest, r.log)
+          assert.include(r.log, "Could not fetch origin/master; branching from the copy fetched before")
+        }),
+      ),
+    // Fetches, a pull and worktrees from four kinds of start: under a second here, past 5 s on CI's runner.
+    30_000,
   )
 
   it.live("a task stacked on another starts from its branch and compares with it", () =>
@@ -815,11 +827,14 @@ describe("stacks", () => {
         yield* git(repo, ["merge", "-q", "--squash", a.branch ?? ""])
         yield* git(repo, ["commit", "-qm", "First"])
         yield* done(a.id)
+        // First merged, Second is restacked onto where it went (4.8) before First's branch goes.
+        yield* (yield* Restack).settled(b.id)
         yield* (yield* Worktrees).teardown(a.id, { force: true, deleteBranch: true })
         yield* (yield* TaskDeletion).delete(a.id, { deleteBranch: false }, Actor.user)
-        // Second goes to master, its changes still only its own.
+        // Second goes to master, from the commit it was restacked onto, its changes still only its own.
         const bNow = yield* getTask(b.id)
-        assert.deepStrictEqual([bNow.base_branch, bNow.start_from], ["master", { type: "commit", commit: aTip }])
+        assert.deepStrictEqual([bNow.base_branch, bNow.start_from], ["master", { type: "commit", commit: yield* rev(repo, "master") }])
+        assert.notStrictEqual(aTip, yield* rev(repo, "master"))
         assert.strictEqual(yield* base.taskBase(bNow, project), "master")
         assert.deepStrictEqual(yield* changedFiles(b.id), ["child-file"])
         assert.include(yield* log(b.id), "X-1, which this task landed after, was deleted: it's merged, so this task goes to master")

@@ -1,7 +1,5 @@
-// What a task's message box gets from its host: the boards `@` offers (HA-303), from the old messageBox check.
-//
-// Dropped from the old check: "the / menu lists a skill saved in the project, and picks it" and "$ lists a Codex task's
-// skills": the host's skills list comes with 6.4 (the composer's skill menu is inert until then), and Codex with M5.
+// What a task's message box gets from its host: the boards `@` offers (HA-303) and the skills `/` and `$` list (IA-146,
+// 6.4), from the old messageBox check.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
 import { makeProject, makeTask, seedBoard, startServer, withBrowser } from "./harness.mjs"
@@ -37,5 +35,28 @@ test("@ in the message box offers the boards that let the profile's agents in, a
     assert.equal(await value(), "See work:WRK-1 ")
     await ui.run(["type and @release", "wait role=option[name=/Release notes/]", "press Tab"])
     assert.equal(await value(), `See work:WRK-1 and ${board.project.key}-${notes.number} `)
+  })
+})
+
+// IA-146: typing `/` lists the agent's skills, as the host finds them.
+test("the / menu lists a skill saved in the project, and picks it", async () => {
+  const content = "---\nname: release-notes\ndescription: Write the release notes.\n---\n\nWrite them.\n"
+  await server.rpc("agentTools.addSkill", { project_id: board.project.id, skill: { content } })
+  const task = await makeTask(server, board.project, { title: "Notes", status: "in_review" })
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([`goto /t/${task.id}`, "click thread", "click css=textarea", "type /rel", "wait Write the release notes.", "press Enter"])
+    assert.equal(await ui.page.locator("textarea").inputValue(), "/release-notes ")
+  })
+})
+
+// IA-146 review: `$` is Codex's: the host says which agent a task's config is. The test server can't run Codex, so the
+// task's skills are the board's.
+test("$ lists a Codex task's skills", async () => {
+  const codex = await server.rpc("configs.create", { config: { name: "Codex", config_dir: "", agent: "codex" } })
+  await server.rpc("profiles.update", { id: board.profile.id, patch: { claude_config_ids: [codex.id] } })
+  const task = await makeTask(server, board.project, { title: "Codex notes", status: "in_review", claude_config_id: codex.id })
+  await withBrowser(server, {}, async (ui) => {
+    await ui.run([`goto /t/${task.id}`, "click thread", "click css=textarea", "type $rel", "wait $release-notes", "press Enter"])
+    assert.equal(await ui.page.locator("textarea").inputValue(), "$release-notes ")
   })
 })

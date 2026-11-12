@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { AgentConfig } from "./agentConfig.ts"
 import { Approval, ApprovalAction, ApprovalRulesView } from "./approval.ts"
 import { HostSettings } from "./host.ts"
-import { HostId, ProfileId, ProjectId, RequestId, TaskId } from "./ids.ts"
+import { AutomationId, HostId, ProfileId, ProjectId, RequestId, TaskId, WorkflowId } from "./ids.ts"
 import { Pen } from "./pen.ts"
 import { Profile } from "./profile.ts"
 import { Project } from "./project.ts"
@@ -68,6 +68,55 @@ export const ReleaseDownloadChanged = Schema.Struct({ type: Schema.Literal("rele
 /** A task's checkpoints changed (a turn's was taken, or it was rewound): its turns are read again (`checkpoints.turns`). */
 export const CheckpointsChanged = Schema.Struct({ type: Schema.Literal("checkpoints"), task_id: TaskId, ...seq })
 
+// 6.8: what push notifies of besides tasks, emitted by the areas that know (both are above push).
+/**
+ * A profile's assistant finished a reply (its turn's result; not a compaction's): emitted by `Assistant` (6.7) at the
+ * end of a turn, for push's `replies` (the old `assistant_reply`, which Telegram emitted).
+ */
+export const AssistantReplied = Schema.Struct({ type: Schema.Literal("assistant_reply"), task_id: TaskId, profile_id: ProfileId, ...seq })
+/**
+ * A routine posted its report on the assistant's thread (once per run): emitted by `Routines` (6.5) as it posts it, for
+ * push's `reports` (the old `report` thread message). `task_id` is the routine's thread (else the assistant's), which
+ * the notification opens; `text` is the report's.
+ */
+export const RoutineReported = Schema.Struct({
+  type: Schema.Literal("routine_report"),
+  /** The report message's id, for the notification's tag. */
+  id: Schema.String,
+  task_id: TaskId,
+  automation: Schema.String,
+  outcome: Schema.Literals(["reported", "failed", "asked"]),
+  text: Schema.String,
+  ...seq,
+})
+/**
+ * 6.5: an automation (or routine) was made, changed or deleted, or a run or delivery of it was recorded or its cost
+ * changed: its owner's list and its runs are read again. `project_id` is null for a profile's routine.
+ */
+export const AutomationsChanged = Schema.Struct({
+  type: Schema.Literal("automations_changed"),
+  project_id: Schema.NullOr(ProjectId),
+  profile_id: ProfileId,
+  automation_id: AutomationId,
+  ...seq,
+})
+/** 6.3: a profile's document was published, moved, relabelled or (`deleted`) deleted: it is read again. */
+export const DocsChanged = Schema.Struct({
+  type: Schema.Literal("docs"),
+  profile_id: ProfileId,
+  slug: Schema.String,
+  deleted: Schema.optional(Schema.Boolean),
+  ...seq,
+})
+/** 6.3: a document's comments changed (added, edited, deleted or sent): they are read again. */
+export const DocCommentsChanged = Schema.Struct({ type: Schema.Literal("doc_comments"), profile_id: ProfileId, slug: Schema.String, ...seq })
+/** 6.3: a profile's connection to its docs site changed (a sign-in started, stopped, connected or was forgotten). */
+export const DocsSiteChanged = Schema.Struct({ type: Schema.Literal("docs_site"), profile_id: ProfileId, ...seq })
+/** 6.6: a project's workflow was made, changed or deleted: its workflows are read again (`workflows.list`). */
+export const WorkflowsChanged = Schema.Struct({ type: Schema.Literal("workflows_changed"), project_id: ProjectId, workflow_id: WorkflowId, ...seq })
+/** 6.6: a task's workflow runs changed: they are read again (`workflows.runsOfTask`). */
+export const WorkflowRunsChanged = Schema.Struct({ type: Schema.Literal("workflow_runs_changed"), task_id: TaskId, ...seq })
+
 export const BoardEvent = Schema.Union([
   Hello,
   Resync,
@@ -87,6 +136,18 @@ export const BoardEvent = Schema.Union([
   ReleaseChecked,
   ReleaseDownloadChanged,
   CheckpointsChanged,
+  // 6.8
+  AssistantReplied,
+  RoutineReported,
+  // 6.5
+  AutomationsChanged,
+  // 6.3: documents.
+  DocsChanged,
+  DocCommentsChanged,
+  DocsSiteChanged,
+  // 6.6
+  WorkflowsChanged,
+  WorkflowRunsChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

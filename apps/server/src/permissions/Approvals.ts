@@ -1,6 +1,8 @@
 import { Context, Effect, FileSystem, Layer, Option, Predicate, Result, Schema, Stream } from "effect"
 import { Invalid, ProfileId, ProjectId, ProjectPatch, TaskId } from "@huntaway/contracts"
 import type { Conflict, Profile, Project, Task } from "@huntaway/contracts"
+// 6.11: a new folder is checked before asking, and moved or followed once approved.
+import { Relocation } from "../git/Relocation.ts"
 import { Events } from "../platform/Events.ts"
 import { Identity } from "../platform/Identity.ts"
 import { Proc } from "../platform/Proc.ts"
@@ -220,6 +222,7 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
     Effect.gen(function* () {
       const permissions = yield* Permissions
       const projects = yield* Projects
+      const relocation = yield* Relocation
       const projectRepo = yield* ProjectRepo
       const taskRepo = yield* TaskRepo
       const runs = yield* Runs
@@ -328,10 +331,10 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
         const after = yield* projects.preview(p.id, patch)
         const changed: Array<string> = FIELD_ORDER.filter((k) => Object.hasOwn(patch, k) && !sameJson(p[k], after[k]))
         // A new repository path has to be the project's folder, or where it can move to.
-        if (moveRepo === true) {
-          if (!changed.includes("repo_path")) return yield* new Invalid({ field: "move_repo", reason: "move_repo needs a new repo_path to move the folder to" })
-          changed.push("move_repo")
-        }
+        if (changed.includes("repo_path")) {
+          yield* relocation.check(p, after.repo_path, moveRepo === true)
+          if (moveRepo === true) changed.push("move_repo")
+        } else if (moveRepo === true) return yield* new Invalid({ field: "move_repo", reason: "move_repo needs a new repo_path to move the folder to" })
         // Only what differs, so a setting left as it was can't overwrite a change made meanwhile; with approval,
         // exactly what the user saw.
         const apply: Record<string, unknown> = {}
@@ -349,7 +352,7 @@ export class Approvals extends Context.Service<Approvals, ApprovalsShape>()("hun
       const applyChange = Effect.fnUntraced(function* (input: unknown) {
         const { project, apply } = yield* read(SavedChange, input)
         if (Object.keys(apply).length === 0) return yield* projects.get(project.id)
-        return yield* projects.update(project.id, apply)
+        return yield* relocation.update(project.id, apply)
       })
 
       const updateProject = Effect.fn("Approvals.updateProject")(function* <E>(asker: Asker | null, request: Effect.Effect<ChangeRequest, E>) {

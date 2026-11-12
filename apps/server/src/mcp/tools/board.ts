@@ -1,6 +1,8 @@
 import { Effect } from "effect"
 import { McpServers } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
+// 6.5
+import { automationTools } from "./automations.ts"
 import { penTools } from "./pens.ts"
 import { projectTools } from "./projects.ts"
 import { questionTools } from "./questions.ts"
@@ -8,6 +10,7 @@ import { reviewTools } from "./review.ts"
 import { taskTools } from "./tasks.ts"
 import { trackingTools } from "./tracking.ts"
 import { waitTools } from "./wait.ts"
+import { workflowTools } from "./workflows.ts"
 
 // The board's own server, `huntaway` (docs/plan/07-agents.md, Board tools): every area's tools, registered in the
 // order the old server listed them (mcp.ts `board_tools`), which is the order runs are shown them. An area that adds
@@ -67,6 +70,10 @@ export const BoardTools = McpServers.register(
       ...Object.values(yield* taskTools),
       ...Object.values(yield* penTools),
       ...Object.values(yield* reviewTools),
+      // 6.5
+      ...Object.values(yield* automationTools),
+      // 6.6
+      ...Object.values(yield* workflowTools),
     ]
     return all.toSorted((a, b) => rank(a) - rank(b))
   }),

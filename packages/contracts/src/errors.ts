@@ -36,6 +36,11 @@ export const ConflictReason = Schema.Literals([
   // stack can't merge yet (the detail says why).
   "nothing_to_choose",
   "stack_not_ready",
+  // 6.3: a profile not connected to its docs site (or whose sign-in it no longer takes); a document's comments with no
+  // task to go to, or none unsent.
+  "not_connected",
+  "no_task",
+  "nothing_to_send",
 ])
 export type ConflictReason = typeof ConflictReason.Type
 

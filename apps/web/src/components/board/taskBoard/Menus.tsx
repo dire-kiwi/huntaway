@@ -2,6 +2,7 @@ import { isArchived, keyPrefix, type HostProject as Project, type HostTask as Ta
 import { Resolution } from "@huntaway/contracts"
 import { Schema } from "effect"
 import { useSelection } from "../../../selection"
+import { openCompare } from "../../../state/route"
 import { titleItem } from "../../layout/TitleModal"
 import { reminderItems, starItem } from "../../task/Reminders"
 import { ContextMenu, RESOLUTION_LABELS, StatusIcon, useClock } from "../../ui"
@@ -22,7 +23,7 @@ export function CardMenu({
   projectOf: (t: Task) => Project | undefined
   setDropErr: (msg: string | null) => void
 }) {
-  const { menu, setMenu, moveItems, complete, setPicking, setRenaming, newPen } = menus
+  const { menu, setMenu, moveItems, complete, setPicking, setRenaming, newPen, menuSiblings } = menus
   const now = useClock(1000)
   if (!menu) return null
   return (
@@ -49,7 +50,7 @@ export function CardMenu({
         ...reminderItems(menuTask, () => setPicking(menuTask), setDropErr),
         ...penItems(menuTask, picked, setDropErr, newPen),
         titleItem(() => setRenaming(menuTask), true),
-        // "Compare all from its prompt" (changes/Compare.tsx) is not yet on this server.
+        ...(menuSiblings > 1 ? [{ label: `Compare all ${menuSiblings} from its prompt`, divider: true, onSelect: () => openCompare(menuTask.id) }] : []),
       ]}
       // A right-click on another task may already have opened its menu in place of this one.
       onClose={() => setMenu((m) => (m === menu ? null : m))}

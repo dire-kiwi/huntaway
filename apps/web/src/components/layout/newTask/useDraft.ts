@@ -2,6 +2,7 @@ import { toJson } from "../../ui/json"
 import { useEffect, useState } from "react"
 import { type AttachmentRef } from "@huntaway/client"
 import type { ExternalLink } from "@huntaway/contracts"
+import { usesAsana } from "../../task/ExternalLinks"
 import type { Draft } from "./draft"
 import type { AgentChoice } from "./useAgentChoice"
 import type { EditorText } from "./useEditorText"
@@ -38,11 +39,10 @@ const noAttachments = (files: ReadonlyArray<AttachmentRef>): AttachmentDraft => 
 })
 
 /** The files and Asana tasks it's for, and the draft (with them) kept in localStorage as it's written. */
-export function useDraft({ draft, saved }: Origin, _where: Where, _agent: AgentChoice, { description }: EditorText, { text, pending }: Tokens) {
+export function useDraft({ draft, saved }: Origin, _where: Where, { profile }: AgentChoice, { description }: EditorText, { text, pending }: Tokens) {
   const attach = noAttachments(saved?.files ?? [])
-  // The Asana tasks it's for (task/ExternalLinks): not yet on this server, which has no Asana until later. Those a
-  // draft has are kept in it.
-  const linking = false
+  // The Asana tasks it's for, in the profile it goes in, unless that has Asana turned off (6.11).
+  const linking = usesAsana(profile)
   const [links, setLinks] = useState<ExternalLink[]>(saved?.links ?? [])
   const [pickingLink, setPickingLink] = useState(false)
   const hasContent = !!text.trim() || attach.items.length > 0

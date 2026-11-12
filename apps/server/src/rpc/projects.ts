@@ -1,5 +1,7 @@
 import { Effect } from "effect"
 import { NotFound, ProjectRpcs } from "@huntaway/contracts"
+import { Relocation } from "../git/Relocation.ts"
+import { Prompts } from "../agents/Prompts.ts"
 import { TaskBase } from "../git/TaskBase.ts"
 import { Worktrees } from "../git/Worktrees.ts"
 import type { ProfileNotFound } from "../profiles/Profiles.ts"
@@ -17,13 +19,17 @@ export const ProjectHandlers = ProjectRpcs.toLayer(
     const base = yield* TaskBase
     const worktrees = yield* Worktrees
     const setupThread = yield* SetupThread
+    const relocation = yield* Relocation
+    const prompts = yield* Prompts
     return ProjectRpcs.of({
       "projects.list": ({ profile_id, archived }) => projects.list(profile_id, archived ?? false).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
       "projects.get": ({ id }) => projects.get(id).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
       "projects.create": ({ project }) => projects.create(project).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
-      "projects.update": ({ id, patch }) => projects.update(id, patch).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
+      // 6.11: a new folder moves or follows it (`Relocation`).
+      "projects.update": ({ id, patch }) => relocation.update(id, patch).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
       // Its tasks' worktrees go first (`Worktrees.deleteProject`).
       "projects.delete": ({ id }) => worktrees.deleteProject(id).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
+      "projects.systemPrompt": ({ id, options }) => prompts.preview(id, options).pipe(Effect.catchTag("ProjectNotFound", projectNotFound)),
       "projects.branches": ({ id }) =>
         projects.get(id).pipe(
           Effect.flatMap((p) => base.branches(p.repo_path)),

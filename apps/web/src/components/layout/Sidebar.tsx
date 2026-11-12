@@ -1,11 +1,18 @@
 import { clsx } from "clsx"
-import { Settings, Star, X } from "lucide-react"
-import { useMemo } from "react"
+import { Plus, Settings, Star, X } from "lucide-react"
+import { useMemo, useState } from "react"
 import { useDrawer } from "../../narrow"
 import { type Route } from "../../router"
 import { navigate } from "../../state/route"
 import { profileNames } from "../boardHelpers"
 import { ArchiveProjectModal } from "../settings/ArchivedProjects"
+import { NewProjectModal } from "../settings/NewProjectModal"
+import { ReloadButton, UpdateButton } from "../settings/Server"
+import { UsagePanel } from "../settings/Usage"
+// 6.3
+import { DocsEntry } from "./sidebar/DocsEntry"
+// 6.7
+import { AssistantEntry } from "./sidebar/AssistantEntry"
 import { ContextMenu, IconButton } from "../ui"
 import { GroupNameModal } from "./sidebar/GroupNameModal"
 import { HostProjects } from "./sidebar/HostProjects"
@@ -53,6 +60,8 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
     leaveGroup,
     setNaming,
   })
+  // Add project (6.11).
+  const [adding, setAdding] = useState(false)
   const row: RowProps = { stats: stats.by, hosts, grouped, active, activeProject, profileOf, isPinned, isFavorite, projectMenu }
 
   return (
@@ -74,7 +83,13 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
       <ProfileNav route={route} names={names} active={active} byProfile={stats.byProfile} setMenu={setMenu} />
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
-        {/* The profile's assistant and documents (sidebar/ProfileEntries) are not yet on this server. */}
+        {/* 6.7: the profile's assistant; 6.3: its documents. */}
+        {active && (
+          <div className="space-y-0.5 pb-3 empty:hidden">
+            <AssistantEntry route={route} profile={active} />
+            <DocsEntry route={route} profile={active} />
+          </div>
+        )}
         <MarkedTasks route={route} />
         {favoriteList.length > 0 && (
           <div className="pb-3">
@@ -101,7 +116,9 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
               </span>
             )}
           </span>
-          {/* Add project (settings/NewProjectModal) comes with the settings on this server. */}
+          <IconButton className="ml-auto h-6 w-6" title="Add project" onClick={() => setAdding(true)}>
+            <Plus size={14} />
+          </IconButton>
         </div>
         <div className="space-y-0.5">
           {groups.map((group) => (
@@ -134,14 +151,17 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
         </div>
       </div>
 
-      {/* The usage panel (settings/Usage) and the reload and update buttons (settings/Server) are not yet on this server. */}
+      <UsagePanel profile={active} />
       <div className="border-t border-line p-2">
+        <UpdateButton />
+        <ReloadButton />
         <NavItem active={route.name === "settings"} onClick={() => navigate({ name: "settings" })} icon={<Settings size={15} />}>
           Settings
         </NavItem>
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} title={menu.title} items={menu.items} onClose={() => setMenu(null)} />}
       {archiving && <ArchiveProjectModal project={archiving} onClose={() => setArchiving(null)} />}
+      {adding && <NewProjectModal profile={active} onClose={() => setAdding(false)} />}
       {naming && <GroupNameModal title={naming.title} initial={naming.initial} onClose={() => setNaming(null)} onSave={saveName} />}
     </aside>
   )

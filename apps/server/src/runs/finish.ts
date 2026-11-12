@@ -78,8 +78,13 @@ export interface FinishFacts {
   readonly configName: string
   /** Why it needs attention when its merge target (or the level it lands after) was closed or deleted while it ran (`tasks/lanes.ts` `heldReasonOf`). */
   readonly mergeHeld: string | null
-  /** Its project's workflow moves a merged task to Done (6.6: never yet). */
+  /** Its project's workflow moves a merged task to Done. */
   readonly mergesToDone: boolean
+  /**
+   * 6.6: the workflow column that takes the task on once its agent's work is done (In progress's, or the one whose prompt
+   * it was sent): the status of that column and whether it asked the agent to say so with `finish_work`.
+   */
+  readonly finishDue: { readonly status: Status; readonly asksFinish: boolean } | null
   /** The run may have written or revised only the task's plan, and no other work (HA-198). */
   readonly planOnly: boolean
   /** The last message its agent was sent was the board's nudge to finish its todo list. */
@@ -98,6 +103,10 @@ export interface FinishDecision {
   readonly sendQueued: boolean
   /** Ask the agent to finish its todo list: the items it hasn't. */
   readonly nudge: ReadonlyArray<Todo> | null
+  /** 6.6: the task stays in its column for the workflow column whose work this was (`finishDue`), which goes on from there. */
+  readonly workDone: boolean
+  /** 6.6: its merging agent said it's merged, for its workflow to move it to Done. */
+  readonly mergeFinished: boolean
 }
 
 type Column = readonly [Status | null, string | null]
@@ -111,7 +120,7 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
     // A compaction never moves the card.
     if (f.outcome._tag === "Cancelled") notices.push({ level: "warning", text: "Compacting stopped" })
     else if (failed !== null) notices.push({ level: "error", text: "Compacting failed", detail: failed })
-    return { notices, columns: { running: false }, sendQueued: true, nudge: null }
+    return { notices, columns: { running: false }, sendQueued: true, nudge: null, workDone: false, mergeFinished: false }
   }
   const limit = failed !== null && f.limitAhead ? f.task.limit_reset_at : null
   const waitReset = limit !== null && isTask && !f.task.merging && f.limitWait
@@ -138,18 +147,34 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
   else if (f.task.merging && f.run.finished && f.mergesToDone) {
     column = [null, null]
     mergeFinished = true
-  } else if (f.task.merging) column = ["needs_attention", "The agent finished without marking the task merged"]
-  else if (f.task.remerge) column = ["ready_for_merge", null]
+  } else if (f.task.merging) {
+    column = [
+      "needs_attention",
+      f.mergesToDone ? "The agent finished without saying the task is merged (with finish_work)" : "The agent finished without marking the task merged",
+    ]
+  } else if (f.task.remerge) column = ["ready_for_merge", null]
   else if (lasting === "assistant" || lasting === "pens") column = ["todo", null]
   else if (lasting === "routine") column = ["done", null]
   else column = ["in_review", null]
+  // The workflow column whose work this was takes the task on once it's done (HA-276): it stays in its column for it,
+  // rather than going to In review. One that waits for the agent to say so needs attention without that (but not for a
+  // plan, which isn't the work yet).
+  let workDone = false
+  if (isTask && column[0] === "in_review" && !f.task.merging && f.finishDue !== null && !f.planOnly) {
+    if (f.finishDue.asksFinish && !f.run.finished) column = ["needs_attention", unfinishedWork(f.finishDue.status)]
+    else {
+      column = [null, null]
+      workDone = true
+    }
+  }
   // A run that only wrote or revised the plan: it waits for the user (`Checkpoints.planOnly`, from its turns' checkpoints).
   if (isTask && column[0] === "in_review" && f.planOnly) column = ["needs_attention", PLAN_READY]
   // An unfinished todo list holds the task in In progress (HA-330): its agent is asked to finish it, once.
   let nudge: ReadonlyArray<Todo> | null = null
-  const leaving = isTask && column[0] !== null && column[0] !== "in_progress" && column[0] !== "needs_attention"
+  const leaving = isTask && (workDone || (column[0] !== null && column[0] !== "in_progress" && column[0] !== "needs_attention"))
   const items = leaving && f.task.status === "in_progress" && lasting === null ? unfinished(f.task) : []
   if (items.length > 0) {
+    workDone = false
     if (f.nudged) column = ["needs_attention", todoReason(items)]
     else {
       column = [null, column[1]]
@@ -174,7 +199,21 @@ export const decideFinish = (f: FinishFacts): FinishDecision => {
     columns.position = f.endOfMergeQueue
     notices.push({ level: "info", text: "Back in the merge queue" })
   }
-  return { notices, columns, sendQueued: limit === null, nudge }
+  return { notices, columns, sendQueued: limit === null, nudge, workDone, mergeFinished }
+}
+
+/** Why a task whose agent ended its turn without saying its work in a workflow's column was done needs attention. */
+export const unfinishedWork = (status: Status): string => {
+  const label = {
+    backlog: "Backlog",
+    todo: "To do",
+    in_progress: "In progress",
+    needs_attention: "Needs attention",
+    in_review: "In review",
+    ready_for_merge: "Ready for merge",
+    done: "Done",
+  }[status]
+  return `The agent ended its turn without saying its work in ${label} is done (with finish_work)`
 }
 
 /** The notice before the nudge: the list the task stays in progress for. */

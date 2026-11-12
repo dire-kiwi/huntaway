@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { ProfileId, ProjectId, TaskId } from "../ids.ts"
-import { NewProject, Project, ProjectPatch } from "../project.ts"
+import { NewProject, Project, ProjectPatch, SystemPromptOptions, SystemPromptPreview } from "../project.ts"
 import { Auth, RequiredScope } from "../session.ts"
 import { Task } from "../task.ts"
 
@@ -42,6 +42,15 @@ export class ProjectRpcs extends RpcGroup.make(
   /** Deletes the project and its tasks; its repository folder is left alone. */
   Rpc.make("projects.delete", { payload: { id: ProjectId }, error: Schema.Union([NotFound, Conflict]) }).annotate(RequiredScope, "settings"),
   /** The repository's branches, newest commit first, at most 200 (the old `GET /projects/{id}/branches`). */
+  /**
+   * What the agent of a new thread in the project would be told, for its settings (the old `GET /projects/{id}/system-prompt`):
+   * a task numbered as the project's next, with `options` and the project's settings as they are now. 6.12.
+   */
+  Rpc.make("projects.systemPrompt", {
+    payload: { id: ProjectId, options: SystemPromptOptions },
+    success: SystemPromptPreview,
+    error: NotFound,
+  }).annotate(RequiredScope, "read"),
   Rpc.make("projects.branches", { payload: { id: ProjectId }, success: Schema.Array(Branch), error: NotFound }).annotate(RequiredScope, "read"),
   /**
    * Remove the worktrees of the project's done tasks whose work is merged and that have nothing uncommitted, one at a

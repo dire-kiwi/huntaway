@@ -163,6 +163,22 @@ export const FakeRepo = Schema.Struct({
   stacks: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.Finite))),
   /** What `gh run view --job <id> --log-failed` prints, by job id. */
   jobs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  // 6.11: what a list of repositories shows of it, who else sees it (`user/repos`) or contributed to it (the GraphQL
+  // query), the folder `gh repo clone` clones it from, and why its clone fails. `created` and `pushed`: `gh repo create`
+  // made it, and pushed to it.
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  private: Schema.optional(Schema.Boolean),
+  fork: Schema.optional(Schema.Boolean),
+  archived: Schema.optional(Schema.Boolean),
+  pushed_at: Schema.optional(Schema.NullOr(Schema.String)),
+  collaborators: Schema.optional(Schema.Array(Schema.String)),
+  contributors: Schema.optional(Schema.Array(Schema.String)),
+  source: Schema.optional(Schema.String),
+  cloneFails: Schema.optional(Schema.String),
+  /** Its clone breaks: its checkout (which git keeps, half made), or gh once it's whole (a fork's parent it can't add). */
+  cloneBreaks: Schema.optional(Schema.Literals(["checkout", "after"])),
+  created: Schema.optional(Schema.Boolean),
+  pushed: Schema.optional(Schema.Boolean),
 })
 export type FakeRepo = typeof FakeRepo.Type
 
@@ -202,6 +218,12 @@ export const FakeGitHubState = Schema.Struct({
   help: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   routes: Schema.optional(Schema.Record(Schema.String, FakeRoute)),
   calls: Schema.optional(Schema.Array(FakeGhCall)),
+  // 6.11: an account's organizations (by login), gh's clone protocol by host (default https), and why `gh repo create`
+  // (or its push) fails.
+  orgs: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
+  gitProtocol: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  createFails: Schema.optional(Schema.String),
+  pushFails: Schema.optional(Schema.String),
 })
 export type FakeGitHubState = typeof FakeGitHubState.Type
 

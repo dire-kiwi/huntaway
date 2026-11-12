@@ -11,8 +11,8 @@ export interface NewThread {
   readonly profile_id: ProfileId
   readonly project_id: ProjectId
   readonly parent_id: TaskId
-  /** `summary` for a summary thread; null for a reviewer's. */
-  readonly task_type: "summary" | null
+  /** `summary` for a summary thread, `workflow` for a workflow's agent step (6.6); null for a reviewer's. */
+  readonly task_type: "summary" | "workflow" | null
   readonly title: string
   /** A summary thread's variant (`variantKey`); "" otherwise. */
   readonly description: string

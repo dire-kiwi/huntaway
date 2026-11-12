@@ -78,6 +78,13 @@ export interface ThreadsShape {
   readonly userMessage: (task: TaskId, text: string, meta: UserMessageMeta) => Effect.Effect<WriteNo, TaskNotFound>
   /** Something to tell the user that is not the agent talking. Its item is `legacy:<n>`. */
   readonly notice: (task: TaskId, level: Notice["level"], text: string, detail?: string) => Effect.Effect<WriteNo, TaskNotFound>
+  /**
+   * 6.5: a routine's report in the assistant's thread: a notice with code `routine_report`, `metadata` the report (its
+   * automation, its thread's key, its outcome, the text). Its item is `legacy:<n>`.
+   */
+  readonly report: (task: TaskId, level: Notice["level"], text: string, metadata: Readonly<Record<string, unknown>>) => Effect.Effect<WriteNo, TaskNotFound>
+  /** 6.5: changes an item's fields (`item.updated`: one set to null is removed); nothing if the thread has no such item. */
+  readonly updateItem: (task: TaskId, id: string, patch: Readonly<Record<string, unknown>>) => Effect.Effect<void, TaskNotFound>
   /** Opens a request, or opens one with the same id again in place (without its resolution). */
   readonly openRequest: (task: TaskId, request: NewRequest) => Effect.Effect<WriteNo, TaskNotFound>
   /** Answers or cancels an open request. The first answer wins: one that is not open (any more) fails. */
@@ -277,6 +284,23 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
         })
       })
 
+      const report = Effect.fn("Threads.report")(function* (task: TaskId, level: Notice["level"], text: string, metadata: Readonly<Record<string, unknown>>) {
+        return yield* boardWrite(task, (n, at) => {
+          const item: Item = { id: legacyId(n), type: "notice", level, text, code: "routine_report", created_at: at, metadata: { ...metadata } }
+          return { events: [{ type: "item.added", item }] }
+        })
+      })
+
+      const updateItem = Effect.fn("Threads.updateItem")(function* (task: TaskId, id: string, patch: Readonly<Record<string, unknown>>) {
+        yield* db.tx(
+          Effect.gen(function* () {
+            yield* check(task)
+            if ((yield* store.item(task, id)) === null) return
+            yield* commit(task, { events: [{ type: "item.updated", item_id: id, patch: { ...patch } }] }, yield* nowTimestamp, undefined)
+          }),
+        )
+      })
+
       const openRequest = Effect.fn("Threads.openRequest")(function* (task: TaskId, request: NewRequest) {
         return yield* boardWrite(task, (n, at) => {
           const opened: ThreadRequest = { ...request, id: request.id ?? legacyId(n), created_at: request.created_at ?? at }
@@ -444,6 +468,9 @@ export class Threads extends Context.Service<Threads, ThreadsShape>()("huntaway-
       return Threads.of({
         userMessage,
         notice,
+        // 6.5
+        report,
+        updateItem,
         openRequest,
         resolveRequest,
         appendFromAgent,
