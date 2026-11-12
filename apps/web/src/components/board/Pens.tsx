@@ -3,7 +3,7 @@
 // as the user asks; (HA-293) the button and menu item that open a pen's own thread, which works on its tasks; and the
 // label in its pen's colour over a card whose task is in a pen (HA-294).
 import { clsx } from "clsx"
-import { CirclePause, CirclePlay, Plus, Fence } from "lucide-react"
+import { CirclePause, CirclePlay, MessageSquare, MessagesSquare, Plus, Fence } from "lucide-react"
 import { memo, useMemo, useState, type DragEvent, type FormEvent, type MouseEvent } from "react"
 import { useShallow } from "../boardHelpers"
 import { PEN_COLOR_NAMES, PEN_COLORS, type HostTask as Task } from "@huntaway/client"
@@ -17,6 +17,8 @@ import {
   inTab,
   moveTab,
   moveToPen,
+  openPensThread,
+  openPenThread,
   penKey,
   penLabel,
   penStyle,
@@ -200,9 +202,14 @@ export function PenTabs({
       .map((p) => `${p.host_id}:${p.id}`)
       .join(" "),
   )
+  // The profile's pens thread is running.
+  const pensThreadRunning = useBoard((s) =>
+    Object.values(s.tasks).some((t) => t.task_type === "pens" && t.running && profiles.has(`${t.host_id}:${t.profile_id}`)),
+  )
   if (!byHost.size) return null
   const running = new Set(runningKeys.split(" "))
   const threadRunning = (tab: PenTab) => tab.pens.some((p) => running.has(`${p.host_id}:${p.id}`))
+  const selectedTab = tabs.find((t) => t.key === selected)
   const shown = tabs.filter((t) => t.active || t.key === selected)
   const inactive = tabs.filter((t) => !t.active)
   const fail = (e: unknown) => setErr(errorText(e))
@@ -228,7 +235,8 @@ export function PenTabs({
   const tabMenu = (tab: PenTab): MenuItem[] => {
     const i = tabs.indexOf(tab)
     return [
-      { label: "Rename…", onSelect: () => setNaming({ tab }) },
+      { label: "Open its thread", onSelect: () => void openPenThread(tab).catch(fail) },
+      { label: "Rename…", divider: true, onSelect: () => setNaming({ tab }) },
       // The menu closes as an item is picked, so the colours open in a menu of their own where it was.
       { label: "Colour…", onSelect: () => setTimeout(() => menu && setMenu({ x: menu.x, y: menu.y, tab, colors: true })) },
       {
@@ -343,7 +351,25 @@ export function PenTabs({
               <CirclePause size={13} /> {inactive.length} inactive
             </Button>
           )}
-          {/* The pen's own thread and the profile's pens thread (HA-293) need agents: not yet on this server. */}
+          {selectedTab && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void openPenThread(selectedTab).catch(fail)}
+              title={`The ${selectedTab.name} pen's own thread: ask how its tasks are going, add tasks to it, or have it start and chase them`}
+            >
+              {threadRunning(selectedTab) ? <RunningDot /> : <MessageSquare size={14} />}{" "}
+              <span className="max-w-[12em] truncate narrow:hidden">{selectedTab.name} thread</span>
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void openPensThread(byHost).catch(fail)}
+            title="The pens thread: tell its agent what you're working on, and it sets up the pens for it"
+          >
+            {pensThreadRunning ? <RunningDot /> : <MessagesSquare size={14} />} <span className="narrow:hidden">Pens thread</span>
+          </Button>
         </div>
       </div>
       {err && (

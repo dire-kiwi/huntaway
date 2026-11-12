@@ -1,12 +1,12 @@
 import { clsx } from "clsx"
 import { Bell, BellRing, Star } from "lucide-react"
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react"
-import type { HostTask as Task } from "@huntaway/client"
+import { saveMarks as saveTaskMarks, type HostTask as Task } from "@huntaway/client"
 import type { TaskPatch } from "@huntaway/contracts"
 import { fromLocalInput, isDue, nextDue, reminderLabel, reminderPresets, toLocalInput } from "../ui/reminders"
 
 import { Button, ContextMenu, errorText, IconButton, Input, Modal, ModalFooter, Wide, type MenuItem } from "../ui"
-import { rpc } from "../../state/rpc"
+import { run } from "../../state/rpc"
 
 /** Whether the task's host can star it and set reminders on it: every host on this server can. */
 export function useCanMark(task: Task | undefined): boolean {
@@ -16,12 +16,11 @@ export function useCanMark(task: Task | undefined): boolean {
 type Marks = Pick<TaskPatch, "starred" | "remind_at" | "reminder">
 
 /**
- * Saves a change to the task's star or reminder. The saved task comes in as an event. (The old board showed it
- * straight away and put it back if the save failed, keeping what other saves in flight showed; step 1 leaves it to the
- * event, docs/plan/09-frontend.md.)
+ * Saves a change to the task's star or reminder, shown straight away and put back if the save fails, keeping what
+ * other saves in flight show (the client's `saveMarks`).
  */
 export async function saveMarks(task: Task, patch: Marks) {
-  await rpc(task.host_id, "tasks.update", { id: task.id, patch })
+  await run(saveTaskMarks(task, patch))
 }
 
 /** The time, re-read every 30 seconds while any of `tasks` has a reminder, and as the next one comes round. */

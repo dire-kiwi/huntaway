@@ -43,6 +43,8 @@ export interface PenColumns {
   readonly name?: string | undefined
   readonly active?: boolean | undefined
   readonly color?: PenColor | undefined
+  /** Its own thread, once it has been opened. */
+  readonly thread_id?: TaskId | null | undefined
 }
 
 export interface PenRepoShape {
@@ -91,10 +93,11 @@ export class PenRepo extends Context.Service<PenRepo, PenRepoShape>()("huntaway-
                   ${pen.active ? 1 : 0}, ${pen.color}, ${pen.now}, ${pen.now})`.pipe(Effect.asVoid, Effect.orDie)
 
       const update: PenRepoShape["update"] = (id, columns, now) => {
-        const values: Record<string, string | number> = { updated_at: now }
+        const values: Record<string, string | number | null> = { updated_at: now }
         if (columns.name !== undefined) values.name = columns.name
         if (columns.active !== undefined) values.active = columns.active ? 1 : 0
         if (columns.color !== undefined) values.color = columns.color
+        if (columns.thread_id !== undefined) values.thread_id = columns.thread_id
         return sql`UPDATE pens SET ${sql.update(values)} WHERE id = ${id}`.pipe(Effect.asVoid, Effect.orDie)
       }
 

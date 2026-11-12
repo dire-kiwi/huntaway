@@ -190,8 +190,16 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         return env
       })
 
-      /** Where the thread's agent works: its worktree, its project's repository, or its profile's scratch folder. */
+      /**
+       * Where the thread's agent works: its worktree, its project's repository, a pen's thread its own folder (which lasts
+       * as long as it, for the pen's notes), or its profile's scratch folder.
+       */
       const cwdOf = Effect.fnUntraced(function* (task: Task, repo: string | null) {
+        if (task.kind === "task" && task.task_type === "pen") {
+          const own = dataDir.documents(task.id)
+          yield* mkdir(own)
+          return own
+        }
         if (task.kind === "review" && task.parent_id !== null) {
           const parent = yield* tasks.get(task.parent_id)
           if (parent?.worktree_path != null && parent.worktree_state === "ready") return parent.worktree_path

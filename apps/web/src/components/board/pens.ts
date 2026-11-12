@@ -9,6 +9,7 @@ import { profileNameOf, type State } from "../boardHelpers"
 import { parseJson, toJson } from "../ui/json"
 import { rpc } from "../../state/rpc"
 import { board } from "../../state/board"
+import { openTask } from "../../state/route"
 
 /** A pen as the store has it: with the host it's on. */
 export type HostPen = Pen & { host_id: string }
@@ -145,6 +146,26 @@ export async function createPen(profiles: Map<string, string>, name: string) {
 /** Does `change` to each of the tab's pens. */
 export async function changeTab(tab: PenTab, change: { name?: string | undefined; active?: boolean | undefined; color?: PenColor | undefined }) {
   await Promise.all(tab.pens.map((p) => rpc(p.host_id, "pens.update", { id: p.id, patch: change })))
+}
+
+/**
+ * Opens the profile's pens thread (made the first time) on the board's own host if it has the profile, else on the
+ * first connected host that has it: `profiles` is the profile on each host, by host id.
+ */
+export async function openPensThread(profiles: Map<string, string>) {
+  const hosts = board.get().hosts.filter((h) => h.connected && profiles.has(h.id))
+  const host = hosts.find((h) => h.local) ?? hosts[0]
+  const profile = host && profiles.get(host.id)
+  if (!host || !profile) throw new Error("No host with this profile is connected")
+  openTask((await rpc(host.id, "pens.thread", { profile_id: ProfileId.make(profile) })).id)
+}
+
+/** Opens the tab's pen's own thread (made the first time): its pen on the board's own host if it has one, else its first. */
+export async function openPenThread(tab: PenTab) {
+  const local = board.get().localHostId
+  const pen = tab.pens.find((p) => p.host_id === local) ?? tab.pens[0]
+  if (!pen) return
+  openTask((await rpc(pen.host_id, "pens.penThread", { id: pen.id })).id)
 }
 
 export async function deleteTab(tab: PenTab) {

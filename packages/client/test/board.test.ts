@@ -1,6 +1,16 @@
 import { describe, expect, it } from "@effect/vitest"
 import { type BoardMessage, HostId, ProjectId, TaskId, Timestamp } from "@huntaway/contracts"
-import { applyBoardEvent, emptyBoard, emptyHostBoard, type HostBoard, type HostPart, mergeBoards, type SessionView, withPatch } from "../src/index.ts"
+import {
+  applyBoardEvent,
+  emptyBoard,
+  emptyHostBoard,
+  type HostBoard,
+  type HostPart,
+  mergeBoards,
+  type SessionView,
+  withPatch,
+  withPendingMarks,
+} from "../src/index.ts"
 import { info, project, snapshot, task } from "./fixtures.ts"
 
 const A = HostId.make("host-a")
@@ -89,5 +99,23 @@ describe("mergeBoards", () => {
     expect(moved.tasks[T1]).toMatchObject({ status: "in_progress", position: 7, starred: true, title: "A task" })
     // Another host's task with that id is not this one.
     expect(withPatch(board, { host_id: B, id: T1 }, { status: "done" })).toBe(board)
+  })
+
+  it("star and reminder saves in flight show on the host's task, in order, each on its own", () => {
+    const board = mergeBoards(emptyBoard, [{ host_id: A, session: live("host-a"), board: boardOf(A, snapshot()) }], A)
+    expect(withPendingMarks(board.tasks, [])).toBe(board.tasks)
+    // A snooze, then a clear while the snooze saves: the clear shows, and takes the note with it.
+    const snooze = { host_id: A, id: T1, patch: { remind_at: "2026-11-12T10:00:00.000Z", reminder: "Think it over" } }
+    const clear = { host_id: A, id: T1, patch: { remind_at: null } }
+    expect(withPendingMarks(board.tasks, [snooze])[T1]).toMatchObject({ remind_at: "2026-11-12T10:00:00.000Z", reminder: "Think it over" })
+    expect(withPendingMarks(board.tasks, [snooze, clear])[T1]).toMatchObject({ remind_at: null, reminder: null })
+    // A star on top of what the host says (a rename meanwhile stays); another host's task with that id is not this one.
+    const renamed = mergeBoards(
+      emptyBoard,
+      [{ host_id: A, session: live("host-a"), board: boardOf(A, snapshot({ tasks: [task({ title: "Renamed meanwhile" })] })) }],
+      A,
+    ).tasks
+    expect(withPendingMarks(renamed, [{ host_id: A, id: T1, patch: { starred: true } }])[T1]).toMatchObject({ starred: true, title: "Renamed meanwhile" })
+    expect(withPendingMarks(board.tasks, [{ host_id: B, id: T1, patch: { starred: true } }])[T1]?.starred).toBe(false)
   })
 })

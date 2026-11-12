@@ -17,6 +17,8 @@ export const PenHandlers = PenRpcs.toLayer(
       "pens.update": ({ id, patch }) => pens.update(id, patch).pipe(Effect.catchTag("PenNotFound", penNotFound)),
       // Only a pen's own thread is refused (`Conflict`), and a session is never one.
       "pens.delete": ({ id }) => pens.delete(id, Actor.user).pipe(Effect.asVoid, Effect.catchTags({ PenNotFound: penNotFound, Conflict: Effect.die })),
+      "pens.thread": ({ profile_id }) => pens.thread(profile_id).pipe(Effect.catchTag("ProfileNotFound", profileNotFound)),
+      "pens.penThread": ({ id }) => pens.penThread(id).pipe(Effect.catchTag("PenNotFound", penNotFound)),
     })
   }),
 )
