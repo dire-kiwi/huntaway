@@ -371,7 +371,8 @@ describe("import-legacy tasks-pens", () => {
       expect(result.report.tables["tasks"]).toStrictEqual({ old: 6, written: 6, withheld: 0 })
       expect(result.report.tables["task_queue"]).toStrictEqual({ old: 1, written: 3, withheld: 0 })
       expect(result.report.tables["pens"]).toStrictEqual({ old: 1, written: 1, withheld: 0 })
-      expect(result.report.notes.map((n) => n.key)).toStrictEqual(["PRJ-2"])
+      // The check's notes on work folders not on disk are its own.
+      expect(result.report.notes.filter((n) => !n.error.endsWith("is not on disk")).map((n) => n.key)).toStrictEqual(["PRJ-2"])
 
       yield* Effect.gen(function* () {
         const tasks = yield* TaskRepo

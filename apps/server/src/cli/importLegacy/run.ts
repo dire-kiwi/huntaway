@@ -181,9 +181,7 @@ const makeWriter = (sql: SqlClient.SqlClient, report: Report) => {
                   )
                   .pipe(
                     Effect.as(true),
-                    Effect.catchTag("SqlError", (e) =>
-                      Effect.as(report.failure(table, check.key(row), `insert: ${sqliteMessage(e)}`.slice(0, 500)), false),
-                    ),
+                    Effect.catchTag("SqlError", (e) => Effect.as(report.failure(table, check.key(row), `insert: ${sqliteMessage(e)}`.slice(0, 500)), false)),
                   )
                 if (ok) n++
               }
