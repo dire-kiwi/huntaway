@@ -174,6 +174,59 @@ After writing, and on its own against an existing pair of files, the importer co
 - A sample of 200 threads: `threads.watch`'s snapshot of the new server equals the old `GET /thread?limit=300`
   answer for the same task, item for item, when both servers are run on copies.
 
+### As built in 9.1 (HE-8)
+
+`apps/server/src/cli/importLegacy/`: `run.ts` (the refusals, the copy, the families, the files, `import.json`),
+`family.ts` (a family's interface and the checked writer's `TableCheck`), `oldDb.ts`, `report.ts`, `check.ts`, and
+`families/` with one module per family, in this order: `settingsProfilesProjects`, `tasks` (with `pens`), `threads`,
+`runs` (with `runRecords`), `agentTools`, `docs`, `automations`, `workflows`, `hosts`. Each family's conversions are
+pure functions with tests of their own, and each has an import test that builds an old folder from the old schema
+(`packages/testing/fixtures/legacy/schema.sql`, dumped from a database the old repository's test server made;
+`makeLegacyBoard`) and reads the result back through the new server's repositories.
+
+What was decided where the plan was silent or turned out wrong:
+
+- **The old file is read from a copy.** Even a read-only connection to a WAL database may write its `-shm` beside it,
+  so the importer copies the database (a byte copy of a stopped server's file and its `-wal`; for a rehearsal an online
+  backup through a read-only connection) into the new folder as `legacy-copy.db`, reads that, and deletes it. The
+  throwaway switch checked the old folder byte for byte afterwards.
+- **A row is checked twice.** The new row against the schema the server reads it with (a failure: the row is not
+  written), and each JSON column strictly against its value's schema (listed under `json`: the row is written, and the
+  server reads the value as its default). Then the board's foreign keys are checked; a row that points at nothing is a
+  failure and is deleted. `--check` fails on any failure or `json` entry.
+- **Threads not yet items are refused only when they have `messages` rows.** The old server leaves every task made
+  since its last start with `thread_source = 'messages'` until its next start, and moving one with no rows rebuilds
+  nothing (`flip` sets the column); a board of synthetic data made through the old API had 2,788 such tasks.
+- **The write counter** is the highest write number kept anywhere (the `messages` sequence, which old databases store
+  as a REAL, item origins, request `message_id`s, `legacy:<n>` ids, prompts, checkpoints, runs, rewinds), not only the
+  sequence.
+- **A stray `messages` row** of kind `claude` goes through the new Claude translator; the board's own kinds (`user`,
+  `event`, `permission`, `question`, `report`) have no pure translator here and are always carried as the `notice`.
+- **Pending prompts** become `expired` and so does their thread request (as `Permissions.expireOne` writes it); a
+  pending `approval_log` entry is settled `expired` by `ended`. The board's own question cards (`request_user_input`,
+  the merge gate's) stay open, as they do on the old board, since answering one resumes the agent.
+- **Runs and workflow runs keep their old `rowid` as `seq`.** A live run (only with `--force` or `--rehearsal`) is
+  written `exited` with `stop = 'interrupted'`; a running workflow run is stopped with "Interrupted by the move to the
+  new server", its pending steps skipped.
+- **Old JSON is read as the old readers read it**: fields added over time take their defaults (`pr_watches.state`,
+  `checkpoints.stats`, reviews, summaries, checks, an SSH target's ports), and a value the old reader could not read
+  either is written as its fallback with a note rather than listed as a `json` problem.
+- **Settings**: `telemetry_inflight` is kept (it points at outbox rows, which are imported as they are). A rehearsal
+  withholds the VAPID key, the telemetry destination and password, Asana sign-ins, docs-site sign-ins, links, web push
+  subscriptions, the outbox, and automations' tokens and secrets (written with a fresh token and no secret). Agent
+  configs' API keys are written: they are not in the list above and the read-only server calls nothing.
+- **Where an imported thread works.** A task's own `work_dir` is now its working folder on the new server too (the
+  old `documents.work_dir`: scratch tasks, document tasks from before labels, pen threads), and an assistant's
+  workspace may be `<old folder>/assistants/<id>` when `import.json` names that old folder (`Memory.checked`), so their
+  sessions are found where they ran. Group tasks and project-less review threads with no `work_dir` worked in the old
+  profile scratch folder and now work in the new one: their sessions start afresh.
+- `repo_root` is the repository's fingerprint, not a path, and is copied as it is.
+- The 200-thread sample is `scripts/compare-threads.mjs`, run with an old test server on a copy and a new test server
+  on its import; it is not part of `--check` itself, which runs with no server.
+
+Measured: a board made through the old server's own API (3 projects, 2,848 tasks, 60 runs) imports as a rehearsal
+with `--check` in 1.2 s with no failures; the throwaway switch is in [Rehearsal](#rehearsal).
+
 ## The switch, on one machine
 
 1. Update the desktop app to a build that speaks the new protocol.
@@ -251,12 +304,23 @@ being made, a merge. Those are tried on a board made to be thrown away: the old 
 scratch folder. It has an identity and a repository of its own, so the import is a true switch in miniature. This is
 part of 9.1's acceptance and is the first thing done on each host's own machine before its switch.
 
-**In CI and for measurements**, `scripts/copy-live-board.sh` stays the tool. In this repository it snapshots an old
+As done in 9.1 (HE-8): the old repository's test server (`--seed`, a real Claude Code on haiku) ran one task that
+replied with one word, in a worktree in its folder; the old server was stopped (by its PID, keeping the folder) and
+imported with `--check` into a scratch folder: no failure, no note, and every file of the old folder hashed the same
+before and after. The new server started on it as the same host with the same token; a message sent to the task resumed
+the same session (the agent answered from the earlier turn) and its items' write numbers carried on after the old ones.
+A terminal, the Changes tab and a webhook were not tried there.
+
+**In CI and for measurements**, `scripts/copy-live-board.sh` stays the tool (with its test, `copy-live-board-test.sh`, in
+`pnpm test:scripts`). In this repository it snapshots an old
 database, applies the old script's scrub to it (runs exited, every path moved under `/nonexistent`, scripts, agent
-configs, links, automations, PR watches, sign-ins and telemetry removed), writes throwaway identity files beside it,
-and imports that into a test server started with `--no-agents` or the fake agent. With nothing real left to act on,
-that server runs normally, which the measurements need. A nightly job on a self-hosted runner that has a board runs
-it with `--check` from M9 on; hosted runners import the fixture database.
+configs, links, automations, PR watches, sign-ins, the push key and subscriptions and telemetry removed), writes the
+test server's own identity files beside it (so its env file's token stays good), and imports that into the test server,
+started with `--no-agents` or the fake agent, with `--check --force`. With nothing real left to act on, that server runs
+normally, which the measurements need. The nightly job (`.github/workflows/nightly-import.yml`) runs it with `--check`
+on a self-hosted runner labelled `huntaway-board` whose machine has a board; it is switched off until the repository
+variable `NIGHTLY_IMPORT` is `on` (and `NIGHTLY_OLD_DATA_DIR` says where the board is), and its report stays on the
+runner. Hosted runners import the fixture databases the importer's tests build.
 
 So, before a host's switch: `--rehearsal --check` on its real folder until the report has no failure, a look
 through the read-only board, and the throwaway switch once.
