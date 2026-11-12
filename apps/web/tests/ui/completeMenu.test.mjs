@@ -14,8 +14,8 @@ afterAll(() => server?.stop())
 const TITLE = "Try dragging this card to another column"
 // The heading of the board column a card is in.
 const columnOf = (page, title) =>
-  page.evaluate((title) => {
-    const card = [...document.querySelectorAll("[data-task]")].find((c) => c.textContent.includes(title))
+  page.evaluate((t) => {
+    const card = [...document.querySelectorAll("[data-task]")].find((c) => c.textContent.includes(t))
     return card?.closest("section")?.querySelector("span.font-medium")?.textContent
   }, title)
 
