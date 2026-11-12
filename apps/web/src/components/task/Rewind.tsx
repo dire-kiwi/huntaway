@@ -1,11 +1,12 @@
 // Rewinding a task to before one of its turns: its files go back to the checkpoint taken before the turn, and optionally
 // its branch and its agent's conversation (on the agent's next run).
 import { History, Loader2 } from "lucide-react"
+import { Exit } from "effect"
 import { useState } from "react"
 import type { HostTask as Task } from "@huntaway/client"
 import type { RewindResult, Turn } from "@huntaway/contracts"
-import { useRpc } from "../../state/rpc"
-import { Button, errorText, Modal } from "../ui"
+import { useMutation } from "../../state/mutation"
+import { Button, Modal } from "../ui"
 
 const short = (sha: string) => sha.slice(0, 8)
 
@@ -24,35 +25,24 @@ export function RewindDialog({
   /** After it's done, with whether the conversation went back too. */
   onDone?: ((r: RewindResult, conversation: boolean) => void) | undefined
 }) {
-  const rpc = useRpc()
+  const [{ busy, error: err }, rewind] = useMutation("checkpoints.rewind")
   const convo = turn.rewind.ok ? turn.rewind.conversation : null
   const [conversation, setConversation] = useState(!!convo?.ok)
   // The branch has moved on since: commits were made (or pulled) after the turn started.
   const beforeHead = turn.before_head
   const moved = !!beforeHead && !!head && beforeHead !== head
   const [branch, setBranch] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const submit = async () => {
+  const submit = () => {
     if (busy || turn.message_id === null) return
-    setBusy(true)
-    setErr(null)
-    try {
-      const r = await rpc(task.host_id, "checkpoints.rewind", {
-        task_id: task.id,
-        message_id: turn.message_id,
-        conversation: conversation && !!convo?.ok,
-        branch: moved && branch,
-      })
-      onDone?.(r, conversation && !!convo?.ok)
+    const back = conversation && !!convo?.ok
+    void rewind(task.host_id, { task_id: task.id, message_id: turn.message_id, conversation: back, branch: moved && branch }).then((exit) => {
+      if (!Exit.isSuccess(exit)) return
+      onDone?.(exit.value, back)
       onClose()
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+    })
   }
   return (
-    <Modal title={`Rewind to before turn ${turn.turn}`} onClose={onClose} onSubmit={() => void submit()}>
+    <Modal title={`Rewind to before turn ${turn.turn}`} onClose={onClose} onSubmit={submit}>
       <div className="space-y-3 text-[13px]">
         <div className="line-clamp-4 border-l-2 border-line-strong pl-2.5 whitespace-pre-wrap text-muted">{turn.text || "(no message)"}</div>
         <p className="text-muted">
@@ -97,7 +87,7 @@ export function RewindDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="danger" disabled={busy} onClick={() => void submit()}>
+          <Button variant="danger" disabled={busy} onClick={submit}>
             {busy ? <Loader2 size={13} className="animate-spin" /> : <History size={13} />} Rewind
           </Button>
         </div>
@@ -108,13 +98,9 @@ export function RewindDialog({
 
 /** Over the composer: the agent's next run takes its conversation back to before a turn. */
 export function RewindNote({ task }: { task: Task }) {
-  const rpc = useRpc()
-  const [err, setErr] = useState<string | null>(null)
+  const [{ error: err }, cancelRewind] = useMutation("checkpoints.cancelRewind")
   if (!task.rewind) return null
-  const keep = () => {
-    setErr(null)
-    rpc(task.host_id, "checkpoints.cancelRewind", { task_id: task.id }).catch((e: unknown) => setErr(errorText(e)))
-  }
+  const keep = () => void cancelRewind(task.host_id, { task_id: task.id })
   return (
     <div className="mb-2 flex items-start gap-2 rounded-lg border border-line bg-panel px-3 py-2 text-[12px] text-muted">
       <History size={13} className="mt-0.5 shrink-0 text-accent" />
