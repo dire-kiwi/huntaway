@@ -15,6 +15,7 @@ import {
   type HostUsage,
   type RestartState,
 } from "./hostBoard.ts"
+import { pendingMarksAtom, withPendingMarks } from "./marks.ts"
 import { hostBoardAtom } from "./watch.ts"
 
 /**
@@ -235,8 +236,15 @@ export const serverBoardAtom: Atom.Atom<Board> = Atom.make((get) => {
   )
 }).pipe(Atom.keepAlive)
 
+/** The merged board with the star and reminder saves in flight shown on its tasks (marks.ts). */
+const markedBoardAtom: Atom.Atom<Board> = Atom.make((get) => {
+  const board = get(serverBoardAtom)
+  const tasks = withPendingMarks(board.tasks, get(pendingMarksAtom))
+  return tasks === board.tasks ? board : { ...board, tasks }
+})
+
 /**
- * What components read: every host's board merged, with the optimistic changes in flight (moves, reorders, stars:
- * see tasks.ts) shown until the host's event for them arrives.
+ * What components read: every host's board merged, with the optimistic changes in flight (moves, reorders: see
+ * tasks.ts; stars and reminders: see marks.ts) shown until the host's event for them arrives.
  */
-export const boardAtom: Atom.Writable<Board, Atom.Atom<AsyncResult.AsyncResult<Board, unknown>>> = Atom.optimistic(serverBoardAtom).pipe(Atom.keepAlive)
+export const boardAtom: Atom.Writable<Board, Atom.Atom<AsyncResult.AsyncResult<Board, unknown>>> = Atom.optimistic(markedBoardAtom).pipe(Atom.keepAlive)

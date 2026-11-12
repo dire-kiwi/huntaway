@@ -20,26 +20,27 @@ const penIds = async (name) => {
   return (await projectTasks())
     .filter((t) => t.pen_id === pen.id)
     .map((t) => t.id)
-    .sort()
+    .toSorted(byId)
 }
 /** Waits for pen `name` to have `ids`. */
 const until = (name, ids) => eventually(async () => assert.deepEqual(await penIds(name), ids))
-const boxOf = (page, id) =>
+const boxOf = (page, task) =>
   page.evaluate((id) => {
     const r = document.querySelector(`[data-task="${id}"]`).getBoundingClientRect()
     return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
-  }, id)
+  }, task)
+const byId = (a, b) => a.localeCompare(b)
 
 // HA-109, HA-285: Ctrl + right-drag draws a lasso round cards, and the bar it brings puts the picked tasks in a pen.
 test("the lasso picks tasks, and its bar and their menus put them in a pen", async () => {
   const tasks = await projectTasks()
+  const idOf = (title) => tasks.find((t) => t.title === title).id
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await ui.run([`goto /p/${board.project.id}`, "wait Merged and closed"])
     const cardIds = await page.evaluate(() => [...document.querySelectorAll("[data-task]")].map((c) => c.dataset.task))
     assert.ok(cardIds.length >= 4)
     // The lasso goes round two in the In review column, one above the other.
-    const idOf = (title) => tasks.find((t) => t.title === title).id
     const first = cardIds[0]
     const [second, third] = [idOf("Finished work to look over"), idOf("Plan a dark mode for the demo site")]
     assert.ok(![second, third].includes(first))
@@ -67,8 +68,8 @@ test("the lasso picks tasks, and its bar and their menus put them in a pen", asy
     await ui.run(["wait 2 tasks picked"])
     assert.equal(await page.locator("[data-lasso]").count(), 0)
     assert.equal(await page.locator("[role=menuitemradio]").count(), 0, "no menu opened")
-    const pickedIds = await page.evaluate(() => [...document.querySelectorAll("[data-selected=true]")].map((c) => c.dataset.task).sort())
-    assert.deepEqual(pickedIds, [second, third].sort())
+    const pickedIds = await page.evaluate(() => [...document.querySelectorAll("[data-selected=true]")].map((c) => c.dataset.task))
+    assert.deepEqual(pickedIds.toSorted(byId), [second, third].toSorted(byId))
 
     // Right-clicking one of them offers to move them all.
     await page.click(`[data-task="${second}"]`, { button: "right" })
@@ -79,7 +80,7 @@ test("the lasso picks tasks, and its bar and their menus put them in a pen", asy
     // The bar puts them in a new pen.
     await page.click("[data-selection-bar] >> text=Pen")
     await ui.run(["click New pen… (2 picked)", "type Parked", "press Enter", "gone Create pen", "gone 2 tasks picked"])
-    await until("Parked", [second, third].sort())
+    await until("Parked", [second, third].toSorted(byId))
 
     // Ctrl + right-click on a card picks it, and again lets it go; Escape lets them all go.
     await page.keyboard.down("Control")
@@ -99,6 +100,6 @@ test("the lasso picks tasks, and its bar and their menus put them in a pen", asy
     await page.keyboard.up("Control")
     await page.click("[data-selection-bar] >> text=Pen")
     await ui.run(["click [role=menu] >> text=Pen: Parked", "gone 1 task picked"])
-    await until("Parked", [first, second, third].sort())
+    await until("Parked", [first, second, third].toSorted(byId))
   })
 })

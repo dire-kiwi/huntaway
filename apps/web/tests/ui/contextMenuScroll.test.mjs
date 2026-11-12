@@ -39,7 +39,7 @@ test("a context menu stays open while the thread scrolls, unless it's on somethi
 
     // The thread following its agent, as follow() does.
     for (const to of [0, 1e6]) {
-      await thread.evaluate((el, to) => (el.scrollTop = to), to)
+      await thread.evaluate((el, top) => (el.scrollTop = top), to)
       await frames(page)
       assert.equal(await page.locator("[role=menu]").count(), 1, `menu closed by the thread scrolling to ${to}`)
     }

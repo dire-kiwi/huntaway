@@ -142,6 +142,10 @@ and then what follows ([05-protocol.md](05-protocol.md#a-thread)).
   project's automations; `checkpoints` a task's turns; a task's `running` or `worktree_state` changing refreshes its
   git status). It replaces the eight listener sets and the dependency-array tricks.
 - **Optimistic changes** (`Atom.optimistic`): moving and reordering cards, pens, stars and reminders, as now.
+  As built (9.2): stars and reminders are not `Atom.optimistic` transitions, which hold back the host's events while
+  they run. Each save is kept in `pendingMarksAtom` (`packages/client/src/board/marks.ts`) and shown on top of the
+  host's board until it is refused or its event arrives, so a rename or a reminder set elsewhere meanwhile shows, and a
+  refused save takes back only its own change (`tests/ui/reminders.test.mjs`).
   Nothing else is optimistic.
 - **Reads across hosts** (analytics, token statistics, disk usage, docs, pens): one query per host, combined by a
   derived atom, in place of the hand-written fan-outs.

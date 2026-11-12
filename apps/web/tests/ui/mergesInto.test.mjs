@@ -58,7 +58,7 @@ test("the sidebar picks what a task merges into", async () => {
     const options = await picker.locator("option").allInnerTexts()
     assert.deepEqual(options.slice(1), ["SHOP-2 Cart totals", "SHOP-1 Checkout rework"])
     await picker.selectOption({ label: "SHOP-1 Checkout rework" })
-    const t = await until(plain.id, (t) => t.merges_into === target.id)
+    const t = await until(plain.id, (x) => x.merges_into === target.id)
     assert.deepEqual(t.start_from, { type: "task", task_id: target.id })
     await ui.run(["wait 1/3"])
     // The task it merges into lists it.
@@ -79,7 +79,7 @@ test("closing the task they merge into asks where they go, for all of them at on
     await ui.run([`goto /p/${project.id}?task=${open.id}`, "wait Choose where they all go now", "wait Close them (SHOP-2 and SHOP-4) too"])
     await ui.run(["click Go where SHOP-1 was going", "gone Choose where they all go now"])
     for (const id of [open.id, plain.id]) {
-      const t = await until(id, (t) => t.merges_into === null)
+      const t = await until(id, (x) => x.merges_into === null)
       assert.notEqual(t.status, "needs_attention")
     }
     // The task it was merging into keeps the ones that merged.
@@ -103,7 +103,7 @@ test("closing the last task of a chain asks where the tasks reaching it go", asy
     assert.match(await badge.getAttribute("title"), new RegExp(`SHOP-${c.number} .*by way of SHOP-${b.number}`))
     await ui.run([`goto /p/${project.id}?task=${a.id}`, `wait SHOP-${c.number} was closed without being merged`])
     await ui.run([`click Go where SHOP-${c.number} was going`, "gone Choose where it goes now"])
-    const t = await until(a.id, (t) => t.merges_into === null)
+    const t = await until(a.id, (x) => x.merges_into === null)
     assert.notEqual(t.status, "needs_attention")
   })
 })

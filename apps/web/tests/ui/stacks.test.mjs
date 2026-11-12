@@ -129,7 +129,7 @@ test("closing the task below asks where the level goes, and restacks it there", 
     assert.match(await card(page, up).locator("button[title*='closed without being merged']").innerText(), /closed/)
     await ui.run([`goto /p/${project.id}?task=${up.id}`, "wait Choose where it goes now", "wait The board restacks its branch there"])
     await ui.run(["click Go where SHOP-1 was going", "gone The board restacks its branch there"])
-    const t = await until(up.id, (t) => t.restack === null && t.status !== "needs_attention" && t.start_from?.type === "commit")
+    const t = await until(up.id, (x) => x.restack === null && x.status !== "needs_attention" && x.start_from?.type === "commit")
     const own = execFileSync("git", ["-C", t.worktree_path, "log", "--format=%s", `${t.base_branch}..HEAD`], { encoding: "utf8" }).trim()
     assert.equal(own, "Cart totals")
   })
