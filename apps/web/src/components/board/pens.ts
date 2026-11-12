@@ -3,12 +3,15 @@
 // task is in it if it's in its host's one. Marking a tab active or inactive (HA-291), renaming, moving or deleting it
 // does it to each of them.
 import type { CSSProperties } from "react"
-import { isPenColor, PEN_COLOR_NAMES, PEN_COLORS, type HostPen as Pen, type HostTask as Task } from "@huntaway/client"
+import { type CallError, isPenColor, mutate, PEN_COLOR_NAMES, PEN_COLORS, type HostPen as Pen, type HostTask as Task } from "@huntaway/client"
 import { type PenColor, ProfileId } from "@huntaway/contracts"
+import { Effect, Exit, Schema } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
 import { profileNameOf, type State } from "../boardHelpers"
-import { parseJson, toJson } from "../ui/json"
-import { rpc } from "../../state/rpc"
 import { board } from "../../state/board"
+import { exitError, runExit } from "../../state/mutation"
+import { penTabAtom } from "../../state/prefs"
+import { registry } from "../../state/registry"
 import { openTask } from "../../state/route"
 
 /** A pen as the store has it: with the host it's on. */
@@ -109,90 +112,123 @@ export function canPen(t: Task) {
   return !(t.kind !== "task" || t.task_type === "assistant" || t.task_type === "routine" || t.task_type === "pens" || t.task_type === "pen")
 }
 
-/**
- * Moves the tasks into pen `name` (made on a host that has none by it), or with null out of their pens. The saved tasks
- * come back as events, and the first error is thrown once all have tried. (The old board showed the move at once where
- * the pen was known; step 1 leaves it to the event.)
- */
-export async function moveToPen(tasks: ReadonlyArray<Task>, name: string | null) {
-  const errors: unknown[] = []
-  await Promise.all(
-    tasks.filter(canPen).map(async (t) => {
-      const pen =
-        name === null ? null : board.get().pens.find((p) => p.host_id === t.host_id && p.profile_id === t.profile_id && penKey(p.name) === penKey(name))
-      if (pen !== undefined && (pen?.id ?? null) === (t.pen_id ?? null)) return
-      try {
-        await rpc(t.host_id, "tasks.update", { id: t.id, patch: { pen: name } })
-      } catch (e) {
-        errors.push(e)
-      }
+/** Runs every one of `changes` side by side, and once all have tried, fails as the first that failed did. */
+function allTried<E>(changes: ReadonlyArray<Effect.Effect<unknown, E, AtomRegistry.AtomRegistry>>): Effect.Effect<void, E, AtomRegistry.AtomRegistry> {
+  return Effect.forEach(changes, (change) => Effect.exit(change), { concurrency: "unbounded" }).pipe(
+    Effect.flatMap((exits) => {
+      const failed = exits.find(Exit.isFailure)
+      return failed ? Effect.failCause(failed.cause) : Effect.void
     }),
   )
-  if (errors.length) throw errors[0]
 }
+
+/**
+ * Runs a change of pens from a menu or a drop, telling `onError` why it failed, if it did. It is the page's, not the
+ * menu's: the menu closing doesn't stop it.
+ */
+export function attempt<E>(change: Effect.Effect<unknown, E, AtomRegistry.AtomRegistry>, onError: (msg: string) => void): void {
+  void runExit(change).then((exit) => {
+    const failed = exitError(exit)
+    if (failed !== null) onError(failed)
+  })
+}
+
+/**
+ * Runs a change of pens for a dialog that waits on a promise (`useConfirm`'s `onConfirm`), which shows why it failed:
+ * it rejects with that.
+ */
+export function settled<A, E>(change: Effect.Effect<A, E, AtomRegistry.AtomRegistry>): Promise<A | undefined> {
+  return runExit(change).then((exit) => {
+    if (Exit.isSuccess(exit)) return exit.value
+    const failed = exitError(exit)
+    if (failed === null) return undefined
+    throw new Error(failed)
+  })
+}
+
+/**
+ * Moves the tasks into pen `name` (made on a host that has none by it), or with null out of their pens. The saved tasks
+ * come back as events, and it fails as the first that failed once all have tried. (The old board showed the move at
+ * once where the pen was known; step 1 leaves it to the event.)
+ */
+export const moveToPen = (tasks: ReadonlyArray<Task>, name: string | null): Effect.Effect<void, CallError<"tasks.update">, AtomRegistry.AtomRegistry> =>
+  Effect.suspend(() =>
+    allTried(
+      tasks.filter(canPen).flatMap((t) => {
+        const pen =
+          name === null ? null : board.get().pens.find((p) => p.host_id === t.host_id && p.profile_id === t.profile_id && penKey(p.name) === penKey(name))
+        if (pen !== undefined && (pen?.id ?? null) === (t.pen_id ?? null)) return []
+        return [mutate("tasks.update", t.host_id, { id: t.id, patch: { pen: name } })]
+      }),
+    ),
+  )
+
+/** A change of pens the board can't make, and why: no host to make the pen on, tasks whose host has no pens. */
+export class PenRefused extends Schema.TaggedError<PenRefused, { readonly brand: unique symbol }>()("PenRefused", { reason: Schema.String }) {}
 
 /**
  * Makes a pen on the board's own host if it can, else on the first host with the profile that has pens: `profiles` is
  * the profile on each host, by host id.
  */
-export async function createPen(profiles: Map<string, string>, name: string) {
-  const hosts = board.get().hosts.filter((h) => h.connected && profiles.has(h.id))
-  const host = hosts.find((h) => h.local) ?? hosts[0]
-  const profile = host && profiles.get(host.id)
-  if (!host || !profile) throw new Error("No host with this profile is connected")
-  await rpc(host.id, "pens.create", { pen: { profile_id: ProfileId.make(profile), name } })
-}
+export const createPen = (profiles: Map<string, string>, name: string): Effect.Effect<void, CallError<"pens.create"> | PenRefused, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    const hosts = board.get().hosts.filter((h) => h.connected && profiles.has(h.id))
+    const host = hosts.find((h) => h.local) ?? hosts[0]
+    const profile = host && profiles.get(host.id)
+    if (!host || !profile) return yield* new PenRefused({ reason: "No host with this profile is connected" })
+    return yield* Effect.asVoid(mutate("pens.create", host.id, { pen: { profile_id: ProfileId.make(profile), name } }))
+  })
 
 /** Does `change` to each of the tab's pens. */
-export async function changeTab(tab: PenTab, change: { name?: string | undefined; active?: boolean | undefined; color?: PenColor | undefined }) {
-  await Promise.all(tab.pens.map((p) => rpc(p.host_id, "pens.update", { id: p.id, patch: change })))
-}
+export const changeTab = (
+  tab: PenTab,
+  change: { name?: string | undefined; active?: boolean | undefined; color?: PenColor | undefined },
+): Effect.Effect<void, CallError<"pens.update">, AtomRegistry.AtomRegistry> =>
+  allTried(tab.pens.map((p) => mutate("pens.update", p.host_id, { id: p.id, patch: change })))
 
 /**
  * Opens the profile's pens thread (made the first time) on the board's own host if it has the profile, else on the
  * first connected host that has it: `profiles` is the profile on each host, by host id.
  */
-export async function openPensThread(profiles: Map<string, string>) {
-  const hosts = board.get().hosts.filter((h) => h.connected && profiles.has(h.id))
-  const host = hosts.find((h) => h.local) ?? hosts[0]
-  const profile = host && profiles.get(host.id)
-  if (!host || !profile) throw new Error("No host with this profile is connected")
-  openTask((await rpc(host.id, "pens.thread", { profile_id: ProfileId.make(profile) })).id)
-}
+export const openPensThread = (profiles: Map<string, string>): Effect.Effect<void, CallError<"pens.thread"> | PenRefused, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    const hosts = board.get().hosts.filter((h) => h.connected && profiles.has(h.id))
+    const host = hosts.find((h) => h.local) ?? hosts[0]
+    const profile = host && profiles.get(host.id)
+    if (!host || !profile) return yield* new PenRefused({ reason: "No host with this profile is connected" })
+    const thread = yield* mutate("pens.thread", host.id, { profile_id: ProfileId.make(profile) })
+    return openTask(thread.id)
+  })
 
 /** Opens the tab's pen's own thread (made the first time): its pen on the board's own host if it has one, else its first. */
-export async function openPenThread(tab: PenTab) {
-  const local = board.get().localHostId
-  const pen = tab.pens.find((p) => p.host_id === local) ?? tab.pens[0]
-  if (!pen) return
-  openTask((await rpc(pen.host_id, "pens.penThread", { id: pen.id })).id)
-}
+export const openPenThread = (tab: PenTab): Effect.Effect<void, CallError<"pens.penThread">, AtomRegistry.AtomRegistry> =>
+  Effect.gen(function* () {
+    const local = board.get().localHostId
+    const pen = tab.pens.find((p) => p.host_id === local) ?? tab.pens[0]
+    if (!pen) return undefined
+    const thread = yield* mutate("pens.penThread", pen.host_id, { id: pen.id })
+    return openTask(thread.id)
+  })
 
-export async function deleteTab(tab: PenTab) {
-  await Promise.all(tab.pens.map((p) => rpc(p.host_id, "pens.delete", { id: p.id })))
-}
+export const deleteTab = (tab: PenTab): Effect.Effect<void, CallError<"pens.delete">, AtomRegistry.AtomRegistry> =>
+  allTried(tab.pens.map((p) => mutate("pens.delete", p.host_id, { id: p.id })))
 
 /** Moves a tab to place `to` among `tabs` (inactive ones too), on each host its pens are on. */
-export async function moveTab(tabs: PenTab[], tab: PenTab, to: number) {
+export function moveTab(tabs: PenTab[], tab: PenTab, to: number): Effect.Effect<void, CallError<"pens.update">, AtomRegistry.AtomRegistry> {
   const order = tabs.filter((t) => t !== tab)
   order.splice(Math.max(0, Math.min(order.length, to)), 0, tab)
-  await Promise.all(
+  return allTried(
     tab.pens.map((p) => {
       // Its place among its own host's pens, in the new order. The others' places come back in the `pens` event.
       const index = order.flatMap((t) => t.pens.filter((x) => x.host_id === p.host_id)).findIndex((x) => x.id === p.id)
-      return rpc(p.host_id, "pens.update", { id: p.id, patch: { index } })
+      return mutate("pens.update", p.host_id, { id: p.id, patch: { index } })
     }),
   )
 }
 
-// The tab each profile's board shows (a pen's key, or "" for All), on this client.
-const tabKey = (profile: string) => `ia.pen.${profile}`
-
-export const loadTab = (profile: string) => localStorage.getItem(tabKey(profile)) ?? ""
-
-export function saveTab(profile: string, key: string) {
-  if (key) localStorage.setItem(tabKey(profile), key)
-  else localStorage.removeItem(tabKey(profile))
+/** Keeps the tab a profile's board shows (a pen's key, or "" for All, which keeps none): `ia.pen.<profile>`. */
+export function saveTab(profile: string, key: string): void {
+  registry.set(penTabAtom(profile), key || null)
 }
 
 /**
@@ -209,20 +245,3 @@ export const viewTabs = (tabs: PenTab[], view: PenView) => tabs.filter((t) => t.
 
 /** A board's rows of pens: a row for each tab, which `collapsed` (by key) shows only the header of; `empty` says there are none. */
 export type PenLanes = { tabs: PenTab[]; collapsed: Set<string>; onToggle: (key: string) => void; empty: string }
-
-// The pens whose rows are collapsed on each profile's board (their keys), on this client.
-const collapsedKey = (profile: string) => `ia.pen.collapsed.${profile}`
-
-export function loadCollapsed(profile: string): Set<string> {
-  try {
-    const keys = parseJson(localStorage.getItem(collapsedKey(profile)) ?? "[]")
-    return new Set(Array.isArray(keys) ? keys.filter((k) => typeof k === "string") : [])
-  } catch {
-    return new Set()
-  }
-}
-
-export function saveCollapsed(profile: string, keys: Set<string>) {
-  if (keys.size) localStorage.setItem(collapsedKey(profile), toJson([...keys]))
-  else localStorage.removeItem(collapsedKey(profile))
-}

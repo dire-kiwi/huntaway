@@ -1,13 +1,16 @@
 import { useCallback, useState, type MouseEvent } from "react"
+import { Effect } from "effect"
 import { isArchived, type HostTask as Task } from "@huntaway/client"
 import type { Resolution, Status } from "@huntaway/contracts"
 import type { TaskUpdateOptions } from "../ConfirmTodos"
 import type { PenTab } from "../pens"
 
-import { errorText, StatusIcon, type MenuItem } from "../../ui"
+import { isoOf, StatusIcon, type MenuItem } from "../../ui"
 import { useNewPen } from "../Pens"
-import { moveTask } from "../../boardHelpers"
+import { moveTaskEffect } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
+import { nowMillis } from "../../../state/clock"
+import { exitError, runExit } from "../../../state/mutation"
 
 /**
  * The board's menus and dialogs: a card's menu and what its items do, the picked tasks' pen menu, the task being
@@ -40,23 +43,25 @@ export function useBoardMenus({
 
   // Moves a task to the end of Done with that resolution (one already done keeps its place). An archived one comes back
   // into Done, done from now, as dragging it there does.
-  const complete = async (task: Task, resolution: Resolution) => {
-    const unarchive = isArchived(task, Date.now())
+  const complete = (task: Task, resolution: Resolution): Promise<void> => {
+    const unarchive = isArchived(task, nowMillis())
     const stays = task.status === "done" && !unarchive
-    if (stays && task.resolution === resolution) return
-    const anyway = await confirmTodos(task, "done")
-    if (!anyway) return
-    // Unmerged work, or (closing it) tasks merging into it.
-    if (!(await confirmDone(task, resolution))) return
-    const done = columns.done.filter((t) => t.id !== task.id)
-    const position = stays ? task.position : (done.at(-1)?.position ?? 0) + 1
-    const done_at = stays ? task.done_at : new Date().toISOString()
-    setDropErr(null)
-    try {
-      await moveTask(task, { status: "done", resolution, position, ...anyway, ...(unarchive && done_at && { done_at }) })
-    } catch (e) {
-      setDropErr(errorText(e))
-    }
+    if (stays && task.resolution === resolution) return Promise.resolve()
+    const move = Effect.gen(function* () {
+      const anyway = yield* Effect.promise(() => confirmTodos(task, "done"))
+      if (!anyway) return
+      // Unmerged work, or (closing it) tasks merging into it.
+      if (!(yield* Effect.promise(() => confirmDone(task, resolution)))) return
+      const done = columns.done.filter((t) => t.id !== task.id)
+      const position = stays ? task.position : (done.at(-1)?.position ?? 0) + 1
+      const done_at = stays ? task.done_at : isoOf(nowMillis())
+      setDropErr(null)
+      yield* moveTaskEffect(task, { status: "done", resolution, position, ...anyway, ...(unarchive && done_at && { done_at }) })
+    })
+    return runExit(move).then((exit) => {
+      const failed = exitError(exit)
+      if (failed !== null) setDropErr(failed)
+    })
   }
   // The same function from render to render, so the (memoized) cards don't all redraw.
   const onMenu = useCallback((e: MouseEvent, task: Task, move?: boolean) => {
@@ -81,8 +86,8 @@ export function useBoardMenus({
             <StatusIcon status={s.id} size={13} /> {s.label}
           </span>
         ),
-        checked: task.status === s.id && !isArchived(task, Date.now()),
-        onSelect: () => (task.status !== s.id || isArchived(task, Date.now())) && dropTask(task, s.id, null),
+        checked: task.status === s.id && !isArchived(task, nowMillis()),
+        onSelect: () => (task.status !== s.id || isArchived(task, nowMillis())) && dropTask(task, s.id, null),
       }))
 
   const newTaskIn = (status: Status, lane: PenTab | null = null) => {

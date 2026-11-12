@@ -2,13 +2,14 @@ import { clsx } from "clsx"
 import { Bot, Brain, Check, ChevronRight, CircleAlert, Clock, Layers, ShieldQuestion } from "lucide-react"
 import { memo, useState, type ReactNode } from "react"
 import { QUESTION_TOOLS } from "@huntaway/client"
-import { Button, useAsyncAction } from "../../ui"
+import { useAction } from "../../../state/mutation"
+import { Button, localeTimeString } from "../../ui"
 import { useSubagentView, subagentTitle } from "./subagentView"
-import { usePromptAnswers } from "./promptAnswers"
+import { answerPrompt } from "./promptAnswers"
 import { AskCard, BoardQuestionCard, PlanCard, questionsOf } from "./requestCards"
 import { useThread } from "./context"
 import { Markdown } from "./Markdown"
-import type { Any } from "./threadModel"
+import type { CompactMeta, PromptData, QuestionData, ResultData } from "./threadModel"
 import { CodeBlock, toolMeta, ToolInput } from "./tools"
 
 export function Collapsible({ label, icon, text }: { label: string; icon: ReactNode; text: string }) {
@@ -48,7 +49,7 @@ export function EventLine({ level, text, detail }: { level: string; text: string
 }
 
 /** Which subagent asked for a prompt (its link opens the subagent's thread), unless it's the thread that's shown. */
-function PromptFrom({ data }: { data: Any }) {
+function PromptFrom({ data }: { data: PromptData }) {
   const taskId = useThread((t) => t.taskId)
   const show = useSubagentView((s) => s.show)
   const viewing = useSubagentView((s) => s.open[taskId])
@@ -69,14 +70,14 @@ function PromptFrom({ data }: { data: Any }) {
 }
 
 /** A question the agent asked with request_user_input. */
-export function QuestionRow({ id, data, hostId }: { id: number; data: Any; hostId: string }) {
+export function QuestionRow({ id, data, hostId }: { id: number; data: QuestionData; hostId: string }) {
   const taskId = useThread((t) => t.taskId)
   const movedOn = useThread((t) => t.lastSent > id)
   return <BoardQuestionCard id={id} data={data} hostId={hostId} taskId={taskId} movedOn={movedOn} />
 }
 
 /** A permission prompt: a question or a plan gets its own card. */
-export function PromptCard({ id, data, hostId }: { id: number; data: Any; hostId: string }) {
+export function PromptCard({ id, data, hostId }: { id: number; data: PromptData; hostId: string }) {
   const taskId = useThread((t) => t.taskId)
   // A message's been sent to the agent since: one whose run ended isn't answered any more.
   const movedOn = useThread((t) => t.lastSent > id)
@@ -87,11 +88,10 @@ export function PromptCard({ id, data, hostId }: { id: number; data: Any; hostId
 }
 
 /** A tool call the agent asks to make: Allow, Always allow (in this thread) and Deny while it waits. */
-const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: Any; hostId: string }) {
+const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: PromptData; hostId: string }) {
   const pending = data.status === "pending"
-  const answer = usePromptAnswers(hostId)
-  const { busy, error, run } = useAsyncAction()
-  const decide = (decision: "allow" | "allow_always" | "deny") => void run(() => answer(data.request_id, { decision }))
+  const [{ busy, error }, run] = useAction()
+  const decide = (decision: "allow" | "allow_always" | "deny") => void run(answerPrompt(hostId, data.request_id, { decision }))
   const m = toolMeta(data.tool_name, data.input)
   return (
     <div className={clsx("rounded-lg border p-3", pending ? "border-st-attention/50 bg-st-attention/[0.06]" : "border-line bg-panel/60")}>
@@ -146,10 +146,10 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: An
 })
 
 /** Why a prompt asks (an approval rule, API 115), and when one from a routine run is denied if nobody answers it. */
-function PromptRule({ data, pending }: { data: Any; pending: boolean }) {
-  const expires = typeof data.expires_at === "string" ? new Date(data.expires_at) : null
+function PromptRule({ data, pending }: { data: PromptData; pending: boolean }) {
+  const expires = data.expires_at ?? null
   if (!data.rule && !expires) return null
-  const at = expires?.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  const at = expires === null ? undefined : localeTimeString(expires, { hour: "numeric", minute: "2-digit" }, [])
   return (
     <div className="mt-2 space-y-0.5 text-[11.5px] text-muted">
       {data.rule && (
@@ -171,13 +171,13 @@ function tokens(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 }
 
-export function CompactLine({ meta, summary, result }: { meta: Any; summary?: string | undefined; result?: Any }) {
+export function CompactLine({ meta, summary, result }: { meta: CompactMeta; summary?: string | undefined; result?: ResultData | undefined }) {
   const [open, setOpen] = useState(false)
   const bits = [
     meta.pre_tokens != null &&
       (meta.post_tokens != null ? `${tokens(meta.pre_tokens)} → ${tokens(meta.post_tokens)} tokens` : `${tokens(meta.pre_tokens)} tokens`),
     result?.duration_ms != null && `${(result.duration_ms / 1000).toFixed(1)}s`,
-    result?.total_cost_usd != null && `$${Number(result.total_cost_usd).toFixed(3)}`,
+    result?.total_cost_usd != null && `$${result.total_cost_usd.toFixed(3)}`,
   ].filter(Boolean)
   return (
     <div className="text-[12px]">
@@ -198,11 +198,11 @@ export function CompactLine({ meta, summary, result }: { meta: Any; summary?: st
   )
 }
 
-export function ResultLine({ data }: { data: Any }) {
+export function ResultLine({ data }: { data: ResultData }) {
   const bits = [
     data.duration_ms != null && `${(data.duration_ms / 1000).toFixed(1)}s`,
     data.num_turns != null && `${data.num_turns} turn${data.num_turns === 1 ? "" : "s"}`,
-    data.total_cost_usd != null && `$${Number(data.total_cost_usd).toFixed(3)}`,
+    data.total_cost_usd != null && `$${data.total_cost_usd.toFixed(3)}`,
   ].filter(Boolean)
   const error = !data.interrupted && (data.is_error || (data.subtype && data.subtype !== "success"))
   return (

@@ -140,10 +140,6 @@ export default defineConfig({
           "react/exhaustive-deps": "error",
           // Off: the components use React's automatic JSX runtime (`"jsx": "react-jsx"`), which needs no React in scope.
           "react/react-in-jsx-scope": "off",
-          // Event handlers and DOM timers.
-          "effecttsgo/async-function": "off",
-          "effecttsgo/global-date": "off",
-          "effecttsgo/global-timers": "off",
           "no-restricted-imports": restrict([
             noTesting,
             { group: ["effect/rpc", "effect/rpc/*", "effect/http", "effect/http/*"], message: "Components read atoms; they do not call the server." },
@@ -151,6 +147,9 @@ export default defineConfig({
           ]),
         },
       },
+      // What runs inside a sandboxed document frame, as source text (docFrame.ts' `docComments`): there is no Effect in
+      // the frame, so its selection debounce is the frame's own DOM timer.
+      { files: ["apps/web/src/components/docs/docFrame.ts"], rules: { "effecttsgo/global-timers": "off" } },
       // Entry points provide layers and read the environment.
       {
         files: [

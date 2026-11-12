@@ -7,12 +7,12 @@ import { ChevronLeft, ChevronRight, GitBranch, Square, X } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../state/board"
 import { navigate, openTask } from "../../../state/route"
-import { rpc } from "../../../state/rpc"
+import { exitError, useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
 import { ContextPill } from "../Context"
 import { ChangeSummaryView, reviewParts, ReviewSummary } from "../Review"
 import { Thread } from "../Thread"
-import { Button, cost, errorText, IconButton } from "../../ui"
+import { Button, cost, IconButton } from "../../ui"
 import { PanelButtons, useWide, type Mode } from "./layout"
 import { Row, Section } from "./details/Section"
 
@@ -33,11 +33,13 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
   const step = isWorkflowThread(thread)
   const back = () => (parent ? openTask(parent.id) : project ? navigate({ name: "board", projectId: project.id }) : history.back())
   const [stopErr, setStopErr] = useState<{ thread: string; text: string } | null>(null)
+  const [, stopRun] = useMutation("tasks.stop")
   const stop = () => {
     setStopErr(null)
-    rpc(thread.host_id, "tasks.stop", { id: thread.id }).catch((e: unknown) =>
-      setStopErr({ thread: thread.id, text: `Couldn't stop the reviewer: ${errorText(e)}` }),
-    )
+    void stopRun(thread.host_id, { id: thread.id }).then((exit) => {
+      const why = exitError(exit)
+      if (why !== null) setStopErr({ thread: thread.id, text: `Couldn't stop the reviewer: ${why}` })
+    })
   }
   const err = stopErr?.thread === thread.id ? stopErr.text : null
   return (

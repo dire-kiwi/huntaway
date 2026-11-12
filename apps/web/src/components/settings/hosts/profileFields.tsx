@@ -1,16 +1,11 @@
-import { agentOf, canRunAgents, type HostAgentConfig as ClaudeConfig } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { agentOf, canRunAgents, type HostAgentConfig as ClaudeConfig, query } from "@huntaway/client"
 import { clsx } from "clsx"
-import { useEffect, useState } from "react"
 import { profileNames, useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
-import { errorText } from "../../ui"
-import { rpc } from "../../../state/rpc"
-import type { GithubAccount, GithubAccounts } from "@huntaway/contracts"
+import { resultError, resultValue } from "../../ui"
 
-// Step 1 (docs/plan/09-frontend.md). gh's accounts are 6.11's `profiles.githubAccounts`.
-
-/** The accounts gh is signed in to on a host. */
-const githubAccounts = (hostId: string): Promise<GithubAccounts> => rpc(hostId, "profiles.githubAccounts", undefined)
+// The fields of a profile's form (docs/plan/09-frontend.md). gh's accounts are 6.11's `profiles.githubAccounts`.
 
 const label = (c: ClaudeConfig | undefined): string => (c ? `${c.name}${agentOf(c) === "codex" ? " (Codex)" : ""}` : "")
 
@@ -66,22 +61,10 @@ export function GithubAccountSelect({
   onChange: (account: string) => void
   inherit: (active: string | undefined) => string
 }) {
-  const [listed, setListed] = useState<{ host: string; list: { accounts: ReadonlyArray<GithubAccount>; error: string | null } | null } | null>(null)
-  useEffect(() => {
-    const req = { live: true }
-    githubAccounts(hostId).then(
-      (l) => {
-        if (req.live) setListed({ host: hostId, list: l })
-      },
-      (e: unknown) => {
-        if (req.live) setListed({ host: hostId, list: { accounts: [], error: errorText(e) } })
-      },
-    )
-    return () => {
-      req.live = false
-    }
-  }, [hostId])
-  const list = listed?.host === hostId ? listed.list : null
+  // The accounts gh is signed in to on the host, or why they couldn't be listed.
+  const result = useAtomValue(query("profiles.githubAccounts", hostId, undefined))
+  const failed = resultError(result)
+  const list = failed === null ? (resultValue(result) ?? null) : { accounts: [], error: failed }
   const accounts = list?.accounts ?? []
   // gh's active account on github.com, or the only host's.
   const active = accounts.find((a) => a.active && a.host === "github.com") ?? accounts.find((a) => a.active)

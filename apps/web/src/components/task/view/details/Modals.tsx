@@ -1,9 +1,10 @@
 import { isMerged, type HostTask as Task } from "@huntaway/client"
 import { TaskId } from "@huntaway/contracts"
+import { Cause, Exit } from "effect"
 import { useState } from "react"
 import { board } from "../../../../state/board"
 import { closeTask, closeTaskModal, navigate } from "../../../../state/route"
-import { isTagged, rpc } from "../../../../state/rpc"
+import { isTagged, useMutation } from "../../../../state/mutation"
 import { isGroupTask, profileNameOf, useProject } from "../../../boardHelpers"
 import { keyList, useReaching } from "../../../board/MergesInto"
 import { useOpenLevels } from "../../../board/StackedOn"
@@ -12,9 +13,14 @@ import type { Mode } from "../layout"
 
 // A subproject's tasks were a legacy branch, and are gone.
 
+/** Why a mutation failed, as `ConfirmModal` takes it (a promise that rejects, its dialog showing why), or nothing if it didn't. */
+const failure = (exit: Exit.Exit<unknown, unknown>): unknown => (Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined)
+const rejectWith = (why: unknown): Promise<void> => (why === undefined ? Promise.resolve() : Promise.reject(why))
+
 export function TeardownModal({ task, onClose }: { task: Task; onClose: () => void }) {
   const [force, setForce] = useState(false)
   const [deleteBranch, setDeleteBranch] = useState(false)
+  const [, teardown] = useMutation("git.teardownWorktree")
   return (
     <ConfirmModal
       title="Tear down worktree"
@@ -31,7 +37,7 @@ export function TeardownModal({ task, onClose }: { task: Task; onClose: () => vo
       }
       action="Tear down"
       danger
-      onConfirm={() => rpc(task.host_id, "git.teardownWorktree", { id: TaskId.make(task.id), force, delete_branch: deleteBranch })}
+      onConfirm={() => teardown(task.host_id, { id: TaskId.make(task.id), force, delete_branch: deleteBranch }).then((exit) => rejectWith(failure(exit)))}
       onClose={onClose}
     />
   )
@@ -44,12 +50,10 @@ export function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mod
   // And the stack levels on it (API 142), unless it's merged (they go where it went).
   const levels = useOpenLevels(task.status === "done" && isMerged(task) ? null : task.id)
   const project = useProject(task.project_id)
-  const go = async () => {
+  const [, remove] = useMutation("tasks.delete")
+  /** Away from the deleted task: to its board, its group or its profile's board on a page of its own. */
+  const leave = () => {
     const pid = task.project_id
-    // Gone already (deleted from another window, say) is as good as deleted.
-    await rpc(task.host_id, "tasks.delete", { id: TaskId.make(task.id), delete_branch: deleteBranch }).catch((e: unknown) => {
-      if (!isTagged(e, "NotFound")) throw e
-    })
     if (mode === "modal") closeTaskModal(true)
     else if (mode !== "page") closeTask(true)
     else if (pid) navigate({ name: "board", projectId: pid }, true)
@@ -59,6 +63,14 @@ export function DeleteTaskModal({ task, mode, onClose }: { task: Task; mode: Mod
       if (profile) navigate({ name: "profile", profile }, true)
     }
   }
+  const go = () =>
+    remove(task.host_id, { id: TaskId.make(task.id), delete_branch: deleteBranch }).then((exit) => {
+      const why = failure(exit)
+      // Gone already (deleted from another window, say) is as good as deleted.
+      if (why !== undefined && !isTagged(why, "NotFound")) return rejectWith(why)
+      leave()
+      return rejectWith(undefined)
+    })
   return (
     <ConfirmModal
       title="Delete task"

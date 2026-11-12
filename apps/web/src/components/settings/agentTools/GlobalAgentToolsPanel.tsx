@@ -1,52 +1,44 @@
 import { clsx } from "clsx"
 import { GitBranch, Plus, Trash2 } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
-import type { GlobalAgentTools, McpServer, Skill } from "@huntaway/contracts"
-import { canRunAgents } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { useState } from "react"
+import type { McpServer, Skill } from "@huntaway/contracts"
+import { canRunAgents, mutate, query } from "@huntaway/client"
 import { useBoard } from "../../../state/board"
-import { useRpc } from "../../../state/rpc"
-import { Button, errorText, useConfirm } from "../../ui"
+import { useAction } from "../../../state/mutation"
+import { Button, resultError, resultValue, useConfirm } from "../../ui"
 import { SkillEditor } from "./SkillsSection"
 import { McpEditor } from "./McpSection"
 import { SourceCard, SourceAdder } from "./SkillSources"
-import { describe } from "./parts"
+import { describe, rejectFailure, type Change } from "./parts"
 
 // Settings → Skills and MCP (6.4; huntaway's settings/agentTools/GlobalAgentToolsPanel.tsx). Picking another host's is
 // M7's (the hosts); every host here has skill sources and subfolders, so the old API checks are gone.
 
 /** A host's global skills and MCP servers, each switched on or off by default per profile. */
 export function GlobalAgentToolsPanel() {
-  const rpc = useRpc()
   const hostId = useBoard((b) => {
     const usable = b.hosts.filter(canRunAgents)
     return usable.find((h) => h.local)?.id ?? usable[0]?.id ?? b.localHostId ?? ""
   })
+  return hostId ? <HostAgentTools hostId={hostId} /> : null
+}
+
+/** The panel for one host: its tools, read while it's shown and again after each change (an `agentTools.*` mutation). */
+function HostAgentTools({ hostId }: { hostId: string }) {
   const allProfiles = useBoard((b) => b.profiles)
   const profiles = allProfiles.filter((p) => p.host_id === hostId)
-  const [tools, setTools] = useState<GlobalAgentTools | null>(null)
+  const result = useAtomValue(query("agentTools.get", hostId, undefined))
+  const tools = resultValue(result)
   const [editing, setEditing] = useState<{ kind: "skill"; item: Skill | null } | { kind: "server"; item: McpServer | null } | null>(null)
   const [addingSource, setAddingSource] = useState(false)
   const [updating, setUpdating] = useState<string | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const reload = useCallback(() => {
-    if (!hostId) return Promise.resolve()
-    return rpc(hostId, "agentTools.get", undefined).then(setTools, (e: unknown) => setErr(errorText(e)))
-  }, [rpc, hostId])
-  useEffect(() => {
-    void reload()
-  }, [reload])
+  // The switches' and Update's failures show under the list; a delete's shows in its dialog.
+  const [changed, run] = useAction()
+  const [, runConfirmed] = useAction()
+  const err = changed.error ?? resultError(result)
+  const confirmed = (change: Change) => runConfirmed(change).then(rejectFailure)
   const confirm = useConfirm()
-  if (!hostId) return null
-  const runAsync = async (fn: () => Promise<unknown>) => {
-    setErr(null)
-    try {
-      await fn()
-      await reload()
-    } catch (e) {
-      setErr(errorText(e))
-    }
-  }
-  const run = (fn: () => Promise<unknown>) => void runAsync(fn)
   const isOn = (profileId: string, id: string) => !!tools?.profile_switches[profileId]?.[id]
   const ownSkills = tools?.skills.filter((s) => !s.source_id) ?? []
   const row = (item: Skill | McpServer) => {
@@ -65,7 +57,7 @@ export function GlobalAgentToolsPanel() {
                 type="checkbox"
                 checked={server.auto_allow}
                 onChange={(e) =>
-                  run(() => rpc(hostId, "agentTools.updateServer", { project_id: null, id: server.id, server: { auto_allow: e.target.checked } }))
+                  void run(mutate("agentTools.updateServer", hostId, { project_id: null, id: server.id, server: { auto_allow: e.target.checked } }))
                 }
                 className="accent-accent"
               />
@@ -88,12 +80,11 @@ export function GlobalAgentToolsPanel() {
                     action: skill ? "Delete skill" : "Delete server",
                     danger: true,
                     onConfirm: () =>
-                      (skill
-                        ? rpc(hostId, "agentTools.removeSkill", { project_id: null, id: skill.id })
+                      skill
+                        ? confirmed(mutate("agentTools.removeSkill", hostId, { project_id: null, id: skill.id }))
                         : server
-                          ? rpc(hostId, "agentTools.removeServer", { project_id: null, id: server.id })
-                          : Promise.resolve()
-                      ).then(reload),
+                          ? confirmed(mutate("agentTools.removeServer", hostId, { project_id: null, id: server.id }))
+                          : undefined,
                   })
                 }
               >
@@ -112,7 +103,7 @@ export function GlobalAgentToolsPanel() {
                   key={p.id}
                   type="button"
                   onClick={() =>
-                    run(() => rpc(hostId, "agentTools.setSwitch", { scope: "profile", scope_id: p.id, item_id: item.id, enabled: on ? null : true }))
+                    void run(mutate("agentTools.setSwitch", hostId, { scope: "profile", scope_id: p.id, item_id: item.id, enabled: on ? null : true }))
                   }
                   className={clsx(
                     "rounded-full border px-2 py-0.5 transition-colors",
@@ -173,11 +164,11 @@ export function GlobalAgentToolsPanel() {
                 updating={updating === src.id}
                 renderSkill={row}
                 onSwitchAll={(profileId, on) =>
-                  run(() => rpc(hostId, "agentTools.setSwitch", { scope: "profile", scope_id: profileId, source_id: src.id, enabled: on ? true : null }))
+                  void run(mutate("agentTools.setSwitch", hostId, { scope: "profile", scope_id: profileId, source_id: src.id, enabled: on ? true : null }))
                 }
                 onUpdate={() => {
                   setUpdating(src.id)
-                  void runAsync(() => rpc(hostId, "agentTools.updateSource", { id: src.id })).finally(() => setUpdating(null))
+                  void run(mutate("agentTools.updateSource", hostId, { id: src.id })).finally(() => setUpdating(null))
                 }}
                 onRemove={() =>
                   confirm.ask({
@@ -185,7 +176,7 @@ export function GlobalAgentToolsPanel() {
                     body: `Remove "${src.name}" and its ${skills.length} skill${skills.length === 1 ? "" : "s"} from every profile and project on this host?`,
                     action: "Remove source",
                     danger: true,
-                    onConfirm: () => rpc(hostId, "agentTools.removeSource", { id: src.id }).then(reload),
+                    onConfirm: () => confirmed(mutate("agentTools.removeSource", hostId, { id: src.id })),
                   })
                 }
               />
@@ -203,32 +194,29 @@ export function GlobalAgentToolsPanel() {
       {confirm.dialog}
       {addingSource && (
         <SourceAdder
-          onAdd={async (url, ref, subdir) => {
-            await rpc(hostId, "agentTools.addSource", { url, ...(ref ? { ref } : {}), ...(subdir ? { subdir } : {}) })
-            await reload()
-          }}
+          onAdd={(url, ref, subdir) => mutate("agentTools.addSource", hostId, { url, ...(ref ? { ref } : {}), ...(subdir ? { subdir } : {}) })}
           onClose={() => setAddingSource(false)}
         />
       )}
       {editing?.kind === "skill" && (
         <SkillEditor
           skill={editing.item}
-          onSave={async (skill, content) => {
-            if (skill) await rpc(hostId, "agentTools.updateSkill", { project_id: null, id: skill.id, skill: { content } })
-            else await rpc(hostId, "agentTools.addSkill", { project_id: null, skill: { content } })
-            await reload()
-          }}
+          onSave={(skill, content) =>
+            skill
+              ? mutate("agentTools.updateSkill", hostId, { project_id: null, id: skill.id, skill: { content } })
+              : mutate("agentTools.addSkill", hostId, { project_id: null, skill: { content } })
+          }
           onClose={() => setEditing(null)}
         />
       )}
       {editing?.kind === "server" && (
         <McpEditor
           server={editing.item}
-          onSave={async (server, b) => {
-            if (server) await rpc(hostId, "agentTools.updateServer", { project_id: null, id: server.id, server: b })
-            else await rpc(hostId, "agentTools.addServer", { project_id: null, server: b })
-            await reload()
-          }}
+          onSave={(server, b) =>
+            server
+              ? mutate("agentTools.updateServer", hostId, { project_id: null, id: server.id, server: b })
+              : mutate("agentTools.addServer", hostId, { project_id: null, server: b })
+          }
           onClose={() => setEditing(null)}
         />
       )}

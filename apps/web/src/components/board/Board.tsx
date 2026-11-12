@@ -1,17 +1,20 @@
 import { clsx } from "clsx"
 import { Folder, FolderGit2, Settings2 } from "lucide-react"
+import { useAtom } from "@effect/atom-react"
+import { Effect } from "effect"
 import { useCallback, useMemo, useState } from "react"
 import { isArchived, isAssistants, isPenThreads, needsWorktreeSetup, type HostProject as Project, type HostTask as Task } from "@huntaway/client"
-import { ACTIVE_VIEW, canPen, inTab, isPenView, loadCollapsed, loadTab, moveToPen, saveCollapsed, saveTab, viewTabs, type PenLanes } from "./pens"
+import { ACTIVE_VIEW, canPen, inTab, isPenView, moveToPen, PenRefused, viewTabs, type PenLanes } from "./pens"
 import { useShallow } from "../boardHelpers"
 import { PenTabs, tabCounts, usePenTabs } from "./Pens"
 import { groupProjects, groupTasks } from "../../projectGroups"
 import { navigate } from "../../state/route"
 import { scratchHost, useHost } from "../boardHelpers"
-import { IconButton, MenuButton } from "../ui"
+import { IconButton, MenuButton, useClock } from "../ui"
 import { NewTaskButton, TaskBoard } from "./TaskBoard"
 import { WorktreeSetup } from "../task/WorktreeSetup"
 import { useBoard } from "../../state/board"
+import { penCollapsedAtom, penTabAtom } from "../../state/prefs"
 
 /** A project's board. */
 export function Board({ projectId }: { projectId: string }) {
@@ -133,28 +136,26 @@ export function ProfileBoard({ profile }: { profile: string }) {
   const scratch = useMemo(() => scratchHost(profile, { profiles, hosts, hostSettings }), [profile, profiles, hosts, hostSettings])
   // Its pens' tabs (HA-285): the one picked last on this client, while it's there.
   const tabs = usePenTabs(ids)
-  const [picked, setPicked] = useState(() => loadTab(profile))
+  const [kept, setKept] = useAtom(penTabAtom(profile))
+  const picked = kept ?? ""
   const tab = tabs.find((t) => t.key === picked)
-  const pickTab = (key: string) => {
-    setPicked(key)
-    saveTab(profile, key)
-  }
+  const pickTab = (key: string) => setKept(key || null)
   // Or the Active or Inactive view (HA-292): the tasks in those pens, in a row for each pen, which can be collapsed.
   const view = !tab && isPenView(picked) && tabs.length ? picked : undefined
-  const [collapsed, setCollapsed] = useState(() => loadCollapsed(profile))
+  const [collapsedKeys, setCollapsedKeys] = useAtom(penCollapsedAtom(profile))
+  const collapsed = useMemo(() => new Set(collapsedKeys), [collapsedKeys])
   const lanes = useMemo((): PenLanes | undefined => {
     if (!view) return undefined
     const onToggle = (key: string) =>
-      setCollapsed((c) => {
+      setCollapsedKeys((c) => {
         const next = new Set(c)
         if (!next.delete(key)) next.add(key)
-        saveCollapsed(profile, next)
-        return next
+        return [...next]
       })
     const empty =
       view === ACTIVE_VIEW ? "No pen is active: pick one from the inactive pens to mark it active" : "No pen is inactive: a pen's tab's menu marks it inactive"
     return { tabs: viewTabs(tabs, view), collapsed, onToggle, empty }
-  }, [view, tabs, collapsed, profile])
+  }, [view, tabs, collapsed, setCollapsedKeys])
   // The same function while the view has the same pens, so collapsing a row doesn't let the picked tasks go.
   const laneKeys = lanes?.tabs.map((t) => t.pens.map((p) => `${p.host_id}:${p.id}`).join(",")).join(" ")
   const [laneTabs, setLaneTabs] = useState(() => ({ keys: laneKeys, tabs: lanes?.tabs }))
@@ -165,20 +166,25 @@ export function ProfileBoard({ profile }: { profile: string }) {
   )
   // A task made on a pen's tab goes in the pen (the board shows why, if it can't: it isn't on the tab).
   const onCreated = useCallback(
-    async (made: ReadonlyArray<Task>) => {
-      if (!tab) return
-      await moveToPen(made, tab.name)
-      const left = made.filter((t) => !canPen(t))
-      if (left.length) throw new Error(`${left.map((t) => t.title).join(", ")} isn't on this tab: its host has no pens`)
-    },
+    (made: ReadonlyArray<Task>) =>
+      tab
+        ? moveToPen(made, tab.name).pipe(
+            Effect.andThen(() => {
+              const left = made.filter((t) => !canPen(t))
+              return left.length
+                ? Effect.fail(new PenRefused({ reason: `${left.map((t) => t.title).join(", ")} isn't on this tab: its host has no pens` }))
+                : Effect.void
+            }),
+          )
+        : Effect.void,
     [tab],
   )
-  // What each tab has: the tasks on the board, not counting archived ones.
+  // What each tab has: the tasks on the board, not counting archived ones (archived as the board has it, by the minute).
+  const now = useClock(60_000)
   const boardTasks = useBoard(
     useShallow((s) =>
       Object.values(s.tasks).filter(
-        (t) =>
-          t.kind === "task" && !isAssistants(t) && !isPenThreads(t) && !t.parent_id && ids.has(`${t.host_id}:${t.profile_id}`) && !isArchived(t, Date.now()),
+        (t) => t.kind === "task" && !isAssistants(t) && !isPenThreads(t) && !t.parent_id && ids.has(`${t.host_id}:${t.profile_id}`) && !isArchived(t, now),
       ),
     ),
   )

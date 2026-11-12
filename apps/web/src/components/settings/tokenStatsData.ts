@@ -5,8 +5,7 @@ import type { ATask, AProject } from "./analytics/analytics"
  * review/stats.rs): where tokens go (tasks' own work, reviews, summaries, compactions), on which
  * models, and how often each model's work passes review.
  *
- * A review or summary thread's tokens count towards the task it's for, and a subproject's tasks'
- * towards the subproject, which lists them. The board's own model calls that aren't runs (task
+ * A review or summary thread's tokens count towards the task it's for. The board's own model calls that aren't runs (task
  * titles and 5-hour window restarts, see server agent/tokens/calls.rs) count in the totals, but
  * not towards tasks.
  */
@@ -111,10 +110,9 @@ export interface URound {
 }
 
 export interface UThread {
-  /** A review thread's task, or a subproject task's subproject. */
+  /** A review thread's task. */
   parentId: string | null
   taskType: string | null
-  subproject: boolean
   groupName: string | null
   /** The model its own runs used most. */
   model: string | null
@@ -279,12 +277,6 @@ export function ownerOf(d: Pick<TokenData, "threads">, threadId: string) {
   return t?.kind === "review" && t.parentId ? t.parentId : threadId
 }
 
-/** The task a task is listed under: its subproject, if it's in one. */
-export function topOf(d: Pick<TokenData, "threads">, taskId: string) {
-  const t = d.threads[taskId]
-  return t?.kind !== "review" && t?.parentId && d.threads[t.parentId]?.subproject ? t.parentId : taskId
-}
-
 /** Rows grouped by `key`, biggest first by `metric`. */
 export function groupBy<K extends string>(rows: URow[], key: (r: URow) => K, metric: Metric): { key: K; totals: Totals }[] {
   const groups = new Map<K, URow[]>()
@@ -310,15 +302,13 @@ export function byDay(d: TokenData, rows: URow[], days: number[]): { day: number
   return out
 }
 
-/** A task's tokens: its own, its review and summary threads' and its compactions', and for a subproject its tasks' (in `parts` too). */
+/** A task's tokens: its own, its review and summary threads' and its compactions' (in `parts` too). */
 export interface TaskUsage {
   taskId: string
   totals: Totals
   parts: Partial<Record<Purpose, Totals>>
   /** The models its tokens went to, biggest first. */
   models: { model: string; totals: Totals }[]
-  /** A subproject's tasks. */
-  children: TaskUsage[]
 }
 
 export function byTask(d: TokenData, rows: URow[], metric: Metric): TaskUsage[] {
@@ -331,32 +321,15 @@ export function byTask(d: TokenData, rows: URow[], metric: Metric): TaskUsage[] 
     if (g) g.push(r)
     else own.set(id, [r])
   }
-  // A subproject's tasks' rows, and the tasks each top-level one lists.
-  const childRows = new Map<string, URow[]>()
-  const tops = new Map<string, string[]>()
-  for (const id of own.keys()) {
-    const top = topOf(d, id)
-    if (top !== id) {
-      childRows.set(id, own.get(id) ?? [])
-      tops.set(top, [...(tops.get(top) ?? []), id])
-    } else if (!tops.has(id)) tops.set(id, [])
-  }
-  const usage = (taskId: string, rs: URow[], children: TaskUsage[]): TaskUsage => {
-    const all = [...rs, ...children.flatMap((c) => childRows.get(c.taskId) ?? [])]
+  const usage = (taskId: string, all: URow[]): TaskUsage => {
     const parts: Partial<Record<Purpose, Totals>> = {}
     for (const p of PURPOSES) {
       const of = all.filter((r) => purposeOf(d, r) === p)
       if (of.length) parts[p] = total(of)
     }
-    return { taskId, totals: total(all), parts, models: groupBy(all, (r) => r.model, metric).map((g) => ({ model: g.key, totals: g.totals })), children }
+    return { taskId, totals: total(all), parts, models: groupBy(all, (r) => r.model, metric).map((g) => ({ model: g.key, totals: g.totals })) }
   }
-  const sort = (xs: TaskUsage[]) => xs.toSorted((a, b) => value(b.totals, metric) - value(a.totals, metric))
-  return sort(
-    [...tops].map(([top, kids]) => {
-      const children = sort(kids.map((k) => usage(k, own.get(k) ?? [], [])))
-      return usage(top, own.get(top) ?? [], children)
-    }),
-  )
+  return [...own].map(([taskId, rs]) => usage(taskId, rs)).toSorted((a, b) => value(b.totals, metric) - value(a.totals, metric))
 }
 
 /** A task's reviews: all of its rounds, those outside the range too, so its first round is its first. */

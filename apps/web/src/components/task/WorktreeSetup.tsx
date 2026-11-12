@@ -1,17 +1,22 @@
+import { Cause, Exit } from "effect"
 // In place of a project's board while its folder can't have worktrees yet (the old task/WorktreeSetup, HA-20; ported in
 // HE-8 with the worktreeSetup check): what's missing, and the project's setup thread (`projects.setupThread`), whose
 // agent helps get it ready. The folder is looked at again every 3 s and when a turn of the thread ends
 // (`projects.get` reads it from disk, and the host's `project` event brings the change); once it's ready, the board
 // comes back with the thread's task on it.
-import type { HostProject as Project } from "@huntaway/client"
+import { type HostProject as Project, type Methods, mutate } from "@huntaway/client"
 import { ProjectId } from "@huntaway/contracts"
 import { FolderGit2, GitBranch, Play, RefreshCw, Settings2 } from "lucide-react"
 import { useCallback, useEffect, useState, type KeyboardEvent } from "react"
 import { useBoard } from "../../state/board"
 import { navigate } from "../../state/route"
-import { rpc } from "../../state/rpc"
+import { runExit } from "../../state/mutation"
 import { Button, errorText, IconButton, MenuButton, SUBMIT_KEYS, Textarea } from "../ui"
 import { Thread } from "./Thread"
+
+/** One call to `host`'s board (through the client's `mutate`, which reads again what it changes), as a promise that rejects with the host's error. */
+const call = <M extends keyof Methods>(host: string, method: M, payload: Methods[M]["payload"]): Promise<Methods[M]["success"]> =>
+  runExit(mutate(method, host, payload)).then((exit) => (Exit.isSuccess(exit) ? exit.value : Promise.reject(Cause.squash(exit.cause))))
 
 /** How often the project is looked at again while it isn't ready: its agent (or the user, in a terminal) makes it so. */
 const RECHECK_MS = 3000
@@ -23,7 +28,7 @@ export function WorktreeSetup({ project, hostName }: { project: Project; hostNam
   const [checking, setChecking] = useState(false)
   const recheck = useCallback(
     () =>
-      rpc(hostId, "projects.get", { id: ProjectId.make(project.id) }).then(
+      call(hostId, "projects.get", { id: ProjectId.make(project.id) }).then(
         () => undefined,
         () => undefined,
       ),
@@ -41,15 +46,13 @@ export function WorktreeSetup({ project, hostName }: { project: Project; hostNam
 
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const withoutWorktrees = async () => {
+  const withoutWorktrees = () => {
     setBusy(true)
     setErr(null)
-    try {
-      await rpc(hostId, "projects.update", { id: ProjectId.make(project.id), patch: { use_worktrees: false } })
-    } catch (e) {
+    call(hostId, "projects.update", { id: ProjectId.make(project.id), patch: { use_worktrees: false } }).catch((e: unknown) => {
       setErr(errorText(e))
       setBusy(false)
-    }
+    })
   }
   const missing = !project.is_git ? "isn't a git repository yet" : "is a git repository with no commits yet"
 
@@ -97,7 +100,7 @@ export function WorktreeSetup({ project, hostName }: { project: Project; hostNam
           <Button
             size="sm"
             disabled={busy}
-            onClick={() => void withoutWorktrees()}
+            onClick={() => withoutWorktrees()}
             title="Tasks work in the project's folder itself, one at a time. You can turn worktrees back on in the project's settings."
           >
             Use without worktrees
@@ -123,22 +126,20 @@ export function WorktreeSetup({ project, hostName }: { project: Project; hostNam
 function StartSetup({ project, missing, onError }: { project: Project; missing: string; onError: (e: string | null) => void }) {
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
-  const start = async () => {
+  const start = () => {
     if (busy) return
     setBusy(true)
     onError(null)
-    try {
-      // The project's event brings its `setup_task_id`, and the thread shows in place of this.
-      await rpc(project.host_id, "projects.setupThread", { id: ProjectId.make(project.id), message: text })
-    } catch (e) {
+    // The project's event brings its `setup_task_id`, and the thread shows in place of this.
+    call(project.host_id, "projects.setupThread", { id: ProjectId.make(project.id), message: text }).catch((e: unknown) => {
       onError(errorText(e))
       setBusy(false)
-    }
+    })
   }
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
-      void start()
+      start()
     }
   }
   return (
@@ -162,7 +163,7 @@ function StartSetup({ project, missing, onError }: { project: Project; missing: 
         />
         <div className="flex items-center justify-end gap-2">
           <span className="text-[11.5px] text-faint">{SUBMIT_KEYS}</span>
-          <Button variant="primary" disabled={busy} onClick={() => void start()}>
+          <Button variant="primary" disabled={busy} onClick={() => start()}>
             <Play size={13} /> Start setup thread
           </Button>
         </div>

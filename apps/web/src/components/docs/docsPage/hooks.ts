@@ -1,4 +1,4 @@
-// The hosts' profiles a Docs route stands for, and what tells the page their documents changed.
+// The hosts' profiles a Docs route stands for, and what tells a link to a document that it changed.
 import { useEffect, useEffectEvent, useMemo } from "react"
 import { docsSeqAtom } from "@huntaway/client"
 import { docsHomes, type DocsHome } from "../docs"
@@ -25,23 +25,14 @@ export function useHomes(segment: string): { name: string; homes: DocsHome[] } {
 }
 
 /**
- * Calls `fn` when the board says something of `homes` changed (6.3: the latest `kind` event of the host's, which
- * `@huntaway/client` keeps): their documents (`docs`), a document's comments (`comments`, with `slug`), or their
- * connection to their docs site (`site`).
+ * Calls `fn` when a document of one of `homes` is published, moved, relabelled or deleted (6.3: the latest `docs` event
+ * of the host's, which `@huntaway/client` keeps). The Docs page's own reads follow these events by themselves (their
+ * queries' triggers, invalidate.ts): this is for what doesn't read through a query yet (a message's link to a document).
  */
-function useDocsEvent(kind: "docs" | "comments" | "site", homes: DocsHome[], fn: () => void, slug?: string) {
+export function useDocsChanged(homes: ReadonlyArray<DocsHome>, fn: () => void) {
   const call = useEffectEvent(fn)
   useEffect(() => {
-    const offs = homes.map((h) => registry.subscribe(docsSeqAtom(h.hostId, kind, h.profileId, slug ?? ""), () => call()))
+    const offs = homes.map((h) => registry.subscribe(docsSeqAtom(h.hostId, "docs", h.profileId), () => call()))
     return () => offs.forEach((off) => off())
-  }, [kind, homes, slug])
+  }, [homes])
 }
-
-/** Calls `fn` when a document of one of `homes` is published, moved, relabelled or deleted. */
-export const useDocsChanged = (homes: DocsHome[], fn: () => void) => useDocsEvent("docs", homes, fn)
-
-/** Calls `fn` when the hosted docs connection of one of `homes` changes (documents' published state is for it). */
-export const useDocsSiteChanged = (homes: DocsHome[], fn: () => void) => useDocsEvent("site", homes, fn)
-
-/** Calls `fn` when document `slug`'s comments of one of `homes` change. */
-export const useDocCommentsChanged = (homes: DocsHome[], slug: string, fn: () => void) => useDocsEvent("comments", homes, fn, slug)

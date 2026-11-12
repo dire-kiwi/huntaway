@@ -1,8 +1,9 @@
 import { splitAttachments, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
 import { useMemo, useState } from "react"
-import { rpc } from "../../../../state/rpc"
-import { Button, errorText, isSubmitShortcut, SUBMIT_KEYS, Textarea } from "../../../ui"
+import { Exit } from "effect"
+import { exitError, useMutation } from "../../../../state/mutation"
+import { Button, isSubmitShortcut, SUBMIT_KEYS, Textarea } from "../../../ui"
 import { AttachmentList } from "../../Attachments"
 import { Markdown } from "../../thread/Markdown"
 import { Section } from "./Section"
@@ -20,11 +21,14 @@ export function DescriptionSection({ task }: { task: Task }) {
     setErr(null)
     setEditingDesc(true)
   }
+  const [, update] = useMutation("tasks.update")
   const saveDesc = () => {
     setErr(null)
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { description: desc } })
-      .then(() => setEditingDesc(false))
-      .catch((e: unknown) => setErr(`Couldn't save the description: ${errorText(e)}`))
+    void update(task.host_id, { id: task.id, patch: { description: desc } }).then((exit) => {
+      const why = exitError(exit)
+      if (Exit.isSuccess(exit)) setEditingDesc(false)
+      else if (why !== null) setErr(`Couldn't save the description: ${why}`)
+    })
   }
   return (
     <Section

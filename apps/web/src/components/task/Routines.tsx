@@ -3,36 +3,36 @@
 // with the profile as owner, read again on `automations_changed`. Under them, the routines left behind on this board's
 // host when a profile's assistant moved to another (`RoutinesLeftBehind`, 7.4).
 import { useAtomValue } from "@effect/atom-react"
-import { automationsAtom, type HostTask as Task } from "@huntaway/client"
+import { automationsAtom, mutate, type HostTask as Task } from "@huntaway/client"
 import type { Automation } from "@huntaway/contracts"
+import { Cause, Exit } from "effect"
 import { Plus } from "lucide-react"
 import { useState } from "react"
+import { useAction } from "../../state/mutation"
 import { openTask } from "../../state/route"
-import { useRpc } from "../../state/rpc"
 import { AutomationEditor } from "../settings/automations/AutomationEditor"
 import { AutomationRow } from "../settings/automations/AutomationRow"
 import { activeText, usd } from "../settings/automations/text"
-import { Button, errorText, useConfirm } from "../ui"
+import { Button, useConfirm } from "../ui"
 import { RoutinesLeftBehind } from "./RoutinesLeftBehind"
+
+/** What the confirm dialog waits for: the exit's value, or its failure as the rejection it shows. */
+const settled = <A, E>(exit: Exit.Exit<A, E>): Promise<A> => (Exit.isSuccess(exit) ? Promise.resolve(exit.value) : Promise.reject(Cause.squash(exit.cause)))
 
 /** The assistant's routines: `assistant` is the profile's assistant, whose host and profile they're on. */
 export function Routines({ assistant }: { assistant: Task }) {
   const { host_id: hostId, profile_id: profileId } = assistant
-  const rpc = useRpc()
   const { data, failed } = useAtomValue(automationsAtom({ host_id: hostId, profile_id: profileId }))
   const list = data?.automations ?? null
   const tz = data?.time_zone ?? null
-  const [err, setErr] = useState<string | null>(null)
+  const [action, run] = useAction()
+  // A delete's failure is the confirm dialog's to show.
+  const [, remove] = useAction()
+  // A routine saved in the editor clears the error of a change before it.
+  const [cleared, setCleared] = useState<unknown>(undefined)
+  const err = action.failure === cleared ? null : action.error
   const [editing, setEditing] = useState<Automation | "new" | null>(null)
   const confirm = useConfirm()
-  const run = async (fn: () => Promise<unknown>) => {
-    setErr(null)
-    try {
-      await fn()
-    } catch (e) {
-      setErr(errorText(e))
-    }
-  }
   return (
     <div className="h-full overflow-y-auto" data-testid="routines">
       <div className="mx-auto max-w-3xl space-y-3 px-5 py-5">
@@ -53,16 +53,16 @@ export function Routines({ assistant }: { assistant: Task }) {
                 routine={a}
                 hostId={hostId}
                 tz={tz}
-                onToggle={(enabled) => void run(() => rpc(hostId, "automations.update", { id: a.id, patch: { enabled } }))}
+                onToggle={(enabled) => void run(mutate("automations.update", hostId, { id: a.id, patch: { enabled } }))}
                 onEdit={() => setEditing(a)}
-                onRun={() => run(() => rpc(hostId, "automations.run", { id: a.id }))}
+                onRun={() => run(mutate("automations.run", hostId, { id: a.id }))}
                 onDelete={() =>
                   confirm.ask({
                     title: `Delete routine ${a.name}`,
                     body: `Delete the routine "${a.name}"? Its run history goes with it; its reports stay in the thread.`,
                     action: "Delete routine",
                     danger: true,
-                    onConfirm: () => rpc(hostId, "automations.delete", { id: a.id }),
+                    onConfirm: () => remove(mutate("automations.delete", hostId, { id: a.id })).then(settled),
                   })
                 }
               />
@@ -78,7 +78,7 @@ export function Routines({ assistant }: { assistant: Task }) {
             owner={{ hostId, profileId }}
             automation={editing === "new" ? null : editing}
             tz={tz}
-            onSaved={() => setErr(null)}
+            onSaved={() => setCleared(action.failure)}
             onClose={() => setEditing(null)}
           />
         )}

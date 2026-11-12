@@ -1,14 +1,16 @@
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
+import { Effect, Exit } from "effect"
 import { ChevronDown, RefreshCw, Trash2 } from "lucide-react"
-import { useEffect, useState } from "react"
-import { STATUSES } from "@huntaway/client"
+import { useState } from "react"
+import { mutate, STATUSES } from "@huntaway/client"
 import { ProjectId } from "@huntaway/contracts"
-import { baseName, bytes, loadDisk, reclaimable, reclaimTargets, type Disk, type DProject, type DWorktree, type Reclaimed } from "./disk"
+import { baseName, bytes, diskAtom, reclaimable, reclaimTargets, type Disk, type DProject, type DWorktree, type Reclaimed } from "./disk"
+import { targetsAtom, useGathered } from "./analytics/gather"
 import { navigate } from "../../state/route"
-import { useBoard } from "../../state/board"
-import { rpc } from "../../state/rpc"
+import { errorText, exitError, useAction } from "../../state/mutation"
 import { Swatch, useTip } from "./chart"
-import { Button, ConfirmModal, errorText, IconButton } from "../ui"
+import { Button, ConfirmModal, IconButton, localeTimeString } from "../ui"
 
 /** How the parts of a project's bar are told apart: by how strong its colour is. */
 const PARTS = [
@@ -18,47 +20,13 @@ const PARTS = [
   { id: "other", label: "Scratch & data", opacity: 0.2 },
 ] as const
 
-/** The last measurement, so coming back to the tab doesn't walk every folder again. */
-let last: { key: string; data: Disk; at: number } | null = null
-
-/** The measurement shown, which measuring (`want`) it's from; null for none yet. */
-interface Measured {
-  want: string | null
-  data: Disk | null
-  at: number | null
-  error: string | null
-}
-
+/** The last measurement of `profile`'s projects on the connected hosts (the one before while another is first made). */
 function useDisk(profile: string | null) {
-  const profilesKey = useBoard((s) => s.profiles.map((p) => `${p.host_id}:${p.id}`).join(","))
-  const hostsKey = useBoard((s) => s.hosts.map((h) => `${h.id}:${h.connected}`).join(","))
-  const key = `${profile ?? ""}|${profilesKey}|${hostsKey}`
-  const [nonce, setNonce] = useState(0)
-  const want = `${nonce}|${key}`
-  const [got, setGot] = useState<Measured>(() =>
-    last?.key === key ? { want, data: last.data, at: last.at, error: null } : { want: null, data: null, at: null, error: null },
-  )
-  // What was measured last, unless asked to measure again.
-  if (got.want !== want && nonce === 0 && last?.key === key) setGot({ ...got, want, data: last.data, at: last.at })
-  const loading = got.want !== want
-  useEffect(() => {
-    if (!loading) return undefined
-    let cancelled = false
-    loadDisk(profile).then(
-      (d) => {
-        if (cancelled) return
-        last = { key, data: d, at: Date.now() }
-        setGot({ want, data: d, at: last.at, error: null })
-      },
-      (e: unknown) => {
-        if (!cancelled) setGot((g) => ({ ...g, want, error: errorText(e) }))
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [loading, want, key, profile])
-  return { data: got.data, at: got.at, loading, error: got.error, reload: () => setNonce((n) => n + 1) }
+  const targets = useAtomValue(targetsAtom(profile))
+  const atom = diskAtom({ profile, targets })
+  const { data, loading } = useGathered(atom)
+  const reload = useAtomRefresh(atom)
+  return { data: data?.disk ?? null, at: data?.at ?? null, loading, reload }
 }
 
 const statusLabel = (w: DWorktree) => (w.taskId === null ? "No task" : (STATUSES.find((s) => s.id === w.status)?.label ?? ""))
@@ -66,33 +34,36 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** The Disk tab: how much space projects and their worktrees take up, `profile`'s or, when it's null, every profile's. */
 export function DiskUsage({ profile = null }: { profile?: string | null }) {
-  const { data, at, loading, error, reload } = useDisk(profile)
+  const { data, at, loading, reload } = useDisk(profile)
   const [confirming, setConfirming] = useState(false)
   const [reclaimed, setReclaimed] = useState<{ results: Reclaimed[]; errors: string[] } | null>(null)
+  const [, run] = useAction()
   const targets = data ? reclaimTargets(data) : []
-  // Removes the done tasks' worktrees that are merged and clean, then measures again.
-  const reclaim = async () => {
-    if (!data) return
-    const errors: string[] = []
-    const results = (
-      await Promise.all(
-        targets.map(async (p) => {
-          try {
-            const removed = await rpc(p.hostId, "projects.removeMergedWorktrees", { id: ProjectId.make(p.id) })
-            return removed.flatMap((r): Reclaimed[] => {
-              const w = p.worktrees.find((x) => x.taskId === r.task_id)
-              return [{ taskId: r.task_id, key: w?.key ?? `#${r.number}`, title: r.title, removed: r.removed, detail: r.detail, bytes: w?.size.bytes ?? 0 }]
-            })
-          } catch (e) {
-            errors.push(`${p.name}: ${errorText(e)}`)
-            return []
-          }
-        }),
-      )
-    ).flat()
-    setReclaimed({ results, errors })
-    reload()
-  }
+  // Removes the done tasks' worktrees that are merged and clean; the hosts it ran on measure again (invalidate.ts).
+  const reclaim = () =>
+    run(
+      Effect.forEach(
+        targets,
+        (p) =>
+          mutate("projects.removeMergedWorktrees", p.hostId, { id: ProjectId.make(p.id) }).pipe(
+            Effect.map((removed) => ({
+              results: removed.map((r): Reclaimed => {
+                const w = p.worktrees.find((x) => x.taskId === r.task_id)
+                return { taskId: r.task_id, key: w?.key ?? `#${r.number}`, title: r.title, removed: r.removed, detail: r.detail, bytes: w?.size.bytes ?? 0 }
+              }),
+              error: null,
+            })),
+            Effect.catch((e) => Effect.succeed({ results: [], error: `${p.name}: ${errorText(e)}` })),
+          ),
+        { concurrency: "unbounded" },
+      ),
+    ).then((exit) => {
+      const failed = exitError(exit)
+      if (failed !== null) throw new Error(failed)
+      if (Exit.isSuccess(exit)) {
+        setReclaimed({ results: exit.value.flatMap((r) => r.results), errors: exit.value.flatMap((r) => (r.error === null ? [] : [r.error])) })
+      }
+    })
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2">
@@ -100,7 +71,7 @@ export function DiskUsage({ profile = null }: { profile?: string | null }) {
           {loading
             ? "Measuring…"
             : data && at
-              ? `Measured at ${new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}, in ${data.elapsedMs < 1000 ? `${data.elapsedMs} ms` : `${(data.elapsedMs / 1000).toFixed(1)}s`}`
+              ? `Measured at ${localeTimeString(at, { hour: "numeric", minute: "2-digit" }, [])}, in ${data.elapsedMs < 1000 ? `${data.elapsedMs} ms` : `${(data.elapsedMs / 1000).toFixed(1)}s`}`
               : ""}
         </span>
         <div className="ml-auto flex items-center gap-2">
@@ -114,7 +85,6 @@ export function DiskUsage({ profile = null }: { profile?: string | null }) {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-6 p-6">
-          {error && <div className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-[12.5px] text-red-300">{error}</div>}
           {data?.errors.map((e) => (
             <div key={e} className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12.5px] text-amber-200">
               {e}

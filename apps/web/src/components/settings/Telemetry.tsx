@@ -1,10 +1,14 @@
 // A host's Telemetry section (API 143, HA-284): the ClickHouse its telemetry goes to, what goes, and how sending is
 // going. Which profiles' tasks are sent is each profile's choice (its form's "Send this profile's tasks").
+import { useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
-import { useEffect, useState } from "react"
+import { Exit } from "effect"
+import { useState } from "react"
+import { mutate, query } from "@huntaway/client"
 import type { TelemetryPatch, TelemetryStatus } from "@huntaway/contracts"
-import { rpc } from "../../state/rpc"
-import { Button, Field, Input, timeAgo, Toggle, useAsyncAction, useConfirm } from "../ui"
+import { nowMillis } from "../../state/clock"
+import { exitError, useAction, useMutation } from "../../state/mutation"
+import { Button, Field, Input, millisOf, resultValue, timeAgo, Toggle, useConfirm } from "../ui"
 
 const LOGS: Array<[TelemetryStatus["logs"], string]> = [
   ["off", "None"],
@@ -39,30 +43,16 @@ const form_of = (t: TelemetryStatus): Form => ({
 })
 
 export function HostTelemetry({ hostId }: { hostId: string }) {
-  const [status, setStatus] = useState<TelemetryStatus | null>(null)
+  // How sending goes, every 15 s; a read that fails keeps the last status. A change reads it again (the admin group).
+  const status = resultValue(useAtomValue(query("admin.telemetry", hostId, undefined, { refresh: "15 seconds" }))) ?? null
   const [form, setForm] = useState<Form | null>(null)
   const [tested, setTested] = useState<{ ok: boolean; error: string | null } | null>(null)
-  const { busy, error, run } = useAsyncAction()
+  const [{ busy, error }, run] = useAction()
+  // Turning off from the dialog: its error shows there.
+  const [, update] = useMutation("admin.updateTelemetry")
   const confirm = useConfirm()
-  useEffect(() => {
-    let alive = true
-    const poll = () =>
-      rpc(hostId, "admin.telemetry", undefined).then(
-        (t) => {
-          if (!alive) return
-          setStatus(t)
-          // What's being typed stays: only the first load fills the form.
-          setForm((f) => f ?? form_of(t))
-        },
-        () => {},
-      )
-    void poll()
-    const id = setInterval(() => void poll(), 15_000)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [hostId])
+  // What's being typed stays: only the first status read fills the form.
+  if (form === null && status !== null) setForm(form_of(status))
   if (!status || !form) return null
   const set = (patch: Partial<Form>) => {
     setForm({ ...form, ...patch })
@@ -88,14 +78,12 @@ export function HostTelemetry({ hostId }: { hostId: string }) {
     // Clearing the address turns it off, which deletes what's waiting: asked first.
     saved.url && !form.url.trim() && status.from === "settings"
       ? turnOff()
-      : run(async () => {
-          const t = await rpc(hostId, "admin.updateTelemetry", { patch: change() })
-          setStatus(t)
-          setForm(form_of(t))
+      : void run(mutate("admin.updateTelemetry", hostId, { patch: change() })).then((exit) => {
+          if (Exit.isSuccess(exit)) setForm(form_of(exit.value))
         })
   const test = () =>
-    run(async () => {
-      setTested(await rpc(hostId, "admin.testTelemetry", { patch: form.url.trim() ? change() : {} }))
+    void run(mutate("admin.testTelemetry", hostId, { patch: form.url.trim() ? change() : {} })).then((exit) => {
+      if (Exit.isSuccess(exit)) setTested(exit.value)
     })
   const turnOff = () =>
     confirm.ask({
@@ -103,11 +91,12 @@ export function HostTelemetry({ hostId }: { hostId: string }) {
       body: "Stop sending this host's telemetry? The rows that haven't been sent yet are deleted. What's already in ClickHouse stays there.",
       action: "Turn off",
       danger: true,
-      onConfirm: async () => {
-        const t = await rpc(hostId, "admin.updateTelemetry", { patch: { url: null } })
-        setStatus(t)
-        setForm(form_of(t))
-      },
+      onConfirm: () =>
+        update(hostId, { patch: { url: null } }).then((exit) => {
+          const failed = exitError(exit)
+          if (failed !== null) throw new Error(failed)
+          if (Exit.isSuccess(exit)) setForm(form_of(exit.value))
+        }),
     })
   const queued = Object.values(status.queued).reduce((a, b) => a + b, 0)
   const [dot, label] = STATE[status.state]
@@ -190,10 +179,10 @@ export function HostTelemetry({ hostId }: { hostId: string }) {
               Turn off
             </Button>
           )}
-          <Button size="sm" onClick={() => void test()} disabled={busy || (!form.url.trim() && !status.url && !status.flag_url)}>
+          <Button size="sm" onClick={test} disabled={busy || (!form.url.trim() && !status.url && !status.flag_url)}>
             Test
           </Button>
-          <Button size="sm" variant="primary" onClick={() => void save()} disabled={busy || !dirty}>
+          <Button size="sm" variant="primary" onClick={save} disabled={busy || !dirty}>
             Save
           </Button>
         </div>
@@ -204,7 +193,7 @@ export function HostTelemetry({ hostId }: { hostId: string }) {
 }
 
 function in_time(iso: string): string {
-  const s = Math.max(0, (Date.parse(iso) - Date.now()) / 1000)
+  const s = Math.max(0, (millisOf(iso) - nowMillis()) / 1000)
   if (s < 60) return "in under a minute"
   if (s < 3600) return `in ${Math.round(s / 60)}m`
   return `in ${Math.round(s / 3600)}h`

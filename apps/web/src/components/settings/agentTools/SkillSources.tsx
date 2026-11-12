@@ -1,8 +1,11 @@
 import { clsx } from "clsx"
 import { ChevronDown, ChevronRight, GitBranch, RefreshCw, Trash2 } from "lucide-react"
+import { Exit } from "effect"
 import { useState, type ReactNode } from "react"
 import type { Skill, SkillSource } from "@huntaway/contracts"
-import { Button, errorText, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, timeAgo } from "../../ui"
+import { useAction } from "../../../state/mutation"
+import { type Save } from "./parts"
+import { Button, Field, Input, Modal, ModalFooter, SUBMIT_KEYS, timeAgo } from "../../ui"
 
 /** A git repository whose skills are offered on the host, with its skills and who has them on by default. */
 export function SourceCard({
@@ -108,26 +111,19 @@ export function SourceCard({
   )
 }
 
-export function SourceAdder({ onAdd, onClose }: { onAdd: (url: string, ref: string, subdir: string) => Promise<void>; onClose: () => void }) {
+export function SourceAdder({ onAdd, onClose }: { onAdd: Save<[url: string, ref: string, subdir: string]>; onClose: () => void }) {
   const [url, setUrl] = useState("")
   const [ref, setRef] = useState("")
   const [subdir, setSubdir] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const add = async () => {
+  const [{ busy, error: err }, run] = useAction()
+  const add = () => {
     if (!url.trim() || busy) return
-    setBusy(true)
-    setErr(null)
-    try {
-      await onAdd(url.trim(), ref.trim(), subdir.trim())
-      onClose()
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+    void run(onAdd(url.trim(), ref.trim(), subdir.trim())).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   return (
-    <Modal title="Add skills from a git repository" onClose={busy ? () => {} : onClose} onSubmit={() => void add()} width="max-w-xl">
+    <Modal title="Add skills from a git repository" onClose={busy ? () => {} : onClose} onSubmit={() => add()} width="max-w-xl">
       <div className="space-y-3">
         <Field
           label="Repository"
@@ -157,7 +153,7 @@ export function SourceAdder({ onAdd, onClose }: { onAdd: (url: string, ref: stri
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={busy || !url.trim()} onClick={() => void add()}>
+            <Button variant="primary" disabled={busy || !url.trim()} onClick={() => add()}>
               {busy ? "Adding…" : "Add skills"}
             </Button>
           </div>

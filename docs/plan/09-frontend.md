@@ -155,11 +155,12 @@ and then what follows ([05-protocol.md](05-protocol.md#a-thread)).
 | File               | Holds                                                                                                                            |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `board.ts`         | `useBoard(selector)` and `board.get()`: the read surface over `boardAtom`                                                        |
-| `rpc.ts`           | `useRpc()`: call any method on a host and get a promise, for event handlers                                                      |
+| `mutation.ts`      | `useMutation(method)` and `useAction()`: a component's changes, their state its own, their runs the page's; `runExit` for module code (step 2: `rpc.ts`'s `useRpc()` promise is gone) |
 | `route.ts`         | The route as an atom over the History API, with the old router's `parse` and `href`. The 14 routes and their query parameters stay |
 | `drafts.ts`        | Composer, new-task, line-comment and plan-answer drafts as `Atom.kvs` atoms over the browser's storage, under their old keys     |
 | `prefs.ts`         | The other persisted keys (view toggles, collapsed groups, theme, active profile…), the same way, each with a schema              |
 | `selection.ts`, `terminalTools.ts`, `subagents.ts`, `narrow.ts`, `shortcuts.ts`, `clock.ts` | The small stores and `useSyncExternalStore` sources, as atoms             |
+| `timers.ts`, `visibility.ts` | DOM timers on Effect's clock (`after`, `every`), and whether the page is shown (what polls only while it is)              |
 | `notify.ts`        | Which changes notify, the single notifying tab, own-move suppression                                                             |
 
 Storage is `BrowserKeyValueStore.layerLocalStorage` from `@effect/platform-browser` behind `Atom.kvs`, with a schema
@@ -608,11 +609,66 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 | A module-level cache (`agents.ts` models, `SkillMenu`'s 60 s cache, `DocLink` titles) | A query atom with a time to live                                                             |
 | A module-level map for something that outlives the component (a send in flight, memory editors) | An atom kept alive, in `state/` or beside the component                            |
 
-Step 2 is not a condition of switching over to the new server. Its tasks run in parallel with the server's later
-milestones and after the switch, largest files first: `settings/Server.tsx`, `task/Approvals.tsx`,
-`settings/TokenStats.tsx`, `changes/Compare.tsx`, `task/Questions.tsx`, `task/Document.tsx`, `task/TaskView.tsx`,
-`task/Memory.tsx`, `task/Review.tsx`, `thread/Composer.tsx`, `task/Terminal.tsx`. A file leaves the lint override
-when it is done, and the override is deleted when the last one has.
+Step 2 is not a condition of switching over to the new server. The plan had it as one task per folder, largest files
+first; it was done as one board task (HE-9), the folders side by side. A file left the lint override when it was done,
+and the override went with the last one.
+
+### Step 2 as done (M10, HE-9)
+
+- **The shared layer.** `packages/client`: `query(method, host, payload, { refresh, focus })` (`queries.ts`), one atom
+  per method, host and payload (payloads compared by value), shared by its readers and kept ten seconds after the last;
+  `mutate(method, host, payload)`, which reads again every query of the method's group on that host once it has run;
+  `invalidate.ts`, the `invalidates` table (other groups a mutation reads again: a rewind or a fan-out's pick the
+  `git` queries, a host's settings its `admin` and `settingsSync`, removing merged worktrees the disk usage) and the
+  `triggers` table (a query read again when what it picks from its host's board changes: a task's run and worktree for
+  its git status and diffs, its column and branch for its branch diff, the `docs`/`doc_comments`/`docs_site` counts for
+  the Docs page, `approval_rules`/`approval_log` for the assistant's rules and log, `document_at` for the brief, the
+  assistant's run for its memory, a config change for a task's skills, the host's boot for `admin.status`, its settings
+  for settings sync and a project's system prompt). The web app: `state/mutation.ts` (`useMutation`, `useAction` with
+  `clear`, `runExit`, `isTagged`, `errorText`, `exitError`), `state/clock.ts` (`useNow`, `nowMillis`),
+  `state/timers.ts` (`after`, `every`; `after(0)` waits for the browser's next task as `setTimeout(f)` did),
+  `state/visibility.ts`, `components/ui/dates.ts` (ISO times and `toLocale…String` through `DateTime`, the browser's
+  zone made once) and `components/ui/Loading.tsx`.
+- **A run is the page's, not the component's.** `useAction`'s runs go through the registry (`runExit`), so a dialog
+  closed while its save, a fan-out's tasks or a clone are on their way doesn't interrupt the call (an interrupted RPC
+  is interrupted on the host too). Only its busy and error state is the component's. The client's shared
+  `mutations.*` atoms in promise mode are no longer used by components: overlapping calls could resolve with another
+  call's result. `ConfirmModal`'s `onConfirm` may resolve with an `Exit` and shows its failure.
+- **Deleted:** `state/rpc.ts` (`rpc`, `useRpc`, `hubRpc`), `smallStore.ts` (the selection, drawer, subagent view and
+  open tools are atoms), `changes/git/useLoaded.ts`, `useAsyncAction`, the module-level caches (preview checks, the
+  skills menu's minute, `DocLink`'s titles, the repository list, the last disk measurement, the attachments' object
+  URLs, the memory editors), and the last listed suppression (`type Any = any`: the thread's rows read their metadata
+  and tool inputs through `thread/fields.ts`'s guards, and board approvals' inputs through the contract's schemas).
+- **Lint.** The components' override has the React rules only. `components/docs/docFrame.ts` keeps `global-timers`
+  off: its comment script runs as source inside a document's sandboxed frame, where there is no Effect.
+- **Decided where this page was silent** (each folder's commit says more):
+  - Polls are a query's `refresh` while the page is visible (git status 4 s while nothing is being changed, previews
+    2 s, `desktop.frame` 700 ms, `desktop.ops` 3 s, telemetry and desktop status 15 s, a host's usage 5 minutes). The
+    old limit of two preview checks at once (HA-188) was for the browser's six HTTP connections; they share the RPC
+    socket now.
+  - Reads across hosts (analytics, token statistics, disk usage, docs, a routine's thread, a doc link's title) are one
+    query per host combined by a derived atom; a host that fails is named in the warnings as before.
+  - The branch diff is polled with the status rather than read again when the status's content changes; `useKept`
+    keeps an unchanged answer as the same object, so what is picked in a diff stays picked. Compare's pick dialog reads
+    the facts again as it opens.
+  - Persisted choices that were read straight from `localStorage` are atoms over the same keys and formats (the docs'
+    view and closed folders, the changes' layout and tree, compare's mode, the analytics choices, the sidebar's
+    groups and marks, pens' tabs and rows, the tracked list's filter, the open tools). `ia.board.stackViews` holds
+    booleans, as the old board kept it. A key `Atom.kvs` reads first is written with its default (`[]`, `null`), which
+    the old build reads the same. Exceptions: the New task dialog's per-target choices and `useActiveProfile` still use
+    storage directly, since their atoms don't map one to one.
+  - Reports and lists are kept ten seconds after their last reader rather than for the page's life or not at all:
+    analytics tabs, the GitHub repository list, a task's skills, Asana searches, a document's images.
+  - Memory files are read again on the assistant's turns and after any `assistant.*` change, not by modified time.
+  - The subproject grouping in the token tables is deleted (reports' `subproject` is always false).
+  - The code that runs inside a plan's frame holds its scroll with `performance.now()` on resize rather than a timer.
+- **Not done.** `task/Thread.tsx` still loads older pages from an effect when a subagent's thread starts before the
+  window (moving it into the action that opens the view is `thread/`'s); `ui-check` can't drive a `<select>` or a
+  `datetime-local`, so those were checked through the whole-app checks only.
+- **Checks.** `pnpm check`, `pnpm test` (236 files) and all 71 `tests/ui` files pass, as on `main`. New unit tests:
+  `packages/client/test/queries.test.ts` (one atom per payload, a mutation reading its group again and not another's,
+  a board trigger), `tests/unit/ui/{dates,reminders}.test.ts` (run in several time zones), `analyticsRange.test.ts`,
+  `automationDraft.test.ts`; `tests/unit/state/fakeHost.test.ts` calls through `runExit` and `mutate`.
 
 ### Logic that must not be lost on the way
 

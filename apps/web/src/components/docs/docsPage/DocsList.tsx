@@ -1,51 +1,38 @@
 // The Docs page's list: every document of the profile's, by folder or by label.
+import { useAtom, useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
+import { Exit, Schema } from "effect"
 import { Folder, Loader2, Tag } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
 import { ProfileId } from "@huntaway/contracts"
-import { docsView, saveDocsView, type DocsHome, type DocsView } from "../docs"
+import type { DocsHome, DocsView } from "../docs"
 import { href } from "../../../router"
 import { useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
-import { errorText, useConfirm } from "../../ui"
+import { exitError, useMutation } from "../../../state/mutation"
+import { storedBare } from "../../../state/storage"
+import { useConfirm } from "../../ui"
 import { HostedDocsButton } from "../HostedDocs"
 import { Header, NoHomes } from "./chrome"
 import { HomeTree } from "./HomeTree"
-import { useDocsChanged, useDocsSiteChanged } from "./hooks"
 import type { Row } from "./model"
+import { docsListAtom } from "./reads"
+
+/** How the Docs page shows documents (HA-324): the user's choice, kept in this browser. */
+const viewAtom = storedBare("ia.docs.view", Schema.Literals(["folders", "labels"]), "folders")
 
 /**
  * Every document of the profile's, on each of its hosts, as a tree of their folders (HA-290): folders first, then
  * documents, each one entry however many pages it has. With several hosts, each has a tree of its own, under its name.
+ * Read again on the hosts' `docs` and `docs_site` events, and after a change made here.
  */
 export function DocsList({ segment, name, homes }: { segment: string; name: string; homes: DocsHome[] }) {
-  const [rows, setRows] = useState<Row[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const { rows, error } = useAtomValue(docsListAtom(homes))
   const hosts = useBoard((s) => s.hosts)
   const { ask, dialog } = useConfirm()
   // By folder or by label (HA-324): every host has labels (6.3).
   const labelled = homes.length > 0
-  const [chosen, setChosen] = useState(docsView)
+  const [chosen, pickView] = useAtom(viewAtom)
   const view: DocsView = labelled ? chosen : "folders"
-  const pickView = (v: DocsView) => {
-    setChosen(v)
-    saveDocsView(v)
-  }
-  const seq = useRef(0)
-  const load = useCallback(() => {
-    const n = ++seq.current
-    void Promise.allSettled(
-      homes.map((h) => rpc(h.hostId, "docs.list", { profile_id: ProfileId.make(h.profileId) }).then((list) => list.map((d): Row => ({ ...d, ...h })))),
-    ).then((got) => {
-      if (n !== seq.current) return
-      const failed = got.find((g) => g.status === "rejected")
-      setError(failed ? errorText(failed.reason) : null)
-      setRows(got.flatMap((g) => (g.status === "fulfilled" ? g.value : [])))
-    })
-  }, [homes])
-  useEffect(load, [load])
-  useDocsChanged(homes, load)
-  useDocsSiteChanged(homes, load)
+  const [, del] = useMutation("docs.delete")
 
   // A document's link names its profile by id where the name stands for several hosts' profiles.
   const docLink = (d: Row) => href({ name: "docs", profile: homes.length > 1 ? d.profileId : segment, slug: d.slug, page: "" })
@@ -55,10 +42,11 @@ export function DocsList({ segment, name, homes }: { segment: string; name: stri
       body: `Its ${d.latest_version === 1 ? "version" : `${d.latest_version} versions`} and every page in them are deleted. Agents' links to it stop working.`,
       action: "Delete",
       danger: true,
-      onConfirm: async () => {
-        await rpc(d.hostId, "docs.delete", { profile_id: ProfileId.make(d.profileId), slug: d.slug })
-        load()
-      },
+      // The dialog shows why it failed, and stays open.
+      onConfirm: () =>
+        del(d.hostId, { profile_id: ProfileId.make(d.profileId), slug: d.slug }).then((exit) =>
+          Exit.isSuccess(exit) ? undefined : Promise.reject(new Error(exitError(exit) ?? "")),
+        ),
     })
 
   return (
@@ -131,7 +119,6 @@ export function DocsList({ segment, name, homes }: { segment: string; name: stri
                       labelsEditable
                       docLink={docLink}
                       onRemove={remove}
-                      onChanged={load}
                     />
                   )
                 })}

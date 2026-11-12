@@ -1,40 +1,95 @@
 // The assistant's Memory tab (6.7): its USER.md, MEMORY.md and daily logs, which the board loads into each of its runs.
 // Edit them, see each file's history and restore a version, or import what another assistant knows about you
 // (`assistant.memory`, `memoryFile`, `writeMemoryFile`, `memoryHistory`, `memoryDiff`, `restoreMemory`, `importMemory`).
-import type { HostTask as Task } from "@huntaway/client"
-import { ProfileId, type MemoryCommit, type MemoryFileInfo, type MemoryOverview } from "@huntaway/contracts"
+import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
+import { mutate, query, type HostTask as Task, type QueryResult } from "@huntaway/client"
+import { ProfileId, type MemoryCommit, type MemoryFileInfo } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Cause, Exit } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { Copy, FileText, History, Import, Loader2, RotateCcw, Save } from "lucide-react"
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { isTagged, rpc } from "../../state/rpc"
-import { useLoaded } from "../changes/git/useLoaded"
-import { Button, copyText, errorText, Modal, ModalFooter, Textarea, timeAgo } from "../ui"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { errorText, isTagged, runExit, useMutation } from "../../state/mutation"
+import { registry } from "../../state/registry"
+import { Button, copyText, isoOf, localeString, millisOf, Modal, ModalFooter, resultError, resultValue, Textarea, timeAgo } from "../ui"
 
 /**
- * An edit not saved yet, kept by host, task and path while the tab is closed or another file is open. `base`: what the
- * editor opened (null for a file that wasn't there), which the save checks is still what's there.
+ * An edit not saved yet. `base`: what the editor opened (null for a file that wasn't there), which the save checks is
+ * still what's there.
  */
 interface Draft {
-  content: string
-  base: string | null
+  readonly content: string
+  readonly base: string | null
 }
-const drafts = new Map<string, Draft>()
-const draftKey = (task: Task, path: string) => `${task.host_id}:${task.id}:${path}`
 
-// Each file's save on its way, and one refused because the assistant changed the file, by the same key: kept here rather
-// than in the editor, which goes when another file or tab is opened, so the editor shown when the save ends (a new one,
-// if the file was opened again) is told, and takes it in without losing what was typed meanwhile (see `savedAs`).
-const saving = new Set<string>()
-const conflicts = new Set<string>()
-const editors = new Map<string, Set<(saved?: string) => void>>()
-/** Tell the file's editors that its save state changed, and with `saved`, what the save wrote. */
-const tell = (key: string, saved?: string) => editors.get(key)?.forEach((f) => f(saved))
+/**
+ * A memory file as its editors share it, by host, task and path, kept for the page's life rather than in the editor,
+ * which goes when another file or tab is opened: the edit not saved yet (kept while the tab is closed or another file is
+ * open), a save on its way, and one refused because the assistant changed the file. So the editor shown when a save ends
+ * (a new one, if the file was opened again) takes it in without losing what was typed meanwhile.
+ */
+interface FileState {
+  readonly draft: Draft | null
+  readonly saving: boolean
+  readonly conflict: boolean
+  /** What the last save or restore wrote, until the file is read again: `over` is the read it was written over. */
+  readonly written: { readonly content: string; readonly over: unknown } | null
+}
 
-/** A save of `key` wrote `content`: the draft, if more was typed since, is now an edit of that. */
-function savedAs(key: string, content: string) {
-  const d = drafts.get(key)
-  if (!d || d.content === content) drafts.delete(key)
-  else drafts.set(key, { content: d.content, base: content })
+const UNTOUCHED: FileState = { draft: null, saving: false, conflict: false, written: null }
+
+const fileStates = Atom.family((_key: string) => Atom.make(UNTOUCHED).pipe(Atom.keepAlive))
+
+/** A memory file of a task's assistant. */
+interface FileRef {
+  readonly host: string
+  readonly profile: string
+  readonly path: string
+  /** What its state is kept by: host, task and path. */
+  readonly key: string
+}
+
+const fileRef = (task: Task, path: string): FileRef => ({ host: task.host_id, profile: task.profile_id, path, key: `${task.host_id}:${task.id}:${path}` })
+
+/** What's in the file now, read again as the assistant's turns start and end, and after a change of its memory. */
+const fileRead = (f: FileRef) => query("assistant.memoryFile", f.host, { profile_id: ProfileId.make(f.profile), path: f.path })
+
+/** A file that isn't there yet: nothing to read (its base is null). */
+const NO_FILE: Atom.Atom<QueryResult<"assistant.memoryFile">> = Atom.make(AsyncResult.initial())
+
+/** The read of the file a save or restore ends over (see `FileState.written`). */
+const readNow = (f: FileRef, exists: boolean): unknown => (exists ? resultValue(registry.get(fileRead(f))) : undefined)
+
+/**
+ * Saves `content` over `base` (what the editor opened), whichever editor of the file started it, and gives why it failed,
+ * if it did with something other than the assistant having changed the file. What it wrote is the new base, and the
+ * draft (what was typed since, in this editor or one before it) stays on top of it.
+ */
+function saveFile(f: FileRef, exists: boolean, content: string, base: string | null, force: boolean): Promise<string | null> {
+  const atom = fileStates(f.key)
+  if (registry.get(atom).saving) return Promise.resolve(null)
+  registry.update(atom, (s) => ({ ...s, saving: true, conflict: false }))
+  const write = mutate("assistant.writeMemoryFile", f.host, {
+    profile_id: ProfileId.make(f.profile),
+    path: f.path,
+    content,
+    expected: base,
+    ...(force ? { force } : {}),
+  })
+  return runExit(write).then((exit) => {
+    const s = registry.get(atom)
+    if (Exit.isSuccess(exit)) {
+      const written = exit.value.content
+      const draft = !s.draft || s.draft.content === written ? null : { content: s.draft.content, base: written }
+      registry.set(atom, { ...s, saving: false, draft, written: { content: written, over: readNow(f, exists) } })
+      return null
+    }
+    const failure = Cause.hasInterruptsOnly(exit.cause) ? undefined : Cause.squash(exit.cause)
+    // A forced save refused too (a file the history leaves out, changed since it was opened) says why.
+    const conflict = isTagged(failure, "Conflict") && !force
+    registry.set(atom, { ...s, saving: false, conflict })
+    return conflict || failure === undefined ? null : errorText(failure)
+  })
 }
 
 const n = (x: number) => x.toLocaleString("en")
@@ -45,24 +100,12 @@ const LOADED = new Set(["user", "memory"])
 const TITLES: Record<MemoryFileInfo["kind"], string> = { user: "About you", memory: "Memory", log: "Daily logs", other: "Other files" }
 
 export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: () => void }) {
-  const [overview, setOverview] = useState<MemoryOverview>()
-  const [error, setError] = useState<string>()
+  // Read again whenever a turn starts or ends, as the assistant may have changed its files, and after a change of them.
+  const read = useAtomValue(query("assistant.memory", task.host_id, { profile_id: ProfileId.make(task.profile_id) }))
+  const overview = resultValue(read)
+  const error = resultError(read)
   const [path, setPath] = useState("USER.md")
   const [importing, setImporting] = useState(false)
-  const host = task.host_id
-  const profile = task.profile_id
-
-  const load = useCallback(() => {
-    rpc(host, "assistant.memory", { profile_id: ProfileId.make(profile) })
-      .then((o) => {
-        setOverview(o)
-        setError(undefined)
-      })
-      .catch((e: unknown) => setError(errorText(e)))
-  }, [host, profile])
-  // Again whenever a turn ends, as the assistant may have changed its files.
-  const running = task.running
-  useEffect(load, [load, running])
 
   // Today's log is listed before it's written, to start it.
   const files = useMemo(() => {
@@ -112,7 +155,7 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
                   >
                     <FileText size={13} className={clsx("shrink-0", loaded ? "text-accent" : "text-faint")} />
                     <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{f.kind === "log" ? f.path.slice("memory/".length) : f.path}</span>
-                    {drafts.has(draftKey(task, f.path)) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Not saved" />}
+                    <Unsaved file={fileRef(task, f.path)} />
                     {f.chars === null && f.modified === null ? (
                       <span className="text-[11px] text-faint">new</span>
                     ) : loaded && f.chars !== null ? (
@@ -138,15 +181,14 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
           cap={LOADED.has(file?.kind ?? "other") || loadedLogs.has(path) ? overview.cap : undefined}
           capBytes={overview.cap_bytes}
           history={overview.history}
-          onSaved={load}
         />
       </section>
       {importing && (
         <ImportDialog
+          task={task}
           prompt={overview.import_prompt}
           onClose={() => setImporting(false)}
-          onSend={async (text) => {
-            await rpc(host, "assistant.importMemory", { profile_id: ProfileId.make(profile), text })
+          onSent={() => {
             setImporting(false)
             onShowThread()
           }}
@@ -156,12 +198,20 @@ export function MemoryView({ task, onShowThread }: { task: Task; onShowThread: (
   )
 }
 
+/** The dot of a file with an edit not saved yet, in the list. */
+function Unsaved({ file }: { file: FileRef }) {
+  const unsaved = useAtomValue(fileStates(file.key), (s) => s.draft !== null)
+  return unsaved ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Not saved" /> : null
+}
+
+const DAY = 24 * 60 * 60 * 1000
+
 /** The day before `memory/YYYY-MM-DD.md`, as a log's path. */
 function yesterday(today: string) {
   const m = /(\d{4})-(\d{2})-(\d{2})/.exec(today)
   if (!m) return ""
-  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) - 1))
-  return `memory/${d.toISOString().slice(0, 10)}.md`
+  const day = millisOf(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`)
+  return Number.isNaN(day) ? "" : `memory/${isoOf(day - DAY).slice(0, 10)}.md`
 }
 
 function FileEditor({
@@ -171,7 +221,6 @@ function FileEditor({
   cap,
   capBytes,
   history,
-  onSaved,
 }: {
   task: Task
   path: string
@@ -181,108 +230,54 @@ function FileEditor({
   /** And in bytes. */
   capBytes: number
   history: boolean
-  onSaved: () => void
 }) {
-  const key = draftKey(task, path)
-  const { host_id: hostId, profile_id: profileId } = task
-  // A draft's base too, from the first render: until the file is read, a Ctrl+S on the file just opened again would find
-  // no base and save nothing (HA-240).
-  const [base, setBase] = useState<string | null | undefined>(() => drafts.get(key)?.base)
-  const [content, setContent] = useState(() => drafts.get(key)?.content ?? "")
+  const ref = fileRef(task, path)
+  const atom = fileStates(ref.key)
+  const state = useAtomValue(atom)
+  const update = useAtomSet(atom)
   const [error, setError] = useState<string>()
-  // Whether it's being saved, or a save was refused (see `saving`), re-read when the file's editors are told.
-  const [, changed] = useState(0)
-  const busy = saving.has(key)
-  const conflict = conflicts.has(key)
+  const busy = state.saving
+  const conflict = state.conflict
   const [showHistory, setShowHistory] = useState(false)
   const [viewing, setViewing] = useState<MemoryCommit>()
   const modified = file?.modified
   const exists = !!modified
 
-  // What's there now, read again when the assistant changes it (its modified time). A draft keeps its own base, so a save
-  // still checks against what it was written over.
-  const fetchFile = useCallback(
-    (): Promise<string | null> =>
-      modified ? rpc(hostId, "assistant.memoryFile", { profile_id: ProfileId.make(profileId), path }).then((f) => f.content) : Promise.resolve(null),
-    [modified, hostId, profileId, path],
-  )
-  // Unless there's a draft (the editor is keyed by the file, so a draft it opened on is in its first state).
-  useEffect(() => {
-    const req = { live: true }
-    if (drafts.has(key)) return undefined
-    fetchFile()
-      .then((c) => {
-        if (!req.live || drafts.has(key)) return
-        setBase(c)
-        setContent(c ?? "")
-      })
-      .catch((e: unknown) => {
-        if (req.live) setError(errorText(e))
-      })
-    return () => {
-      req.live = false
-    }
-  }, [key, fetchFile])
-
-  // A save that ends, whichever editor of the file started it: what it wrote is the new base, and the draft (what was
-  // typed since, in this editor or one before it) stays on top of it.
-  useEffect(() => {
-    const listen = (written?: string) => {
-      if (written !== undefined) {
-        setBase(written)
-        setContent(drafts.get(key)?.content ?? written)
-      }
-      changed((x) => x + 1)
-    }
-    const set = editors.get(key) ?? new Set()
-    editors.set(key, set.add(listen))
-    return () => void set.delete(listen)
-  }, [key])
+  // What's there now, read again as the assistant may have changed it (its turns) and after a change of the memory (null:
+  // not there yet). A draft keeps its own base, so a save still checks against what it was written over; and the draft's
+  // base is there from the first render, so a Ctrl+S on the file just opened again saves it before the file is read
+  // (HA-240).
+  const fileAtom = exists ? fileRead(ref) : NO_FILE
+  const read = useAtomValue(fileAtom)
+  const refresh = useAtomRefresh(fileAtom)
+  const refreshList = useAtomRefresh(query("assistant.memory", task.host_id, { profile_id: ProfileId.make(task.profile_id) }))
+  const readValue = resultValue(read)
+  const there = !exists ? null : readValue?.content
+  const shown = state.written && state.written.over === readValue ? state.written.content : there
+  const base = state.draft ? state.draft.base : shown
+  const content = state.draft ? state.draft.content : (base ?? "")
+  const shownError = error ?? resultError(read) ?? undefined
 
   const dirty = base !== undefined && content !== (base ?? "")
   const edit = (c: string) => {
-    setContent(c)
     if (base === undefined) return
     // While a save is on its way, even a change back to what was there is kept, as it isn't what's being saved.
-    if (c === (base ?? "") && !saving.has(key)) drafts.delete(key)
-    else drafts.set(key, { content: c, base })
+    update((s) => ({ ...s, draft: c === (base ?? "") && !s.saving ? null : { content: c, base } }))
   }
 
-  const save = async (force = false) => {
+  const save = (force = false) => {
     // Nothing to save (Ctrl+S on a file as it is, or a log not written yet, which would make it empty).
-    if (base === undefined || saving.has(key) || (!dirty && !force)) return
-    saving.add(key)
-    conflicts.delete(key)
-    tell(key)
+    if (base === undefined || (!dirty && !force)) return
     setError(undefined)
-    let written: string | undefined
-    try {
-      written = (
-        await rpc(hostId, "assistant.writeMemoryFile", { profile_id: ProfileId.make(profileId), path, content, expected: base, ...(force ? { force } : {}) })
-      ).content
-      savedAs(key, written)
-    } catch (e) {
-      // A forced save refused too (a file the history leaves out, changed since it was opened) says why.
-      if (isTagged(e, "Conflict") && !force) conflicts.add(key)
-      else setError(errorText(e))
-    } finally {
-      saving.delete(key)
-      tell(key, written)
-    }
-    if (written !== undefined) onSaved()
+    void saveFile(ref, exists, content, base, force).then((failed) => {
+      if (failed !== null) setError(failed)
+    })
   }
-  const discard = async () => {
-    drafts.delete(key)
-    conflicts.delete(key)
-    tell(key)
+  const discard = () => {
+    update((s) => ({ ...s, draft: null, conflict: false, written: null }))
     setError(undefined)
-    try {
-      const c = await fetchFile().catch(() => null)
-      setBase(c)
-      setContent(c ?? "")
-    } finally {
-      onSaved()
-    }
+    refresh()
+    refreshList()
   }
 
   // Ctrl+S saves wherever the focus is in the tab (rather than saving the page).
@@ -295,7 +290,7 @@ function FileEditor({
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s" && !document.querySelector("[data-modal]")) {
         e.preventDefault()
-        void saveRef.current()
+        saveRef.current()
       }
     }
     window.addEventListener("keydown", onKey)
@@ -333,12 +328,12 @@ function FileEditor({
             </Button>
           )}
           {dirty && !viewing && (
-            <Button size="sm" variant="ghost" onClick={() => void discard()} title="Drop your changes">
+            <Button size="sm" variant="ghost" onClick={discard} title="Drop your changes">
               Revert
             </Button>
           )}
           {!viewing && (
-            <Button size="sm" variant="primary" disabled={!dirty || busy} onClick={() => void save()} title="Save (Ctrl+S)">
+            <Button size="sm" variant="primary" disabled={!dirty || busy} onClick={() => save()} title="Save (Ctrl+S)">
               {busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
             </Button>
           )}
@@ -347,15 +342,15 @@ function FileEditor({
       {conflict && (
         <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/25 bg-amber-500/10 px-4 py-2 text-[12.5px] text-amber-200">
           The assistant changed {path} since you opened it.
-          <Button size="sm" onClick={() => void discard()}>
+          <Button size="sm" onClick={discard}>
             Load its version
           </Button>
-          <Button size="sm" variant="danger" onClick={() => void save(true)}>
+          <Button size="sm" variant="danger" onClick={() => save(true)}>
             Overwrite it with yours
           </Button>
         </div>
       )}
-      {error && <div className="border-b border-line px-4 py-2 text-[12.5px] text-red-300">{error}</div>}
+      {shownError && <div className="border-b border-line px-4 py-2 text-[12.5px] text-red-300">{shownError}</div>}
       <div className="flex min-h-0 flex-1 narrow:flex-col">
         {viewing ? (
           <CommitView
@@ -365,11 +360,8 @@ function FileEditor({
             commit={viewing}
             onBack={() => setViewing(undefined)}
             onRestored={(c) => {
-              drafts.delete(key)
-              setBase(c)
-              setContent(c)
+              update((s) => ({ ...s, draft: null, written: { content: c, over: readNow(ref, exists) } }))
               setViewing(undefined)
-              onSaved()
             }}
             dirty={dirty}
           />
@@ -383,39 +375,24 @@ function FileEditor({
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                 e.preventDefault()
-                void save()
+                save()
               }
             }}
             placeholder={exists ? "" : `${path} isn't there yet: write it, then save.`}
             className="min-h-0 flex-1 resize-none bg-transparent px-4 py-3 font-mono [font-variant-ligatures:none] text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint"
           />
         )}
-        {showHistory && <HistoryList task={task} path={path} viewing={viewing} onView={setViewing} refresh={modified} />}
+        {showHistory && <HistoryList task={task} path={path} viewing={viewing} onView={setViewing} />}
       </div>
     </div>
   )
 }
 
-function HistoryList({
-  task,
-  path,
-  viewing,
-  onView,
-  refresh,
-}: {
-  task: Task
-  path: string
-  viewing: MemoryCommit | undefined
-  onView: (c: MemoryCommit) => void
-  /** Read again when this changes (the file's modified time). */
-  refresh: string | null | undefined
-}) {
-  const { host_id: hostId, profile_id: profileId } = task
-  const read = useLoaded(`${hostId}\u0000${profileId}\u0000${path}\u0000${refresh ?? ""}`, () =>
-    rpc(hostId, "assistant.memoryHistory", { profile_id: ProfileId.make(profileId), path }),
-  )
-  const commits = read?.value?.commits
-  const error = read?.error
+function HistoryList({ task, path, viewing, onView }: { task: Task; path: string; viewing: MemoryCommit | undefined; onView: (c: MemoryCommit) => void }) {
+  // Read again as the file is (the assistant's turns, a change of the memory).
+  const read = useAtomValue(query("assistant.memoryHistory", task.host_id, { profile_id: ProfileId.make(task.profile_id), path }))
+  const commits = resultValue(read)?.commits
+  const error = resultError(read)
   return (
     <div className="w-72 shrink-0 overflow-y-auto border-l border-line narrow:max-h-[40%] narrow:w-full narrow:border-t narrow:border-l-0">
       {error && <div className="p-3 text-[12px] text-red-300">{error}</div>}
@@ -430,7 +407,7 @@ function HistoryList({
           <div className="truncate text-[12.5px] text-fg">{c.message}</div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-faint">
             <span className={c.author === "You" ? "text-accent" : undefined}>{c.author}</span>
-            <span title={new Date(c.date).toLocaleString()}>{timeAgo(c.date)}</span>
+            <span title={localeString(c.date)}>{timeAgo(c.date)}</span>
             <span className="font-mono">{c.sha.slice(0, 7)}</span>
             {i === 0 && <span>(current)</span>}
           </div>
@@ -469,47 +446,30 @@ function CommitView({
   onBack: () => void
   onRestored: (content: string) => void
 }) {
-  const [diff, setDiff] = useState<string>()
-  const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState(false)
-  const { host_id: hostId, profile_id: profileId } = task
-  useEffect(() => {
-    const req = { live: true }
-    rpc(hostId, "assistant.memoryDiff", { profile_id: ProfileId.make(profileId), rev: commit.sha, path })
-      .then((d) => {
-        if (req.live) setDiff(d.diff)
-      })
-      .catch((e: unknown) => {
-        if (req.live) setError(errorText(e))
-      })
-    return () => {
-      req.live = false
-    }
-  }, [hostId, profileId, commit.sha, path])
-  const restore = async () => {
-    if (dirty && !window.confirm(`Restoring drops the changes you haven't saved to ${path}.`)) return
-    setBusy(true)
-    try {
-      const w = await rpc(hostId, "assistant.restoreMemory", { profile_id: ProfileId.make(profileId), path, rev: commit.sha })
-      onRestored(w.content)
-    } catch (e) {
-      setError(errorText(e))
-    } finally {
-      setBusy(false)
-    }
+  const profile_id = ProfileId.make(task.profile_id)
+  const read = useAtomValue(query("assistant.memoryDiff", task.host_id, { profile_id, rev: commit.sha, path }))
+  const diff = resultValue(read)?.diff
+  const [restoring, restoreMemory] = useMutation("assistant.restoreMemory")
+  const busy = restoring.busy
+  const error = restoring.error ?? resultError(read)
+  const restore = () => {
+    if (busy || (dirty && !window.confirm(`Restoring drops the changes you haven't saved to ${path}.`))) return
+    void restoreMemory(task.host_id, { profile_id, path, rev: commit.sha }).then((exit) => {
+      if (Exit.isSuccess(exit)) onRestored(exit.value.content)
+    })
   }
   const lines = keyed((diff ?? "").split("\n").filter((l) => !HEADER.test(l)))
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2 text-[12.5px]">
         <span className="text-muted">
-          {commit.message} · {commit.author}, {new Date(commit.date).toLocaleString()}
+          {commit.message} · {commit.author}, {localeString(commit.date)}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
           <Button size="sm" variant="ghost" onClick={onBack}>
             Back to editing
           </Button>
-          <Button size="sm" onClick={() => void restore()} disabled={busy} title={`Put ${path} back as it was after this change`}>
+          <Button size="sm" onClick={restore} disabled={busy} title={`Put ${path} back as it was after this change`}>
             <RotateCcw size={13} /> Restore this version
           </Button>
         </div>
@@ -547,24 +507,19 @@ function CommitView({
   )
 }
 
-function ImportDialog({ prompt, onClose, onSend }: { prompt: string; onClose: () => void; onSend: (text: string) => Promise<void> }) {
+/** Sends another assistant's answer to the task's assistant (`onSent` once it has). */
+function ImportDialog({ task, prompt, onClose, onSent }: { task: Task; prompt: string; onClose: () => void; onSent: () => void }) {
   const [text, setText] = useState("")
   const [copied, setCopied] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
-  const send = async () => {
+  const [{ busy, error }, importMemory] = useMutation("assistant.importMemory")
+  const send = () => {
     if (!text.trim() || busy) return
-    setBusy(true)
-    setError(undefined)
-    try {
-      await onSend(text)
-    } catch (e) {
-      setError(errorText(e))
-      setBusy(false)
-    }
+    void importMemory(task.host_id, { profile_id: ProfileId.make(task.profile_id), text }).then((exit) => {
+      if (Exit.isSuccess(exit)) onSent()
+    })
   }
   return (
-    <Modal title="Import memory from another assistant" onClose={onClose} onSubmit={() => void send()} width="max-w-2xl">
+    <Modal title="Import memory from another assistant" onClose={onClose} onSubmit={send} width="max-w-2xl">
       <div className="space-y-4 text-[13px]">
         <div className="space-y-1.5">
           <div className="text-muted">
@@ -594,7 +549,7 @@ function ImportDialog({ prompt, onClose, onSend }: { prompt: string; onClose: ()
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={!text.trim() || busy} onClick={() => void send()}>
+            <Button variant="primary" disabled={!text.trim() || busy} onClick={send}>
               {busy && <Loader2 size={13} className="animate-spin" />} Send to the assistant
             </Button>
           </div>

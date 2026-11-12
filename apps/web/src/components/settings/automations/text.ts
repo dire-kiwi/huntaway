@@ -1,5 +1,6 @@
 import type { HostProject as Project } from "@huntaway/client"
-import { toJson } from "../../ui"
+import { nowMillis } from "../../../state/clock"
+import { localeString, millisOf, toJson } from "../../ui"
 import type { ActiveHours, Filter, FilterOp, HostTimeZone, Trigger, Weekday } from "@huntaway/contracts"
 
 export type TimeZone = HostTimeZone
@@ -72,14 +73,13 @@ export function activeText(h: ActiveHours) {
 /** Dollars, to the cent (or a tenth of one, under a dollar). */
 export const usd = (n: number) => `$${n < 1 && n > 0 ? n.toFixed(3).replace(/0$/, "") : n.toFixed(2)}`
 
-/** "in 5m", "in 3h": how long until a time. */
-export function timeUntil(iso: string) {
-  const s = Math.max(0, (new Date(iso).getTime() - Date.now()) / 1000)
+/** "in 5m", "in 3h": how long until a time (from `now`, in milliseconds). */
+export function timeUntil(iso: string, now: number = nowMillis()) {
+  const s = Math.max(0, (millisOf(iso) - now) / 1000)
   if (s < 60) return "in under a minute"
   if (s < 3600) return `in ${Math.round(s / 60)}m`
   if (s < 86400 * 2) return `in ${Math.round(s / 3600)}h`
   return `in ${Math.round(s / 86400)}d`
 }
 
-export const localTime = (iso: string) =>
-  new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+export const localTime = (iso: string) => localeString(iso, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }, [])

@@ -49,7 +49,6 @@ const row = (threadId: string | null, at: number, model: string, output: number,
 const thread = (kind: string, extra: Partial<UThread> = {}): UThread => ({
   parentId: null,
   taskType: null,
-  subproject: false,
   groupName: null,
   model: null,
   kind,
@@ -72,7 +71,8 @@ const review = (taskId: string, threadId: string, at: number, verdict: Verdict, 
   ...extra,
 })
 
-// A subproject S with task C, which has a review thread and a summary thread; and task T on its own.
+// Task C, which has a review thread and a summary thread; and task T on its own. (Subprojects, which listed their
+// tasks' tokens, are gone: docs/plan/14-dropped-and-open.md.)
 const data = (extra: Partial<TokenData> = {}): TokenData => ({
   from: 0,
   to: 100,
@@ -83,8 +83,7 @@ const data = (extra: Partial<TokenData> = {}): TokenData => ({
   tasks: {},
   projects: {},
   threads: {
-    S: thread("task", { subproject: true }),
-    C: thread("task", { parentId: "S", model: "opus" }),
+    C: thread("task", { model: "opus" }),
     R: thread("review", { parentId: "C" }),
     M: thread("review", { parentId: "C", taskType: "summary" }),
     T: thread("task", { model: "gpt" }),
@@ -122,32 +121,21 @@ test("totals count each run once and group by model", () => {
   )
 })
 
-test("a task's tokens include its threads', and a subproject lists its tasks", () => {
+test("a task's tokens include its threads'", () => {
   const d = data()
-  const rows = [
-    row("S", 1, "opus", 10),
-    row("C", 2, "opus", 100),
-    row("R", 3, "gpt", 40, { runKind: "review" }),
-    row("M", 4, "haiku", 5),
-    row("T", 5, "gpt", 50),
-  ]
+  const rows = [row("C", 2, "opus", 100), row("R", 3, "gpt", 40, { runKind: "review" }), row("M", 4, "haiku", 5), row("T", 5, "gpt", 50)]
   const tasks = byTask(d, rows, "output")
   assert.deepEqual(
     tasks.map((t) => [t.taskId, t.totals.output]),
     [
-      ["S", 155],
+      ["C", 145],
       ["T", 50],
     ],
   )
-  const s = must(tasks[0])
-  // With its tasks'.
-  assert.deepEqual([s?.parts.task?.output, s?.parts.review?.output, s?.parts.summary?.output], [110, 40, 5])
+  const c = must(tasks[0])
+  assert.deepEqual([c.parts.task?.output, c.parts.review?.output, c.parts.summary?.output], [100, 40, 5])
   assert.deepEqual(
-    s.children.map((c) => [c.taskId, c.totals.output, c.parts.task?.output, c.parts.review?.output, c.parts.summary?.output]),
-    [["C", 145, 100, 40, 5]],
-  )
-  assert.deepEqual(
-    s.models.map((m) => m.model),
+    c.models.map((m) => m.model),
     ["opus", "gpt", "haiku"],
   )
 })
@@ -188,14 +176,6 @@ test("titles and window restarts are calls of their own, counted in totals but n
   )
   // Two calls in the same millisecond, for the same task or for no task, are two calls.
   assert.deepEqual(total([title("e", "T", 5, "haiku", 1), title("f", "T", 5, "haiku", 1), window("g", 5, "haiku", 1), window("h", 5, "haiku", 1)]).calls, 4)
-})
-
-test("a subproject's task shows under it even when the subproject used nothing itself", () => {
-  const tasks = byTask(data(), [row("C", 2, "opus", 100)], "tokens")
-  assert.deepEqual(
-    tasks.map((t) => [t.taskId, t.totals.output, t.children.map((c) => c.taskId)]),
-    [["S", 100, ["C"]]],
-  )
 })
 
 test("days add up each purpose", () => {
@@ -341,7 +321,7 @@ test("cache hit rates, flags for poor ones, and which cache writes went to where
   assert.deepEqual([t.cacheWrite1h, t.cacheWrite5m, t.cacheWriteUnsplit, codexWrites(t)], [100, 10, 100, 0])
   assert.equal(hitRate(total([])), null)
   // A task's totals keep them, its threads' added in.
-  const c = must(byTask(data(), rows, "tokens").find((u) => u.taskId === "S"))
+  const c = must(byTask(data(), rows, "tokens").find((u) => u.taskId === "C"))
   assert.deepEqual([c.totals.cacheWrite1h, c.totals.cacheWriteUnsplit], [100, 100])
   // Poor: under 85% on a million tokens or more of input; a short thread's first writes aren't.
   assert.ok(poorHit({ input: 100_000, cacheRead: 600_000, cacheWrite: 400_000 }))

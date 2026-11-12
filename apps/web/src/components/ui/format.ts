@@ -1,3 +1,4 @@
+import { after } from "../../state/timers"
 /** Saves `text` as a file called `name`. */
 export function download(name: string, text: string, type: string) {
   // Saved as a file, never opened here: a page opened from a blob URL would run with the board's origin.
@@ -6,7 +7,7 @@ export function download(name: string, text: string, type: string) {
   a.href = url
   a.download = name
   a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  after("1 second", () => URL.revokeObjectURL(url))
 }
 
 export function cost(usd: number) {

@@ -1,11 +1,14 @@
-// Step 1 (6.11, docs/plan/09-frontend.md "Step 1 as done for 6.11"): the list and the search are `profiles.githubRepos`.
+// The list and the search are `profiles.githubRepos` (6.11), the search's keyed by what was typed once typing paused.
+import { useAtomValue } from "@effect/atom-react"
+import { query, type QueryResult } from "@huntaway/client"
 import type { GithubRepo, GithubRepoList } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { Archive, Check, GitFork, Loader2, Lock } from "lucide-react"
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
-import { rpc } from "../../state/rpc"
+import { after } from "../../state/timers"
 import { filterRepos, mergeRepos, repoFromInput } from "./repoSource"
-import { errorText, Input, timeAgo } from "../ui"
+import { Input, resultError, resultValue, timeAgo } from "../ui"
 
 /** GitHub's mark (Octicons' `mark-github`, MIT), which lucide doesn't have. */
 export function GithubMark({ size = 12, className }: { size?: number | undefined; className?: string | undefined }) {
@@ -16,8 +19,8 @@ export function GithubMark({ size = 12, className }: { size?: number | undefined
   )
 }
 
-/** The last list of repositories for each host and account, shown while it's asked for again (gh takes a few seconds). */
-const lists = new Map<string, GithubRepoList>()
+/** No search while nothing is typed. */
+const noSearch: Atom.Atom<QueryResult<"profiles.githubRepos">> = Atom.make(AsyncResult.initial())
 
 /** A repository to clone: one gh listed or found, or one typed as `OWNER/REPO`. */
 export type RepoChoice = Pick<GithubRepo, "full_name" | "name">
@@ -42,58 +45,33 @@ export function GithubRepoPicker({
   onChange: (repo: RepoChoice) => void
 }) {
   const source = `${hostId}\n${account ?? ""}`
-  const [listed, setListed] = useState<{ source: string; list?: GithubRepoList; err?: string } | null>(() => {
-    const list = lists.get(source)
-    return list ? { source, list } : null
-  })
-  const [found, setFound] = useState<{ source: string; query: string; list?: GithubRepoList; err?: string } | null>(null)
-  const [query, setQuery] = useState("")
+  const [input, setInput] = useState("")
   const [active, setActive] = useState(-1)
   const listRef = useRef<HTMLDivElement>(null)
-  const q = query.trim()
+  const q = input.trim()
 
-  useEffect(() => {
-    let live = true
-    const cached = lists.get(source)
-    void rpc(hostId, "profiles.githubRepos", { account }).then(
-      // A list from before stays up if asking again fails.
-      (list) => {
-        if (!list.error) lists.set(source, list)
-        if (live && !(list.error && cached)) setListed({ source, list })
-      },
-      (e: unknown) => {
-        if (live && !cached) setListed({ source, err: errorText(e) })
-      },
-    )
-    return () => {
-      live = false
-    }
-  }, [hostId, account, source])
+  // The list (gh takes a few seconds): what was read stays up while it's read again, and a good list stays up if
+  // asking again fails, or gh fails this time.
+  const listed = useAtomValue(query("profiles.githubRepos", hostId, { account }))
+  const read = resultValue(listed)
+  const [good, setGood] = useState<{ source: string; list: GithubRepoList } | null>(null)
+  if (read && !read.error && (good?.source !== source || good.list !== read)) setGood({ source, list: read })
+  const kept = good?.source === source ? good.list : undefined
+  const shown = read && !(read.error && kept) ? read : kept
+  const listFailed = resultError(listed)
+  const list: { list?: GithubRepoList; err?: string } | null = shown ? { list: shown } : listFailed ? { err: listFailed } : null
 
   // The search API has a low rate limit, so it waits for a pause in typing.
+  const [asked, setAsked] = useState("")
   useEffect(() => {
     if (!q) return undefined
-    const asked = { live: true }
-    const t = setTimeout(() => {
-      void rpc(hostId, "profiles.githubRepos", { account, q }).then(
-        (list) => {
-          if (asked.live) setFound({ source, query: q, list })
-        },
-        (e: unknown) => {
-          if (asked.live) setFound({ source, query: q, err: errorText(e) })
-        },
-      )
-    }, 400)
-    return () => {
-      asked.live = false
-      clearTimeout(t)
-    }
-  }, [hostId, account, q, source])
-
-  // The list kept from before is shown while it's asked for again.
-  const cachedList = lists.get(source)
-  const list = listed?.source === source ? listed : cachedList ? { source, list: cachedList, err: undefined } : null
-  const search = q && found?.source === source && found.query === q ? found : null
+    return after(400, () => setAsked(q))
+  }, [q])
+  const searched = useAtomValue(asked ? query("profiles.githubRepos", hostId, { account, q: asked }) : noSearch)
+  const found = resultValue(searched)
+  const searchFailed = resultError(searched)
+  const search: { list?: GithubRepoList; err?: string } | null =
+    !q || asked !== q ? null : searchFailed ? { err: searchFailed } : found ? { list: found } : null
   const repos = q ? mergeRepos(filterRepos(list?.list?.repos ?? [], q), search?.list?.repos ?? []) : (list?.list?.repos ?? [])
   const typed = repoFromInput(q)
   const options: (GithubRepo | RepoChoice)[] = [
@@ -135,8 +113,8 @@ export function GithubRepoPicker({
   return (
     <div className="space-y-2">
       <Input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder="Search, or OWNER/REPO"
         aria-label="Search repositories"

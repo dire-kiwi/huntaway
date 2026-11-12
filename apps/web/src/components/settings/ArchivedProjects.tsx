@@ -1,10 +1,11 @@
+import { Exit } from "effect"
 import { Archive, ArchiveRestore } from "lucide-react"
 import { useMemo, useState } from "react"
-import type { HostProject as Project } from "@huntaway/client"
+import { mutate, type HostProject as Project } from "@huntaway/client"
 import { parse } from "../../router"
 import { navigate } from "../../state/route"
-import { Button, errorText, Modal, ModalFooter, timeAgo } from "../ui"
-import { rpc } from "../../state/rpc"
+import { Button, Modal, ModalFooter, timeAgo } from "../ui"
+import { exitError, runExit, useMutation } from "../../state/mutation"
 import { board, useBoard } from "../../state/board"
 import { profileNames } from "../boardHelpers"
 
@@ -13,13 +14,19 @@ import { profileNames } from "../boardHelpers"
  * project lists) until it's unarchived in Settings. Leaves a page about the project for the home page.
  */
 export function ArchiveProjectModal({ project, onClose }: { project: Project; onClose: () => void }) {
-  const [err, setErr] = useState<string | null>(null)
+  // Not the dialog's own action (useMutation): the project's event can take it off the page before the answer comes,
+  // which would interrupt that, and what comes after (going home) has to happen still.
   const [busy, setBusy] = useState(false)
-  const archive = async () => {
+  const [err, setErr] = useState<string | null>(null)
+  const archive = (): void => {
     setErr(null)
     setBusy(true)
-    try {
-      await rpc(project.host_id, "projects.update", { id: project.id, patch: { archived: true } })
+    void runExit(mutate("projects.update", project.host_id, { id: project.id, patch: { archived: true } })).then((exit) => {
+      if (!Exit.isSuccess(exit)) {
+        setErr(exitError(exit))
+        setBusy(false)
+        return
+      }
       const s = board.get()
       const route = parse(window.location.pathname)
       const panel = new URLSearchParams(window.location.search).get("task")
@@ -27,10 +34,7 @@ export function ArchiveProjectModal({ project, onClose }: { project: Project; on
       const here = ("projectId" in route && route.projectId === project.id) || (!!taskId && s.tasks[taskId]?.project_id === project.id)
       onClose()
       if (here) navigate({ name: "home" }, true)
-    } catch (e) {
-      setErr(errorText(e))
-      setBusy(false)
-    }
+    })
   }
   return (
     <Modal title={`Archive ${project.name}`} onClose={onClose}>
@@ -44,7 +48,7 @@ export function ArchiveProjectModal({ project, onClose }: { project: Project; on
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy} onClick={() => void archive()}>
+          <Button variant="primary" disabled={busy} onClick={archive}>
             <Archive size={13} /> Archive project
           </Button>
         </div>
@@ -64,22 +68,17 @@ export function ArchivedProjectsPanel() {
   const profiles = useBoard((s) => s.profiles)
   const archived = useBoard((s) => s.archived)
   const list = useMemo(() => archived.toSorted((a, b) => (b.archived_at ?? "").localeCompare(a.archived_at ?? "")), [archived])
-  const [busy, setBusy] = useState<string | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  const [state, update] = useMutation("projects.update")
+  // The project last unarchived here: the one the button waits for, and the one the error names.
+  const [last, setLast] = useState<Project | null>(null)
   if (!profiles.length) return null
   const manyProfiles = profileNames(profiles).length > 1
   const manyHosts = new Set(profiles.map((p) => p.host_id)).size > 1
-  const unarchive = async (p: Project): Promise<void> => {
-    setErr(null)
-    setBusy(key(p))
-    try {
-      await rpc(p.host_id, "projects.update", { id: p.id, patch: { archived: false } })
-    } catch (e) {
-      setErr(`Unarchiving ${p.name}: ${errorText(e)}`)
-    } finally {
-      setBusy(null)
-    }
+  const unarchive = (p: Project): void => {
+    setLast(p)
+    void update(p.host_id, { id: p.id, patch: { archived: false } })
   }
+  const err = state.error !== null && last ? `Unarchiving ${last.name}: ${state.error}` : null
   return (
     <section>
       <h2 className="mb-3 text-[13px] font-semibold">Archived projects</h2>
@@ -105,7 +104,7 @@ export function ArchivedProjectsPanel() {
                     .join(" · ")}
                 </div>
               </div>
-              <Button size="sm" disabled={busy === key(p)} onClick={() => void unarchive(p)}>
+              <Button size="sm" disabled={state.busy && last !== null && key(last) === key(p)} onClick={() => unarchive(p)}>
                 <ArchiveRestore size={13} /> Unarchive
               </Button>
             </div>

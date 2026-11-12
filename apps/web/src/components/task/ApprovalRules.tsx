@@ -1,21 +1,19 @@
 // The assistant's approval rules in its details (6.7): what they come to, and a dialog to change them
 // (`approvalRules.get`, `approvalRules.set`), read again on the profile's `approval_rules` events.
 import { useAtomValue } from "@effect/atom-react"
-import { approvalSeqAtom, RULE_DECISIONS, ruleFor, type HostTask as Task } from "@huntaway/client"
-import { ProfileId, type ApprovalRule, type ApprovalRulesView as ApprovalRules, type RuleDecision } from "@huntaway/contracts"
+import { mutate, query, RULE_DECISIONS, ruleFor, type HostTask as Task } from "@huntaway/client"
+import { ProfileId, type ApprovalRule, type ApprovalRulesUpdate, type ApprovalRulesView as ApprovalRules, type RuleDecision } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Effect, Exit } from "effect"
 import { Plus, RotateCcw, X } from "lucide-react"
 import { useMemo, useState } from "react"
-import { rpc } from "../../state/rpc"
-import { useLoaded } from "../changes/git/useLoaded"
-import { Button, IconButton, Input, Modal, ModalFooter, Toggle, toJson, useAsyncAction } from "../ui"
+import { useAction } from "../../state/mutation"
+import { Button, IconButton, Input, Modal, ModalFooter, resultError, resultValue, Toggle, toJson } from "../ui"
 
-/** A profile's approval rules, loaded and read again as they change on its host. */
+/** A profile's approval rules, read again as they change on its host (its `approval_rules` events, invalidate.ts). */
 export function useApprovalRules(hostId: string, profileId: string): { rules: ApprovalRules | null; error: string | null } {
-  const changed = useAtomValue(approvalSeqAtom(hostId, "rules", profileId))
-  // The latest load's answer only: one started before it that lands after it would undo it.
-  const read = useLoaded(`${hostId}\u0000${profileId}\u0000${changed}`, () => rpc(hostId, "approvalRules.get", { profile_id: ProfileId.make(profileId) }))
-  return { rules: read?.value ?? null, error: read?.error ?? null }
+  const read = useAtomValue(query("approvalRules.get", hostId, { profile_id: ProfileId.make(profileId) }))
+  return { rules: resultValue(read) ?? null, error: resultError(read) }
 }
 
 const DECISION_STYLE: Record<RuleDecision, string> = {
@@ -84,7 +82,7 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
   const [draft, setDraft] = useState<DraftRule[]>(() => rules.rules.map((r) => ({ tool: r.tool, decision: r.decision, id: nextId() })))
   const [expiry, setExpiry] = useState(String(rules.expiry_minutes))
   const [tryTool, setTryTool] = useState("")
-  const save = useAsyncAction()
+  const [save, run] = useAction()
   const creates = createTaskRules(rules)
   const asksToCreate = creates.every((t) => draft.some((r) => r.tool === t && r.decision === "ask"))
   const minutes = Number(expiry)
@@ -107,26 +105,30 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
         ? [...d.filter((r) => !creates.includes(r.tool)), ...creates.map((tool) => ({ tool, decision: "ask" as const, id: nextId() }))]
         : d.filter((r) => !creates.includes(r.tool)),
     )
+  // Saves the rules (or says why they can't be), and closes with what the host kept.
+  const saveRules = (update: Effect.Effect<ApprovalRulesUpdate, string>) => {
+    if (save.busy) return
+    const saving = Effect.flatMap(update, (u) => mutate("approvalRules.set", task.host_id, { profile_id: ProfileId.make(task.profile_id), update: u }))
+    void run(saving).then((exit) => {
+      if (!Exit.isSuccess(exit)) return
+      onSaved(exit.value)
+      onClose()
+    })
+  }
   const submit = () =>
-    save.run(async () => {
-      if (!expiryOk) throw new Error("The expiry is a whole number of minutes, at most a week (10080)")
-      if (firstRepeated) throw new Error(`"${firstRepeated}" has more than one rule: keep one for each tool or pattern`)
-      const saved = await rpc(task.host_id, "approvalRules.set", {
-        profile_id: ProfileId.make(task.profile_id),
-        update: { rules: plain(draft.filter((r) => r.tool.trim())), expiry_minutes: minutes },
-      })
-      onSaved(saved)
-      onClose()
-    })
-  const reset = () =>
-    save.run(async () => {
-      if (!window.confirm("Go back to the default rules? Your own rules are dropped.")) return
-      onSaved(await rpc(task.host_id, "approvalRules.set", { profile_id: ProfileId.make(task.profile_id), update: { reset: true } }))
-      onClose()
-    })
+    saveRules(
+      !expiryOk
+        ? Effect.fail("The expiry is a whole number of minutes, at most a week (10080)")
+        : firstRepeated
+          ? Effect.fail(`"${firstRepeated}" has more than one rule: keep one for each tool or pattern`)
+          : Effect.succeed({ rules: plain(draft.filter((r) => r.tool.trim())), expiry_minutes: minutes }),
+    )
+  const reset = () => {
+    if (!save.busy && window.confirm("Go back to the default rules? Your own rules are dropped.")) saveRules(Effect.succeed({ reset: true }))
+  }
 
   return (
-    <Modal title="Approval rules" onClose={onClose} onSubmit={() => void submit()} width="max-w-2xl">
+    <Modal title="Approval rules" onClose={onClose} onSubmit={submit} width="max-w-2xl">
       <div className="space-y-3 text-[12.5px]" data-draft={dirty ? "" : undefined}>
         <p className="text-muted">
           For each tool or MCP server, the assistant may use it (<span className={DECISION_STYLE.allow}>allow</span>), asks you first each time (
@@ -174,7 +176,7 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
           <Button size="sm" onClick={() => setDraft((d) => [...d, { tool: "", decision: "ask", id: nextId() }])}>
             <Plus size={13} /> Add a rule
           </Button>
-          <Button size="sm" variant="ghost" disabled={rules.is_default && !dirty} onClick={() => void reset()} title="Go back to the default rules">
+          <Button size="sm" variant="ghost" disabled={rules.is_default && !dirty} onClick={reset} title="Go back to the default rules">
             <RotateCcw size={13} /> Defaults
           </Button>
         </div>
@@ -232,7 +234,7 @@ function RulesDialog({ task, rules, onSaved, onClose }: { task: Task; rules: App
         <ModalFooter className="flex items-center justify-end gap-2">
           {save.error && <span className="mr-auto text-xs text-red-400">{save.error}</span>}
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={save.busy || !dirty || !!firstRepeated} onClick={() => void submit()}>
+          <Button variant="primary" disabled={save.busy || !dirty || !!firstRepeated} onClick={submit}>
             Save rules
           </Button>
         </ModalFooter>

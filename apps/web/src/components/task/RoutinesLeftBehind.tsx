@@ -1,16 +1,21 @@
+import { Cause, Exit } from "effect"
 // The routines this board's own host still has for a profile whose assistant runs on another host (the old Routines
 // tab's `LeftBehind`, HA-241, HA-255; 7.4): they don't run there while the assistant is away (the board's host refuses
 // them, `RoutineHost.elsewhere`), and that host's routines are the assistant's own, in its Routines tab. Each can be
 // deleted from here, since the board no longer opens the assistant they'd wake.
 import { useAtomValue } from "@effect/atom-react"
-import { automationsAtom, type HostTask as Task } from "@huntaway/client"
+import { automationsAtom, type HostTask as Task, type Methods, mutate } from "@huntaway/client"
 import { Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
-import { rpc } from "../../state/rpc"
+import { runExit } from "../../state/mutation"
 import { useShallow } from "../boardHelpers"
 import { triggerText } from "../settings/automations/text"
 import { Button, errorText, useConfirm } from "../ui"
+
+/** One call to `host`'s board (through the client's `mutate`, which reads again what it changes), as a promise that rejects with the host's error. */
+const call = <M extends keyof Methods>(host: string, method: M, payload: Methods[M]["payload"]): Promise<Methods[M]["success"]> =>
+  runExit(mutate(method, host, payload)).then((exit) => (Exit.isSuccess(exit) ? exit.value : Promise.reject(Cause.squash(exit.cause))))
 
 /** Under the assistant's own routines: those its profile left on the board's host, if it sends its assistant to `assistant`'s host. */
 export function RoutinesLeftBehind({ assistant }: { assistant: Task }) {
@@ -70,7 +75,7 @@ function LeftBehind({
                 action: "Delete routine",
                 danger: true,
                 onConfirm: () =>
-                  rpc(boardHost, "automations.delete", { id: a.id }).then(
+                  call(boardHost, "automations.delete", { id: a.id }).then(
                     () => setErr(null),
                     (e: unknown) => setErr(errorText(e)),
                   ),

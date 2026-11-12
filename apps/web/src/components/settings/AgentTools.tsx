@@ -1,60 +1,48 @@
+import { useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Exit } from "effect"
+import { useRef, useState } from "react"
 import type { McpServer, ProjectAgentTools as AgentTools, SeenTools, Skill } from "@huntaway/contracts"
-import type { HostProject as Project } from "@huntaway/client"
-import { useRpc } from "../../state/rpc"
-import { errorText, useConfirm } from "../ui"
-import { describe } from "./agentTools/parts"
+import { mutate, query, type HostProject as Project } from "@huntaway/client"
+import { useAction } from "../../state/mutation"
+import { resultError, resultValue, useConfirm } from "../ui"
+import { describe, rejectFailure, type Change } from "./agentTools/parts"
 import { SkillsSection } from "./agentTools/SkillsSection"
 import { McpSection } from "./agentTools/McpSection"
 
 // A project's skills and MCP servers (6.4; huntaway's settings/AgentTools.tsx): its own, its switches for the host's
 // global ones, and the ones from elsewhere it turns off. The project settings' Skills and MCP tab mounts
-// `ProjectAgentTools` (6.12).
+// `ProjectAgentTools` (6.12). They're read while shown, and again after each `agentTools.*` change.
 
 type DisabledKey = "disabled_skills" | "disabled_mcp_servers"
 type Disabled = Pick<AgentTools, DisabledKey>
 /** `t` with the lists of others' skills and servers it turns off as `d` has them. */
 const withDisabled = (t: AgentTools, d: Disabled): AgentTools =>
   Object.assign({}, t, { disabled_skills: d.disabled_skills, disabled_mcp_servers: d.disabled_mcp_servers })
+const disabledOf = (t: Disabled): Disabled => ({ disabled_skills: t.disabled_skills, disabled_mcp_servers: t.disabled_mcp_servers })
 const toggleIn = (list: ReadonlyArray<string>, name: string, off: boolean) => (off ? [...list.filter((n) => n !== name), name] : list.filter((n) => n !== name))
 
 /** The project's own skills and MCP servers, and switches for the ones its agents get from elsewhere. */
 export function ProjectAgentTools({ project }: { project: Project }) {
-  const rpc = useRpc()
-  const [tools, setTools] = useState<AgentTools | null>(null)
-  const [err, setErr] = useState<string | null>(null)
   const hostId = project.host_id
-  // Switches for skills and servers from elsewhere save the whole list, so each click builds on
-  // the ones before it (not on what was last rendered) and the saves go one at a time.
+  const result = useAtomValue(query("agentTools.project", hostId, { project_id: project.id }))
+  const read = resultValue(result)
+  // Changes show their failure under the sections; a delete's shows in its dialog.
+  const [changed, run] = useAction()
+  const [, runConfirmed] = useAction()
+  const confirmed = (change: Change) => runConfirmed(change).then(rejectFailure)
+  // Switches for skills and servers from elsewhere save the whole list, so each click builds on the ones before it
+  // (not on what was last read) and the saves go one at a time. While they save, and the list is read again after
+  // them, they show as clicked.
   const wanted = useRef<Disabled | null>(null)
   const saving = useRef(0)
   const queue = useRef<Promise<void>>(Promise.resolve())
-  const show = useCallback((t: AgentTools) => {
-    // While switches are saving, keep showing them as clicked.
-    setTools(saving.current && wanted.current ? withDisabled(t, wanted.current) : t)
-    if (!saving.current) wanted.current = { disabled_skills: t.disabled_skills, disabled_mcp_servers: t.disabled_mcp_servers }
-  }, [])
-  const reload = useCallback(
-    () =>
-      rpc(hostId, "agentTools.project", { project_id: project.id }).then(
-        (t) => {
-          show(t)
-          setErr(null)
-        },
-        (e: unknown) => setErr(errorText(e)),
-      ),
-    [rpc, hostId, project.id, show],
-  )
-  useEffect(() => {
-    void reload()
-  }, [reload])
+  const [clicked, setClicked] = useState<Disabled | null>(null)
+  const [saves, setSaves] = useState(0)
   const confirm = useConfirm()
-  if (!tools) return err ? <div className="text-xs text-red-400">{err}</div> : null
-  const run = (fn: () => Promise<unknown>) => {
-    setErr(null)
-    fn().then(reload, (e: unknown) => setErr(errorText(e)))
-  }
+  const err = changed.error ?? resultError(result)
+  if (!read) return err ? <div className="text-xs text-red-400">{err}</div> : null
+  const tools = clicked && (saves > 0 || result.waiting) ? withDisabled(read, clicked) : read
   const seen: ReadonlyArray<SeenTools> = Object.values(tools.seen)
   const lastSeen = seen
     .map((s) => s.at)
@@ -62,28 +50,24 @@ export function ProjectAgentTools({ project }: { project: Project }) {
     .pop()
   const toggleOther = (key: DisabledKey, name: string, on: boolean) => {
     const set = (off: boolean) => {
-      const base = wanted.current ?? { disabled_skills: tools.disabled_skills, disabled_mcp_servers: tools.disabled_mcp_servers }
+      const base = saving.current > 0 && wanted.current ? wanted.current : disabledOf(tools)
       const now: Disabled =
         key === "disabled_skills"
           ? { disabled_skills: toggleIn(base.disabled_skills, name, off), disabled_mcp_servers: base.disabled_mcp_servers }
           : { disabled_skills: base.disabled_skills, disabled_mcp_servers: toggleIn(base.disabled_mcp_servers, name, off) }
       wanted.current = now
-      setTools((t) => t && withDisabled(t, now))
+      setClicked(now)
     }
     set(!on)
-    setErr(null)
     saving.current++
-    queue.current = queue.current.then(async () => {
-      let saved: AgentTools | null = null
-      try {
-        saved = await rpc(hostId, "agentTools.updateProject", { project_id: project.id, patch: { [key]: wanted.current?.[key] ?? [] } })
-      } catch (e) {
-        setErr(errorText(e))
-        set(on)
-      }
-      saving.current--
-      if (saved && !saving.current) show(saved)
-    })
+    setSaves(saving.current)
+    queue.current = queue.current.then(() =>
+      run(mutate("agentTools.updateProject", hostId, { project_id: project.id, patch: { [key]: wanted.current?.[key] ?? [] } })).then((exit) => {
+        if (!Exit.isSuccess(exit)) set(on)
+        saving.current--
+        setSaves(saving.current)
+      }),
+    )
   }
   const globalNames = new Set([...tools.global_skills, ...tools.global_mcp_servers].map((g) => g.name))
   const sourceNames = new Map(tools.skill_sources.map((src) => [src.id, src.name]))
@@ -96,7 +80,7 @@ export function ProjectAgentTools({ project }: { project: Project }) {
         replaced={new Set(own.filter((o) => o.enabled).map((o) => o.name))}
         profileOn={(id) => !!tools.profile_switches[id]}
         override={(id) => tools.project_switches[id] ?? null}
-        onChange={(id, enabled) => run(() => rpc(hostId, "agentTools.setSwitch", { scope: "project", scope_id: project.id, item_id: id, enabled }))}
+        onChange={(id, enabled) => void run(mutate("agentTools.setSwitch", hostId, { scope: "project", scope_id: project.id, item_id: id, enabled }))}
       />
     ) : null
   return (
@@ -109,21 +93,21 @@ export function ProjectAgentTools({ project }: { project: Project }) {
           .filter((n) => !globalNames.has(n))}
         lastSeen={lastSeen}
         onToggleOther={(name, on) => toggleOther("disabled_skills", name, on)}
-        onToggle={(s, enabled) => run(() => rpc(hostId, "agentTools.updateSkill", { project_id: project.id, id: s.id, skill: { enabled } }))}
+        onToggle={(s, enabled) => void run(mutate("agentTools.updateSkill", hostId, { project_id: project.id, id: s.id, skill: { enabled } }))}
         onDelete={(s) =>
           confirm.ask({
             title: `Delete skill ${s.name}`,
             body: `Delete the skill "${s.name}"?`,
             action: "Delete skill",
             danger: true,
-            onConfirm: () => rpc(hostId, "agentTools.removeSkill", { project_id: project.id, id: s.id }).then(reload),
+            onConfirm: () => confirmed(mutate("agentTools.removeSkill", hostId, { project_id: project.id, id: s.id })),
           })
         }
-        onSave={async (skill, content) => {
-          if (skill) await rpc(hostId, "agentTools.updateSkill", { project_id: project.id, id: skill.id, skill: { content } })
-          else await rpc(hostId, "agentTools.addSkill", { project_id: project.id, skill: { content } })
-          await reload()
-        }}
+        onSave={(skill, content) =>
+          skill
+            ? mutate("agentTools.updateSkill", hostId, { project_id: project.id, id: skill.id, skill: { content } })
+            : mutate("agentTools.addSkill", hostId, { project_id: project.id, skill: { content } })
+        }
       />
       <McpSection
         tools={tools}
@@ -133,21 +117,21 @@ export function ProjectAgentTools({ project }: { project: Project }) {
         ).filter((s) => !globalNames.has(s.name))}
         lastSeen={lastSeen}
         onToggleOther={(name, on) => toggleOther("disabled_mcp_servers", name, on)}
-        onUpdate={(s, b) => run(() => rpc(hostId, "agentTools.updateServer", { project_id: project.id, id: s.id, server: b }))}
+        onUpdate={(s, b) => void run(mutate("agentTools.updateServer", hostId, { project_id: project.id, id: s.id, server: b }))}
         onDelete={(s) =>
           confirm.ask({
             title: `Delete MCP server ${s.name}`,
             body: `Delete the MCP server "${s.name}"?`,
             action: "Delete server",
             danger: true,
-            onConfirm: () => rpc(hostId, "agentTools.removeServer", { project_id: project.id, id: s.id }).then(reload),
+            onConfirm: () => confirmed(mutate("agentTools.removeServer", hostId, { project_id: project.id, id: s.id })),
           })
         }
-        onSave={async (server, b) => {
-          if (server) await rpc(hostId, "agentTools.updateServer", { project_id: project.id, id: server.id, server: b })
-          else await rpc(hostId, "agentTools.addServer", { project_id: project.id, server: b })
-          await reload()
-        }}
+        onSave={(server, b) =>
+          server
+            ? mutate("agentTools.updateServer", hostId, { project_id: project.id, id: server.id, server: b })
+            : mutate("agentTools.addServer", hostId, { project_id: project.id, server: b })
+        }
       />
       {err && <div className="text-xs text-red-400">{err}</div>}
       {confirm.dialog}

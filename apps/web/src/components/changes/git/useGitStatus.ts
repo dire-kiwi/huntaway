@@ -1,65 +1,47 @@
+import { useAtomValue } from "@effect/atom-react"
 import { TaskId, type GitStatus } from "@huntaway/contracts"
-import type { HostTask as Task } from "@huntaway/client"
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
-import { rpc } from "../../../state/rpc"
+import { query, type HostTask as Task, type QueryOptions } from "@huntaway/client"
+import { useState } from "react"
+import { useVisible } from "../../../state/visibility"
+import { resultError, resultValue } from "../../ui"
 import { toJson } from "../../ui/json"
-import { errText } from "./model"
 
 /** How often the view checks for changes (an agent may be making them). */
-const POLL_MS = 4000
+const POLL = "4 seconds"
 
 /** Whether two answers are the same, so the one already shown is kept (and what depends on it isn't fetched again). */
 export const sameJson = (a: unknown, b: unknown) => toJson(a) === toJson(b)
 
 /**
- * The repository's status, checked when the agent starts or stops, every few seconds while the page is shown (but
- * not while a change is being made, `busy`), and when the window comes back. `tick` is bumped by every check, and
- * `askedTick` by every one but the polls (for what's big to fetch again).
+ * `value`, or the one it was before while what's read again is the same (`sameJson`): what depends on it (a diff's lines
+ * picked, a file's diffs) stays as it was. State adjusted during render, and only when the value has changed: a value
+ * made anew on every render with the same content (a failure's) must not set it, or each render asks for another and
+ * React gives up.
  */
-export function useGitStatus(task: Task, busy: RefObject<boolean>) {
-  const [h, id] = [task.host_id, task.id]
-  const [status, setStatus] = useState<GitStatus | null>(null)
-  const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [tick, setTick] = useState(0)
-  const [askedTick, setAskedTick] = useState(0)
+export function useKept<T>(value: T): T {
+  const [kept, setKept] = useState<{ readonly raw: T; readonly value: T }>({ raw: value, value })
+  if (kept.raw === value) return kept.value
+  if (kept.value !== undefined && value !== undefined && sameJson(kept.value, value)) return kept.value
+  setKept({ raw: value, value })
+  return value
+}
 
-  // The status, kept as it was when nothing changed, so what depends on it isn't fetched again.
-  const seq = useRef(0)
-  const refresh = useCallback(
-    async (poll = false): Promise<GitStatus | null> => {
-      const n = ++seq.current
-      let st: GitStatus | null = null
-      try {
-        st = await rpc(h, "git.status", { id: TaskId.make(id) })
-        if (n !== seq.current) return null
-        const got = st
-        setStatus((prev) => (sameJson(prev, got) ? prev : got))
-        setLoadErr(null)
-      } catch (e) {
-        if (n === seq.current) setLoadErr(errText(e))
-      }
-      setTick((t) => t + 1)
-      if (!poll) setAskedTick((t) => t + 1)
-      return st
-    },
-    [h, id],
-  )
-  // Again as the agent starts or stops and the worktree comes or goes (from a timer, so not while the effect runs).
-  const moved = `${task.running}:${task.worktree_state}`
-  useEffect(() => {
-    const t = setTimeout(() => void refresh(), 0, moved)
-    return () => clearTimeout(t)
-  }, [refresh, moved])
-  useEffect(() => {
-    const poll = setInterval(() => {
-      if (document.visibilityState === "visible" && !busy.current) void refresh(true)
-    }, POLL_MS)
-    const onFocus = () => void refresh()
-    window.addEventListener("focus", onFocus)
-    return () => {
-      clearInterval(poll)
-      window.removeEventListener("focus", onFocus)
-    }
-  }, [refresh, busy])
-  return { status, loadErr, tick, askedTick, refresh }
+/**
+ * How the tab's reads are kept: every few seconds while the page is shown (but not while a change is being made,
+ * `busy`), and again when the window comes back. The agent starting or stopping and the worktree coming or going read
+ * them again too (invalidate.ts's triggers), and so does every change made here (a `git.*` mutation).
+ */
+export function useGitReads(busy: boolean): QueryOptions {
+  const visible = useVisible()
+  return { refresh: visible && !busy ? POLL : undefined, focus: true }
+}
+
+/** The repository's status query (with no options: the read every reader shares, which a change waits for). */
+export const statusQuery = (h: string, id: string, options?: QueryOptions) => query("git.status", h, { id: TaskId.make(id) }, options)
+
+/** The repository's status, kept as it was while it's the same; `loadErr` once a read failed (the status before stays). */
+export function useGitStatus(task: Task, reads: QueryOptions): { status: GitStatus | null; loadErr: string | null } {
+  const result = useAtomValue(statusQuery(task.host_id, task.id, reads))
+  const status = useKept(resultValue(result) ?? null)
+  return { status, loadErr: resultError(result) }
 }

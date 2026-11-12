@@ -1,8 +1,9 @@
 import { clsx } from "clsx"
-import { ChevronDown, ChevronRight, TriangleAlert } from "lucide-react"
-import { Fragment, useState, type ReactNode } from "react"
-import { addDays, NEUTRAL, PALETTE, SCRATCH, startOfDay, type ATask } from "./analytics/analytics"
+import { TriangleAlert } from "lucide-react"
+import { useState, type ReactNode } from "react"
+import { addDays, NEUTRAL, PALETTE, partsOf, SCRATCH, startOfDay, type ATask } from "./analytics/analytics"
 import { navigate } from "../../state/route"
+import { localeDateString } from "../ui/dates"
 import {
   add,
   allTokens,
@@ -31,7 +32,6 @@ import {
   summarise,
   ticks,
   tokens,
-  topOf,
   total,
   usd,
   value,
@@ -62,7 +62,7 @@ function openTask(t: ATask | undefined) {
 
 export function TokenStats({ data, project }: { data: TokenData; project: string }) {
   const [metric, setMetric] = useState<Metric>("tokens")
-  const projectOf = (threadId: string) => data.tasks[topOf(data, ownerOf(data, threadId))]?.projectId ?? SCRATCH
+  const projectOf = (threadId: string) => data.tasks[ownerOf(data, threadId)]?.projectId ?? SCRATCH
   // Window restarts are in no project.
   const keep = (threadId: string | null) => project === "all" || (threadId !== null && projectOf(threadId) === project)
   const rows = data.rows.filter((r) => keep(r.threadId))
@@ -135,7 +135,7 @@ function DayLabels({ days }: { days: number[] }) {
     <div className="mt-1 flex gap-[2px] pl-12">
       {days.map((d, i) => (
         <div key={d} className="min-w-0 flex-1 text-center text-[10.5px] text-faint tabular-nums">
-          {i % every === 0 ? (days.length <= 7 ? new Date(d).toLocaleDateString(undefined, { weekday: "short", day: "numeric" }) : new Date(d).getDate()) : ""}
+          {i % every === 0 ? (days.length <= 7 ? localeDateString(d, { weekday: "short", day: "numeric" }) : partsOf(d).day) : ""}
         </div>
       ))}
     </div>
@@ -175,9 +175,7 @@ function DailyChart({ data, metric }: { data: TokenData; metric: Metric }) {
                     className="flex h-full min-w-0 flex-1 cursor-default flex-col-reverse gap-[2px] rounded-sm hover:bg-white/[0.03]"
                     {...bind(() => (
                       <>
-                        <div className="mb-1 font-medium">
-                          {new Date(d.day).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
-                        </div>
+                        <div className="mb-1 font-medium">{localeDateString(d.day, { weekday: "short", day: "numeric", month: "short" })}</div>
                         {segs.length === 0 && <div className="text-faint">Nothing</div>}
                         {segs.map(({ p, v }) => (
                           <div key={p} className="flex items-center gap-1.5">
@@ -335,7 +333,7 @@ function CacheByDay({ data }: { data: TokenData }) {
                 className="flex h-full min-w-0 flex-1 cursor-default flex-col-reverse rounded-sm hover:bg-white/[0.03]"
                 {...bind(() => (
                   <>
-                    <div className="mb-1 font-medium">{new Date(day).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}</div>
+                    <div className="mb-1 font-medium">{localeDateString(day, { weekday: "short", day: "numeric", month: "short" })}</div>
                     {h === null ? (
                       <div className="text-faint">Nothing</div>
                     ) : (
@@ -472,7 +470,6 @@ const SPLIT: Purpose[] = ["task", "review", "summary", "compaction"]
 
 function Tasks({ data, metric }: { data: TokenData; metric: Metric }) {
   const [all, setAll] = useState(false)
-  const [open, setOpen] = useState<Set<string>>(new Set())
   const tasks = byTask(data, data.rows, metric)
   if (!tasks.length) return null
   const list = all ? tasks : tasks.slice(0, 20)
@@ -480,47 +477,28 @@ function Tasks({ data, metric }: { data: TokenData; metric: Metric }) {
     const t = p === "task" ? sumParts(u, ["task", "scratch", "group"]) : u.parts[p]
     return t && value(t, metric) ? format(value(t, metric), metric) : ""
   }
-  const row = (u: TaskUsage, child: boolean) => {
-    const isOpen = open.has(u.taskId)
-    const toggle = () => setOpen((s) => new Set(isOpen ? [...s].filter((x) => x !== u.taskId) : [...s, u.taskId]))
-    return (
-      <tr key={u.taskId} className="cursor-pointer bg-panel/60 hover:bg-raised" onClick={() => openTask(data.tasks[u.taskId])}>
-        <td className={clsx("py-1.5 pr-3", child ? "pl-9" : "pl-2")}>
-          <span className="flex min-w-0 items-center gap-1">
-            {!child &&
-              (u.children.length ? (
-                <button
-                  className="shrink-0 rounded p-0.5 text-faint hover:text-fg"
-                  title={isOpen ? "Hide its tasks" : `Show its ${plural(u.children.length, "task")}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    toggle()
-                  }}
-                >
-                  {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                </button>
-              ) : (
-                <span className="w-[21px] shrink-0" />
-              ))}
-            <TaskLabel data={data} taskId={u.taskId} />
-          </span>
+  const row = (u: TaskUsage) => (
+    <tr key={u.taskId} className="cursor-pointer bg-panel/60 hover:bg-raised" onClick={() => openTask(data.tasks[u.taskId])}>
+      <td className="py-1.5 pr-3 pl-2">
+        <span className="flex min-w-0 items-center gap-1">
+          {/* Where a subproject's toggle was: the labels stay where they were. */}
+          <span className="w-[21px] shrink-0" />
+          <TaskLabel data={data} taskId={u.taskId} />
+        </span>
+      </td>
+      {SPLIT.map((p) => (
+        <td key={p} className={clsx(td, "text-muted")}>
+          {part(u, p)}
         </td>
-        {SPLIT.map((p) => (
-          <td key={p} className={clsx(td, "text-muted")}>
-            {part(u, p)}
-          </td>
-        ))}
-        <td className={clsx(td, "font-medium")} title={u.children.length ? "With its tasks'" : undefined}>
-          {format(value(u.totals, metric), metric)}
-        </td>
-        <HitCell t={u.totals} />
-        <td className="truncate px-3 py-1.5 text-muted" title={u.models.map((m) => `${m.model}: ${format(value(m.totals, metric), metric)}`).join("\n")}>
-          {u.models[0]?.model}
-          {u.models.length > 1 && <span className="text-faint"> +{u.models.length - 1}</span>}
-        </td>
-      </tr>
-    )
-  }
+      ))}
+      <td className={clsx(td, "font-medium")}>{format(value(u.totals, metric), metric)}</td>
+      <HitCell t={u.totals} />
+      <td className="truncate px-3 py-1.5 text-muted" title={u.models.map((m) => `${m.model}: ${format(value(m.totals, metric), metric)}`).join("\n")}>
+        {u.models[0]?.model}
+        {u.models.length > 1 && <span className="text-faint"> +{u.models.length - 1}</span>}
+      </td>
+    </tr>
+  )
   return (
     <section>
       <h2 className="mb-2 text-[13px] font-medium">
@@ -543,14 +521,7 @@ function Tasks({ data, metric }: { data: TokenData; metric: Metric }) {
               <th className="w-36 px-3 py-2 font-normal">Model</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
-            {list.map((u) => (
-              <Fragment key={u.taskId}>
-                {row(u, false)}
-                {open.has(u.taskId) && u.children.map((c) => row(c, true))}
-              </Fragment>
-            ))}
-          </tbody>
+          <tbody className="divide-y divide-line">{list.map(row)}</tbody>
         </table>
         {!all && tasks.length > list.length && (
           <button

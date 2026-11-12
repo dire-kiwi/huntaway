@@ -1,39 +1,29 @@
+import { useAtomValue } from "@effect/atom-react"
+import { query, type QueryResult } from "@huntaway/client"
 import type { HostInfo } from "@huntaway/contracts"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { Download, Loader2, RotateCw } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useBoard } from "../../state/board"
-import { rpc } from "../../state/rpc"
-import { Button, errorText, timeAgo } from "../ui"
+import { Button, resultError, resultValue, timeAgo } from "../ui"
 import { PHASES, RunningServer, short, stagedRelease, useServerStatus } from "./server/parts"
 import { Releases, ShellNotice } from "./server/Releases"
 import { RestartModal } from "./server/RestartModal"
 import { useNewUiBuild } from "./uiVersion"
 
-// Step 1 (docs/plan/09-frontend.md) for settings/Server.tsx: what this server runs and where (`admin.status`, with
-// `host.info`'s machine and data folder), restarting and rebuilding, following a deployment, releases (check,
-// download, Update, Roll back: settings/server/), the desktop app's own update, and the sidebar's Update button. The
-// old database line (which file, Copy again) and the threads' batch rebuild are dropped
+// Settings → Server (docs/plan/09-frontend.md): what this server runs and where (`admin.status`, polled and read again on
+// focus, with `host.info`'s machine and data folder), restarting and rebuilding, following a deployment, releases
+// (check, download, Update, Roll back: settings/server/), the desktop app's own update, and the sidebar's Update button.
+// The old database line (which file, Copy again) and the threads' batch rebuild are dropped
 // (docs/plan/14-dropped-and-open.md: the two-file database scheme, moving threads onto items).
 
-/** What `host` says of itself (`host.info`), read when it's shown; null until then. */
+/** No host to ask yet. */
+const noInfo: Atom.Atom<QueryResult<"host.info">> = Atom.make<QueryResult<"host.info">>(AsyncResult.initial())
+
+/** What `host` says of itself (`host.info`), read while it's shown; null until then. */
 export function useHostInfo(host: string | null): { info: HostInfo | null; error: string | null } {
-  const [read, setRead] = useState<{ host: string; info: HostInfo | null; error: string | null } | null>(null)
-  useEffect(() => {
-    if (!host) return undefined
-    const req = { live: true }
-    rpc(host, "host.info", undefined).then(
-      (info) => {
-        if (req.live) setRead({ host, info, error: null })
-      },
-      (e: unknown) => {
-        if (req.live) setRead({ host, info: null, error: errorText(e) })
-      },
-    )
-    return () => {
-      req.live = false
-    }
-  }, [host])
-  return read?.host === host ? read : { info: null, error: null }
+  const result = useAtomValue(host ? query("host.info", host, undefined) : noInfo)
+  return { info: resultValue(result) ?? null, error: resultError(result) }
 }
 
 /** Sidebar prompt shown when the server has a newer UI build than this page is running. */
@@ -61,7 +51,7 @@ export function ReloadButton() {
  */
 export function UpdateButton() {
   const host = useBoard((s) => s.localHostId)
-  const { status } = useServerStatus(host, 30_000)
+  const { status } = useServerStatus(host, "30 seconds", { focus: true })
   const live = useBoard((s) => s.restart)
   const [open, setOpen] = useState(false)
   const busy = live && live.phase !== "failed"
@@ -93,7 +83,7 @@ export function UpdateButton() {
 export function ServerPanel() {
   const host = useBoard((s) => s.localHostId)
   const { info } = useHostInfo(host)
-  const { status, setStatus, refresh } = useServerStatus(host, 15_000)
+  const { status } = useServerStatus(host, "15 seconds", { focus: true })
   const [open, setOpen] = useState<"restart" | "update" | "release" | "rollback" | null>(null)
   const deployed = status?.deployed
   const ahead = status?.deployed_commits?.length ?? 0
@@ -163,7 +153,7 @@ export function ServerPanel() {
           <div>Loading…</div>
         )}
       </div>
-      {status && release && host && <Releases hostId={host} release={release} onStatus={setStatus} refresh={refresh} onRollback={() => setOpen("rollback")} />}
+      {status && release && host && <Releases hostId={host} release={release} onRollback={() => setOpen("rollback")} />}
       {release?.shell?.outdated && <ShellNotice release={release} />}
       {open && status && (
         <RestartModal

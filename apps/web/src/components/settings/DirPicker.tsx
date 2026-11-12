@@ -1,10 +1,13 @@
-// Step 1 (6.11, for settings/NewProjectModal; 6.12 owns settings/ and keeps this): the folder browser is `host.listDirs`.
+// The folder browser is `host.listDirs` (6.11, for settings/NewProjectModal), keyed by the folder typed once typing paused.
+import { useAtomValue } from "@effect/atom-react"
+import { query, type QueryResult } from "@huntaway/client"
 import type { DirListing } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { ArrowUp, Folder, FolderGit2 } from "lucide-react"
 import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from "react"
-import { rpc } from "../../state/rpc"
-import { errorText, Input } from "../ui"
+import { after } from "../../state/timers"
+import { Input, resultError, resultValue } from "../ui"
 
 const withSlash = (p: string) => (p.endsWith("/") ? p : p + "/")
 
@@ -16,10 +19,12 @@ function commonPrefix(names: string[]) {
 
 type DirEntry = DirListing["entries"][number]
 
+/** No listing while no folder is typed. */
+const noListing: Atom.Atom<QueryResult<"host.listDirs">> = Atom.make(AsyncResult.initial())
+
 /** Browse directories on a host. The listing follows what's typed: it shows the folder up to the
  *  last `/`, filtered by the rest. Tab or Enter completes, arrows pick, and `~/` expands. */
 export function DirPicker({ hostId, value, onChange }: { hostId: string; value: string; onChange: (v: string) => void }) {
-  const [loaded, setLoaded] = useState<{ dir: string; listing?: DirListing; err?: string } | null>(null)
   const [active, setActive] = useState(-1)
   const listRef = useRef<HTMLDivElement>(null)
   const slash = value.lastIndexOf("/")
@@ -30,42 +35,40 @@ export function DirPicker({ hostId, value, onChange }: { hostId: string; value: 
   // What's typed after `dir` now (an answer comes after more may have been typed).
   const typedAfter = useEffectEvent((d: string) => value.slice(d.length))
 
-  // Start in the host's home folder.
+  // Start in the host's home folder: the field is given it once per host, when it's read.
+  const home = useAtomValue(query("host.listDirs", hostId, {}))
+  const homePath = resultValue(home)?.path
+  const startedOn = useRef<string | null>(null)
   useEffect(() => {
-    void rpc(hostId, "host.listDirs", {}).then(
-      (l) => change(withSlash(l.path)),
-      (e: unknown) => setLoaded({ dir: "", err: errorText(e) }),
-    )
-  }, [hostId])
+    if (homePath === undefined || startedOn.current === hostId) return
+    startedOn.current = hostId
+    change(withSlash(homePath))
+  }, [homePath, hostId])
 
+  // The folder typed, once typing has paused.
+  const [asked, setAsked] = useState(dir)
   useEffect(() => {
     if (!dir) return undefined
-    const asked = { stale: false }
-    const t = setTimeout(() => {
-      void rpc(hostId, "host.listDirs", { path: dir }).then(
-        (l) => {
-          if (asked.stale) return
-          if (dir.startsWith("~")) {
-            // Expand ~ in place, keeping whatever was typed after the folder.
-            const abs = withSlash(l.path)
-            setLoaded({ dir: abs, listing: l })
-            change(abs + typedAfter(dir))
-          } else {
-            setLoaded({ dir, listing: l })
-          }
-        },
-        (e: unknown) => {
-          if (!asked.stale) setLoaded({ dir, err: errorText(e) })
-        },
-      )
-    }, 120)
-    return () => {
-      asked.stale = true
-      clearTimeout(t)
-    }
-  }, [hostId, dir])
+    return after(120, () => setAsked(dir))
+  }, [dir])
+  const result = useAtomValue(asked ? query("host.listDirs", hostId, { path: asked }) : noListing)
+  const failed = resultError(result)
+  const read = failed === null ? resultValue(result) : undefined
+  // A folder under ~ is listed as the folder it expands to.
+  const expanded = read && asked.startsWith("~") ? withSlash(read.path) : null
+  useEffect(() => {
+    // Expand ~ in place, keeping whatever was typed after the folder (unless the folder typed has changed since).
+    if (expanded === null || asked !== dir) return
+    change(expanded + typedAfter(asked))
+  }, [expanded, asked, dir])
 
-  const current = loaded?.dir === dir ? loaded : null
+  // The last folder read, which stays up while the same folder is read again (the expanded one, say).
+  const [loaded, setLoaded] = useState<{ dir: string; listing: DirListing | undefined; err: string | null } | null>(null)
+  const readDir = expanded ?? asked
+  if (asked && (read || failed) && (loaded === null || loaded.dir !== readDir || loaded.listing !== read || loaded.err !== failed))
+    setLoaded({ dir: readDir, listing: read, err: failed })
+  const homeFailed = resultError(home)
+  const current = dir === "" ? (homeFailed === null ? null : { listing: undefined, err: homeFailed }) : loaded?.dir === dir ? loaded : null
   const listing = current?.listing
   const lower = prefix.toLowerCase()
   const matches = (listing?.entries ?? []).filter((e) => (!e.hidden || prefix.startsWith(".")) && e.name.toLowerCase().startsWith(lower))

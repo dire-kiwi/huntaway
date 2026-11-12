@@ -1,4 +1,5 @@
 import { clsx } from "clsx"
+import { Cause, Exit } from "effect"
 import { Bell, BellRing, Star } from "lucide-react"
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react"
 import { saveMarks as saveTaskMarks, type HostTask as Task } from "@huntaway/client"
@@ -6,7 +7,10 @@ import type { TaskPatch } from "@huntaway/contracts"
 import { fromLocalInput, isDue, nextDue, reminderLabel, reminderPresets, toLocalInput } from "../ui/reminders"
 
 import { Button, ContextMenu, errorText, IconButton, Input, Modal, ModalFooter, Wide, type MenuItem } from "../ui"
-import { run } from "../../state/rpc"
+import { nowMillis, useNow } from "../../state/clock"
+import { runExit, useAction } from "../../state/mutation"
+import { after } from "../../state/timers"
+import { isoOf, localeString, millisOf } from "../ui/dates"
 
 /** Whether the task's host can star it and set reminders on it: every host on this server can. */
 export function useCanMark(task: Task | undefined): boolean {
@@ -15,34 +19,32 @@ export function useCanMark(task: Task | undefined): boolean {
 
 type Marks = Pick<TaskPatch, "starred" | "remind_at" | "reminder">
 
+/** The save of a change to the task's star or reminder (`tasks.update`), shown at once; the saved task comes in as an event. */
+const marksSaved = (task: Task, patch: Marks) => saveTaskMarks(task, patch)
+
 /**
  * Saves a change to the task's star or reminder, shown straight away and put back if the save fails, keeping what
- * other saves in flight show (the client's `saveMarks`).
+ * other saves in flight show (the client's `saveMarks`); rejects with the host's error if it fails.
  */
-export async function saveMarks(task: Task, patch: Marks) {
-  await run(saveTaskMarks(task, patch))
+export function saveMarks(task: Task, patch: Marks): Promise<void> {
+  return runExit(marksSaved(task, patch)).then((exit) => (Exit.isSuccess(exit) ? undefined : Promise.reject(Cause.squash(exit.cause))))
 }
 
 /** The time, re-read every 30 seconds while any of `tasks` has a reminder, and as the next one comes round. */
 export function useReminderClock(tasks: ReadonlyArray<Task>) {
-  const [now, setNow] = useState(Date.now)
   const any = tasks.some((t) => t.remind_at)
-  useEffect(() => {
-    if (!any) return undefined
-    // Read again now (from a timer, so not while the effect runs) and every 30 seconds.
-    const first = setTimeout(() => setNow(Date.now()))
-    const id = setInterval(() => setNow(Date.now()), 30_000)
-    return () => {
-      clearTimeout(first)
-      clearInterval(id)
-    }
-  }, [any])
+  // Every 30 seconds while there is a reminder to show (a day otherwise: nothing shows the time then).
+  const ticked = useNow(any ? 30_000 : 86_400_000)
+  // The time read when the next reminder came round, which a 30-second tick would show late.
+  const [woke, setWoke] = useState(0)
+  const now = Math.max(ticked, woke)
   const next = nextDue(tasks, now)
+  // When the next one comes round, once that is within a minute (`now` is up to a tick behind the time).
+  const soon = next === null || next > 60_000 ? null : now + next
   useEffect(() => {
-    if (next === null || next > 30_000) return undefined
-    const id = setTimeout(() => setNow(Date.now()), next + 50)
-    return () => clearTimeout(id)
-  }, [next])
+    if (soon === null) return undefined
+    return after(Math.max(0, soon - nowMillis()) + 50, () => setWoke(nowMillis()))
+  }, [soon])
   return now
 }
 
@@ -53,10 +55,10 @@ export function useReminderClock(tasks: ReadonlyArray<Task>) {
 export function reminderItems(task: Task, onPick: () => void, onError: (msg: string) => void, divider = false): MenuItem[] {
   const save = (patch: Parameters<typeof saveMarks>[1]) => saveMarks(task, patch).catch((e: unknown) => onError(errorText(e)))
   return [
-    ...reminderPresets(new Date()).map((p, i) => ({
+    ...reminderPresets(nowMillis()).map((p, i) => ({
       label: `Remind me ${p.label.charAt(0).toLowerCase()}${p.label.slice(1)}`,
       divider: divider && i === 0,
-      onSelect: () => save({ remind_at: p.at.toISOString() }),
+      onSelect: () => save({ remind_at: isoOf(p.at) }),
     })),
     { label: "Remind me at…", onSelect: onPick },
     ...(task.remind_at ? [{ label: "Clear reminder", onSelect: () => save({ remind_at: null }) }] : []),
@@ -72,27 +74,20 @@ export const starItem = (task: Task, onError: (msg: string) => void, divider = f
 
 /** Sets the task's reminder to a time picked, with a note on what it's for. */
 export function ReminderModal({ task, onClose }: { task: Task; onClose: () => void }) {
-  const [at, setAt] = useState(() => toLocalInput(task.remind_at ? new Date(task.remind_at) : (reminderPresets(new Date())[2]?.at ?? new Date())))
+  const [at, setAt] = useState(() => toLocalInput(task.remind_at ? millisOf(task.remind_at) : (reminderPresets(nowMillis())[2]?.at ?? nowMillis())))
   const [note, setNote] = useState(task.reminder ?? "")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ busy, error: err }, run] = useAction()
   const when = fromLocalInput(at)
-  const save = async (e?: FormEvent) => {
+  const save = (e?: FormEvent) => {
     e?.preventDefault()
     if (!when || busy) return
-    setBusy(true)
-    setErr(null)
-    try {
-      await saveMarks(task, { remind_at: when, reminder: note.trim() || null })
-      onClose()
-    } catch (error) {
-      setErr(errorText(error))
-      setBusy(false)
-    }
+    void run(marksSaved(task, { remind_at: when, reminder: note.trim() || null })).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   return (
-    <Modal title={`Remind me about “${task.title}”`} onClose={onClose} onSubmit={() => void save()} width="max-w-sm">
-      <form onSubmit={(e) => void save(e)} className="space-y-3">
+    <Modal title={`Remind me about “${task.title}”`} onClose={onClose} onSubmit={() => save()} width="max-w-sm">
+      <form onSubmit={(e) => save(e)} className="space-y-3">
         <Input autoFocus type="datetime-local" aria-label="Remind me at" value={at} onChange={(e) => setAt(e.target.value)} />
         <Input value={note} placeholder="What for (optional)" aria-label="What for" maxLength={500} onChange={(e) => setNote(e.target.value)} />
         <ModalFooter className="space-y-3">
@@ -141,7 +136,7 @@ export function ReminderButton({ task, onError }: { task: Task; onError: (msg: s
         <Button
           size="sm"
           className={clsx(due && "border-st-attention/40 text-amber-300")}
-          title={`Reminder: ${new Date(task.remind_at).toLocaleString()}${task.reminder ? ` · ${task.reminder}` : ""}`}
+          title={`Reminder: ${localeString(task.remind_at)}${task.reminder ? ` · ${task.reminder}` : ""}`}
           onClick={open}
         >
           {due ? <BellRing size={12} /> : <Bell size={12} />} {reminderLabel(task.remind_at, now)}
@@ -155,7 +150,7 @@ export function ReminderButton({ task, onError }: { task: Task; onError: (msg: s
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          title={task.reminder ?? (task.remind_at ? `Reminder: ${new Date(task.remind_at).toLocaleString()}` : undefined)}
+          title={task.reminder ?? (task.remind_at ? `Reminder: ${localeString(task.remind_at)}` : undefined)}
           items={reminderItems(task, () => setPicking(true), onError)}
           onClose={() => setMenu(null)}
         />
@@ -178,7 +173,7 @@ export function TaskMarks({ task, compact }: { task: Task; compact?: boolean | u
       {task.remind_at && (
         <span
           className={clsx("flex shrink-0 items-center gap-1 whitespace-nowrap", isDue(task, now) ? "text-amber-300" : "text-muted")}
-          title={`Reminder: ${reminderLabel(task.remind_at, now)}, ${new Date(task.remind_at).toLocaleString()}${task.reminder ? ` · ${task.reminder}` : ""}`}
+          title={`Reminder: ${reminderLabel(task.remind_at, now)}, ${localeString(task.remind_at)}${task.reminder ? ` · ${task.reminder}` : ""}`}
         >
           {isDue(task, now) ? <BellRing size={11} /> : <Bell size={11} />}{" "}
           {compact ? <Wide>{reminderLabel(task.remind_at, now)}</Wide> : reminderLabel(task.remind_at, now)}

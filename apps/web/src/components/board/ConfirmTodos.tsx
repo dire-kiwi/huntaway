@@ -15,17 +15,16 @@ export type TaskUpdateOptions = Pick<TaskPatch, "todos_override">
 
 export function useConfirmTodos() {
   const [asking, setAsking] = useState<{ task: Task; status: Status; items: ReadonlyArray<TaskTodo>; answer: (go: boolean) => void } | null>(null)
-  const confirmTodos = useCallback(async (task: Task, status: Status): Promise<TaskUpdateOptions | null> => {
+  const confirmTodos = useCallback((task: Task, status: Status): Promise<TaskUpdateOptions | null> => {
     const items = heldTodos(task, status)
-    if (!items.length) return {}
+    if (!items.length) return Promise.resolve({})
     const { promise, resolve: answer } = Promise.withResolvers<boolean>()
     setAsking((before) => {
       // Asked about another task meanwhile: that move doesn't happen.
       before?.answer(false)
       return { task, status, items, answer }
     })
-    const go = await promise
-    return go ? { todos_override: true } : null
+    return promise.then((go) => (go ? { todos_override: true } : null))
   }, [])
   const close = (go: boolean) => {
     asking?.answer(go)

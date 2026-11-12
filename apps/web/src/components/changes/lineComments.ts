@@ -3,11 +3,12 @@
 // agent, all in one. They're kept in this browser, as composer drafts are, so another tab, task or a reload
 // doesn't lose them, and so are the comments still being written (`lineReviewAtom` in state/drafts.ts).
 import { useAtomValue } from "@effect/atom-react"
+import { Effect } from "effect"
+import { mutate } from "@huntaway/client"
 import { lineReviewAtom, lineReviewKey, type LineComment, type LineReview } from "../../state/drafts"
 import { TaskId } from "@huntaway/contracts"
+import { nowMillis } from "../../state/clock"
 import { registry } from "../../state/registry"
-import { rpc } from "../../state/rpc"
-import { errorText } from "../ui"
 import type { FileDiff } from "./diffs"
 
 export type { CommentDraft, LineComment } from "../../state/drafts"
@@ -68,7 +69,7 @@ export function useReview(hostId: string, taskId: string): Review {
 }
 
 /** An id for a comment (crypto.randomUUID needs a secure context, which a LAN board may not be). */
-const newId = () => `${Date.now().toString(36)}${Array.from(crypto.getRandomValues(new Uint32Array(1)), (n) => n.toString(36)).join("")}`
+const newId = () => `${nowMillis().toString(36)}${Array.from(crypto.getRandomValues(new Uint32Array(1)), (n) => n.toString(36)).join("")}`
 const sameSpot = (a: CommentLines, b: CommentLines) => a.where === b.where && a.path === b.path && a.at.side === b.at.side && a.at.line === b.at.line
 
 /** Starts a comment on some lines, or gives the one already being written under the same line. Returns its id. */
@@ -173,18 +174,17 @@ export const withComments = (text: string, comments: ReadonlyArray<LineComment>)
 
 /**
  * Sends the task's comments on their own, as the composer would with nothing typed (the Changes tab's "Send to the
- * agent"), and takes them off the review once they've gone; or says why they didn't go.
+ * agent"), and takes them off the review once they've gone, as a mutation (it fails with why they didn't go).
  */
-export async function sendComments(task: { host_id: string; id: string }, comments: ReadonlyArray<LineComment>): Promise<{ error?: string }> {
-  try {
-    await rpc(task.host_id, "tasks.send", { id: TaskId.make(task.id), text: reviewMessage(comments) })
-    removeComments(
-      task.host_id,
-      task.id,
-      comments.map((c) => c.id),
-    )
-    return {}
-  } catch (e) {
-    return { error: errorText(e) }
-  }
-}
+export const sendComments = (task: { host_id: string; id: string }, comments: ReadonlyArray<LineComment>) =>
+  mutate("tasks.send", task.host_id, { id: TaskId.make(task.id), text: reviewMessage(comments) }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() =>
+        removeComments(
+          task.host_id,
+          task.id,
+          comments.map((c) => c.id),
+        ),
+      ),
+    ),
+  )

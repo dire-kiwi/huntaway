@@ -1,13 +1,16 @@
 // Hosted docs (HA-282): a profile connects to a hosted docs site (dire-kiwi/docs) from the Docs page, and publishes its
 // local documents there. The host keeps the sign-in (apps/server/src/integrations/docs_site.ts); the board only sees
 // whether it's connected, as whom, and the code of a device sign-in under way.
+import { useAtomValue } from "@effect/atom-react"
+import { Exit, type Effect } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
 import { ExternalLink, Globe, Loader2, Upload } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useState } from "react"
 import { ProfileId, type DocDetail, type DocPublished, type DocPublishExists, type DocPublishResult, type HostedDocsStatus } from "@huntaway/contracts"
+import { type CallError, mutate, query } from "@huntaway/client"
 import type { DocsHome } from "./docs"
-import { rpc } from "../../state/rpc"
-import { useDocsSiteChanged } from "./docsPage/hooks"
-import { Button, ErrorBox, errorText, Field, Input, Modal, ModalFooter, useAsyncAction } from "../ui"
+import { useAction, useMutation } from "../../state/mutation"
+import { Button, ErrorBox, Field, Input, Modal, ModalFooter, resultError, resultValue } from "../ui"
 
 /** A site's name for showing: its host. */
 export const siteName = (url: string) => {
@@ -26,36 +29,18 @@ const openLink = (url: string) => {
 /** Whether the home's host can publish to hosted docs: every host can (6.3), once the document's is known. */
 export const useCanPublish = (home: DocsHome | undefined) => home !== undefined
 
-/** The home's connection to its docs site, kept up to date by `docs_site` events. */
-export function useHostedDocs(home: DocsHome | undefined) {
-  const [status, setStatus] = useState<HostedDocsStatus | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const seq = useRef(0)
-  const hostId = home?.hostId
-  const profileId = home?.profileId
-  const reload = useCallback(() => {
-    if (!hostId || !profileId) return
-    const n = ++seq.current
-    rpc(hostId, "docs.hostedStatus", { profile_id: ProfileId.make(profileId) }).then(
-      (s) => {
-        if (n !== seq.current) return
-        setStatus(s)
-        setError(null)
-      },
-      (e: unknown) => n === seq.current && setError(errorText(e)),
-    )
-  }, [hostId, profileId])
-  useEffect(reload, [reload])
-  useDocsSiteChanged(
-    useMemo(() => (home ? [home] : []), [home]),
-    reload,
-  )
-  // An answer to an action is the latest state too (an event may come before or after it).
-  const set = useCallback((s: HostedDocsStatus) => {
-    seq.current++
-    setStatus(s)
-  }, [])
-  return { status, error, reload, set }
+/**
+ * The home's connection to its docs site, read again on its `docs_site` events and after a change to its documents
+ * (a sign-in that expired while publishing shows as not connected).
+ */
+export function useHostedDocs(home: DocsHome) {
+  const result = useAtomValue(query("docs.hostedStatus", home.hostId, { profile_id: ProfileId.make(home.profileId) }))
+  const read = resultValue(result)
+  // An answer to an action is the latest state too, until the status is read again (an event may come before or after it).
+  const [answer, setAnswer] = useState<{ readonly status: HostedDocsStatus; readonly over: HostedDocsStatus | undefined } | null>(null)
+  const status = answer !== null && answer.over === read ? answer.status : (read ?? null)
+  const set = (s: HostedDocsStatus) => setAnswer({ status: s, over: read })
+  return { status, error: resultError(result), set }
 }
 
 /** Who the profile is connected as, in a few words. */
@@ -63,14 +48,22 @@ export function connectedAs(s: HostedDocsStatus) {
   return s.login ? `${s.login} on ${siteName(s.site_url)}` : siteName(s.site_url)
 }
 
+/** What a change to the connection fails with. */
+type ConnectionError = CallError<"docs.hostedDisconnect" | "docs.hostedDeviceCancel" | "docs.hostedDeviceStart" | "docs.hostedToken">
+
 /** Connect to a docs site (the device sign-in, or a pasted token), or see who's connected and disconnect. */
 export function HostedDocsConnection({ home, hosted }: { home: DocsHome; hosted: ReturnType<typeof useHostedDocs> }) {
   const { status, error: loadError, set } = hosted
   const [site, setSite] = useState<string | null>(null)
   const [token, setToken] = useState("")
-  const action = useAsyncAction()
+  const [action, run] = useAction()
   const siteUrl = site ?? status?.site_url ?? ""
-  const act = (fn: () => Promise<HostedDocsStatus>) => action.run(async () => set(await fn()))
+  /** Runs a change to the connection, whose answer is its state now: whether it was made. */
+  const act = (change: Effect.Effect<HostedDocsStatus, ConnectionError, AtomRegistry.AtomRegistry>) =>
+    run(change).then((exit) => {
+      if (Exit.isSuccess(exit)) set(exit.value)
+      return Exit.isSuccess(exit)
+    })
 
   if (!status) return loadError ? <ErrorBox>{loadError}</ErrorBox> : <Loader2 size={14} className="animate-spin text-muted" />
   if (status.connected) {
@@ -94,7 +87,7 @@ export function HostedDocsConnection({ home, hosted }: { home: DocsHome; hosted:
             variant="danger"
             size="sm"
             disabled={action.busy}
-            onClick={() => void act(() => rpc(home.hostId, "docs.hostedDisconnect", { profile_id: ProfileId.make(home.profileId) }))}
+            onClick={() => void act(mutate("docs.hostedDisconnect", home.hostId, { profile_id: ProfileId.make(home.profileId) }))}
           >
             Disconnect
           </Button>
@@ -133,7 +126,7 @@ export function HostedDocsConnection({ home, hosted }: { home: DocsHome; hosted:
             variant="ghost"
             size="sm"
             disabled={action.busy}
-            onClick={() => void act(() => rpc(home.hostId, "docs.hostedDeviceCancel", { profile_id: ProfileId.make(home.profileId) }))}
+            onClick={() => void act(mutate("docs.hostedDeviceCancel", home.hostId, { profile_id: ProfileId.make(home.profileId) }))}
           >
             Cancel
           </Button>
@@ -141,7 +134,7 @@ export function HostedDocsConnection({ home, hosted }: { home: DocsHome; hosted:
             <Button
               size="sm"
               disabled={action.busy}
-              onClick={() => void act(() => rpc(home.hostId, "docs.hostedDeviceStart", { profile_id: ProfileId.make(home.profileId), site_url: p.site_url }))}
+              onClick={() => void act(mutate("docs.hostedDeviceStart", home.hostId, { profile_id: ProfileId.make(home.profileId), site_url: p.site_url }))}
             >
               Start again
             </Button>
@@ -159,7 +152,7 @@ export function HostedDocsConnection({ home, hosted }: { home: DocsHome; hosted:
         <Button
           variant="primary"
           disabled={action.busy || !siteUrl.trim()}
-          onClick={() => void act(() => rpc(home.hostId, "docs.hostedDeviceStart", { profile_id: ProfileId.make(home.profileId), site_url: siteUrl }))}
+          onClick={() => void act(mutate("docs.hostedDeviceStart", home.hostId, { profile_id: ProfileId.make(home.profileId), site_url: siteUrl }))}
         >
           {action.busy && <Loader2 size={13} className="animate-spin" />}
           Sign in
@@ -170,7 +163,7 @@ export function HostedDocsConnection({ home, hosted }: { home: DocsHome; hosted:
         className="space-y-1.5"
         onSubmit={(e) => {
           e.preventDefault()
-          void act(() => rpc(home.hostId, "docs.hostedToken", { profile_id: ProfileId.make(home.profileId), site_url: siteUrl, token })).then(
+          void act(mutate("docs.hostedToken", home.hostId, { profile_id: ProfileId.make(home.profileId), site_url: siteUrl, token })).then(
             (ok) => ok && setToken(""),
           )
         }}
@@ -246,7 +239,8 @@ export function PublishDialog({
   // The site's document at the slug, which publishing would add a version to: the user says whether to.
   const [exists, setExists] = useState<DocPublishExists | null>(null)
   const [done, setDone] = useState<DocPublishResult | null>(null)
-  const action = useAsyncAction()
+  // A sign-in that expired while publishing shows as not connected: the status is read again after it (useHostedDocs).
+  const [action, publishVersion] = useMutation("docs.publish")
   const s = hosted.status
   const v = detail.versions.find((x) => x.number === version)
   // Where it was published on the site it's connected to now (the document's `published` is for that site and account).
@@ -254,14 +248,15 @@ export function PublishDialog({
   const choosing = !before || elsewhere
   /** Publish, asking first (`ask`) if the site has a document at a slug it wasn't published to. */
   const publish = (ask: boolean) =>
-    void action.run(async () => {
-      const out = await rpc(home.hostId, "docs.publish", {
-        profile_id: ProfileId.make(home.profileId),
-        slug: detail.slug,
-        version,
-        ...(choosing ? { remote_slug: slug.trim() || detail.slug } : {}),
-        ask,
-      })
+    void publishVersion(home.hostId, {
+      profile_id: ProfileId.make(home.profileId),
+      slug: detail.slug,
+      version,
+      ...(choosing ? { remote_slug: slug.trim() || detail.slug } : {}),
+      ask,
+    }).then((exit) => {
+      if (!Exit.isSuccess(exit)) return
+      const out = exit.value
       if ("exists" in out) setExists(out.exists)
       else setDone(out)
     })
@@ -270,11 +265,6 @@ export function PublishDialog({
     setElsewhere(true)
     if (before) setSlug(before.remote_slug)
   }
-  // A sign-in that expired while publishing shows as not connected.
-  const reload = hosted.reload
-  useEffect(() => {
-    if (action.error) reload()
-  }, [action.error, reload])
 
   return (
     <Modal

@@ -3,13 +3,16 @@
 // shows that task's key and status, and shows as done once it is. Items come off the list with `tasks.removeTracked` (6.7).
 import { isMerged, STATUSES, trackedStatus, type HostTask as Task, type TrackedStatus } from "@huntaway/client"
 import type { TrackedItem } from "@huntaway/contracts"
+import { useAtom } from "@effect/atom-react"
+import { Schema } from "effect"
 import { clsx } from "clsx"
 import { CircleCheck, CircleDot, CircleX, Hourglass, MessageCircleQuestion, type LucideIcon } from "lucide-react"
 import { useState, type MouseEvent } from "react"
 import { useBoard } from "../../../../state/board"
-import { useRpc } from "../../../../state/rpc"
+import { useMutation } from "../../../../state/mutation"
+import { storedBare } from "../../../../state/storage"
 import { openTaskModal, useTaskModal } from "../../../../state/route"
-import { ContextMenu, errorText, StatusIcon, type MenuItem } from "../../../ui"
+import { ContextMenu, localeString, StatusIcon, type MenuItem } from "../../../ui"
 import { Section } from "./Section"
 
 const LOOK: Record<TrackedStatus, { icon: LucideIcon; tone: string; label: string }> = {
@@ -20,17 +23,10 @@ const LOOK: Record<TrackedStatus, { icon: LucideIcon; tone: string; label: strin
   failed: { icon: CircleX, tone: "text-red-400", label: "Failed" },
 }
 
-const HIDE_DONE_KEY = "ia.details.trackedHideDone"
+/** Whether the list leaves out what's done, kept in the browser ("1" or "0"). */
+const hideDoneAtom = storedBare("ia.details.trackedHideDone", Schema.Literals(["0", "1"]), "0")
 
 const statusLabel = (t: Task) => (t.status === "done" ? (isMerged(t) ? "merged" : "closed") : (STATUSES.find((s) => s.id === t.status)?.label ?? t.status))
-
-const loadHideDone = () => {
-  try {
-    return localStorage.getItem(HIDE_DONE_KEY) === "1"
-  } catch {
-    return false
-  }
-}
 
 /** Opens what an item follows: its task over the page, or its link. */
 const open = (item: TrackedItem, linked: Task | undefined) => {
@@ -42,20 +38,12 @@ const open = (item: TrackedItem, linked: Task | undefined) => {
 export function TrackedWork({ task }: { task: Task }) {
   const tasks = useBoard((s) => s.tasks)
   const modalTask = useTaskModal()
-  const [hideDone, setHideDoneState] = useState(loadHideDone)
+  const [hidden, setHidden] = useAtom(hideDoneAtom)
+  const hideDone = hidden === "1"
+  const setHideDone = (on: boolean) => setHidden(on ? "1" : "0")
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; title: string } | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const rpc = useRpc()
+  const [{ error: err }, removeTracked] = useMutation("tasks.removeTracked")
   const items = task.tracked
-
-  const setHideDone = (on: boolean) => {
-    setHideDoneState(on)
-    try {
-      localStorage.setItem(HIDE_DONE_KEY, on ? "1" : "0")
-    } catch {
-      /* ignore */
-    }
-  }
   const rows = items.map((item) => {
     const linked = item.task_id ? tasks[item.task_id] : undefined
     return { item, linked, status: trackedStatus(item, linked) }
@@ -64,10 +52,7 @@ export function TrackedWork({ task }: { task: Task }) {
   const waiting = rows.filter((r) => r.status === "waiting_user").length
   const shown = hideDone ? rows.filter((r) => r.status !== "done") : rows
   // What comes back arrives as the task's event.
-  const remove = (ids: string[]) => {
-    setErr(null)
-    rpc(task.host_id, "tasks.removeTracked", { id: task.id, ids }).catch((e: unknown) => setErr(errorText(e)))
-  }
+  const remove = (ids: string[]) => void removeTracked(task.host_id, { id: task.id, ids })
   const itemMenu = (e: MouseEvent, item: TrackedItem, linked: Task | undefined) => {
     e.preventDefault()
     const url = item.url
@@ -109,7 +94,7 @@ export function TrackedWork({ task }: { task: Task }) {
             behind && item.note && `The assistant's last note: ${item.note}`,
             item.task_key && `${item.task_key}${linked ? `: ${linked.title} (${statusLabel(linked)})` : ""}`,
             item.url,
-            `Updated ${new Date(item.updated_at).toLocaleString()}`,
+            `Updated ${localeString(item.updated_at)}`,
           ]
             .filter(Boolean)
             .join("\n")

@@ -1,5 +1,4 @@
 import type { HostProject as Project, HostTask as Task } from "@huntaway/client"
-import { parseJson, toJson } from "./components/ui/json"
 import { byName } from "./projectOrder.ts"
 
 /** A row of a host's projects on the sidebar: a project on its own, or a group of them. */
@@ -66,50 +65,8 @@ export function sidebarEntries(projects: ReadonlyArray<Project>): SidebarEntry[]
   return entries.toSorted((a, b) => byName(name(a), name(b)))
 }
 
-/** A set of strings kept in this browser under `key`. */
-function loadKeys(key: string): Set<string> {
-  try {
-    const value = parseJson(localStorage.getItem(key) ?? "[]")
-    return new Set(Array.isArray(value) ? value.filter((k): k is string => typeof k === "string") : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function saveKeys(key: string, keys: Set<string>) {
-  try {
-    localStorage.setItem(key, toJson([...keys]))
-  } catch {
-    // The sidebar still follows it for this session when storage is unavailable.
-  }
-}
-
-const COLLAPSED_KEY = "ia.collapsedGroups"
-
-/** Groups collapsed on the sidebar, by groupKey; kept in this browser. */
-export const loadCollapsedGroups = () => loadKeys(COLLAPSED_KEY)
-export const saveCollapsedGroups = (keys: Set<string>) => saveKeys(COLLAPSED_KEY, keys)
-
-const HIDDEN_KEY = "ia.hiddenProjects"
-
-/** How a project is named in the hidden set: by host, as ids are only unique on their host. */
+/** How a project is named in the hidden, pinned and favourite sets (state/prefs.ts): by host, as ids are only unique on their host. */
 export const hiddenKey = (p: Pick<Project, "host_id" | "id">) => `${p.host_id}:${p.id}`
-
-/** Projects hidden from the sidebar, by hiddenKey; kept in this browser, for every profile view. */
-export const loadHiddenProjects = () => loadKeys(HIDDEN_KEY)
-export const saveHiddenProjects = (keys: Set<string>) => saveKeys(HIDDEN_KEY, keys)
-
-const PINNED_KEY = "ia.pinnedProjects"
-
-/** Projects pinned to the sidebar of every profile, by hiddenKey; kept in this browser. */
-export const loadPinnedProjects = () => loadKeys(PINNED_KEY)
-export const savePinnedProjects = (keys: Set<string>) => saveKeys(PINNED_KEY, keys)
-
-const FAVORITES_KEY = "ia.favoriteProjects"
-
-/** Favorite projects, listed in a section of their own above the others, by hiddenKey; kept in this browser. */
-export const loadFavoriteProjects = () => loadKeys(FAVORITES_KEY)
-export const saveFavoriteProjects = (keys: Set<string>) => saveKeys(FAVORITES_KEY, keys)
 
 /**
  * The projects the sidebar lists while `profile` is active: its own and the pinned ones, in

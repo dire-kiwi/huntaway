@@ -2,9 +2,10 @@ import { clsx } from "clsx"
 import { Plus, Trash2 } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import type { McpServer, McpServerConfig, ProjectAgentTools as AgentTools } from "@huntaway/contracts"
-import { Option, Schema } from "effect"
+import { Exit, Option, Schema } from "effect"
+import { useAction } from "../../../state/mutation"
 import { Button, errorText, Field, Input, Modal, ModalFooter, parseJson, Textarea, Toggle } from "../../ui"
-import { OtherList, Section, serverSummary } from "./parts"
+import { OtherList, Section, serverSummary, type Save } from "./parts"
 
 /** A server as saved: its name and its `mcpServers` entry. */
 export interface ServerBody {
@@ -30,7 +31,7 @@ export function McpSection({
   onToggleOther: (name: string, on: boolean) => void
   onUpdate: (s: McpServer, b: { enabled?: boolean; auto_allow?: boolean }) => void
   onDelete: (s: McpServer) => void
-  onSave: (server: McpServer | null, b: ServerBody) => Promise<void>
+  onSave: Save<[server: McpServer | null, b: ServerBody]>
 }) {
   const [editing, setEditing] = useState<McpServer | "new" | null>(null)
   const own = new Set(tools.mcp_servers.map((s) => s.name))
@@ -147,15 +148,18 @@ export function McpEditor({
   onClose,
 }: {
   server: McpServer | null
-  onSave: (server: McpServer | null, b: ServerBody) => Promise<void>
+  onSave: Save<[server: McpServer | null, b: ServerBody]>
   onClose: () => void
 }) {
   const [name, setName] = useState(server?.name ?? "")
   const [base, setBase] = useState<McpServerConfig>(server?.config ?? {})
   const [form, setForm] = useState<Form>(toForm(server?.config ?? { type: "stdio" }))
   const [json, setJson] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
+  const [saving, run] = useAction()
+  const busy = saving.busy
+  // Why the form's config doesn't read (as JSON, or from the form), else why the last save failed.
+  const [invalid, setErr] = useState<string | null>(null)
+  const err = invalid ?? saving.error
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm({ ...form, [k]: v })
   const config = () => (json !== null ? parseConfig(json) : fromForm(form, base))
   const switchMode = () => {
@@ -172,19 +176,21 @@ export function McpEditor({
       setErr(errorText(e))
     }
   }
-  const save = async () => {
-    setBusy(true)
+  const save = () => {
     setErr(null)
+    let body: ServerBody
     try {
-      await onSave(server, { name: name.trim(), config: config() })
-      onClose()
+      body = { name: name.trim(), config: config() }
     } catch (e) {
       setErr(errorText(e))
-      setBusy(false)
+      return
     }
+    void run(onSave(server, body)).then((exit) => {
+      if (Exit.isSuccess(exit)) onClose()
+    })
   }
   return (
-    <Modal title={server ? `Edit ${server.name}` : "Add MCP server"} onClose={onClose} onSubmit={() => void save()} width="max-w-xl">
+    <Modal title={server ? `Edit ${server.name}` : "Add MCP server"} onClose={onClose} onSubmit={() => save()} width="max-w-xl">
       <div className="space-y-4">
         <div className="grid grid-cols-[1fr_140px] gap-3">
           <Field label="Name" hint="Its tools are named mcp__<name>__<tool>.">
@@ -272,7 +278,7 @@ export function McpEditor({
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={busy || !name.trim()} onClick={() => void save()}>
+            <Button variant="primary" disabled={busy || !name.trim()} onClick={() => save()}>
               {server ? "Save server" : "Add server"}
             </Button>
           </div>

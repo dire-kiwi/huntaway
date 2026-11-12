@@ -1,8 +1,11 @@
-import type { DesktopCheck, DesktopStatus } from "@huntaway/contracts"
+import { useAtomValue } from "@effect/atom-react"
+import { type Effect, Exit } from "effect"
+import type { AtomRegistry } from "effect/reactivity"
 import { Loader2 } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
-import { rpc } from "../../state/rpc"
-import { Button, errorText, timeAgo, Toggle, useConfirm } from "../ui"
+import { useState } from "react"
+import { mutate, query } from "@huntaway/client"
+import { useAction } from "../../state/mutation"
+import { Button, resultError, resultValue, timeAgo, Toggle, useConfirm } from "../ui"
 
 const SESSION: Record<string, string> = { wayland: "a Wayland session", x11: "an X11 session", macos: "macOS" }
 
@@ -13,40 +16,31 @@ const mb = (n: number) => `${(n / 1_000_000).toFixed(1)} MB`
  * `desktop` tools. Its actions ask first, as any tool does. The host's page (6.12) mounts it.
  */
 export function HostDesktop({ hostId }: { hostId: string }) {
-  const [st, setSt] = useState<DesktopStatus | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  // Read every 15 s, and every second while Cua Driver installs (which the status it reads says); each action reads it
+  // again (the desktop group).
+  const [fast, setFast] = useState(false)
+  const result = useAtomValue(query("desktop.status", hostId, undefined, { refresh: fast ? "1 second" : "15 seconds" }))
+  const st = resultValue(result) ?? null
   const [check, setCheck] = useState<string | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
+  // Which action runs, for its button's spinner.
+  const [doing, setDoing] = useState<string | null>(null)
+  const [action, run] = useAction()
   const confirm = useConfirm()
   const installing = !!st?.install && st.install.phase !== "done" && st.install.phase !== "failed"
-  const load = useCallback(
-    () =>
-      rpc(hostId, "desktop.status", undefined).then(setSt, (e: unknown) => {
-        setErr(errorText(e))
-      }),
-    [hostId],
-  )
-  useEffect(() => {
-    void load()
-    const id = setInterval(() => void load(), installing ? 1000 : 15_000)
-    return () => clearInterval(id)
-  }, [load, installing])
+  if (installing !== fast) setFast(installing)
   // A host that can't say has nothing to show.
   if (!st) return null
 
-  const act = async (what: string, f: () => Promise<DesktopStatus | DesktopCheck>) => {
-    setErr(null)
-    setBusy(what)
-    try {
-      const next = await f()
-      setSt(next)
-      if ("check" in next) setCheck(next.check)
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(null)
-    }
+  const busy = action.busy ? doing : null
+  const err = action.error ?? resultError(result)
+  const act = <A, E>(what: string, change: Effect.Effect<A, E, AtomRegistry.AtomRegistry>) => {
+    setDoing(what)
+    return run(change)
   }
+  const checkNow = () =>
+    void act("check", mutate("desktop.check", hostId, undefined)).then((exit) => {
+      if (Exit.isSuccess(exit)) setCheck(exit.value.check)
+    })
   const inst = st.installed
   const outdated = inst?.source === "installed" && st.release && inst.version !== st.release.version
   const failed = st.install?.phase === "failed" ? st.install : null
@@ -58,12 +52,12 @@ export function HostDesktop({ hostId }: { hostId: string }) {
         <h2 className="text-[13px] font-semibold">Computer use</h2>
         <div className="flex items-center gap-2">
           {inst && (
-            <Button size="sm" variant="ghost" disabled={!!busy || installing} onClick={() => void act("check", () => rpc(hostId, "desktop.check", undefined))}>
+            <Button size="sm" variant="ghost" disabled={!!busy || installing} onClick={checkNow}>
               {busy === "check" && <Loader2 size={12} className="animate-spin" />} Check
             </Button>
           )}
           {st.release && (!inst || outdated) && (
-            <Button size="sm" disabled={!!busy || installing} onClick={() => void act("install", () => rpc(hostId, "desktop.install", undefined))}>
+            <Button size="sm" disabled={!!busy || installing} onClick={() => void act("install", mutate("desktop.install", hostId, undefined))}>
               {installing ? <Loader2 size={12} className="animate-spin" /> : null}
               {outdated ? `Update Cua Driver to ${st.release.version}` : `Install Cua Driver ${st.release.version}`}
             </Button>
@@ -79,7 +73,7 @@ export function HostDesktop({ hostId }: { hostId: string }) {
                   body: `Remove Cua Driver ${inst.version} from this host? Agents here lose their desktop tools from their next run.`,
                   action: "Remove",
                   danger: true,
-                  onConfirm: () => act("remove", () => rpc(hostId, "desktop.uninstall", undefined)),
+                  onConfirm: () => act("remove", mutate("desktop.uninstall", hostId, undefined)),
                 })
               }
             >
@@ -142,7 +136,7 @@ export function HostDesktop({ hostId }: { hostId: string }) {
             <div className="pt-1">
               <Toggle
                 checked={st.enabled}
-                onChange={(v) => void act("enable", () => rpc(hostId, "desktop.setEnabled", { enabled: v }))}
+                onChange={(v) => void act("enable", mutate("desktop.setEnabled", hostId, { enabled: v }))}
                 label={<span>Let agents on this host use its desktop (from their next run)</span>}
               />
             </div>

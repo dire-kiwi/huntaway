@@ -1,26 +1,33 @@
-import { useAtom } from "@effect/atom-react"
-import { usageKey } from "@huntaway/client"
+import { useAtom, useAtomMount, useAtomValue } from "@effect/atom-react"
+import { boardAtom, mutate, query, usageKey } from "@huntaway/client"
 import type { UsageAccount, UsageLimit } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Effect } from "effect"
+import { Atom } from "effect/reactivity"
 import { ChevronDown, RefreshCw, TriangleAlert } from "lucide-react"
-import { useEffect, useState } from "react"
-import { board, useBoard } from "../../state/board"
+import { useBoard } from "../../state/board"
+import { useNow } from "../../state/clock"
+import { useAction } from "../../state/mutation"
 import { usageOpenAtom } from "../../state/prefs"
-import { rpc } from "../../state/rpc"
 import { timeAgo } from "../ui"
 import { resetsIn, resetsPhrase, resetTime, usageAlert, usageConfigs, WARN_AT, type UsageAlert } from "../ui/usageConfigs"
 
+/** The hosts with configs that show their usage (passed on only when the list changes). */
+const usageHostsAtom = Atom.make((get): ReadonlyArray<string> => [
+  ...new Set(
+    get(boardAtom)
+      .claudeConfigs.filter((c) => c.show_usage)
+      .map((c) => c.host_id),
+  ),
+])
+
 /**
- * Asks each host with configs that show usage for it (`refresh`: read again now rather than what's kept): the answers
- * come as the board's `usage` events (the old store's `loadUsage`).
+ * Asks each of those hosts for its usage while the panel is mounted, every 5 minutes (the host caches for a few minutes
+ * and agent runs push updates, so polling can be slow). The answers come as the board's `usage` events, not from here.
  */
-async function loadUsage(refresh = false): Promise<void> {
-  const s = board.get()
-  const hosts = [...new Set(s.claudeConfigs.filter((c) => c.show_usage).map((c) => c.host_id))]
-  await Promise.all(hosts.map((h) => rpc(h, "host.usage", { refresh }).catch(() => [])))
-}
-/** The host caches for a few minutes and agent runs push updates, so polling can be slow. */
-const POLL_MS = 5 * 60 * 1000
+const usagePollAtom = Atom.make((get) => {
+  for (const h of get(usageHostsAtom)) get(query("host.usage", h, { refresh: false }, { refresh: "5 minutes" }))
+})
 
 function shortLabel(l: UsageLimit): string {
   if (l.id === "session") return "Session"
@@ -105,18 +112,10 @@ export function UsagePanel({ profile }: { profile: string | undefined }) {
   const usage = useBoard((s) => s.usage)
   const [openFlag, setOpenFlag] = useAtom(usageOpenAtom)
   const open = openFlag !== "0"
-  const [refreshing, setRefreshing] = useState(false)
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    void loadUsage()
-    const poll = setInterval(() => void loadUsage(), POLL_MS)
-    const tick = setInterval(() => setNow(Date.now()), 30_000)
-    return () => {
-      clearInterval(poll)
-      clearInterval(tick)
-    }
-  }, [])
+  useAtomMount(usagePollAtom)
+  const usageHosts = useAtomValue(usageHostsAtom)
+  const [{ busy: refreshing }, run] = useAction()
+  const now = useNow(30_000)
 
   const rows = usageConfigs(configs, profiles, projects, profile)
     .map((c) => ({ key: usageKey(c.host_id, c.id), host_id: c.host_id, name: c.name, usage: usage[usageKey(c.host_id, c.id)] }))
@@ -126,14 +125,9 @@ export function UsagePanel({ profile }: { profile: string | undefined }) {
   const multiHost = new Set(rows.map((r) => r.host_id)).size > 1
 
   const toggle = (): void => setOpenFlag(open ? "0" : "1")
-  const refresh = async (): Promise<void> => {
-    setRefreshing(true)
-    try {
-      await loadUsage(true)
-    } finally {
-      setRefreshing(false)
-      setNow(Date.now())
-    }
+  // Each host reads its usage again now rather than giving what it keeps; one that can't is left as it is.
+  const refresh = (): void => {
+    void run(Effect.forEach(usageHosts, (h) => Effect.ignore(mutate("host.usage", h, { refresh: true })), { concurrency: "unbounded" }))
   }
 
   return (
@@ -144,7 +138,7 @@ export function UsagePanel({ profile }: { profile: string | undefined }) {
           <ChevronDown size={12} className={clsx("transition-transform", !open && "-rotate-90")} />
         </button>
         {open && (
-          <button onClick={() => void refresh()} title="Check usage now" className="ml-auto text-faint hover:text-muted">
+          <button onClick={refresh} title="Check usage now" className="ml-auto text-faint hover:text-muted">
             <RefreshCw size={11} className={clsx(refreshing && "animate-spin")} />
           </button>
         )}

@@ -1,12 +1,13 @@
+import { useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { Layers, Loader2, Sparkles } from "lucide-react"
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
-import type { TaskSkills } from "@huntaway/contracts"
-import type { HostTask as Task } from "@huntaway/client"
-import { useRpc } from "../../state/rpc"
+import { query as hostQuery, type HostTask as Task, type QueryResult } from "@huntaway/client"
+import { resultError, resultValue } from "../ui"
 
 // The composer's `/` menu (6.4; huntaway's task/SkillMenu.tsx): the skills a task's agent can be asked to use (the
-// host's `tasks.skills`, kept a minute) and the board's own `/compact`, `/plan` and `/new`. Every host here handles
+// host's `tasks.skills`, a query read again when the task's config changes and kept ten seconds after the composer) and the board's own `/compact`, `/plan` and `/new`. Every host here handles
 // them all, so the old API checks are gone.
 
 /** Something the composer's `/` menu offers: a skill, or `/compact`, `/plan` or `/new`, which the board handles itself. */
@@ -20,23 +21,23 @@ export interface SkillItem {
   args?: string | undefined
 }
 
-/** Each task's skills (null when the host couldn't say), kept for a minute so typing `/` again doesn't wait for it. */
-const cache = new Map<string, { at: number; data: TaskSkills | null }>()
-const FRESH_MS = 60_000
+/** No skills asked for yet. */
+const notAsked: Atom.Atom<QueryResult<"tasks.skills">> = Atom.make<QueryResult<"tasks.skills">>(AsyncResult.initial())
 
 /** The `/` menu: typing `/` (or `$` for Codex) at the start of a message lists the skills its agent
  *  can be asked to use, and picking one puts `/name ` in the message. */
 export function useSkillMenu(task: Task, text: string, setText: (t: string) => void) {
-  const rpc = useRpc()
   const plans = task.kind === "task"
   // The task's config decides its skills, and whether they're `/name` or `$name`.
   const key = `${task.host_id}/${task.id}/${task.claude_config_id ?? ""}`
-  // The last list loaded, with the key it's for: one for a task that has moved to another config meanwhile isn't shown.
-  const [loaded, setLoaded] = useState<{ key: string; data: TaskSkills | null } | null>(null)
+  // The list is read once a message here has started with `/` (or `$`) for this config, and followed from then on.
+  const [asked, setAsked] = useState<string | null>(null)
   const [selected, setSelected] = useState(0)
   const [dismissed, setDismissed] = useState(false)
-  const fetching = useRef<string | null>(null)
-  const data = loaded?.key === key ? loaded.data : (cache.get(key)?.data ?? null)
+  const result = useAtomValue(asked === key ? hostQuery("tasks.skills", task.host_id, { id: task.id }) : notAsked)
+  // Null when the host couldn't say.
+  const data = asked === key ? (resultValue(result) ?? null) : null
+  const failed = asked === key && resultError(result) !== null
 
   const agent = data?.agent
   const m = /^\s*([/$])(\S*)$/.exec(text)
@@ -51,27 +52,7 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
     setSelected(0)
     if (query === null) setDismissed(false)
   }
-  useEffect(() => {
-    if (query === null || fetching.current === key) return
-    const hit = cache.get(key)
-    if (hit && Date.now() - hit.at < FRESH_MS) return
-    const k = key
-    fetching.current = k
-    rpc(task.host_id, "tasks.skills", { id: task.id })
-      .then(
-        (d) => {
-          cache.set(k, { at: Date.now(), data: d })
-          setLoaded({ key: k, data: d })
-        },
-        () => {
-          cache.set(k, { at: Date.now(), data: null })
-          setLoaded({ key: k, data: null })
-        },
-      )
-      .finally(() => {
-        if (fetching.current === k) fetching.current = null
-      })
-  }, [rpc, query, key, task.host_id, task.id])
+  if (query !== null && asked !== key) setAsked(key)
 
   const all: SkillItem[] = [
     {
@@ -115,7 +96,7 @@ export function useSkillMenu(task: Task, text: string, setText: (t: string) => v
           .filter((i) => i.name.toLowerCase().includes(query) && (trigger === "/" || !i.builtin))
           .toSorted((a, b) => Number(!a.name.toLowerCase().startsWith(query)) - Number(!b.name.toLowerCase().startsWith(query)))
   // Loading the first list for this config.
-  const waiting = query !== null && !data && cache.get(key) === undefined
+  const waiting = query !== null && !data && !failed
   const open = query !== null && !dismissed && (items.length > 0 || waiting)
   const sel = Math.min(selected, Math.max(items.length - 1, 0))
 

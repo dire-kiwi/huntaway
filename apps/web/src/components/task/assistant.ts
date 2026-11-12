@@ -2,13 +2,17 @@
 // full width, at `/assistant/<profile>`. It's off the boards. Where it is: `assistantHome` in @huntaway/client, which
 // follows the board's own host's profile's `assistant_host` to a linked host (7.4), offline or without the profile there
 // as it may be; that host is asked for its own assistant (`here`), whatever its own profile says.
-import { assistantHome, isAssistant, type AssistantHome } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { assistantHome, isAssistant, query, type AssistantHome, type QueryResult } from "@huntaway/client"
 import { ProfileId } from "@huntaway/contracts"
-import { useEffect, useMemo, useState } from "react"
+import { AsyncResult, Atom } from "effect/reactivity"
+import { useMemo } from "react"
 import { useBoard } from "../../state/board"
-import { useRpc } from "../../state/rpc"
 import { useShallow } from "../boardHelpers"
-import { errorText } from "../ui"
+import { resultError } from "../ui"
+
+/** Nothing to ask for: the profile has no assistant host yet. */
+const NOWHERE: Atom.Atom<QueryResult<"assistant.get">> = Atom.make(AsyncResult.initial())
 
 /**
  * The profile's assistant, made by its host the first time it's asked for: its id once it's on the board (its events
@@ -17,23 +21,11 @@ import { errorText } from "../ui"
 export function useAssistant(name: string): { taskId?: string | undefined; error?: string | undefined; missing: boolean; home?: AssistantHome | undefined } {
   const home = useAssistantHome(name)
   const [hostId, profileId] = [home?.hostId, home?.profileId]
-  const rpc = useRpc()
   const known = useBoard((s) => Object.values(s.tasks).find((t) => isAssistant(t) && t.host_id === hostId && t.profile_id === profileId)?.id)
-  const [failed, setFailed] = useState<{ key: string; error: string }>()
-  const key = `${hostId}:${profileId}`
-  useEffect(() => {
-    if (!hostId || !profileId) return undefined
-    const req = { live: true }
-    // What comes back arrives on the board as the task's event (or was in its snapshot).
-    // Its own, there: the host this board found it on, whatever that host's profile names (HA-120).
-    rpc(hostId, "assistant.get", { profile_id: ProfileId.make(profileId), here: true }).catch((e: unknown) => {
-      if (req.live) setFailed({ key: `${hostId}:${profileId}`, error: errorText(e) })
-    })
-    return () => {
-      req.live = false
-    }
-  }, [rpc, hostId, profileId])
-  return { taskId: known, error: failed?.key === key ? failed.error : undefined, missing: !home, home }
+  // What comes back arrives on the board as the task's event (or was in its snapshot). Its own, there: the host this
+  // board found it on, whatever that host's profile names (HA-120).
+  const asked = useAtomValue(hostId && profileId ? query("assistant.get", hostId, { profile_id: ProfileId.make(profileId), here: true }) : NOWHERE)
+  return { taskId: known, error: resultError(asked) ?? undefined, missing: !home, home }
 }
 
 /** Where profile `name`'s assistant is (see assistantHome), kept as long as that doesn't change. */

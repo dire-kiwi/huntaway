@@ -1,18 +1,24 @@
-import type { RestartState } from "@huntaway/client"
+import { mutate, type RestartState } from "@huntaway/client"
 import type { ReleaseStatus, ServerStatus } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Effect, Exit } from "effect"
 import { CircleAlert, ExternalLink, GitCommitHorizontal, Loader2, RotateCw, Undo2 } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { board, useBoard } from "../../../state/board"
-import { rpc } from "../../../state/rpc"
+import { useBoard } from "../../../state/board"
+import { useAction } from "../../../state/mutation"
+import { after } from "../../../state/timers"
 import { Markdown } from "../../task/thread/Markdown"
-import { Button, errorText, Modal, ModalFooter, Toggle } from "../../ui"
-import { PHASES, short, stagedRelease, Warning } from "./parts"
+import { Button, Modal, ModalFooter, Toggle } from "../../ui"
+import { PHASES, short, stagedRelease, useServerStatus, Warning } from "./parts"
 
-// Step 1 (docs/plan/09-frontend.md) of the old Server.tsx's RestartModal over `admin.restart`, `admin.update`,
+// The old Server.tsx's RestartModal (docs/plan/09-frontend.md) over `admin.restart`, `admin.update`,
 // `admin.updateRelease` and `admin.rollback`. This host's restart is followed by its `restart` and `restart_log` events
-// (the board's `restart`); a linked host's by its page, polling. The old "Copy again" (`recopy`) is dropped with the
-// two-file database (docs/plan/14-dropped-and-open.md).
+// (the board's `restart`), and once it is restarting by polling its `admin.status` for the new boot; a linked host's by
+// its page, polling. The old "Copy again" (`recopy`) is dropped with the two-file database
+// (docs/plan/14-dropped-and-open.md).
+
+/** What the dialog says when the server it restarted doesn't come back. */
+const NOT_BACK = "The server didn't come back within 2 minutes. Check its logs."
 
 /** What a restart this dialog has just asked for shows until the host's first event of it arrives. */
 const STARTING: RestartState = { phase: "starting", error: null, log: [] }
@@ -43,12 +49,17 @@ export function RestartModal({
   // The board's restart events are the local host's.
   const live = useBoard((s) => (remote ? null : s.restart))
   const [rebuild, setRebuild] = useState(!!status.source_dir)
-  const [err, setErr] = useState<string | null>(null)
-  const [starting, setStarting] = useState(false)
+  const [asking, run] = useAction()
+  const starting = asking.busy
+  // The restart's new process didn't answer within 2 minutes.
+  const [timedOut, setTimedOut] = useState(false)
+  const err = timedOut ? NOT_BACK : asking.error
   // The commit to update to, kept from when the modal opened.
   const [target] = useState(!release && update && status.deployed_commits?.length ? (status.deployed?.commit ?? null) : null)
   // The release to update to, or what a rollback goes back to, also kept from when the modal opened.
   const [version] = useState(release === "update" ? stagedRelease(status) : release === "rollback" ? (status.release?.rollback_to ?? null) : null)
+  // The boot it runs, kept too: the status given follows the host, onto its new boot as well.
+  const [boot] = useState(status.boot_id)
   const running = status.release?.running
   const logRef = useRef<HTMLPreElement>(null)
   // The board's restart state when this dialog asked for one: until it changes, the restart shows as starting.
@@ -68,75 +79,59 @@ export function RestartModal({
   const phase = job?.phase
   const logLines = job?.log.length ?? 0
 
-  // Once the server goes down for the restart, wait for the new process, then reload for the new UI.
+  // Once the server goes down for the restart, wait for the new process (a new boot), then reload for the new UI.
+  const restarting = phase === "restarting"
+  const { status: now } = useServerStatus(restarting && !timedOut ? localHost : null, "1 second")
+  const back = !!now && now.boot_id !== boot
   useEffect(() => {
-    if (phase !== "restarting") return undefined
-    const since = Date.now()
-    const id = setInterval(() => {
-      const host = board.get().localHostId
-      if (host)
-        rpc(host, "admin.status", undefined).then(
-          (s) => {
-            if (s.boot_id !== status.boot_id) {
-              clearInterval(id)
-              window.location.reload()
-            }
-          },
-          () => {
-            // Still restarting.
-          },
-        )
-      if (Date.now() - since > 120_000) {
-        clearInterval(id)
-        setErr("The server didn't come back within 2 minutes. Check its logs.")
-      }
-    }, 1000)
-    return () => clearInterval(id)
-  }, [phase, status.boot_id])
+    if (back) window.location.reload()
+  }, [back])
+  useEffect(() => {
+    if (!restarting) return undefined
+    return after("2 minutes", () => setTimedOut(true))
+  }, [restarting])
 
   useLayoutEffect(() => {
     const el = logRef.current
     if (el && logLines > 0) el.scrollTop = el.scrollHeight
   }, [logLines])
 
-  const call = async (host: string): Promise<boolean> => {
-    if (release === "update") await rpc(host, "admin.updateRelease", { version: version ?? "" })
-    else if (release === "rollback") await rpc(host, "admin.rollback", undefined)
-    else if (target) return !(await rpc(host, "admin.update", { commit: target })).up_to_date
-    else await rpc(host, "admin.restart", { rebuild })
-    return true
-  }
+  /** Asks `host` for it: false when it runs the deployed commit already, so there's nothing to restart for. */
+  const call = (host: string) =>
+    Effect.gen(function* () {
+      if (release === "update") yield* mutate("admin.updateRelease", host, { version: version ?? "" })
+      else if (release === "rollback") yield* mutate("admin.rollback", host, undefined)
+      else if (target) return !(yield* mutate("admin.update", host, { commit: target })).up_to_date
+      else yield* mutate("admin.restart", host, { rebuild })
+      return true
+    })
 
-  const start = async () => {
+  const start = () => {
     if (starting) return
-    setErr(null)
+    setTimedOut(false)
     if (remote && hostId) {
-      setStarting(true)
-      try {
-        await call(hostId)
+      void run(call(hostId)).then((exit) => {
+        if (!Exit.isSuccess(exit)) return
         onStarted?.()
         onClose()
-      } catch (e) {
-        setErr(errorText(e))
-        setStarting(false)
-      }
+      })
       return
     }
-    const host = board.get().localHostId
-    if (!host) return
+    if (!localHost) return
     setStarted(true)
     setAsked({ from: live })
-    try {
-      // Already on the deployed commit: nothing to restart for.
-      if (!(await call(host))) {
-        setAsked(null)
-        onClose()
+    void run(call(localHost)).then((exit) => {
+      if (Exit.isSuccess(exit)) {
+        // Already on the deployed commit: nothing to restart for.
+        if (!exit.value) {
+          setAsked(null)
+          onClose()
+        }
+        return
       }
-    } catch (e) {
       setAsked(null)
       setStarted(false)
-      setErr(errorText(e))
-    }
+    })
   }
 
   const commits = (release ? [] : target ? status.deployed_commits : status.new_commits) ?? []
@@ -256,7 +251,7 @@ export function RestartModal({
               <Button
                 variant={release === "rollback" && !inherited ? "danger" : "primary"}
                 disabled={starting || (!!release && !version)}
-                onClick={inherited ? () => setWatched(false) : () => void start()}
+                onClick={inherited ? () => setWatched(false) : start}
               >
                 {starting ? <Loader2 size={13} className="animate-spin" /> : release === "rollback" ? <Undo2 size={13} /> : <RotateCw size={13} />}{" "}
                 {inherited ? `${action}…` : job ? "Try again" : action}
