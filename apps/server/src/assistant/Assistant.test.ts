@@ -401,11 +401,16 @@ layer(TestBoard({ dataDir: importedInto }))("Assistant, on an imported board", (
       const memory = yield* Memory
       const p = yield* profile("p")
       const { task: a } = yield* opened(p)
-      const at = (workDir: string) => ({ ...a, work_dir: workDir })
-      assert.strictEqual(yield* memory.checked(at(`${oldFolder}/assistants/${a.id}`)), `${oldFolder}/assistants/${a.id}`)
+      const at = (workDir: string) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          yield* sql`UPDATE tasks SET work_dir = ${workDir} WHERE id = ${a.id}`.pipe(Effect.orDie)
+          return (yield* (yield* TaskRepo).get(a.id)) ?? assert.fail("no assistant")
+        })
+      assert.strictEqual(yield* memory.checked(yield* at(`${oldFolder}/assistants/${a.id}`)), `${oldFolder}/assistants/${a.id}`)
       assert.isTrue(existsSync(`${oldFolder}/assistants/${a.id}`))
       const elsewhere = mkdtempSync(`${tmpdir()}/huntaway-elsewhere-`)
-      assert.strictEqual((yield* Effect.flip(memory.checked(at(`${elsewhere}/assistants/${a.id}`))))._tag, "Unavailable")
+      assert.strictEqual((yield* Effect.flip(memory.checked(yield* at(`${elsewhere}/assistants/${a.id}`))))._tag, "Unavailable")
     }),
   )
 })
