@@ -60,17 +60,6 @@ const stepOne = [
   "apps/web/src/components/docs/**",
   // layout/
   "apps/web/src/components/layout/**",
-  // settings/: analytics, token statistics, disk usage, telemetry, usage
-  "apps/web/src/components/settings/analytics/**",
-  "apps/web/src/components/settings/Analytics.tsx",
-  "apps/web/src/components/settings/TokenStats.tsx",
-  "apps/web/src/components/settings/tokenStatsData.ts",
-  "apps/web/src/components/settings/DiskUsage.tsx",
-  "apps/web/src/components/settings/disk.ts",
-  "apps/web/src/components/settings/chart.tsx",
-  "apps/web/src/components/settings/Telemetry.tsx",
-  "apps/web/src/components/settings/Usage.tsx",
-  "apps/web/src/components/settings/HostDesktop.tsx",
   // settings/: agent tools, automations, workflows
   "apps/web/src/components/settings/agentTools/**",
   "apps/web/src/components/settings/automations/**",
