@@ -1,15 +1,15 @@
 import { useRef, useState, type DragEvent } from "react"
 import { ProfileId } from "@huntaway/contracts"
-import { rpc } from "../../../state/rpc"
+import { exitError, useMutation } from "../../../state/mutation"
 import type { DocsHome, DocsView } from "../docs"
-import { errorText } from "../../ui"
 import type { Row } from "./model"
 
 /** The type of a drag that carries one of the page's documents (its slug). */
 const DOC_DRAG = "application/x-huntaway-doc"
 
 /** Dragging a document of a home's tree onto a folder, which moves it there: the rows' handlers, and a move that failed. */
-export function useDocDrag(home: DocsHome, editable: boolean, view: DocsView, onChanged: () => void) {
+export function useDocDrag(home: DocsHome, editable: boolean, view: DocsView) {
+  const [, update] = useMutation("docs.update")
   // The document being dragged, and the folder it's over.
   const dragged = useRef<Row | null>(null)
   const [over, setOver] = useState<string | null>(null)
@@ -21,9 +21,10 @@ export function useDocDrag(home: DocsHome, editable: boolean, view: DocsView, on
     setOver(null)
     if (!d || (d.folder ?? "") === folder) return
     setDropError(null)
-    rpc(home.hostId, "docs.update", { profile_id: ProfileId.make(home.profileId), slug: d.slug, patch: { folder } }).then(onChanged, (e: unknown) =>
-      setDropError(`Couldn't move “${d.title}”: ${errorText(e)}`),
-    )
+    void update(home.hostId, { profile_id: ProfileId.make(home.profileId), slug: d.slug, patch: { folder } }).then((exit) => {
+      const error = exitError(exit)
+      if (error !== null) setDropError(`Couldn't move “${d.title}”: ${error}`)
+    })
   }
   /** A row a dragged document can be dropped on, to move it to `folder` (in the Folders view). */
   const target = (folder: string) =>

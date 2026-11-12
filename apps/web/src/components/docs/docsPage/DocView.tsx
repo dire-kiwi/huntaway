@@ -2,10 +2,10 @@
 import { Loader2 } from "lucide-react"
 import { useMemo, useRef, useState } from "react"
 import { ProfileId } from "@huntaway/contracts"
+import { mutate } from "@huntaway/client"
 import { pageSuffix, type DocsHome } from "../docs"
 import { docBase, href } from "../../../router"
 import { cameFrom, navigate } from "../../../state/route"
-import { rpc } from "../../../state/rpc"
 import { boardTheme } from "../docFrame"
 import { PublishDialog, useCanPublish } from "../HostedDocs"
 import { OpenLinkBar } from "../../ui"
@@ -13,7 +13,6 @@ import { DocCommentsPanel, useDocComments } from "../DocComments"
 import { VersionBar } from "./bars"
 import { BoardLink, NoHomes, Notice } from "./chrome"
 import { DocHeader } from "./DocHeader"
-import { useDocsChanged, useDocsSiteChanged } from "./hooks"
 import { LabelsDialog } from "./LabelsDialog"
 import type { DocsRoute } from "./model"
 import { NavTree } from "./NavTree"
@@ -26,7 +25,9 @@ import { useDocPage } from "./useDocPage"
 export function DocView({ route, name, homes }: { route: DocsRoute & { slug: string }; name: string; homes: DocsHome[] }) {
   const { slug, version } = route
   const page = route.page ?? ""
-  const { home, detail, missing, error: homeError, reload } = useDocHome(homes, slug)
+  // Read again on the hosts' `docs` and `docs_site` events (a new version changes the menu's versions; connecting or
+  // disconnecting the docs site its published state), and the latest version's page on `docs`.
+  const { home, detail, missing, error: homeError } = useDocHome(homes, slug)
   const [publishing, setPublishing] = useState(false)
   const [labelling, setLabelling] = useState(false)
   // 6.3: every host has labels and comments.
@@ -39,14 +40,7 @@ export function DocView({ route, name, homes }: { route: DocsRoute & { slug: str
   const commenting = true
   const comments = useDocComments(home, slug, commenting)
 
-  const { shown, error, loadPage } = useDocPage({ hostId, profileId, slug, version, page, base })
-  // A new version: the menu's versions change, and so does the latest's page.
-  useDocsChanged(homes, () => {
-    reload()
-    if (version === undefined) loadPage()
-  })
-  // Connecting or disconnecting changes its published state.
-  useDocsSiteChanged(homes, reload)
+  const { shown, error } = useDocPage({ hostId, profileId, slug, version, page, base })
 
   const theme = useMemo(() => boardTheme(), [])
   const current = shown?.pages[0]
@@ -93,8 +87,7 @@ export function DocView({ route, name, homes }: { route: DocsRoute & { slug: str
           title={`Labels of “${detail.title}”`}
           initial={detail.labels ?? []}
           home={home}
-          onSave={(next) => rpc(home.hostId, "docs.update", { profile_id: ProfileId.make(home.profileId), slug, patch: { labels: next } })}
-          onDone={reload}
+          onSave={(next) => mutate("docs.update", home.hostId, { profile_id: ProfileId.make(home.profileId), slug, patch: { labels: next } })}
           onClose={() => setLabelling(false)}
         />
       )}

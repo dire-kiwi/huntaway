@@ -5,46 +5,28 @@
 // docs server's `get_feedback`.
 import { clsx } from "clsx"
 import { Check, ChevronRight, Loader2, MessageSquare, Pencil, Send, Trash2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react"
+import { useAtomValue } from "@effect/atom-react"
+import { Effect, Exit } from "effect"
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react"
 import { ProfileId, type DocComment, type DocComments, type DocPublisher } from "@huntaway/contracts"
+import { mutate, query } from "@huntaway/client"
 import { type DocsHome } from "./docs"
 import { href } from "../../router"
 import { navigate } from "../../state/route"
-import { rpc } from "../../state/rpc"
-import { useDocCommentsChanged } from "./docsPage/hooks"
-import { Ago, Button, ErrorBox, errorText, IconButton, Textarea, useAsyncAction } from "../ui"
+import { useAction, useMutation } from "../../state/mutation"
+import { idle } from "./docsPage/reads"
+import { Ago, Button, ErrorBox, IconButton, resultError, resultValue, Textarea } from "../ui"
 
 /** A quote waiting for its comment: where it was made, and the text with its context. */
 export type CommentDraft = { version: number; page: string; quote: string; prefix: string; suffix: string }
 
-/** A document's comments, kept up to date with its host's `doc_comments` events; null until they're loaded (or when `on` is off). */
-export function useDocComments(home: DocsHome | undefined, slug: string, on: boolean) {
-  const [data, setData] = useState<DocComments | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const seq = useRef(0)
-  const reload = useCallback(() => {
-    const n = ++seq.current
-    if (!home || !on) {
-      // Off: nothing to show (set once the answer of a read under way can't come in).
-      void Promise.resolve().then(() => n === seq.current && setData(null))
-      return
-    }
-    rpc(home.hostId, "docs.comments", { profile_id: ProfileId.make(home.profileId), slug }).then(
-      (d) => {
-        if (n !== seq.current) return
-        setData(d)
-        setError(null)
-      },
-      (e: unknown) => n === seq.current && setError(errorText(e)),
-    )
-  }, [home, slug, on])
-  useEffect(reload, [reload])
-  useDocCommentsChanged(
-    useMemo(() => (home ? [home] : []), [home]),
-    slug,
-    reload,
-  )
-  return { data, error, reload }
+/**
+ * A document's comments, read again on its host's `doc_comments` events (and after a change made here); null until
+ * they're read (or when `on` is off).
+ */
+export function useDocComments(home: DocsHome | undefined, slug: string, on: boolean): { data: DocComments | null; error: string | null } {
+  const result = useAtomValue(home && on ? query("docs.comments", home.hostId, { profile_id: ProfileId.make(home.profileId), slug }) : idle)
+  return { data: resultValue(result) ?? null, error: resultError(result) }
 }
 
 function TaskLink({ task }: { task: DocPublisher }) {
@@ -113,7 +95,7 @@ export function DocCommentsPanel({
   onFocus: (id: number) => void
   onGo: (version: number, page: string) => void
 }) {
-  const send = useAsyncAction()
+  const [send, sendComments] = useMutation("docs.sendComments")
   const [sent, setSent] = useState<{ n: number; task: DocPublisher } | null>(null)
   const comments = data?.comments ?? []
   const here = comments.filter((m) => m.version === version && m.page === page)
@@ -129,9 +111,8 @@ export function DocCommentsPanel({
   }, [active])
 
   const sendAll = () =>
-    void send.run(async () => {
-      const out = await rpc(home.hostId, "docs.sendComments", { profile_id: ProfileId.make(home.profileId), slug })
-      setSent({ n: out.sent, task: out.task })
+    void sendComments(home.hostId, { profile_id: ProfileId.make(home.profileId), slug }).then((exit) => {
+      if (Exit.isSuccess(exit)) setSent({ n: exit.value.sent, task: exit.value.task })
     })
 
   return (
@@ -233,10 +214,10 @@ function elsewhereLabel(elsewhere: DocComment[], version: number | undefined): s
 
 function DraftForm({ home, slug, draft, elsewhere, onDone }: { home: DocsHome; slug: string; draft: CommentDraft; elsewhere: boolean; onDone: () => void }) {
   const [text, setText] = useState("")
-  const save = useAsyncAction()
+  const [save, add] = useMutation("docs.addComment")
   const submit = () =>
-    void save.run(async () => {
-      await rpc(home.hostId, "docs.addComment", { profile_id: ProfileId.make(home.profileId), slug, comment: { ...draft, comment: text.trim() } })
+    void add(home.hostId, { profile_id: ProfileId.make(home.profileId), slug, comment: { ...draft, comment: text.trim() } }).then((exit) => {
+      if (!Exit.isSuccess(exit)) return
       setText("")
       onDone()
     })
@@ -293,13 +274,15 @@ function CommentItem({
   onFocus: (id: number) => void
 }) {
   const [editing, setEditing] = useState<string | null>(null)
-  const act = useAsyncAction()
+  const [act, run] = useAction()
+  const profile_id = ProfileId.make(home.profileId)
   const saveEdit = () =>
-    void act.run(async () => {
-      await rpc(home.hostId, "docs.updateComment", { profile_id: ProfileId.make(home.profileId), slug, id: c.id, comment: (editing ?? "").trim() })
-      setEditing(null)
-    })
-  const remove = () => void act.run(() => rpc(home.hostId, "docs.deleteComment", { profile_id: ProfileId.make(home.profileId), slug, id: c.id }))
+    void run(
+      mutate("docs.updateComment", home.hostId, { profile_id, slug, id: c.id, comment: (editing ?? "").trim() }).pipe(
+        Effect.tap(() => Effect.sync(() => setEditing(null))),
+      ),
+    )
+  const remove = () => void run(mutate("docs.deleteComment", home.hostId, { profile_id, slug, id: c.id }))
   return (
     <li
       data-comment={c.id}

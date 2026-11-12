@@ -1,8 +1,11 @@
+import { useAtom } from "@effect/atom-react"
+import { Schema } from "effect"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
+import { storedBare } from "../../../state/storage"
 import type { CommentDraft, useDocComments } from "../DocComments"
 
-/** Whether the document page shows its comments panel: the user's choice, kept in this browser. */
-const COMMENTS_SHOWN = "ia.docComments"
+/** Whether the document page shows its comments panel ("0" hides it): the user's choice, kept in this browser. */
+const commentsShownAtom = storedBare("ia.docComments", Schema.Literals(["0", "1"]), null)
 
 /**
  * The comments of the page that's shown (HA-302): whether their panel is, the comment being written, the one chosen,
@@ -17,11 +20,9 @@ export function useCommentMarks(
     path,
   }: { data: ReturnType<typeof useDocComments>["data"]; commenting: boolean; shownVersion: number | undefined; path: string | undefined },
 ) {
-  const [commentsShown, setCommentsShown] = useState(() => localStorage.getItem(COMMENTS_SHOWN) !== "0")
-  const showComments = useCallback((on: boolean) => {
-    setCommentsShown(on)
-    localStorage.setItem(COMMENTS_SHOWN, on ? "1" : "0")
-  }, [])
+  const [shown, setShown] = useAtom(commentsShownAtom)
+  const commentsShown = shown !== "0"
+  const showComments = useCallback((on: boolean) => setShown(on ? "1" : "0"), [setShown])
   const [draft, setDraft] = useState<CommentDraft | null>(null)
   // The shown page's comments the frame found, and the one chosen (in the page or the panel).
   const [found, setFound] = useState<Set<number> | null>(null)

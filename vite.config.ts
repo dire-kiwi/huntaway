@@ -54,10 +54,10 @@ const stepOne = [
   // board/ and boardHelpers.ts
   "apps/web/src/components/board/**",
   "apps/web/src/components/boardHelpers.ts",
+  // docs/: what runs inside the sandboxed page frame, as source, where Effect's timers aren't (its selection debounce)
+  "apps/web/src/components/docs/docFrame.ts",
   // changes/
   "apps/web/src/components/changes/**",
-  // docs/
-  "apps/web/src/components/docs/**",
   // layout/
   "apps/web/src/components/layout/**",
   // settings/: analytics, token statistics, disk usage, telemetry, usage

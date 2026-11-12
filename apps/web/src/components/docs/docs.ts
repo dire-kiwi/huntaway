@@ -4,9 +4,7 @@
 import type { Host } from "@huntaway/contracts"
 import type { HostProfile as Profile } from "@huntaway/client"
 import { href, parse, type Route } from "../../router"
-import { rpc } from "../../state/rpc"
-import { parseJson, toJson } from "../ui/json"
-import { ProfileId } from "@huntaway/contracts"
+import { parseJson } from "../ui/json"
 
 /** A rendered page's `<img>` that is one of its document's images: the server's marker for it, with the image's sha256. */
 export const DOC_IMAGE_SRC = /\ssrc="\/api\/profiles\/[^/"]+\/doc_images\/([0-9a-f]{64})"/g
@@ -212,45 +210,6 @@ export function labelPaths<T>(tree: DocLabel<T>): string[] {
 
 /** How the Docs page shows documents: by folder or by label (HA-324), the user's choice, kept in this browser. */
 export type DocsView = "folders" | "labels"
-const VIEW_KEY = "ia.docs.view"
-
-export function docsView(): DocsView {
-  try {
-    return localStorage.getItem(VIEW_KEY) === "labels" ? "labels" : "folders"
-  } catch {
-    return "folders"
-  }
-}
-
-export function saveDocsView(view: DocsView) {
-  try {
-    localStorage.setItem(VIEW_KEY, view)
-  } catch {
-    // It's the page's own until it's left, when storage is unavailable.
-  }
-}
-
-/** Where a host's profile's closed folders (or labels) on the Docs page are kept in this browser. */
-const closedKey = (home: DocsHome, kind: DocsView) => `ia.docs.${kind === "labels" ? "closedLabels" : "closedFolders"}:${home.hostId}:${home.profileId}`
-
-/** The folders (or labels) of a host's profile that were closed on the Docs page (all open, the first time). */
-export function closedFolders(home: DocsHome, kind: DocsView = "folders"): Set<string> {
-  try {
-    const value = parseJson(localStorage.getItem(closedKey(home, kind)) ?? "[]")
-    return new Set(Array.isArray(value) ? value.filter((k): k is string => typeof k === "string") : [])
-  } catch {
-    return new Set()
-  }
-}
-
-export function saveClosedFolders(home: DocsHome, closed: Set<string>, kind: DocsView = "folders") {
-  try {
-    if (closed.size) localStorage.setItem(closedKey(home, kind), toJson([...closed]))
-    else localStorage.removeItem(closedKey(home, kind))
-  } catch {
-    // They stay as they are until the page is left, when storage is unavailable.
-  }
-}
 
 /** A folder renamed from `from` to `to`, for folder `path` (in it, or one inside it): its new path, or null if it isn't in it. */
 export function renamedFolder(path: string, from: string, to: string): string | null {
@@ -258,40 +217,18 @@ export function renamedFolder(path: string, from: string, to: string): string | 
   return `${to}${path.slice(from.length)}`.replace(/^\/+/, "")
 }
 
-/**
- * Documents' images (HA-327) as data: URLs, by host, profile and hash, most recently used last: an image never changes,
- * so each is fetched once while it's kept. A failed fetch isn't kept, so it's tried again with the page.
- */
-const images = new Map<string, Promise<string | null>>()
-const KEEP_IMAGES = 60
-
-function docImage(hostId: string, profileId: string, sha: string): Promise<string | null> {
-  const key = `${hostId}/${profileId}/${sha}`
-  let got = images.get(key)
-  if (got) images.delete(key)
-  else
-    got = rpc(hostId, "docs.image", { profile_id: ProfileId.make(profileId), sha256: sha }).then(
-      (im) => `data:${im.mime === "image/avif" ? im.mime : "image/avif"};base64,${im.data}`,
-      () => (images.delete(key), null),
-    )
-  images.set(key, got)
-  for (const old of [...images.keys()].slice(0, Math.max(0, images.size - KEEP_IMAGES))) images.delete(old)
-  return got
-}
+/** The images (their sha256) a rendered page's HTML shows, each once (HA-327). */
+export const docImageShas = (html: string): string[] => [...new Set([...html.matchAll(DOC_IMAGE_SRC)].flatMap((m) => (m[1] === undefined ? [] : [m[1]])))]
 
 /**
- * A rendered page's HTML with its images (their `src`, the host's route for each) as data: URLs, which the page's frame
- * can show: it's sandboxed, with no origin of its own, so it can't fetch them with the board's token, nor read the
- * board's blob: URLs. One that can't be fetched loses its `src`, and shows its alt text.
+ * A rendered page's HTML with its images (their `src`, the host's route for each) as data: URLs (`urls`, by sha256),
+ * which the page's frame can show: it's sandboxed, with no origin of its own, so it can't fetch them with the board's
+ * token, nor read the board's blob: URLs. One that couldn't be fetched (null, or missing) loses its `src`, and shows its
+ * alt text.
  */
-export function withDocImages(html: string, hostId: string, profileId: string): Promise<string> {
-  const shas = [...new Set([...html.matchAll(DOC_IMAGE_SRC)].flatMap((m) => (m[1] === undefined ? [] : [m[1]])))]
-  if (!shas.length) return Promise.resolve(html)
-  return Promise.all(shas.map((sha) => docImage(hostId, profileId, sha).then((url) => [sha, url] as const))).then((pairs) => {
-    const urls = new Map(pairs)
-    return html.replace(DOC_IMAGE_SRC, (_, sha: string) => {
-      const url = urls.get(sha)
-      return url ? ` src="${url}"` : ""
-    })
+export function withDocImages(html: string, urls: ReadonlyMap<string, string | null>): string {
+  return html.replace(DOC_IMAGE_SRC, (_, sha: string) => {
+    const url = urls.get(sha)
+    return url ? ` src="${url}"` : ""
   })
 }
