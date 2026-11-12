@@ -96,26 +96,50 @@ export const mergeLimits = (limits: ReadonlyArray<UsageLimit>, fresh: ReadonlyAr
   return out.toSorted(order)
 }
 
-/**
- * A pool's limits from its accounts': each limit is the one of the account whose window ends first (the usage that's
- * lost soonest if it isn't spent), leaving out accounts that have used none of it (0%), whose window hasn't really
- * begun. A limit with no reset time comes after those with one, and when every account is at 0% it's the first to
- * reset of those. Accounts without numbers are left out.
- */
-/** Used ones first, then by when they reset (none last). */
-const poolKey = (l: UsageLimit): readonly [number, number] => [l.percent > 0 ? 0 : 1, (l.resets_at !== null ? parseTime(l.resets_at) : null) ?? Infinity]
+/** Whether `l` is used up and hasn't reset by `now` (ms). */
+const spent = (l: UsageLimit, now: number): boolean => {
+  if (l.percent < 100) return false
+  const at = l.resets_at !== null ? parseTime(l.resets_at) : null
+  return at === null || at > now
+}
 
-export const poolLimits = (accounts: ReadonlyArray<UsageAccount>): Array<UsageLimit> => {
+/**
+ * Whether an account can't be used until a limit resets: its session or weekly limit (the ones every model counts
+ * against) is used up and hasn't reset by `now` (ms). A model's own weekly limit used up only stops that model.
+ */
+export const usedUp = (account: UsageAccount, now: number): boolean => account.limits.some((l) => (l.id === "session" || l.id === "weekly") && spent(l, now))
+
+/** Ones with room first (when `room` counts), then used ones, then by when they reset (none last). */
+const poolKey = (l: UsageLimit, now: number, room: boolean): readonly [number, number, number] => [
+  room && spent(l, now) ? 1 : 0,
+  l.percent > 0 ? 0 : 1,
+  (l.resets_at !== null ? parseTime(l.resets_at) : null) ?? Infinity,
+]
+const before = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): boolean => {
+  for (let i = 0; i < a.length; i++) {
+    const [x, y] = [a[i] ?? 0, b[i] ?? 0]
+    if (x !== y) return x < y
+  }
+  return false
+}
+
+/**
+ * A pool's limits from its accounts' at `now` (ms): what's left of the pool, as the proxy serves it. Accounts without
+ * numbers are left out, and so are used-up ones (`usedUp`) while any other isn't: the proxy sends them nothing until
+ * they reset. Of the rest, each limit is the one of the account where it has room left (a model's own limit can be
+ * used up on one account and not on another) and has been used (at 0% a window hasn't really begun) and ends first
+ * (the usage that's lost soonest if it isn't spent). A limit with no reset time comes after those with one. When every
+ * account is used up, room left doesn't count: each limit is the used one that ends first.
+ */
+export const poolLimits = (accounts: ReadonlyArray<UsageAccount>, now: number): Array<UsageLimit> => {
+  const free = accounts.filter((a) => a.limits.length > 0 && !usedUp(a, now))
+  const room = free.length > 0
   const out: Array<UsageLimit> = []
-  for (const l of accounts.flatMap((a) => a.limits)) {
+  for (const l of (room ? free : accounts).flatMap((a) => a.limits)) {
     const i = out.findIndex((x) => x.id === l.id)
     const have = out[i]
-    if (have === undefined) {
-      out.push({ ...l })
-      continue
-    }
-    const [a, b] = [poolKey(l), poolKey(have)]
-    if (a[0] < b[0] || (a[0] === b[0] && a[1] < b[1])) out[i] = { ...l }
+    if (have === undefined) out.push({ ...l })
+    else if (before(poolKey(l, now, room), poolKey(have, now, room))) out[i] = { ...l }
   }
   return out
 }

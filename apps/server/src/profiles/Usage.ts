@@ -23,9 +23,9 @@ import { codexOutUntil, field, mergeLimits, parseLimits, parseTime, poolLimits, 
 //
 // A config with a proxy (CLIProxyAPI: its own `api_url`, or one its settings.json sets) pools several logins, none of
 // them in its folder. Its usage is each of the proxy's Claude accounts' (asked for through the proxy's management API,
-// with each account's own token), and its limits are the pool's (`poolLimits`). Its runs' `rate_limit_event`s are
-// about whichever account served them, so they don't change its limits, only whether it's out (the proxy only passes a
-// refusal on once every account it could try has refused).
+// with each account's own token), and its limits are the pool's (`poolLimits`, from the accounts that aren't used up).
+// Its runs' `rate_limit_event`s are about whichever account served them, so they don't change its limits, only whether
+// it's out (the proxy only passes a refusal on once every account it could try has refused).
 //
 // A config is *out* when a run on it was refused for its usage limit (`rate_limit_event` with status `rejected`),
 // until that limit resets. Usage at 100% alone doesn't make it out: a plan with extra usage carries on past it.
@@ -272,7 +272,8 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
         const files = field(v, "files")
         const claude = (Array.isArray(files) ? files : []).filter((c) => field(c, "provider") === "claude" && field(c, "disabled") !== true)
         const accounts = yield* Effect.forEach(claude, (c) => accountUsage(base, key, c), { concurrency: "unbounded" })
-        return { plan: `${accounts.length} account${accounts.length === 1 ? "" : "s"}`, limits: poolLimits(accounts), accounts }
+        const now = yield* Clock.currentTimeMillis
+        return { plan: `${accounts.length} account${accounts.length === 1 ? "" : "s"}`, limits: poolLimits(accounts, now), accounts }
       })
 
       /** A Codex config's plan and limits, from a short-lived `codex app-server` (the agents area's reader). */

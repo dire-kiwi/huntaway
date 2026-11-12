@@ -178,14 +178,52 @@ describe("usage limits", () => {
       // Its usage couldn't be read: it counts for nothing.
       { name: "b", limits: [], error: "no" },
     ]
-    assert.deepStrictEqual(poolLimits(accounts), [
+    // Before its session resets, the first account is used up and counts for nothing.
+    assert.deepStrictEqual(poolLimits(accounts, Date.parse("2026-11-04T06:00:00Z")), [
+      lim("session", 30.0, "2026-11-04T08:30:00+00:00"),
+      lim("weekly", 60.0, "2026-11-06T00:00:00Z"),
+      lim("weekly:opus", 5.0, null),
+      lim("weekly:sonnet", 0, "2026-11-08T00:00:00Z"),
+    ])
+    // Once it has, it counts again.
+    assert.deepStrictEqual(poolLimits(accounts, Date.parse("2026-11-04T11:00:00Z")), [
       lim("session", 30.0, "2026-11-04T08:30:00+00:00"),
       lim("weekly", 60.0, "2026-11-06T00:00:00Z"),
       // Every account is at 0%: the first to reset.
       lim("weekly:sonnet", 0, "2026-11-08T00:00:00Z"),
       lim("weekly:opus", 5.0, null),
     ])
-    assert.deepStrictEqual(poolLimits([]), [])
+    assert.deepStrictEqual(poolLimits([], NOW), [])
+  })
+
+  it("a pool's limits leave out the accounts that are used up, unless they all are", () => {
+    const early = Date.parse("2026-11-04T06:00:00Z")
+    // Its weekly limit is used up and resets first; it has some of its Fable limit left.
+    const spent = acct([
+      lim("session", 20.0, "2026-11-04T08:00:00Z"),
+      lim("weekly", 100.0, "2026-11-05T00:00:00Z"),
+      lim("weekly:fable", 30.0, "2026-11-05T00:00:00Z"),
+    ])
+    const room = acct([
+      lim("session", 10.0, "2026-11-04T09:00:00Z"),
+      lim("weekly", 40.0, "2026-11-09T00:00:00Z"),
+      lim("weekly:fable", 5.0, "2026-11-09T00:00:00Z"),
+    ])
+    assert.deepStrictEqual(poolLimits([spent, room], early), room.limits)
+    // A model's own limit used up doesn't stop the account, but the pool's is another account's that has some left.
+    const noFable = acct([
+      lim("session", 20.0, "2026-11-04T08:00:00Z"),
+      lim("weekly", 50.0, "2026-11-05T00:00:00Z"),
+      lim("weekly:fable", 100.0, "2026-11-05T00:00:00Z"),
+    ])
+    assert.deepStrictEqual(poolLimits([noFable, room], early), [...noFable.limits.slice(0, 2), lim("weekly:fable", 5.0, "2026-11-09T00:00:00Z")])
+    // Every account used up: room on one doesn't count, each limit is the one that ends first.
+    const sessionOut = acct([lim("session", 100.0, "2026-11-04T07:00:00Z"), lim("weekly", 40.0, "2026-11-09T00:00:00Z")])
+    assert.deepStrictEqual(poolLimits([spent, sessionOut], early), [
+      lim("session", 100.0, "2026-11-04T07:00:00Z"),
+      lim("weekly", 100.0, "2026-11-05T00:00:00Z"),
+      lim("weekly:fable", 30.0, "2026-11-05T00:00:00Z"),
+    ])
   })
 
   it("a reset is due a minute after", () => {
