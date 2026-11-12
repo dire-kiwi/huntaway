@@ -13,7 +13,7 @@ import { StartupError } from "../../platform/StartupError.ts"
 import { checkImport } from "./check.ts"
 import { FAMILIES } from "./families/index.ts"
 import { issueText } from "./family.ts"
-import type { FamilyIo, ImportContext, NewRow, TableCheck } from "./family.ts"
+import type { Family, FamilyIo, ImportContext, NewRow, TableCheck } from "./family.ts"
 import { makeOldDb } from "./oldDb.ts"
 import type { OldDb } from "./oldDb.ts"
 import { makeReport, ReportJson, reportPasses } from "./report.ts"
@@ -254,8 +254,11 @@ const readTrimmed = (file: string) =>
     return text === "" ? null : text
   })
 
-/** The import, or with `--check` on a folder already imported from `from`, the check alone. */
-export const importLegacy = Effect.fn("importLegacy")(function* (options: ImportOptions) {
+/**
+ * The import, or with `--check` on a folder already imported from `from`, the check alone. `families` is for tests: a
+ * family's test runs it after stand-ins for the families whose rows it points at.
+ */
+export const importLegacy = Effect.fn("importLegacy")(function* (options: ImportOptions, families: ReadonlyArray<Family> = FAMILIES) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
   if (!(yield* fs.exists(options.from))) return yield* refuse([`there is no folder ${options.from}`])
@@ -317,7 +320,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
               write: makeWriter(sql, report),
               exec: (statement: string, params: ReadonlyArray<ColumnValue> = []) => sql.unsafe<Record<string, unknown>>(statement, params).pipe(Effect.orDie),
             }
-            for (const family of FAMILIES) {
+            for (const family of families) {
               yield* Effect.logInfo(`importing ${family.name}`)
               yield* family.run(io)
             }
