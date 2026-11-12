@@ -35,6 +35,8 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
   "git.taskDiff": (board, p) => taskState(board, p.id),
+  // A task's skills are its config's (the old SkillMenu's cache was per config).
+  "tasks.skills": (board, p) => board.tasks.get(p.id)?.claude_config_id ?? "",
 }
 
 /** The key a host's group is invalidated by. */
