@@ -1,10 +1,9 @@
 import type { HostTask as Task } from "@huntaway/client"
 import { AgentConfigId } from "@huntaway/contracts"
-import { useState } from "react"
 import { useBoard } from "../../../../state/board"
-import { rpc } from "../../../../state/rpc"
+import { useMutation } from "../../../../state/mutation"
 import { useHost } from "../../../boardHelpers"
-import { ActivityTime, Ago, cost, errorText, waitTitle } from "../../../ui"
+import { ActivityTime, Ago, cost, waitTitle } from "../../../ui"
 import { AgentMark } from "../../../ui/AgentIcon"
 import { useThreadConfig } from "../hooks"
 import { Row, Section } from "./Section"
@@ -39,7 +38,7 @@ export function AgentSection({ task }: { task: Task }) {
 /** The thread's agent config, which can change until its agent first starts. */
 function ConfigRow({ task }: { task: Task }) {
   const { current, available } = useThreadConfig(task)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ error: err }, update] = useMutation("tasks.update")
   const options = current && !available.some((c) => c.id === current.id) ? [current, ...available] : available
   const canChange = !task.session_id && !task.running && options.length > 1
   if (!current) return task.session_id ? <Row label="Config">Claude's default config</Row> : null
@@ -49,12 +48,7 @@ function ConfigRow({ task }: { task: Task }) {
         <select
           className="h-6 rounded border border-line bg-panel px-1 text-[12px] text-fg outline-none"
           value={current.id}
-          onChange={(e) => {
-            setErr(null)
-            rpc(task.host_id, "tasks.update", { id: task.id, patch: { claude_config_id: AgentConfigId.make(e.target.value) } }).catch((x: unknown) =>
-              setErr(errorText(x)),
-            )
-          }}
+          onChange={(e) => void update(task.host_id, { id: task.id, patch: { claude_config_id: AgentConfigId.make(e.target.value) } })}
         >
           {options.map((c) => (
             <option key={c.id} value={c.id}>

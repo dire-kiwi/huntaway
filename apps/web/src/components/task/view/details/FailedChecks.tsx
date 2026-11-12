@@ -1,8 +1,9 @@
 import { useState } from "react"
 import { failedChecks, prChecks, type HostTask as Task } from "@huntaway/client"
+import { Exit } from "effect"
 import { CircleX, Loader2 } from "lucide-react"
-import { rpc } from "../../../../state/rpc"
-import { Ago, Button, ErrorBox, useAsyncAction } from "../../../ui"
+import { useMutation } from "../../../../state/mutation"
+import { Ago, Button, ErrorBox, localeString } from "../../../ui"
 
 /**
  * Fix broken checks for an open task's pull request (`tasks.fixChecks`), with its failed checks as the board last read
@@ -11,17 +12,20 @@ import { Ago, Button, ErrorBox, useAsyncAction } from "../../../ui"
  * outdated one, and the button reads it afresh, sending the failures it finds or saying there are none.
  */
 export function FailedChecks({ task }: { task: Task }) {
-  const { busy, error, run } = useAsyncAction()
+  const [{ busy, error }, fixChecks] = useMutation("tasks.fixChecks")
   // The head commit whose failures were sent, while it's still the one that failed.
   const [sent, setSent] = useState<string | null>(null)
   if (!task.pr_url || task.status === "done") return null
   const checks = failedChecks(task)
-  const fix = () => run(async () => setSent((await rpc(task.host_id, "tasks.fixChecks", { id: task.id })).pr_checks?.head ?? null))
+  const fix = () =>
+    void fixChecks(task.host_id, { id: task.id }).then((exit) => {
+      if (Exit.isSuccess(exit)) setSent(exit.value.pr_checks?.head ?? null)
+    })
   const button = (
     <Button
       size="sm"
       disabled={busy}
-      onClick={() => void fix()}
+      onClick={fix}
       title="Read the pull request's checks now and send the agent the failed ones, with the ends of their logs, asking it to fix them and push"
     >
       {busy && <Loader2 size={12} className="animate-spin" />}
@@ -58,7 +62,7 @@ export function FailedChecks({ task }: { task: Task }) {
           {n} check{n === 1 ? "" : "s"} failed on <span className="font-mono text-[11.5px]">{checks.head.slice(0, 7)}</span>
         </span>
         <span className="ml-auto shrink-0 text-[11px] text-faint">
-          <Ago at={checks.since} title={`Read from GitHub ${new Date(checks.since).toLocaleString()} or since`} />
+          <Ago at={checks.since} title={`Read from GitHub ${localeString(checks.since)} or since`} />
         </span>
       </div>
       <ul className="mt-1.5 space-y-0.5">

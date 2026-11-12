@@ -1,9 +1,7 @@
 import { documentsOnly, LABELS, taskLabels, type DocumentType, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
-import { useState } from "react"
-import { rpc } from "../../../../state/rpc"
+import { useMutation } from "../../../../state/mutation"
 import { isGroupTask } from "../../../boardHelpers"
-import { errorText } from "../../../ui"
 import { LABEL_INFO } from "../../documentInfo"
 import { Section } from "./Section"
 
@@ -15,11 +13,11 @@ import { Section } from "./Section"
 export function LabelsSection({ task }: { task: Task }) {
   const labels = taskLabels(task)
   const docsOnly = documentsOnly(task)
-  const [err, setErr] = useState<string | null>(null)
+  const [{ error }, update] = useMutation("tasks.update")
+  const err = error === null ? null : `Couldn't change the labels: ${error}`
   const toggle = (l: DocumentType) => {
-    setErr(null)
     const next = labels.includes(l) ? labels.filter((x) => x !== l) : LABELS.filter((x) => x === l || labels.includes(x))
-    rpc(task.host_id, "tasks.update", { id: task.id, patch: { labels: next } }).catch((e: unknown) => setErr(`Couldn't change the labels: ${errorText(e)}`))
+    void update(task.host_id, { id: task.id, patch: { labels: next } })
   }
   const where = isGroupTask(task) ? "group's repositories" : "project's repository"
   return (

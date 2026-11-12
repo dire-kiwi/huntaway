@@ -139,9 +139,6 @@ const stepOne = [
   "apps/web/src/components/task/Rewind.tsx",
   "apps/web/src/components/task/openingTab.ts",
   "apps/web/src/components/task/turns.ts",
-  // task/thread/ and task/view/
-  "apps/web/src/components/task/thread/**",
-  "apps/web/src/components/task/view/**",
 ]
 
 export default defineConfig({
