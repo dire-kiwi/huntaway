@@ -14,7 +14,7 @@ import { penColorOf } from "./penChecks.ts"
 const ColorColumn = Schema.String.pipe(Schema.decodeTo(PenColor, SchemaTransformation.transform<PenColor, string>({ decode: penColorOf, encode: (c) => c })))
 
 /** A `pens` row as the wire's `Pen`, with how many tasks (not review threads) are in it. */
-const PenRow = Schema.Struct({
+export const PenRow = Schema.Struct({
   id: PenId,
   profile_id: ProfileId,
   name: Schema.String,

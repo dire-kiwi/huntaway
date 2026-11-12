@@ -105,7 +105,8 @@ export interface SteerRowOf {
   readonly written: boolean
 }
 
-const QueueRows = Schema.Struct({ text: Schema.String, source: MessageSource, automation_run_id: Text })
+/** A `task_queue` row as the queue is read (`queued`). */
+export const QueueRows = Schema.Struct({ text: Schema.String, source: MessageSource, automation_run_id: Text })
 const SteerRows = Schema.Struct({ id: Schema.String, run_id: RunId, text: Schema.String, source: MessageSource, automation_run_id: Text, written: Bit })
 
 /** A row of `tasks`, with its project's key and its queue and steer rows (`SELECT_TASK`). */

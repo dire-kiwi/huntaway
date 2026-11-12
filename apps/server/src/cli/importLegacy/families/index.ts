@@ -5,6 +5,7 @@ import { docs } from "./docs.ts"
 import { hosts } from "./hosts.ts"
 import { runsFamily } from "./runs.ts"
 import { settingsProfilesProjects } from "./settingsProfilesProjects.ts"
+import { tasksPens } from "./tasks.ts"
 import { threadsFamily } from "./threads.ts"
 import { workflows } from "./workflows.ts"
 
@@ -13,7 +14,7 @@ import { workflows } from "./workflows.ts"
 
 export const FAMILIES: ReadonlyArray<Family> = [
   settingsProfilesProjects,
-  // tasks-pens goes here.
+  tasksPens,
   threadsFamily,
   runsFamily,
   agentTools,
