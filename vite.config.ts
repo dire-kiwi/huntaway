@@ -53,22 +53,6 @@ const noEffect = {
 const stepOne = [
   // docs/: what runs inside the sandboxed page frame, as source, where Effect's timers aren't (its selection debounce)
   "apps/web/src/components/docs/docFrame.ts",
-  // task/: the assistant, documents and links
-  "apps/web/src/components/task/Memory.tsx",
-  "apps/web/src/components/task/Brief.tsx",
-  "apps/web/src/components/task/Routines.tsx",
-  "apps/web/src/components/task/ActionLog.tsx",
-  "apps/web/src/components/task/ApprovalRules.tsx",
-  "apps/web/src/components/task/GoogleCard.tsx",
-  "apps/web/src/components/task/AssistantPage.tsx",
-  "apps/web/src/components/task/assistant.ts",
-  "apps/web/src/components/task/Document.tsx",
-  "apps/web/src/components/task/htmlFrame.ts",
-  "apps/web/src/components/task/planTheme.ts",
-  "apps/web/src/components/task/planAnswers.ts",
-  "apps/web/src/components/task/mermaid.ts",
-  "apps/web/src/components/task/documentInfo.tsx",
-  "apps/web/src/components/task/ExternalLinks.tsx",
 ]
 
 export default defineConfig({

@@ -1,13 +1,15 @@
 // A task's document for one of its labels (a plan, artifact or diagram), as its agent writes it (6.2; the old
 // components/task/Document.tsx: the labels' names and badges are documentInfo.tsx). Read with @huntaway/client's
 // `taskDocumentAtom`, again as the task's `document_at` changes; the plan's answers are sent as a message (`tasks.send`).
-import { useAtomValue } from "@effect/atom-react"
-import { taskDocumentAtom, type DocumentType, type HostTask as Task } from "@huntaway/client"
-import type { Item as ThreadItem } from "@huntaway/contracts"
+import { useAtomSet, useAtomSubscribe, useAtomValue } from "@effect/atom-react"
+import { mutate, taskDocumentAtom, type DocumentType, type HostTask as Task } from "@huntaway/client"
+import { TaskId, type Item as ThreadItem } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Effect } from "effect"
+import { AsyncResult, Atom } from "effect/reactivity"
 import { ChevronDown, ChevronUp, Code, Copy, Download, Eye, ListChecks, Loader2, MessagesSquare, ZoomIn, ZoomOut } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
-import { rpc } from "../../state/rpc"
+import { exitError, useMutation } from "../../state/mutation"
 import { documentInfo } from "./documentInfo"
 import { followsFrameInput, frameDoc, fromFrame, openable, trackBoardInput } from "./htmlFrame"
 import { diagramImage, renderMermaid, svgWidth, withPlanDiagrams } from "./mermaid"
@@ -28,7 +30,7 @@ import planCss from "./planTheme.css?raw"
 import { useThreadView } from "./thread/threadView"
 import { Composer } from "./thread/Composer"
 import { Markdown } from "./thread/Markdown"
-import { Button, copyText, download, errorText, IconButton, OpenLinkBar, RunningDot, timeAgo } from "../ui"
+import { Button, copyText, download, errorText, IconButton, OpenLinkBar, resultError, RunningDot, timeAgo } from "../ui"
 
 /**
  * What the agent last said, as the server's `last_assistant_text` finds it, from the thread's items: its latest
@@ -65,38 +67,37 @@ const untouched = (f: PlanField): PlanField => ({
   touched: false,
 })
 
-/** Tasks whose plan answers are being sent (`host:task`). */
-const answersSending = new Set<string>()
-/** How a send of a task's answers is going: `sentAsIs` (the answers it sent as they are) and `left` once it's done. */
-type AnswersSent = { task: string; sending: boolean; error?: string; sentAsIs?: string[]; left?: number }
-/** The views of tasks open now, told how a send of answers goes (the old page's `ia-plan-answers` event). */
-const answersSent = new Set<(d: AnswersSent) => void>()
+/** A send of a plan's answers (`fields`, of `version`) to its task's agent. */
+interface AnswersSend {
+  readonly host: string
+  readonly task: string
+  readonly fields: PlanField[]
+  readonly version: number
+}
+
+/** How a send of a task's answers went: the answers it sent as they are, and how many are left to send. */
+interface AnswersSent {
+  readonly sentAsIs: ReadonlyArray<string>
+  readonly left: number
+}
 
 /**
- * Send the answers to a plan's questions (`fields`, of `version`) to its agent. It's done here rather than in the
- * view it's started from, which can go (and another open) before it ends: the answers saved then that are as they
- * were when it started go, and the rest are left to send.
+ * The send of a task's plan answers (`host:task`), kept for the page's life rather than in the view it's started from,
+ * which can go (and another open) before it ends: the answers saved then that are as they were when it started go, and
+ * the rest are left to send. The views of the task read how it goes (the old page's `ia-plan-answers` event).
  */
-async function sendPlanAnswers(task: Task, fields: PlanField[], version: number) {
-  const id = `${task.host_id}:${task.id}`
-  if (answersSending.has(id)) return
-  const tell = (d: Omit<AnswersSent, "task">) => {
-    for (const listener of answersSent) listener({ task: id, ...d })
-  }
-  answersSending.add(id)
-  tell({ sending: true })
-  const before = loadAnswers(task.host_id, task.id)
-  try {
-    await rpc(task.host_id, "tasks.send", { id: task.id, text: answersMessage(fields, version) })
-    const { answers, sentAsIs } = afterSend(before, loadAnswers(task.host_id, task.id))
-    saveAnswers(task.host_id, task.id, answers)
-    answersSending.delete(id)
-    tell({ sending: false, sentAsIs, left: Object.keys(answers).length })
-  } catch (e) {
-    answersSending.delete(id)
-    tell({ sending: false, error: errorText(e) })
-  }
-}
+const answersSend = Atom.family((_key: string) =>
+  Atom.fn<AnswersSend>()((s) =>
+    Effect.gen(function* () {
+      const before = loadAnswers(s.host, s.task)
+      yield* mutate("tasks.send", s.host, { id: TaskId.make(s.task), text: answersMessage(s.fields, s.version) })
+      const { answers, sentAsIs } = afterSend(before, loadAnswers(s.host, s.task))
+      saveAnswers(s.host, s.task, answers)
+      const sent: AnswersSent = { sentAsIs, left: Object.keys(answers).length }
+      return sent
+    }),
+  ).pipe(Atom.keepAlive),
+)
 
 /**
  * A task's document for one of its labels (a plan, artifact or diagram), as its agent writes it, with
@@ -153,8 +154,9 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
   }, [])
   // Only the fields of the document shown: in the source view there's no frame to report another's.
   const fields = form.key !== null && form.key === formKey ? form.fields : []
-  const sendKey = `${task.host_id}:${task.id}`
-  const [sending, setSending] = useState(() => answersSending.has(sendKey))
+  const send = answersSend(`${task.host_id}:${task.id}`)
+  const sending = useAtomValue(send).waiting
+  const startSend = useAtomSet(send)
   const [sent, setSent] = useState(false)
   const page = useMemo(() => (themed ? themedPlan(content, planCss) : content), [content, themed])
   // The frame reports its questions each time it loads, and as the user answers them.
@@ -168,26 +170,25 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
     setSent(false)
   }
   // A send can end after this view is gone (and another is open): it says how it went to the views of the task.
-  useEffect(() => {
-    const onSent = (d: AnswersSent) => {
-      if (d.task !== sendKey) return
-      setSending(d.sending)
-      if (d.error) setErr(d.error)
-      const sentAsIs = d.sentAsIs
-      if (!sentAsIs) return
+  const onSent = useCallback(
+    (result: AsyncResult.AsyncResult<AnswersSent, unknown>) => {
+      if (result.waiting) return
+      const error = resultError(result)
+      if (error !== null) setErr(error)
+      if (!AsyncResult.isSuccess(result)) return
+      const { sentAsIs, left } = result.value
       frame.current?.contentWindow?.postMessage({ iaFormSent: sentAsIs }, "*")
       const f = latestForm.current
       setForm({ ...f, fields: f.fields.map((x) => (sentAsIs.includes(x.name) ? untouched(x) : x)) })
-      setSent(!d.left)
-    }
-    answersSent.add(onSent)
-    return () => {
-      answersSent.delete(onSent)
-    }
-  }, [sendKey, setForm])
+      setSent(!left)
+    },
+    [setForm],
+  )
+  useAtomSubscribe(send, onSent)
   const sendAnswers = () => {
+    if (sending) return
     setErr(null)
-    void sendPlanAnswers(task, fields, parseInt(form.key ?? "", 10))
+    startSend({ host: task.host_id, task: task.id, fields, version: parseInt(form.key ?? "", 10) })
   }
   const resetAnswers = () => {
     keep({})
@@ -210,19 +211,19 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
     if (el) ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  const [, sendText] = useMutation("tasks.send")
   const sendFix = (error: string) =>
-    rpc(task.host_id, "tasks.send", {
+    void sendText(task.host_id, {
       id: task.id,
       text: `The diagram doesn't render. Mermaid says:\n\n\`\`\`\n${error}\n\`\`\`\n\nPlease fix it.`,
-    }).catch((e) => setErr(errorText(e)))
-  const downloadDocument = async () => {
+    }).then((exit) => {
+      const failure = exitError(exit)
+      if (failure !== null) setErr(failure)
+    })
+  const downloadDocument = () => {
     if (content === null) return
-    try {
-      const html = themed && page !== null ? await withPlanDiagrams(page) : (page ?? content)
-      download(info.file, html, type === "diagram" ? "text/plain" : "text/html")
-    } catch (e) {
-      setErr(errorText(e))
-    }
+    const html = themed && page !== null ? withPlanDiagrams(page) : Promise.resolve(page ?? content)
+    void html.then((h) => download(info.file, h, type === "diagram" ? "text/plain" : "text/html")).catch((e: unknown) => setErr(errorText(e)))
   }
 
   return (
@@ -282,7 +283,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
             <IconButton title="Copy the source" onClick={() => copyText(content)}>
               <Copy size={13} />
             </IconButton>
-            <IconButton title={`Download ${info.file}`} onClick={() => void downloadDocument()}>
+            <IconButton title={`Download ${info.file}`} onClick={downloadDocument}>
               <Download size={13} />
             </IconButton>
             {type === "diagram" && svg && (
@@ -315,7 +316,7 @@ export function DocumentView({ task, label: type, onShowThread }: { task: Task; 
             {content}
           </pre>
         ) : type === "diagram" ? (
-          <MermaidView source={content} inset={inset} onSvg={setSvg} onFix={task.running ? undefined : (error) => void sendFix(error)} />
+          <MermaidView source={content} inset={inset} onSvg={setSvg} onFix={task.running ? undefined : sendFix} />
         ) : (
           <HtmlFrame
             frame={frame}

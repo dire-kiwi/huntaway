@@ -11,16 +11,18 @@ const load = () =>
     return m.default
   }))
 
-export async function renderMermaid(source: string): Promise<string> {
-  const mermaid = await load()
-  const id = `ia-mermaid-${++renders}`
-  try {
-    return asXml((await mermaid.render(id, source)).svg)
-  } finally {
-    // Mermaid can leave these behind after a failed render.
-    document.getElementById(id)?.remove()
-    document.getElementById(`d${id}`)?.remove()
-  }
+export function renderMermaid(source: string): Promise<string> {
+  return load().then((mermaid) => {
+    const id = `ia-mermaid-${++renders}`
+    return mermaid
+      .render(id, source)
+      .then((drawn) => asXml(drawn.svg))
+      .finally(() => {
+        // Mermaid can leave these behind after a failed render.
+        document.getElementById(id)?.remove()
+        document.getElementById(`d${id}`)?.remove()
+      })
+  })
 }
 
 /** Mermaid writes labels' HTML as HTML (`<br>` for a line break, `&nbsp;`), which isn't XML, so an image of
@@ -37,30 +39,31 @@ export const diagramImage = (svg: string) => `data:image/svg+xml;charset=utf-8,$
 export const svgWidth = (svg: string) => Number(/viewBox="[-\d.]+[ ,]+[-\d.]+[ ,]+([\d.]+)/.exec(svg)?.[1]) || null
 
 /** Bake a plan's diagrams into its download, so it can be read without the board or a network connection. */
-export async function withPlanDiagrams(html: string): Promise<string> {
+export function withPlanDiagrams(html: string): Promise<string> {
   const doc = new DOMParser().parseFromString(html, "text/html")
   // Each rendered as it comes (Mermaid renders one at a time of its own accord).
-  const each = [...doc.querySelectorAll("ia-diagram > pre")].map(async (pre) => {
+  const each = [...doc.querySelectorAll("ia-diagram > pre")].map((pre) => {
     const host = pre.parentElement
-    if (!host) return
-    try {
-      const img = doc.createElement("img")
-      img.alt = host.getAttribute("title") || "Diagram"
-      const svg = await renderMermaid(pre.textContent ?? "")
-      img.src = diagramImage(svg)
-      img.style.width = "100%"
-      const width = svgWidth(svg)
-      if (width) img.style.maxWidth = `${width}px`
-      host.replaceChildren(img)
-    } catch (e) {
-      const error = doc.createElement("div")
-      error.className = "ia-diagram-error"
-      error.textContent = `Mermaid: ${errorText(e)}`
-      // Nest the source so the exported page's component script doesn't ask the board to retry it.
-      pre.replaceWith(error)
-      error.append(pre)
-    }
+    if (!host) return Promise.resolve()
+    return renderMermaid(pre.textContent ?? "").then(
+      (svg) => {
+        const img = doc.createElement("img")
+        img.alt = host.getAttribute("title") || "Diagram"
+        img.src = diagramImage(svg)
+        img.style.width = "100%"
+        const width = svgWidth(svg)
+        if (width) img.style.maxWidth = `${width}px`
+        host.replaceChildren(img)
+      },
+      (e: unknown) => {
+        const error = doc.createElement("div")
+        error.className = "ia-diagram-error"
+        error.textContent = `Mermaid: ${errorText(e)}`
+        // Nest the source so the exported page's component script doesn't ask the board to retry it.
+        pre.replaceWith(error)
+        error.append(pre)
+      },
+    )
   })
-  await Promise.all(each)
-  return `<!doctype html>\n${doc.documentElement.outerHTML}`
+  return Promise.all(each).then(() => `<!doctype html>\n${doc.documentElement.outerHTML}`)
 }

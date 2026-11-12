@@ -1,14 +1,17 @@
 // The assistant's Google card (6.7): whether its Google Workspace server (Gmail, Calendar and Drive, on the assistant's
 // host) is connected and as whom, and if not, what's missing and how to set it up (`assistant.google`,
 // `assistant.setupGoogle`).
+import { useAtomValue } from "@effect/atom-react"
+import { mutate, query } from "@huntaway/client"
 import type { GoogleStatus } from "@huntaway/contracts"
 import { ProfileId } from "@huntaway/contracts"
 import { clsx } from "clsx"
+import { Exit } from "effect"
 import { Copy, Loader2 } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
-import { useRpc } from "../../state/rpc"
+import { useState } from "react"
+import { useAction } from "../../state/mutation"
 import { GuideLink } from "../settings/Guide"
-import { Button, copyText, errorText, IconButton } from "../ui"
+import { Button, copyText, IconButton, resultError, resultValue } from "../ui"
 
 /** A command to run, with a button that copies it. */
 function Command({ text }: { text: string }) {
@@ -24,36 +27,22 @@ function Command({ text }: { text: string }) {
 
 /** The Google card of the assistant of profile `profileId` on host `hostId` (its assistant host), in Settings. */
 export function GoogleCard({ hostId, profileId }: { hostId: string; profileId: string }) {
-  const rpc = useRpc()
-  const [st, setSt] = useState<GoogleStatus | null>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const [busy, setBusy] = useState<"setup" | "check" | null>(null)
-  const load = useCallback(
-    (check = false) =>
-      rpc(hostId, "assistant.google", { profile_id: ProfileId.make(profileId), ...(check ? { check } : {}) }).then(
-        (s) => {
-          setSt(s)
-          setErr(null)
-        },
-        (e: unknown) => setErr(errorText(e)),
-      ),
-    [rpc, hostId, profileId],
-  )
-  useEffect(() => {
-    void load()
-  }, [load])
-  const act = async (what: "setup" | "check") => {
-    setBusy(what)
-    try {
-      if (what === "setup") {
-        setSt(await rpc(hostId, "assistant.setupGoogle", { profile_id: ProfileId.make(profileId) }))
-        setErr(null)
-      } else await load(true)
-    } catch (e) {
-      setErr(errorText(e))
-    } finally {
-      setBusy(null)
-    }
+  const profile_id = ProfileId.make(profileId)
+  const read = useAtomValue(query("assistant.google", hostId, { profile_id }))
+  // What the last check or set-up gave, shown in place of the status read before it.
+  const [acted, setActed] = useState<GoogleStatus | null>(null)
+  const [action, run] = useAction()
+  const [doing, setDoing] = useState<"setup" | "check" | null>(null)
+  const busy = action.busy ? doing : null
+  const st = acted ?? resultValue(read) ?? null
+  const err = action.error ?? (acted ? null : resultError(read))
+  const act = (what: "setup" | "check") => {
+    setDoing(what)
+    void run(what === "setup" ? mutate("assistant.setupGoogle", hostId, { profile_id }) : mutate("assistant.google", hostId, { profile_id, check: true })).then(
+      (exit) => {
+        if (Exit.isSuccess(exit)) setActed(exit.value)
+      },
+    )
   }
   if (!st) return err ? <div className="text-[12px] text-red-400">{err}</div> : <Loader2 size={14} className="animate-spin text-muted" />
   const serverMissing = !st.server || !st.server.on
@@ -67,7 +56,7 @@ export function GoogleCard({ hostId, profileId }: { hostId: string; profileId: s
           size="sm"
           variant="ghost"
           disabled={!!busy}
-          onClick={() => void act("check")}
+          onClick={() => act("check")}
           title={st.connected ? "Check with Google that its sign-in still works" : "Look again"}
         >
           {busy === "check" && <Loader2 size={12} className="animate-spin" />} {st.connected ? "Test" : "Check again"}
@@ -85,7 +74,7 @@ export function GoogleCard({ hostId, profileId }: { hostId: string; profileId: s
         </div>
       ))}
       {serverMissing && (
-        <Button size="sm" disabled={!!busy} onClick={() => void act("setup")}>
+        <Button size="sm" disabled={!!busy} onClick={() => act("setup")}>
           {busy === "setup" && <Loader2 size={12} className="animate-spin" />} {st.server ? "Switch the Google server on" : "Add the Google server"}
         </Button>
       )}
