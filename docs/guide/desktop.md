@@ -84,7 +84,7 @@ workflow builds an existing release's tag again and replaces its files.
 | File                                           | What                                                                                                                                                                                                                                                              |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `huntaway-<version>-linux-x86_64.AppImage`     | The desktop app for Linux                                                                                                                                                                                                                                         |
-| `huntaway-<version>-linux-x64.pacman`          | The desktop app as an Arch package (`sudo pacman -U <file>`)                                                                                                                                                                                                      |
+| `huntaway-<version>-linux-x64.pacman`          | The desktop app as an Arch package, `huntaway-effect` (`sudo pacman -U <file>`; see [The Arch package](#the-arch-package))                                                                                                                                        |
 | `huntaway-<version>-mac-arm64.dmg`, `.zip`     | The desktop app for Apple silicon Macs                                                                                                                                                                                                                            |
 | `huntaway-server-<version>-<os>-<arch>.tar.gz` | The server alone, for hosts: `huntaway` (which runs the server in `server/` with the Node in `node/`), `build.json` (the version and commit), `ia-shim`, the UI in `ui/`, and the desktop app's code in `electron/`; with its `.sha256` beside it                 |
 | `huntaway-<version>-release.json`              | The release's manifest: its `version`, and the desktop app's `shell` stamp and `electron` version, which change when an update needs a new package (Electron or the app's `boot.cjs`) rather than only changing the server, the UI and the rest of the app's code |
@@ -112,9 +112,38 @@ The desktop app carries the server, `ia-shim` and the UI, and starts the server 
 from the Dock or an app launcher. A release build isn't a checkout, so it has no **Rebuild &
 restart**: it updates from GitHub's releases instead (see below). The Mac build is ad-hoc signed,
 not signed with a Developer ID, so macOS blocks a downloaded copy until you run
-`xattr -dr com.apple.quarantine /Applications/Huntaway.app`. To build the same files locally,
+`xattr -dr com.apple.quarantine "/Applications/Huntaway Effect.app"`. To build the same files locally,
 run `pnpm --filter huntaway-desktop run dist`, which puts them in `apps/desktop/release/`. To build an existing
 release again, use Actions → Release → Run workflow with its tag, which replaces its files.
+
+### The Arch package
+
+The `.pacman` file is the package `huntaway-effect`, and every name it installs differs from the old app's (the
+package `huntaway` from `dire-kiwi/huntaway`, in `/opt/Huntaway`), so the two install side by side and neither
+replaces the other:
+
+|                                            | This app                                      | The old app                        |
+| ------------------------------------------ | --------------------------------------------- | ---------------------------------- |
+| Package                                    | `huntaway-effect`                             | `huntaway`                         |
+| Files                                      | `/opt/Huntaway Effect/`                       | `/opt/Huntaway/`                   |
+| Command                                    | `/usr/bin/huntaway-effect-desktop`            | `/usr/bin/huntaway-desktop`        |
+| Launcher entry, icon, window class         | `huntaway-effect-desktop` ("Huntaway Effect") | `huntaway-desktop` ("Huntaway")    |
+| Its own settings (`desktop.json`, windows) | `~/.config/huntaway-effect/`                  | the old app's                      |
+| Board (data folder, port)                  | `~/.local/share/huntaway-effect`, 7879        | `~/.local/share/issue-agent`, 7878 |
+
+To install the latest release's package, download its `.pacman` (from the release page, or with `gh`) and install
+that file:
+
+```sh
+gh release download --repo dire-kiwi/huntaway-effect --pattern 'huntaway-*-linux-x64.pacman'
+sudo pacman -U huntaway-*-linux-x64.pacman
+```
+
+Start it as **Huntaway Effect** from the app launcher, or with
+`huntaway-effect-desktop`. Later releases come through the app's own updates (below), or the same `pacman -U` with
+the newer file; `sudo pacman -R huntaway-effect` removes it, and leaves its board in `~/.local/share/huntaway-effect`.
+
+Releases up to 0.0.2 named the package `huntaway`, like the old app: installing one of those replaces the old app.
 
 ## Updating the desktop app
 
@@ -123,7 +152,7 @@ A release build (the AppImage, the pacman package or the Mac app) updates itself
 release 30 seconds after it starts and every six hours (or with **Check now** in Settings → Server), downloads
 the new server in the background, checks it against the sha256 GitHub lists for it, and unpacks it
 into `<data dir>/app/<version>/` (`~/.local/share/huntaway-effect/app/`). That's per user, so the pacman package's
-files in `/opt/Huntaway` stay as pacman installed them. Nothing changes until you click
+files in `/opt/Huntaway Effect` stay as pacman installed them. Nothing changes until you click
 **v<version> · Update** in the sidebar, which shows the release notes and restarts the server onto
 the new version in place: running agents keep going, as with a rebuild. Downloading the next
 version is all a check does; quitting and starting the app again still runs the one you had.

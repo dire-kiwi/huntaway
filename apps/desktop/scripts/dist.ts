@@ -10,6 +10,12 @@
 // $VERSION        the version the app reports (the release's), written into the packaged package.json
 //
 // The packages land in apps/desktop/release/. Nothing is published.
+//
+// Until the switch (docs/plan/11-migration.md) the app installs beside the old one (dire-kiwi/huntaway), so every name
+// the system sees is its own: the Arch package huntaway-effect in /opt/Huntaway Effect, /usr/bin/huntaway-effect-desktop,
+// huntaway-effect-desktop.desktop (Electron's WM_CLASS) and its icon, "Huntaway Effect.app" and its bundle id on a Mac.
+// The old package is huntaway in /opt/Huntaway with huntaway-desktop. The release files keep the old names
+// (huntaway-<v>-<os>-<arch>.<ext>): they are on this repository's releases, and the updaters look for them by name.
 import { existsSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -35,18 +41,18 @@ for (const file of ["boot.cjs", "main.cjs", "preload.cjs"]) {
 
 const version = process.env["VERSION"]?.trim()
 const config: Configuration = {
-  appId: "nz.net.ivan.huntaway",
-  productName: "Huntaway",
+  appId: "nz.net.ivan.huntaway-effect",
+  productName: "Huntaway Effect",
   // The shell is bundled with its dependencies (vite.config.ts): the app carries no node_modules.
   files: ["dist/**", "package.json", "!node_modules/**"],
   extraResources: [{ from: server, to: ".", filter: ["**/*"] }],
   artifactName: "huntaway-${version}-${os}-${arch}.${ext}",
   // desktopName is Electron's app_id / WM_CLASS on Linux: the .desktop file is named after it, so that desktops match the
   // app's windows to it. $VERSION, when given, is the version the app reports.
-  extraMetadata: { desktopName: "huntaway-desktop.desktop", ...(version === undefined || version === "" ? {} : { version }) },
+  extraMetadata: { desktopName: "huntaway-effect-desktop.desktop", ...(version === undefined || version === "" ? {} : { version }) },
   linux: {
     target: ["AppImage", "pacman"],
-    executableName: "huntaway-desktop",
+    executableName: "huntaway-effect-desktop",
     syncDesktopName: true,
     category: "Development",
     icon: "build/icon.png",
@@ -55,7 +61,7 @@ const config: Configuration = {
     maintainer: "Huntaway <https://github.com/dire-kiwi/huntaway-effect>",
   },
   pacman: {
-    packageName: "huntaway",
+    packageName: "huntaway-effect",
     depends: ["gtk3", "nss", "alsa-lib", "libxss", "libxtst", "libnotify", "libsecret", "at-spi2-core", "xdg-utils", "git"],
     fpm: ["--description", "Kanban board for Claude Code and Codex agents"],
   },
