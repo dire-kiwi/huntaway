@@ -44,8 +44,11 @@ export const localeDateString = (at: At, options: Intl.DateTimeFormatOptions = {
 export const localeTimeString = (at: At, options: Intl.DateTimeFormatOptions = {}, locales?: Intl.LocalesArgument): string =>
   format(at, locales, options, "time")
 
+/** This browser's time zone, made once: making it builds an `Intl.DateTimeFormat`, which is slow in a loop. */
+const LOCAL = DateTime.zoneMakeLocal()
+
 /** A time in this browser's time zone. */
-export const local = (at: At): DateTime.Zoned => DateTime.makeZonedUnsafe(at, { timeZone: DateTime.zoneMakeLocal() })
+export const local = (at: At): DateTime.Zoned => DateTime.makeZonedUnsafe(at, { timeZone: LOCAL })
 
 /**
  * The parts of a time in this browser's time zone: `month` is 1 to 12 (`Date#getMonth` was 0 to 11), `weekDay` 0 for
@@ -55,4 +58,4 @@ export const localParts = (at: At): DateTime.DateTime.PartsWithWeekday => DateTi
 
 /** Milliseconds of a wall-clock time in this browser's time zone (`new Date(y, m - 1, d, …).getTime()`, month 1 to 12). */
 export const localMillis = (parts: Partial<DateTime.DateTime.Parts>): number =>
-  DateTime.toEpochMillis(DateTime.makeZonedUnsafe(parts, { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true }))
+  DateTime.toEpochMillis(DateTime.makeZonedUnsafe(parts, { timeZone: LOCAL, adjustForTimeZone: true }))
