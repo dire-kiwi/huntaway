@@ -187,6 +187,26 @@ export const requestRow = (old: OldRequest, promptPending: boolean): Readonly<Re
   }
 }
 
+/** The old board's prompts still pending (`permission_requests` rows): their ids and their message ids. */
+export interface PendingPrompts {
+  readonly ids: ReadonlySet<string>
+  readonly writes: ReadonlySet<number>
+}
+
+/**
+ * Whether a request is a prompt still pending in the old board: its id is the prompt's, or its `metadata.message_id`
+ * is the prompt's `message_id` (what the old `expire` went by, `set_message_status(message_id, "expired")`). A board
+ * question (`legacy:<n>`) has no prompt row, so it is not one: it stays answerable after its run, on the new server
+ * as on the old.
+ */
+export const isPendingPrompt = (old: OldRequest, pending: PendingPrompts): boolean => {
+  if (pending.ids.has(old.id)) return true
+  const value = parsed(old.data)
+  const metadata = Predicate.isObject(value) && Predicate.isObject(value["metadata"]) ? value["metadata"] : undefined
+  const write = writeNumber(metadata?.["message_id"])
+  return write !== null && pending.writes.has(write)
+}
+
 /** `review_thread_skills` and `thread_mcp_servers`, merged by task: one `thread_tools` row each. */
 export const toolsRows = (skills: ReadonlyArray<OldList>, disabled: ReadonlyArray<OldList>): ReadonlyArray<NewRow> => {
   const rows = new Map<string, { task_id: string; skills: string; disabled_mcp_servers: string }>()
@@ -377,14 +397,16 @@ const run = Effect.fnUntraced(function* (io: FamilyIo) {
   yield* io.write("threads", threadsCheck, threads.map(threadRow))
 
   // thread_requests, with the prompts still pending in the old board's permission_requests
-  const pending = new Set(
-    io.old.columns("permission_requests").has("status")
-      ? (yield* io.old.query(`SELECT id FROM permission_requests WHERE status = 'pending'`)).map((r) => String(r["id"]))
-      : [],
-  )
+  const pendingRows = io.old.columns("permission_requests").has("message_id")
+    ? yield* io.old.query(`SELECT id, message_id FROM permission_requests WHERE status = 'pending'`)
+    : []
+  const pending: PendingPrompts = {
+    ids: new Set(pendingRows.map((r) => String(r["id"]))),
+    writes: new Set(pendingRows.flatMap((r) => [writeNumber(r["message_id"])].filter((n) => n !== null))),
+  }
   const oldRequests = yield* decodeOld(io.report, "thread_requests", OldRequest, keyOf("task_id", "id"))(yield* io.old.rows("thread_requests", "task_id, pos"))
   yield* io.report.old("thread_requests", oldRequests.length)
-  const requestRows = oldRequests.map((r) => requestRow(r, pending.has(r.id)))
+  const requestRows = oldRequests.map((r) => requestRow(r, isPendingPrompt(r, pending)))
   for (const r of requestRows) marks.push(r["write_no"])
   yield* io.write("thread_requests", requestsCheck, yield* encodeAll(requestRows))
   /** Each task's requests as the translator takes them, for a task with kept messages. */

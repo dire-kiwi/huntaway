@@ -14,7 +14,18 @@ import { ThreadStore } from "../../../threads/ThreadStore.ts"
 import type { Family } from "../family.ts"
 import { importLegacy } from "../run.ts"
 import { FAMILIES } from "./index.ts"
-import { counterValue, insertionIndex, itemRow, LEGACY_MESSAGE, messageItems, requestRow, toolsRows, withMessages, writeNumber } from "./threads.ts"
+import {
+  counterValue,
+  insertionIndex,
+  isPendingPrompt,
+  itemRow,
+  LEGACY_MESSAGE,
+  messageItems,
+  requestRow,
+  toolsRows,
+  withMessages,
+  writeNumber,
+} from "./threads.ts"
 import type { OldItem, OldMessage, OldRequest, Prior } from "./threads.ts"
 
 // The threads family (docs/plan/11-migration.md, Table by table and Threads not yet items). The rows below are
@@ -172,6 +183,15 @@ describe("threads family: conversions", () => {
         ...(c.resolution === undefined ? {} : { resolution: c.resolution }),
       })
     }
+  })
+
+  it.each([
+    { name: "by its id", id: "perm-2", message_id: 99, expected: true },
+    { name: "by its message id", id: "other", message_id: 10, expected: true },
+    { name: "neither", id: "other", message_id: 11, expected: false },
+  ])("a request of a pending prompt is found $name", ({ id, message_id, expected }) => {
+    const old = oldRequest(permission({ status: "pending", message_id }), { id })
+    expect(isPendingPrompt(old, { ids: new Set(["perm-2"]), writes: new Set([10]) })).toBe(expected)
   })
 
   it("a request that is not JSON is passed on as it is (the row check reports it)", () => {
