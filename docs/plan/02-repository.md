@@ -205,7 +205,11 @@ digest, unpacked into `~/.local/share/huntaway-effect-server/<v>/`, `current` po
 `~/.local/share/huntaway-effect` and port 7879 unless told otherwise; it installs no service itself.
 `scripts/install.sh` installs the desktop app from source into `~/.local/share/huntaway-effect-app`, with a launcher
 `huntaway-effect-desktop` and a `huntaway-effect.desktop` entry ("Huntaway Effect.app" on macOS), so that it sits
-beside the old app until the switch. Their tests run them on fakes (`curl`, `systemctl`, `loginctl` on PATH, a HOME
+beside the old app until the switch. The release's desktop packages are named for that too (HE-12,
+`apps/desktop/scripts/dist.ts`): the Arch package is `huntaway-effect` in `/opt/Huntaway Effect` with
+`/usr/bin/huntaway-effect-desktop` and a `huntaway-effect-desktop.desktop` entry, and the Mac app "Huntaway Effect.app"
+(bundle id `nz.net.ivan.huntaway-effect`), so `pacman -U` installs it beside the old `huntaway` package rather than over
+it; the release files keep the names `huntaway-<v>-…` the updaters look for. Their tests run them on fakes (`curl`, `systemctl`, `loginctl` on PATH, a HOME
 of their own) and never touch the machine.
 
 **Pull request previews** are not in this repository, as they were not in the old one: the old previews were

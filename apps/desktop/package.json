@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Huntaway's desktop app: the Electron shell that finds or starts a server and shows its board",
-  "homepage": "https://github.com/dire-kiwi/huntaway",
+  "homepage": "https://github.com/dire-kiwi/huntaway-effect",
   "license": "MIT",
   "author": "Ivan Meredith",
   "type": "module",
