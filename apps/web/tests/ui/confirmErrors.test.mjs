@@ -57,15 +57,19 @@ test("a refused model change says so", async () => {
     )
     // In the message box (HA-326).
     await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click thread"])
-    const model = page.locator('select[title="Model"]')
-    await model.selectOption("opus")
+    const model = page.locator('button[title="Model"]')
+    const pick = async (name) => {
+      await model.click()
+      await page.getByRole("menuitemradio", { name }).click()
+    }
+    await pick(/^Opus/)
     await ui.run(["wait Couldn't change the model: disk full"])
-    assert.equal(await model.inputValue(), "", "it shows the saved model again")
+    await eventually(async () => assert.match(await model.innerText(), /default|Default model/, "it shows the saved model again"))
     // A specific model typed in: saved on Enter, and refused the same way.
-    await model.selectOption({ label: "Specific model…" })
+    await pick(/^Specific model/)
     await page.keyboard.type("claude-opus-5-5")
     await page.keyboard.press("Enter")
     await ui.run(["wait Couldn't change the model: disk full"])
-    assert.equal(await model.inputValue(), "", "it shows the saved model again")
+    await eventually(async () => assert.match(await model.innerText(), /default|Default model/, "it shows the saved model again"))
   })
 })

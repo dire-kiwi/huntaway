@@ -2,7 +2,7 @@
 // 6.4), from the old messageBox check.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { makeProject, makeTask, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, makeProject, makeTask, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 let server, board, notes
 beforeAll(async () => {
@@ -46,6 +46,56 @@ test("the / menu lists a skill saved in the project, and picks it", async () => 
   await withBrowser(server, {}, async (ui) => {
     await ui.run([`goto /t/${task.id}`, "click thread", "click css=textarea", "type /rel", "wait Write the release notes.", "press Enter"])
     assert.equal(await ui.page.locator("textarea").inputValue(), "/release-notes ")
+  })
+})
+
+// HE-2: the model and effort are menus in the app's style, like the permission mode beside them, rather than the
+// browser's selects; picking from one saves it on the task, and its default entry clears it.
+test("the model and effort menus save what's picked, by mouse or keyboard", async () => {
+  const task = await makeTask(server, board.project, { title: "Pickers", status: "in_review" })
+  const saved = async () => {
+    const t = await server.rpc("tasks.get", { id: task.id })
+    return { model: t.model ?? null, effort: t.effort ?? null }
+  }
+  const until = (want) => eventually(async () => assert.deepEqual(await saved(), want))
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    const model = page.locator("button[title='Model']")
+    const effort = page.locator("button[title='Effort']")
+    await ui.run([`goto /t/${task.id}`, "click thread", "wait css=button[title='Model']"])
+    assert.equal(await page.locator("select[title='Model'], select[title='Effort']").count(), 0)
+
+    await model.click()
+    await page.getByRole("menuitemradio", { name: /^Sonnet/ }).click()
+    await until({ model: "sonnet", effort: null })
+    await page.getByRole("menuitemradio").first().waitFor({ state: "detached" })
+    await eventually(async () => assert.match(await model.innerText(), /Sonnet/))
+
+    // The keyboard: ArrowUp opens it on the chosen effort (the default), ArrowDown moves on, Enter picks.
+    await effort.focus()
+    await page.keyboard.press("ArrowUp")
+    await page.locator("[role=menuitemradio][aria-checked=true]:focus").waitFor()
+    await page.keyboard.press("ArrowDown")
+    await page.keyboard.press("Enter")
+    await until({ model: "sonnet", effort: "low" })
+    await eventually(async () => assert.match(await effort.innerText(), /low effort/))
+
+    // Escape closes it without a change, back on its button.
+    await page.keyboard.press("ArrowDown")
+    await page.getByRole("menu", { name: "Effort" }).waitFor()
+    await page.keyboard.press("Escape")
+    await page.getByRole("menu", { name: "Effort" }).waitFor({ state: "detached" })
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("title")), "Effort")
+
+    // A specific model, typed in; then back to the default.
+    await model.click()
+    await page.getByRole("menuitemradio", { name: /^Specific model/ }).click()
+    await page.keyboard.type("claude-opus-5-5")
+    await page.keyboard.press("Enter")
+    await until({ model: "claude-opus-5-5", effort: "low" })
+    await model.click()
+    await page.getByRole("menuitemradio", { name: /^Default model/ }).click()
+    await until({ model: null, effort: "low" })
   })
 })
 
