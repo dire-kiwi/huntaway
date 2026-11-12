@@ -169,6 +169,7 @@ read-only, and the server's CPU meanwhile); ten runs at once. Medians, with the 
 | Follower: 10,000 lines, first written to last stored (5)              | 3,165 ms                | 982 ms              | **3.2×**      | ≤ 1.5×   | **no**  |
 | … CPU per line / SQL statements per line                              | 0.39 ms / 8.1           | 0.106 ms            | 3.7×          |          |         |
 | … the same lines without `usage` (4)                                  | 1,333 ms, 0.18 ms / 6.1 | 720 ms, 0.08 ms     | **1.85×**     | ≤ 1.5×   | **no**  |
+| Follower after the context meter's fix, alternating with the old (7)  | 1,417 ms, 0.17 ms       | 920 ms, 0.12 ms     | **1.54×**     | ≤ 1.5×   | at it   |
 | Board's first message (snapshot; old: its 16 loads) (6)               | 164 ms, 4.9 MB          | 84 ms, 5.0 MB       | 1.95×         | recorded |         |
 | `approval-hook`, cold / warm compile cache (2 × 9)                    | 60 / 30 ms              | 52 / 25 ms          | 1.15× / 1.2×  | < 60 ms  | warm only |
 | `pnpm check` / `pnpm test` (3)                                        | 14.1 s / 28.9 s         |                     |               | recorded |         |
@@ -184,8 +185,11 @@ tasks is 450 ms more than fresh on the new server and 15 ms on the old: not look
 new server's thread for 57 to 77 ms (the probe's slowest answer meanwhile). The hook's cold start is at its limit (60
 and 61 ms medians; M2 56 ms); the warm one, which an agent's calls find, is well under it.
 
-**Three are over their limits.** Memory with runs live and after (1.9× to 2.1×, still 1.6× a minute later; at idle
+**Three were over their limits.** Memory with runs live and after (1.9× to 2.1×, still 1.6× a minute later; at idle
 1.38× to 1.48×), the follower (3.2×, and 1.85× even without `usage`), and the hook's cold start (60 ms, not under).
+The follower's first cause is fixed (below): 1.54× the old server, seven floods each, new and old alternating at a load
+of 2 (one set of four gave 1.46×), so at its limit rather than within it. Memory with runs and the hook's cold start are
+as measured, and open.
 
 The follower: the plan's first step (precompiled line decoders, no per-line span) has been in since M2 (HE-4) and still
 is (`RunOutput`'s and the Claude output's handlers are `Effect.fnUntraced`, the follower runs with the tracer off), so
@@ -195,7 +199,10 @@ there was nothing of it left to try. What the measurement found instead:
   line's commit and so outside the 64-line transaction: an `UPDATE runs SET turn_start_tokens…` and a whole task read
   (`TaskRepo.get`, the task row with its queue as `json_group_array`, 78 µs of SQLite and its decoding) only to find the
   tokens unchanged. Those are 2 of the 8.1 statements a line and about half its time: with the call skipped (an
-  experiment, not kept) the flood took 1,580 to 2,000 ms. HE-4's 6.1 statements say its lines had no `usage`.
+  experiment, not kept) the flood took 1,580 to 2,000 ms. HE-4's 6.1 statements say its lines had no `usage`. Fixed
+  (HE-8): the meter remembers the tokens each task's run last noted and skips a line that repeats them (one reply
+  comes as several lines with the same usage), forgetting them at a turn's end, a compaction and any other change to
+  the task's context; `ContextMeter.test.ts` holds that a turn starting at the last turn's size still has its start.
 - **Without `usage`**, the statements are M2's 6.1 a line, but the CPU a line has gone from 0.098 to 0.18 ms (the old
   server's from 0.072 to 0.08 on this day's machine), and the time from 770 to 1,333 ms. The profile: SQLite a quarter,
   then the Effect runtime and `Context` lookups, schema decoding and GC; the work added to each line's `follow` since M2
