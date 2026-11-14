@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, FileSystem, Layer, Option, Path, Redacted, Ref, Schema } from "effect"
+import { Clock, Context, Effect, Equal, FileSystem, Layer, Option, Path, Redacted, Ref, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import type { HttpClientResponse } from "effect/http"
 import type { AgentConfigId, Timestamp, Usage as UsageData, UsageAccount, UsageLimit } from "@huntaway/contracts"
@@ -16,7 +16,9 @@ import { codexOutUntil, field, mergeLimits, parseLimits, parseTime, poolLimits, 
 // Two sources feed it: Anthropic's OAuth usage endpoint (what `/usage` in Claude Code shows), called with the config's
 // own login, and the `rate_limit_event`s agents print as they run. The login is only read, never refreshed:
 // refreshing rotates the token underneath any `claude` running with the config. An expired login refreshes on the
-// config's next run.
+// config's next run. What either changes is emitted as a `usage` event, which is how the board gets it: the old board
+// kept `GET /usage`'s answer, but the sidebar's poll of `host.usage` only asks. A fetch that only gives what's kept
+// already emits nothing.
 //
 // Only configs with `show_usage` on are fetched and listed. The endpoint's rate limit is per account, and every host
 // with a copy of the login (PR previews, test servers) would otherwise poll it too.
@@ -90,7 +92,7 @@ export interface UsageShape {
   readonly list: (refresh: boolean) => Effect.Effect<ReadonlyArray<UsageData>>
   /** What is known now, without fetching: the configs that show their usage, and any other a run said is out. For the board's snapshot. */
   readonly snapshot: Effect.Effect<ReadonlyArray<UsageData>>
-  /** Fetch a config's usage now: whether that worked (the last numbers stay, with the error, if it didn't). Fetches don't emit. */
+  /** Fetch a config's usage now: whether that worked (the last numbers stay, with the error, if it didn't). What changed is emitted as `usage`. */
   readonly refresh: (config: AgentConfigId) => Effect.Effect<boolean>
   /**
    * A `rate_limit_event` line from a run on `config`: its session and weekly limits merged in, and whether it is out of
@@ -292,7 +294,8 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
         const result = yield* Effect.result(fetch)
         const now = yield* Clock.currentTimeMillis
         const at = yield* nowTimestamp
-        yield* change(row.id, ({ usage }) =>
+        const before = (yield* entryOf(row.id))?.usage ?? null
+        const after = yield* change(row.id, ({ usage }) =>
           result._tag === "Success"
             ? {
                 // A fresh fetch is the whole picture: limits it no longer reports go.
@@ -308,6 +311,8 @@ export class Usage extends Context.Service<Usage, UsageShape>()("huntaway-server
               }
             : { usage: { ...usage, error: result.failure.reason }, fetched: now },
         )
+        // The board shows what was fetched (the sidebar's poll of `host.usage` doesn't read the answer).
+        if (after !== null && !Equal.equals(after, before)) yield* events.emit({ type: "usage", usage: after })
         if (result._tag === "Failure") yield* Effect.logDebug(`usage: config=${row.id} fetch failed: ${result.failure.reason}`)
         return result._tag === "Success"
       })

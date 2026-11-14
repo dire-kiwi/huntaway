@@ -209,12 +209,20 @@ describe("Usage", () => {
         const dir = `${yield* tempDir}/claude`
         const off = yield* config({ config_dir: dir })
         const on = yield* config({ config_dir: dir, show_usage: true })
+        const events = yield* Events
+        const seq = yield* events.seq
         const listed = yield* usage.list(false)
         assert.strictEqual(listed.length, 1)
         assert.strictEqual(listed[0]?.config_id, on)
         assert.isTrue(listed[0]?.error?.startsWith("No Claude login"), listed[0]?.error ?? "")
         assert.isNull(yield* usage.get(off))
         assert.deepStrictEqual(yield* Ref.get(seen), [])
+        // The board is told of the error once, not again for the same one.
+        const told = yield* events.seq
+        assert.strictEqual(told, seq + 1)
+        yield* TestClock.adjust("30 seconds")
+        yield* usage.list(true)
+        assert.strictEqual(yield* events.seq, told)
         // The snapshot has it, without fetching.
         assert.deepStrictEqual(
           (yield* usage.snapshot).map((u) => u.config_id),
@@ -255,8 +263,8 @@ describe("Usage", () => {
             asked.map((r) => [r.method, r.url, r.authorization]),
             [["GET", USAGE_URL, "Bearer tok"]],
           )
-          // Fetches don't emit: the client asks for them.
-          assert.strictEqual(yield* (yield* Events).seq, seq)
+          // The board is told what was fetched.
+          assert.isAbove(yield* (yield* Events).seq, seq)
           // Fresh for four minutes, or 30 seconds when a refresh is asked for.
           yield* usage.list(true)
           assert.strictEqual((yield* Ref.get(seen)).length, 1)
