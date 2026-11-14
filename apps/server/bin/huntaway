@@ -1,5 +1,5 @@
 #!/bin/sh
-# The huntaway server's launcher: `huntaway serve …` and its other subcommands. Carried over from dire-kiwi/huntaway
+# The huntaway server's launcher: `huntaway serve …` and its other subcommands. Carried over from dire-kiwi/huntaway-legacy
 # (apps/server/bin/huntaway at f2298f0c) with the entry file renamed (src/bin.ts), the hooks as entry files of their own
 # (src/hooks/), and its variables under HUNTAWAY_* (docs/plan/02-repository.md). It keeps the server's PID stable across
 # restarts, restarts a crashed server with backoff, and execs what the server asks for on exit code 75.

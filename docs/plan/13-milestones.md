@@ -10,7 +10,7 @@ A task's description on the board says, in this order:
 
 1. The pages of this plan to read: always [12-conventions.md](12-conventions.md), then the ones in its row.
 2. The inventory sections that are its checklist, and the old source paths they describe
-   (`dire-kiwi/huntaway` at `f2298f0c`, to be read for behaviour, not for structure).
+   (`dire-kiwi/huntaway-legacy` at `f2298f0c`, to be read for behaviour, not for structure).
 3. The old test files whose cases it ports ([10-testing.md](10-testing.md)).
 4. `node_modules/effect/AGENTS.md`, and `docs/plan/spike/` for the shapes that were run.
 

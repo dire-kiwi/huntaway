@@ -187,7 +187,7 @@ Its tools are `mcp__google__…`.
    the server.
 
 On a test server, the old repository's
-[`scripts/stub-google-mcp.py`](https://github.com/dire-kiwi/huntaway/blob/master/scripts/stub-google-mcp.py) (not in
+[`scripts/stub-google-mcp.py`](https://github.com/dire-kiwi/huntaway-legacy/blob/master/scripts/stub-google-mcp.py) (not in
 this one) stands in for workspace-mcp: an MCP server over stdio
 with a few of its tools by name and canned mail, events and files for today (one mail a prompt
 injection), which logs each call to `$STUB_GOOGLE_LOG`. Make it the Google server's command
@@ -202,7 +202,7 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
 1. **Install a host there** from a release, as the user the assistant should run as:
 
    ```sh
-   curl -fsSLO https://raw.githubusercontent.com/dire-kiwi/huntaway-effect/main/scripts/install-release-host.sh
+   curl -fsSLO https://raw.githubusercontent.com/dire-kiwi/huntaway/main/scripts/install-release-host.sh
    sh install-release-host.sh
    ```
 
@@ -217,7 +217,7 @@ agents run, and its agents can't read the hub's files or database. Set it up lik
    `~/.ssh/authorized_keys` on the machine, with the forced command the script printed:
 
    ```text
-   restrict,port-forwarding,permitopen="127.0.0.1:7879",command="HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway-effect '/home/me/.local/share/huntaway-effect-server/current/huntaway' ssh-host --port 7879 --data-dir '/home/me/.local/share/huntaway-effect'" ssh-ed25519 AAAA… huntaway-hub@<hub>
+   restrict,port-forwarding,permitopen="127.0.0.1:7879",command="HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway '/home/me/.local/share/huntaway-effect-server/current/huntaway' ssh-host --port 7879 --data-dir '/home/me/.local/share/huntaway-effect'" ssh-ed25519 AAAA… huntaway-hub@<hub>
    ```
 
    The hub tunnels to the host through that command, so it listens on its own localhost only and

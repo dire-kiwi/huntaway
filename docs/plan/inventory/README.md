@@ -1,6 +1,6 @@
 # Inventory of the old code
 
-What Huntaway does today, area by area, read from `dire-kiwi/huntaway` at commit `f2298f0c` (11 November 2026). These
+What Huntaway does today, area by area, read from `dire-kiwi/huntaway-legacy` at commit `f2298f0c` (11 November 2026). These
 eleven notes are the checklist the port is held to: each lists an area's capabilities, data, in-memory state, processes,
 timers, routes, events and the rules its comments record, and ends with what looks accidental and what is essential.
 

@@ -16,7 +16,7 @@ export const VAPID_SECRET = "vapid_key"
  * Who runs the board, for push services to contact (RFC 8292's `sub`); Apple's turns away a token without one. The old
  * `IA_PUSH_SUBJECT` that changed it isn't carried (docs/plan/06-server.md, As built in 6.8).
  */
-export const SUBJECT = "https://github.com/dire-kiwi/huntaway-effect"
+export const SUBJECT = "https://github.com/dire-kiwi/huntaway"
 
 /** How long a push service has to answer. */
 export const PUSH_TIMEOUT = "30 seconds"

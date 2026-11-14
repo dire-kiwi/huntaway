@@ -30,9 +30,9 @@ const wire = {
   remind_at: null,
   reminder: null,
   preview_url: null,
-  pr_url: "https://github.com/dire-kiwi/huntaway-effect/pull/3",
+  pr_url: "https://github.com/dire-kiwi/huntaway/pull/3",
   pr_checks: {
-    url: "https://github.com/dire-kiwi/huntaway-effect/pull/3",
+    url: "https://github.com/dire-kiwi/huntaway/pull/3",
     head: "abc123",
     outcome: "failed",
     failed: [{ name: "CI / check", conclusion: "failure", url: null }],

@@ -1,6 +1,6 @@
 # huntaway-effect
 
-[Huntaway](https://github.com/dire-kiwi/huntaway), a kanban board for orchestrating Claude Code and Codex agents,
+[Huntaway](https://github.com/dire-kiwi/huntaway-legacy), a kanban board for orchestrating Claude Code and Codex agents,
 written again on [Effect](https://effect.website) v4.
 
 The port is under way. **[docs/plan/](docs/plan/README.md)** is the plan: the architecture, the directory layout

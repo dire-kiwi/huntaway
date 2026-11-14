@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install a host from a GitHub release's server tarball, to update from releases. Carried over from dire-kiwi/huntaway
+# Install a host from a GitHub release's server tarball, to update from releases. Carried over from dire-kiwi/huntaway-legacy
 # (scripts/install-release-host.sh at f2298f0c) under the new names (docs/plan/02-repository.md, Releases).
 #
 #   scripts/install-release-host.sh [--version <v>] [--dir <dir>] [--data-dir <dir>] [--port <port>] [--repo <OWNER/REPO>]
@@ -10,7 +10,7 @@
 # a user systemd service on Linux, or by hand), and the forced command for a hub that links it over SSH.
 set -eu
 
-repo=dire-kiwi/huntaway-effect
+repo=dire-kiwi/huntaway
 version=
 dir=${XDG_DATA_HOME:-$HOME/.local/share}/huntaway-effect-server
 data_dir=${XDG_DATA_HOME:-$HOME/.local/share}/huntaway-effect

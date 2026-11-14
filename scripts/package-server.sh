@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Puts together a release of the server from this checkout: a folder that runs on its own (its own Node, no install
 # step), as the server tarball and the desktop app's resources carry it, and the tarball. Carried over from
-# dire-kiwi/huntaway (scripts/package-server.sh at f2298f0c) for the new server (docs/plan/02-repository.md, Releases).
+# dire-kiwi/huntaway-legacy (scripts/package-server.sh at f2298f0c) for the new server (docs/plan/02-repository.md, Releases).
 #
 #   scripts/package-server.sh <out dir> [<node binary>]
 #

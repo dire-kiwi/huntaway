@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Scratch huntaway server for testing a worktree build, kept apart from the live boards (the old server on 7878, the
-# new one on 7879): a fresh data dir, 127.0.0.1 only, a free port, no hub. Carried over from dire-kiwi/huntaway
+# new one on 7879): a fresh data dir, 127.0.0.1 only, a free port, no hub. Carried over from dire-kiwi/huntaway-legacy
 # (scripts/test-server.sh at f2298f0c) for the new server (docs/plan/10-testing.md, Tools for agents).
 #
 #   scripts/test-server.sh [start] [options] [serve args...]   # e.g. start --seed --demo

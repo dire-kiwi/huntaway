@@ -3,7 +3,7 @@
 # arguments), in a temp folder with a HOME of its own: the commands it prints run the installed server on the data dir
 # and port it was given (or the defaults), as they are, through a shell, and through authorized_keys' quoting; it picks
 # the highest release, refuses a tarball that doesn't match its sha256, and touches no service (systemctl and loginctl
-# on PATH fail the test if run). Carried over from dire-kiwi/huntaway (scripts/install-release-host-test.sh).
+# on PATH fail the test if run). Carried over from dire-kiwi/huntaway-legacy (scripts/install-release-host-test.sh).
 #
 #   sh scripts/install-release-host-test.sh
 set -eu
@@ -83,7 +83,7 @@ check() {
   [ -n "$ssh" ] || fail "no forced command in: $out"
   for cmd in "$serve" "$service" "$ssh"; do
     got=$(sh -c "$cmd" 2>&1) || fail "$cmd didn't run: $got"
-    printf '%s\n' "$got" | grep -qxF 'updates=dire-kiwi/huntaway-effect' || fail "no HUNTAWAY_RELEASE_UPDATES from: $cmd"
+    printf '%s\n' "$got" | grep -qxF 'updates=dire-kiwi/huntaway' || fail "no HUNTAWAY_RELEASE_UPDATES from: $cmd"
     printf '%s\n' "$got" | grep -A1 -xF -- '--data-dir' | tail -n1 | grep -qxF -- "$want" || fail "not on $want: $cmd gave: $got"
     printf '%s\n' "$got" | grep -A1 -xF -- '--port' | tail -n1 | grep -qxF -- "$want_port" || fail "not on port $want_port: $cmd gave: $got"
   done

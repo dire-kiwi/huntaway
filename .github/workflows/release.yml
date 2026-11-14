@@ -1,5 +1,5 @@
 # Builds the server for hosts and the desktop app, for Linux and macOS, when a GitHub release is published, and attaches
-# them to that release. The shape is the old repository's (dire-kiwi/huntaway, .github/workflows/release.yml), less
+# them to that release. The shape is the old repository's (dire-kiwi/huntaway-legacy, .github/workflows/release.yml), less
 # the phone app (docs/plan/14-dropped-and-open.md). How a release is made and checked: docs/plan/02-repository.md,
 # Releases.
 #

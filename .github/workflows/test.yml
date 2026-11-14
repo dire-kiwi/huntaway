@@ -6,7 +6,7 @@
 # A run tests a tree (the files of the commit it checks out), and a tree that a run has passed isn't tested again: the
 # `tree` job finds the earlier run and the other jobs are skipped, which GitHub and the board count as passed. To test a
 # tree again whatever passed before, run the workflow by hand (workflow_dispatch) or use "Re-run all jobs". The shape is
-# the old repository's (dire-kiwi/huntaway, .github/workflows/test.yml), which explains each part at length.
+# the old repository's (dire-kiwi/huntaway-legacy, .github/workflows/test.yml), which explains each part at length.
 #
 # The owner's own jobs can run on self-hosted runners (labels self-hosted and huntaway): set the repository variable
 # SELF_HOSTED_USER to the owner's login. Everything else, and every job while the variable isn't set, runs on

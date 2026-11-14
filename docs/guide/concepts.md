@@ -725,7 +725,7 @@
   "$IA_REPO_PATH/scripts/clean-worktree.sh" "$IA_WORKTREE_PATH"
   ```
 
-  [`scripts/clean-worktree.sh`](https://github.com/dire-kiwi/huntaway/blob/master/scripts/clean-worktree.sh)
+  [`scripts/clean-worktree.sh`](https://github.com/dire-kiwi/huntaway-legacy/blob/master/scripts/clean-worktree.sh)
   (not in this repository) only cleans linked worktrees, never the main checkout the daemon
   runs from, and keeps `node_modules`. A task that's reopened builds again from scratch.
 

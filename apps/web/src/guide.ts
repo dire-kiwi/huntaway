@@ -18,7 +18,7 @@ export const GUIDE_PAGES = [
 ] as const
 
 /** Where the guide's links to the rest of the repository (READMEs, design notes) go. */
-export const REPO_URL = "https://github.com/dire-kiwi/huntaway-effect/blob/main/"
+export const REPO_URL = "https://github.com/dire-kiwi/huntaway/blob/main/"
 
 export const isGuidePage = (page: string): boolean => GUIDE_PAGES.some((p) => p.page === page)
 

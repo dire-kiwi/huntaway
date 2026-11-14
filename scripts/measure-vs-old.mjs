@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The measurements of docs/plan/10-testing.md (Measurements) on a test server, the new one (scripts/test-server.sh) or
-// the old one (dire-kiwi/huntaway's scripts/test-server.sh at f2298f0c), told apart by its env file (HUNTAWAY_TEST_* or
+// the old one (dire-kiwi/huntaway-legacy's scripts/test-server.sh at f2298f0c), told apart by its env file (HUNTAWAY_TEST_* or
 // IA_TEST_*). Test servers on 127.0.0.1 only, never 7878 or 7879; the database is only ever opened read-only.
 //
 //   node scripts/measure-vs-old.mjs <what> --env <env file or data dir> [options]

@@ -163,7 +163,7 @@ describe("how the app was installed, and what it can install of itself", () => {
 
     const desktop = { version: "0.2.0", shell: "abc", install: "pacman", bundled: "/opt/Huntaway/resources/huntaway" }
     expect(releaseEnv({ releaseUpdates: null, ...desktop })).toEqual({
-      HUNTAWAY_RELEASE_UPDATES: "dire-kiwi/huntaway-effect",
+      HUNTAWAY_RELEASE_UPDATES: "dire-kiwi/huntaway",
       HUNTAWAY_DESKTOP_VERSION: "0.2.0",
       HUNTAWAY_DESKTOP_SHELL: "abc",
       HUNTAWAY_DESKTOP_INSTALL: "pacman",
