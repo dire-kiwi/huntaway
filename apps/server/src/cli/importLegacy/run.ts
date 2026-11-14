@@ -38,6 +38,11 @@ export interface ImportOptions {
   readonly rehearsal: boolean
   /** `--db`: which old database file, when the old folder has more than one. */
   readonly database: Option.Option<string>
+  /**
+   * `--replace`: the new folder may have a board already (one used before the switch). With its server stopped, its
+   * board and the files an import writes are set aside under `replaced-<time>/` and the import takes their place.
+   */
+  readonly replace?: boolean | undefined
   /** The families to run, for tests (every family of `FAMILIES` when not given). */
   readonly families?: ReadonlyArray<Family> | undefined
 }
@@ -246,6 +251,75 @@ const dropDangling = Effect.fnUntraced(function* (sql: SqlClient.SqlClient, repo
   }
 })
 
+/**
+ * What `--replace` sets aside of the board already in the new folder: its database and import files, and every file an
+ * import writes there (the identity, `ssh/`, attachments, skill sources and run folders), so the imported board starts
+ * with none of the replaced one's and the replaced one can be put back as it was. Worktrees (`projects/`), profile
+ * scratch folders and the tmux socket stay: worktrees are registered in their repositories by path.
+ */
+export const REPLACED_FILES: ReadonlyArray<string> = [
+  "board.db",
+  "board.db-wal",
+  "board.db-shm",
+  IMPORT_FILE,
+  "import-report.json",
+  "host_id",
+  "auth_token",
+  "hub_token",
+  "ssh",
+  "attachments",
+  "skill-sources",
+  "runs",
+]
+
+/** The folder `--replace` sets the board aside in: `replaced-<time>`, the time without colons. */
+const replacedFolder = (to: string, now: string) => `${to}/replaced-${now.replaceAll(":", "-")}`
+
+/** Why the board in `to` cannot be replaced: its server running, or runs of it still live. */
+const replaceRefusals = Effect.fnUntraced(function* (boardFile: string, force: boolean) {
+  const open = yield* processesWithOpen(boardFile)
+  if (open.length > 0) return [`processes ${open.join(", ")} have ${boardFile} open: stop the new server first, then replace its board`]
+  if (force) return []
+  const live = yield* using(sqliteAt(boardFile, true))(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const tables = yield* sql<{ readonly name: string }>`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'`
+      if (tables.length === 0) return []
+      return yield* sql<{ readonly id: string }>`SELECT id FROM runs WHERE status <> 'exited' ORDER BY seq`
+    }),
+  ).pipe(Effect.orDie)
+  return live.length > 0
+    ? [`${live.length} runs of the board being replaced are live (${listed(live.map((r) => r.id))}): wait for them to end, or --force replaces it anyway`]
+    : []
+})
+
+/** Moves the replaced board's files into `aside`; returns the names it moved. */
+const setAside = Effect.fnUntraced(function* (to: string, aside: string) {
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.makeDirectory(aside, { recursive: true, mode: 0o700 })
+  const moved: Array<string> = []
+  for (const name of REPLACED_FILES) {
+    if (!(yield* fs.exists(`${to}/${name}`))) continue
+    yield* fs.rename(`${to}/${name}`, `${aside}/${name}`)
+    moved.push(name)
+  }
+  return moved
+})
+
+/** Puts back what `setAside` moved, over whatever a failed import left in its place. */
+const putBack = (to: string, aside: string, moved: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    for (const name of REPLACED_FILES) {
+      if (!moved.includes(name)) yield* fs.remove(`${to}/${name}`, { recursive: true, force: true })
+    }
+    for (const name of moved) {
+      yield* fs.remove(`${to}/${name}`, { recursive: true, force: true })
+      yield* fs.rename(`${aside}/${name}`, `${to}/${name}`)
+    }
+    yield* fs.remove(aside, { recursive: true, force: true })
+  })
+
 /** Copies `name` from the old folder to the new one, if it is there. */
 const copyOver = Effect.fnUntraced(function* (from: string, to: string, name: string) {
   const fs = yield* FileSystem.FileSystem
@@ -280,9 +354,17 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
   const oldFile = path.join(from, database)
   const boardFile = path.join(to, "board.db")
   const existing = yield* readImportRecord(to)
-  const checkOnly = options.check && (yield* fs.exists(boardFile)) && Option.isSome(existing) && existing.value.from === from
-  if (!checkOnly && (yield* fs.exists(boardFile)))
-    return yield* refuse([`${to} has a board.db already: move it aside first (a board tried out there is not merged with an import)`])
+  const replace = options.replace === true
+  const hasBoard = yield* fs.exists(boardFile)
+  const checkOnly = !replace && options.check && hasBoard && Option.isSome(existing) && existing.value.from === from
+  if (!checkOnly && hasBoard && !replace)
+    return yield* refuse([
+      `${to} has a board.db already: move it aside first, or --replace sets it aside and imports in its place (a board tried out there is not merged with an import)`,
+    ])
+  if (replace && hasBoard) {
+    const reasons = yield* replaceRefusals(boardFile, options.force)
+    if (reasons.length > 0) return yield* refuse(reasons)
+  }
   if (!options.rehearsal) {
     const open = yield* processesWithOpen(oldFile)
     if (open.length > 0)
@@ -302,6 +384,9 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
     Effect.ignore,
   )
   const report = yield* makeReport({ from, database, at: now, rehearsal })
+  // `--replace`: where the board already there was set aside, once the old database has passed its preconditions.
+  const aside = replacedFolder(to, now)
+  const replaced: { current: { readonly folder: string; readonly moved: ReadonlyArray<string> } | null } = { current: null }
   // The check alone, on the copy and the board as they are.
   const checkAlone = Effect.scoped(
     Effect.gen(function* () {
@@ -316,6 +401,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
         const old = yield* makeOldDb(yield* SqlClient.SqlClient)
         const reasons = yield* preconditions(old, options)
         if (reasons.length > 0) return yield* refuse(reasons)
+        if (replace && hasBoard) replaced.current = { folder: aside, moved: yield* setAside(to, aside) }
         return yield* using(Layer.provideMerge(Db.layerOver, sqliteAt(partial)))(
           Effect.gen(function* () {
             const sql = yield* SqlClient.SqlClient
@@ -356,10 +442,14 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
     for (const f of [`${partial}-wal`, `${partial}-shm`]) yield* fs.remove(f, { force: true })
     yield* fs.rename(partial, boardFile)
   })
-  // A failed import leaves no board and no record (what it copied stays, and a new try copies it again).
-  const undo = Effect.forEach([partial, `${partial}-wal`, `${partial}-shm`, recordFile], (f) => fs.remove(f, { force: true }), {
-    concurrency: 1,
-    discard: true,
+  // A failed import leaves no board and no record (what it copied stays, and a new try copies it again). With
+  // `--replace` over a board, the record there is that board's until it is set aside: a failure before then (the old
+  // database refused, say) leaves it, and one after puts the whole board back as it was.
+  const undo = Effect.gen(function* () {
+    yield* Effect.forEach([partial, `${partial}-wal`, `${partial}-shm`], (f) => fs.remove(f, { force: true }), { concurrency: 1, discard: true })
+    const set = replaced.current
+    if (set !== null) yield* putBack(to, set.folder, set.moved)
+    else if (!(replace && hasBoard)) yield* fs.remove(recordFile, { force: true })
   }).pipe(Effect.ignore)
   yield* (checkOnly ? checkAlone : importAll).pipe(
     Effect.ensuring(removeCopy),
@@ -367,7 +457,7 @@ export const importLegacy = Effect.fn("importLegacy")(function* (options: Import
   )
   const result = yield* report.get
   yield* fs.writeFileString(reportFile, `${yield* encodeReport(result)}\n`, { mode: 0o600 })
-  return { report: result, passes: reportPasses(result), reportFile, checkOnly }
+  return { report: result, passes: reportPasses(result), reportFile, checkOnly, replaced: replaced.current?.folder ?? null }
 })
 
 /**

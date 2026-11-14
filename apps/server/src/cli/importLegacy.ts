@@ -3,8 +3,8 @@ import { Command, Flag } from "effect/cli"
 import { serveFlags } from "../platform/ServerConfig.ts"
 import { importLegacy } from "./importLegacy/run.ts"
 
-// `huntaway import-legacy --from <old data folder> [--data-dir <new folder>] [--check] [--force] [--rehearsal] [--db <file>]`
-// (docs/plan/11-migration.md, The importer). The work is `importLegacy/run.ts`; this decodes the flags, says what
+// `huntaway import-legacy --from <old data folder> [--data-dir <new folder>] [--check] [--force] [--rehearsal] [--db <file>]
+// [--replace]` (docs/plan/11-migration.md, The importer). The work is `importLegacy/run.ts`; this decodes the flags, says what
 // happened, and exits 1 when `--check` finds a failure.
 
 /** The command's own way out: what it says is already on stdout or stderr, so the runtime only takes its exit code. */
@@ -27,6 +27,12 @@ const flags = {
     Flag.withDescription("Beside a running old server: a board with no identity or credentials of the old host's, which only a read-only server opens"),
     Flag.withDefault(false),
   ),
+  replace: Flag.Boolean("replace").pipe(
+    Flag.withDescription(
+      "The new folder has a board already, to be replaced: with its server stopped, set it aside under replaced-<time>/ in that folder and import in its place",
+    ),
+    Flag.withDefault(false),
+  ),
   database: Flag.String("db").pipe(Flag.withDescription("Which old database file, when the old folder has more than one"), Flag.optional),
 }
 
@@ -41,6 +47,7 @@ export const importLegacyCommand = Command.make("import-legacy", flags, (args) =
     const tables = Object.entries(r.tables)
       .map(([t, c]) => `  ${t}: ${c.written} written${c.withheld > 0 ? `, ${c.withheld} withheld` : ""} (old ${c.old})`)
       .join("\n")
+    if (result.replaced !== null) yield* Console.log(`The board that was in ${dataDir} is set aside in ${result.replaced}.`)
     if (!result.checkOnly) yield* Console.log(`Imported ${r.from}/${r.database} into ${dataDir}${r.rehearsal ? " as a rehearsal (read-only)" : ""}:\n${tables}`)
     yield* Console.log(
       `${r.failures.length} failures, ${r.json.length} JSON values the new schema does not read, ${r.notes.length} notes${r.check === null ? "" : `; the check found ${r.check.problems.length} problems`}. The report is ${result.reportFile}.`,

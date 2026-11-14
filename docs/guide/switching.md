@@ -120,8 +120,11 @@ The importer says why it won't go ahead, and names the tasks and runs a reason i
   Once it passes, start the old server again so the task moves. A task still listed after that has history the old
   server can't read: that's a bug to fix in the old repository, as the importer has no way to drop a thread. `--force`
   doesn't override this.
-- **The new folder already has a `board.db`** (a board tried out there): move it aside first. An import is never
-  merged into another board.
+- **The new folder already has a `board.db`** (a board tried out there, or used before the switch): move it aside
+  first, or replace it with `--replace` (see _Switching onto a board already in use_). An import is never merged into
+  another board.
+- **The new server has its `board.db` open**, or **runs of the board being replaced are live** (with `--replace`):
+  stop the new server, and wait for its agents to finish (`--force` records them as interrupted).
 - **The old folder has more than one database file**: name the one the old server used with `--db huntaway-2.db`.
 
 ## A throwaway switch
@@ -186,6 +189,37 @@ Pick a quiet moment: the board is down from step 3 until step 7.
 7. **Check it works**: open a task and send a message (the agent's session resumes), open its terminal (a new
    shell in the task's worktree, see _Terminals start afresh_ above), look at the Changes tab, and check that a webhook automation fires (Settings →
    Automations shows its runs).
+
+## Switching onto a board already in use
+
+If this machine has run the new server for a while, `~/.local/share/huntaway-effect` has a board of its own: profiles,
+projects and tasks made there. The switch **replaces** that board with the old one; nothing of the two is merged.
+`scripts/switch-board.sh`, in a checkout of this repository (after `pnpm install`), does it in one go:
+
+1. **Rehearse**, beside both running servers: `scripts/switch-board.sh --rehearse` imports a snapshot of the old
+   board into a fresh folder under `$TMPDIR` as a [rehearsal](#the-rehearsal) and stops there. Read its report.
+2. **Stop both servers**: the old one for good, and the new one (quit both desktop apps, or stop their `huntaway
+   serve`), once no agent of either board is running.
+3. **Switch**: `scripts/switch-board.sh` (`--from` and `--data-dir` if the folders are elsewhere; it asks before
+   going ahead, `--yes` doesn't). It runs
+
+   ```sh
+   huntaway import-legacy --from ~/.local/share/issue-agent --data-dir ~/.local/share/huntaway-effect --check --replace
+   ```
+
+   which refuses while either server has its database open or runs of either board are live (`--force` records them
+   as interrupted), then sets the new folder's board aside in `~/.local/share/huntaway-effect/replaced-<time>/`
+   (`board.db`, `import.json`, the identity files, `ssh/`, `attachments/`, `skill-sources/`, `runs/`) and imports the
+   old board in its place. If the import fails, the board is put back as it was.
+
+4. **Start the new server** (its desktop app, or `huntaway serve`). It is now the old host: the old board's tasks,
+   projects, profiles, identity and **board token**. The tasks of the replaced board are not on it; their branches,
+   pull requests and worktrees (`~/.local/share/huntaway-effect/projects/…`, registered in their repositories) stay
+   as they were.
+
+To go back to the board that was replaced: stop the new server and run
+`scripts/switch-board.sh --undo ~/.local/share/huntaway-effect/replaced-<time>`, which removes the import and puts the
+set-aside files back. The old server's folder was never written, so it starts as it was too.
 
 ## Going back
 

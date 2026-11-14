@@ -59,7 +59,7 @@ carried with the host id).
    - **Every thread is kept as items** ([below](#threads-not-yet-items)): no task has `thread_source <> 'items'`
      and no thread has `error` set. It lists the tasks by key. `--force` does not override this.
    - The new folder has no `board.db` (a board tried out there during development is moved aside by hand first, not
-     merged).
+     merged), unless `--replace` (below).
 2. Opens the old file read-only and writes `board.db.partial` through the new server's own repositories and
    schemas, so that **every imported row has passed the schema the server will read it with**. A row that fails is
    written to `import-report.json` with its table, key and the decoding error, and the import continues; `--check`
@@ -225,6 +225,15 @@ What was decided where the plan was silent or turned out wrong:
   an assistant whose workspace is in the old folder (`Unavailable`), and the rehearsal's service test has one. Group tasks and project-less review threads with no `work_dir` worked in the old
   profile scratch folder and now work in the new one: their sessions start afresh.
 - `repo_root` is the repository's fingerprint, not a path, and is copied as it is.
+- **`--replace` (HE-8 of the new board).** A machine that ran the new server before its switch has a board in the new
+  folder, in daily use. The switch replaces it, never merges with it: with `--replace`, the importer refuses while a
+  process has the new `board.db` open or the new board has live runs (`--force` overrides the second), and once the
+  old database has passed its own refusals moves `board.db` (and `-wal`, `-shm`), `import.json`, the report, the
+  identity files, `ssh/`, `attachments/`, `skill-sources/` and `runs/` (`REPLACED_FILES`) into
+  `<new folder>/replaced-<time>/`, then imports as usual. A failure puts them back. Worktrees under `projects/`,
+  profile scratch folders and the tmux socket stay, since worktrees are registered by path; the replaced board's tasks
+  are gone from the board, not their branches. `scripts/switch-board.sh` runs it (`--rehearse` beside both servers,
+  the switch, `--undo <replaced folder>` to put the replaced board back), with its test in `pnpm test:scripts`.
 - The 200-thread sample is `scripts/compare-threads.mjs`, run with an old test server on a copy and a new test server
   on its import; it is not part of `--check` itself, which runs with no server.
 
