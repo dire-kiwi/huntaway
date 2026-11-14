@@ -44,7 +44,7 @@ quit). When it relaunches itself after an update, it opens the windows it had ag
 `scripts/install.sh` installs the desktop app from source on Linux or macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway-effect/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway/main/scripts/install.sh | bash
 ```
 
 It checks for git, Node.js 24+ and npm (which runs pnpm when it isn't installed; it warns if `claude`/`codex` or
@@ -119,7 +119,7 @@ release again, use Actions → Release → Run workflow with its tag, which repl
 ### The Arch package
 
 The `.pacman` file is the package `huntaway-effect`, and every name it installs differs from the old app's (the
-package `huntaway` from `dire-kiwi/huntaway`, in `/opt/Huntaway`), so the two install side by side and neither
+package `huntaway` from `dire-kiwi/huntaway-legacy`, in `/opt/Huntaway`), so the two install side by side and neither
 replaces the other:
 
 |                                            | This app                                      | The old app                        |
@@ -135,7 +135,7 @@ To install the latest release's package, download its `.pacman` (from the releas
 that file:
 
 ```sh
-gh release download --repo dire-kiwi/huntaway-effect --pattern 'huntaway-*-linux-x64.pacman'
+gh release download --repo dire-kiwi/huntaway --pattern 'huntaway-*-linux-x64.pacman'
 sudo pacman -U huntaway-*-linux-x64.pacman
 ```
 
@@ -195,7 +195,7 @@ version is all a check does; quitting and starting the app again still runs the 
   An install from source (`scripts/install.sh`) updates from its checkout instead, as above.
 
 A host installed from the server tarball can update the same way with
-`huntaway serve --release-updates dire-kiwi/huntaway-effect` (or `HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway-effect`):
+`huntaway serve --release-updates dire-kiwi/huntaway` (or `HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway`):
 the board it serves shows the same Update, Check now and Roll back, and versions go into
 `<data dir>/app/` as above. So does its page in a hub's Settings → Hosts, through the hub. There's
 no desktop app to choose the version when a supervisor starts the tarball's `huntaway` again (after
@@ -211,7 +211,7 @@ Deleting `<data dir>/app/` goes back to the tarball's server until the next Upda
 
 A hub deployed as a container (a board on a server, with the binary and UI in its image or bundle) can
 update itself from GitHub this way too, rather than being redeployed for every change: start it with
-`--release-updates dire-kiwi/huntaway-effect` and keep `<data dir>` on a volume, so the versions in
+`--release-updates dire-kiwi/huntaway` and keep `<data dir>` on a volume, so the versions in
 `<data dir>/app/` and `app/state.json` survive the container being recreated. Update restarts the server
 in place (the container's process stays), and when the container starts again the deployed server execs
 the version it last updated to, as above. A release serves its own `ui/` (unless it's given `--ui-dir`), and reports
@@ -226,6 +226,6 @@ release's commit. The Linux releases are built on GitHub's `ubuntu-latest`, so t
 `HUNTAWAY_RELEASE_UPDATES` set (as a user systemd service,
 `… install-service --host 127.0.0.1 --port 7879 --data-dir '<data dir>'`, or by hand), and the forced command for a
 hub that links it over SSH
-(`command="HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway-effect '…/current/huntaway' ssh-host --port 7879 --data-dir '<data dir>'"`).
+(`command="HUNTAWAY_RELEASE_UPDATES=dire-kiwi/huntaway '…/current/huntaway' ssh-host --port 7879 --data-dir '<data dir>'"`).
 All name the data dir (`--data-dir`, or the default `~/.local/share/huntaway-effect`), so the host keeps its board.
 `scripts/install-release-host-test.sh` checks the script against a fake release.

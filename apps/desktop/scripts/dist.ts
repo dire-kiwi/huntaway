@@ -11,7 +11,7 @@
 //
 // The packages land in apps/desktop/release/. Nothing is published.
 //
-// Until the switch (docs/plan/11-migration.md) the app installs beside the old one (dire-kiwi/huntaway), so every name
+// Until the switch (docs/plan/11-migration.md) the app installs beside the old one (dire-kiwi/huntaway-legacy), so every name
 // the system sees is its own: the Arch package huntaway-effect in /opt/Huntaway Effect, /usr/bin/huntaway-effect-desktop,
 // huntaway-effect-desktop.desktop (Electron's WM_CLASS) and its icon, "Huntaway Effect.app" and its bundle id on a Mac.
 // The old package is huntaway in /opt/Huntaway with huntaway-desktop. The release files keep the old names
@@ -58,7 +58,7 @@ const config: Configuration = {
     icon: "build/icon.png",
     synopsis: "Kanban board for Claude Code and Codex agents",
     description: "A kanban board for orchestrating Claude Code and Codex agents.",
-    maintainer: "Huntaway <https://github.com/dire-kiwi/huntaway-effect>",
+    maintainer: "Huntaway <https://github.com/dire-kiwi/huntaway>",
   },
   pacman: {
     packageName: "huntaway-effect",

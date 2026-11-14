@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // How long the server's one thread is held up (docs/plan/10-testing.md, Measurements): carried over from
-// dire-kiwi/huntaway (scripts/event-loop-probe.mjs at f2298f0c), pointed at the new server's RPC. While it runs,
+// dire-kiwi/huntaway-legacy (scripts/event-loop-probe.mjs at f2298f0c), pointed at the new server's RPC. While it runs,
 // `GET /api/health` is fetched every 5 ms and an RPC `Ping` is sent every 5 ms over a websocket on `/api/rpc` (the RPC
 // server answers `Pong`); how late those answers come is the delay a client sees.
 //

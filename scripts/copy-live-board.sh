@@ -5,7 +5,7 @@
 #   scripts/test-server.sh --no-agents > $TMPDIR/env    # or --fake-claude
 #   scripts/copy-live-board.sh $TMPDIR/env               # the env file or the test server's data dir
 #
-# Carried over from the old repository's script of the same name (dire-kiwi/huntaway at f2298f0c), with one more step:
+# Carried over from the old repository's script of the same name (dire-kiwi/huntaway-legacy at f2298f0c), with one more step:
 #   1. It snapshots the old board's database with SQLite's online backup through a read-only connection (the old server
 #      may be running), into a folder of its own beside the test server's data dir, <data dir>-legacy-source (the
 #      importer refuses an old folder inside the new one; test-server.sh stop removes it with the data dir).

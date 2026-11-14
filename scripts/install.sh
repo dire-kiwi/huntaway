@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Installs the Huntaway desktop app from source on Linux or macOS, or updates an install. Carried over from
-# dire-kiwi/huntaway (scripts/install.sh at f2298f0c) for this repository: the desktop shell is apps/desktop (package
+# dire-kiwi/huntaway-legacy (scripts/install.sh at f2298f0c) for this repository: the desktop shell is apps/desktop (package
 # huntaway-desktop), and the names are this port's, so that it installs beside the old app (docs/plan/02-repository.md).
 #
-#   curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway-effect/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/dire-kiwi/huntaway/main/scripts/install.sh | bash
 #   scripts/install.sh [options]          # from a checkout; run --help for the options
 #
 # It checks for the build tools, clones the repository (or fast-forwards a clone it made before), installs the
@@ -14,12 +14,12 @@
 # follows the board deployed there: once that runs a newer commit, the sidebar offers to update to it.
 set -euo pipefail
 
-REPO="${HUNTAWAY_REPO:-https://github.com/dire-kiwi/huntaway-effect.git}"
+REPO="${HUNTAWAY_REPO:-https://github.com/dire-kiwi/huntaway.git}"
 BRANCH="${HUNTAWAY_BRANCH:-main}"
 DIR="${HUNTAWAY_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/huntaway-effect-app}"
 UPDATE_FROM="${HUNTAWAY_UPDATE_FROM-}"
 # The GitHub repository whose latest release has the prebuilt ia-shim, without cargo.
-RELEASES="${HUNTAWAY_RELEASES:-dire-kiwi/huntaway-effect}"
+RELEASES="${HUNTAWAY_RELEASES:-dire-kiwi/huntaway}"
 # The port the app's server listens on (the new server's default, beside the old board's 7878).
 PORT="${HUNTAWAY_PORT:-7879}"
 BUILD=1

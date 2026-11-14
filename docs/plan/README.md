@@ -1,6 +1,10 @@
 # Huntaway on Effect: the plan
 
-HE-2, 11 November 2026. Old code: `dire-kiwi/huntaway` at `f2298f0c`. Effect 4.1.4.
+HE-2, 11 November 2026. Old code: `dire-kiwi/huntaway-legacy` at `f2298f0c`. Effect 4.1.4.
+
+Since HE-15 (14 November 2026) this repository is `dire-kiwi/huntaway`, renamed from `dire-kiwi/huntaway-effect`, and
+the old one is `dire-kiwi/huntaway-legacy` (it was `dire-kiwi/huntaway`, which older notes in the plan and the code
+mean by "the old repository"). The data folder (`~/.local/share/huntaway-effect`) and port 7879 keep their names.
 
 **The plan is to write Huntaway again as one Effect program, keeping its React components, its shim and its data,
 and to switch each machine over by importing its database.** HA-408 planned converting the old server in place, one

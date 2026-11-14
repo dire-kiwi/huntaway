@@ -7,7 +7,7 @@ A thread whose config is a Codex one runs `huntaway codex-run` under ia-shim ins
 thread, sends the prompt, steers messages sent meanwhile into the turn (`turn/steer`), and exits
 when its input ends with no turn going. Codex's events are kept in the run's
 output as they are, and the server writes them into the thread's items as they come (see
-[docs/threads.md](https://github.com/dire-kiwi/huntaway/blob/master/docs/threads.md), "Codex writes items directly", in
+[docs/threads.md](https://github.com/dire-kiwi/huntaway-legacy/blob/master/docs/threads.md), "Codex writes items directly", in
 the old repository), shown like Claude's: commands as Bash calls, file
 changes as diffs, the plan as a todo list, MCP calls under their server's name. The board's
 tools (as Codex dynamic tools), the project's MCP servers and skills, `/compact`, steering, stopping (`turn/interrupt`), queued messages and

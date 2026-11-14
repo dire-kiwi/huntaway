@@ -1,4 +1,4 @@
--- The old board's schema (dire-kiwi/huntaway at f2298f0c): numbered migrations 1 to 130 and its four named migrations,
+-- The old board's schema (dire-kiwi/huntaway-legacy at f2298f0c): numbered migrations 1 to 130 and its four named migrations,
 -- dumped from a database its own test server made (sqlite3 .schema). The importer's tests build old databases from it.
 CREATE TABLE profiles (
   id TEXT PRIMARY KEY,

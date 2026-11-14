@@ -22,7 +22,7 @@ them in service units and deploy scripts.)
 | `--hub-token` / `HUNTAWAY_HUB_TOKEN`             |                                  | Token for `--hub`, from that hub's Settings → Hosts                                                                                                                           |
 | `--source-dir` / `HUNTAWAY_SOURCE_DIR`           | the checkout the server runs in  | Repository to rebuild from on restart                                                                                                                                         |
 | `--update-from` / `HUNTAWAY_UPDATE_FROM`         |                                  | A deployment of the board (e.g. `https://board.example`) to offer updates to                                                                                                  |
-| `--release-updates` / `HUNTAWAY_RELEASE_UPDATES` |                                  | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway-effect`) whose releases to check for a newer server, for release installs                                         |
+| `--release-updates` / `HUNTAWAY_RELEASE_UPDATES` |                                  | A GitHub repository (`OWNER/REPO`, e.g. `dire-kiwi/huntaway`) whose releases to check for a newer server, for release installs                                                |
 | `--demo` / `HUNTAWAY_DEMO`                       | off                              | On a fresh data dir, create a "Default" profile with a sample "Demo" project and tasks (used by PR previews)                                                                  |
 | `--open-token` / `HUNTAWAY_OPEN_TOKEN`           | off                              | Give the access token to any browser that opens the board, so it signs in without `?token=`. Anyone who can reach the server gets full control (used by LAN-only PR previews) |
 | `--profile NAME=DIR` / `HUNTAWAY_PROFILES`       |                                  | On start, make a profile `NAME` with the Claude config in `DIR`, unless there's a profile of that name already (repeatable, or comma-separated).                              |
@@ -160,9 +160,9 @@ A host can send its telemetry to a [ClickHouse](https://clickhouse.com) of your 
 and keep for longer than a board keeps it: what agents did and cost, how each server is behaving, and the servers'
 logs. It's off until you set it up, and nothing goes anywhere you didn't configure. The plan behind it is the old
 repository's
-[docs/notes/telemetry-clickhouse.md](https://github.com/dire-kiwi/huntaway/blob/master/docs/notes/telemetry-clickhouse.md),
+[docs/notes/telemetry-clickhouse.md](https://github.com/dire-kiwi/huntaway-legacy/blob/master/docs/notes/telemetry-clickhouse.md),
 and Grafana dashboards for it are in its
-[docs/telemetry/grafana/](https://github.com/dire-kiwi/huntaway/tree/master/docs/telemetry/grafana).
+[docs/telemetry/grafana/](https://github.com/dire-kiwi/huntaway-legacy/tree/master/docs/telemetry/grafana).
 
 **Setting it up:**
 
