@@ -1230,12 +1230,18 @@ Electron's Node can speak it. A Rust or worker-thread relay waits for a measurem
   in the URL's fragment and never reaches a server.
 - **Every relayed answer is sandboxed** (`spacesd.ts`'s `responseHeaders`, found on review): whatever answers on the
   Space's port is the Space's to choose (its user has passwordless sudo, so anything in it can replace spacesd), and it
-  is served from the board's origin, where the board's token is in `localStorage`. So the relay puts its own
-  `sandbox allow-scripts allow-forms allow-popups allow-downloads allow-pointer-lock` (no `allow-same-origin`) and
-  `frame-ancestors 'self'` into each answer's CSP, in place of any the Space gave, or as the CSP when it gave none, and
-  drops `Set-Cookie`, `Service-Worker-Allowed` and `Clear-Site-Data`. The page then has an opaque origin however it is
-  opened (the board's frame, which is sandboxed too, or a window of its own), and spacesd's viewer works there: it keeps
-  its ticket in the fragment and reaches the relay by relative URLs.
+  is served from the board's origin, where the board's token is in `localStorage`. So the relay splits the Space's CSP
+  (every header of it) into its comma-separated policies, takes `sandbox` and `frame-ancestors` out of each, and adds
+  its own policy last: `frame-ancestors 'self'; sandbox allow-scripts allow-forms allow-popups allow-downloads
+  allow-pointer-lock` (no `allow-same-origin`). A `sandbox` added to the Space's last policy instead would lose to one
+  the Space put there first. It also drops `Set-Cookie`, `Service-Worker-Allowed` and `Clear-Site-Data`. The page then
+  has an opaque origin however it is opened (the board's frame, which is sandboxed too, or a window of its own), and
+  spacesd's viewer works there: it keeps its ticket in the fragment and reaches the relay by relative URLs.
+- **Nothing from a Space is followed or trusted** (also from review): the relay asks with `redirect: "manual"`, so a
+  redirect goes back to the browser (a path kept under the relay) and can't make the host fetch its own loopback; the
+  health check and `CreateViewerTicket` refuse redirects (`redirect: "error"`); and `parseViewerTicket` reads frame
+  lengths unsigned and stops at one longer than the answer, where a negative length had looped forever on the event
+  loop.
 
 ## Hook commands<a id="hook-commands"></a>
 

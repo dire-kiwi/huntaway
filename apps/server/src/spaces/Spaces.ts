@@ -1,6 +1,6 @@
 import { Clock, Context, DateTime, Effect, Fiber, FiberMap, FileSystem, Layer, Option, Redacted, Ref, Schedule } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { HttpClient, HttpClientRequest } from "effect/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { Invalid, NotFound, Timestamp, Unavailable } from "@huntaway/contracts"
 import type { AgentConfigId, NewSpace, Space, SpacesStatus, SpaceView } from "@huntaway/contracts"
 import { apiEnv, configDir } from "../agents/configEnv.ts"
@@ -51,6 +51,9 @@ export interface SpacesShape {
   /** The Space a relay ticket opens, while it lasts. */
   readonly relayTarget: (ticket: string) => Effect.Effect<RelayTarget | null>
 }
+
+/** What answers on a Space's port is the Space's to choose: the server never follows it somewhere else. */
+const NO_REDIRECTS: RequestInit = { redirect: "error" }
 
 const unavailable = (reason: string) => new Unavailable({ what: "spaces", reason })
 const dockerFailed = (e: { readonly reason: string }) => unavailable(e.reason)
@@ -190,9 +193,10 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
           if (c.State.Status !== "running") return yield* unavailable(`the container is ${c.State.Status}`)
           const port = portOf(c)
           if (port === null) return yield* unavailable("spacesd's port isn't published")
-          const r = yield* http
-            .execute(HttpClientRequest.get(`http://127.0.0.1:${port}/health`))
-            .pipe(Effect.mapError(() => unavailable("spacesd isn't answering")))
+          const r = yield* http.execute(HttpClientRequest.get(`http://127.0.0.1:${port}/health`)).pipe(
+            Effect.mapError(() => unavailable("spacesd isn't answering")),
+            Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECTS),
+          )
           if (r.status !== 204 && r.status !== 200) return yield* unavailable(`spacesd answered its health check with ${r.status}`)
           return port
         })
@@ -339,6 +343,7 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
           ),
         )
         const answer = yield* http.execute(request).pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECTS),
           Effect.flatMap((r) =>
             Effect.map(r.arrayBuffer, (body) => {
               const refused = headerStatus(r.headers)

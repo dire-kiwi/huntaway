@@ -3,7 +3,16 @@ import { Option, Schema } from "effect"
 import { AgentConfigId, Timestamp } from "@huntaway/contracts"
 import { claudeCredentials, claudeFiles, claudeSettings, codexAuth } from "./agentFiles.ts"
 import { imageTag, LABEL, nameProblem, parseInspect, portOf, runArgs, tokenOf, toSpace } from "./containers.ts"
-import { parseViewerTicket, POLICY_ALLOW_ACTIVATION, requestHeaders, responseHeaders, SANDBOX, viewerTicketRequest } from "./spacesd.ts"
+import {
+  headerStatus,
+  parseViewerTicket,
+  POLICY_ALLOW_ACTIVATION,
+  requestHeaders,
+  responseHeaders,
+  SANDBOX,
+  sandboxedCsp,
+  viewerTicketRequest,
+} from "./spacesd.ts"
 
 // Spaces' plain parts (HE-35): the containers' arguments and what's read of them, the one gRPC-Web message, the relay's
 // headers, and what of a config goes into a Space.
@@ -26,6 +35,18 @@ describe("spacesd's viewer ticket", () => {
     const req = viewerTicketRequest({ ttlSeconds: 3600, policy: POLICY_ALLOW_ACTIVATION, clipboard: true, filesRoot: "~" })
     // ttl { seconds: 3600 }, policy 3, clipboard true, files_root "~", after the five-byte frame header.
     assert.deepStrictEqual([...req], [0, 0, 0, 0, 12, 0x0a, 3, 0x08, 0x90, 0x1c, 0x10, 3, 0x18, 1, 0x22, 1, 0x7e])
+  })
+
+  it("gives up on a frame longer than the answer, rather than looping", () => {
+    // A length with its top bit set read as signed was negative, and the loop never moved on.
+    assert.strictEqual(parseViewerTicket(Uint8Array.from([0, 0xff, 0xff, 0xff, 0xfb])), "spacesd's answer didn't parse")
+    assert.strictEqual(parseViewerTicket(Uint8Array.from([0, 0, 0, 0, 9, 1, 2])), "spacesd's answer didn't parse")
+  })
+
+  it("keeps a refusal's text that isn't percent-encoded as it came", () => {
+    assert.strictEqual(headerStatus({ "grpc-status": "7", "grpc-message": "100% denied" }), "spacesd refused a viewer ticket (7: 100% denied)")
+    assert.strictEqual(headerStatus({ "grpc-status": "7", "grpc-message": "no%20way" }), "spacesd refused a viewer ticket (7: no way)")
+    assert.isNull(headerStatus({ "grpc-status": "0" }))
   })
 
   it("reads the ticket and its expiry, and a refusal from the trailers", () => {
@@ -54,7 +75,7 @@ describe("the relay's headers", () => {
       "/api/spaces/v/t",
     )
     assert.deepStrictEqual(out, {
-      "content-security-policy": `default-src 'self'; base-uri 'none'; frame-ancestors 'self'; ${SANDBOX}`,
+      "content-security-policy": `default-src 'self'; base-uri 'none', frame-ancestors 'self'; ${SANDBOX}`,
       location: "/api/spaces/v/t/viewer/",
       "x-content-type-options": "nosniff",
     })
@@ -74,8 +95,23 @@ describe("the relay's headers", () => {
     )
     assert.deepStrictEqual(out, { "content-type": "text/html", "content-security-policy": `frame-ancestors 'self'; ${SANDBOX}` })
     const own = responseHeaders({ "Content-Security-Policy": "sandbox allow-scripts allow-same-origin; script-src *" }, "/p")
-    assert.strictEqual(own["content-security-policy"], `script-src *; frame-ancestors 'self'; ${SANDBOX}`)
+    assert.strictEqual(own["content-security-policy"], `script-src *, frame-ancestors 'self'; ${SANDBOX}`)
     assert.notInclude(SANDBOX, "allow-same-origin")
+  })
+
+  it("strips a sandbox from every policy of the Space's, so none but the relay's is left", () => {
+    // A comma starts another policy, whose first `sandbox` would win over the relay's had it been added to that one.
+    assert.strictEqual(
+      sandboxedCsp("script-src * 'unsafe-inline', sandbox allow-scripts allow-same-origin"),
+      `script-src * 'unsafe-inline', frame-ancestors 'self'; ${SANDBOX}`,
+    )
+    // Repeated headers, joined with a comma.
+    const joined = responseHeaders(
+      { "content-security-policy": "img-src *", "Content-Security-Policy": "sandbox allow-same-origin allow-scripts; frame-ancestors *" },
+      "/p",
+    )
+    assert.strictEqual(joined["content-security-policy"], `img-src *, frame-ancestors 'self'; ${SANDBOX}`)
+    assert.strictEqual(sandboxedCsp(" , ;SANDBOX allow-same-origin, "), `frame-ancestors 'self'; ${SANDBOX}`)
   })
 
   it("passes on the viewer's own headers, not the board's cookies or the connection's", () => {

@@ -100,6 +100,15 @@ const readFields = (b: Uint8Array): { readonly ints: Map<number, number>; readon
   return { ints, bytes }
 }
 
+/** `grpc-message`'s text, percent-decoded as gRPC sends it, or as it came when it isn't valid ("100% denied"). */
+const percentDecoded = (text: string): string => {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
+}
+
 /** The ticket in a gRPC-Web answer to `CreateViewerTicket` (its first data frame), or why there is none. */
 export const parseViewerTicket = (body: Uint8Array): ViewerTicket | string => {
   // Frames: a flag byte (0x80 for the trailers), four bytes of length, the payload.
@@ -108,7 +117,9 @@ export const parseViewerTicket = (body: Uint8Array): ViewerTicket | string => {
   let trailers = ""
   while (at + 5 <= body.length) {
     const flag = body[at] ?? 0
-    const len = ((body[at + 1] ?? 0) << 24) | ((body[at + 2] ?? 0) << 16) | ((body[at + 3] ?? 0) << 8) | (body[at + 4] ?? 0)
+    // Unsigned, so a length with its top bit set can't go negative and stall the loop (the answer is the Space's).
+    const len = (body[at + 1] ?? 0) * 0x1000000 + (body[at + 2] ?? 0) * 0x10000 + (body[at + 3] ?? 0) * 0x100 + (body[at + 4] ?? 0)
+    if (at + 5 + len > body.length) return "spacesd's answer didn't parse"
     const payload = body.subarray(at + 5, at + 5 + len)
     if ((flag & 0x80) === 0) message ??= payload
     else trailers = new TextDecoder().decode(payload)
@@ -117,7 +128,7 @@ export const parseViewerTicket = (body: Uint8Array): ViewerTicket | string => {
   const status = /grpc-status:\s*(\d+)/u.exec(trailers)?.[1]
   if (status !== undefined && status !== "0") {
     const said = /grpc-message:\s*(.*)/u.exec(trailers)?.[1]?.trim()
-    return `spacesd refused a viewer ticket (${status}${said === undefined || said === "" ? "" : `: ${decodeURIComponent(said)}`})`
+    return `spacesd refused a viewer ticket (${status}${said === undefined || said === "" ? "" : `: ${percentDecoded(said)}`})`
   }
   if (message === null) return "spacesd answered without a viewer ticket"
   const fields = readFields(message)
@@ -131,7 +142,8 @@ export const parseViewerTicket = (body: Uint8Array): ViewerTicket | string => {
 export const headerStatus = (headers: Readonly<Record<string, string | undefined>>): string | null => {
   const status = headers["grpc-status"]
   if (status === undefined || status === "0") return null
-  return `spacesd refused a viewer ticket (${status}${headers["grpc-message"] === undefined ? "" : `: ${decodeURIComponent(headers["grpc-message"])}`})`
+  const said = headers["grpc-message"]
+  return `spacesd refused a viewer ticket (${status}${said === undefined ? "" : `: ${percentDecoded(said)}`})`
 }
 
 /** Headers that are about one connection, not the message, and are never passed on by the relay. */
@@ -169,13 +181,21 @@ export const SANDBOX = "sandbox allow-scripts allow-forms allow-popups allow-dow
 /** Headers an answer from a Space may not set on the board's origin. */
 const DROPPED = new Set(["set-cookie", "set-cookie2", "service-worker-allowed", "clear-site-data"])
 
-/** spacesd's CSP (or none) with the relay's sandbox in place of any it gives, and only the board's own frames allowed. */
+/**
+ * The Space's CSP (or none) with no `sandbox` or `frame-ancestors` left in it, and the relay's own as a policy of its own
+ * after it. A header holds several policies separated by commas (and repeated headers are joined with them), each
+ * enforced on its own, and a policy's second `sandbox` is ignored: so the Space's are split into policies and each is
+ * stripped, and no `sandbox` but the relay's is left anywhere.
+ */
 export const sandboxedCsp = (csp: string | null): string => {
-  const kept = (csp ?? "")
-    .split(";")
-    .map((d) => d.trim())
-    .filter((d) => d !== "" && !/^(sandbox|frame-ancestors)(\s|$)/iu.test(d))
-  return [...kept, "frame-ancestors 'self'", SANDBOX].join("; ")
+  const policies = (csp ?? "").split(",").flatMap((policy) => {
+    const kept = policy
+      .split(";")
+      .map((d) => d.trim())
+      .filter((d) => d !== "" && !/^(sandbox|frame-ancestors)(\s|$)/iu.test(d))
+    return kept.length === 0 ? [] : [kept.join("; ")]
+  })
+  return [...policies, `frame-ancestors 'self'; ${SANDBOX}`].join(", ")
 }
 
 /**
@@ -184,7 +204,8 @@ export const sandboxedCsp = (csp: string | null): string => {
  * and always sandboxed (`sandboxedCsp`).
  */
 export const responseHeaders = (headers: Readonly<Record<string, string | undefined>>, prefix: string): Record<string, string> => {
-  const csp = Object.entries(headers).find(([k, v]) => k.toLowerCase() === "content-security-policy" && v !== undefined)?.[1] ?? null
+  const csps = Object.entries(headers).flatMap(([k, v]) => (k.toLowerCase() === "content-security-policy" && v !== undefined ? [v] : []))
+  const csp = csps.length === 0 ? null : csps.join(", ")
   const passed = Object.entries(headers).flatMap(([k, v]): ReadonlyArray<readonly [string, string]> => {
     const key = k.toLowerCase()
     if (v === undefined || HOP_BY_HOP.has(key) || DROPPED.has(key) || key === "content-security-policy") return []

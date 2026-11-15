@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { HttpClient, HttpClientRequest, HttpMethod, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpMethod, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { accept, dial, pipe } from "../hosts/pipe.ts"
 import { Spaces } from "../spaces/Spaces.ts"
 import { requestHeaders, responseHeaders } from "../spaces/spacesd.ts"
@@ -42,7 +42,9 @@ export const SpacesRoute = HttpRouter.use(
           HttpClientRequest.setHeaders(requestHeaders(request.headers)),
           (r) => (body === null ? r : HttpClientRequest.bodyUint8Array(r, body, request.headers["content-type"])),
         )
-        const answer = yield* http.execute(forwarded)
+        // A redirect goes back to the browser (its `location` kept under the relay), never followed by this server: what
+        // answers on the Space's port is the Space's to choose, and must not reach the host's loopback through it.
+        const answer = yield* http.execute(forwarded).pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }))
         return HttpServerResponse.stream(answer.stream, { status: answer.status, headers: responseHeaders(answer.headers, prefix) })
       }).pipe(
         Effect.catchTags({
