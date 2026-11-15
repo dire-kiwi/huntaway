@@ -269,7 +269,8 @@ See §3.6 for the full piece list. Capabilities: per-project replaceable instruc
   waiting_task|done|failed, task_id, task_key, url (http/https ≤2000), created_at, updated_at}`. MCP tools `track_work` (add, or change by `id`; `task` ref resolved
   through `get_task`, key qualified `profile:KEY` for other profiles; "" clears), `untrack_work {ids | done:true}`, `list_tracked_work`; only the assistant and its
   routine threads. `effective_status`: done once the linked task is done (unless failed); working/waiting_task → waiting_user when the task is `needs_attention` or
-  `in_review`. `POST /tasks/{id}/tracked/remove {ids}`.
+  `in_review`. `POST /tasks/{id}/tracked/remove {ids}`. In the assistant's details, clicking an item with a `task_id` opens that task in a
+  dialog over the page (`openTaskModal`; the dialog looks the task up when it isn't on the board, e.g. in an archived project, HE-19), else its `url`.
 - **Morning brief** (API 113): `POST /profiles/{id}/assistant/brief {time? "HH:MM" default 07:30, weekdays? default mon-fri}` creates routine "Morning brief"
   `{trigger:{kind:"daily", time, weekdays}, action:{kind:"message_assistant", message: MESSAGE (~3.3 k chars, with {{date}} and {{google}}), mode:"fresh"}}`. The run
   writes `brief.html` + `brief.json` in the workspace; kept as label documents `brief`/`brief_items`, one version a day. `items(text)`: list of `{kind ∈
