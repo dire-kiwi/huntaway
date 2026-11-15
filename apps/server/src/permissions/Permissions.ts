@@ -64,6 +64,7 @@ import { ThreadStore } from "../threads/ThreadStore.ts"
 import { PermissionRepo } from "./PermissionRepo.ts"
 import type { ExpireScope, PromptRow, PromptStatus } from "./PermissionRepo.ts"
 import {
+  EDIT_REFUSED,
   allow,
   approvalQuestion,
   checkAnswers,
@@ -697,15 +698,11 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           input = { ...(Predicate.isObject(input) && !Array.isArray(input) ? input : {}), answers: toolAnswers(row.tool_name, input, answers) }
         }
         let edited = false
-        // A tool call allowed as the user edited it (a draft mail's To, Subject and body): Claude Code runs it with the
-        // input it's answered with, Codex's approval has no input to change.
+        // A tool call allowed as the user edited it (a draft mail): Claude runs it with that input; Codex's approval has none.
         const given = a.input ?? null
-        if (given !== null) {
-          const codex = (yield* store.request(row.task_id, row.id))?.request.metadata?.["codex"] !== undefined
-          if (!allowIt || row.kind !== "tool" || question || plan || codex) {
-            return yield* new Invalid({ field: "input", reason: "only a tool call of a Claude Code run, allowed, takes an edited input" })
-          }
-        }
+        const codex = given !== null && (yield* store.request(row.task_id, row.id))?.request.metadata?.["codex"] !== undefined
+        if (given !== null && (!allowIt || row.kind !== "tool" || question || plan || codex))
+          return yield* new Invalid({ field: "input", reason: EDIT_REFUSED })
         const editedTo = given !== null && (yield* toJson(given)) !== (yield* toJson(input ?? null)) ? given : null
         if (editedTo !== null) input = editedTo
         if (allowIt && row.kind === "automation" && a.automation !== undefined && a.automation !== null) {

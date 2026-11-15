@@ -35,7 +35,7 @@ function Settled({ data, allowed }: { data: PromptData; allowed: string }) {
 function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="flex items-baseline gap-2 py-0.5">
-      <span className="w-14 shrink-0 text-[11.5px] text-faint">{label}</span>
+      <span className={clsx("shrink-0 text-[11.5px] text-faint", typeof label === "string" ? "w-14" : "w-4 self-center")}>{label}</span>
       <span className="min-w-0 flex-1 break-words">{children}</span>
     </div>
   )

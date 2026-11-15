@@ -708,6 +708,27 @@ name and a line on what it does. All are off at first.
   without a result yet, the running one, stays open.
 - **Checks.** `tests/unit/turnFold.test.ts`; `tests/ui/foldTurns.test.mjs` (the switch on and off, a turn with a failed
   call and one that waited for approval); `apps/server/src/settings/HostSettings.test.ts` (the rows).
+- **Show outgoing mail and events as drafts** (`draft_cards`, HE-23; from bot-hq's draft card, which never had a server
+  side). `task/thread/drafts.ts` reads a prompt's tool and input (pure): workspace-mcp 2.3.0's `send_gmail_message` and
+  `draft_gmail_message` (any `mcp__<server>__` prefix; `to`, `cc`, `bcc`, `subject`, `body`, `body_format`,
+  `thread_id`, `forward_message_id`, `attachments`) are a mail, and `manage_event` with `action` `create` or `update`
+  (and the older `create_event`/`modify_event`) an event; a Codex prompt's `{message, arguments}` is read for its
+  arguments; anything else is null, and `PromptCard` (items.tsx) draws the usual `PermissionCard`. `draftCards.tsx`
+  draws them: a mail's To/Cc/Bcc/Subject and body (plain text, or HTML in a `srcdoc` frame sandboxed without scripts
+  and with `MAIL_CSP` first: inline styles and data: images only; it's `allow-same-origin` only so the page sizes it
+  to its content), **Send**/**Discard** for Allow/Deny with _Always allow_ kept as `PermissionCard` has it; an
+  event's title, `eventWhen` (its own wall clock and zone, not the viewer's), attendees, place and description, and
+  for an update `changes` ("the time", "the place"…, the fields it sets). Edit (not on Codex: `agent` is `codex` when
+  the request's metadata has `codex`) turns the mail's fields into inputs; `editedInput` is the tool's input with
+  them, sent as `permissions.answer`'s `input` (07-agents.md, 3.3) and shown as "Edited" until then and "Sent as you
+  edited it" after (`edited` in the request's metadata). Settled, a card folds to a line ("To kim@… · Invoice 4411")
+  that opens. Events aren't edited: their fields are many and the time zones easy to get wrong.
+- **Checks.** `tests/unit/drafts.test.ts` (the tools, Codex's shape, times, the edited input, the frame's policy);
+  `tests/ui/draftCards.test.mjs` (off and on, a mail edited and sent and the fake agent's reply with the edited input,
+  an event discarded, an HTML mail's frame running and loading nothing, Codex without Edit);
+  `Permissions.test.ts` (the input Claude is told, the thread and the action log; refused for a question, a deny and
+  Codex). The fake `claude`'s `fake-ask-mail`/`fake-ask-event` call the run's `google` MCP server (the stub) once
+  allowed.
 
 ### Logic that must not be lost on the way
 

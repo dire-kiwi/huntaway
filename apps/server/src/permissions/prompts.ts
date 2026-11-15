@@ -22,6 +22,9 @@ export const SKIPPED =
 
 export const DONT_ASK_DENIAL = 'Denied automatically: this thread is in "Don\'t ask" mode.'
 
+/** Why `permissions.answer`'s `input` is refused (HE-23): Codex's approval can't carry one, nor anything but a tool call allowed. */
+export const EDIT_REFUSED = "only a tool call of a Claude Code run, allowed, takes an edited input"
+
 /** What the agent is told of a denial without a message. */
 export const DENIED = "The user denied this action."
 
