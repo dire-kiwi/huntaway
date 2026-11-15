@@ -16,6 +16,7 @@ import { Actor } from "../platform/Changes.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Events } from "../platform/Events.ts"
 import { MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
+import { Permissions, SKIPPED } from "../permissions/Permissions.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { AssistantLaunch } from "../runs/AssistantLaunch.ts"
 import { LaunchFacts } from "../runs/LaunchFacts.ts"
@@ -132,6 +133,27 @@ layer(board)("Assistant", (it) => {
         page.items.some((i) => i.type === "user_message" && i.text === "Hello there"),
         json(page.items),
       )
+    }),
+  )
+
+  it.effect("a message to the assistant skips the permission prompt it is waiting on, and goes to its agent", () =>
+    Effect.gen(function* () {
+      const p = yield* profile("skip")
+      const a = yield* (yield* Assistant).get(p.id)
+      yield* (yield* TaskRepo).write(a.id, { running: true }, a.created_at)
+      const agent = yield* fakeAgent({ task: a.id })
+      const permissions = yield* Permissions
+      const told = yield* Effect.forkChild(
+        permissions.ask({ run: agent.run, call_id: "c" }, { tool_name: "Bash", input: { command: "ls" }, tool_use_id: null }),
+      )
+      yield* Effect.raceFirst(
+        permissions.asking("c"),
+        Effect.flatMap(Fiber.join(told), (d) => Effect.die(`decided without asking: ${json(d)}`)),
+      )
+      yield* (yield* Assistant).send(p.id, "Never mind that").pipe(Effect.orDie)
+      assert.deepStrictEqual(yield* Fiber.join(told), { behavior: "deny", message: SKIPPED })
+      // The message went to the agent.
+      assert.include(json(yield* agent.input), "Never mind that")
     }),
   )
 

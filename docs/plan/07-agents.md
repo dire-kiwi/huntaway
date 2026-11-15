@@ -739,6 +739,8 @@ export class Permissions extends Context.Service<Permissions, {
 - **Board changes that always ask** (create a project, risky project fields, delete a task, automations,
   workflows) are `Approvals`: it works out what would change, asks, and applies exactly the fields shown.
 - `Questions` is `request_user_input`: a card that is not waited on, answered later as the user's message.
+- **A message from the user skips what is open** (HE-27, bot-hq's rule): an agent holding a prompt can't read a
+  message until the prompt is settled, so the user's message settles it as skipped (below).
 
 As built in 3.2 (HE-4), `permissions/Questions.ts`: a card is a question request in the thread (`legacy:<n>`, one
 question `q`, metadata the card and the `call_id` that asked), opened with `Threads.openRequest` once per call
@@ -836,6 +838,34 @@ As built in 3.4 (HE-4), `permissions/Approvals.ts`:
 - **Web** (step 1): `apps/web/src/components/task/thread/approvalDetails.tsx` has the old `ProjectChangeDetail`,
   `ProjectCreationDetail` and `TaskDeletionDetail`; the approval card shows them while it waits (or once opened) and a
   line otherwise. The browser check is `apps/web/tests/ui/boardApprovals.test.mjs` (the old suite had none).
+
+As built in HE-27, a message skips the prompts that are open (`Permissions.skipFor(task)`):
+
+- **When**: after the user's message is sent (`Runs.send` with `source: "user"`, so a live run has it on its input
+  first) and isn't blank, in `tasks.send` and `Assistant.send`, beside `Questions.settle(task, "replied")`. Not
+  `Runs.send` itself: another agent's `send_to_task`, the board's own prompts (review fixes, an automatic
+  `/compact`) and a late answer's message also go through it, and none of them is the user choosing not to answer.
+- **What**: the task's pending prompts but questions and plans (`skippedByMessage`: `kind` not `tool`, or a tool that
+  isn't `AskUserQuestion`, `request_user_input` or `ExitPlanMode`), so a subagent's (the parent thread's task) too.
+  Each is one conditional update `pending → skipped` (the new `PromptStatus`, and `ApprovalStatus`), so of it and an
+  answer only the first is taken; its request is written again from the row with `{ outcome: "deny", message:
+  SKIPPED }`, its waiter woken (the call is denied with `SKIPPED`: "Skipped: the user did not approve this. They sent
+  you a new message instead of answering, so read it now, and don't retry this unless their message asks you to."),
+  a rule's entry settled as `skipped` by `message` (new in `ActionOutcome` and `AnsweredBy`), and the task back to
+  work once nothing is pending. Claude's `can_use_tool` is answered `deny`; Codex's approval `decline` (its turn goes
+  on, with the message steered into it).
+- **Decided**: the board's own approvals (project changes, deletions, automations, workflows) are skipped too: the
+  agent's tool call waits on the card just as a `can_use_tool` does, so the message would sit behind it; the agent is
+  told "The user didn't approve …: Skipped: …" and can ask again if the message says to. **Stop** skips nothing: it
+  interrupts the turn, Claude Code cancels the open request (`control_cancel_request`, and Codex resolves it), so the
+  prompt expires with the turn (`onCancel`, or the run's `ended`); answering it first would let the agent take its
+  next step before the interrupt lands.
+- **Web**: a skipped card (`PermissionCard`, `ApprovalCard`) shows the `skipped` badge and _Skipped: you sent a
+  message_ (`SkippedLine`); the Actions log's outcome says "Skipped: you sent a message instead of answering".
+- **Tests**: `permissions/Permissions.test.ts` (what is skipped and what waits, the action log, first wins, a
+  subagent's `can_use_tool` denied on the input), `assistant/Assistant.test.ts` (`Assistant.send`), and on a whole
+  server with the fake agents: `tests/e2e/permissions.test.ts` (fake-claude's reply has the deny and the message, in
+  one run) and `tests/e2e/codex.test.ts` (declined, and the message steered into the same turn).
 
 ### As built in HE-28: `request_connection`
 

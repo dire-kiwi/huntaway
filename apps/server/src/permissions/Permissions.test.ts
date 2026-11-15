@@ -21,7 +21,7 @@ import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Threads } from "../threads/Threads.ts"
 import { ThreadStore } from "../threads/ThreadStore.ts"
 import { PermissionRepo } from "./PermissionRepo.ts"
-import { DONT_ASK_DENIAL, EXPIRED, EXPIRED_UNANSWERED, Permissions, promptCallId } from "./Permissions.ts"
+import { DONT_ASK_DENIAL, EXPIRED, EXPIRED_UNANSWERED, Permissions, promptCallId, SKIPPED } from "./Permissions.ts"
 import type { Decision } from "./Permissions.ts"
 import { reason } from "./prompts.ts"
 
@@ -816,6 +816,89 @@ describe("Permissions: can_use_tool on the run's output", () => {
         yield* sql`UPDATE runs SET status = 'exited' WHERE id = ${other.agent.run.id}`.pipe(Effect.orDie)
         yield* permissions.expireOrphans
         assert.strictEqual((yield* row(stale)).status, "expired")
+      }),
+    ),
+  )
+})
+
+describe("Permissions: a message from the user skips what is open", () => {
+  it.effect("tool calls, what a rule asked and the board's approvals are skipped; questions and plans wait", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* assistant([["mcp__g__send*", "ask"]], "default")
+        const permissions = yield* Permissions
+        const bash = yield* asked(agent, "b", "Bash", { command: "rm -rf build" })
+        const ruled = yield* asked(agent, "r", "mcp__g__send_mail", { to: "bob@example.com" })
+        const question = yield* asked(agent, "q", "AskUserQuestion", twoQuestions)
+        const plan = yield* asked(agent, "p", "ExitPlanMode", { plan: "Do it" })
+        const input = { project: null, task: { id: task, key: null, title: "A task" }, delete: { id: "t-9" }, delete_branch: false, reason: "Done" }
+        const approval = yield* Effect.forkChild(permissions.approve({ run: agent.run, call_id: "d" }, "delete_task", "delete_task", input))
+        const deletion = yield* permissions.asking("d")
+
+        assert.strictEqual(yield* permissions.skipFor(task), 3)
+        // The agent is told it wasn't approved, and to read the message.
+        assert.deepStrictEqual(yield* Fiber.join(bash.told), deny(SKIPPED))
+        assert.deepStrictEqual(yield* Fiber.join(ruled.told), deny(SKIPPED))
+        assert.deepStrictEqual(yield* Fiber.join(approval), Result.fail(SKIPPED))
+        for (const id of [bash.id, ruled.id, deletion]) {
+          assert.strictEqual((yield* row(id)).status, "skipped")
+          assert.strictEqual((yield* card(task, id))["status"], "skipped")
+          const request = (yield* (yield* ThreadStore).request(task, id))?.request
+          assert.deepStrictEqual(request?.resolution, { outcome: "deny", message: SKIPPED })
+        }
+        assert.deepStrictEqual((yield* permissions.approvals).length, 0)
+        // A question and a plan are the user's to answer still.
+        assert.deepStrictEqual([(yield* row(question.id)).status, (yield* row(plan.id)).status], ["pending", "pending"])
+        // The action log says it was skipped, by the user's message.
+        assert.deepStrictEqual(yield* log, [["mcp__g__send_mail", "ask", "skipped", "message"]])
+        // An answer from another tab comes too late; a second message skips nothing more.
+        assert.strictEqual(yield* tag(answer(bash.id, { decision: "allow" })), "PromptNotPending")
+        assert.strictEqual(yield* permissions.skipFor(task), 0)
+        // Still waiting on the question and the plan.
+        assert.strictEqual((yield* taskRow(task)).status, "needs_attention")
+      }),
+    ),
+  )
+
+  it.effect("an answer and a message at the same moment: only the first settles it", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* runningTask()
+        const permissions = yield* Permissions
+        const { id, told } = yield* asked(agent, "b", "Bash", { command: "ls" })
+        const [answered, skipped] = yield* Effect.all([Effect.result(answer(id, { decision: "allow" })), permissions.skipFor(task)], { concurrency: 2 })
+        const status = (yield* row(id)).status
+        const decision = yield* Fiber.join(told)
+        if (Result.isSuccess(answered)) {
+          assert.deepStrictEqual([skipped, status, decision.behavior], [0, "allowed", "allow"])
+        } else {
+          assert.deepStrictEqual([skipped, status, decision], [1, "skipped", deny(SKIPPED)])
+          assert.strictEqual(answered.failure._tag, "PromptNotPending")
+        }
+        // Back to work either way.
+        assert.deepStrictEqual([(yield* taskRow(task)).status, (yield* taskRow(task)).attention_reason], ["in_progress", null])
+      }),
+    ),
+  )
+
+  it.effect("a can_use_tool prompt, a subagent's too, is denied on the run's input", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* runningTask()
+        yield* output(agent, [canUseTool("r1", "Bash", { command: "ls" }), canUseTool("r2", "Edit", { file_path: "/x" }, "toolu_sub")])
+        yield* waitingOn(agent, "r1")
+        yield* waitingOn(agent, "r2")
+        assert.strictEqual(yield* (yield* Permissions).skipFor(task), 2)
+        yield* answeredOn(agent, "r1")
+        yield* answeredOn(agent, "r2")
+        const sent = yield* responses(agent)
+        assert.deepStrictEqual(
+          sent.map((r) => [String(Reflect.get(r, "request_id")), Reflect.get(r, "response")] as const).toSorted(([a], [b]) => a.localeCompare(b)),
+          [
+            ["r1", deny(SKIPPED)],
+            ["r2", deny(SKIPPED)],
+          ],
+        )
       }),
     ),
   )

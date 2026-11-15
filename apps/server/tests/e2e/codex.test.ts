@@ -107,4 +107,64 @@ describe.skipIf(shim === null)("a Codex run on a whole server", () => {
       assert.include(spec, '"requests_on_output": true')
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
+
+  it.live("a message sent while Codex waits on an approval skips it: declined, and the message steered into the turn", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const { port, token, dataDir } = yield* startServer(["--codex-bin", FAKE_CODEX])
+      const http = yield* RpcClient.make(CliRpcs).pipe(Effect.provide(httpRpcClientLayer(`http://127.0.0.1:${port}`, token)))
+      const home = `${dataDir}/codex-home`
+      yield* fs.makeDirectory(home, { recursive: true })
+      const config = yield* http["configs.create"]({ config: { name: "Codex", agent: "codex", config_dir: home } })
+      const profile = yield* http["profiles.create"]({ profile: { name: "me", claude_config_ids: [config.id] } })
+      const task = yield* http["tasks.create"]({ task: { profile_id: profile.id, title: "Talk", claude_config_id: config.id } })
+
+      const seen = yield* Effect.gen(function* () {
+        const socket = yield* RpcClient.make(CliRpcs)
+        const watch = socket["threads.watch"]({ task_id: task.id, limit: 50 })
+        const open = yield* watch.pipe(
+          Stream.flatMap((m) => Stream.fromIterable(isSnapshot(m) ? m.requests : isOpened(m) ? [m.request] : [])),
+          Stream.filter((r) => r.type === "permission" && r.resolution === undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        const watched = yield* watch.pipe(
+          Stream.mapAccum(
+            (): Snapshot | null => null,
+            (state, m) => {
+              const next = isSnapshot(m)
+                ? { thread: m.thread, items: m.items, requests: m.requests, seq: m.seq }
+                : state !== null && isEvent(m)
+                  ? applyEvent(state, m)
+                  : state
+              return [next, [{ state: next, message: m }]]
+            },
+          ),
+          Stream.takeUntil(({ message }) => isAdded(message) && message.item.type === "turn_result"),
+          Stream.runLast,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* http["tasks.send"]({ id: task.id, text: "fake-ask-permission" })
+        yield* Fiber.join(open)
+        yield* http["tasks.send"]({ id: task.id, text: "No, run the tests instead" })
+        const last = yield* Fiber.join(watched)
+        return last._tag === "Some" ? last.value.state : null
+      }).pipe(Effect.scoped, Effect.provide(socketRpcClientLayer(port, token)))
+
+      const items = seen?.items ?? []
+      const reply = items.find((i) => i.type === "assistant_message")
+      const text = reply?.type === "assistant_message" ? reply.text : ""
+      // Declined, and the message was in the same turn.
+      assert.include(text, "permission Bash: decline")
+      assert.include(text, "steered: No, run the tests instead")
+      assert.deepStrictEqual(
+        items.map((i) => (i.type === "tool_call" ? `${i.name}: ${i.status}` : i.type)),
+        ["user_message", "Bash: denied", "user_message", "assistant_message", "turn_result"],
+      )
+      assert.deepStrictEqual(
+        seen?.requests.map((r) => [r.type, r.metadata?.["status"], r.resolution?.outcome]),
+        [["permission", "skipped", "deny"]],
+      )
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
 })

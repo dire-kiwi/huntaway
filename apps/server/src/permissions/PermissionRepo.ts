@@ -8,7 +8,8 @@ import { Bit } from "../platform/columns.ts"
 // truth (docs/plan/07-agents.md, Threads: the thread's request is written from it). Statements only; `SqlError` and
 // `SchemaError` are defects. Nothing here waits.
 
-export const PromptStatus = Schema.Literals(["pending", "allowed", "denied", "expired"])
+/** `skipped`: the user sent the thread a message instead of answering, so it was denied (`Permissions.skipFor`). */
+export const PromptStatus = Schema.Literals(["pending", "allowed", "denied", "expired", "skipped"])
 export type PromptStatus = typeof PromptStatus.Type
 
 /** A prompt as stored. `input` is JSON text (or, for a row an old board wrote, text that isn't). */

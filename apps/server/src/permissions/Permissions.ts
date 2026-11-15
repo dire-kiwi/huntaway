@@ -80,6 +80,8 @@ import {
   reason,
   shownAnswers,
   shownKind,
+  SKIPPED,
+  skippedByMessage,
   toolAnswers,
   withModelEffort,
 } from "./prompts.ts"
@@ -94,7 +96,7 @@ import type { Decision, PromptKind } from "./prompts.ts"
 // come here through `AgentRequests` (`Permissions.registered`), answered on the run's input; the board's tools ask
 // through `McpHooks.askRule` (`askRule`), and the board's own approvals (3.4) through `approve`.
 
-export { DONT_ASK_DENIAL, EXPIRED, EXPIRED_UNANSWERED } from "./prompts.ts"
+export { DONT_ASK_DENIAL, EXPIRED, EXPIRED_UNANSWERED, SKIPPED } from "./prompts.ts"
 export type { Decision } from "./prompts.ts"
 export type { ExpireScope } from "./PermissionRepo.ts"
 
@@ -146,6 +148,12 @@ export interface PermissionsShape {
     answer: PermissionAnswer,
     by: AnsweredBy,
   ) => Effect.Effect<"allowed" | "denied", PromptNotFound | PromptNotPending | PromptMovedOn | Invalid | SendRefused | TaskNotFound>
+  /**
+   * The user sent the thread a message instead of answering (`tasks.send`, `assistant.send`): its prompts still open
+   * are skipped, denied with `SKIPPED` so that the agent reads the message next, but not its questions and plans,
+   * which a message doesn't answer. The first settling wins, as an answer's does. How many it skipped.
+   */
+  readonly skipFor: (task: TaskId) => Effect.Effect<number>
   /** Prompts waiting for an answer, oldest first: all, a task's, or a profile's. */
   readonly pending: (filter: {
     readonly task?: TaskId | undefined
@@ -778,6 +786,28 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         return status
       })
 
+      const skipFor = Effect.fn("Permissions.skipFor")(function* (task: TaskId) {
+        let skipped = 0
+        for (const row of (yield* repo.pending({ task })).filter((r) => skippedByMessage(r.kind, r.tool_name))) {
+          const taken = yield* db.tx(
+            Effect.gen(function* () {
+              // In one statement, so an answer given at the same moment either comes first or finds it settled.
+              if (!(yield* repo.settle(row.id, "pending", { status: "skipped", note: SKIPPED, input: row.input }))) return false
+              const now: PromptRow = { ...row, status: "skipped", note: SKIPPED }
+              yield* rewrite(now, { outcome: "deny", message: SKIPPED })
+              yield* approvalChanged(now, false)
+              return true
+            }),
+          )
+          if (!taken) continue
+          skipped += 1
+          if (row.rule !== null) yield* rules.settle(row.id, "skipped", "message")
+          yield* wake(row.id)
+        }
+        if (skipped > 0) yield* offer([yield* db.tx(backToWork(task, Actor.user))])
+        return skipped
+      })
+
       const applyMode: PermissionsShape["applyMode"] = Effect.fn("Permissions.applyMode")(function* (taskId: TaskId) {
         const task = yield* tasks.get(taskId)
         if (task === null) return
@@ -884,6 +914,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
             Option.map((row) => parsed(row.input)),
           ),
         answer,
+        skipFor,
         pending: Effect.fn("Permissions.pending")(function* (filter) {
           return (yield* repo.pending(filter)).map((r): PendingPermission => ({
             id: r.id,

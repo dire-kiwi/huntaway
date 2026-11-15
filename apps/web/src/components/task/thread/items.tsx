@@ -6,7 +6,7 @@ import { useAction } from "../../../state/mutation"
 import { Button, localeTimeString } from "../../ui"
 import { useSubagentView, subagentTitle } from "./subagentView"
 import { answerPrompt } from "./promptAnswers"
-import { AskCard, BoardQuestionCard, PlanCard, questionsOf } from "./requestCards"
+import { AskCard, BoardQuestionCard, PlanCard, questionsOf, SkippedLine } from "./requestCards"
 import { ConnectionCard } from "./ConnectionCard"
 import { useThread } from "./context"
 import { Markdown } from "./Markdown"
@@ -127,6 +127,7 @@ const PermissionCard = memo(function PermissionCard({ data, hostId }: { data: Pr
       </div>
       {pending ? <ToolInput name={data.tool_name} input={data.input} /> : <div className="truncate font-mono text-[12px] text-faint">{m.summary}</div>}
       <PromptRule data={data} pending={pending} />
+      <SkippedLine status={data.status} />
       {pending && (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="primary" disabled={busy} onClick={() => decide("allow")} className="narrow:px-4">

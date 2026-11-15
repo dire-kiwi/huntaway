@@ -13,6 +13,13 @@ export const EXPIRED = "Request expired"
 export const EXPIRED_UNANSWERED =
   "Nobody answered this in time, so it was denied. Carry on without this action, and say in your report what you couldn't do and why."
 
+/**
+ * What the agent is told of a prompt the user skipped: they sent the thread a message instead of answering it
+ * (`Permissions.skipFor`), which it reads next.
+ */
+export const SKIPPED =
+  "Skipped: the user did not approve this. They sent you a new message instead of answering, so read it now, and don't retry this unless their message asks you to."
+
 export const DONT_ASK_DENIAL = 'Denied automatically: this thread is in "Don\'t ask" mode.'
 
 /** What the agent is told of a denial without a message. */
@@ -42,6 +49,12 @@ export const deny = (message: string): Decision => ({ behavior: "deny", message 
 
 /** Whether prompts for `tool` ask the user questions: only the user answers them, whatever the mode but Don't ask. */
 export const isQuestion = (tool: string): boolean => tool === ASK_USER || tool === CODEX_QUESTIONS
+
+/**
+ * Whether a prompt is skipped when the user sends the thread a message (`Permissions.skipFor`): a tool call or one of
+ * the board's own approvals, not a question or a plan, which a message doesn't answer.
+ */
+export const skippedByMessage = (kind: string, tool: string): boolean => kind !== "tool" || !(isQuestion(tool) || tool === EXIT_PLAN)
 
 /** What a thread's mode decides for any prompt without asking: allow (Bypass), deny (Don't ask), or ask (null). */
 export const decisionIn = (mode: PermissionMode): boolean | null => (mode === "bypassPermissions" ? true : mode === "dontAsk" ? false : null)
