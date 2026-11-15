@@ -1,5 +1,5 @@
 import { clsx } from "clsx"
-import { Archive, Bell, Bot, KeyRound, Keyboard, Network, Puzzle, Server, Users, Wifi } from "lucide-react"
+import { Archive, Bell, Bot, FlaskConical, KeyRound, Keyboard, Network, Puzzle, Server, Users, Wifi } from "lucide-react"
 import type { ReactNode } from "react"
 import { navigate } from "../../state/route"
 import { canRunAgents } from "@huntaway/client"
@@ -11,13 +11,14 @@ import { GlobalAgentToolsPanel } from "./agentTools/GlobalAgentToolsPanel"
 import { AssistantsPanel } from "./Assistants"
 import { ArchivedProjectsPanel } from "./ArchivedProjects"
 import { ClaudeConfigsPanel, configHosts } from "./ClaudeConfigs"
+import { ExperimentsPanel } from "./Experiments"
 import { HostsPanel } from "./Hosts"
 import { ProfilesPanel } from "./hosts/ProfilesPanel"
 import { NetworkPanel } from "./Network"
 import { ServerPanel } from "./Server"
 import { ShortcutsPanel } from "./Shortcuts"
 
-type SettingsTab = "hosts" | "configs" | "profiles" | "assistant" | "tools" | "notifications" | "shortcuts" | "archived" | "server" | "network"
+type SettingsTab = "hosts" | "configs" | "profiles" | "assistant" | "tools" | "notifications" | "shortcuts" | "archived" | "server" | "network" | "experiments"
 
 /**
  * The settings' sections, in their order down the side (HA-406), as the project settings have theirs. Their labels are
@@ -35,6 +36,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string; icon: ReactNode; panel: (
   { id: "archived", label: "Archived projects", icon: <Archive size={14} />, panel: () => <ArchivedProjectsPanel /> },
   { id: "server", label: "Server", icon: <Server size={14} />, panel: () => <ServerPanel /> },
   { id: "network", label: "Network access", icon: <Wifi size={14} />, panel: () => <NetworkPanel /> },
+  { id: "experiments", label: "Experiments", icon: <FlaskConical size={14} />, panel: () => <ExperimentsPanel /> },
 ]
 
 export function Settings({ tab }: { tab?: string | undefined }) {
@@ -52,6 +54,7 @@ export function Settings({ tab }: { tab?: string | undefined }) {
     archived: profiles.length > 0,
     server: true,
     network: true,
+    experiments: true,
   }
   const tabs = SETTINGS_TABS.filter((t) => shown[t.id])
   const current = tabs.find((t) => t.id === tab) ?? tabs[0]

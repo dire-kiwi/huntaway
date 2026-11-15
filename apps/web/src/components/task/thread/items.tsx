@@ -3,7 +3,7 @@ import { Bot, Brain, Check, ChevronRight, CircleAlert, Clock, Layers, ShieldQues
 import { memo, useState, type ReactNode } from "react"
 import { QUESTION_TOOLS } from "@huntaway/client"
 import { useAction } from "../../../state/mutation"
-import { Button, localeTimeString } from "../../ui"
+import { Button, duration, localeTimeString } from "../../ui"
 import { useSubagentView, subagentTitle } from "./subagentView"
 import { answerPrompt } from "./promptAnswers"
 import { AskCard, BoardQuestionCard, PlanCard, questionsOf } from "./requestCards"
@@ -11,6 +11,7 @@ import { useThread } from "./context"
 import { Markdown } from "./Markdown"
 import type { CompactMeta, PromptData, QuestionData, ResultData } from "./threadModel"
 import { CodeBlock, toolMeta, ToolInput } from "./tools"
+import { workedMs, type FoldedTurn } from "./turnFold"
 
 export function Collapsible({ label, icon, text }: { label: string; icon: ReactNode; text: string }) {
   const [open, setOpen] = useState(false)
@@ -211,5 +212,40 @@ export function ResultLine({ data }: { data: ResultData }) {
       {data.interrupted ? "Interrupted" : error ? `Ended: ${data.subtype ?? "error"}` : "Turn complete"} · {bits.join(" · ")}
       <span className="h-px flex-1 bg-line" />
     </div>
+  )
+}
+
+/**
+ * A finished turn folded into one row (the "Fold finished turns" experiment): how long it worked, its steps and its
+ * cost, an amber dot if a step waited for approval and a red one if a step failed or was refused. Clicking it shows the
+ * steps (and the result line) as they are drawn without it, and folds them again.
+ */
+export function FoldedTurnRow({ turn, open, onToggle }: { turn: FoldedTurn; open: boolean; onToggle: () => void }) {
+  const { result } = turn
+  const worked = workedMs(result)
+  const steps = turn.calls.length
+  const error = !result.interrupted && (result.is_error || (result.subtype && result.subtype !== "success"))
+  const bits = [
+    worked !== null ? `Worked for ${duration(worked)}` : "Worked",
+    `${steps} step${steps === 1 ? "" : "s"}`,
+    result.total_cost_usd != null && `$${result.total_cost_usd.toFixed(3)}`,
+  ].filter(Boolean)
+  return (
+    <button
+      type="button"
+      data-folded-turn
+      aria-expanded={open}
+      onClick={onToggle}
+      title={open ? "Fold the steps" : "Show the steps"}
+      className="flex w-fit max-w-full items-center gap-2 rounded-lg border border-line bg-panel/60 px-3 py-1 text-[12.5px] text-muted hover:text-fg"
+    >
+      {turn.waited && <span data-dot="waited" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="A step waited for approval" />}
+      {turn.failed && <span data-dot="failed" className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-400" title="A step failed or was refused" />}
+      <span className="min-w-0 truncate">
+        {bits.join(" · ")}
+        {result.interrupted ? " · Interrupted" : error ? <span className="text-red-400"> · Ended: {result.subtype || "error"}</span> : null}
+      </span>
+      <ChevronRight size={12} className={clsx("shrink-0 text-faint transition-transform", open && "rotate-90")} />
+    </button>
   )
 }
