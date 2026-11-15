@@ -123,6 +123,11 @@ column are that table's.
 | `hub.push`     | `info`, `subscribe`, `update`, `unsubscribe`, `test`                                                                                                             | read; operate        | 15–18      |
 | `link`         | `hello`, `attach` (stream), `reply`, `upcalls` (stream), `upcallResult`, `events` (stream)                                                                       | link                 | 2, 50      |
 
+Settings → Experiments (HE-22) has no group of its own: the switches are a host setting, read with `host.settings`
+(and the board's `settings_changed`) as `experiments`, the ids switched on, and set with `host.updateSettings`'s
+`experiments`, the whole list to have on (the rest go off). An id the host doesn't know fails to decode. See
+[09-frontend.md](09-frontend.md#experiments-he-22).
+
 Waiting for the phone app: device pairing (5, 19–21) and answering a prompt from a notification (4).
 
 Not carried: the legacy `messages` routes (142's GET), `profiles/{id}/scratch` (70), `profiles/{id}/claude-config`

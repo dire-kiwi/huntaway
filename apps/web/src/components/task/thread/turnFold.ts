@@ -8,7 +8,7 @@ import type { Item, ResultData } from "./threadModel"
 export interface FoldedTurn {
   /** The key of its first tool group, where its row goes. */
   readonly at: string
-  /** The keys of the rows that fold into it: its tool groups and its result line. */
+  /** The keys of the rows that fold into it: its tool groups, its answered tool prompts and its result line. */
   readonly folded: ReadonlySet<string>
   /** Its tool calls' ids, for revealing a subagent among them. */
   readonly calls: ReadonlyArray<string>
@@ -55,6 +55,8 @@ export function finishedTurns(items: ReadonlyArray<Item>): Array<FoldedTurn> {
     } else if (it.type === "permission" && isToolPrompt(it)) {
       waited = true
       if (it.data.status === "denied") failed = true
+      // Answered, it's part of its step; one still waiting stays in sight.
+      if (it.data.status !== "pending") folded.add(it.key)
     } else if (it.type === "result") {
       if (at !== null) {
         folded.add(it.key)
