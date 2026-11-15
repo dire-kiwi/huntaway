@@ -1,9 +1,11 @@
 import { clsx } from "clsx"
 import { GitBranch, Plus, Trash2 } from "lucide-react"
 import { useAtomValue } from "@effect/atom-react"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import type { McpServer, Skill } from "@huntaway/contracts"
 import { canRunAgents, mutate, query } from "@huntaway/client"
+import { useShallow } from "../../boardHelpers"
+import { HostSelect } from "../hosts/profileFields"
 import { useBoard } from "../../../state/board"
 import { useAction } from "../../../state/mutation"
 import { Button, resultError, resultValue, useConfirm } from "../../ui"
@@ -12,20 +14,30 @@ import { McpEditor } from "./McpSection"
 import { SourceCard, SourceAdder } from "./SkillSources"
 import { describe, rejectFailure, type Change } from "./parts"
 
-// Settings → Skills and MCP (6.4; huntaway's settings/agentTools/GlobalAgentToolsPanel.tsx). Picking another host's is
-// M7's (the hosts); every host here has skill sources and subfolders, so the old API checks are gone.
+// Settings → Skills and MCP (6.4; huntaway's settings/agentTools/GlobalAgentToolsPanel.tsx). Every host here has skill
+// sources and subfolders, so the old API checks are gone.
 
-/** A host's global skills and MCP servers, each switched on or off by default per profile. */
+/**
+ * A host's global skills and MCP servers, each switched on or off by default per profile. With several hosts, a picker
+ * says whose: each host keeps its own, and only its own profiles' agents get them. It starts on this board's host if
+ * that has profiles, else on the first that has: a board whose own host has none (a laptop's showing another machine's
+ * projects) would otherwise add skills where no agent runs.
+ */
 export function GlobalAgentToolsPanel() {
-  const hostId = useBoard((b) => {
-    const usable = b.hosts.filter(canRunAgents)
-    return usable.find((h) => h.local)?.id ?? usable[0]?.id ?? b.localHostId ?? ""
-  })
-  return hostId ? <HostAgentTools hostId={hostId} /> : null
+  const hosts = useBoard(useShallow((b) => b.hosts.filter(canRunAgents)))
+  const withProfiles = useBoard(useShallow((b) => b.hosts.filter((h) => b.profiles.some((p) => p.host_id === h.id)).map((h) => h.id)))
+  const fallback = useBoard((b) => b.localHostId ?? "")
+  const [picked, setPicked] = useState("")
+  const profiled = hosts.filter((h) => withProfiles.includes(h.id))
+  const first = profiled.find((h) => h.local) ?? profiled[0] ?? hosts.find((h) => h.local) ?? hosts[0]
+  const hostId = hosts.some((h) => h.id === picked) ? picked : (first?.id ?? fallback)
+  if (!hostId) return null
+  return <HostAgentTools key={hostId} hostId={hostId} picker={hosts.length > 1 ? <HostSelect value={hostId} onChange={setPicked} /> : null} />
 }
 
 /** The panel for one host: its tools, read while it's shown and again after each change (an `agentTools.*` mutation). */
-function HostAgentTools({ hostId }: { hostId: string }) {
+function HostAgentTools({ hostId, picker }: { hostId: string; picker: ReactNode }) {
+  const hostName = useBoard((b) => b.hosts.find((h) => h.id === hostId)?.name ?? "this host")
   const allProfiles = useBoard((b) => b.profiles)
   const profiles = allProfiles.filter((p) => p.host_id === hostId)
   const result = useAtomValue(query("agentTools.get", hostId, undefined))
@@ -141,6 +153,13 @@ function HostAgentTools({ hostId }: { hostId: string }) {
         project can override that in its settings, or add its own. Skills can also come from a git repository, as with npx skills: add the repository, then
         switch on the skills you want.
       </p>
+      {picker && <div className="mb-3 w-64">{picker}</div>}
+      {tools && profiles.length === 0 && (
+        <div className="mb-3 rounded-xl border border-dashed border-line p-3 text-[12.5px] text-muted">
+          {hostName} has no profiles, so its skills and MCP servers reach no agent and there is nothing to switch on.
+          {picker ? " Pick the host your projects run on." : ""}
+        </div>
+      )}
       {tools && (
         <div className="space-y-3">
           {tools.skills.length + tools.mcp_servers.length === 0 && tools.skill_sources.length === 0 && (
