@@ -66,6 +66,15 @@ export const withLostNote = (lost: ReadonlyArray<LostWork>, sessionGoesOn: boole
   return isSlashCommand(prompt) ? `${prompt.trimEnd()}\n\n${said.trimEnd()}` : `${said}${prompt}`
 }
 
+/**
+ * `preface` (what changed in the assistant's memory, its routines' reports) put in front of `prompt`, or after it when
+ * it's a command, which Claude Code runs only at the very start.
+ */
+export const withPreface = (preface: string, prompt: string): string => {
+  if (preface === "") return prompt
+  return isSlashCommand(prompt) ? `${prompt.trimEnd()}\n\n${preface.trimEnd()}` : `${preface}${prompt}`
+}
+
 /** How many stopped pieces of background work the note lists, the latest. */
 export const LOST_NOTE_ITEMS = 10
 

@@ -1,12 +1,15 @@
-import { Context, DateTime, Effect, FiberSet, FileSystem, Layer, Option, Result } from "effect"
+import { Context, DateTime, Effect, FiberSet, FileSystem, HashMap, Layer, Option, Ref, Result } from "effect"
 import { Conflict, Invalid, NotFound, Unavailable } from "@huntaway/contracts"
 import type { MemoryCommit, MemoryDiff, MemoryFileContent, MemoryOverview, MemoryWrite, Task, TaskId } from "@huntaway/contracts"
+import { ContextStatsRepo } from "../agents/ContextStatsRepo.ts"
+import { pendingRewind } from "../git/checkpoints/conversation.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { readImportRecord } from "../platform/ImportRecord.ts"
 import type { ImportRecord } from "../platform/ImportRecord.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { Proc } from "../platform/Proc.ts"
-import { memory as memoryPrompt, memoryNotLoaded, MEMORY_CAP, MEMORY_CAP_BYTES, MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
+import { memory as memoryPrompt, memoryNotLoaded, memoryUpdate, MEMORY_CAP, MEMORY_CAP_BYTES, MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
+import type { MemoryChange, MemoryFacts, MemoryFile } from "../prompts/memory.ts"
 import { checkRev, dayIn, IMPORT_PROMPT, loaded, LOG_FORMAT, logName, MAX_FILE, memoryFile, parseLog, withWeekday } from "./memory/text.ts"
 import { makeWorkspace } from "./memory/workspace.ts"
 
@@ -23,9 +26,59 @@ import { makeWorkspace } from "./memory/workspace.ts"
 // folders are real ones, never symlinks (one could lead to another assistant's workspace), and its git work is under a
 // lock per workspace (`KeyedLock` `["workspace", dir]`). A workspace from before the history moved out of it (HA-160) is
 // the old server's to have moved: its `.git` isn't moved here (docs/plan/14-dropped-and-open.md).
+//
+// Claude Code and Codex keep the instructions a conversation started with (Claude Code until it's compacted: its
+// `--system-prompt-snapshot`), so a later run of the conversation is told its memory before its message, when it changed
+// since the conversation was last told it (HE-25): what's new at a log's end, or the files that changed as they are now;
+// all of it when the board can't be sure what the conversation has (after a restart, a compaction, a rewind or another
+// session, or on another day). What each conversation was told is kept in memory, so a restart tells it all once.
 
 /** What a file write is checked against: what the editor opened (null: that it wasn't there), or nothing (a restore). */
 type Seen = { readonly _tag: "Opened"; readonly content: string | null } | { readonly _tag: "Any" }
+
+/** What a conversation was last told of its memory: in which session, when, on which day, and the files as shown. */
+interface Told {
+  readonly session: string | null
+  readonly at: number
+  readonly day: string
+  readonly files: ReadonlyMap<string, MemoryFile>
+}
+
+/** What a run in an assistant's workspace is told of its memory. */
+export interface MemoryForRun {
+  /** Last in its instructions. */
+  readonly system: string
+  /** Before its message: what changed since its conversation was last told ("" for nothing). */
+  readonly update: string
+  /** Once its agent has started with them: its conversation was told them. */
+  readonly told: Effect.Effect<void>
+}
+
+/** The files a run is told, by path. */
+const filesOf = (t: MemoryFacts): ReadonlyArray<readonly [string, MemoryFile]> => [
+  [USER_FILE, t.user],
+  [MEMORY_FILE, t.memory],
+  [t.yesterdayLog.rel, t.yesterdayLog.file],
+  [t.todayLog.rel, t.todayLog.file],
+]
+
+const sameFile = (a: MemoryFile, b: MemoryFile) =>
+  a._tag === "Shown" && b._tag === "Shown" ? a.shown === b.shown && a.cut === b.cut && a.total === b.total : a._tag === b._tag
+
+/** What changed in `now` since `before`: whole lines added at a file's end, or the file as it is now. */
+export const memoryChanges = (before: ReadonlyMap<string, MemoryFile>, now: MemoryFacts): ReadonlyMap<string, MemoryChange> => {
+  const out = new Map<string, MemoryChange>()
+  for (const [rel, f] of filesOf(now)) {
+    const was = before.get(rel)
+    if (was !== undefined && sameFile(was, f)) continue
+    const appended =
+      was?._tag === "Shown" && f._tag === "Shown" && !was.cut && !f.cut && was.shown.endsWith("\n") && f.shown.startsWith(was.shown)
+        ? f.shown.slice(was.shown.length)
+        : null
+    out.set(rel, appended !== null && appended.trim() !== "" ? { _tag: "Added", added: appended } : { _tag: "Whole", file: f })
+  }
+  return out
+}
 
 /** A commit's id, checked. */
 const rev = (r: string) => Effect.fromResult(Result.mapError(checkRev(r), (reason) => new Invalid({ field: "rev", reason })))
@@ -35,8 +88,12 @@ export interface MemoryShape {
   readonly checked: (assistant: Task) => Effect.Effect<string, Unavailable>
   /** The workspace seeded, with a repository and a first commit if it has none yet. */
   readonly ensure: (dir: string) => Effect.Effect<void, Unavailable>
-  /** What the assistant `assistant` is told about its memory, its workspace made ready first (or why it isn't loaded). */
-  readonly forRun: (assistant: Task) => Effect.Effect<string>
+  /**
+   * What a run in the assistant `assistant`'s workspace is told about its memory, its workspace made ready first (or
+   * why it isn't loaded): `run`'s thread (the assistant or a routine thread) is told before its message what changed
+   * since its conversation was last told; a compaction is told nothing before it. Null: not a run (its terminal).
+   */
+  readonly forRun: (assistant: Task, run: { readonly thread: Task; readonly compact: boolean } | null) => Effect.Effect<MemoryForRun>
   /** One of the assistant's turns ended (or a run in its workspace did): what changed is committed, in the background. */
   readonly turnEnded: (assistant: Task) => Effect.Effect<void>
   /** Commit everything that changed (tests, and `turnEnded`'s work): the commit, if there was one. */
@@ -75,6 +132,8 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
     Memory,
     Effect.gen(function* () {
       const dataDir = yield* DataDir
+      const contextStats = yield* ContextStatsRepo
+      const toldBy = yield* Ref.make(HashMap.empty<TaskId, Told>())
       const locks = yield* KeyedLock
       const ws = makeWorkspace({ fs: yield* FileSystem.FileSystem, proc: yield* Proc })
       const background = yield* FiberSet.make()
@@ -134,25 +193,51 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
         }).pipe(locked(dir))
       })
 
-      const forRun = Effect.fn("Memory.forRun")(function* (assistant: Task) {
+      const forRun = Effect.fn("Memory.forRun")(function* (assistant: Task, run: { readonly thread: Task; readonly compact: boolean } | null) {
         const dir = yield* Effect.result(checked(assistant))
         if (Result.isFailure(dir)) {
           yield* Effect.logWarning(`task=${assistant.id} the assistant's memory: ${dir.failure.reason}`)
-          return memoryNotLoaded(dir.failure.reason)
+          const out: MemoryForRun = { system: memoryNotLoaded(dir.failure.reason), update: "", told: Effect.void }
+          return out
         }
         yield* ensure(dir.success).pipe(Effect.catch((e) => Effect.logWarning(`task=${assistant.id} setting up the assistant's memory: ${e.reason}`)))
-        const day = yield* today
+        const at = yield* DateTime.now
+        const day = dayIn(at, zone)
         const [, , y, t] = loaded(day)
         const read = (rel: string, tail: boolean) =>
           Effect.map(ws.readForPrompt(dir.success, rel), (text) => memoryFile(text, tail, MEMORY_CAP, MEMORY_CAP_BYTES))
-        return memoryPrompt({
+        const facts: MemoryFacts = {
           dir: dir.success,
           today: withWeekday(day),
           user: yield* read(USER_FILE, false),
           memory: yield* read(MEMORY_FILE, false),
           yesterdayLog: { rel: y, file: yield* read(y, true) },
           todayLog: { rel: t, file: yield* read(t, true) },
-        })
+        }
+        const system = memoryPrompt(facts)
+        if (run === null || run.compact) {
+          const out: MemoryForRun = { system, update: "", told: Effect.void }
+          return out
+        }
+        const { thread } = run
+        const session = thread.session_id
+        let update = ""
+        // A new conversation is told them in its instructions; a later run, what its conversation doesn't have.
+        if (session !== null) {
+          const was = Option.getOrUndefined(HashMap.get(yield* Ref.get(toldBy), thread.id))
+          const compacted = yield* contextStats.lastCompaction(thread.id)
+          const unsure =
+            was === undefined ||
+            (was.session !== null && was.session !== session) ||
+            was.day !== day ||
+            pendingRewind(thread) !== null ||
+            // A compaction since it was told (in a run after, or later in that run).
+            (compacted !== null && DateTime.toEpochMillis(DateTime.makeUnsafe(compacted)) > was.at)
+          update = memoryUpdate(facts, unsure ? null : memoryChanges(was.files, facts))
+        }
+        const told: Told = { session, at: DateTime.toEpochMillis(at), day, files: new Map(filesOf(facts)) }
+        const out: MemoryForRun = { system, update, told: Ref.update(toldBy, HashMap.set(thread.id, told)) }
+        return out
       })
 
       const commitAll = Effect.fn("Memory.commitAll")(function* (dir: string) {

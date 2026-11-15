@@ -11,6 +11,7 @@ import type { LaunchRefused } from "../agents/codex/launch.ts"
 import { isClaudeModel } from "../agents/codex/spec.ts"
 import { CodexQueries } from "../agents/CodexQueries.ts"
 import { Prompts } from "../agents/Prompts.ts"
+import { withPreface } from "../agents/prompts/start.ts"
 import { Checkpoints, pendingRewind } from "../git/Checkpoints.ts"
 import { Worktrees, WorktreeFailed } from "../git/Worktrees.ts"
 import { Restack } from "../git/Restack.ts"
@@ -34,7 +35,7 @@ import { Threads } from "../threads/Threads.ts"
 import { AgentRequests } from "./AgentRequests.ts"
 // 6.7: the assistant's workspace, memory and routines' reports.
 import { AssistantLaunch } from "./AssistantLaunch.ts"
-import type { WorkspaceRefused } from "./AssistantLaunch.ts"
+import type { ReportsRun, WorkspaceRefused, WorkspaceRun } from "./AssistantLaunch.ts"
 import { BackgroundWork } from "./BackgroundWork.ts"
 import type { Run } from "./Run.ts"
 import { RunDir } from "./RunDir.ts"
@@ -51,11 +52,18 @@ export interface Prepared {
   readonly writesDocuments: boolean
   /** The conversation rollback a rewind asked for that the run makes (`Checkpoints.rewound` once its agent starts). */
   readonly rewind?: Rewind | null
-  /** 6.7: what's done once its agent has started (the assistant's routines' reports it starts with are read). */
+  /**
+   * 6.7: what's done once its agent has started (the assistant's routines' reports it starts with are read, and its
+   * conversation was told its memory).
+   */
   readonly started?: Effect.Effect<void> | undefined
   /** 6.9: what telemetry's `run_start` says of it: its agent, model, effort and mode, and whether it resumes a session. */
   readonly runStart?: { readonly runtime: string; readonly model: string; readonly effort: string; readonly permission_mode: string; readonly resume: boolean }
 }
+
+/** What's done once a run's agent has started: its conversation was told its memory, and has read its routines' reports. */
+const startedWith = (workspace: WorkspaceRun | null, reports: ReportsRun | null): Effect.Effect<void> | undefined =>
+  workspace === null && reports === null ? undefined : Effect.andThen(workspace?.told ?? Effect.void, reports?.started ?? Effect.void)
 
 /** Trimmed, or null when blank. */
 const nonBlank = (s: string | null | undefined): string | null => {
@@ -263,7 +271,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const compact = run.kind === "compact"
         task = yield* prepareWork(run, task, project)
         // 6.7: the assistant and its routine threads work in its workspace, with its memory.
-        const workspace = yield* assistantLaunch.workspace(task)
+        const workspace = yield* assistantLaunch.workspace(task, { compact })
         const cwd = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
         const rewind = pendingRewind(task)
         // A labelled task's agent writes its documents in the task's own folder, wherever it works.
@@ -280,7 +288,10 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         // What the end of its last run stopped of its background work, which it never heard about: once.
         // 6.7: the assistant reads its routines' reports since its last turn with the next message.
         const reports = compact ? null : yield* assistantLaunch.reports(task)
-        const prompt = compact ? text : (reports?.preface ?? "") + (yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
+        // HE-25: what changed in its memory since its conversation was told, first (after a command).
+        const prompt = compact
+          ? text
+          : withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         // The task's own temp folder, its TMPDIR, which goes once it's done.
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
@@ -330,7 +341,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         // Where its conversation is kept, if it starts one, and the effort it was given (review statistics).
         yield* runs.update(run.id, { config_dir: configDir ?? "", effort: recordedEffort(effort) })
         const runStart = { runtime: "claude", model: model ?? "", effort: effort ?? "", permission_mode: permissionMode, resume: task.session_id !== null }
-        const prepared: Prepared = { spec, writesDocuments: docs !== null, rewind, started: reports?.started, runStart }
+        const prepared: Prepared = { spec, writesDocuments: docs !== null, rewind, started: startedWith(workspace, reports), runStart }
         return prepared
       })
 
@@ -390,7 +401,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const compact = run.kind === "compact"
         const review = task.kind === "review"
         // 6.7: as Claude's launch.
-        const workspace = yield* assistantLaunch.workspace(task)
+        const workspace = yield* assistantLaunch.workspace(task, { compact })
         const cwd = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
         const docs = task.kind === "task" && task.labels.length > 0 ? dataDir.documents(task.id) : null
         if (docs !== null) yield* mkdir(docs)
@@ -405,7 +416,9 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const asked = nonBlank(task.effort) ?? nonBlank(host.default_effort)
         const effort = asked === null ? null : codexEffort(asked, model, yield* queries.models(cfg).pipe(Effect.orElseSucceed(() => [])))
         const reports = compact ? null : yield* assistantLaunch.reports(task)
-        const prompt = compact ? "" : (reports?.preface ?? "") + (yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
+        const prompt = compact
+          ? ""
+          : withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
         const served = yield* requests.served
@@ -461,7 +474,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         })
         yield* runs.update(run.id, { config_dir: configDir ?? "", effort: effort?.trim() ?? "", board_tools: launched.boardTools })
         const runStart = { runtime: "codex", model: model ?? "", effort: effort ?? "", permission_mode: permissionMode, resume: task.session_id !== null }
-        const prepared: Prepared = { spec: launched.spec, writesDocuments: docs !== null, rewind: pending, started: reports?.started, runStart }
+        const prepared: Prepared = { spec: launched.spec, writesDocuments: docs !== null, rewind: pending, started: startedWith(workspace, reports), runStart }
         return prepared
       })
 
