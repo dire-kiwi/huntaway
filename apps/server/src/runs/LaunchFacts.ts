@@ -11,6 +11,7 @@ import type { LaunchRefused } from "../agents/codex/launch.ts"
 import { isClaudeModel } from "../agents/codex/spec.ts"
 import { CodexQueries } from "../agents/CodexQueries.ts"
 import { Prompts } from "../agents/Prompts.ts"
+import { withPreface } from "../agents/prompts/start.ts"
 import { Checkpoints, pendingRewind } from "../git/Checkpoints.ts"
 import { Worktrees, WorktreeFailed } from "../git/Worktrees.ts"
 import { Restack } from "../git/Restack.ts"
@@ -287,10 +288,10 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         // What the end of its last run stopped of its background work, which it never heard about: once.
         // 6.7: the assistant reads its routines' reports since its last turn with the next message.
         const reports = compact ? null : yield* assistantLaunch.reports(task)
-        // HE-25: what changed in its memory since its conversation was told, first.
+        // HE-25: what changed in its memory since its conversation was told, first (after a command).
         const prompt = compact
           ? text
-          : (workspace?.update ?? "") + (reports?.preface ?? "") + (yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
+          : withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         // The task's own temp folder, its TMPDIR, which goes once it's done.
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
@@ -417,7 +418,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const reports = compact ? null : yield* assistantLaunch.reports(task)
         const prompt = compact
           ? ""
-          : (workspace?.update ?? "") + (reports?.preface ?? "") + (yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
+          : withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         const tmp = yield* taskTmp.ensure(task)
         // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
         const served = yield* requests.served

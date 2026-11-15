@@ -300,6 +300,11 @@ layer(board)("Assistant", (it) => {
       assert.include(sent, "- The car is blue")
       yield* prepared.started ?? Effect.void
       assert.notInclude((yield* facts.claude((yield* fakeAgent({ task: a.id })).run, "And now?")).spec.prompt, "<memory-update>")
+      // A command stays at the start of the message, which is the only place Claude Code runs one: the update follows it.
+      writeFileSync(`${dir}/${MEMORY_FILE}`, "# Memory\n- The car is red\n")
+      const command = yield* facts.claude((yield* fakeAgent({ task: a.id })).run, "/remember the car")
+      assert.include(command.spec.prompt, '"content":"/remember the car\\n\\n<memory-update>')
+      assert.include(command.spec.prompt, "- The car is red")
     }),
   )
 
