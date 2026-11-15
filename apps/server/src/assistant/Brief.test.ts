@@ -135,7 +135,7 @@ describe("Brief", () => {
         text = readFileSync(`${dir}/${MEMORY_FILE}`, "utf8")
         assert.strictEqual([0, 1, 2, 3, 4, 5, 6, 7].filter((i) => text.includes(`board: Task ${i} `)).length, 8, text)
         // And the next run reads them: they're in its memory.
-        const told = yield* memory.forRun(a)
+        const told = (yield* memory.forRun(a, null)).system
         assert.isTrue(told.includes("More like this — board: Task 3") && told.includes("Less like this — other: Rain at 3pm"), told)
         // Taken back.
         r = yield* brief.feedback(p.id, "clear", { kind: "other", topic: "Rain at 3pm", text: null })

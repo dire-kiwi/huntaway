@@ -27,12 +27,18 @@ conversation on the new one (the thread and its memory files stay).
 
 The assistant **remembers** you in files in its workspace: `USER.md` (who you are, your
 preferences), `MEMORY.md` (lasting facts) and a log for each day, `memory/YYYY-MM-DD.md` (in the
-host's time zone). The board, not the CLI, puts them into the instructions of every run, so it's the
-same on Claude Code and Codex and always what the files say now: `USER.md` and `MEMORY.md` up to
+host's time zone). The board, not the CLI, gives them to every run, so it's the same on Claude Code
+and Codex and always what the files say when the run starts: `USER.md` and `MEMORY.md` up to
 8,000 characters (and 16 KB) each (with a note to the assistant when one is cut), today's and
-yesterday's logs (their ends, if longer), and how to remember, forget and keep the log. Claude Code
-is given these instructions in a file (`--append-system-prompt-file`, in the run's folder) rather
-than as an argument, which can't be longer than 128 KiB. The workspace has a git history: after each
+yesterday's logs (their ends, if longer), and how to remember, forget and keep the log. A
+conversation's first run has them in its instructions. Claude Code and Codex keep the instructions a
+conversation started with (Claude Code until it's compacted), which keeps the conversation in their
+prompt cache, so a later run whose files changed since (the assistant's own edits, yours in the
+Memory tab, a routine's) starts its message with a `<memory-update>`: what's new at the end of a
+log, or the files that changed, as they are now. After a compaction, a rewind, a restart of the
+board, or on a new day, the update has all of them. Claude Code is given the instructions in a file
+(`--append-system-prompt-file`, in the run's folder) rather than as an argument, which can't be
+longer than 128 KiB. The workspace has a git history: after each
 of the assistant's turns that changed it, the board commits it as _Assistant_. Its git folder is
 `<data dir>/assistants/<task id>.git`, next to the workspace rather than in it, so the assistant
 can't set the config, hooks or filters the board's git runs with. A workspace that still has its own `.git` inside it
