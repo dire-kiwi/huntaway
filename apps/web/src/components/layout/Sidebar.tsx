@@ -80,13 +80,19 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
         )}
       </div>
 
+      {/* 6.7: the active profile's assistant, above the profiles. */}
+      {active && (
+        <div className="px-2 pb-3 empty:hidden">
+          <AssistantEntry route={route} profile={active} />
+        </div>
+      )}
+
       <ProfileNav route={route} names={names} active={active} byProfile={stats.byProfile} setMenu={setMenu} />
 
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-2">
-        {/* 6.7: the profile's assistant; 6.3: its documents. */}
+        {/* 6.3: the profile's documents. */}
         {active && (
           <div className="space-y-0.5 pb-3 empty:hidden">
-            <AssistantEntry route={route} profile={active} />
             <DocsEntry route={route} profile={active} />
           </div>
         )}
