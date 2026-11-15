@@ -837,6 +837,40 @@ As built in 3.4 (HE-4), `permissions/Approvals.ts`:
   `ProjectCreationDetail` and `TaskDeletionDetail`; the approval card shows them while it waits (or once opened) and a
   line otherwise. The browser check is `apps/web/tests/ui/boardApprovals.test.mjs` (the old suite had none).
 
+### As built in HE-28: `request_connection`
+
+The assistant (and the threads under it, routines' too: `trackedList.owner`'s rule, as for tracked work) asks for a
+connection it needs and doesn't have with the board tool `request_connection` (`mcp/tools/connections.ts`;
+bot-hq's `request_app_connection`): `{ connection: "google", reason }`. It's listed after `finish_work`, is a thread
+tool (`THREAD_TOOLS`: an agent on another host is refused), rerunnable and allowed in plan mode, not for reviewers.
+
+- **What it does**: `Connections.state(kind, profile)` first; for Google that is `Google.status(profile, true)`, its
+  files and then its refresh token tried with Google, so a token Google turns away isn't connected. Connected: no card,
+  and the agent is told so (try the tool again). In a routine's turn (its user message `routine`, as for a prompt's
+  expiry): no card either: nobody is there, so the agent is told to carry on without it and say in its report that it
+  isn't connected (and where to set it up). Otherwise the run's `attention` is `Connect Google` (it ends in Needs
+  attention) and `Connections.ask` opens the card once per call.
+- **The card** is a board question (`legacy:<n>`, one question `q`, its one option `Skip`, no answer of one's own) whose
+  metadata is `{ connection, reason, problem, call_id }` (`assistant/connectionText.ts` `connectionRequest`).
+  `Questions.answer` refuses it (not found): it is settled with its own RPCs. Its resolution: `answer` with `answers.q`
+  `["connected"]` and `answers.account` (message `Connected as <address>`), or `["skipped"]`; a `cancel` as a
+  question's (`Questions.settle`: a message from the user settles it, as replied).
+- **Settling it** (`assistant/Connections.ts`): `check` (`threads.checkConnection`, Check again) reads the state and,
+  if connected, settles it; `skip` (`threads.skipConnection`). Both refuse a settled card or one the conversation moved
+  past (`QuestionClosed`), resolve it (the compare and set), send the agent `connectedText` ("Google is connected now
+  (as …). Carry on with what you were doing.") or `skippedText` ("… Carry on without it.") with `Runs.send(task,
+  { source: "board" })` (on a failure the card opens again), then settle the thread's other open questions as replied.
+  `sweep` is the board noticing on its own: `Connections.watcher` (in `AreasLive`, not in tests, which run `sweep`)
+  every 30 seconds reads the open cards of the assistants' and routines' threads (`ThreadStore.openConnections`, only
+  while one may be open: a flag set when a card is opened and at start) and settles those whose connection is made,
+  reading each profile's state once a pass.
+- **Another connection** (an MCP server switched off for the profile, say) is a kind in `CONNECTION_KINDS` with a
+  label, a branch of `Connections.state`, and a card in the web app's `LABELS` with its own set-up dialog.
+- **Web**: `components/task/thread/ConnectionCard.tsx` (an item `connection` in the thread model): what's missing (the
+  problem when asked, or the last Check again's), the reason, **Set up Google** (the profile's Google card from Settings
+  → Assistant in a dialog, which checks again when closed), **Check again**, **Skip**; settled, _Connected as
+  <address>_, skipped, or answered in the thread. Browser check: `apps/web/tests/ui/connectionCard.test.mjs`.
+
 ## Codex<a id="codex"></a>
 
 ### As built in 5.1–5.3 (HE-5)

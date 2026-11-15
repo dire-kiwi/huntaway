@@ -62,6 +62,20 @@ export interface QuestionData {
   readonly merge_approval?: true | undefined
 }
 
+/**
+ * A connection card (HE-28, the assistant's request_connection): what it asks to have connected (Google), the agent's
+ * reason, what was missing when it asked, and how it settled.
+ */
+export interface ConnectionData {
+  readonly connection: string
+  readonly reason: string
+  readonly problem: string | null
+  /** pending, connected, skipped, replied, replaced or expired. */
+  readonly status: string
+  /** Connected as. */
+  readonly account?: string | undefined
+}
+
 /** A turn's end, as Claude's result message has it. */
 export interface ResultData {
   readonly subtype: string
@@ -93,6 +107,8 @@ export type Item =
   | { type: "event"; key: string; level: string; text: string; detail?: string | null | undefined }
   | { type: "permission"; key: string; data: PromptData }
   | { type: "question"; key: string; id: number; data: QuestionData }
+  /** A connection card in the assistant's thread (HE-28). */
+  | { type: "connection"; key: string; id: number; data: ConnectionData }
   | { type: "text"; key: string; text: string }
   | { type: "thinking"; key: string; text: string }
   | { type: "tools"; key: string; calls: Call[] }

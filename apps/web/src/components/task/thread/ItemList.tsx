@@ -5,7 +5,7 @@ import { splitAttachments } from "@huntaway/client"
 import type { Turn } from "@huntaway/contracts"
 import { openTaskModal } from "../../../state/route"
 import { AttachmentList } from "../Attachments"
-import { CompactLine, EventLine, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
+import { CompactLine, ConnectionRow, EventLine, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
 import { Markdown } from "./Markdown"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
 import type { Item, ReportData } from "./threadModel"
@@ -93,6 +93,8 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       return <PromptCard id={Number(it.key)} data={it.data} hostId={hostId} />
     case "question":
       return <QuestionRow id={it.id} data={it.data} hostId={hostId} />
+    case "connection":
+      return <ConnectionRow id={it.id} data={it.data} hostId={hostId} />
     case "result":
       return <ResultLine data={it.data} />
     case "compact":

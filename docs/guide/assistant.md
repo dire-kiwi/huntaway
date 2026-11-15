@@ -186,6 +186,21 @@ Its tools are `mcp__google__…`.
    env to pick one). The RPC `assistant.google` (with `check` for the test) is the same, and `assistant.setupGoogle` adds
    the server.
 
+**When the assistant needs Google** and it isn't connected (one of its Google tools is missing, or fails for want of a
+sign-in), it doesn't tell you to go to Settings: it calls the board tool `request_connection` (with `google` and why it
+needs it) and ends its turn, and the thread shows a **Connect Google** card. The card says what's missing, as the Google
+card does (no server, switched off for the profile, `uvx` not found, no OAuth client, not signed in, no refresh token,
+or a refresh token Google turned away), with the assistant's reason, and has **Set up Google** (the Google card from
+Settings → Assistant, in a dialog over the page; closing it checks again), **Check again** and **Skip**. The thread
+waits in _Needs attention_ meanwhile. Once Google is connected, whether you pressed **Check again** or the board noticed
+by itself (it looks every 30 seconds while a card is open, trying the refresh token with Google, as **Test** does), the
+card says _Connected as <your address>_ and the assistant is told "Google is connected now (as <address>). Carry on with
+what you were doing."; **Skip** tells it "The user skipped connecting Google. Carry on without it." The card settles
+once: a message of yours sent before it's settled settles it too, as it does a question. If Google turns out to be
+connected when it asks, there's no card and it tries again. The routines' threads have the tool too, but a routine's
+run, with nobody there, puts up no card: it carries on without Google and says in its report that Google isn't
+connected. The RPCs are `threads.checkConnection` and `threads.skipConnection` (`{"task_id", "request_id"}`).
+
 On a test server, the old repository's
 [`scripts/stub-google-mcp.py`](https://github.com/dire-kiwi/huntaway-legacy/blob/master/scripts/stub-google-mcp.py) (not in
 this one) stands in for workspace-mcp: an MCP server over stdio
