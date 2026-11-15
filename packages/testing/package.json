@@ -13,6 +13,7 @@
     "@effect/sql-sqlite-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@huntaway/contracts": "workspace:*",
+    "@huntaway/plugin": "workspace:*",
     "effect": "catalog:",
     "huntaway-server": "workspace:*"
   },

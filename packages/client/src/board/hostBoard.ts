@@ -81,6 +81,17 @@ export interface HostBoard {
   readonly workflows: ReadonlyMap<ProjectId, number>
   /** 6.6: by task, the number of the latest `workflow_runs_changed` about it, which its workflow runs are read again on. */
   readonly workflowRuns: ReadonlyMap<TaskId, number>
+  /**
+   * HE-34: by plugin, its latest event (what its frames are given) and the number of its latest event with `reload`
+   * (what its pages are rendered again on).
+   */
+  readonly plugins: ReadonlyMap<string, PluginEventState>
+}
+
+/** A plugin's latest event on a host's board, and the number of its latest that reloads its pages. */
+export interface PluginEventState {
+  readonly last: Extract<BoardEvent, { readonly type: "plugin" }> | null
+  readonly reload: number
 }
 
 const noSettings: HostSettings = {
@@ -116,6 +127,7 @@ export const emptyHostBoard = (host_id: HostId): HostBoard => ({
   approvalRules: new Map(),
   workflows: new Map(),
   workflowRuns: new Map(),
+  plugins: new Map(),
 })
 
 // ---- identity -----------------------------------------------------------------------------------------------------
@@ -299,6 +311,12 @@ function applyEvent(board: HostBoard, message: Exclude<BoardEvent, { readonly ty
       return { ...next, approvalRules: new Map(board.approvalRules).set(`rules ${message.profile_id}`, message.seq) }
     case "approval_log":
       return { ...next, approvalRules: new Map(board.approvalRules).set(`log ${message.profile_id}`, message.seq) }
+    // HE-34
+    case "plugin": {
+      const was = board.plugins.get(message.plugin)
+      const state: PluginEventState = { last: message, reload: message.reload ? message.seq : (was?.reload ?? 0) }
+      return { ...next, plugins: new Map(board.plugins).set(message.plugin, state) }
+    }
     // 6.8: for push; the board has nothing of them.
     case "assistant_reply":
     case "routine_report":

@@ -1,0 +1,21 @@
+{
+  "name": "@huntaway/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The plugin API: what a plugin gives the board (an MCP server, pages, calls, HTTP routes, its own SQLite database) and the board services it may call",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./example/notes": "./example/notes.ts"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "effect": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "catalog:"
+  }
+}

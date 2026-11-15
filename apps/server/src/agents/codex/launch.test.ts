@@ -100,6 +100,19 @@ describe("a Codex run's launch", () => {
     }),
   )
 
+  // HE-34
+  it.effect("the plugins' servers are in mcp.json, a pre-approved one's approved", () =>
+    Effect.gen(function* () {
+      const plugins = [
+        { name: "notes", preApproved: true },
+        { name: "asks", preApproved: false },
+      ]
+      const { spec, codex } = yield* launch({ served: { gh: false, docs: false, desktop: false, plugins } })
+      assert.deepStrictEqual(Object.keys(spec.mcpServers ?? {}).toSorted(), ["asks", "huntaway", "notes"])
+      assert.deepStrictEqual(codex.approved_mcp_servers, ["notes"])
+    }),
+  )
+
   it.effect("a compaction takes no input and calls no tools", () =>
     Effect.gen(function* () {
       const { spec, codex, boardTools } = yield* launch({ kind: "compact", prompt: "" })
