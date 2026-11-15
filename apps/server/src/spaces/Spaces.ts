@@ -1,4 +1,4 @@
-import { Clock, Context, DateTime, Effect, FiberMap, FileSystem, Layer, Option, Redacted, Ref, Schedule } from "effect"
+import { Clock, Context, DateTime, Effect, Fiber, FiberMap, FileSystem, Layer, Option, Redacted, Ref, Schedule } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Invalid, NotFound, Timestamp, Unavailable } from "@huntaway/contracts"
@@ -46,6 +46,8 @@ export interface SpacesShape {
   /** Copy its configs' sign-ins in again. */
   readonly syncAgents: (id: string) => Effect.Effect<Space, NotFound | Unavailable>
   readonly view: (id: string, interactive: boolean) => Effect.Effect<SpaceView, NotFound | Unavailable>
+  /** Waits for what is being done to the Space in the background (making or starting it) to end; the Space then. */
+  readonly settled: (id: string) => Effect.Effect<Space, NotFound | Unavailable>
   /** The Space a relay ticket opens, while it lasts. */
   readonly relayTarget: (ticket: string) => Effect.Effect<RelayTarget | null>
 }
@@ -360,6 +362,13 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
         return out
       })
 
+      const settled = Effect.fn("Spaces.settled")(function* (id: string) {
+        const fiber = yield* FiberMap.get(work, id)
+        if (Option.isSome(fiber)) yield* Fiber.await(fiber.value)
+        const held = (yield* Ref.get(pending)).get(id)
+        return held ?? (yield* spaceOf(yield* container(id), null))
+      })
+
       const relayTarget = (ticket: string) =>
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis
@@ -367,7 +376,7 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
           return r === undefined || r.expires <= now ? null : { id: r.id, port: r.port }
         })
 
-      return Spaces.of({ status, create, start, stop, remove, syncAgents, view, relayTarget })
+      return Spaces.of({ status, create, start, stop, remove, syncAgents, view, settled, relayTarget })
     }),
   )
 }

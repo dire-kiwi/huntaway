@@ -12,6 +12,7 @@ import { AgentDefaultsRow } from "./hosts/AgentDefaults"
 import { ProfileForm } from "./hosts/ProfileForm"
 import { ServerPanel } from "./Server"
 import { HostDesktop } from "./HostDesktop"
+import { HostSpaces } from "./HostSpaces"
 import { TerminalToolsRow } from "./hosts/TerminalTools"
 import { HostVersion } from "./hosts/HostRow"
 import { hubRpc } from "./hosts/hub"
@@ -100,6 +101,7 @@ export function HostPage({ hostId }: { hostId: string }) {
               {host.local ? <ServerPanel /> : <RemoteServer hostId={host.id} />}
               <HostService hostId={host.id} />
               {agents && <HostDesktop hostId={host.id} />}
+              <HostSpaces host={host} />
             </>
           )}
 
