@@ -195,12 +195,12 @@ test("Board's default replicates the board's handling and switches the project t
   await withBrowser(server, {}, async (ui) => {
     await ui.run([
       `goto /p/${project.id}/settings/workflows`,
-      "wait [data-testid=use-workflows] >> text=The board handles this project's tasks itself",
+      "wait [data-testid=use-workflows] [role=switch][aria-checked=false]",
       'click role=button[name="Board\'s default"]',
       "wait [data-node=reviewer]",
       "click Create workflow",
       "gone [role=dialog]",
-      "wait [data-testid=use-workflows] >> text=Tasks entering a column start the workflows",
+      "wait [data-testid=use-workflows] [role=switch][aria-checked=true]",
     ])
     const [w] = await workflows()
     const g = w.graph
@@ -219,7 +219,7 @@ test("Board's default replicates the board's handling and switches the project t
     assert.deepEqual([n.done.status, has("merge", "done", "done")], ["done", true])
     assert.equal((await getProject()).use_workflows, true)
     // Off again from the switch.
-    await ui.run(["click [data-testid=use-workflows] [role=switch]", "wait text=The board handles this project's tasks itself"])
+    await ui.run(["click [data-testid=use-workflows] [role=switch]", "wait [data-testid=use-workflows] [role=switch][aria-checked=false]"])
     assert.equal((await getProject()).use_workflows, false)
   })
 })
@@ -236,7 +236,7 @@ test("switching to workflows moves the Review tab's reviews into a workflow", as
     await ui.run([
       `goto /p/${project.id}/settings/workflows`,
       "click [data-testid=use-workflows] [role=switch]",
-      "wait text=workflows' steps review and summarise instead",
+      "wait [data-testid=use-workflows] [role=switch][aria-checked=true]",
       "wait In review · Reviewer, Summary",
     ])
     const w = await workflow("Review and summarise")
@@ -249,7 +249,7 @@ test("switching to workflows moves the Review tab's reviews into a workflow", as
       `assert !${boardReviewTab}`,
       `goto /p/${project.id}/settings/workflows`,
       "click [data-testid=use-workflows] [role=switch]",
-      "wait text=The board handles this project's tasks itself",
+      "wait [data-testid=use-workflows] [role=switch][aria-checked=false]",
       `goto /t/${task.id}`,
       "wait Changes",
       `assert ${boardReviewTab}`,

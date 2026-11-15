@@ -6,27 +6,32 @@ import { useBoard } from "../../../state/board"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 import { ConfigPicker } from "../ClaudeConfigs"
 import { GithubAccountSelect } from "../hosts/profileFields"
-import { Field, Input, Toggle } from "../../ui"
+import { Field, Input } from "../../ui"
+import { selectClass } from "./parts"
 
 const isMode = Schema.is(PermissionMode)
 
-/** The Agents tab: the model, permission mode, GitHub account and agent configs of the project's agents. */
+/** The Agents tab: the agent configs, model, permission mode and GitHub account of the project's agents. */
 export function AgentsTab({ form, hostMode, set }: { form: ProjectForm; hostMode: PermissionMode; set: SetField }) {
   return (
     <>
-      <Field label="Model" hint="Overrides the profile default">
-        <Input value={form.model ?? ""} placeholder="profile default" onChange={(e) => set("model", e.target.value)} />
+      <ProjectConfigs project={form} onChange={(ids) => set("claude_config_ids", ids && ids.map((id) => AgentConfigId.make(id)))} />
+      <Field label="Model">
+        <Input value={form.model ?? ""} placeholder="The profile's default" onChange={(e) => set("model", e.target.value)} />
       </Field>
-      <Field label="Permission mode" hint="With 'Ask', tool approvals show up in the thread and flag the task as needing attention.">
+      <Field
+        label="Permission mode"
+        help="What agents may do without asking. With Ask, tool approvals show in the thread and flag the task as needing attention."
+      >
         <select
           value={form.permission_mode ?? ""}
           onChange={(e) => {
             const v = e.target.value
             set("permission_mode", isMode(v) ? v : null)
           }}
-          className="h-8 w-full rounded-md border border-line bg-panel px-2 text-[13px] outline-none"
+          className={selectClass}
         >
-          <option value="">Host default ({PERMISSION_MODES.find((m) => m.id === hostMode)?.label})</option>
+          <option value="">The host's default ({PERMISSION_MODES.find((m) => m.id === hostMode)?.label})</option>
           {PERMISSION_MODES.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label} — {m.description}
@@ -35,7 +40,6 @@ export function AgentsTab({ form, hostMode, set }: { form: ProjectForm; hostMode
         </select>
       </Field>
       <ProjectGithubAccount project={form} onChange={(a) => set("github_account", a)} />
-      <ProjectConfigs project={form} onChange={(ids) => set("claude_config_ids", ids && ids.map((id) => AgentConfigId.make(id)))} />
     </>
   )
 }
@@ -46,13 +50,17 @@ function ProjectConfigs({ project, onChange }: { project: ProjectForm; onChange:
   const label = useBoard((s) => (profile ? profileConfigLabel(s, profile) : ""))
   const own = project.claude_config_ids != null
   return (
-    <div className="space-y-3 rounded-xl border border-line p-4">
-      <div className="space-y-1.5">
-        <Toggle checked={own} onChange={(v) => onChange(v ? (profile?.claude_config_ids ?? []) : null)} label="Use its own agent configs" />
-        <div className="text-[12px] text-faint">
-          {own ? "New tasks pick from these; with more than one, they ask which, starting with the default." : `Uses the profile's: ${label}.`}
-        </div>
-      </div>
+    <div className="space-y-2">
+      <Field label="Agent configs" help="The configs new tasks pick from. With more than one, a new task asks which, starting with the default.">
+        <select
+          value={own ? "own" : "profile"}
+          onChange={(e) => onChange(e.target.value === "own" ? (profile?.claude_config_ids ?? []) : null)}
+          className={selectClass}
+        >
+          <option value="profile">The profile's ({label})</option>
+          <option value="own">This project's own</option>
+        </select>
+      </Field>
       {own && <ConfigPicker hostId={project.host_id} value={project.claude_config_ids ?? []} onChange={onChange} />}
     </div>
   )
@@ -62,12 +70,12 @@ function ProjectConfigs({ project, onChange }: { project: ProjectForm; onChange:
 function ProjectGithubAccount({ project, onChange }: { project: ProjectForm; onChange: (account: string | null) => void }) {
   const profile = useBoard((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id))
   return (
-    <Field label="GitHub account" hint="The account its agents act as on GitHub through their gh tools. Overrides the profile's.">
+    <Field label="GitHub account" help="The account the project's agents act as on GitHub, through their gh tools.">
       <GithubAccountSelect
         hostId={project.host_id}
         value={project.github_account ?? ""}
         onChange={(a) => onChange(a || null)}
-        inherit={(active) => `Profile's (${profile?.github_account || (active ? `gh's active account, ${active}` : "gh's active account")})`}
+        inherit={(active) => `The profile's (${profile?.github_account || (active ? `gh's active account, ${active}` : "gh's active account")})`}
       />
     </Field>
   )

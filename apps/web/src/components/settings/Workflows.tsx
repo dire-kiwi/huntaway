@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react"
-import { GuideLink } from "./Guide"
 import { mutate, workflowsAtom, type HostProject as Project } from "@huntaway/client"
 import { ProjectId, type Workflow, type WorkflowGraph } from "@huntaway/contracts"
 import { clsx } from "clsx"
@@ -7,7 +6,7 @@ import { Plus, Trash2, Workflow as WorkflowIcon } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { useAction } from "../../state/mutation"
-import { Button, Toggle, useConfirm } from "../ui"
+import { Button, Toggle, ToggleField, useConfirm } from "../ui"
 import { rejectFailure } from "./agentTools/parts"
 import { PRESETS, type Preset, type PresetSource } from "./workflows/presets"
 import { graphText } from "./workflows/text"
@@ -45,21 +44,26 @@ export function ProjectWorkflows({ project }: { project: Project }) {
   const edit = (w: Workflow) => setEditing({ workflow: w, name: w.name, graph: w.graph, replacesBoard: false })
   return (
     <div className="space-y-3" data-testid="workflows">
-      <p className="text-[12.5px] text-muted">
-        A workflow is a task's way across the board. Each <i>column</i> step is a column: when a task enters it, its agent is sent the column's prompt (in In
-        progress, that's what the agent starts with), and once that work is done the steps after it run. Those can be checks, agents that read the work in
-        threads of their own (or process what the steps before them wrote, with a skill, in a fresh context), pull requests, messages to the task's agent, and
-        the next column, which moves the task there. The prompt tells the agent what the board does when it's done. <i>Board's default</i> is what the board
-        does without workflows (its prompts, and the Review tab's reviews and summaries), as one to change. <GuideLink page="workflows">Workflows</GuideLink> in
-        the guide explains each node, its inputs and outputs.
-      </p>
-      <div className="space-y-1.5 rounded-md border border-line/70 bg-raised/40 p-2.5" data-testid="use-workflows">
-        <Toggle checked={project.use_workflows} onChange={(on) => void switchToWorkflows(on)} label="Use workflows instead of the board's default" />
-        <p className="text-[11.5px] text-faint">
-          {project.use_workflows
-            ? "Tasks entering a column start the workflows that are on, which take them across the board. Columns no workflow has a step for keep the board's handling, but the Review tab's reviews and summaries don't run: workflows' steps review and summarise instead."
-            : "The board handles this project's tasks itself: the start and merge prompts, and the Review tab's reviews, fix rounds and summaries. Workflows only run when you run one from a task. Turned on, the Review tab's reviews and summaries become a workflow (unless one that's on reviews in In review already), and Board's default starts a workflow that does what the board does, to change."}
-        </p>
+      {/* What a workflow is, is in the tab's help (project/ProjectSettings.tsx). */}
+      <div className="rounded-md border border-line/70 bg-raised/40 p-2.5" data-testid="use-workflows">
+        <ToggleField
+          checked={project.use_workflows}
+          onChange={(on) => void switchToWorkflows(on)}
+          label="Use workflows instead of the board's default"
+          help={
+            <>
+              <span className="block">
+                <b className="font-medium text-fg">Off:</b> the board handles this project&apos;s tasks itself (the start and merge prompts, and the Review
+                tab&apos;s reviews, fix rounds and summaries). Workflows only run when you run one from a task.
+              </span>
+              <span className="block">
+                <b className="font-medium text-fg">On:</b> tasks entering a column start the workflows that are on, which take them across the board. Columns no
+                workflow has a step for keep the board&apos;s handling, but the Review tab&apos;s reviews and summaries become a workflow (unless one
+                that&apos;s on reviews in In review already).
+              </span>
+            </>
+          }
+        />
       </div>
       <div className="flex flex-wrap gap-2">
         {PRESETS.map((p) => (
