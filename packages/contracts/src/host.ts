@@ -32,8 +32,12 @@ export const HostSettings = Schema.Struct({
   release_prereleases: Schema.Boolean,
   /** Keep this host's settings the same as the board's other hosts that have this on. */
   settings_sync: Schema.Boolean,
-  /** The experiments switched on (Settings → Experiments), for the whole board. */
-  experiments: Schema.Array(ExperimentId),
+  /**
+   * The experiments switched on (Settings → Experiments), for the whole board. Open strings, and optional, so that a
+   * host one version behind (none) or ahead (an experiment this build doesn't list) still decodes: read it through
+   * `knownExperiments`.
+   */
+  experiments: Schema.optionalKey(Schema.Array(Schema.String)),
 })
 export interface HostSettings extends Schema.Schema.Type<typeof HostSettings> {}
 

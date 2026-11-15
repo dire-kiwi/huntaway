@@ -684,7 +684,8 @@ name and a line on what it does. All are off at first.
   `description`), and `ExperimentId` its ids. Adding one is an entry there: the tab lists it, the host keeps its switch
   and settings sync carries it, with nothing else to change. What the experiment does reads
   `experiments.includes("<id>")`.
-- **Per board, not per profile.** They are a host's settings (`HostSettings.experiments`, the ids switched on), so they
+- **Per board, not per profile.** They are a host's settings (`HostSettings.experiments`, the ids switched on: optional
+  and open strings on the wire, read through `knownExperiments`; see [05-protocol.md](05-protocol.md#rpc-groups)), so they
   hold in every browser and the desktop app, and the server can read them (`HostSettings.get`) for an experiment of
   its own. The web app reads the page's own host's: `experimentsAtom` in `packages/client` (`board.ts`), from the
   board's `hostSettings[localHostId]`, which `settings_changed` keeps. The tab sets them on that host with

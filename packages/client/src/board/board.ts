@@ -1,6 +1,6 @@
 import { Option } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
-import type { ExperimentId, Host, HostId, HostSettings } from "@huntaway/contracts"
+import { knownExperiments, type ExperimentId, type Host, type HostId, type HostSettings } from "@huntaway/contracts"
 import type { SessionView } from "../session/HostSession.ts"
 import { hostSessionAtom, hubHostListAtom, hubHostsAtom, localHostIdAtom, tokenPendingAtom } from "../session/sessions.ts"
 import {
@@ -264,13 +264,11 @@ export const boardAtom: Atom.Atom<Board> = Atom.make((get) => {
   return tasks === board.tasks ? board : { ...board, tasks }
 }).pipe(Atom.keepAlive)
 
-const NO_EXPERIMENTS: ReadonlyArray<ExperimentId> = []
-
 /**
  * The experiments switched on (Settings → Experiments): the page's own host's, which settings sync keeps the same on
  * the hosts it links that sync. None until its board has come. Set with `host.updateSettings` on that host.
  */
 export const experimentsAtom: Atom.Atom<ReadonlyArray<ExperimentId>> = Atom.make((get) => {
   const board = get(boardAtom)
-  return board.hostSettings[board.localHostId ?? ""]?.experiments ?? NO_EXPERIMENTS
+  return knownExperiments(board.hostSettings[board.localHostId ?? ""]?.experiments)
 })
