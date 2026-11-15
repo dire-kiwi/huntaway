@@ -48,6 +48,28 @@ programs), and a proxy the config uses on the host's `localhost` is reached as `
 everything in it. Spaces are Docker containers named `huntaway-space-<id>`, so `docker ps` shows them too, and one
 removed with `docker rm` is gone from the board.
 
+## Agents and Spaces
+
+A task's agent can make and use Spaces too, as Cua Spaces' own agent tools do. On the host's page, under **Spaces**,
+turn on **Let agents on this host make and use Spaces**: from their next run, agents on the host get a `spaces` MCP
+server (while Docker is there), and their system prompt says so. It's off by default.
+
+| Tool                                    | What it does                                                                                       |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `list_spaces`                           | The host's Spaces                                                                                  |
+| `create_space {name, reuse?}`           | Makes a Space and waits until it's running; with `reuse` (the default) uses one of that name       |
+| `start_space`, `stop_space`             | Starts or stops one                                                                                |
+| `delete_space`                          | Deletes one, and always asks you first                                                             |
+| `space_bash {space, command, timeout?}` | Runs a command in it as its desktop user (at most 10 minutes; the end of long output)              |
+| `space_list_tools {space, tool?}`       | Its Cua Driver's tools, or one tool's arguments                                                    |
+| `space_call_tool {space, tool, args?}`  | Calls one: `get_desktop_state` for a screenshot, `get_window_state`, `run_steps` to click and type |
+| `space_view {space}`                    | A link for you to watch it, good for an hour                                                       |
+
+A Space is named by its id or its name. Spaces an agent makes have no sign-ins; one you made from the host's page with
+sign-ins can be reused by its name. Reviewers and threads in plan mode can only look: list Spaces,
+take screenshots and read windows, not run commands, click or make Spaces. The tools that change something ask as any
+tool does, by the thread's mode and your approval rules.
+
 ## Settings
 
 | Variable                | What it does                                                         |

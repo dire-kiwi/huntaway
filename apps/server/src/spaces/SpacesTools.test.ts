@@ -130,7 +130,17 @@ describe("the spaces server", () => {
             .find((c) => c[0] === "run")
             ?.find((a) => a.startsWith("CUA_ENV_TOKEN="))
             ?.slice(14)
-          assert.deepStrictEqual(spacesd.calls.at(-1), { tool: "click", args: { pid: 226, x: 10, y: 20 }, token: token ?? "" })
+          // In one MCP session for the task, which the driver ties what it saw to (pixel clicks are measured on it).
+          const session = spacesd.calls[0]?.session ?? assert.fail("no session")
+          assert.deepStrictEqual(spacesd.calls.at(-1), { tool: "click", args: { pid: 226, x: 10, y: 20 }, token: token ?? "", session })
+          assert.isTrue(spacesd.calls.every((c) => c.session === session))
+          // Another task's agent has a session of its own; one spacesd forgot is opened again.
+          const other = yield* fakeAgent()
+          yield* spacesCall(other, "space_call_tool", { space: id, tool: "list_windows" })
+          assert.notStrictEqual(spacesd.calls.at(-1)?.session, session)
+          spacesd.sessions.clear()
+          assert.isFalse(said(yield* spacesCall(agent, "space_call_tool", { space: id, tool: "list_windows" })).error)
+          assert.isTrue(spacesd.sessions.has(spacesd.calls.at(-1)?.session ?? ""))
           assert.isTrue(said(yield* spacesCall(agent, "space_call_tool", { space: id, tool: "create_space" })).error)
 
           // The user's link to watch it.

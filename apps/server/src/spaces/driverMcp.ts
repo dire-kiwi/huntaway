@@ -2,8 +2,10 @@ import { Option, Predicate, Schema } from "effect"
 import { truncate } from "../git/paths.ts"
 
 // What the host's server says to a Space's Cua Driver (HE-37), plainly: spacesd serves the driver as an MCP server on
-// `POST /mcp` (streamable HTTP, `authorization: Bearer <spacesd's token>`). It answers each request on its own, with no
-// session needed, as JSON (or, as the transport allows, an event stream). And what the `spaces` server makes of the
+// `POST /mcp` (streamable HTTP, `authorization: Bearer <spacesd's token>`), answering as JSON (or, as the transport
+// allows, an event stream). It answers a request without a session too, but the driver ties what it saw to the MCP
+// session (a pixel click is refused unless that session read the window's screenshot), so `Spaces.driver` keeps one
+// (`initialize`, then `mcp-session-id` and `mcp-protocol-version` on each request; without the version, 400). And what the `spaces` server makes of the
 // driver's tools for an agent: its list is some 200 KB of schemas, so `space_list_tools` gives one line a tool and a
 // tool's schema when asked for it. No I/O here.
 
@@ -31,6 +33,15 @@ const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> => Predica
 const Json = Schema.fromJsonString(Schema.Unknown)
 const encodeJson = Schema.encodeOption(Json)
 const decodeJson = Schema.decodeUnknownOption(Json)
+
+/** The MCP version the server asks for. */
+export const MCP_PROTOCOL = "2025-06-18"
+
+/** `initialize`'s parameters. */
+export const INITIALIZE = { protocolVersion: MCP_PROTOCOL, capabilities: {}, clientInfo: { name: "huntaway", version: "1" } }
+
+/** A JSON-RPC notification's body. */
+export const notification = (method: string): string => Option.getOrElse(encodeJson({ jsonrpc: "2.0", method }), () => "{}")
 
 /** A JSON-RPC request's body. */
 export const requestBody = (id: number, method: string, params: unknown): string =>

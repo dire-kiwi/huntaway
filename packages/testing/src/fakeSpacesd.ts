@@ -3,14 +3,16 @@ import { createServer } from "node:http"
 
 // A fake spacesd for tests (HE-37): its health check, a viewer ticket, and its `POST /mcp` (Cua Driver over streamable-HTTP MCP) with a
 // few of the driver's tools, the ones that only look saying so, and one of spacesd's own Spaces tools, which the board
-// hides. It answers `tools/list` as JSON and `tools/call` as an event stream, as the transport allows either. It never
-// touches a desktop.
+// hides. It answers `tools/list` as JSON and `tools/call` as an event stream, as the transport allows either. As
+// spacesd does, it opens an MCP session on `initialize`, answers 404 for one it doesn't know and 400 for one without
+// `mcp-protocol-version`, and answers a request without a session too. It never touches a desktop.
 
-/** A tool call it was given, with the bearer token it came with. */
+/** A tool call it was given, with the bearer token and the MCP session it came with. */
 export interface FakeSpacesdCall {
   readonly tool: string
   readonly args: unknown
   readonly token: string
+  readonly session: string | null
 }
 
 export interface FakeSpacesd {
@@ -19,6 +21,8 @@ export interface FakeSpacesd {
   readonly calls: Array<FakeSpacesdCall>
   /** How many times it was asked for its tools. */
   readonly listed: { count: number }
+  /** The MCP sessions it has opened (`initialize`), which it forgets as a restarted spacesd would (`clear`). */
+  readonly sessions: Set<string>
 }
 
 /** A one-pixel PNG. */
@@ -84,7 +88,18 @@ export const fakeSpacesd = Effect.acquireRelease(
     const calls: Array<FakeSpacesdCall> = []
     const listed = { count: 0 }
     /** What a request is answered with: its status, headers and body. */
-    const answer = (method: string, url: string, auth: string, body: string): readonly [number, Record<string, string>, string | Buffer] => {
+    const sessions = new Set<string>()
+    const answer = (
+      method: string,
+      url: string,
+      headers: Readonly<Record<string, string | ReadonlyArray<string> | undefined>>,
+      body: string,
+    ): readonly [number, Record<string, string>, string | Buffer] => {
+      const header = (name: string) => {
+        const v = headers[name]
+        return typeof v === "string" ? v : null
+      }
+      const auth = header("authorization") ?? ""
       if (method === "GET" && url === "/health") return [204, {}, ""]
       // A viewer ticket, `v1.tick`, in a gRPC-Web frame.
       if (method === "POST" && url === "/cua.env.v1.SystemService/CreateViewerTicket") {
@@ -94,16 +109,25 @@ export const fakeSpacesd = Effect.acquireRelease(
       }
       if (method !== "POST" || url !== "/mcp") return [404, {}, ""]
       if (!auth.startsWith("Bearer ") || auth.length <= 7) return [401, {}, "unauthorized"]
+      const session = header("mcp-session-id")
+      if (session !== null && !sessions.has(session)) return [404, {}, ""]
+      if (session !== null && header("mcp-protocol-version") === null) return [400, {}, ""]
       const request = decode(body)
       if (Option.isNone(request)) return [400, {}, ""]
       const { id, method: rpc, params } = request.value
+      if (id === undefined) return [202, {}, ""]
+      if (rpc === "initialize") {
+        const opened = `mcp-fake-${sessions.size + 1}`
+        sessions.add(opened)
+        return [200, { "content-type": "application/json", "mcp-session-id": opened }, json({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-06-18" } })]
+      }
       if (rpc === "tools/list") {
         listed.count++
         return [200, { "content-type": "application/json" }, json({ jsonrpc: "2.0", id, result: { tools: TOOLS } })]
       }
       if (rpc === "tools/call") {
         const tool = params?.name ?? ""
-        calls.push({ tool, args: params?.arguments ?? {}, token: auth.slice(7) })
+        calls.push({ tool, args: params?.arguments ?? {}, token: auth.slice(7), session })
         return [200, { "content-type": "text/event-stream" }, `event: message\ndata: ${json({ jsonrpc: "2.0", id, result: resultOf(tool) })}\n\n`]
       }
       return [200, { "content-type": "application/json" }, json({ jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } })]
@@ -112,14 +136,14 @@ export const fakeSpacesd = Effect.acquireRelease(
       const chunks: Array<Buffer> = []
       req.on("data", (c: Buffer) => chunks.push(c))
       req.on("end", () => {
-        const [status, headers, body] = answer(req.method ?? "", req.url ?? "", req.headers["authorization"] ?? "", Buffer.concat(chunks).toString("utf8"))
+        const [status, headers, body] = answer(req.method ?? "", req.url ?? "", req.headers, Buffer.concat(chunks).toString("utf8"))
         res.writeHead(status, headers).end(body)
       })
     })
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
       const port = typeof address === "object" && address !== null ? address.port : 0
-      resume(Effect.succeed({ fake: { port, calls, listed }, close: () => server.close() }))
+      resume(Effect.succeed({ fake: { port, calls, listed, sessions }, close: () => server.close() }))
     })
   }),
   ({ close }) => Effect.sync(close),

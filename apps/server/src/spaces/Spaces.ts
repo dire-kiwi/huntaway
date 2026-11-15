@@ -15,7 +15,7 @@ import type { HomeFile } from "./agentFiles.ts"
 import { Docker } from "./Docker.ts"
 import { DESKTOP_USER, dockerfile, imageTag, isSpaceId, NAME_PREFIX, nameProblem, portOf, runArgs, tokenOf, toSpace } from "./containers.ts"
 import type { Inspected } from "./containers.ts"
-import { MCP_PATH, parseAnswer, requestBody } from "./driverMcp.ts"
+import { INITIALIZE, MCP_PATH, MCP_PROTOCOL, notification, parseAnswer, requestBody } from "./driverMcp.ts"
 import type { DriverAnswer } from "./driverMcp.ts"
 import { CREATE_VIEWER_TICKET, headerStatus, parseViewerTicket, POLICY_ALLOW_ACTIVATION, POLICY_VIEW_ONLY, viewerTicketRequest } from "./spacesd.ts"
 
@@ -73,8 +73,12 @@ export interface SpacesShape {
    * (`BASH_MAX_SECONDS`); its exit code (124 when it timed out) and output.
    */
   readonly bash: (id: string, command: string, seconds: number) => Effect.Effect<ProcResult, NotFound | Unavailable>
-  /** One MCP request (`tools/list`, `tools/call`) to a running Space's Cua Driver, through spacesd's `/mcp`. */
-  readonly driver: (id: string, method: string, params: unknown) => Effect.Effect<DriverAnswer, NotFound | Unavailable>
+  /**
+   * One MCP request (`tools/list`, `tools/call`) to a running Space's Cua Driver, through spacesd's `/mcp`, in the MCP
+   * session kept for `key` (a task's): the driver ties what it saw (a window's screenshot, which pixel clicks are
+   * measured on) to its session, so one caller's requests share one.
+   */
+  readonly driver: (id: string, key: string, method: string, params: unknown) => Effect.Effect<DriverAnswer, NotFound | Unavailable>
 }
 
 /** What answers on a Space's port is the Space's to choose: the server never follows it somewhere else. */
@@ -111,6 +115,8 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
       const pending = yield* Ref.make<ReadonlyMap<string, Space>>(new Map())
       const work = yield* FiberMap.make<string>()
       const relays = yield* Ref.make<ReadonlyMap<string, RelayTarget & { readonly expires: number }>>(new Map())
+      /** The driver's MCP sessions, by `<space id>/<key>`. */
+      const sessions = yield* Ref.make<ReadonlyMap<string, string>>(new Map())
 
       const hex = (bytes: number) => Effect.map(random.randomBytes(bytes), (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join(""))
       const setPending = (space: Space | null, id: string) =>
@@ -334,6 +340,7 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
         yield* FiberMap.remove(work, id)
         yield* setPending(null, id)
         yield* Ref.update(relays, (m) => new Map([...m].filter(([, r]) => r.id !== id)))
+        yield* Ref.update(sessions, (m) => new Map([...m].filter(([k]) => !k.startsWith(`${id}/`))))
         const c = yield* docker.inspect(`${NAME_PREFIX}${id}`).pipe(Effect.mapError(dockerFailed))
         if (c === null) return held ? undefined : yield* new NotFound({ what: "space", id })
         return yield* docker.remove(c.Name.replace(/^\//u, "")).pipe(Effect.mapError(dockerFailed))
@@ -449,29 +456,57 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
           .pipe(Effect.mapError(dockerFailed))
       })
 
-      const driver = Effect.fn("Spaces.driver")(function* (id: string, method: string, params: unknown) {
+      /** One POST to the Space's `/mcp`, in MCP session `session` if there is one: its status, session header and body. */
+      const post = (port: number, token: string, body: string, session: string | null) =>
+        http
+          .execute(
+            HttpClientRequest.post(`http://127.0.0.1:${port}${MCP_PATH}`).pipe(
+              HttpClientRequest.setHeaders({
+                authorization: `Bearer ${token}`,
+                accept: "application/json, text/event-stream",
+                "mcp-protocol-version": MCP_PROTOCOL,
+                ...(session === null ? {} : { "mcp-session-id": session }),
+              }),
+              HttpClientRequest.bodyText(body, "application/json"),
+            ),
+          )
+          .pipe(
+            Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECTS),
+            Effect.flatMap((r) =>
+              Effect.map(r.text, (text) => ({ status: r.status, session: r.headers["mcp-session-id"] ?? null, type: r.headers["content-type"] ?? "", text })),
+            ),
+            Effect.timeout("3 minutes"),
+            Effect.mapError(() => unavailable("spacesd isn't answering")),
+          )
+
+      /** A new MCP session with the Space's driver (`initialize`, then `initialized`); null if spacesd keeps none. */
+      const openSession = Effect.fnUntraced(function* (port: number, token: string) {
+        const init = yield* post(port, token, requestBody(1, "initialize", INITIALIZE), null)
+        if (init.status === 401) return yield* unavailable("spacesd refused the Space's token")
+        if (init.status !== 200) return yield* unavailable(`spacesd answered ${init.status}`)
+        if (init.session !== null) yield* post(port, token, notification("notifications/initialized"), init.session)
+        return init.session
+      })
+
+      const driver = Effect.fn("Spaces.driver")(function* (id: string, key: string, method: string, params: unknown) {
         const c = yield* running(id)
         const port = portOf(c)
         const token = tokenOf(c)
         if (port === null || token === null) return yield* unavailable("The Space's spacesd isn't reachable.")
-        // Each request is answered on its own connection, so one id does.
-        const rpcId = 1
-        const request = HttpClientRequest.post(`http://127.0.0.1:${port}${MCP_PATH}`).pipe(
-          HttpClientRequest.setHeaders({ authorization: `Bearer ${token}`, accept: "application/json, text/event-stream" }),
-          HttpClientRequest.bodyText(requestBody(rpcId, method, params), "application/json"),
-        )
-        return yield* http.execute(request).pipe(
-          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECTS),
-          Effect.flatMap((r) =>
-            Effect.map(r.text, (body): DriverAnswer => {
-              if (r.status === 401) return { error: "spacesd refused the Space's token" }
-              if (r.status !== 200) return { error: `spacesd answered ${r.status}` }
-              return parseAnswer(r.headers["content-type"] ?? "", body, rpcId)
-            }),
-          ),
-          Effect.timeout("3 minutes"),
-          Effect.mapError(() => unavailable("spacesd isn't answering")),
-        )
+        const at = `${id}/${key}`
+        const body = requestBody(2, method, params)
+        const known = (yield* Ref.get(sessions)).get(at)
+        let session = known ?? (yield* openSession(port, token))
+        let r = yield* post(port, token, body, session)
+        // A session spacesd forgot (it restarted, or let it go): a new one, once.
+        if (known !== undefined && (r.status === 404 || r.status === 400)) {
+          session = yield* openSession(port, token)
+          r = yield* post(port, token, body, session)
+        }
+        yield* Ref.update(sessions, (m) => (session === null ? m : new Map(m).set(at, session)))
+        if (r.status === 401) return { error: "spacesd refused the Space's token" }
+        if (r.status !== 200) return { error: `spacesd answered ${r.status}` }
+        return parseAnswer(r.type, r.text, 2)
       })
 
       return Spaces.of({

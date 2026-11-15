@@ -37,7 +37,7 @@ push          Push
 hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
 terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
-spaces        Docker · Spaces
+spaces        Docker · Spaces · SpacesTools
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
 board         Board
@@ -1208,7 +1208,9 @@ host's Node server; spacesd's QUIC media (UDP 3212, ALPN `rcdp/2`) is for native
 Electron's Node can speak it. A Rust or worker-thread relay waits for a measurement that calls for it.
 
 - **`spaces/`** (below `desktop/`): `Docker` (the CLI through `Proc`: `HUNTAWAY_DOCKER`, else `docker`; tests replace
-  the service), `Spaces` (status, create, start, stop, remove, `syncAgents`, `view`, `settled`, `relayTarget`). Pure
+  the service, or give `fakeDocker`'s CLI), `Spaces` (status, create, start, stop, remove, `syncAgents`, `view`,
+  `settled`, `relayTarget`; HE-37's `setAgentTools`, `toolsEnabled`, `toolsAvailable`, `find`, `bash`, `driver`),
+  `SpacesTools` (the `spaces` MCP server, below). Pure
   parts: `containers.ts` (`docker run`'s arguments, labels, `docker inspect` read back, the image's Dockerfile and tag),
   `spacesd.ts` (`CreateViewerTicket` over gRPC-Web, hand-written protobuf; the relay's header rules), `agentFiles.ts`.
 - **No table**: a Space is a container named `huntaway-space-<id>` and labelled with the host's id, its name, its
@@ -1243,6 +1245,51 @@ Electron's Node can speak it. A Rust or worker-thread relay waits for a measurem
   health check and `CreateViewerTicket` refuse redirects (`redirect: "error"`); and `parseViewerTicket` reads frame
   lengths unsigned and stops at one longer than the answer, where a negative length had looped forever on the event
   loop.
+
+#### Agent tools for Spaces (HE-37)
+
+Runs get a `spaces` MCP server beside `desktop`, after Cua Spaces' own tools
+([use from an agent](https://cua.ai/docs/spaces/guides/use-from-an-agent)). A server of its own, not more tools on
+`huntaway`, so runs without it don't pay for its tool list.
+
+- **Gated** like `desktop`: `McpServers.serveWhen("spaces", Spaces.toolsAvailable)`, asked at each launch: the host
+  page's switch (`spaces_tools`, off by default; `spaces.setAgentTools`, `SpacesStatus.agent_tools`) and Docker
+  answering `docker version` (not asked while it's off). Turned off since a run started, every call refuses.
+  `served.spaces` flows through `control.ts`, both launches (Claude's `mcp.json` with a one-hour `timeout`, Codex's
+  `tool_timeout_sec` 3600: the first Space builds its image) and `mcp-run.json`'s `spaces`, which `http.ts` checks; it
+  is written only when true, so a run without it writes the file as the old server did. The run's prompt gets
+  `prompts/spacesNote.ts` (as `desktopHost` is told, `spacesHost` in `PromptContext`).
+- **Tools** (`spaces/tools.ts`, handlers in `spaces/SpacesTools.ts`, registered from `Main.ts` as `DesktopTools` is):
+  `list_spaces`; `create_space {name, reuse?}` (reuse, the default, takes a Space of that name, started if it's stopped;
+  either way it waits with `Spaces.settled`); `start_space`, `stop_space`, `delete_space`; `space_bash {space, command,
+  timeout?}`; `space_list_tools {space, tool?}`; `space_call_tool {space, tool, args?}`; `space_view`. A Space is named
+  by id or name (`Spaces.find`; a name several share is refused with their ids). Agents make Spaces without sign-ins.
+- **`space_bash`** (`Spaces.bash`): `docker exec --user cua` under `timeout --kill-after=5 <n>` (at most 600 s), so the
+  command stops in the container and not only Docker's CLI; HOME is looked up (`docker exec` keeps the image's
+  `/root`) and the command runs with `bash -l` in it. The agent gets the exit code and the last 30,000 characters of
+  each stream.
+- **The driver** (`Spaces.driver`, plain parts in `spaces/driverMcp.ts`): JSON-RPC to spacesd's `POST /mcp` with
+  `authorization: Bearer <CUA_ENV_TOKEN>` (`tokenOf`, `portOf`), redirects refused, answered as JSON or an event stream.
+  Checked on Cua's image (spacesd with cua-driver 0.49.1): it answers a request without a session, but the driver ties
+  what it saw to the MCP session, so a pixel click after a screenshot in another request was refused ("No screenshot of
+  window … in this session", found running an agent). So `Spaces` keeps an MCP session per Space and task (`initialize`,
+  `notifications/initialized`, then `mcp-session-id` and `mcp-protocol-version` on each request: without the version it
+  answers 400), in a `Ref`, opened again once when spacesd answers 404 or 400 for it (it restarted). Cua's named
+  sessions (`session: "…"`) are refused on this transport. Its tool list is some 200 KB of schemas, so
+  `space_list_tools` gives a line a tool (name, read-only, arguments, first sentence) and one tool's schema when asked.
+  spacesd's own Spaces tools in that list (`create_space`, `space_bash`, `share_tcp_port`…, `HIDDEN_TOOLS`) are left
+  out and refused. Results reach the agent as `desktop`'s do (`forAgent`: images as MCP image content).
+- **Who may act**: reviewers and threads in plan mode (checked per call) only look: `list_spaces`,
+  `space_list_tools`, `space_view` (a view-only ticket) and the driver's tools whose `readOnlyHint` is true. Claude
+  runs get the three that look and `delete_space` in `--allowedTools`, reviewers the ones that change a Space in
+  `--disallowedTools`; Codex's config approves the same and disables the same. The others ask as any tool does.
+- **`delete_space` asks the user itself**, whatever the mode, with the generic tool card: `McpHooks.askRule` with no
+  rule (`Permissions.askRule`'s `rule` is nullable for it; Don't ask denies it). A card of its own, as `delete_task`
+  has, waits for a need.
+- **Not journaled**: driver actions aren't put in `DesktopOpRepo` (its rows are the host desktop's, which its viewer
+  shows); a Space has no one at it to share with, and `mcp_calls` keeps each call's arguments and answer.
+- **Tests**: `SpacesTools.test.ts` runs the server through `ToolCalls` on `TestBoard` over `packages/testing`'s
+  `fakeDocker` (bin/fake-docker, state in a folder) and `fakeSpacesd` (health, a viewer ticket, `/mcp`).
 
 ## Hook commands<a id="hook-commands"></a>
 

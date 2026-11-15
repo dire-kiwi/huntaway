@@ -95,7 +95,8 @@ export const spacesTools = Effect.gen(function* () {
     return answer(why === null ? body : Effect.succeed(text(why, true)))
   }
 
-  const toolsOf = (id: string) => Effect.map(spaces.driver(id, "tools/list", {}), (a) => ("error" in a ? { error: a.error } : { tools: driverTools(a.result) }))
+  const toolsOf = (id: string, caller: LocalCaller) =>
+    Effect.map(spaces.driver(id, caller.task.id, "tools/list", {}), (a) => ("error" in a ? { error: a.error } : { tools: driverTools(a.result) }))
 
   const create = (name: string, reuse: boolean) =>
     Effect.gen(function* () {
@@ -132,10 +133,10 @@ export const spacesTools = Effect.gen(function* () {
       return text(out.join("\n\n"), r.code !== 0)
     })
 
-  const listTools = (ref: string, tool: string | undefined) =>
+  const listTools = (caller: LocalCaller, ref: string, tool: string | undefined) =>
     Effect.gen(function* () {
       const s = yield* spaces.find(ref)
-      const listed = yield* toolsOf(s.id)
+      const listed = yield* toolsOf(s.id, caller)
       if ("error" in listed) return text(listed.error, true)
       if (tool === undefined) return text(`Cua Driver's tools in ${s.name}:\n${toolsSummary(listed.tools)}`)
       const one = listed.tools.find((t) => t.name === tool)
@@ -149,12 +150,12 @@ export const spacesTools = Effect.gen(function* () {
       // A caller that only looks may call the driver's tools that say they only look.
       const why = onlyLooks(caller, tool)
       if (why !== null) {
-        const listed = yield* toolsOf(s.id)
+        const listed = yield* toolsOf(s.id, caller)
         if ("error" in listed) return text(listed.error, true)
         const found = listed.tools.find((t) => t.name === tool)
         if (found === undefined || !readOnly(found)) return text(why, true)
       }
-      return driven(yield* spaces.driver(s.id, "tools/call", { name: tool, arguments: args }))
+      return driven(yield* spaces.driver(s.id, caller.task.id, "tools/call", { name: tool, arguments: args }))
     })
 
   const view = (caller: LocalCaller, ref: string) =>
@@ -192,7 +193,7 @@ export const spacesTools = Effect.gen(function* () {
     ),
     localToolHandler(DeleteSpace, (a, caller) => acting(caller, DeleteSpace.name, remove(caller, a.space))),
     localToolHandler(SpaceBash, (a, caller) => acting(caller, SpaceBash.name, bash(a.space, a.command, a.timeout))),
-    localToolHandler(SpaceListTools, (a) => answer(listTools(a.space, a.tool))),
+    localToolHandler(SpaceListTools, (a, caller) => answer(listTools(caller, a.space, a.tool))),
     localToolHandler(SpaceCallTool, (a, caller) => answer(call(caller, a.space, a.tool, a.args ?? {}))),
     localToolHandler(SpaceView, (a, caller) => answer(view(caller, a.space))),
   ]
