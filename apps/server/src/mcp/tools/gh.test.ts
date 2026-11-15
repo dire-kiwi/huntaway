@@ -147,7 +147,7 @@ describe("the gh server", () => {
           const agent = yield* runningIn("/tmp", null)
           const task = (yield* (yield* TaskRepo).get(agent.run.task_id)) ?? assert.fail("no task")
           const profile = Option.getOrThrow(yield* (yield* ProfileRepo).get(task.profile_id))
-          const caller: McpCaller = { call_id: CallId.make("c1"), server: "gh", run: agent.run, task, profile, mode: "default" }
+          const caller: McpCaller = { call_id: CallId.make("c1"), server: "gh", run: agent.run, task, profile, mode: "default", hops: 0 }
           const asked: Array<string> = []
           const tools = yield* ghTools.pipe(
             Effect.provideService(

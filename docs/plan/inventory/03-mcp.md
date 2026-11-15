@@ -173,7 +173,8 @@ Tool behaviour details (all `mcp/tools/local.ts` unless noted):
   todo list; starts the agent when moved todo/backlog → in_progress and it has never run (`session_id == null`), isn't queued,
   isn't running, isn't the caller itself. If the task was closed unmerged while others merge into it, the result carries a `note`
   telling the agent to ask the user where those go.
-- `send_to_task`: not to yourself; `runner.send_from_agent`.
+- `send_to_task`: not to yourself; `runner.send_from_agent`. New (HE-26): refused past `MAX_HOPS` agent-to-agent messages in a
+  row, as are a start by `create_task` or `update_task` and `run_workflow` ([07-agents.md](../07-agents.md#hops-between-agents)).
 - `remind_at` parsing (`tools/tasks.ts reminder_time`): delay (`30m`, `2h`, `1d 12h`, `in 3 days`, `1w`; each number ≤ 10 000),
   RFC 3339, local `YYYY-MM-DD[ HH:MM[:SS]]` (date alone = 09:00 host time), `""` clears.
 - `list_tasks` leaves out archived projects' tasks and (unless `include_assistant` and own board) the assistant.

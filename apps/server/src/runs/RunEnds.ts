@@ -105,7 +105,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
             const steers = yield* tasks.takeSteers(task.id, run.id)
             yield* tasks.queueAhead(
               task.id,
-              steers.map((s) => ({ text: s.text, source: s.source, automation_run_id: s.automation_run_id })),
+              steers.map((s) => ({ text: s.text, source: s.source, automation_run_id: s.automation_run_id, hops: s.hops })),
               at,
             )
             const later = yield* repo.laterThan(run)
@@ -153,13 +153,14 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         )
 
       /** Ask the agent to finish its todo list; one that can't be asked (its project archived, say) needs attention. */
-      const nudge = Effect.fnUntraced(function* (task: TaskId, items: NonNullable<FinishDecision["nudge"]>, due: FinishDue | null) {
+      /** `hops`: the run's, as the nudge carries on its work (docs/plan/07-agents.md, Hops between agents). */
+      const nudge = Effect.fnUntraced(function* (task: TaskId, items: NonNullable<FinishDecision["nudge"]>, due: FinishDue | null, hops: number) {
         const notice = nudgeNotice(items)
         yield* threads.notice(task, notice.level, notice.text, notice.detail).pipe(Effect.ignore)
         // 6.6: `finish_work` is the run's that called it, so the run this message starts is told again how to say it's done.
         const row = yield* tasks.get(task)
         const text = row === null ? todoNudge(items) : yield* workflowFacts.withDueFinish(row, due, todoNudge(items))
-        const sent = yield* Effect.exit(runs.send(task, { text, source: "board", auto: true }))
+        const sent = yield* Effect.exit(runs.send(task, { text, source: "board", auto: true, hops }))
         if (Exit.isSuccess(sent)) return
         yield* Effect.logWarning(`task=${task} asking its agent to finish its todo list failed`)
         const done = yield* locks.withLock(["task", task])(
@@ -228,7 +229,7 @@ export class RunEnds extends Context.Service<RunEnds, RunEndsShape>()("huntaway-
         const done = yield* locks.withLock(["task", run.task_id])(writeColumn(run, decision.columns))
         if (done === null) return
         yield* changes.offer({ _tag: "TaskChanged", before: done.before, after: done.after, cause: board })
-        if (decision.nudge !== null) yield* nudge(run.task_id, decision.nudge, first.due)
+        if (decision.nudge !== null) yield* nudge(run.task_id, decision.nudge, first.due, run.hops)
         // 6.6: the workflow column that held the task goes on from there, or its workflow moves the merged task to Done.
         if ((decision.workDone && first.due !== null) || decision.mergeFinished) {
           const due = decision.workDone ? first.due : null

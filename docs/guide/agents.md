@@ -127,6 +127,14 @@ checks them; left out, the project's, profile's or board's default is used, and 
 calls for it. As with the thread's model picker, a change applies from the agent's next run, and
 task summaries show a task's own `model` and `effort`.
 
+Agents can't keep waking each other indefinitely. A message an agent sends with `send_to_task`, or a
+task it starts with `create_task` or `update_task`, counts one more hop than the message that started (or was last
+steered into) the agent's turn. A message from you, or the board's own, counts none. After three in a row (A messages
+B, B answers, A follows up, B answers), the next `send_to_task` is refused: the agent is told to stop and report to you
+instead, and the thread shows the refusal as a tool error. A task it creates past that point is made but not started,
+and `run_workflow` is refused too. Writing to either agent starts the count again. The count is kept across a server
+restart, and across hosts and profiles' boards.
+
 `get_task` gives a bounded overview of a task: small fields stay inline, `field_lengths` lists every available field's
 length, and `omitted_fields` names those left out. Values over 1,000 serialized bytes are omitted, with a 6,000-byte
 budget for inline values in total. Read any field with `get_task_field`, for example

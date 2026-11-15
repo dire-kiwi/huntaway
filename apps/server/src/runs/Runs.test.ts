@@ -373,7 +373,7 @@ describe("Runs.send", () => {
         yield* repo.enqueue(id, { text: "First", source: "agent", automation_run_id: null }, AT)
         const failed = yield* refusal(send(id, "Second"))
         assert.strictEqual(failed.reason, "no_agents")
-        assert.deepStrictEqual(yield* repo.queued(id), [{ text: "First", source: "agent", automation_run_id: null }])
+        assert.deepStrictEqual(yield* repo.queued(id), [{ text: "First", source: "agent", automation_run_id: null, hops: 0 }])
       }).pipe(Effect.scoped, Effect.provide(TestBoard({ noAgents: true })))
       yield* run(
         Effect.gen(function* () {

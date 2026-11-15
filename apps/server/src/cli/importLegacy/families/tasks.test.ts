@@ -393,9 +393,9 @@ describe("import-legacy tasks-pens", () => {
         expect([queued?.key, queued?.status, queued?.waiting, queued?.queued_message]).toStrictEqual(["PRJ-3", "in_progress", true, "mine\n\nfrom PRJ-1"])
         expect(queued?.summaries.map((s) => [s.thread_id, s.label])).toStrictEqual([["s1", ""]])
         expect(yield* tasks.queued(TaskId.make("queued"))).toStrictEqual([
-          { text: "mine", source: "user", automation_run_id: null },
-          { text: "from PRJ-1", source: "agent", automation_run_id: null },
-          { text: "", source: "automation", automation_run_id: "ar1" },
+          { text: "mine", source: "user", automation_run_id: null, hops: 0 },
+          { text: "from PRJ-1", source: "agent", automation_run_id: null, hops: 0 },
+          { text: "", source: "automation", automation_run_id: "ar1", hops: 0 },
         ])
         const chat = yield* tasks.get("chat")
         expect([chat?.key, chat?.task_type, chat?.project_id, chat?.status, chat?.work_dir]).toStrictEqual([

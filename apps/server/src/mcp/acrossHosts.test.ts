@@ -65,8 +65,9 @@ describe("board tools across hosts", () => {
       const me = yield* agentOf(yield* profile("personal"))
       const found = ok(yield* call(me, "get_task", { task_id: "LAP-1" }))
       assert.strictEqual(found["title"], "On the laptop")
-      // Asked as the caller's profile by name, `host` taken out, with no call id (a link doesn't record it).
-      assert.deepStrictEqual(laptop.asked.at(-1), { profile: "personal", tool: "get_task", args: { task_id: "LAP-1" }, call_id: null })
+      // Asked as the caller's profile by name, `host` taken out, with no call id (a link doesn't record it), and the hops
+      // of the agent's turn (the user's: none).
+      assert.deepStrictEqual(laptop.asked.at(-1), { profile: "personal", tool: "get_task", args: { task_id: "LAP-1" }, call_id: null, hops: 0 })
       // A host that has it but refuses: its reason, not "not found".
       assert.strictEqual(err(yield* call(me, "delete_task", { task_id: "STR-1" })), "deleting STR-1 needs the user's approval")
       // Nowhere: not found here, with why a hub may have it and didn't say.

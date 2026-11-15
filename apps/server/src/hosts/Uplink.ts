@@ -31,11 +31,14 @@ const maybe = (what: string, tool: string) =>
 
 const err = (message: string): ToolOutcome => ({ _tag: "Err", message, not_found: false })
 
+/** The call's hops, as they go across. */
+const hopsOf = (call: RemoteToolCall) => (call.hops === undefined ? {} : { hops: call.hops })
+
 /** `tools.call` on a host's client, its failures told as the agent is told them. */
 const viaClient =
   (client: PeerClient, name: string, up: boolean) =>
   (call: RemoteToolCall): Effect.Effect<ToolOutcome> =>
-    client("tools.call", { profile: call.profile, tool: call.tool, args: call.args, call_id: call.call_id, up }).pipe(
+    client("tools.call", { profile: call.profile, tool: call.tool, args: call.args, call_id: call.call_id, ...hopsOf(call), up }).pipe(
       Effect.timeoutOption(CALL_TIMEOUT),
       Effect.map(Option.getOrElse(() => err(up ? maybe(`${name} didn't answer in time`, call.tool) : `${name} didn't answer in time`))),
       Effect.catch((e) =>
@@ -92,7 +95,14 @@ export class Uplink extends Context.Service<Uplink, UplinkShape>()("huntaway-ser
           const answered = yield* Deferred.make<ToolOutcome | null>()
           yield* Ref.update(holder.pending, (all) => new Map(all).set(id, answered))
           return yield* Effect.gen(function* () {
-            const offered = yield* Queue.offer(holder.calls, { id, profile: call.profile, tool: call.tool, args: call.args, call_id: call.call_id ?? `${id}` })
+            const offered = yield* Queue.offer(holder.calls, {
+              id,
+              profile: call.profile,
+              tool: call.tool,
+              args: call.args,
+              call_id: call.call_id ?? `${id}`,
+              ...hopsOf(call),
+            })
             if (!offered) return err(`lost the link to ${name}, so this ${call.tool} call wasn't sent there`)
             const answer = yield* Deferred.await(answered).pipe(Effect.timeoutOption(CALL_TIMEOUT))
             if (Option.isNone(answer)) return err(maybe(`${name} didn't answer in time`, call.tool))

@@ -183,6 +183,8 @@ export class RunInput extends Context.Service<RunInput, RunInputShape>()("huntaw
           ...(byAgent ? {} : { attention: null, finished: false }),
           // The message the next turn starts with (checkpoints).
           ...(newTurn ? { write_no: writeNo } : {}),
+          // What its agent sends another task from now on is one hop further than this message (the user's: 0).
+          hops: steer.hops,
         })
         // The automation runs it carried are this run's, for their cost (6.5).
         if (steer.automation_run_id !== null) yield* repo.chargeAutomationRuns(run.id, [steer.automation_run_id])
