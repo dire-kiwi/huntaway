@@ -71,6 +71,7 @@ import { AutomationHandlers } from "./rpc/automations.ts"
 import { Assistant } from "./assistant/Assistant.ts"
 import { AssistantHooks } from "./assistant/AssistantHooks.ts"
 import { Brief } from "./assistant/Brief.ts"
+import { Connections } from "./assistant/Connections.ts"
 import { Google } from "./assistant/Google.ts"
 import { Memory } from "./assistant/Memory.ts"
 import { Tracked } from "./assistant/Tracked.ts"
@@ -569,6 +570,7 @@ const PushLive = Push.watcher.pipe(Layer.provideMerge(Push.layer), Layer.provide
  * it registers with the areas above it (routines, launches, turns' ends).
  */
 const AssistantLive = AssistantHooks.pipe(
+  Layer.provideMerge(Connections.layer),
   Layer.provideMerge(Layer.mergeAll(Brief.layer, Google.layer, Tracked.layer)),
   Layer.provideMerge(Assistant.layer),
   Layer.provideMerge(Memory.layer),
@@ -641,6 +643,9 @@ export const PrLoops = Layer.mergeAll(InReview.watcher, MergedWatcher.loop)
 /** 6.5: the automations' scheduler (a pass every 5 s, pruning every hour). Not in `areasLayer`: tests run `Scheduler.tick`. */
 export const AutomationLoops = Scheduler.loop
 
+/** HE-28: the board's look at the connections the assistant's open cards ask for. Not in tests: they run `Connections.sweep`. */
+export const AssistantLoops = Connections.watcher
+
 /** 6.9: the telemetry exporter (with the minute's metrics) and the event loop's ticker. Not in tests, as `RunLoops`. */
 export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
 
@@ -648,7 +653,7 @@ export const PlatformLoops = Layer.mergeAll(Telemetry.exporter, Lag.ticker)
 /** 6.11: the fingerprint recorder (what each project's folder is, until its history is known: now, then hourly); 9.2: the git facts' sweep. */
 export const ProjectLoops = Layer.mergeAll(Projects.recorder, Projects.gitSweeper)
 
-export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, PlatformLoops, Terminals.reaper /* 6.1 */).pipe(
+export const AreasLive = Layer.mergeAll(RunLoops, PrLoops, ProjectLoops, AutomationLoops, AssistantLoops, PlatformLoops, Terminals.reaper /* 6.1 */).pipe(
   Layer.provideMerge(areasLayer({ titles: TitleModel.layer, window: WindowPrompt.layer, codex: CodexQueriesLive })),
 )
 

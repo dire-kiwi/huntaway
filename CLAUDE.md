@@ -83,3 +83,5 @@ node scripts/ui-check.mjs --env $TMPDIR/server-env "goto /" "click New task" "ty
 ```
 
 `node scripts/ui-check.mjs --help` lists the steps (`goto`, `click`, `type`, `press`, `wait`, `gone`, `shot`…).
+
+The phone app (`apps/mobile`) is checked the same way on its web build: [apps/mobile/README.md](apps/mobile/README.md#checking-it).

@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
 import { Conflict, Invalid, NotFound, Unavailable } from "../errors.ts"
+import { ConnectionState } from "../assistant.ts"
 import { TaskId } from "../ids.ts"
 import { Task } from "../task.ts"
 import { Auth, RequiredScope } from "../session.ts"
@@ -38,6 +39,22 @@ export class ThreadRpcs extends RpcGroup.make(
       choices: Schema.optional(Schema.Array(Schema.String)),
       text: Schema.optional(Schema.NullOr(Schema.String)),
     },
+    success: Task,
+    error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
+  }).annotate(RequiredScope, "operate"),
+  /**
+   * A connection card's Check again (HE-28, the assistant's `request_connection`): whether what it asks for is connected
+   * now; if it is, the card settles and the agent is told to carry on. Not found for no such card; a conflict once it has
+   * been settled or the conversation moved on.
+   */
+  Rpc.make("threads.checkConnection", {
+    payload: { task_id: TaskId, request_id: Schema.String },
+    success: ConnectionState,
+    error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
+  }).annotate(RequiredScope, "operate"),
+  /** A connection card's Skip: it settles, and the agent is told to carry on without it. The task as it is after. */
+  Rpc.make("threads.skipConnection", {
+    payload: { task_id: TaskId, request_id: Schema.String },
     success: Task,
     error: Schema.Union([NotFound, Invalid, Conflict, Unavailable]),
   }).annotate(RequiredScope, "operate"),

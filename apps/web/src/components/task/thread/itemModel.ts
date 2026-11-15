@@ -18,6 +18,7 @@ import {
   shallowEqual,
   type Call,
   type CompactMeta,
+  type ConnectionData,
   type Item,
   type PromptData,
   type QuestionData,
@@ -67,6 +68,7 @@ const onceTurn = cache<ResultData>()
 const onceCompact = cache<CompactMeta>()
 const oncePrompt = cache<PromptData>()
 const onceQuestion = cache<QuestionData>()
+const onceConnection = cache<ConnectionData>()
 const onceReport = cache<ReportData>()
 
 /** The board's own facts on an item or request (its `metadata`), read through fields.ts. */
@@ -231,6 +233,33 @@ const questionData = (r: Extract<ThreadRequest, { type: "question" }>) =>
     }
   })
 
+/** A connection card's data: its metadata, and how its resolution settled it (assistant/connectionText.ts on the server). */
+const connectionData = (r: Extract<ThreadRequest, { type: "question" }>) =>
+  onceConnection(r, (): ConnectionData => {
+    const md = r.metadata ?? {}
+    const res = r.resolution
+    const answers = res?.answers ?? {}
+    const picked = answers.q?.[0]
+    const status = !res
+      ? "pending"
+      : res.outcome === "answer"
+        ? picked === "connected"
+          ? "connected"
+          : "skipped"
+        : (res.message ?? "").startsWith("Replaced")
+          ? "replaced"
+          : (res.message ?? "").startsWith("Expired")
+            ? "expired"
+            : "replied"
+    return {
+      connection: shown(md.connection),
+      reason: stringOf(md.reason) ?? "",
+      problem: stringOf(md.problem) ?? null,
+      status,
+      ...optional("account", answers.account?.[0]),
+    }
+  })
+
 /** Whether a request is one of the board's own questions (request_user_input, a merge approval), not a permission prompt. */
 const boardQuestion = (r: ThreadRequest): r is Extract<ThreadRequest, { type: "question" }> =>
   r.type === "question" && messageIdOf(r.id) !== undefined && !meta(r).tool_name
@@ -302,7 +331,8 @@ class Rows {
   request(r: ThreadRequest) {
     const n = requestMessage(r)
     const key = n !== undefined ? String(n) : r.id
-    if (boardQuestion(r)) this.push({ type: "question", key, id: n ?? 0, data: questionData(r) })
+    if (boardQuestion(r) && r.metadata?.connection !== undefined) this.push({ type: "connection", key, id: n ?? 0, data: connectionData(r) })
+    else if (boardQuestion(r)) this.push({ type: "question", key, id: n ?? 0, data: questionData(r) })
     else this.push({ type: "permission", key, data: promptData(r) })
   }
 }

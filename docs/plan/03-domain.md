@@ -240,6 +240,9 @@ Changes:
   board-wide write number ([04-database.md](04-database.md#write-numbers)). The UI orders requests among items by it,
   and rewinds, "has the conversation moved on" and question answers key on it. Renaming the prefix would change code
   on both sides for no behaviour.
+- **A connection card** (HE-28, the assistant's `request_connection`) is no new request kind: it is a board question
+  whose metadata names the `connection` (with the agent's `reason` and what was missing), drawn as its own card
+  ([07-agents.md](07-agents.md#as-built-in-he-28-request_connection)).
 - **Permission modes keep both spellings**: Claude Code's on tasks and projects (`acceptEdits`), snake_case in the
   thread protocol (`accept_edits`). One pair of converters in the contracts package replaces the copies.
 

@@ -139,7 +139,7 @@ function useDigitKeys(id: number, on: boolean, ref: RefObject<HTMLElement | null
 
 // ---------- pieces ----------
 
-function Frame({ pending, children, label, cardRef }: { pending: boolean; children: ReactNode; label: string; cardRef?: Ref<HTMLDivElement> }) {
+export function Frame({ pending, children, label, cardRef }: { pending: boolean; children: ReactNode; label: string; cardRef?: Ref<HTMLDivElement> }) {
   return (
     <div
       ref={cardRef}
@@ -153,7 +153,7 @@ function Frame({ pending, children, label, cardRef }: { pending: boolean; childr
 }
 
 /** What became of a question or plan, once it's settled. */
-function Outcome({ tone, children }: { tone: "good" | "bad" | "plain"; children: ReactNode }) {
+export function Outcome({ tone, children }: { tone: "good" | "bad" | "plain"; children: ReactNode }) {
   return (
     <span
       className={clsx(

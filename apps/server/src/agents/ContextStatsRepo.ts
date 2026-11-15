@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { SqlClient, SqlSchema } from "effect/sql"
-import type { RunId, TaskId, Timestamp } from "@huntaway/contracts"
+import { Timestamp } from "@huntaway/contracts"
+import type { RunId, TaskId } from "@huntaway/contracts"
 
 // The context meter's rows (huntaway's agent/context.ts): `context_stats` (a row for the end of each turn and one for
 // each compaction, which outlive the session), the turn's sizes on its run (`runs.turn_start_tokens`, `turn_tokens`)
@@ -33,6 +34,7 @@ export interface CompactStat {
 
 const Turn = Schema.Struct({ turn_start_tokens: Schema.NullOr(Schema.Int), turn_tokens: Schema.NullOr(Schema.Int) })
 const Detail = Schema.Struct({ context_detail: Schema.NullOr(Schema.String) })
+const LastCompaction = Schema.Struct({ at: Schema.NullOr(Schema.String) })
 
 export interface ContextStatsRepoShape {
   /** A request in the run's current turn: the first says what the turn started from, the latest what it's got to. */
@@ -46,6 +48,8 @@ export interface ContextStatsRepoShape {
   /** The task's latest breakdown, as JSON text. */
   readonly detail: (task: TaskId) => Effect.Effect<string | null>
   readonly setDetail: (task: TaskId, detail: string | null) => Effect.Effect<void>
+  /** When the task's conversation was last compacted, if ever (the assistant's memory updates, HE-25). */
+  readonly lastCompaction: (task: TaskId) => Effect.Effect<Timestamp | null>
 }
 
 export class ContextStatsRepo extends Context.Service<ContextStatsRepo, ContextStatsRepoShape>()("huntaway-server/agents/ContextStatsRepo") {
@@ -103,7 +107,21 @@ export class ContextStatsRepo extends Context.Service<ContextStatsRepo, ContextS
       const setDetail = (task: TaskId, text: string | null) =>
         sql`UPDATE tasks SET context_detail = ${text} WHERE id = ${task}`.pipe(Effect.asVoid, Effect.orDie)
 
-      return ContextStatsRepo.of({ turnUsage, compactedTurn, takeTurn, insertTurn, insertCompaction, detail, setDetail })
+      const lastCompactionOf = SqlSchema.findAll({
+        Request: Schema.String,
+        Result: LastCompaction,
+        execute: (task) => sql`SELECT MAX(at) AS at FROM context_stats WHERE task_id = ${task} AND kind = 'compact'`,
+      })
+      const lastCompaction = (task: TaskId) =>
+        lastCompactionOf(task).pipe(
+          Effect.map((rows) => {
+            const at = rows[0]?.at ?? null
+            return at === null ? null : Timestamp.make(at)
+          }),
+          Effect.orDie,
+        )
+
+      return ContextStatsRepo.of({ turnUsage, compactedTurn, takeTurn, insertTurn, insertCompaction, detail, setDetail, lastCompaction })
     }),
   )
 }

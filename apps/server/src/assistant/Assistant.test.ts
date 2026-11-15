@@ -2,11 +2,13 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { assert, layer } from "@effect/vitest"
-import { Effect, Fiber, Result, Schema, Stream } from "effect"
+import { DateTime, Effect, Fiber, Result, Schema, Stream } from "effect"
+import { TestClock } from "effect/testing"
 import { SqlClient } from "effect/sql"
-import { ProfileId, TaskId } from "@huntaway/contracts"
+import { ProfileId, RunId, TaskId, Timestamp } from "@huntaway/contracts"
 import type { Profile, Task } from "@huntaway/contracts"
 import { fakeAgent, TestBoard } from "@huntaway/testing"
+import { ContextStatsRepo } from "../agents/ContextStatsRepo.ts"
 import { Prompts } from "../agents/Prompts.ts"
 import { Routines } from "../automations/Routines.ts"
 import { RoutineHost } from "../automations/RoutineHost.ts"
@@ -17,6 +19,7 @@ import { MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
 import { Permissions, SKIPPED } from "../permissions/Permissions.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { AssistantLaunch } from "../runs/AssistantLaunch.ts"
+import { LaunchFacts } from "../runs/LaunchFacts.ts"
 import { TurnHooks } from "../runs/TurnHooks.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Tasks } from "../tasks/Tasks.ts"
@@ -244,6 +247,89 @@ layer(board)("Assistant", (it) => {
     }),
   )
 
+  it.effect("a later run of its conversation is told what changed in its memory before its message", () =>
+    Effect.gen(function* () {
+      const p = yield* profile("updates")
+      const { task: a, dir } = yield* opened(p)
+      const launch = yield* AssistantLaunch
+      const repo = yield* TaskRepo
+      const today = `memory/${yield* (yield* Memory).today}.md`
+      const inSession = (session: string) =>
+        Effect.gen(function* () {
+          yield* repo.write(a.id, { session_id: session }, a.created_at)
+          return (yield* repo.get(a.id)) ?? assert.fail("no assistant")
+        })
+      /** A prompt run's workspace, its conversation told once its agent has started (`started`). */
+      const runOf = (t: Task, started = true, compact = false) =>
+        Effect.gen(function* () {
+          const w = (yield* launch.workspace(t, { compact })) ?? assert.fail("no workspace")
+          if (started) yield* w.told
+          return w
+        })
+      // A new conversation is told its memory in its instructions, and nothing before its message.
+      assert.strictEqual((yield* runOf(a)).update, "")
+      const s1 = yield* inSession("s1")
+      // Nothing changed since: nothing.
+      assert.strictEqual((yield* runOf(s1)).update, "")
+      // A log made since is told whole; then only what's added at its end.
+      writeFileSync(`${dir}/${today}`, "# Today\n- First thing\n")
+      const made = (yield* runOf(s1)).update
+      assert.include(made, `<memory-file path="${today}">\n# Today\n- First thing\n</memory-file>`)
+      assert.notInclude(made, "USER.md")
+      writeFileSync(`${dir}/${today}`, "# Today\n- First thing\n- Second thing\n")
+      const added = (yield* runOf(s1)).update
+      assert.include(added, `<memory-file path="${today}" part="end">\n- Second thing\n</memory-file>`)
+      assert.notInclude(added, "First thing")
+      assert.isTrue(added.startsWith("<memory-update>") && added.endsWith("</memory-update>\n\n"), added)
+      // The user's edit, whole; told again until a run's agent starts with it.
+      writeFileSync(`${dir}/${USER_FILE}`, "# About the user\n- Their name is Sam\n")
+      assert.include((yield* runOf(s1, false)).update, "- Their name is Sam")
+      assert.include((yield* runOf(s1)).update, "- Their name is Sam")
+      assert.strictEqual((yield* runOf(s1)).update, "")
+      // A compaction is told nothing; after one, the next run is told all of it.
+      assert.strictEqual((yield* runOf(s1, true, true)).update, "")
+      yield* TestClock.adjust("1 minute")
+      yield* (yield* ContextStatsRepo).insertCompaction({
+        task_id: a.id,
+        run_id: RunId.make("compaction"),
+        at: Timestamp.make(DateTime.formatIso(yield* DateTime.now)),
+        tokens: null,
+        post_tokens: null,
+        max_tokens: null,
+        model: null,
+        source: "idle",
+        duration_ms: null,
+      })
+      const all = (yield* runOf(s1)).update
+      assert.include(all, "Your memory files as they are now")
+      assert.include(all, "- Their name is Sam")
+      assert.include(all, "- Second thing")
+      // So is another session's.
+      assert.include((yield* runOf(yield* inSession("s2"))).update, "Your memory files as they are now")
+      // A routine thread's conversation is its own: one it hasn't told is told all of it.
+      const thread = yield* threadUnder(a)
+      yield* repo.write(thread.id, { session_id: "r1" }, a.created_at)
+      const routine = (yield* repo.get(thread.id)) ?? assert.fail("no routine")
+      assert.include((yield* runOf(routine)).update, "Your memory files as they are now")
+      assert.strictEqual((yield* runOf(yield* inSession("s2"))).update, "")
+      // A launch puts it first in the run's message, and tells the conversation once the agent starts.
+      writeFileSync(`${dir}/${MEMORY_FILE}`, "# Memory\n- The car is blue\n")
+      const facts = yield* LaunchFacts
+      const run = (yield* fakeAgent({ task: a.id })).run
+      const prepared = yield* facts.claude(run, "What colour is the car?")
+      const sent = prepared.spec.prompt
+      assert.isTrue(sent.indexOf("<memory-update>") >= 0 && sent.indexOf("<memory-update>") < sent.indexOf("What colour is the car?"), sent)
+      assert.include(sent, "- The car is blue")
+      yield* prepared.started ?? Effect.void
+      assert.notInclude((yield* facts.claude((yield* fakeAgent({ task: a.id })).run, "And now?")).spec.prompt, "<memory-update>")
+      // A command stays at the start of the message, which is the only place Claude Code runs one: the update follows it.
+      writeFileSync(`${dir}/${MEMORY_FILE}`, "# Memory\n- The car is red\n")
+      const command = yield* facts.claude((yield* fakeAgent({ task: a.id })).run, "/remember the car")
+      assert.include(command.spec.prompt, '"content":"/remember the car\\n\\n<memory-update>')
+      assert.include(command.spec.prompt, "- The car is red")
+    }),
+  )
+
   it.effect("a workspace that is a symlink is refused, and its memory isn't loaded", () =>
     Effect.gen(function* () {
       const assistant = yield* Assistant
@@ -270,7 +356,7 @@ layer(board)("Assistant", (it) => {
       assert.strictEqual(readFileSync(`${theirDir}/SECRET.md`, "utf8"), "WORK SECRET")
       // Its runs don't start there, aren't told work's memory, and its turns don't commit there.
       assert.strictEqual((yield* Effect.flip((yield* AssistantLaunch).workspace(a)))._tag, "WorkspaceRefused")
-      const told = yield* memory.forRun(a)
+      const told = (yield* memory.forRun(a, null)).system
       assert.isTrue(told.includes("Your memory isn't loaded") && !told.includes("<memory-file"), told)
       yield* (yield* TurnHooks).turnEnded(a.id, { compact: false })
       yield* memory.idle

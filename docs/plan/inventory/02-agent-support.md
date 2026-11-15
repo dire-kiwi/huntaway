@@ -256,7 +256,9 @@ See §3.6 for the full piece list. Capabilities: per-project replaceable instruc
 - **Memory** (API 111): workspace files `USER.md`, `MEMORY.md`, `memory/YYYY-MM-DD.md` (host local date), seeded with comment headers + `.gitignore`. Loaded into
   every run's instructions by the board (not by CLAUDE.md): each of USER.md/MEMORY.md head-capped and yesterday's/today's logs tail-capped at 8,000 chars and
   16 KiB, cut at a line when near, with a note when cut; wrapped in `<memory-file path>`; missing/empty notes. How-to text ≈2 k chars. Claude gets the whole system
-  prompt in a file (`--append-system-prompt-file`) because an argv string is limited to 128 KiB.
+  prompt in a file (`--append-system-prompt-file`) because an argv string is limited to 128 KiB. **Changed (HE-25)**: the agents keep a conversation's first
+  instructions (Claude Code until compaction), so the old board's later runs saw the memory of the conversation's start; now a later run whose files changed
+  starts its message with a `<memory-update>` (lines added at a log's end, or the changed files; all of them after a compaction, rewind, restart or new day).
 - **History**: git repo with `GIT_DIR=<data>/assistants/<task id>.git` (beside, not inside, the workspace) and `GIT_WORK_TREE` = workspace. Commit after each
   assistant turn that changed it (`turn_ended` → `commit_all` as `Assistant <assistant@huntaway.invalid>`, message "Update a, b, c, d and N more"); user edits
   committed as `You <user@huntaway.invalid>`. Not committed: `.gitignore`d files, files >1 MiB, non-UTF-8 names, nested repos (gitlinks dropped from the index
