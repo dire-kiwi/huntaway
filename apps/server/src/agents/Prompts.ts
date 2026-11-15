@@ -42,6 +42,8 @@ export interface RunTold {
   readonly tmp?: string | null | undefined
   /** 6.10: it has the desktop server: the host's name, whose desktop it is; none by default. */
   readonly desktopHost?: string | null | undefined
+  /** HE-37: it has the `spaces` server: the host's name, whose Spaces they are; none by default. */
+  readonly spacesHost?: string | null | undefined
   /** 6.7: the assistant's (or a routine thread's) memory as its files say now; none by default. */
   readonly memory?: string | undefined
 }
@@ -104,7 +106,17 @@ const set = (s: string | null | undefined) => {
 }
 
 /** What the later areas give when their feature is off (see `PromptContext`). */
-const OFF = { github: null, ghTools: false, boardPr: false, workflowStart: null, docsTools: false, desktopHost: null, tmp: null, memory: "" } as const
+const OFF = {
+  github: null,
+  ghTools: false,
+  boardPr: false,
+  workflowStart: null,
+  docsTools: false,
+  desktopHost: null,
+  spacesHost: null,
+  tmp: null,
+  memory: "",
+} as const
 
 export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-server/agents/Prompts") {
   static readonly layer = Layer.effect(
@@ -178,6 +190,7 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           tmp: run.tmp ?? null,
           // 6.10: computer use.
           desktopHost: run.desktopHost ?? null,
+          spacesHost: run.spacesHost ?? null,
           // 6.7: the assistant's memory.
           memory: run.memory ?? "",
           task,

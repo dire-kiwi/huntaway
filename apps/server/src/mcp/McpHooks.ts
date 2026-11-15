@@ -17,17 +17,24 @@ export interface McpHooksShape {
   /** Any board call but `wait` means the run is working again: it ends the run's current wait. */
   readonly callMade: (caller: LocalCaller) => Effect.Effect<void>
   /**
-   * An approval rule asks about the call (`name` is the tool as the rule matched it, `mcp__huntaway__<tool>`): the
-   * user, or the thread's mode, decides. Fails with what the agent is told when it is denied.
+   * An approval rule asks about the call (`name` is the tool as the rule matched it, `mcp__huntaway__<tool>`), or
+   * (`rule` null) a tool asks for itself (`mcp__spaces__delete_space`): the user, or the thread's mode, decides. Fails
+   * with what the agent is told when it is denied.
    */
-  readonly askRule: (caller: LocalCaller, name: string, input: unknown, rule: Rule) => Effect.Effect<void, ToolError>
+  readonly askRule: (caller: LocalCaller, name: string, input: unknown, rule: Rule | null) => Effect.Effect<void, ToolError>
   /** The agent gave up on call `call` of `run`: the prompt it raised expires and its wait ends (it is not answered). */
   readonly cancelled: (run: Run, call: CallId) => Effect.Effect<void>
 }
 
 /** An ask rule's call refused (closed rather than open), with the reason, while the board can't ask the user. */
 export const refuseAsk: McpHooksShape["askRule"] = (_caller, name, _input, rule) =>
-  Effect.fail(ToolError.other(`The user's approval rules ask about ${name} (ask: ${rule.tool}), and this board can't ask the user yet, so it wasn't run.`))
+  Effect.fail(
+    ToolError.other(
+      rule === null
+        ? `${name} asks the user first, and this board can't ask the user yet, so it wasn't run.`
+        : `The user's approval rules ask about ${name} (ask: ${rule.tool}), and this board can't ask the user yet, so it wasn't run.`,
+    ),
+  )
 
 export class McpHooks extends Context.Service<McpHooks, McpHooksShape>()("huntaway-server/mcp/McpHooks") {
   /**

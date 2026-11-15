@@ -17,7 +17,7 @@ import { ToolCalls } from "../ToolCalls.ts"
 // The board's MCP servers over HTTP, MCP's streamable HTTP transport (docs/plan/inventory/03-mcp.md 2.2;
 // docs/plan/05-protocol.md, Plain HTTP): `/api/mcp/<run id>/<server>` on the host's internal URL, each run with a
 // secret of its own as its bearer token (`Identity.runSecret`), so a run can only act as itself and never holds the
-// board token. Every run reaches gh's, docs' and desktop's servers here; the board's own only compactions and Codex
+// board token. Every run reaches gh's, docs', desktop's and spaces' servers here; the board's own only compactions and Codex
 // sessions that took no dynamic tools (Claude runs that take input call it on their output, `control.ts`).
 //
 // A call is answered as a server-sent event stream that starts with an event that has an id and no data (MCP's priming
@@ -151,9 +151,14 @@ export const McpHttpRoute = HttpRouter.use(
       if (!authorised) return json(401, { error: "unauthorized" })
       const settings = yield* dirs.mcpRun(run)
       if (settings === null) return json(404, { error: "unknown run" })
-      // Its board tools are answered on its own output; and only a run launched with the desktop server has it (the
-      // run's secret is its gh and docs servers' too).
-      if ((settings.in_process && server.value === BOARD_SERVER) || (!settings.desktop && server.value === "desktop")) return notFound
+      // Its board tools are answered on its own output; and only a run launched with the desktop server has it, or with
+      // the spaces server (the run's secret is its gh and docs servers' too).
+      if (
+        (settings.in_process && server.value === BOARD_SERVER) ||
+        (!settings.desktop && server.value === "desktop") ||
+        (settings.spaces !== true && server.value === "spaces")
+      )
+        return notFound
 
       if (request.method === "GET") {
         const last = request.headers["last-event-id"]

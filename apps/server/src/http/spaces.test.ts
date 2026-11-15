@@ -24,6 +24,12 @@ const FakeSpaces = Layer.succeed(
     view: () => Effect.die("not in this test"),
     settled: () => Effect.die("not in this test"),
     relayTarget: (ticket) => Effect.succeed(ticket === "tk" ? { id: "s1", port: target.port } : null),
+    setAgentTools: () => Effect.die("not in this test"),
+    toolsEnabled: Effect.die("not in this test"),
+    toolsAvailable: Effect.die("not in this test"),
+    find: () => Effect.die("not in this test"),
+    bash: () => Effect.die("not in this test"),
+    driver: () => Effect.die("not in this test"),
   }),
 )
 

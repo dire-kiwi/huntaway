@@ -1,7 +1,16 @@
 import { decide, strict } from "@huntaway/shared"
 import type { Decision, Rule, Rules } from "@huntaway/shared"
 import { Predicate } from "effect"
-import { BOARD_SERVER, DESKTOP_READS, DESKTOP_SERVER, GH_SERVER, LEGACY_BOARD_SERVER } from "../claude/access.ts"
+import {
+  BOARD_SERVER,
+  DESKTOP_READS,
+  DESKTOP_SERVER,
+  GH_SERVER,
+  LEGACY_BOARD_SERVER,
+  SPACES_ASKS_ITSELF,
+  SPACES_READS,
+  SPACES_SERVER,
+} from "../claude/access.ts"
 import type { CodexPolicy } from "./spec.ts"
 import { toolPrefix } from "./items.ts"
 
@@ -57,6 +66,12 @@ export const mcpServerConfig = (
     // Its read-only tools need no approval; its actions ask.
     out["tool_timeout_sec"] = 300
     out["tools"] = Object.fromEntries(DESKTOP_READS.map((tool) => [tool, { approval_mode: "approve" }]))
+  }
+  if (name === SPACES_SERVER) {
+    // Its read-only tools need no approval, nor delete_space, which asks the user itself; the rest ask. Making the first
+    // Space builds its image, which takes minutes.
+    out["tool_timeout_sec"] = 3600
+    out["tools"] = Object.fromEntries([...SPACES_READS, ...SPACES_ASKS_ITSELF].map((tool) => [tool, { approval_mode: "approve" }]))
   }
   if (disabled.length > 0) out["disabled_tools"] = [...disabled]
   return out

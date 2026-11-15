@@ -9,3 +9,5 @@ export const GH_SERVER = "gh"
 export const DOCS_SERVER = "docs"
 /** Computer use (plan task 6.10). */
 export const DESKTOP_SERVER = "desktop"
+/** This host's Spaces, Linux desktops in Docker (HE-37). */
+export const SPACES_SERVER = "spaces"

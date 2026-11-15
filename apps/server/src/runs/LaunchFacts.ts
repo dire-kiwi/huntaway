@@ -294,13 +294,14 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           : withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         // The task's own temp folder, its TMPDIR, which goes once it's done.
         const tmp = yield* taskTmp.ensure(task)
-        // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
+        // 6.10: the board's servers this run gets, read once: the desktop's and the Spaces' are told of in its system prompt.
         const served = yield* requests.served
         const systemPrompt = yield* prompts.system(task.id, {
           codex: false,
           permission_mode: permissionMode,
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
+          spacesHost: served.spaces === true ? identity.hostName : null,
           memory: workspace?.memory,
         })
         const configDir = yield* configDirOf(task, cfg)
@@ -420,13 +421,14 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           ? ""
           : withPreface((workspace?.update ?? "") + (reports?.preface ?? ""), yield* prompts.start(task.id, text, yield* background.takeLost(task.id)))
         const tmp = yield* taskTmp.ensure(task)
-        // 6.10: the board's servers this run gets, read once: the desktop's is told of in its system prompt.
+        // 6.10: the board's servers this run gets, read once: the desktop's and the Spaces' are told of in its system prompt.
         const served = yield* requests.served
         const systemPrompt = yield* prompts.system(task.id, {
           codex: true,
           permission_mode: permissionMode,
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
+          spacesHost: served.spaces === true ? identity.hostName : null,
           memory: workspace?.memory,
         })
         const configDir = yield* configDirOf(task, cfg)

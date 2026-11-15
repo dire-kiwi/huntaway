@@ -6,13 +6,17 @@ import type { AgentConfigId, NewSpace, Space, SpacesStatus, SpaceView } from "@h
 import { apiEnv, configDir } from "../agents/configEnv.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { Identity } from "../platform/Identity.ts"
+import type { ProcResult } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
+import { SettingsRepo } from "../settings/SettingsRepo.ts"
 import { CLAUDE_STATE, claudeFiles, codexFiles } from "./agentFiles.ts"
 import type { HomeFile } from "./agentFiles.ts"
 import { Docker } from "./Docker.ts"
 import { DESKTOP_USER, dockerfile, imageTag, isSpaceId, NAME_PREFIX, nameProblem, portOf, runArgs, tokenOf, toSpace } from "./containers.ts"
 import type { Inspected } from "./containers.ts"
+import { MCP_PATH, parseAnswer, requestBody } from "./driverMcp.ts"
+import type { DriverAnswer } from "./driverMcp.ts"
 import { CREATE_VIEWER_TICKET, headerStatus, parseViewerTicket, POLICY_ALLOW_ACTIVATION, POLICY_VIEW_ONLY, viewerTicketRequest } from "./spacesd.ts"
 
 // Spaces (HE-35; docs/plan/06-server.md, Spaces): Linux desktops in Docker, after Cua Spaces. Each is a container of
@@ -30,6 +34,12 @@ import { CREATE_VIEWER_TICKET, headerStatus, parseViewerTicket, POLICY_ALLOW_ACT
 const VIEW_SECONDS = 3600
 /** How long spacesd has to answer its health check once the container starts. */
 const HEALTHY_TRIES = 120
+
+/** The setting that gives this host's agents the `spaces` server (HE-37), off until the host's page turns it on. */
+export const TOOLS_SETTING = "spaces_tools"
+
+/** The longest a command run in a Space (`bash`) may take, in seconds. */
+export const BASH_MAX_SECONDS = 600
 
 /** What the relay route reaches for a ticket. */
 export interface RelayTarget {
@@ -50,6 +60,21 @@ export interface SpacesShape {
   readonly settled: (id: string) => Effect.Effect<Space, NotFound | Unavailable>
   /** The Space a relay ticket opens, while it lasts. */
   readonly relayTarget: (ticket: string) => Effect.Effect<RelayTarget | null>
+  /** HE-37: give this host's agents the `spaces` server (from their next run), or not. */
+  readonly setAgentTools: (on: boolean) => Effect.Effect<SpacesStatus>
+  /** Whether the host's page has given its agents the `spaces` server. */
+  readonly toolsEnabled: Effect.Effect<boolean>
+  /** Whether a run launched now gets the `spaces` server: the host's page turned it on, and Docker answers. */
+  readonly toolsAvailable: Effect.Effect<boolean>
+  /** A Space by its id, or by its name (NotFound when none has it, Invalid when several do). */
+  readonly find: (ref: string) => Effect.Effect<Space, Invalid | NotFound>
+  /**
+   * Run `command` with `bash -l` in a running Space, as its desktop user in its home, for at most `seconds`
+   * (`BASH_MAX_SECONDS`); its exit code (124 when it timed out) and output.
+   */
+  readonly bash: (id: string, command: string, seconds: number) => Effect.Effect<ProcResult, NotFound | Unavailable>
+  /** One MCP request (`tools/list`, `tools/call`) to a running Space's Cua Driver, through spacesd's `/mcp`. */
+  readonly driver: (id: string, method: string, params: unknown) => Effect.Effect<DriverAnswer, NotFound | Unavailable>
 }
 
 /** What answers on a Space's port is the Space's to choose: the server never follows it somewhere else. */
@@ -75,6 +100,7 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
       const config = yield* ServerConfig
       const identity = yield* Identity
       const configs = yield* AgentConfigRepo
+      const settings = yield* SettingsRepo
       const fs = yield* FileSystem.FileSystem
       const http = yield* HttpClient.HttpClient
       const random = yield* SecureRandom.SecureRandom
@@ -122,10 +148,13 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
         )
       })
 
+      const agentTools = Effect.map(settings.get(TOOLS_SETTING), (v) => v === "true")
+
       const status = Effect.gen(function* () {
         const v = yield* docker.version
         const out: SpacesStatus = {
           docker: "reason" in v ? { available: false, version: null, reason: v.reason } : { available: true, version: v.version, reason: null },
+          agent_tools: yield* agentTools,
           base_image: base,
           spaces: "reason" in v ? [] : yield* list,
         }
@@ -381,7 +410,87 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
           return r === undefined || r.expires <= now ? null : { id: r.id, port: r.port }
         })
 
-      return Spaces.of({ status, create, start, stop, remove, syncAgents, view, settled, relayTarget })
+      const setAgentTools = Effect.fn("Spaces.setAgentTools")(function* (on: boolean) {
+        yield* settings.set(TOOLS_SETTING, on ? "true" : null)
+        return yield* status
+      })
+
+      // Off (the default), Docker isn't asked: a launch then costs nothing.
+      const toolsAvailable = Effect.flatMap(agentTools, (on) => (on ? Effect.map(docker.version, (v) => !("reason" in v)) : Effect.succeed(false)))
+
+      const find = Effect.fn("Spaces.find")(function* (ref: string) {
+        const r = ref.trim()
+        const all = yield* list
+        const byId = all.find((s) => s.id === r.toLowerCase())
+        if (byId !== undefined) return byId
+        const named = all.filter((s) => s.name === r)
+        const matched = named.length > 0 ? named : all.filter((s) => s.name.toLowerCase() === r.toLowerCase())
+        if (matched.length > 1) {
+          return yield* new Invalid({
+            field: "space",
+            reason: `${matched.length} Spaces are named ${r}: name one by its id (${matched.map((s) => s.id).join(", ")})`,
+          })
+        }
+        const one = matched[0]
+        if (one === undefined) return yield* new NotFound({ what: "space", id: r })
+        return one
+      })
+
+      const bash = Effect.fn("Spaces.bash")(function* (id: string, command: string, seconds: number) {
+        const c = yield* running(id)
+        const limit = Math.max(1, Math.min(BASH_MAX_SECONDS, Math.round(seconds)))
+        // `docker exec --user` keeps the image's HOME (/root), so the user's own is looked up; `timeout` stops the command
+        // in the container, where Docker's CLI going away wouldn't.
+        const script = 'h=$(getent passwd "$(id -un)" | cut -d: -f6); export HOME="${h:-$HOME}"; cd "$HOME" 2>/dev/null; exec bash -lc "$1"'
+        return yield* docker
+          .exec(c.Name.replace(/^\//u, ""), DESKTOP_USER, ["timeout", "--kill-after=5", `${limit}`, "sh", "-c", script, "sh", command], {
+            timeout: `${limit + 30} seconds`,
+          })
+          .pipe(Effect.mapError(dockerFailed))
+      })
+
+      const driver = Effect.fn("Spaces.driver")(function* (id: string, method: string, params: unknown) {
+        const c = yield* running(id)
+        const port = portOf(c)
+        const token = tokenOf(c)
+        if (port === null || token === null) return yield* unavailable("The Space's spacesd isn't reachable.")
+        // Each request is answered on its own connection, so one id does.
+        const rpcId = 1
+        const request = HttpClientRequest.post(`http://127.0.0.1:${port}${MCP_PATH}`).pipe(
+          HttpClientRequest.setHeaders({ authorization: `Bearer ${token}`, accept: "application/json, text/event-stream" }),
+          HttpClientRequest.bodyText(requestBody(rpcId, method, params), "application/json"),
+        )
+        return yield* http.execute(request).pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECTS),
+          Effect.flatMap((r) =>
+            Effect.map(r.text, (body): DriverAnswer => {
+              if (r.status === 401) return { error: "spacesd refused the Space's token" }
+              if (r.status !== 200) return { error: `spacesd answered ${r.status}` }
+              return parseAnswer(r.headers["content-type"] ?? "", body, rpcId)
+            }),
+          ),
+          Effect.timeout("3 minutes"),
+          Effect.mapError(() => unavailable("spacesd isn't answering")),
+        )
+      })
+
+      return Spaces.of({
+        status,
+        create,
+        start,
+        stop,
+        remove,
+        syncAgents,
+        view,
+        settled,
+        relayTarget,
+        setAgentTools,
+        toolsEnabled: agentTools,
+        toolsAvailable,
+        find,
+        bash,
+        driver,
+      })
     }),
   )
 }

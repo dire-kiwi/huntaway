@@ -19,3 +19,6 @@ export * from "./fakeSpacePort.ts"
 export * from "./legacyBoard.ts"
 // 9.1: an imported folder (a rehearsal's or a switch's), for the guard and the read-only server.
 export * from "./rehearsal.ts"
+// HE-37: a fake Docker CLI and a fake spacesd, for the spaces server.
+export * from "./fakeDocker.ts"
+export * from "./fakeSpacesd.ts"

@@ -12,6 +12,7 @@ export const SpacesHandlers = SpacesRpcs.toLayer(
       "spaces.stop": ({ id }) => spaces.stop(id),
       "spaces.delete": ({ id }) => spaces.remove(id),
       "spaces.syncAgents": ({ id }) => spaces.syncAgents(id),
+      "spaces.setAgentTools": ({ enabled }) => spaces.setAgentTools(enabled),
       "spaces.view": ({ id, interactive }) => spaces.view(id, interactive ?? true),
     })
   }),

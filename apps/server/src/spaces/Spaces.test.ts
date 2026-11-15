@@ -4,6 +4,7 @@ import { HttpClient, HttpClientResponse } from "effect/http"
 import { AgentConfigId, Timestamp } from "@huntaway/contracts"
 import { TestPlatform, tempDir } from "@huntaway/testing"
 import { AgentConfigRepo } from "../profiles/AgentConfigRepo.ts"
+import { SettingsRepo } from "../settings/SettingsRepo.ts"
 import { LABEL, NAME_PREFIX } from "./containers.ts"
 import type { Inspected } from "./containers.ts"
 import { Docker, DockerError } from "./Docker.ts"
@@ -81,7 +82,7 @@ const fakeSpacesd = HttpClient.make((request, url) =>
 )
 
 const TestSpaces = Spaces.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(FakeDockerLive, AgentConfigRepo.layer, Layer.succeed(HttpClient.HttpClient, fakeSpacesd))),
+  Layer.provideMerge(Layer.mergeAll(FakeDockerLive, AgentConfigRepo.layer, SettingsRepo.layer, Layer.succeed(HttpClient.HttpClient, fakeSpacesd))),
   Layer.provideMerge(TestPlatform()),
 )
 
