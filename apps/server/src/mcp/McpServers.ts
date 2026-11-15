@@ -71,12 +71,23 @@ export const DESKTOP_INSTRUCTIONS =
   "leave it as you found it (close the windows you opened, not theirs). If the screen is locked or another task is " +
   "using the desktop, stop and say so; don't try to unlock it."
 
+/** HE-37: the spaces server's. */
+export const SPACES_INSTRUCTIONS =
+  "`spaces` gives you Spaces: Linux desktops (Ubuntu with XFCE, Firefox and Chromium) in Docker on the board's host, each " +
+  "with its own Cua Driver. `create_space` makes one and waits for it (with `reuse`, the default, one of that name is used " +
+  "if it's there); `space_bash` runs a command in it as its desktop user. To use its desktop, call `space_list_tools` for " +
+  "the driver's tools and `space_call_tool` to call them: `get_desktop_state` for a screenshot and its windows, " +
+  "`get_window_state` with `query` for a window's accessibility tree, then `run_steps` with a batch of clicks and typing on " +
+  "`element_token`s or pixels. Name a Space by its id or name. `space_view` gives the user a link to watch it. Stop or " +
+  "delete the Spaces you made once you're done, unless the user wants to keep them; `delete_space` asks the user first."
+
 /** What each server says it is in `initialize` (`serverInfo.name`, `instructions`). gh's name the run's account (`ghInstructions`). */
 export const SERVER_INFO: { readonly [S in BuiltInServer]: { readonly name: string; readonly instructions: string | null } } = {
   huntaway: { name: "huntaway", instructions: INSTRUCTIONS },
   gh: { name: "huntaway-gh", instructions: GH_INSTRUCTIONS },
   docs: { name: "huntaway-docs", instructions: DOCS_INSTRUCTIONS },
   desktop: { name: "huntaway-desktop", instructions: DESKTOP_INSTRUCTIONS },
+  spaces: { name: "huntaway-spaces", instructions: SPACES_INSTRUCTIONS },
 }
 
 /** A tool with its handler, over JSON: what `ToolCalls` runs. */
@@ -204,7 +215,7 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
     McpServers,
     Effect.gen(function* () {
       const config = yield* ServerConfig
-      const registry = yield* Ref.make<Readonly<Record<ServerName, ReadonlyArray<RegisteredTool>>>>({ huntaway: [], gh: [], docs: [], desktop: [] })
+      const registry = yield* Ref.make<Readonly<Record<ServerName, ReadonlyArray<RegisteredTool>>>>({ huntaway: [], gh: [], docs: [], desktop: [], spaces: [] })
       const definitions = yield* Ref.make<ReadonlyMap<ServerName, DefinedServer>>(new Map())
 
       const gates = yield* Ref.make<Readonly<Record<ServerName, Effect.Effect<boolean>>>>({})

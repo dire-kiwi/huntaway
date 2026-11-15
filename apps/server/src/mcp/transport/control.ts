@@ -136,12 +136,11 @@ export const McpControlRegistered = Layer.effectDiscard(
     yield* requests.provideServers({
       manifest: control.manifest,
       // HE-34: and the plugins' that have tools.
-      served: Effect.map(Effect.all([servers.serves("desktop"), servers.defined], { concurrency: 1 }), ([desktop, plugins]) => ({
-        gh: true,
-        docs: true,
-        desktop,
-        plugins,
-      })),
+      // HE-37: the spaces' while theirs says so (on for the host's agents, and Docker answers).
+      served: Effect.map(
+        Effect.all([servers.serves("desktop"), servers.serves("spaces"), servers.defined], { concurrency: 1 }),
+        ([desktop, spaces, plugins]) => ({ gh: true, docs: true, desktop, spaces, plugins }),
+      ),
     })
   }),
 )

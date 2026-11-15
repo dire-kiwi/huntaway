@@ -131,6 +131,7 @@ import { DesktopOpRepo } from "./desktop/DesktopOpRepo.ts"
 import { DesktopTools } from "./desktop/DesktopTools.ts"
 import { Docker } from "./spaces/Docker.ts"
 import { Spaces } from "./spaces/Spaces.ts"
+import { SpacesTools } from "./spaces/SpacesTools.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
@@ -635,8 +636,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
     Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
     // 6.10: computer use, over the MCP area it registers its server with.
     Layer.provideMerge(DesktopLive),
-    // HE-35: Spaces, Linux desktops in Docker.
-    Layer.provideMerge(Spaces.layer.pipe(Layer.provideMerge(Docker.layer))),
+    // HE-35: Spaces, Linux desktops in Docker; HE-37: and the `spaces` MCP server's tools, over the MCP area.
+    Layer.provideMerge(SpacesTools.pipe(Layer.provideMerge(Spaces.layer), Layer.provideMerge(Docker.layer))),
     // 6.8: push, watching the board's events for what devices want.
     Layer.provideMerge(PushLive),
     // HE-34: the plugins, over the MCP area they define their servers with.

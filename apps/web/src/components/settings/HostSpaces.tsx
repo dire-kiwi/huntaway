@@ -127,6 +127,15 @@ export function HostSpaces({ host }: { host: Host }) {
           ))}
         </div>
       )}
+      {st.docker.available && (
+        <div className="mt-3">
+          <Toggle
+            checked={st.agent_tools}
+            onChange={(v) => void act("agent-tools", mutate("spaces.setAgentTools", hostId, { enabled: v }))}
+            label={<span>Let agents on this host make and use Spaces (from their next run)</span>}
+          />
+        </div>
+      )}
       {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[12px] whitespace-pre-wrap text-red-300">{err}</div>}
       {creating && <NewSpaceModal hostId={hostId} onClose={() => setCreating(false)} />}
       {viewing && <SpaceViewer host={host} space={viewing.space} view={viewing.view} onClose={() => setViewing(null)} />}

@@ -72,6 +72,7 @@ const context = (task: Thread, o: Partial<PromptContext> = {}): PromptContext =>
   workflowStart: null,
   docsTools: false,
   desktopHost: null,
+  spacesHost: null,
   tmp: null,
   memory: "",
   ...o,

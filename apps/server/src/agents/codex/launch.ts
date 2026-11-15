@@ -3,9 +3,19 @@ import type { PermissionMode, Task } from "@huntaway/contracts"
 import { forMode } from "@huntaway/shared"
 import type { Rules } from "@huntaway/shared"
 import type { LaunchSpec } from "../AgentDriver.ts"
-import { DESKTOP_SERVER, desktopDisallowed, DOCS_SERVER, GH_SERVER, GH_WRITES, toolPrefix, usesServer } from "../claude/access.ts"
+import {
+  DESKTOP_SERVER,
+  desktopDisallowed,
+  DOCS_SERVER,
+  GH_SERVER,
+  GH_WRITES,
+  SPACES_SERVER,
+  spacesDisallowed,
+  toolPrefix,
+  usesServer,
+} from "../claude/access.ts"
 import type { RunTools } from "../claude/access.ts"
-import { boardServers, pluginServers, TASK_ENV, userInput } from "../claude/launch.ts"
+import { boardServers, mcpRun, pluginServers, TASK_ENV, userInput } from "../claude/launch.ts"
 import type { BoardManifest, ServedServers } from "../claude/launch.ts"
 import { boardTools } from "./requests.ts"
 import { codexPolicy } from "./servers.ts"
@@ -112,6 +122,7 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
       gh: usesServer(tools, GH_SERVER, input.served.gh),
       docs: usesServer(tools, DOCS_SERVER, input.served.docs),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
+      spaces: usesServer(tools, SPACES_SERVER, input.served.spaces === true),
       plugins: pluginServers(tools, input.served),
     }
     const ownGh = Object.hasOwn(tools.mcp_servers, GH_SERVER)
@@ -122,6 +133,9 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
     // server refuses until the plan is approved.
     const desktopOff = desktopDisallowed(review)
     if (servers.desktop && desktopOff.length > 0) disabled[DESKTOP_SERVER] = desktopOff
+    // A reviewer only looks at Spaces, too.
+    const spacesOff = spacesDisallowed(review)
+    if (servers.spaces === true && spacesOff.length > 0) disabled[SPACES_SERVER] = spacesOff
     // In their read-only sandbox, reviewers can still build and run the tests to check what they find.
     const filesystem = review && sandbox === "read-only" && input.reviewFilesystem !== null ? input.reviewFilesystem : {}
     const instructions = Object.keys(filesystem).length > 0 ? input.systemPrompt + REVIEW_SANDBOX_NOTE : input.systemPrompt
@@ -191,7 +205,7 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
       promptId: null,
       systemPrompt: null,
       mcpServers: boardServers(input, servers, inProcess),
-      mcpRun: { cwd: input.cwd, github_account: input.githubAccount, review, in_process: inProcess, desktop: servers.desktop },
+      mcpRun: mcpRun({ cwd: input.cwd, github_account: input.githubAccount, review, in_process: inProcess, desktop: servers.desktop }, servers),
       codex,
     }
     return { spec, codex, boardTools: given !== null }

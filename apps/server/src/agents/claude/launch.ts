@@ -3,7 +3,7 @@ import type { PermissionMode, Task } from "@huntaway/contracts"
 import { forMode } from "@huntaway/shared"
 import type { Rules } from "@huntaway/shared"
 import { toJson } from "../../platform/columns.ts"
-import type { LaunchSpec } from "../AgentDriver.ts"
+import type { LaunchSpec, McpRunSettings } from "../AgentDriver.ts"
 import { claudeDisallowed, claudeHook, ghHook, hookSettings, needsPromptTool } from "../rules.ts"
 import type { ClaudeHook } from "../rules.ts"
 import {
@@ -19,6 +19,9 @@ import {
   ghAllowed,
   REVIEW_ALLOWED,
   REVIEW_DISALLOWED,
+  SPACES_SERVER,
+  spacesAllowed,
+  spacesDisallowed,
   usesServer,
 } from "./access.ts"
 import type { RunTools } from "./access.ts"
@@ -42,6 +45,8 @@ export const BOARD_TIMEOUT_MS = 86_400_000
 export const GH_TIMEOUT_MS = 900_000
 /** A desktop call's own limit, but for its permission prompt, which Claude Code asks before it. */
 export const DESKTOP_TIMEOUT_MS = 300_000
+/** A Spaces call: making the first Space on a host downloads and builds its image, which can take many minutes. */
+export const SPACES_TIMEOUT_MS = 3_600_000
 
 /**
  * Claude's task list tool (HA-316). Claude Code turns its todo tools off for models newer than Sonnet 4.6 and Haiku 4.5
@@ -68,6 +73,8 @@ export interface ServedServers {
   readonly docs: boolean
   /** Computer use is on for this host and it has a driver. */
   readonly desktop: boolean
+  /** HE-37: Spaces are on for this host's agents and it has Docker. None when missing. */
+  readonly spaces?: boolean | undefined
   /** HE-34: the plugins' servers (docs/plan/15-plugins.md), by their plugins' ids. None when missing. */
   readonly plugins?: ReadonlyArray<PluginServer> | undefined
 }
@@ -180,12 +187,16 @@ export const boardServers = (input: Pick<ClaudeLaunchInput, "mcp" | "tools">, se
   if (servers.gh) out[GH_SERVER] = { type: "http", url: url(GH_SERVER), headers, timeout: GH_TIMEOUT_MS }
   if (servers.docs) out[DOCS_SERVER] = { type: "http", url: url(DOCS_SERVER), headers }
   if (servers.desktop) out[DESKTOP_SERVER] = { type: "http", url: url(DESKTOP_SERVER), headers, timeout: DESKTOP_TIMEOUT_MS }
+  if (servers.spaces === true) out[SPACES_SERVER] = { type: "http", url: url(SPACES_SERVER), headers, timeout: SPACES_TIMEOUT_MS }
   // HE-34: the plugins' (already narrowed to the run's, `pluginServers`).
   for (const p of servers.plugins ?? []) out[p.name] = { type: "http", url: url(p.name), headers }
   // The project's own (which may replace any but the board's).
   for (const [name, server] of Object.entries(input.tools.mcp_servers)) if (name !== BOARD_SERVER) out[name] = server
   return out
 }
+
+/** `mcp-run.json`, with `spaces` only for a run that has the server (so a run without is written as before). */
+export const mcpRun = (settings: McpRunSettings, servers: ServedServers): McpRunSettings => (servers.spaces === true ? { ...settings, spaces: true } : settings)
 
 /** What to run for a Claude Code run, and what goes in its folder. */
 export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec> =>
@@ -204,6 +215,7 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
       gh: usesServer(tools, GH_SERVER, input.served.gh),
       docs: usesServer(tools, DOCS_SERVER, input.served.docs),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
+      spaces: usesServer(tools, SPACES_SERVER, input.served.spaces === true),
       plugins: pluginServers(tools, input.served),
     }
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
@@ -231,12 +243,14 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
     args.push("--allowedTools", ...boardToolsAllowed(input.permissionMode, toolNames(input.mcp.manifest)))
     if (servers.docs) args.push(`mcp__${DOCS_SERVER}`)
     if (servers.desktop) args.push(...desktopAllowed())
+    if (servers.spaces === true) args.push(...spacesAllowed())
     for (const p of servers.plugins ?? []) if (p.preApproved) args.push(`mcp__${p.name}`)
     const ownGh = Object.hasOwn(tools.mcp_servers, GH_SERVER)
     if (!ownGh) args.push(...ghAllowed(task).map(ghTool))
     args.push(...tools.allowed)
     const disallowed = [...tools.disallowed, ...(rules === null ? [] : claudeDisallowed(rules))]
     if (servers.desktop) disallowed.push(...desktopDisallowed(review).map((t) => `mcp__${DESKTOP_SERVER}__${t}`))
+    if (servers.spaces === true) disallowed.push(...spacesDisallowed(review).map((t) => `mcp__${SPACES_SERVER}__${t}`))
     if (review) {
       // Reviewers read and report; they don't change the work.
       args.push(...REVIEW_ALLOWED)
@@ -281,7 +295,7 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
       promptId: takesInput ? input.promptId : null,
       systemPrompt: input.systemPrompt,
       mcpServers: boardServers(input, servers, inProcess),
-      mcpRun: { cwd: input.cwd, github_account: input.githubAccount, review, in_process: inProcess, desktop: servers.desktop },
+      mcpRun: mcpRun({ cwd: input.cwd, github_account: input.githubAccount, review, in_process: inProcess, desktop: servers.desktop }, servers),
     }
     return spec
   })

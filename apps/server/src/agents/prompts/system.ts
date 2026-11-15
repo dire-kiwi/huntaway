@@ -3,6 +3,7 @@ import { assistant } from "../../prompts/assistant.ts"
 import { codeTask } from "../../prompts/codeTask.ts"
 import { codexPlanMode } from "../../prompts/codexPlanMode.ts"
 import { desktopNote } from "../../prompts/desktopNote.ts"
+import { spacesNote } from "../../prompts/spacesNote.ts"
 import { docsNote } from "../../prompts/docsNote.ts"
 import { documentsOnly } from "../../prompts/documentsOnly.ts"
 import { codexGithubNote, githubNote } from "../../prompts/github.ts"
@@ -93,7 +94,7 @@ export const basePrompt = (kind: ThreadKind, c: PromptContext): string => {
 const grants = (profile: PromptContext["profiles"][number], name: string) => profile.name === name || profile.agent_access.some((n) => n === "*" || n === name)
 
 /**
- * What a run is told after `base`: Codex's plan mode, GitHub, the docs and desktop servers, its temp folder, which
+ * What a run is told after `base`: Codex's plan mode, GitHub, the docs, desktop and spaces servers, its temp folder, which
  * profiles' boards it reaches, a pen thread's pen and the assistant's memory (last), each when it applies.
  */
 export const instructions = (base: string, kind: ThreadKind, c: PromptContext): string => {
@@ -103,6 +104,7 @@ export const instructions = (base: string, kind: ThreadKind, c: PromptContext): 
   else if (c.ghTools) s += githubNote(c.githubAccount)
   if (c.docsTools && !isUnderTask(kind)) s += docsNote(c.codex)
   if (c.desktopHost !== null && c.desktopHost !== "") s += desktopNote(c.codex, c.desktopHost)
+  if (c.spacesHost !== null && c.spacesHost !== "") s += spacesNote(c.codex, c.spacesHost)
   if (c.tmp !== null) s += tempFolder(c.tmp, isUnderTask(kind))
   // Which profiles' boards it can't use, so it asks rather than make a project that may be there.
   if (!isUnderTask(kind)) {

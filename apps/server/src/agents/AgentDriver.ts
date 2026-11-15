@@ -14,6 +14,8 @@ export interface McpRunSettings {
   readonly in_process: boolean
   /** It was launched with the desktop server. */
   readonly desktop: boolean
+  /** HE-37: and with the spaces server (written only when it was). */
+  readonly spaces?: boolean | undefined
 }
 
 /** The process to start under ia-shim. */

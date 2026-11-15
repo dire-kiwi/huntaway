@@ -38,6 +38,8 @@ export const SpacesStatus = Schema.Struct({
     /** Why it isn't available. */
     reason: Schema.NullOr(Schema.String),
   }),
+  /** HE-37: this host's agents get the `spaces` MCP server (from their next run). Off until the host's page turns it on. */
+  agent_tools: Schema.Boolean,
   /** The image new Spaces are built on (Cua's Linux image with spacesd). */
   base_image: Schema.String,
   spaces: Schema.Array(Space),

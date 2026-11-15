@@ -17,6 +17,8 @@ export const GH_SERVER = "gh"
 export const DOCS_SERVER = "docs"
 /** The board's desktop server (mcp/desktop_mcp.ts). */
 export const DESKTOP_SERVER = "desktop"
+/** The board's spaces server (HE-37: this host's Spaces). */
+export const SPACES_SERVER = "spaces"
 
 /** The gh server's tools that only read, so they run without asking (`--allowedTools mcp__gh__<name>`). */
 export const GH_READ_ONLY: ReadonlyArray<string> = ["pr_view", "pr_list", "pr_checks", "pr_diff", "issue_view", "issue_list", "run_list", "run_view"]
@@ -26,6 +28,13 @@ export const GH_WRITES: ReadonlyArray<string> = ["pr_create", "pr_comment", "pr_
 export const DESKTOP_READS: ReadonlyArray<string> = ["health", "apps", "windows", "read", "screen", "zoom", "verify", "op_status"]
 /** The desktop's tools that change something, which ask first unless the run may do anything. */
 export const DESKTOP_WRITES: ReadonlyArray<string> = ["act", "launch", "clipboard"]
+
+/** The spaces server's tools that only look (`space_call_tool` is refused by the server for an action of a caller that only looks). */
+export const SPACES_READS: ReadonlyArray<string> = ["list_spaces", "space_list_tools", "space_view"]
+/** Those that change a Space, which reviewers don't get. */
+export const SPACES_WRITES: ReadonlyArray<string> = ["create_space", "start_space", "stop_space", "delete_space", "space_bash"]
+/** The one that asks the user itself, whatever the mode, so the agent doesn't ask first too. */
+export const SPACES_ASKS_ITSELF: ReadonlyArray<string> = ["delete_space"]
 
 /** What a reviewer may use without asking (huntaway's review.ts `ALLOWED_TOOLS`): reading, and git and gh that only read. */
 export const REVIEW_ALLOWED: ReadonlyArray<string> = [
@@ -117,6 +126,12 @@ export const desktopAllowed = (): ReadonlyArray<string> => DESKTOP_READS.map((t)
 
 /** The desktop tools a run doesn't get: the ones that act, for a reviewer (the server refuses them too). */
 export const desktopDisallowed = (review: boolean): ReadonlyArray<string> => (review ? DESKTOP_WRITES : [])
+
+/** The spaces tools a run may use without asking: those that only look, and `delete_space`, which asks the user itself. */
+export const spacesAllowed = (): ReadonlyArray<string> => [...SPACES_READS, ...SPACES_ASKS_ITSELF].map((t) => `mcp__${SPACES_SERVER}__${t}`)
+
+/** The spaces tools a run doesn't get: the ones that change a Space, for a reviewer (the server refuses them too). */
+export const spacesDisallowed = (review: boolean): ReadonlyArray<string> => (review ? SPACES_WRITES : [])
 
 /** Trimmed, or null when blank. */
 const set = (s: string | null | undefined): string | null => {

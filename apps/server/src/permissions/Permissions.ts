@@ -130,8 +130,8 @@ export interface Asker {
 export interface PermissionsShape {
   /** An agent wants to use a tool: decided by the rules, the thread's list and folder, its mode, or the user. */
   readonly ask: (asker: Asker, use: ToolUse) => Effect.Effect<Decision>
-  /** An approval rule asks about board tool call `name` (`mcp__huntaway__<tool>`): Don't ask denies it, else the user decides. */
-  readonly askRule: (asker: Asker, name: string, input: unknown, rule: Rule) => Effect.Effect<Decision>
+  /** An approval rule asks about tool call `name`, or (`rule` null) it asks itself (`delete_space`): Don't ask denies it, else the user decides. */
+  readonly askRule: (asker: Asker, name: string, input: unknown, rule: Rule | null) => Effect.Effect<Decision>
   /**
    * One of the board's own approvals (3.4: a project change, a deletion, an automation or workflow): only the user
    * decides, whatever the mode. The input they approved (the first asked for this call, if it is retried), or why not.
@@ -601,15 +601,15 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         return (yield* decide(asker, use)).decision
       })
 
-      const askRule = Effect.fn("Permissions.askRule")(function* (asker: Asker, name: string, input: unknown, rule: Rule) {
+      const askRule = Effect.fn("Permissions.askRule")(function* (asker: Asker, name: string, input: unknown, rule: Rule | null) {
         const task = yield* tasks.get(asker.run.task_id)
         if (task === null) return deny(EXPIRED)
-        if ((yield* modeOf(task)) === "dontAsk") {
-          yield* rules.record({ task, tool: name, input, rule: { tool: rule.tool, decision: "ask" }, result: { outcome: "denied", by: "mode" } })
-          return deny(DONT_ASK_DENIAL)
-        }
-        const asked = yield* askUser({ asker, task, kind: "tool", tool: name, input, toolUseId: null, attention: reason(name, input), rule, logged: name })
-        return asked.decision
+        const denied = { outcome: "denied", by: "mode" } as const
+        if ((yield* modeOf(task)) !== "dontAsk")
+          return (yield* askUser({ asker, task, kind: "tool", tool: name, input, toolUseId: null, attention: reason(name, input), rule, logged: name }))
+            .decision
+        if (rule !== null) yield* rules.record({ task, tool: name, input, rule: { tool: rule.tool, decision: "ask" }, result: denied })
+        return deny(DONT_ASK_DENIAL)
       })
 
       const approve = Effect.fn("Permissions.approve")(function* (asker: Asker, kind: Exclude<PromptKind, "tool">, tool: string, input: unknown) {

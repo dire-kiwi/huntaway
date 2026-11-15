@@ -21,6 +21,8 @@ export class SpacesRpcs extends RpcGroup.make(
   Rpc.make("spaces.delete", { payload: SpaceRef, error: Schema.Union([NotFound, Unavailable]) }).annotate(RequiredScope, "admin"),
   /** Copy its configs' sign-ins in again (they are copied without refresh tokens, so they expire). */
   Rpc.make("spaces.syncAgents", { payload: SpaceRef, success: Space, error: Schema.Union([NotFound, Unavailable]) }).annotate(RequiredScope, "admin"),
+  /** HE-37: give this host's agents the `spaces` MCP server (their next runs), or not. */
+  Rpc.make("spaces.setAgentTools", { payload: { enabled: Schema.Boolean }, success: SpacesStatus }).annotate(RequiredScope, "admin"),
   /** A viewer ticket for a running Space, good for an hour; `interactive` false only watches. */
   Rpc.make("spaces.view", {
     payload: { id: Schema.String, interactive: Schema.optional(Schema.Boolean) },
