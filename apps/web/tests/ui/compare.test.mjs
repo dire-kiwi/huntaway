@@ -57,7 +57,6 @@ test("compares the tasks from one prompt, and picking one completes the others b
       "gone [data-compare]",
       `assert location.search === '?task=${opus.id}'`,
       // From the task's details too.
-      "click Details",
       "click Compare all 3",
       "wait [data-compare] >> text=Pick this one",
       "press ArrowRight",

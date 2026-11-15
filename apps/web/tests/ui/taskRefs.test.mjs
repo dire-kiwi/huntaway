@@ -19,7 +19,7 @@ test("a task key in markdown opens its task in a dialog over the board", async (
   const task = await makeTask(server, project, { title: "Refers to another", description: `See ${key}, not ${project.key}-9999 or \`${key}\`.` })
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click details", "wait See"])
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait See"])
     const links = page.locator(".prose-chat a")
     await links.first().waitFor()
     assert.deepEqual(await links.allTextContents(), [key], "only the key of a task there is is a link")

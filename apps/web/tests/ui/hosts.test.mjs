@@ -83,11 +83,7 @@ test("a host linked in Settings shows its projects and tasks on the board; its t
 
     // The profile's board has both hosts' tasks; the linked host's opens, and moves on that host.
     await ui.run(["goto /profile/Default", "wait A task on the hub", "wait A task on the linked host", "click A task on the linked host", "wait REM-1"])
-    await ui.run([
-      "click Details",
-      "click role=button[name='Needs attention']",
-      "wait css=section:has(span:text-is('Needs attention')) >> text=A task on the linked host",
-    ])
+    await ui.run(["click role=button[name='Needs attention']", "wait css=section:has(span:text-is('Needs attention')) >> text=A task on the linked host"])
     await eventually(async () => assert.equal((await host.rpc("tasks.get", { id: remoteTask.id })).status, "needs_attention"))
     // A change made on that host shows here.
     await host.rpc("tasks.update", { id: remoteTask.id, patch: { title: "Renamed on the host" } })

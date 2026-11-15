@@ -219,7 +219,8 @@ test("on a phone the new task dialog fits the screen", async () => {
   })
 })
 
-// HA-13: none of it on a desktop: the sidebar, the columns side by side, no menu buttons on cards, and the panel beside the board.
+// HA-13: none of it on a desktop: the sidebar, the columns side by side, no menu buttons on cards, and a task in a dialog
+// over the board (HE-30), which collapses into a side panel.
 test("the desktop layout is as it was", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
@@ -230,20 +231,20 @@ test("the desktop layout is as it was", async () => {
     assert.ok(await onScreen(page, TODO))
     assert.ok(await onScreen(page, ATTENTION))
     assert.equal(await page.locator(`[aria-label="Move ${TODO} to…"]`).isVisible(), false)
-    await ui.run([`click ${ATTENTION}`, "wait role=button[name='Expand']"])
+    await ui.run([`click ${ATTENTION}`, "wait role=button[name='Collapse into the side panel']"])
     assert.equal(await page.getByRole("button", { name: "Back", exact: true }).count(), 0)
     assert.equal(await page.locator("button[title^='Send']").getAttribute("title"), "Send (Enter)")
   })
 })
 
 // HA-13: a tablet keeps the desktop layout, but its cards have the menu button to move them, as dragging may not work.
-test("a tablet has menu buttons on its cards, and a side panel wide enough to use", async () => {
+test("a tablet has menu buttons on its cards, and a task view wide enough to use", async () => {
   await withBrowser(server, { size: "820x1180", touch: true }, async (ui) => {
     const { page } = ui
     await ui.run([`goto /p/${board.project.id}`, `wait ${TODO}`])
     assert.equal(await page.getByRole("tablist", { name: "Columns" }).count(), 0)
     assert.ok(await page.locator(`[aria-label="Move ${TODO} to…"]`).isVisible())
-    await ui.run([`click ${ATTENTION}`, "wait role=button[name='Expand']"])
+    await ui.run([`click ${ATTENTION}`, "wait role=button[name='Collapse into the side panel']"])
     const panel = await page.locator("main").first().boundingBox()
     assert.ok(panel.width >= 470, `panel ${panel.width} wide`)
   })

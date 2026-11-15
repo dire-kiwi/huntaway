@@ -26,7 +26,7 @@ test("a task's text field keeps what's typed while the task changes, and follows
       await server.rpc("tasks.update", { id: task.id, patch: { title, preview_url: url } })
       await page.locator("header h1", { hasText: title }).waitFor()
     }
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click details", "wait css=input[placeholder^='https://… (where to try']"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait css=input[placeholder^='https://… (where to try']"])
     await preview.click()
     await page.keyboard.type("https://typed.example")
     await changed("Fields changed", "https://agent.example")

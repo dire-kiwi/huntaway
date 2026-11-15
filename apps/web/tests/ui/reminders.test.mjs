@@ -50,7 +50,9 @@ test("stars tasks and sets reminders, and lists them in the sidebar", async () =
     assert.match(await sidebar(page), /Reminders\s+1\s/i)
 
     // Still there after a reload, and the panel shows the note.
-    await ui.run([`goto /p/${board.project.id}`, "wait css=aside >> text=due", "click css=aside >> text=A task waiting", "click Details", "wait Answer it"])
+    await ui.run([`goto /p/${board.project.id}`, "wait css=aside >> text=due", "click css=aside >> text=A task waiting", "wait Answer it"])
+    // The task opened in a dialog over the page: closed again to get at the sidebar.
+    await ui.run(["press Escape", "gone Close (Esc)"])
 
     await ui.run(["rclick css=aside >> text=A task waiting", "click [role=menu] >> text=Clear reminder", "gone css=aside >> text=Reminders"])
     await eventually(async () => {
