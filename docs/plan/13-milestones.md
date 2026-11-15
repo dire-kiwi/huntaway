@@ -178,6 +178,13 @@ From 2.7 on, in parallel with everything above and after the switch: one task pe
 the order in [09-frontend.md](09-frontend.md#step-2-by-hand-a-feature-folder-at-a-time). Each removes its files from
 the lint override.
 
+## After the port: the phone app
+
+HE-20 built `apps/mobile` on `packages/client` (connect, Inbox, Assistant, Projects, a task's thread and composer). What
+it has yet to get back is a task each, listed in [09-frontend.md](09-frontend.md#the-phone-app): running it on phones
+and an APK in releases, device pairing, several boards, Expo push and lock-screen answers, sharing and attachments,
+and one thread model for both apps.
+
 ## Order at a glance
 
 ```

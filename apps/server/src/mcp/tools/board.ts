@@ -3,6 +3,7 @@ import { McpServers } from "../McpServers.ts"
 import type { RegisteredTool } from "../McpServers.ts"
 // 6.5
 import { automationTools } from "./automations.ts"
+import { connectionTools } from "./connections.ts"
 import { penTools } from "./pens.ts"
 import { projectTools } from "./projects.ts"
 import { questionTools } from "./questions.ts"
@@ -20,6 +21,7 @@ import { workflowTools } from "./workflows.ts"
 export const BOARD_TOOLS: ReadonlyArray<string> = [
   "request_user_input",
   "finish_work",
+  "request_connection",
   "track_work",
   "untrack_work",
   "list_tracked_work",
@@ -64,6 +66,7 @@ export const BoardTools = McpServers.register(
   Effect.gen(function* () {
     const all: ReadonlyArray<RegisteredTool> = [
       ...Object.values(yield* questionTools),
+      ...Object.values(yield* connectionTools),
       ...Object.values(yield* trackingTools),
       ...Object.values(yield* waitTools),
       ...Object.values(yield* projectTools),

@@ -6,10 +6,12 @@ import { Effect, FileSystem, Layer, Result, Schema } from "effect"
 import { TaskId } from "@huntaway/contracts"
 import { TestPlatform } from "@huntaway/testing"
 import { MEMORY_CAP, MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
+import type { MemoryFacts, MemoryFile } from "../prompts/memory.ts"
 import { MAX_COMMITTED, MAX_LISTED } from "./memory/text.ts"
 import { gitDir, makeWorkspace } from "./memory/workspace.ts"
+import { ContextStatsRepo } from "../agents/ContextStatsRepo.ts"
 import { Proc } from "../platform/Proc.ts"
-import { Memory } from "./Memory.ts"
+import { Memory, memoryChanges } from "./Memory.ts"
 
 /** JSON text, through a schema (the global `JSON` throws). */
 const encodeJson = Schema.encodeResult(Schema.fromJsonString(Schema.Unknown))
@@ -27,7 +29,18 @@ const json = (v: unknown): string => Result.getOrElse(encodeJson(v), () => "")
 // is kept as the `-c` options' check in workspace.ts (`maintenance.autoDetach=false`), as reading GIT_TRACE would need
 // the server's own environment changed.
 
-const memoryLayer = Memory.layer.pipe(Layer.provideMerge(TestPlatform()))
+/** A file as a run is shown it, and a run's facts with today's log `todayLog` (and `user`). */
+const shown = (text: string, cut = false): MemoryFile => ({ _tag: "Shown", shown: text, cut, total: text.length })
+const facts = (todayLog: MemoryFile, user: MemoryFile = { _tag: "Empty" }): MemoryFacts => ({
+  dir: "/ws",
+  today: "2026-11-15 (Sunday)",
+  user,
+  memory: { _tag: "Missing" },
+  yesterdayLog: { rel: "memory/2026-11-14.md", file: { _tag: "Missing" } },
+  todayLog: { rel: "memory/2026-11-15.md", file: todayLog },
+})
+
+const memoryLayer = Memory.layer.pipe(Layer.provide(ContextStatsRepo.layer), Layer.provideMerge(TestPlatform()))
 
 /** A new folder for a workspace, with its git folder to be next to it. */
 const ws = (name = "ws") => {
@@ -458,4 +471,25 @@ layer(memoryLayer)("Memory", (it) => {
       assert.isNotNull(yield* memory.commitAll(dir))
     }),
   )
+
+  it("what changed in a conversation's memory: whole lines added at a file's end, else the file", () => {
+    const before = new Map<string, MemoryFile>([
+      [USER_FILE, { _tag: "Empty" }],
+      [MEMORY_FILE, { _tag: "Missing" }],
+      ["memory/2026-11-14.md", { _tag: "Missing" }],
+      ["memory/2026-11-15.md", shown("- one\n")],
+    ])
+    const day = "memory/2026-11-15.md"
+    assert.strictEqual(memoryChanges(before, facts(shown("- one\n"))).size, 0)
+    assert.deepStrictEqual(memoryChanges(before, facts(shown("- one\n- two\n"))).get(day), { _tag: "Added", added: "- two\n" })
+    // Not whole lines (the last one didn't end), or the file cut: as it is now.
+    const partial = new Map([...before, [day, shown("- one")]])
+    assert.strictEqual(memoryChanges(partial, facts(shown("- one more\n"))).get(day)?._tag, "Whole")
+    assert.strictEqual(memoryChanges(before, facts(shown("- one\n- two\n", true))).get(day)?._tag, "Whole")
+    // Gone, or changed elsewhere in it: as it is now.
+    assert.deepStrictEqual(memoryChanges(before, facts({ _tag: "Missing" })).get(day), { _tag: "Whole", file: { _tag: "Missing" } })
+    assert.strictEqual(memoryChanges(before, facts(shown("- uno\n- two\n"))).get(day)?._tag, "Whole")
+    // Only what changed.
+    assert.deepStrictEqual([...memoryChanges(before, facts(shown("- one\n"), shown("# Me\n"))).keys()], [USER_FILE])
+  })
 })

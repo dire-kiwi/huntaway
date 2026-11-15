@@ -7,9 +7,10 @@ import { Button, duration, localeTimeString } from "../../ui"
 import { useSubagentView, subagentTitle } from "./subagentView"
 import { answerPrompt } from "./promptAnswers"
 import { AskCard, BoardQuestionCard, PlanCard, questionsOf } from "./requestCards"
+import { ConnectionCard } from "./ConnectionCard"
 import { useThread } from "./context"
 import { Markdown } from "./Markdown"
-import type { CompactMeta, PromptData, QuestionData, ResultData } from "./threadModel"
+import type { CompactMeta, ConnectionData, PromptData, QuestionData, ResultData } from "./threadModel"
 import { CodeBlock, toolMeta, ToolInput } from "./tools"
 import { workedMs, type FoldedTurn } from "./turnFold"
 
@@ -75,6 +76,13 @@ export function QuestionRow({ id, data, hostId }: { id: number; data: QuestionDa
   const taskId = useThread((t) => t.taskId)
   const movedOn = useThread((t) => t.lastSent > id)
   return <BoardQuestionCard id={id} data={data} hostId={hostId} taskId={taskId} movedOn={movedOn} />
+}
+
+/** A connection card (HE-28): settled once, like a question, so one the conversation has moved past isn't answered. */
+export function ConnectionRow({ id, data, hostId }: { id: number; data: ConnectionData; hostId: string }) {
+  const taskId = useThread((t) => t.taskId)
+  const movedOn = useThread((t) => t.lastSent > id)
+  return <ConnectionCard id={id} data={data} hostId={hostId} taskId={taskId} movedOn={movedOn} />
 }
 
 /** A permission prompt: a question or a plan gets its own card. */

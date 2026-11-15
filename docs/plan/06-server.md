@@ -941,7 +941,14 @@ an MCP server.
   `SecureRandom` and `Digest`.
 - **Reaching up.** `runs/AssistantLaunch` (new, as `TurnHooks`): `workspace(task)` gives the assistant's and its routine
   threads' cwd (refused, `WorkspaceRefused`, when it isn't its own) and memory, which `LaunchFacts` passes to
-  `Prompts.system` (`RunTold.memory`, last) for both agents and to a task's terminal (`workEnv`); `reports(task)` is the
+  `Prompts.system` (`RunTold.memory`, last) for both agents and to a task's terminal (`workEnv`). HE-25: Claude Code
+  (`--system-prompt-snapshot`, on by default) and Codex keep the instructions a conversation started with, so
+  `workspace(task, { compact })` also gives `update`, put first in a later prompt run's text: what changed since the
+  thread's conversation was last told (`Memory.forRun`'s record per thread: session, time, day, the four files as
+  shown; in memory, set by `told` once the agent has started, with `Prepared.started`): lines added at a log's end
+  (`memoryChanges`), else the files as they are now; all four (`memoryUpdate(facts, null)`) when there's no record (a
+  restart), the session or day differs, a rewind is pending, or `ContextStatsRepo.lastCompaction` is later than the
+  record. A compaction run is told nothing. `reports(task)` is the
   routines' unread reports in front of a prompt run's text, marked read by `Prepared.started` once the agent is spawned
   (`Runs.launch`). `TurnHooks.turnEnded(task, end?)` gained `end` (`{ compact }`, from the line handlers; none from a
   run's end): a turn of the assistant or a routine thread keeps the brief (also after each tool call) and commits the

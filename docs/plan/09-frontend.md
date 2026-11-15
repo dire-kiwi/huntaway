@@ -787,11 +787,45 @@ apps/desktop/
 
 ## The phone app
 
-Not part of this plan. The old Expo app speaks the old API and keeps working against machines that have not
-switched; it cannot reach one that has. When it is taken up again, its screens are kept and its state modules are
-replaced by `packages/client` with a key-value store on `expo-secure-store`, and three server pieces come with it:
-device pairing, Expo push, and answering a prompt from the lock screen. Effect on React Native would be the first
-thing to prove (T3 Code ships an Expo 58 app on Effect 4, which is good evidence).
+`apps/mobile` (HE-20): an Expo SDK 58 app (React Native 0.88, expo-router) on `packages/client` and effect 4, which
+bundles for Hermes as it is (the client's atoms, sessions and thread are the web app's own; Expo installs `URL` and
+`structuredClone`, and Babel turns effect's `import.meta` into what Hermes parses). The old app's screens are kept in
+shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set from the board kept in the keychain
+(`expo-secure-store`, `localStorage` on its web build), and everything else is atoms.
+
+- **Connect**: the link Settings → Network access shows (`http://<host>:<port>/?token=…`) pasted or typed, or an address
+  alone with its token apart, or none on a board started with `--open-token`. The board must answer `public.health`
+  within 10 s before it is kept. Plain HTTP to another machine is allowed with a warning (boards are reached over
+  Tailscale and the like), so a release build allows cleartext (`expo-build-properties`, `NSAllowsArbitraryLoads`).
+- **Inbox**: every usable host's `permissions.pending` (read every 5 s while it shows: a prompt is no board event),
+  Allow or Deny in place, a question or plan opening its task; and the tasks in Needs attention with no prompt.
+- **Assistant**: the shown profile's, found with `assistantHome` and opened with `assistant.get` (`here`).
+- **Projects** and **a project**: the shown profile's projects on every host; a project's tasks by status, what needs
+  the user first, Done the latest 20; New task (`tasks.create` with `start`).
+- **A task**: Stop (`tasks.stop`), Start (an empty `tasks.send`), Move (`optimisticMove`), its thread (`threadAtom`,
+  `threadPreviewAtom`, `olderPage`) as rows (`src/logic/thread.ts`, a smaller cut of the web's `itemModel.ts`), its
+  requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`), and the composer
+  (`sendMessage`).
+- **Board**: the board's sessions, its hosts, the profile shown (merged by name, kept), connecting another, forgetting.
+
+Checked: its pure logic in `pnpm test` (`apps/mobile/tests`); the type check and lint in `pnpm check`; the screens on
+its web build (`pnpm --filter huntaway-mobile export:web`, served on a free port, driven by `scripts/ui-check.mjs`)
+against a test server with the fake agent; `expo export --platform android` (Hermes bytecode). Not yet on a phone.
+
+What is left, a task each:
+
+1. **Run on a phone, and an APK in releases**: a development build or Expo Go on Android and iOS; the release
+   workflow's Android job (signing key, `versionCode` from the version, as the old one did).
+2. **Device pairing**: a QR code in Settings → Network access, one-time codes, device tokens with `read` and
+   `operate` only (the `device` session kind is in the contract), revoking; the app's Pair screen replaces pasting
+   the board token.
+3. **Several boards**: one atom registry per board (the client's atoms are per registry), an Inbox across them.
+4. **Expo push** and **answering from the lock screen**: the server's `expo` subscriptions are kept and not pushed to
+   (6.8); with them, `push_answer_tokens` and the notification's Allow and Deny.
+5. **Sharing into the app, attachments, dictation**: the old app's share intent, photos and files
+   (`attachments.upload`), voice notes.
+6. **One thread model**: the web's `itemModel.ts` and the phone's `thread.ts` moved into `packages/client`, so the two
+   apps draw a thread from the same rows.
 
 ## Tests
 
