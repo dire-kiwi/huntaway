@@ -213,14 +213,14 @@ describe("Projects", () => {
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
 
-  // projects_turn_their_tasks_pull_requests_on_and_off, projects_watch_pull_requests_in_review_once_asked_to
-  it.live("turn pull requests on and off and watch them once asked to", () =>
+  // projects_turn_their_tasks_pull_requests_on_and_off, projects_watch_pull_requests_in_review (failures, from HE-29)
+  it.live("turn pull requests on and off, and watch them for failures unless told otherwise", () =>
     Effect.gen(function* () {
       const { projects, make } = yield* setup
       const p = yield* make("x")
-      assert.deepStrictEqual([p.pull_requests, p.watch_pull_requests], [true, "off"])
+      assert.deepStrictEqual([p.pull_requests, p.watch_pull_requests], [true, "failures"])
       assert.isFalse((yield* projects.update(p.id, { pull_requests: false })).pull_requests)
-      for (const mode of ["failures", "all", "off"] as const)
+      for (const mode of ["off", "all", "failures"] as const)
         assert.strictEqual((yield* projects.update(p.id, { watch_pull_requests: mode })).watch_pull_requests, mode)
       assert.strictEqual(yield* tag(projects.update(p.id, { pr_preview_url: "https://x.example" })), "Invalid")
       assert.strictEqual((yield* projects.update(p.id, { pr_preview_url: " https://pr-{pr}.example " })).pr_preview_url, "https://pr-{pr}.example")
