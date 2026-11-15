@@ -116,6 +116,7 @@ column are that table's.
 | `analytics`    | `report`, `contextStats`, `tokenStats`, `diskUsage`                                                                                                              | read                 | 87–90      |
 | `attachments`  | `upload`, `get`                                                                                                                                                  | operate; read        | 38–39      |
 | `desktop`      | `status`, `setEnabled`, `install`, `uninstall`, `stop`, `check`, `frame`, `ops`                                                                                  | terminal; admin      | 51–56      |
+| `spaces`       | `status`, `view`; `create`, `start`, `stop`, `delete`, `syncAgents` (HE-35)                                                                                      | terminal; admin      | new        |
 | `admin`        | `status`, `restart`, `update`, `checkRelease`, `updateRelease`, `rollback`, `installService`, `telemetry`, `updateTelemetry`, `testTelemetry`                    | admin                | 31–32, 40–47 |
 | `settingsSync` | `get`, `merge`, `resolve` (`merge` too needs `settings`, not `link`: the hub token alone must not write a host's synced settings; review of HE-6) | settings             | 28–30      |
 | `tools`        | `call`                                                                                                                                                           | link                 | 34         |
@@ -219,6 +220,7 @@ Rpc.make("threads.watch", {
 | `GET /api/rpc` (websocket), `POST /api/rpc` | RPC                                                                                      | per request                  |
 | `GET /api/relay/<ticket>` (websocket)      | A client's socket to another host, relayed                                                | the ticket                   |
 | `GET /api/terminal/<ticket>` (websocket)   | A terminal: binary output and input, JSON control frames, as now                          | the ticket                   |
+| `* /api/spaces/v/<ticket>/…`               | A Space's spacesd (HE-35): its viewer page, gRPC-Web calls and media websocket, relayed  | the ticket (an hour, reused) |
 | `GET /api/link` (websocket)                | A host dialling in: its control connection                                                | the hub token                |
 | `GET /api/link/stream/<id>` (websocket)    | A host answering the hub's request for one more socket                                    | the hub token and the id     |
 | `POST /api/hooks/<id>/<token>`             | An automation's webhook. Same path as now, so registered URLs keep working                | the token in the path        |
@@ -237,7 +239,9 @@ is answered 413 only after it has been drained; open routes take small bodies on
 folder; CORS stays open on `/api`.
 
 Tickets are single-use, expire in a minute, and are bound to the session that asked. They exist because a browser
-cannot put a header on a websocket, and a long-lived token must not sit in a URL that proxies log.
+cannot put a header on a websocket, and a long-lived token must not sit in a URL that proxies log. A Space's viewer
+ticket is the exception: its page makes many requests and reconnects its media socket, so it lasts an hour and is
+reused, and what it reaches still needs spacesd's own viewer ticket, which only the URL's fragment carries.
 
 ## Versions
 

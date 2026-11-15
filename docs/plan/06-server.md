@@ -1197,6 +1197,39 @@ As built in 8.1 and 8.2 (`apps/server/src/update/`):
   A finished run's folder is reported kept 14 days (`Disk.RUNS_KEPT_DAYS`), the old constant. The CLI does not ask for
   a password on a terminal.
 
+### Spaces<a id="spaces"></a> (HE-35)
+
+Linux desktops in Docker, after [Cua Spaces](https://cua.ai/docs/spaces), built on Cua's own daemon rather than a
+streamer of ours: each Space is a container of Cua's Linux image (`ghcr.io/trycua/linux:24.04`: Ubuntu, XFCE, Cua
+Driver and **spacesd**, which streams the screen as H.264 and takes input through Cua Driver) with Claude Code and Codex
+added. **Decided** (with the user, HE-35): the board sees a Space through spacesd's `/media` WebSocket, relayed by the
+host's Node server; spacesd's QUIC media (UDP 3212, ALPN `rcdp/2`) is for native clients, and neither a browser nor
+Electron's Node can speak it. A Rust or worker-thread relay waits for a measurement that calls for it.
+
+- **`spaces/`** (below `desktop/`): `Docker` (the CLI through `Proc`: `HUNTAWAY_DOCKER`, else `docker`; tests replace
+  the service), `Spaces` (status, create, start, stop, remove, `syncAgents`, `view`, `settled`, `relayTarget`). Pure
+  parts: `containers.ts` (`docker run`'s arguments, labels, `docker inspect` read back, the image's Dockerfile and tag),
+  `spacesd.ts` (`CreateViewerTicket` over gRPC-Web, hand-written protobuf; the relay's header rules), `agentFiles.ts`.
+- **No table**: a Space is a container named `huntaway-space-<id>` and labelled with the host's id, its name, its
+  configs and when it was made. What isn't a container yet (pulling, building, starting, copying sign-ins) or failed is
+  a `Ref` in `Spaces`, with the work in a `FiberMap` by id, so a server restart forgets a Space being made (its container,
+  if there is one, stays and shows as Docker has it).
+- **The image**: Huntaway builds `huntaway-space:<revision>-<base>` on `HUNTAWAY_SPACES_IMAGE` (default Cua's) the
+  first time a Space needs it: `npm install -g @anthropic-ai/claude-code @openai/codex`, linked into `/usr/local/bin`.
+- **spacesd's token** is a random 24 bytes given to the container as `CUA_ENV_TOKEN` and read back from `docker
+  inspect`; only the server uses it. Its port is published on `127.0.0.1` unless the Space was made with a direct link.
+- **Sign-ins** (`agentFiles.ts`): a Claude Code config gives `.credentials.json` **without `refreshToken`**,
+  `settings.json` without `hooks`, `statusLine` and `apiKeyHelper` (they name the host's programs) and with its proxy in
+  `env` (a loopback proxy becomes `host.docker.internal`), and `CLAUDE.md`; a Codex config gives `auth.json` with
+  `refresh_token` emptied and `config.toml`. Refresh tokens rotate when used, so a Space that refreshed would sign the
+  host out. Copied at create, at start, and by `syncAgents`; written as the desktop user (`cua`) through `docker exec`.
+- **Viewing**: `view` asks spacesd for a viewer ticket (an hour; `ALLOW_ACTIVATION` with clipboard and `~` for files, or
+  `VIEW_ONLY`) and makes a relay ticket (an hour, many requests: the viewer makes many) for `/api/spaces/v/<ticket>/`
+  (`http/spaces.ts`), which passes the rest of the path to spacesd: its page (with `frame-ancestors 'self'` in place
+  of `'none'`), its gRPC-Web calls and its media WebSocket, piped by `hosts/pipe.ts` with each side's pace passed on
+  and no compression. spacesd's viewer ticket travels in the URL's fragment and never reaches a server. The board frames
+  it sandboxed without `allow-same-origin`, so Cua's code can't read the board's storage.
+
 ## Hook commands<a id="hook-commands"></a>
 
 `huntaway approval-hook`, `gh-hook` and `gh-run` are started by an agent CLI for a tool call, the first two for

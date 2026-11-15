@@ -12,6 +12,7 @@ export const GUIDE_PAGES = [
   { page: "assistant", title: "The personal assistant" },
   { page: "server", title: "Running a server" },
   { page: "hosts", title: "Hosts" },
+  { page: "spaces", title: "Spaces" },
   { page: "desktop", title: "The desktop app and releases" },
   { page: "switching", title: "Switching from the old server" },
   { page: "mobile", title: "Phones" },
