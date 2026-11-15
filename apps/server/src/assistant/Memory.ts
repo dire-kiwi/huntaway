@@ -8,9 +8,20 @@ import { readImportRecord } from "../platform/ImportRecord.ts"
 import type { ImportRecord } from "../platform/ImportRecord.ts"
 import { KeyedLock } from "../platform/KeyedLock.ts"
 import { Proc } from "../platform/Proc.ts"
-import { memory as memoryPrompt, memoryNotLoaded, memoryUpdate, MEMORY_CAP, MEMORY_CAP_BYTES, MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
-import type { MemoryChange, MemoryFacts, MemoryFile } from "../prompts/memory.ts"
+import {
+  memory as memoryPrompt,
+  memoryNotLoaded,
+  memoryUpdate,
+  MEMORY_CAP,
+  MEMORY_CAP_BYTES,
+  MEMORY_FILE,
+  notesBefore,
+  notesIndex,
+  USER_FILE,
+} from "../prompts/memory.ts"
+import type { MemoryChange, MemoryFacts, MemoryFile, Note, NoteLoaded } from "../prompts/memory.ts"
 import { checkRev, dayIn, IMPORT_PROMPT, loaded, LOG_FORMAT, logName, MAX_FILE, memoryFile, parseLog, withWeekday } from "./memory/text.ts"
+import { MAX_NOTES_LOADED, notesNamed } from "./memory/notes.ts"
 import { makeWorkspace } from "./memory/workspace.ts"
 
 // The assistant's memory (docs/plan/06-server.md, Assistant; inventory 02, section 2.12; huntaway's
@@ -32,6 +43,12 @@ import { makeWorkspace } from "./memory/workspace.ts"
 // since the conversation was last told it (HE-25): what's new at a log's end, or the files that changed as they are now;
 // all of it when the board can't be sure what the conversation has (after a restart, a compaction, a rewind or another
 // session, or on another day). What each conversation was told is kept in memory, so a restart tells it all once.
+//
+// Notes by topic (HE-36: `memory/<topic>.md` with `keywords` in its frontmatter) are listed in the instructions by
+// name and description, not loaded. A run whose message names one of a note's keywords is told the note before its
+// message, once a conversation (again when it changes); for its topic coming up any other way, the instructions tell
+// the assistant to read the note. The board matches the user's words, which it has; the assistant's own work it can't
+// see until the run is over, so that half is the assistant's.
 
 /** What a file write is checked against: what the editor opened (null: that it wasn't there), or nothing (a restore). */
 type Seen = { readonly _tag: "Opened"; readonly content: string | null } | { readonly _tag: "Any" }
@@ -42,6 +59,16 @@ interface Told {
   readonly at: number
   readonly day: string
   readonly files: ReadonlyMap<string, MemoryFile>
+  /** The notes' list as shown, and the notes it was shown, by path. */
+  readonly index: string
+  readonly notes: ReadonlyMap<string, MemoryFile>
+}
+
+/** The run a memory is for: its thread, whether it's a compaction, and its message (which may name notes' keywords). */
+export interface MemoryRun {
+  readonly thread: Task
+  readonly compact: boolean
+  readonly message?: string | undefined
 }
 
 /** What a run in an assistant's workspace is told of its memory. */
@@ -80,6 +107,30 @@ export const memoryChanges = (before: ReadonlyMap<string, MemoryFile>, now: Memo
   return out
 }
 
+/**
+ * The notes a run is told before its message: those `message` names a keyword of, and those its conversation was
+ * told (`had`) that changed since, unless it has them as they are; at most `MAX_NOTES_LOADED`, and the others it names.
+ */
+export const notesFor = (
+  notes: ReadonlyArray<{ readonly note: Note; readonly body: string }>,
+  message: string,
+  had: ReadonlyMap<string, MemoryFile>,
+): readonly [ReadonlyArray<NoteLoaded>, ReadonlyArray<Note>] => {
+  const named = new Set(
+    notesNamed(
+      notes.map((n) => n.note),
+      message,
+    ).map((n) => n.rel),
+  )
+  const due: Array<NoteLoaded> = []
+  for (const { note, body } of notes) {
+    const file = memoryFile(body, false, MEMORY_CAP, MEMORY_CAP_BYTES)
+    const was = had.get(note.rel)
+    if (was !== undefined ? !sameFile(was, file) : named.has(note.rel)) due.push({ note, file })
+  }
+  return [due.slice(0, MAX_NOTES_LOADED), due.slice(MAX_NOTES_LOADED).flatMap((n) => (named.has(n.note.rel) ? [n.note] : []))]
+}
+
 /** A commit's id, checked. */
 const rev = (r: string) => Effect.fromResult(Result.mapError(checkRev(r), (reason) => new Invalid({ field: "rev", reason })))
 
@@ -91,9 +142,10 @@ export interface MemoryShape {
   /**
    * What a run in the assistant `assistant`'s workspace is told about its memory, its workspace made ready first (or
    * why it isn't loaded): `run`'s thread (the assistant or a routine thread) is told before its message what changed
-   * since its conversation was last told; a compaction is told nothing before it. Null: not a run (its terminal).
+   * since its conversation was last told, and the notes its message names; a compaction is told nothing before it.
+   * Null: not a run (its terminal).
    */
-  readonly forRun: (assistant: Task, run: { readonly thread: Task; readonly compact: boolean } | null) => Effect.Effect<MemoryForRun>
+  readonly forRun: (assistant: Task, run: MemoryRun | null) => Effect.Effect<MemoryForRun>
   /** One of the assistant's turns ended (or a run in its workspace did): what changed is committed, in the background. */
   readonly turnEnded: (assistant: Task) => Effect.Effect<void>
   /** Commit everything that changed (tests, and `turnEnded`'s work): the commit, if there was one. */
@@ -193,7 +245,7 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
         }).pipe(locked(dir))
       })
 
-      const forRun = Effect.fn("Memory.forRun")(function* (assistant: Task, run: { readonly thread: Task; readonly compact: boolean } | null) {
+      const forRun = Effect.fn("Memory.forRun")(function* (assistant: Task, run: MemoryRun | null) {
         const dir = yield* Effect.result(checked(assistant))
         if (Result.isFailure(dir)) {
           yield* Effect.logWarning(`task=${assistant.id} the assistant's memory: ${dir.failure.reason}`)
@@ -206,6 +258,7 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
         const [, , y, t] = loaded(day)
         const read = (rel: string, tail: boolean) =>
           Effect.map(ws.readForPrompt(dir.success, rel), (text) => memoryFile(text, tail, MEMORY_CAP, MEMORY_CAP_BYTES))
+        const notes = yield* ws.readNotes(dir.success)
         const facts: MemoryFacts = {
           dir: dir.success,
           today: withWeekday(day),
@@ -213,6 +266,7 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
           memory: yield* read(MEMORY_FILE, false),
           yesterdayLog: { rel: y, file: yield* read(y, true) },
           todayLog: { rel: t, file: yield* read(t, true) },
+          notes: notes.map((n) => n.note),
         }
         const system = memoryPrompt(facts)
         if (run === null || run.compact) {
@@ -221,7 +275,10 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
         }
         const { thread } = run
         const session = thread.session_id
+        const index = notesIndex(facts.notes)
         let update = ""
+        // The notes its conversation has, as it was shown them (none it can be sure of, for a new one).
+        let notesHad: ReadonlyMap<string, MemoryFile> = new Map()
         // A new conversation is told them in its instructions; a later run, what its conversation doesn't have.
         if (session !== null) {
           const was = Option.getOrUndefined(HashMap.get(yield* Ref.get(toldBy), thread.id))
@@ -233,9 +290,14 @@ export class Memory extends Context.Service<Memory, MemoryShape>()("huntaway-ser
             pendingRewind(thread) !== null ||
             // A compaction since it was told (in a run after, or later in that run).
             (compacted !== null && DateTime.toEpochMillis(DateTime.makeUnsafe(compacted)) > was.at)
-          update = memoryUpdate(facts, unsure ? null : memoryChanges(was.files, facts))
+          update = memoryUpdate(facts, unsure ? null : memoryChanges(was.files, facts), !unsure && was.index !== index)
+          if (!unsure) notesHad = was.notes
         }
-        const told: Told = { session, at: DateTime.toEpochMillis(at), day, files: new Map(filesOf(facts)) }
+        const [loadedNotes, more] = notesFor(notes, run.message ?? "", notesHad)
+        update += notesBefore(loadedNotes, more)
+        const toldNotes = new Map(notesHad)
+        for (const n of loadedNotes) toldNotes.set(n.note.rel, n.file)
+        const told: Told = { session, at: DateTime.toEpochMillis(at), day, files: new Map(filesOf(facts)), index, notes: toldNotes }
         const out: MemoryForRun = { system, update, told: Ref.update(toldBy, HashMap.set(thread.id, told)) }
         return out
       })

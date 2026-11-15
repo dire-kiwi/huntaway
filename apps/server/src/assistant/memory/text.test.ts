@@ -38,6 +38,7 @@ const told = (today: string, files: Readonly<Record<string, string | null>>) => 
     memory: f("MEMORY.md", false),
     yesterdayLog: { rel: y, file: f(y, true) },
     todayLog: { rel: t, file: f(t, true) },
+    notes: [],
   })
 }
 
@@ -125,7 +126,14 @@ describe("memory text", () => {
       ["notes.md", "memory/2026-11-03.md", "MEMORY.md", ".gitignore", "memory/2026-11-04.md", "USER.md", "memory/old/x.md"].toSorted(compareFiles),
       ["USER.md", "MEMORY.md", "memory/2026-11-04.md", "memory/2026-11-03.md", ".gitignore", "memory/old/x.md", "notes.md"],
     )
-    assert.deepStrictEqual(["USER.md", "MEMORY.md", "memory/a.md", "memory/a/b.md", "x.md"].map(kindOf), ["user", "memory", "log", "other", "other"])
+    assert.deepStrictEqual(["USER.md", "MEMORY.md", "memory/2026-11-04.md", "memory/a.md", "memory/a/b.md", "x.md"].map(kindOf), [
+      "user",
+      "memory",
+      "log",
+      "other",
+      "other",
+      "other",
+    ])
   })
 
   it("git's output is read", () => {

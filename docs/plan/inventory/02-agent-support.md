@@ -259,6 +259,11 @@ See §3.6 for the full piece list. Capabilities: per-project replaceable instruc
   prompt in a file (`--append-system-prompt-file`) because an argv string is limited to 128 KiB. **Changed (HE-25)**: the agents keep a conversation's first
   instructions (Claude Code until compaction), so the old board's later runs saw the memory of the conversation's start; now a later run whose files changed
   starts its message with a `<memory-update>` (lines added at a log's end, or the changed files; all of them after a compaction, rewind, restart or new day).
+  **New (HE-36)**: notes by topic, `memory/<topic>.md` (not a `YYYY-MM-DD.md` log, ≤100 read, ≤1 MiB) with frontmatter `name`, `description`, `keywords` (list,
+  comma words, or `triggers`) and `metadata.type` (`user|feedback|project|reference`). Listed under "Notes by topic" in the instructions by path, type, name and
+  description; a message naming a keyword (whole words, case-folded, `word*` a prefix) gets the note's body (capped as `MEMORY.md`, ≤5 a message) before it in a
+  `<memory-notes>`, once a conversation and again when it changes; otherwise the assistant is told to read it at its path. No keywords: not a note, as before. The
+  Memory tab's "log" kind is now only `memory/YYYY-MM-DD.md`, so a note is listed with the other files.
 - **History**: git repo with `GIT_DIR=<data>/assistants/<task id>.git` (beside, not inside, the workspace) and `GIT_WORK_TREE` = workspace. Commit after each
   assistant turn that changed it (`turn_ended` → `commit_all` as `Assistant <assistant@huntaway.invalid>`, message "Update a, b, c, d and N more"); user edits
   committed as `You <user@huntaway.invalid>`. Not committed: `.gitignore`d files, files >1 MiB, non-UTF-8 names, nested repos (gitlinks dropped from the index

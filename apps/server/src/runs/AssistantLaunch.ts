@@ -27,9 +27,10 @@ export interface WorkspaceRun {
   readonly told: Effect.Effect<void>
 }
 
-/** The run a workspace is for: a compaction is told nothing before its message. */
+/** The run a workspace is for: a compaction is told nothing before its message; its message may name notes' keywords. */
 export interface WorkspaceFor {
   readonly compact: boolean
+  readonly message?: string | undefined
 }
 
 /** The reports a prompt run of the assistant starts with, and what marks them read once its agent has started. */

@@ -36,7 +36,31 @@ conversation started with (Claude Code until it's compacted), which keeps the co
 prompt cache, so a later run whose files changed since (the assistant's own edits, yours in the
 Memory tab, a routine's) starts its message with a `<memory-update>`: what's new at the end of a
 log, or the files that changed, as they are now. After a compaction, a rewind, a restart of the
-board, or on a new day, the update has all of them. Claude Code is given the instructions in a file
+board, or on a new day, the update has all of them.
+
+Longer or occasional topics can go in **notes by topic**: any Markdown file in `memory/` other than
+a daily log, starting with frontmatter that gives it keywords, as a skill's gives its name and
+description:
+
+```markdown
+---
+name: Invoices
+description: How I bill my clients, and through what
+keywords: [invoice, billing, Xero, tax return]
+metadata:
+  type: project # user, feedback, project or reference
+---
+
+- Invoices go out on the 1st, through Xero.
+```
+
+A note isn't loaded into every run: the instructions list each one by path, name and description
+only. When your message names one of its keywords (whole words, in any case; `invoic*` for any word
+that starts so), the board puts the note (up to 8,000 characters of it) before the message, in a
+`<memory-notes>`, once a conversation, and again when the note changes. The assistant is told to read
+a note at its path whenever its topic comes up some other way, in its own work or a routine. A file in
+`memory/` without keywords is just a file, as before: not listed and not loaded. `USER.md` and
+`MEMORY.md` stay loaded in full in every run. Claude Code is given the instructions in a file
 (`--append-system-prompt-file`, in the run's folder) rather than as an argument, which can't be
 longer than 128 KiB. The workspace has a git history: after each
 of the assistant's turns that changed it, the board commits it as _Assistant_. Its git folder is
