@@ -554,7 +554,7 @@ export const tasksPens: Family = {
       const queue: Array<NewRow> = []
       for (const task of tasks) {
         if (!ids.has(task.id)) continue
-        for (const q of task.queue) queue.push({ task_id: task.id, ...q, created_at: task.queuedAt })
+        for (const q of task.queue) queue.push({ task_id: task.id, ...q, hops: 0, created_at: task.queuedAt })
       }
       yield* io.write("task_queue", queueCheck, queue)
     }),

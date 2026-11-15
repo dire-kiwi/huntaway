@@ -19,6 +19,11 @@ export interface Outgoing {
   readonly automation_run_id?: string | undefined
   /** A review thread's round (`send_review`): the run is a `review` run. */
   readonly review?: boolean | undefined
+  /**
+   * How many agent-to-agent messages led to it (docs/plan/07-agents.md, Hops between agents): one more than the hops
+   * of the sending agent's turn for a message an agent sent; 0 (left out) for the user's and the board's own.
+   */
+  readonly hops?: number | undefined
 }
 
 /** `/compact [instructions]`: Claude Code summarises the conversation so far. */
@@ -48,6 +53,8 @@ export interface Combined {
   readonly routine: boolean
   /** The automation runs whose messages it carries. */
   readonly automationRuns: ReadonlyArray<string>
+  /** The fewest hops of its parts: with the user's message among them, 0. */
+  readonly hops: number
 }
 
 const join = (a: string, b: string) => (a.trim() === "" ? b : b.trim() === "" ? a : `${a}\n\n${b}`)
@@ -57,6 +64,7 @@ export const rowOf = (message: Outgoing): QueuedRow => ({
   text: message.text.trim(),
   source: message.source,
   automation_run_id: message.automation_run_id ?? null,
+  hops: message.hops ?? 0,
 })
 
 /** `parts` in order as one message (the old `Queued::then`): an empty part says nothing about who is there. */
@@ -78,6 +86,7 @@ export const combine = (parts: ReadonlyArray<QueuedRow>): Combined => {
     userText,
     routine: routine ?? false,
     automationRuns: parts.flatMap((p) => (p.automation_run_id === null ? [] : [p.automation_run_id])),
+    hops: parts.length === 0 ? 0 : Math.min(...parts.map((p) => p.hops ?? 0)),
   }
 }
 

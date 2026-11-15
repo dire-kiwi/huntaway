@@ -377,8 +377,13 @@ async function leakyPlan(ui) {
   await routeDocuments(page, server, plan, { document: () => planDocument(content) })
   await ui.run([`goto /p/${project.id}?task=${plan.id}`, "wait css=iframe"])
   // Let the activation from the queries above run out, untouched (the frame's asks until then may open), and the
-  // frame take the focus.
-  const quiet = await until("!navigator.userActivation.isActive && performance.now()", "the board's activation to run out")
+  // frame take the focus. Out for as long as an activation lasts after the last of them, too: read straight after it,
+  // the board can be without one that comes from it a moment later.
+  const queried = await peek("performance.now()")
+  const quiet = await until(
+    `!navigator.userActivation.isActive && performance.now() > ${queried} + 5500 && performance.now()`,
+    "the board's activation to run out",
+  )
   await until(`iaCheck.asks.filter((a) => a.at > ${quiet}).length >= 3 && document.activeElement?.tagName === "IFRAME"`, "the frame's asks")
   assert.deepEqual(
     opened.filter((u) => !u.includes("/later")),

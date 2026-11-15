@@ -76,7 +76,7 @@ export const makeAcross = Effect.gen(function* () {
 
   const run = Effect.fnUntraced(function* (input: AcrossInput) {
     const { caller, tool, args, from } = input
-    const remote = (a: Args, callId: string | null): RemoteToolCall => ({ profile: caller.profile.name, tool, args: a, call_id: callId })
+    const remote = (a: Args, callId: string | null): RemoteToolCall => ({ profile: caller.profile.name, tool, args: a, call_id: callId, hops: caller.hops })
     const upId = input.upById ? Effect.succeed<string>(caller.call_id) : random.uuidV4()
     const down = (link: OtherHost) => link.call(remote(withoutHost(args), null))
     const up = (hub: OtherHost, id: string) => hub.call(remote(args, id))

@@ -70,6 +70,11 @@ export interface McpCaller {
   readonly profile: CallerProfile
   /** The thread's permission mode at the call: its own, else its project's, else the host's default. */
   readonly mode: PermissionMode
+  /**
+   * The hops of the caller's turn (its run's; another host's agent's, as its host passed them): a message it sends
+   * another task's agent goes one further (docs/plan/07-agents.md, Hops between agents).
+   */
+  readonly hops: number
 }
 
 /** The caller's profile as the tools read it: its id here (null: this host has none of that name) and its name. */

@@ -93,6 +93,8 @@ export interface QueuedRow {
   readonly text: string
   readonly source: MessageSource
   readonly automation_run_id: string | null
+  /** How many agent-to-agent messages led to it (docs/plan/07-agents.md, Hops between agents); 0 when not given. */
+  readonly hops?: number | undefined
 }
 
 /** A steered message as its row has it. */
@@ -102,12 +104,21 @@ export interface SteerRowOf {
   readonly text: string
   readonly source: MessageSource
   readonly automation_run_id: string | null
+  readonly hops: number
   readonly written: boolean
 }
 
 /** A `task_queue` row as the queue is read (`queued`). */
-export const QueueRows = Schema.Struct({ text: Schema.String, source: MessageSource, automation_run_id: Text })
-const SteerRows = Schema.Struct({ id: Schema.String, run_id: RunId, text: Schema.String, source: MessageSource, automation_run_id: Text, written: Bit })
+export const QueueRows = Schema.Struct({ text: Schema.String, source: MessageSource, automation_run_id: Text, hops: Schema.Int })
+const SteerRows = Schema.Struct({
+  id: Schema.String,
+  run_id: RunId,
+  text: Schema.String,
+  source: MessageSource,
+  automation_run_id: Text,
+  hops: Schema.Int,
+  written: Bit,
+})
 
 /** A row of `tasks`, with its project's key and its queue and steer rows (`SELECT_TASK`). */
 export const TaskRow = Schema.Struct({
@@ -498,10 +509,10 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
       const groupProjects = (profileId: ProfileId, group: string) =>
         count(sql`SELECT COUNT(*) AS n FROM projects WHERE profile_id = ${profileId} AND group_name = ${group} AND archived_at IS NULL`)
 
-      const queued = (task: TaskId) => queueRows(sql`SELECT text, source, automation_run_id FROM task_queue WHERE task_id = ${task} ORDER BY seq`)
+      const queued = (task: TaskId) => queueRows(sql`SELECT text, source, automation_run_id, hops FROM task_queue WHERE task_id = ${task} ORDER BY seq`)
       const enqueue = (task: TaskId, row: QueuedRow, now: Timestamp) =>
-        sql`INSERT INTO task_queue (task_id, text, source, automation_run_id, created_at)
-          VALUES (${task}, ${row.text}, ${row.source}, ${row.automation_run_id}, ${now})`.pipe(Effect.asVoid, Effect.orDie)
+        sql`INSERT INTO task_queue (task_id, text, source, automation_run_id, hops, created_at)
+          VALUES (${task}, ${row.text}, ${row.source}, ${row.automation_run_id}, ${row.hops ?? 0}, ${now})`.pipe(Effect.asVoid, Effect.orDie)
       const takeQueued = (task: TaskId) =>
         Effect.gen(function* () {
           const rows = yield* queued(task)
@@ -516,12 +527,12 @@ export class TaskRepo extends Context.Service<TaskRepo, TaskRepoShape>()("huntaw
           for (const row of [...rows, ...later]) yield* enqueue(task, row, now)
         })
       const steers = (task: TaskId, run?: RunId) =>
-        steerRows(sql`SELECT id, run_id, text, source, automation_run_id, written FROM task_steers
+        steerRows(sql`SELECT id, run_id, text, source, automation_run_id, hops, written FROM task_steers
             WHERE task_id = ${task} AND (${run ?? null} IS NULL OR run_id = ${run ?? null}) ORDER BY seq`)
       const addSteer = (task: TaskId, row: Omit<SteerRowOf, "written">, now: Timestamp) =>
-        sql`INSERT INTO task_steers (id, seq, task_id, run_id, text, source, automation_run_id, written, created_at)
+        sql`INSERT INTO task_steers (id, seq, task_id, run_id, text, source, automation_run_id, hops, written, created_at)
           VALUES (${row.id}, (SELECT COALESCE(MAX(seq), 0) + 1 FROM task_steers WHERE task_id = ${task}), ${task}, ${row.run_id}, ${row.text},
-            ${row.source}, ${row.automation_run_id}, 0, ${now})`.pipe(Effect.asVoid, Effect.orDie)
+            ${row.source}, ${row.automation_run_id}, ${row.hops}, 0, ${now})`.pipe(Effect.asVoid, Effect.orDie)
       const takeSteer = (task: TaskId, id: string) =>
         Effect.gen(function* () {
           const found = (yield* steers(task)).find((s) => s.id === id) ?? null
