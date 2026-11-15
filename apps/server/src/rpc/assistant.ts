@@ -34,6 +34,7 @@ export const AssistantHandlers = AssistantRpcs.toLayer(
       "assistant.google": ({ profile_id, check }) => google.status(profile_id, check ?? false),
       "assistant.setupGoogle": ({ profile_id }) => google.setup(profile_id),
       "assistant.addBrief": ({ profile_id, time, weekdays }) => brief.add(profile_id, time ?? null, weekdays ?? null),
+      "assistant.addCheckIn": ({ profile_id, times, weekdays, google }) => brief.addCheckIn(profile_id, times ?? null, weekdays ?? null, google ?? false),
       "assistant.briefFeedback": ({ profile_id, rating, kind, topic, text }) =>
         brief.feedback(profile_id, rating, { kind: kind ?? null, topic: topic ?? null, text: text ?? null }),
       "tasks.removeTracked": ({ id, ids }) => tracked.remove(id, ids).pipe(Effect.catchTag("TaskNotFound", taskNotFound)),

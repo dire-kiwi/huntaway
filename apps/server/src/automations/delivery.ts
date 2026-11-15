@@ -128,7 +128,16 @@ export interface Vars {
   readonly precheck?: string | null | undefined
   /** For a routine that names `{{google}}`: where the assistant's Google server stands (6.7). */
   readonly google?: string | null | undefined
+  /**
+   * For a template that names them, the automation's runs before this one: when the last that went ahead started
+   * (epoch milliseconds; null for none), and how many of the latest that went ahead were quiet in a row
+   * (`{{last_run}}`, `{{quiet_runs}}`).
+   */
+  readonly history?: { readonly lastRun: number | null; readonly quietRuns: number } | undefined
 }
+
+/** Whether a template names the automation's earlier runs (`{{last_run}}`, `{{quiet_runs}}`). */
+export const namesHistory = (template: string): boolean => /\{\{\s*(last_run|quiet_runs)\s*\}\}/u.test(template)
 
 /** A path a template or filter names: letters, digits, `_`, `-`, `.` and `*`, at most 200 bytes. */
 export const validPath = (p: string): boolean => p.length > 0 && new TextEncoder().encode(p).length <= 200 && /^[A-Za-z0-9_\-.*]+$/u.test(p)
@@ -162,6 +171,12 @@ const lookup = (vars: Vars, path: string): readonly [ReadonlyArray<unknown>, boo
   const parts = path.split(".")
   if (path === "precheck") return [vars.precheck === null || vars.precheck === undefined ? [] : [vars.precheck], true]
   if (path === "google") return [vars.google === null || vars.google === undefined ? [] : [vars.google], false]
+  if (path === "last_run" || path === "quiet_runs") {
+    const h = vars.history
+    if (h === undefined) return [[], false]
+    if (path === "quiet_runs") return board(h.quietRuns)
+    return board(h.lastRun === null ? "never" : nowText(vars.zone, h.lastRun))
+  }
   const d = vars.delivery
   if (d === null) {
     const l = localParts(vars.zone, vars.now)

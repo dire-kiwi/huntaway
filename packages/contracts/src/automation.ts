@@ -24,7 +24,8 @@ export type Filter = typeof Filter.Type
 
 /**
  * What starts an automation. `interval`: every `every_minutes`, from when it's turned on (or its schedule changes).
- * `daily`: at `time` (`HH:MM`, in the host's time zone) on `weekdays` (none is every day). `cron`: when a cron
+ * `daily`: at `time` (`HH:MM`, or several in order, `11:00, 16:30`; in the host's time zone) on `weekdays` (none is
+ * every day). `cron`: when a cron
  * expression (`minute hour day-of-month month day-of-week`, in the host's time zone) matches. `at`: once (kept as UTC
  * RFC 3339), after which it turns itself off. `webhook`: each delivery to its URL that passes its `filters`;
  * deliveries within `coalesce_seconds` of the first make one run (0: each runs by itself), and only those whose

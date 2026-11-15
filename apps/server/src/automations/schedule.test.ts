@@ -48,6 +48,11 @@ describe("schedules", () => {
     assert.isTrue(next(early, first) > second)
     // A weekly run on a day that only comes round next week.
     assert.strictEqual(next(daily("10:00", ["sun"]), nz("2026-09-27 10:00")), nz("2026-10-04 10:00"))
+    // HE-24: several times a day, the soonest first, and on to the next weekday after the last.
+    const twice = daily("11:00, 16:30", ["mon", "tue", "wed", "thu", "fri"])
+    assert.strictEqual(next(twice, nz("2026-09-25 08:00")), nz("2026-09-25 11:00"))
+    assert.strictEqual(next(twice, nz("2026-09-25 11:00")), nz("2026-09-25 16:30"))
+    assert.strictEqual(next(twice, nz("2026-09-25 16:30")), nz("2026-09-28 11:00"))
   })
 
   it("cron expressions follow their fields and daylight saving", () => {

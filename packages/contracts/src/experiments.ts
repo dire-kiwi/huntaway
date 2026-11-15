@@ -13,6 +13,12 @@ export const EXPERIMENTS = [
     description:
       "A finished turn's tool calls and its result line fold into one row, “Worked for 2m 10s · 7 steps”, with an amber dot if a step waited for approval and a red one if a step failed or was refused. Click it to see the steps.",
   },
+  {
+    id: "check_ins",
+    name: "Assistant check-ins",
+    description:
+      "The assistant's Routines tab offers Add check-ins: at the times you pick (say 11:00 and 16:30 on weekdays) the assistant looks over your boards and messages you only if something needs you, and stays quiet otherwise. It leaves you be while you're talking to it.",
+  },
 ] as const
 
 /** An experiment's id. */

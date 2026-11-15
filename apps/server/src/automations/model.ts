@@ -2,7 +2,7 @@ import { Result } from "effect"
 import { DocumentLabel, Effort, Invalid } from "@huntaway/contracts"
 import type { Action, ActionInput, ActiveHours, ActiveHoursInput, Filter, Trigger, TriggerInput, Weekday } from "@huntaway/contracts"
 import { MAX_TEXT_CHARS, validPath, wanted } from "./delivery.ts"
-import { cronNext, isoOf, parseAt, parseCron, parseDailyTime, weekdayIndex } from "./schedule.ts"
+import { cronNext, isoOf, parseAt, parseCron, parseDailyTime, parseDailyTimes, weekdayIndex } from "./schedule.ts"
 import type { Zone } from "./schedule.ts"
 
 // What an automation is and how what a request gives is checked and tidied (huntaway's automations.ts and
@@ -26,6 +26,8 @@ export const MAX_COALESCE_SECONDS = 3600
 /** How long a delivery's id is kept, so the same delivery sent again is dropped. */
 export const DEDUPE_DAYS = 7
 export const MAX_FILTERS = 16
+/** The most times of day a daily trigger has. */
+export const MAX_DAILY_TIMES = 24
 /** Runs kept per automation: up to `KEEP_RUNS`, of those older than `DEDUPE_DAYS` only `KEEP_RECENT`; payloads for `KEEP_PAYLOADS`. */
 export const KEEP_RUNS = 1000
 export const KEEP_RECENT = 50
@@ -64,9 +66,10 @@ export const checkTrigger = (t: TriggerInput, now: number, zone: Zone): Result.R
         }
         return { kind: "interval", every_minutes: t.every_minutes }
       case "daily": {
-        const at = parseDailyTime(t.time)
-        if (at === null) return yield* bad("trigger", "time must be a time of day like 09:30")
-        return { kind: "daily", time: hm(at), weekdays: yield* checkWeekdays("trigger", t.weekdays ?? []) }
+        const times = parseDailyTimes(t.time)
+        if (times === null) return yield* bad("trigger", "time must be a time of day like 09:30, or several like 11:00, 16:30")
+        if (times.length > MAX_DAILY_TIMES) return yield* bad("trigger", `a routine can run at most ${MAX_DAILY_TIMES} times a day`)
+        return { kind: "daily", time: times.map(hm).join(", "), weekdays: yield* checkWeekdays("trigger", t.weekdays ?? []) }
       }
       case "cron": {
         const expr = t.expr
