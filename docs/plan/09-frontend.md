@@ -388,8 +388,11 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   6.12's), "Create a GitHub repository for it" (`projects.createOnGithub`; a repository made but not pushed says so and
   waits for "Open project"), or the GitHub tab (`settings/GithubRepos.tsx`'s picker over `profiles.githubRepos`, then
   `projects.clone`). `settings/repoSource.ts` keeps the old helpers and the `ia.newProjectSource` key. The old modal's
-  host picker and making the profile on another host are M7's: the project goes on the page's own host, in one of its
-  profiles.
+  host picker is back (HE-38): with more than one host that runs agents, a Host field (`hosts/profileFields`'
+  `HostSelect`) picks where the project goes, and the folder browser and GitHub picker follow it. On a host without the
+  picked profile, the dialog makes it there first (`profiles.create`) with the configs ticked in a `ConfigPicker`, or,
+  when the host has no configs, with the folder typed as its first config (`configs.create`), as Settings → Profiles
+  does.
 - **The compare view** (`changes/Compare.tsx`) mounts over the page from `App.tsx` on `?task=…&compare`, from a card's
   model badge (`board/Fanout.tsx`), a card's menu ("Compare all N from its prompt") and the Details panel's Same prompt
   section. Facts and the pick are `tasks.fanout` and `tasks.pickFanout`, each one's diff `git.taskDiff`; the facts go
