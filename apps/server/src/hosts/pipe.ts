@@ -60,6 +60,8 @@ export const dial = (
   url: string,
   options: {
     readonly headers?: Readonly<Record<string, string>>
+    /** Subprotocols to ask for (a Space's media socket's `rcdp.v2`). */
+    readonly protocols?: ReadonlyArray<string>
     readonly openTimeout?: Duration.Input
     readonly onOpen?: (transport: Transport) => void
   } = {},
@@ -70,7 +72,7 @@ export const dial = (
     const socket = yield* Socket.fromWebSocket(
       Effect.acquireRelease(
         Effect.sync(() => {
-          const ws = new NodeWS.WebSocket(url, { headers: { ...options.headers } })
+          const ws = new NodeWS.WebSocket(url, [...(options.protocols ?? [])], { headers: { ...options.headers } })
           ws.once("upgrade", (response) => {
             under.current = response.socket
             options.onOpen?.(response.socket)

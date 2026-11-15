@@ -36,6 +36,7 @@ push          Push
 hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
 terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
+spaces        Docker · Spaces
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
 board         Board

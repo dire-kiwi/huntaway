@@ -38,6 +38,8 @@ const order: ReadonlyArray<ReadonlyArray<string>> = [
   ["hosts"],
   ["terminal"],
   ["desktop"],
+  // HE-35: Spaces, Linux desktops in Docker.
+  ["spaces"],
   ["update"],
   ["analytics"],
   // The board's subscription, which reads every area (moved out of lifecycle/ in 9.1, so a read-only server serves it).
