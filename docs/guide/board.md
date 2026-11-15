@@ -318,3 +318,14 @@ it's in that project (or with `project_id` on `create_task`): numbered with the 
 repository without changing it. Like a document task it has no worktree, review or merge: moving it to _Ready for merge_
 marks it done. Scratch tasks replace the scratch chats of earlier versions: those became done scratch tasks (in no
 project, whichever project they were in) that keep working in their old folder, so their conversations carry on.
+
+**Experiments** (Settings → _Experiments_) are features still being tried, each with a switch and a line on what it
+does. They may change or go away. All are off until you switch one on, and a switch is for the whole board: it's kept
+on the board's own host, so it holds in every browser and the desktop app, and settings sync carries it to the hosts
+that sync (see _Settings sync_ in Hosts). The experiments:
+
+- **Fold finished turns**: once a turn has finished (from your message, or the board's, to the agent's result), its tool
+  calls, the approvals they asked for and its _Turn complete_ line fold into one row where its first tool call was:
+  _Worked for 2m 10s · 7 steps · $0.123_. An amber dot says a step waited for your approval, a red one that a step
+  failed or was refused. What the agent wrote between the steps stays in sight. Click the row to see the steps as they
+  are without it, and again to fold them. The turn that's running stays open.

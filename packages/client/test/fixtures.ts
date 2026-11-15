@@ -222,6 +222,7 @@ export const settings = (s: Partial<HostSettings> = {}): HostSettings => ({
   public_url: null,
   release_prereleases: false,
   settings_sync: false,
+  experiments: [],
   ...s,
 })
 

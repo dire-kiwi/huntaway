@@ -141,7 +141,7 @@ keeps these the same as the board's other hosts that have it on. It's off by def
 since the hub is what passes settings between its hosts (they don't talk to each other).
 
 - What syncs: the agent defaults (model, effort, permission mode), terminal tools, whether release checks include
-  prereleases, and for each profile its default model, GitHub account, the two usage-limit switches, merge approval,
+  prereleases, the experiments switched on (Settings → Experiments), and for each profile its default model, GitHub account, the two usage-limit switches, merge approval,
   required pull request approval, which profiles' agents may use its board, and its assistant's approval rules.
   Profiles are matched by name: a setting for a profile a host doesn't have is kept, and applied when a profile of
   that name is added there. Sync never creates or deletes a profile.

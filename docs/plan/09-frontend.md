@@ -675,6 +675,40 @@ and the override went with the last one.
   a board trigger), `tests/unit/ui/{dates,reminders}.test.ts` (run in several time zones), `analyticsRange.test.ts`,
   `automationDraft.test.ts`; `tests/unit/state/fakeHost.test.ts` calls through `runExit` and `mutate`.
 
+### Experiments (HE-22)
+
+Settings → **Experiments** (`settings/Experiments.tsx`) lists the features still being tried, each with a switch, its
+name and a line on what it does. All are off at first.
+
+- **One list.** `EXPERIMENTS` in `packages/contracts/src/experiments.ts` is every experiment (`id`, `name`,
+  `description`), and `ExperimentId` its ids. Adding one is an entry there: the tab lists it, the host keeps its switch
+  and settings sync carries it, with nothing else to change. What the experiment does reads
+  `experiments.includes("<id>")`.
+- **Per board, not per profile.** They are a host's settings (`HostSettings.experiments`, the ids switched on: optional
+  and open strings on the wire, read through `knownExperiments`; see [05-protocol.md](05-protocol.md#rpc-groups)), so they
+  hold in every browser and the desktop app, and the server can read them (`HostSettings.get`) for an experiment of
+  its own. The web app reads the page's own host's: `experimentsAtom` in `packages/client` (`board.ts`), from the
+  board's `hostSettings[localHostId]`, which `settings_changed` keeps. The tab sets them on that host with
+  `host.updateSettings` (`experiments`: the whole list to have on), showing the list it saved until the host's
+  settings have it. A per-profile switch would need a profile picked for pages that show several; nothing tried so
+  far is about one profile.
+- **Synced** like the other host-wide settings (docs/plan/08-hosts.md): each experiment is its own field
+  (`global/experiment_<id>`), so two switched on two hosts apart don't conflict. A linked host that doesn't sync keeps
+  its own, which the page doesn't read (it reads its own host's).
+- **Fold finished turns** (`fold_turns`, `task/thread/turnFold.ts`, `FoldedTurnRow` in `items.tsx`, used by
+  `ItemList`). A turn runs from a message to the agent (the user's, or the board's: an `auto` user item) to its
+  `result` item; a message sent while it worked (`steered`) is part of it, and a compaction's result ends one without
+  folding. A finished turn with tool calls folds its tool groups, its answered tool permission prompts and its result
+  line into one row, where its first tool group was: "Worked for 2m 10s · 7 steps · $0.123", with an amber dot if a
+  tool prompt came up and a red one if a call failed or a prompt was denied; "Interrupted" or "Ended: <subtype>" is
+  added as the result line says. The time is the result's `duration_ms`, shown between 1 s and 12 h (as bot-hq does),
+  else just "Worked". Its text, thinking, questions, plans and the board's own approvals stay as they are. Clicking it
+  draws the turn as it is without the experiment (the result line too) under the row, and again folds it; which are
+  open is `ItemList`'s state. A request to reveal a subagent whose call is in a folded turn opens the turn. A turn
+  without a result yet, the running one, stays open.
+- **Checks.** `tests/unit/turnFold.test.ts`; `tests/ui/foldTurns.test.mjs` (the switch on and off, a turn with a failed
+  call and one that waited for approval); `apps/server/src/settings/HostSettings.test.ts` (the rows).
+
 ### Logic that must not be lost on the way
 
 These live in components or module-level state today, outside the store, and are easy to drop when "the store and
