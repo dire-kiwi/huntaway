@@ -33,7 +33,7 @@ test("a context menu stays open while the thread scrolls, unless it's on somethi
   seedThread(server, task, steps())
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Step 80 of the job.", `rclick ${CARD}`, "wait [role=menu]"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}&side`, "click Thread", "wait Step 80 of the job.", `rclick ${CARD}`, "wait [role=menu]"])
     const thread = page.locator("[data-autoscroll]")
     assert.ok(await thread.evaluate((el) => el.scrollHeight > el.clientHeight + 200), "the thread scrolls")
 
