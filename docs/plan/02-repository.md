@@ -41,6 +41,12 @@ apps/
     src/main/             main process: start or attach to the server, windows, shell updates (TypeScript, Effect)
     src/preload/          the bridge the page sees
     src/shared/           the decisions boot and main share, as plain functions
+  mobile/                 the phone app (package huntaway-mobile): Expo SDK 58, React Native 0.88, on @huntaway/client (HE-20)
+    src/app/              expo-router's screens: the tabs (Inbox, Assistant, Projects, Board), connect, a project, a task
+    src/components/       the thread, request cards, composer, Markdown, building blocks
+    src/logic/            pure: a board's link, tasks by status, a thread's rows, the Inbox
+    src/state/            the registry, the board kept in the keychain, actions
+    tests/                the pure logic's (Vitest, Node)
 packages/
   contracts/              @huntaway/contracts: schemas, errors, RPC groups, HTTP endpoints, events, the thread protocol
   client/                 @huntaway/client: host sessions, atoms, queries and mutations, for the web app
@@ -234,8 +240,10 @@ Some names are baked into things that outlive a server or live outside this repo
 The data folder is new: `~/.local/share/huntaway-effect`, with a default port of 7879, so the new server runs beside
 the old board on one machine until the switch ([11-migration.md](11-migration.md#a-data-folder-of-its-own)).
 
-The phone app is not part of this plan ([14-dropped-and-open.md](14-dropped-and-open.md#deferred)). `packages/client`
-stays free of DOM, Node and React Native APIs so that one can be built on it later.
+The phone app (`apps/mobile`, HE-20) is built on `packages/client`, which stays free of DOM, Node and React Native APIs:
+the app gives it the board's URL and token and React Native's global `WebSocket`, as the browser does
+([09-frontend.md](09-frontend.md#the-phone-app)). Its own pins are Expo's (`react` 19.3.0, where the web app has 19.3.1:
+React Native's renderer needs its exact React), so they are in its `package.json`, not the catalog.
 
 Everything else takes the product's name: the server's own environment variables become `HUNTAWAY_*` (`IA_PORT` is
 `HUNTAWAY_PORT`), the test scripts' variables too, and the `issue-agent` command, `issue_agent` MCP server name and
