@@ -1,15 +1,18 @@
 import { clsx } from "clsx"
 import { History, Repeat } from "lucide-react"
-import { createContext, memo, useContext, useMemo } from "react"
-import { splitAttachments } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { createContext, Fragment, memo, useContext, useMemo, useState } from "react"
+import { experimentsAtom, splitAttachments } from "@huntaway/client"
 import type { Turn } from "@huntaway/contracts"
 import { openTaskModal } from "../../../state/route"
 import { AttachmentList } from "../Attachments"
-import { CompactLine, EventLine, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
+import { lineage, ThreadCtx, usePendingFocus } from "./context"
+import { CompactLine, ConnectionRow, EventLine, FoldedTurnRow, PromptCard, QuestionRow, ResultLine, Thinking } from "./items"
 import { Markdown } from "./Markdown"
 import { AutomationChangeCard, isWorkflowApproval, ProjectChangeCard, TaskDeletionCard, WorkflowChangeCard } from "./requestCards"
 import type { Item, ReportData } from "./threadModel"
 import { ToolGroup } from "./tools"
+import { finishedTurns } from "./turnFold"
 
 // Memoized: the thread redraws for changes to its task (e.g. its context use), which leave the items as they were.
 export const ItemList = memo(function ItemList({
@@ -23,11 +26,44 @@ export const ItemList = memo(function ItemList({
   hostId: string
   cwd?: string | null | undefined
 }) {
+  const fold = useAtomValue(experimentsAtom, (on) => on.includes("fold_turns"))
+  const turns = useMemo(() => (fold ? finishedTurns(items) : []), [fold, items])
+  // The folded turns opened, by where their row is.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set())
+  const open = (at: string) => setOpened((s) => new Set(s).add(at))
+  const toggle = (at: string) =>
+    setOpened((s) => {
+      const next = new Set(s)
+      if (!next.delete(at)) next.add(at)
+      return next
+    })
+  // A request to reveal a subagent whose call is in a folded turn opens the turn (once, as it comes; adjusted while drawing).
+  const source = useContext(ThreadCtx)
+  const focus = usePendingFocus()
+  const [seen, setSeen] = useState<typeof focus>(null)
+  if (focus !== seen) {
+    setSeen(focus)
+    if (focus && source) {
+      const path = lineage(source.data.subagents, focus.id)
+      const turn = turns.find((t) => t.calls.some((c) => path.includes(c)))
+      if (turn && !opened.has(turn.at)) open(turn.at)
+    }
+  }
+  const at = useMemo(() => new Map(turns.map((t) => [t.at, t])), [turns])
+  const hidden = useMemo(() => new Set(turns.flatMap((t) => (opened.has(t.at) ? [] : [...t.folded]))), [turns, opened])
   return (
     <>
-      {items.map((it) => (
-        <Row key={it.key} it={it} running={running} hostId={hostId} cwd={cwd} />
-      ))}
+      {items.map((it) => {
+        const turn = at.get(it.key)
+        const row = hidden.has(it.key) ? null : <Row key={it.key} it={it} running={running} hostId={hostId} cwd={cwd} />
+        if (!turn) return row
+        return (
+          <Fragment key={`turn:${it.key}`}>
+            <FoldedTurnRow turn={turn} open={opened.has(turn.at)} onToggle={() => toggle(turn.at)} />
+            {row}
+          </Fragment>
+        )
+      })}
     </>
   )
 })
@@ -93,6 +129,8 @@ const Row = memo(function Row({ it, running, hostId, cwd }: { it: Item; running:
       return <PromptCard id={Number(it.key)} data={it.data} hostId={hostId} />
     case "question":
       return <QuestionRow id={it.id} data={it.data} hostId={hostId} />
+    case "connection":
+      return <ConnectionRow id={it.id} data={it.data} hostId={hostId} />
     case "result":
       return <ResultLine data={it.data} />
     case "compact":

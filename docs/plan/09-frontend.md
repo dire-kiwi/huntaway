@@ -675,6 +675,40 @@ and the override went with the last one.
   a board trigger), `tests/unit/ui/{dates,reminders}.test.ts` (run in several time zones), `analyticsRange.test.ts`,
   `automationDraft.test.ts`; `tests/unit/state/fakeHost.test.ts` calls through `runExit` and `mutate`.
 
+### Experiments (HE-22)
+
+Settings → **Experiments** (`settings/Experiments.tsx`) lists the features still being tried, each with a switch, its
+name and a line on what it does. All are off at first.
+
+- **One list.** `EXPERIMENTS` in `packages/contracts/src/experiments.ts` is every experiment (`id`, `name`,
+  `description`), and `ExperimentId` its ids. Adding one is an entry there: the tab lists it, the host keeps its switch
+  and settings sync carries it, with nothing else to change. What the experiment does reads
+  `experiments.includes("<id>")`.
+- **Per board, not per profile.** They are a host's settings (`HostSettings.experiments`, the ids switched on: optional
+  and open strings on the wire, read through `knownExperiments`; see [05-protocol.md](05-protocol.md#rpc-groups)), so they
+  hold in every browser and the desktop app, and the server can read them (`HostSettings.get`) for an experiment of
+  its own. The web app reads the page's own host's: `experimentsAtom` in `packages/client` (`board.ts`), from the
+  board's `hostSettings[localHostId]`, which `settings_changed` keeps. The tab sets them on that host with
+  `host.updateSettings` (`experiments`: the whole list to have on), showing the list it saved until the host's
+  settings have it. A per-profile switch would need a profile picked for pages that show several; nothing tried so
+  far is about one profile.
+- **Synced** like the other host-wide settings (docs/plan/08-hosts.md): each experiment is its own field
+  (`global/experiment_<id>`), so two switched on two hosts apart don't conflict. A linked host that doesn't sync keeps
+  its own, which the page doesn't read (it reads its own host's).
+- **Fold finished turns** (`fold_turns`, `task/thread/turnFold.ts`, `FoldedTurnRow` in `items.tsx`, used by
+  `ItemList`). A turn runs from a message to the agent (the user's, or the board's: an `auto` user item) to its
+  `result` item; a message sent while it worked (`steered`) is part of it, and a compaction's result ends one without
+  folding. A finished turn with tool calls folds its tool groups, its answered tool permission prompts and its result
+  line into one row, where its first tool group was: "Worked for 2m 10s · 7 steps · $0.123", with an amber dot if a
+  tool prompt came up and a red one if a call failed or a prompt was denied; "Interrupted" or "Ended: <subtype>" is
+  added as the result line says. The time is the result's `duration_ms`, shown between 1 s and 12 h (as bot-hq does),
+  else just "Worked". Its text, thinking, questions, plans and the board's own approvals stay as they are. Clicking it
+  draws the turn as it is without the experiment (the result line too) under the row, and again folds it; which are
+  open is `ItemList`'s state. A request to reveal a subagent whose call is in a folded turn opens the turn. A turn
+  without a result yet, the running one, stays open.
+- **Checks.** `tests/unit/turnFold.test.ts`; `tests/ui/foldTurns.test.mjs` (the switch on and off, a turn with a failed
+  call and one that waited for approval); `apps/server/src/settings/HostSettings.test.ts` (the rows).
+
 ### Logic that must not be lost on the way
 
 These live in components or module-level state today, outside the store, and are easy to drop when "the store and
@@ -753,11 +787,45 @@ apps/desktop/
 
 ## The phone app
 
-Not part of this plan. The old Expo app speaks the old API and keeps working against machines that have not
-switched; it cannot reach one that has. When it is taken up again, its screens are kept and its state modules are
-replaced by `packages/client` with a key-value store on `expo-secure-store`, and three server pieces come with it:
-device pairing, Expo push, and answering a prompt from the lock screen. Effect on React Native would be the first
-thing to prove (T3 Code ships an Expo 58 app on Effect 4, which is good evidence).
+`apps/mobile` (HE-20): an Expo SDK 58 app (React Native 0.88, expo-router) on `packages/client` and effect 4, which
+bundles for Hermes as it is (the client's atoms, sessions and thread are the web app's own; Expo installs `URL` and
+`structuredClone`, and Babel turns effect's `import.meta` into what Hermes parses). The old app's screens are kept in
+shape and its state modules are gone: `serverUrlAtom` and `tokenAtom` are set from the board kept in the keychain
+(`expo-secure-store`, `localStorage` on its web build), and everything else is atoms.
+
+- **Connect**: the link Settings → Network access shows (`http://<host>:<port>/?token=…`) pasted or typed, or an address
+  alone with its token apart, or none on a board started with `--open-token`. The board must answer `public.health`
+  within 10 s before it is kept. Plain HTTP to another machine is allowed with a warning (boards are reached over
+  Tailscale and the like), so a release build allows cleartext (`expo-build-properties`, `NSAllowsArbitraryLoads`).
+- **Inbox**: every usable host's `permissions.pending` (read every 5 s while it shows: a prompt is no board event),
+  Allow or Deny in place, a question or plan opening its task; and the tasks in Needs attention with no prompt.
+- **Assistant**: the shown profile's, found with `assistantHome` and opened with `assistant.get` (`here`).
+- **Projects** and **a project**: the shown profile's projects on every host; a project's tasks by status, what needs
+  the user first, Done the latest 20; New task (`tasks.create` with `start`).
+- **A task**: Stop (`tasks.stop`), Start (an empty `tasks.send`), Move (`optimisticMove`), its thread (`threadAtom`,
+  `threadPreviewAtom`, `olderPage`) as rows (`src/logic/thread.ts`, a smaller cut of the web's `itemModel.ts`), its
+  requests' cards (`permissions.answer`; a board question's `threads.answerQuestion`), and the composer
+  (`sendMessage`).
+- **Board**: the board's sessions, its hosts, the profile shown (merged by name, kept), connecting another, forgetting.
+
+Checked: its pure logic in `pnpm test` (`apps/mobile/tests`); the type check and lint in `pnpm check`; the screens on
+its web build (`pnpm --filter huntaway-mobile export:web`, served on a free port, driven by `scripts/ui-check.mjs`)
+against a test server with the fake agent; `expo export --platform android` (Hermes bytecode). Not yet on a phone.
+
+What is left, a task each:
+
+1. **Run on a phone, and an APK in releases**: a development build or Expo Go on Android and iOS; the release
+   workflow's Android job (signing key, `versionCode` from the version, as the old one did).
+2. **Device pairing**: a QR code in Settings → Network access, one-time codes, device tokens with `read` and
+   `operate` only (the `device` session kind is in the contract), revoking; the app's Pair screen replaces pasting
+   the board token.
+3. **Several boards**: one atom registry per board (the client's atoms are per registry), an Inbox across them.
+4. **Expo push** and **answering from the lock screen**: the server's `expo` subscriptions are kept and not pushed to
+   (6.8); with them, `push_answer_tokens` and the notification's Allow and Deny.
+5. **Sharing into the app, attachments, dictation**: the old app's share intent, photos and files
+   (`attachments.upload`), voice notes.
+6. **One thread model**: the web's `itemModel.ts` and the phone's `thread.ts` moved into `packages/client`, so the two
+   apps draw a thread from the same rows.
 
 ## Tests
 

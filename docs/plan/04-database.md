@@ -173,6 +173,10 @@ CREATE TABLE thread_tools (
 CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;
 ```
 
+New `settings` keys: `experiment_<id>` (HE-22), `"true"` while the experiment `<id>` is switched on and no row while it
+is off, one per entry of `EXPERIMENTS` ([09-frontend.md](09-frontend.md#experiments-he-22)). A row for an id the build
+doesn't list is ignored.
+
 All tables are created `STRICT`, so SQLite refuses a value it cannot convert to the column's type instead of storing
 it as it came (checked on Node 26: text into an `INTEGER` column fails). The old server checked types by hand at the
 edge for the lack of this.

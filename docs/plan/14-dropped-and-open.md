@@ -35,11 +35,11 @@ variables `IA_TASK_KEY` and friends, the `ia.*` browser storage keys, tmux names
 
 ## Deferred
 
-**The phone app**, and what exists only for it: device pairing and device tokens, Expo push, answering a prompt from
-the lock screen (`/api/push-answer`), the Jest set-up. The old app keeps working against machines that have not
-switched and cannot reach one that has. Sessions and scopes are designed with a device's place in them, and
-`packages/client` is kept free of browser APIs, so the app can be built on this later
-([09-frontend.md](09-frontend.md#the-phone-app)).
+**What the phone app has yet to get back** (the app itself is `apps/mobile` since HE-20, on one board's token): device
+pairing and device tokens, Expo push, answering a prompt from the lock screen (`/api/push-answer`), several boards,
+sharing in, attachments and dictation. The Jest set-up is not carried: the app's logic is tested with Vitest like the
+rest. The old app keeps working against machines that have not switched and cannot reach one that has. The list,
+a task each, is in [09-frontend.md](09-frontend.md#the-phone-app).
 
 With it, Settings → Network access's paired phones (the old `settings/Devices.tsx`): the panel keeps the board's URL
 and token (6.12).
@@ -70,7 +70,7 @@ Each could have gone another way. They are listed so that a different answer is 
 ## Settled on review
 
 - **Subprojects' rows** are kept as ordinary tasks.
-- **The phone app** is left out for now ([Deferred](#deferred)).
+- **The phone app** was left out of the port; HE-20 brought it back on `packages/client` ([Deferred](#deferred)).
 - **A new data folder**, not the old one ([11-migration.md](11-migration.md#a-data-folder-of-its-own)).
 
 ## Open questions

@@ -139,7 +139,7 @@ function useDigitKeys(id: number, on: boolean, ref: RefObject<HTMLElement | null
 
 // ---------- pieces ----------
 
-function Frame({ pending, children, label, cardRef }: { pending: boolean; children: ReactNode; label: string; cardRef?: Ref<HTMLDivElement> }) {
+export function Frame({ pending, children, label, cardRef }: { pending: boolean; children: ReactNode; label: string; cardRef?: Ref<HTMLDivElement> }) {
   return (
     <div
       ref={cardRef}
@@ -153,7 +153,7 @@ function Frame({ pending, children, label, cardRef }: { pending: boolean; childr
 }
 
 /** What became of a question or plan, once it's settled. */
-function Outcome({ tone, children }: { tone: "good" | "bad" | "plain"; children: ReactNode }) {
+export function Outcome({ tone, children }: { tone: "good" | "bad" | "plain"; children: ReactNode }) {
   return (
     <span
       className={clsx(
@@ -710,6 +710,11 @@ export const PlanCard = memo(function PlanCard({
   )
 })
 
+/** A prompt the user skipped by sending the thread a message instead of answering it (the agent was told it was denied). */
+export function SkippedLine({ status }: { status: string }) {
+  return status === "skipped" ? <div className="mt-1.5 text-[12px] text-faint">Skipped: you sent a message</div> : null
+}
+
 /** How a board approval was answered, once it was. */
 function Answer({ status, deletion }: { status: string; deletion?: boolean | undefined }) {
   return (
@@ -773,6 +778,7 @@ function ApprovalCard({
               {shortly}
             </button>
           ))}
+      <SkippedLine status={data.status} />
       {pending && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button size="sm" variant={deletion ? "danger" : "primary"} disabled={busy} onClick={() => decide("allow")}>

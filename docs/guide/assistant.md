@@ -27,12 +27,18 @@ conversation on the new one (the thread and its memory files stay).
 
 The assistant **remembers** you in files in its workspace: `USER.md` (who you are, your
 preferences), `MEMORY.md` (lasting facts) and a log for each day, `memory/YYYY-MM-DD.md` (in the
-host's time zone). The board, not the CLI, puts them into the instructions of every run, so it's the
-same on Claude Code and Codex and always what the files say now: `USER.md` and `MEMORY.md` up to
+host's time zone). The board, not the CLI, gives them to every run, so it's the same on Claude Code
+and Codex and always what the files say when the run starts: `USER.md` and `MEMORY.md` up to
 8,000 characters (and 16 KB) each (with a note to the assistant when one is cut), today's and
-yesterday's logs (their ends, if longer), and how to remember, forget and keep the log. Claude Code
-is given these instructions in a file (`--append-system-prompt-file`, in the run's folder) rather
-than as an argument, which can't be longer than 128 KiB. The workspace has a git history: after each
+yesterday's logs (their ends, if longer), and how to remember, forget and keep the log. A
+conversation's first run has them in its instructions. Claude Code and Codex keep the instructions a
+conversation started with (Claude Code until it's compacted), which keeps the conversation in their
+prompt cache, so a later run whose files changed since (the assistant's own edits, yours in the
+Memory tab, a routine's) starts its message with a `<memory-update>`: what's new at the end of a
+log, or the files that changed, as they are now. After a compaction, a rewind, a restart of the
+board, or on a new day, the update has all of them. Claude Code is given the instructions in a file
+(`--append-system-prompt-file`, in the run's folder) rather than as an argument, which can't be
+longer than 128 KiB. The workspace has a git history: after each
 of the assistant's turns that changed it, the board commits it as _Assistant_. Its git folder is
 `<data dir>/assistants/<task id>.git`, next to the workspace rather than in it, so the assistant
 can't set the config, hooks or filters the board's git runs with. A workspace that still has its own `.git` inside it
@@ -119,9 +125,10 @@ it) is denied if nobody answers it within the profile's expiry (30 minutes by de
 `expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts raised before
 this, ones the user's own turns raise, and project tasks' (even ones an automation started) wait as
 they always did. Each call a rule asked about or blocked goes in the assistant's **Actions** tab
-(`approvalRules.log`): what it was called with, the rule, how it ended (allowed, denied, expired or blocked) and who
-answered (you on the board, nobody in time, the mode, the rule, or its run ending first; an entry from the old board
-can also say a notification or Telegram).
+(`approvalRules.log`): what it was called with, the rule, how it ended (allowed, denied, expired, skipped or blocked)
+and who answered (you on the board, nobody in time, the mode, the rule, its run ending first, or your message: a
+prompt you sent the thread a message instead of answering is skipped, see _Permissions_ in concepts.md; an entry from
+the old board can also say a notification or Telegram).
 
 ## Google for the assistant
 
@@ -185,6 +192,22 @@ Its tools are `mcp__google__…`.
    can read, scopes not granted, or several accounts signed in (set `USER_GOOGLE_EMAIL` in the server's
    env to pick one). The RPC `assistant.google` (with `check` for the test) is the same, and `assistant.setupGoogle` adds
    the server.
+
+**When the assistant needs Google** and it isn't connected (one of its Google tools is missing, or fails for want of a
+sign-in), it doesn't tell you to go to Settings: it calls the board tool `request_connection` (with `google` and why it
+needs it) and ends its turn, and the thread shows a **Connect Google** card. The card says what's missing, as the Google
+card does (no server, switched off for the profile, `uvx` not found, no OAuth client, not signed in, no refresh token,
+or a refresh token Google turned away), with the assistant's reason, and has **Set up Google** (the Google card from
+Settings → Assistant, in a dialog over the page; closing it checks again), **Check again** and **Skip**. The thread
+waits in _Needs attention_ meanwhile. Once Google is connected, whether you pressed **Check again** or the board noticed
+by itself (it looks every 30 seconds while a card is open, trying the refresh token with Google, as **Test** does), the
+card says _Connected as <your address>_ and the assistant is told "Google is connected now (as <address>). Carry on with
+what you were doing."; **Skip** tells it "The user skipped connecting Google. Carry on without it." The card settles
+once: a message of yours sent before it's settled settles it too, as it does a question; one the conversation moved past
+otherwise (a routine's message, another agent's) is closed, not answered, at the board's next look. If Google turns out to be
+connected when it asks, there's no card and it tries again. The routines' threads have the tool too, but a routine's
+run, with nobody there, puts up no card: it carries on without Google and says in its report that Google isn't
+connected. The RPCs are `threads.checkConnection` and `threads.skipConnection` (`{"task_id", "request_id"}`).
 
 On a test server, the old repository's
 [`scripts/stub-google-mcp.py`](https://github.com/dire-kiwi/huntaway-legacy/blob/master/scripts/stub-google-mcp.py) (not in

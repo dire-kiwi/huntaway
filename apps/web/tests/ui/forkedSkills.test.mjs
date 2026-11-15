@@ -67,13 +67,10 @@ test("an older forked Skill, before the thread's window, opens with its transcri
     const { page } = ui
     await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Review follow-up 320.", "wait Load earlier messages"])
     assert.equal(await page.getByText("No runtime bugs found.").count(), 0, "the Skill's launch is before the window")
-    // Scrolled up to it, the earlier part loads (a click on "Load earlier messages" races that: scrolling the button into
-    // view starts the load, which takes the button away).
-    await eventually(async () => {
-      await threadScroller(page).evaluate((el) => (el.scrollTop = 0))
-      assert.ok(await page.locator(row).count(), "the Skill's row")
-    }, 15_000)
-    await ui.run([openRow, "wait Show in thread"])
+    // Scrolled to the top, the page before the window loads. (Clicking "Load earlier messages" raced that: scrolling the
+    // button into view starts the load, which takes the button away before the click lands.)
+    await threadScroller(page).evaluate((el) => (el.scrollTop = 0))
+    await ui.run([`wait ${row}`, openRow, "wait Show in thread"])
     await ui.run(["wait git diff main...HEAD", "wait Permission for Bash", "wait No runtime bugs found."])
     await ui.run(["click git diff main...HEAD", "wait The reviewed diff.", "gone Review follow-up 320."])
     await ui.run(["click Show in thread", "gone Show in thread", `wait ${row}`])

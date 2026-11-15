@@ -493,6 +493,8 @@ describe("task tools", () => {
       assert.deepStrictEqual(board, [
         "request_user_input",
         "finish_work",
+        // HE-28
+        "request_connection",
         "track_work",
         "untrack_work",
         "list_tracked_work",

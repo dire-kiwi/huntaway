@@ -1,5 +1,6 @@
 import { Effect, Stream } from "effect"
 import { Conflict, Invalid, NotFound, ThreadRpcs } from "@huntaway/contracts"
+import { Connections } from "../assistant/Connections.ts"
 import { Questions } from "../permissions/Questions.ts"
 import { Threads } from "../threads/Threads.ts"
 import { sendRefused } from "./tasks.ts"
@@ -10,6 +11,14 @@ export const ThreadHandlers = ThreadRpcs.toLayer(
   Effect.gen(function* () {
     const threads = yield* Threads
     const questions = yield* Questions
+    const connections = yield* Connections
+    const cardErrors = {
+      TaskNotFound: (e: { readonly id: string }) => Effect.fail(taskNotFound(e)),
+      QuestionNotFound: (e: { readonly request_id: string }) => Effect.fail(new NotFound({ what: "connection card", id: e.request_id })),
+      QuestionClosed: (e: { readonly reason: "answered" | "moved_on"; readonly detail: string }) =>
+        Effect.fail(new Conflict({ reason: e.reason === "answered" ? "not_pending" : "moved_on", detail: e.detail })),
+      SendRefused: sendRefused,
+    }
     return ThreadRpcs.of({
       "threads.watch": ({ task_id, limit, since }) => threads.watch(task_id, { limit, since }).pipe(Stream.mapError(taskNotFound)),
       "threads.page": ({ task_id, before, limit }) => threads.page(task_id, before, limit).pipe(Effect.mapError(taskNotFound)),
@@ -24,6 +33,8 @@ export const ThreadHandlers = ThreadRpcs.toLayer(
             SendRefused: sendRefused,
           }),
         ),
+      "threads.checkConnection": ({ task_id, request_id }) => connections.check(task_id, request_id).pipe(Effect.catchTags(cardErrors)),
+      "threads.skipConnection": ({ task_id, request_id }) => connections.skip(task_id, request_id).pipe(Effect.catchTags(cardErrors)),
     })
   }),
 )

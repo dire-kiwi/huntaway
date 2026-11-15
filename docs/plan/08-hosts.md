@@ -223,6 +223,8 @@ As built (7.5):
   hello take part (`takesPart`). Property tests found one gap in the old merge: it is associative for changes made
   apart, but when an entry another covers also lost to a third, hosts that merged in different orders agree on the
   value and vector and can keep different `lost` lists, which equal vectors then never reconcile. Ported as it is.
+  Settings → Experiments' switches (HE-22) sync too, one global field each (`global/experiment_<id>`, `"true"` or
+  null), added to `GLOBAL` from the shared list.
 - **Copying a config** (`hosts/CopyConfig.ts`): through each host's RPCs (this host's services directly); the config
   is matched by name and made on the target if missing. The login travels as the config's archive (6.11's
   `configs.exportArchive`, then `importArchive`), exported before anything is made on the target; the answer's `files`

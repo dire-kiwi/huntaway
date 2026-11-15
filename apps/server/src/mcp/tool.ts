@@ -100,6 +100,7 @@ export const THREAD_TOOLS: ReadonlyArray<string> = [
   "permission_prompt",
   "request_user_input",
   "finish_work",
+  "request_connection",
   "submit_review",
   "wait",
   "background_wait",

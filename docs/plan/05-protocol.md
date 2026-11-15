@@ -101,7 +101,7 @@ column are that table's.
 | `configs`      | `list`, `create`, `update`, `delete`, `models`, `exportArchive`, `importArchive`                                                                                 | read; settings; admin | 61–64     |
 | `projects`     | `list`, `get`, `create`, `clone`, `createOnGithub`, `update`, `delete`, `branches`, `systemPrompt`, `setupThread`, `removeMergedWorktrees`                        | read; settings; git  | 66–68, 110–115 |
 | `tasks`        | `list`, `get`, `create`, `update`, `delete`, `updateStack`, `send`, `dropQueued`, `stop`, `stopBackground`, `stopServer`, `waitForLimit`, `review`, `extendReview`, `summarize`, `fixChecks`, `mergeTarget`, `mergeStack`, `fanout`, `pickFanout`, `removeTracked`, `context`, `document`, `skills`, `unmerged` | read; operate | 69, 86, 111, 140–141, 148–165, 179–180, 139 |
-| `threads`      | `watch` (stream), `page`, `command`, `answerQuestion`                                                                                                            | read; operate        | 143–147    |
+| `threads`      | `watch` (stream), `page`, `command`, `answerQuestion`, `checkConnection`, `skipConnection` (HE-28)                                                                                                            | read; operate        | 143–147    |
 | `permissions`  | `pending`, `answer`, `approvals`                                                                                                                                 | read; operate        | 35–37      |
 | `git`          | `status`, `diff`, `show`, `taskDiff`, `stage`, `unstage`, `discard`, `apply`, `commit`, `stash`, `reset`, `setupWorktree`, `teardownWorktree`                     | read; git            | 157–159, 166–175 |
 | `checkpoints`  | `turns`, `turnDiff`, `rewind`, `cancelRewind`                                                                                                                    | read; git            | 176–178    |
@@ -122,6 +122,14 @@ column are that table's.
 | `hub.hosts`    | `watch` (stream), `list`, `add`, `addSsh`, `sshKey`, `join`, `discover`, `update`, `remove`, `copyConfig`, `pushUpdate`, `openRelay` (gives a ticket)           | read; admin          | 6–13, 22   |
 | `hub.push`     | `info`, `subscribe`, `update`, `unsubscribe`, `test`                                                                                                             | read; operate        | 15–18      |
 | `link`         | `hello`, `attach` (stream), `reply`, `upcalls` (stream), `upcallResult`, `events` (stream)                                                                       | link                 | 2, 50      |
+
+Settings → Experiments (HE-22) has no group of its own: the switches are a host setting, read with `host.settings`
+(and the board's `settings_changed`) as `experiments`, the ids switched on, and set with `host.updateSettings`'s
+`experiments`, the whole list to have on (the rest go off). In `HostSettings` the field is optional and open strings,
+so a snapshot or `settings_changed` from a host one version behind (no field) or ahead (an experiment this build
+doesn't list) still decodes; readers take it through `knownExperiments`, which keeps the ids this build has. Only the
+patch is strict: a patch naming an id the host doesn't know fails to decode. See
+[09-frontend.md](09-frontend.md#experiments-he-22).
 
 Waiting for the phone app: device pairing (5, 19–21) and answering a prompt from a notification (4).
 

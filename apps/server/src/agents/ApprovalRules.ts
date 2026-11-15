@@ -77,7 +77,7 @@ export interface ApprovalRulesShape {
    */
   readonly blocked: (task: RuledTask, tool: string, input: unknown) => Effect.Effect<void>
   /** Prompt `request` was answered, expired, or its run ended first: its entry says so. Emits `approval_log` if it had one. */
-  readonly settle: (request: RequestId, outcome: "allowed" | "denied" | "expired", by: AnsweredBy) => Effect.Effect<void>
+  readonly settle: (request: RequestId, outcome: "allowed" | "denied" | "expired" | "skipped", by: AnsweredBy) => Effect.Effect<void>
   /** A profile's action log, newest first: `limit` entries (200 unless given, 1 to 500). */
   readonly log: (filter: {
     readonly profile_id: ProfileId
@@ -208,7 +208,7 @@ export class ApprovalRules extends Context.Service<ApprovalRules, ApprovalRulesS
           yield* record({ task, tool, input, rule: { tool: rule.tool, decision: "never" }, result: { outcome: "blocked", by: "rule" } })
         }),
 
-        settle: Effect.fn("ApprovalRules.settle")(function* (request: RequestId, outcome: "allowed" | "denied" | "expired", by: AnsweredBy) {
+        settle: Effect.fn("ApprovalRules.settle")(function* (request: RequestId, outcome: "allowed" | "denied" | "expired" | "skipped", by: AnsweredBy) {
           const now = yield* nowTimestamp
           yield* db
             .tx(

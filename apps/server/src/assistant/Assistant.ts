@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Conflict, Invalid, NotFound, TaskId, Unavailable } from "@huntaway/contracts"
 import type { MemoryCommit, MemoryDiff, MemoryFileContent, MemoryOverview, MemoryWrite, Profile, ProfileId, Task } from "@huntaway/contracts"
+import { Permissions } from "../permissions/Permissions.ts"
 import { Questions } from "../permissions/Questions.ts"
 import { nowTimestamp, rowsOf } from "../platform/columns.ts"
 import { Db } from "../platform/Db.ts"
@@ -86,6 +87,7 @@ export class Assistant extends Context.Service<Assistant, AssistantShape>()("hun
       const events = yield* Events
       const runs = yield* Runs
       const questions = yield* Questions
+      const permissions = yield* Permissions
       const memory = yield* Memory
       const random = yield* SecureRandom.SecureRandom
 
@@ -167,8 +169,11 @@ export class Assistant extends Context.Service<Assistant, AssistantShape>()("hun
       const send = Effect.fn("Assistant.send")(function* (profile: ProfileId, text: string, local = false) {
         const task = yield* get(profile, local)
         const after = yield* runs.send(task.id, { text, source: "user" })
-        // The user's reply answers the questions it asked.
-        if (text.trim() !== "") yield* questions.settle(after.id, "replied")
+        // The user's reply answers the questions it asked, and skips its permission prompts, so that it reads the reply now.
+        if (text.trim() !== "") {
+          yield* questions.settle(after.id, "replied")
+          yield* permissions.skipFor(after.id)
+        }
         return after
       })
 

@@ -30,6 +30,9 @@ export const routine = (t: RoutineFacts): string => {
     "main thread, where they read it. Say what's new or needs them, not what you checked. If there's nothing " +
     "new or worth telling them, make your last message just NO_REPLY: nothing is posted, and the run is quiet. " +
     "The user isn't watching this thread: only call `request_user_input` if the run can't go on without them. " +
+    "When a Google tool (`mcp__google__…`) you need is missing or fails for want of a sign-in, call `request_connection` " +
+    "with connection `google`: no card is shown during a routine's run, so carry on without it and say in your report " +
+    "that Google isn't connected. " +
     "Don't move this thread to another status."
   )
 }

@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { ExperimentId } from "./experiments.ts"
 import { HostId, LinkId } from "./ids.ts"
 import { PermissionMode } from "./task.ts"
 import { Timestamp } from "./time.ts"
@@ -31,6 +32,12 @@ export const HostSettings = Schema.Struct({
   release_prereleases: Schema.Boolean,
   /** Keep this host's settings the same as the board's other hosts that have this on. */
   settings_sync: Schema.Boolean,
+  /**
+   * The experiments switched on (Settings → Experiments), for the whole board. Open strings, and optional, so that a
+   * host one version behind (none) or ahead (an experiment this build doesn't list) still decodes: read it through
+   * `knownExperiments`.
+   */
+  experiments: Schema.optionalKey(Schema.Array(Schema.String)),
 })
 export interface HostSettings extends Schema.Schema.Type<typeof HostSettings> {}
 
@@ -46,6 +53,8 @@ export const HostSettingsPatch = Schema.Struct({
   /** Changing it checks for releases again. */
   release_prereleases: Schema.optional(Schema.Boolean),
   settings_sync: Schema.optional(Schema.Boolean),
+  /** The experiments to have on, all of them: the rest are switched off. */
+  experiments: Schema.optional(Schema.Array(ExperimentId)),
 })
 export interface HostSettingsPatch extends Schema.Schema.Type<typeof HostSettingsPatch> {}
 

@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { HostEffort, Invalid, LinkId, PermissionMode, TerminalTool } from "@huntaway/contracts"
+import { EXPERIMENTS, experimentKey, HostEffort, Invalid, LinkId, PermissionMode, TerminalTool } from "@huntaway/contracts"
 import type { HostSettings as Settings, HostSettingsPatch } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
@@ -97,6 +97,7 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
           public_url: text(KEY.public_url),
           release_prereleases: text(KEY.release_prereleases) === "true",
           settings_sync: text(KEY.settings_sync) === "true",
+          experiments: EXPERIMENTS.flatMap((e) => (text(experimentKey(e.id)) === "true" ? [e.id] : [])),
         } satisfies Settings
       })
 
@@ -125,6 +126,8 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
             }
             if (patch.release_prereleases !== undefined) yield* repo.set(KEY.release_prereleases, patch.release_prereleases ? "true" : null)
             if (patch.settings_sync !== undefined) yield* repo.set(KEY.settings_sync, patch.settings_sync ? "true" : null)
+            const on = patch.experiments
+            if (on !== undefined) for (const e of EXPERIMENTS) yield* repo.set(experimentKey(e.id), on.includes(e.id) ? "true" : null)
             const settings = yield* get
             yield* events.emit({ type: "settings_changed", settings })
             return settings

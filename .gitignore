@@ -18,3 +18,7 @@ coverage/
 /release/
 /huntaway-server-*
 /apps/server/bin/ia-shim
+# The phone app's Expo state, and the native projects `expo prebuild` / `expo run:*` make (apps/mobile/README.md).
+/apps/mobile/.expo
+/apps/mobile/android
+/apps/mobile/ios

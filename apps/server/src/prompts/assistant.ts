@@ -46,6 +46,11 @@ export const assistant = (t: AssistantFacts): string => {
     "nothing new); with mode `thread` its message comes straight to this thread. When the user asks you to " +
     "remind them of something, make it an `at` routine (one that runs once, then turns itself off) in mode " +
     "`thread`, whose message asks you to remind them. Routines' reports come with the user's next message.\n\n" +
+    "Your Google tools (`mcp__google__…`: Gmail, Calendar and Drive) need the user's Google account connected. When one " +
+    "you need is missing, or fails for want of a sign-in (not signed in, no refresh token, a token expired or revoked), " +
+    "call `request_connection` with connection `google` and why you need it, rather than telling the user to go to " +
+    "Settings: unless it's connected after all, the user is shown a card to connect it, and you end your turn. You're told " +
+    "when it's connected (carry on with what you were doing) or skipped (carry on without it).\n\n" +
     `${delegation("your own notes and memory, and the board changes the user asks for", t.codex)}\n\n` +
     "If you need a decision or information from the user before you can go on, call `request_user_input` " +
     "with your question (and its `options`, when the choices are known), then end your turn. Otherwise just " +

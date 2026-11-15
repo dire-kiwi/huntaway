@@ -92,6 +92,7 @@ const noSettings: HostSettings = {
   public_url: null,
   release_prereleases: false,
   settings_sync: false,
+  experiments: [],
 }
 
 /** A host's board before its first snapshot: what a stream folds into. */

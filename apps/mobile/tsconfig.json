@@ -1,0 +1,13 @@
+{
+  // The phone app: bundled by Metro, so imports resolve as a bundler's do (extensionless, as Expo's own templates). React
+  // Native's types, no DOM and no Node. The workspace's strict settings apply as everywhere else.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": []
+  },
+  "include": ["src", "tests"]
+}

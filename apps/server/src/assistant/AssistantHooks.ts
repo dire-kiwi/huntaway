@@ -4,6 +4,7 @@ import { RoutineHost, RoutineHostError } from "../automations/RoutineHost.ts"
 import { Routines } from "../automations/Routines.ts"
 import { Events } from "../platform/Events.ts"
 import { AssistantLaunch, WorkspaceRefused } from "../runs/AssistantLaunch.ts"
+import type { WorkspaceFor } from "../runs/AssistantLaunch.ts"
 import { TurnHooks } from "../runs/TurnHooks.ts"
 import type { TurnEnd } from "../runs/TurnHooks.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
@@ -15,7 +16,8 @@ import { Memory } from "./Memory.ts"
 // What the assistant area registers with the areas above it, which can't call it (docs/plan/06-server.md, Assistant):
 //
 // - `RoutineHost` (automations): a routine's assistant (made if need be), its checked workspace, and `{{google}}`.
-// - `AssistantLaunch` (runs): the assistant and its routine threads work in its workspace and are told its memory; the
+// - `AssistantLaunch` (runs): the assistant and its routine threads work in its workspace and are told its memory (and,
+//   before a later run's message, what changed in it since their conversation was told); the
 //   assistant's prompt run starts with its routines' unread reports, read once its agent has started.
 // - `TurnHooks` (runs): after a tool call or a turn of the assistant or a routine thread, the brief follows its files; a
 //   turn's end commits what changed in the workspace and, for the assistant's own turn (not a compaction's), tells push
@@ -42,14 +44,15 @@ export const AssistantHooks = Layer.effectDiscard(
     const whose = (t: Task) => Effect.map(Effect.result(assistant.whoseWorkspace(t)), (r) => (Result.isSuccess(r) ? r.success : null))
 
     yield* (yield* AssistantLaunch).register({
-      workspace: Effect.fnUntraced(function* (t: Task) {
+      workspace: Effect.fnUntraced(function* (t: Task, run?: WorkspaceFor) {
         const owner = yield* assistant
           .whoseWorkspace(t)
           .pipe(Effect.mapError((e) => new WorkspaceRefused({ reason: `the assistant's workspace: ${e.reason}` })))
         if (owner === null) return null
         // Only in a workspace of its own: not one that's become a symlink, which could be another's.
         const dir = yield* memory.checked(owner).pipe(Effect.mapError((e) => new WorkspaceRefused({ reason: `the assistant's workspace: ${e.reason}` })))
-        return { cwd: dir, memory: yield* memory.forRun(owner) }
+        const told = yield* memory.forRun(owner, run === undefined ? null : { thread: t, compact: run.compact })
+        return { cwd: dir, memory: told.system, update: told.update, told: told.told }
       }),
       reports: Effect.fnUntraced(function* (t: Task) {
         if (t.kind !== "task" || t.task_type !== "assistant") return null

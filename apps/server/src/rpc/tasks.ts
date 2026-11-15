@@ -10,6 +10,7 @@ import { MergeTargets } from "../merge/MergeTargets.ts"
 import { InReview } from "../review/InReview.ts"
 import type { FixChecksRefused } from "../review/InReview.ts"
 import { DevServers } from "../runs/DevServers.ts"
+import { Permissions } from "../permissions/Permissions.ts"
 import { Questions } from "../permissions/Questions.ts"
 import { Push } from "../push/Push.ts"
 import { Reviews } from "../review/Reviews.ts"
@@ -75,6 +76,7 @@ export const TaskHandlers = TaskRpcs.toLayer(
     const runs = yield* Runs
     const deletion = yield* TaskDeletion
     const questions = yield* Questions
+    const permissions = yield* Permissions
     const devServers = yield* DevServers
     const meter = yield* ContextMeter
     const stackTitles = yield* StackTitles
@@ -110,8 +112,9 @@ export const TaskHandlers = TaskRpcs.toLayer(
         ),
       "tasks.send": ({ id, text }) =>
         runs.send(id, { text, source: "user" }).pipe(
-          // The user's reply answers the questions the agent asked (`Questions`).
-          Effect.tap(() => (text.trim() === "" ? Effect.void : questions.settle(id, "replied"))),
+          // The user's reply answers the questions the agent asked (`Questions`), and skips its permission prompts, so
+          // that it reads the message now (`Permissions.skipFor`).
+          Effect.tap(() => (text.trim() === "" ? Effect.void : Effect.andThen(questions.settle(id, "replied"), permissions.skipFor(id)))),
           Effect.catchTags({ TaskNotFound: notFound.TaskNotFound, SendRefused: sendRefused }),
         ),
       // Its agent, and its review and summaries (4.6).

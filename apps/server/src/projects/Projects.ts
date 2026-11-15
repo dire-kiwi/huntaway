@@ -214,6 +214,9 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()("huntaw
               is_git: facts.is_git,
               has_commits: facts.has_commits,
               repo_root: repoRoot,
+              // HE-29: a failed check or a conflict on a task's pull request in review wakes its agent to fix it. The
+              // column's default stays 'off' (SQLite can't change one in place), for projects made before.
+              watch_pull_requests: "failures",
             })
             const project = yield* getProject(id).pipe(Effect.orDie)
             yield* events.emit({ type: "project", project })

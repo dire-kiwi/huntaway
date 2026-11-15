@@ -1,5 +1,5 @@
 import { Effect, Option, Schema } from "effect"
-import { ApprovalRule, HostEffort, PermissionMode, TerminalTool } from "@huntaway/contracts"
+import { ApprovalRule, EXPERIMENTS, experimentKey, HostEffort, PermissionMode, TerminalTool } from "@huntaway/contracts"
 import type { Profile, ProfileId } from "@huntaway/contracts"
 import { ApprovalRules } from "../../agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "../../agents/ApprovalRulesRepo.ts"
@@ -72,6 +72,8 @@ const GLOBAL: ReadonlyArray<readonly [string, (v: unknown) => Effect.Effect<stri
             )
           : refuse("must be a JSON list or null"),
   ],
+  // Settings → Experiments: one field each, so switching two on two hosts apart doesn't conflict.
+  ...EXPERIMENTS.map((e) => [experimentKey(e.id), oneOf(["true"])] as const),
 ]
 
 /** A profile column that syncs: how it reads, and what a value has to be before it is written (`name` is the profile's). */

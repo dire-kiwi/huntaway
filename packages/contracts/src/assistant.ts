@@ -115,6 +115,14 @@ export const GoogleStatus = Schema.Struct({
 })
 export type GoogleStatus = typeof GoogleStatus.Type
 
+/** Whether what a connection card asks for (HE-28: Google) is connected now, as whom, and if not, what's missing. */
+export const ConnectionState = Schema.Struct({
+  connected: Schema.Boolean,
+  account: Schema.NullOr(Schema.String),
+  problem: Schema.NullOr(Schema.String),
+})
+export type ConnectionState = typeof ConnectionState.Type
+
 /** How the user rated one of the brief's items: `clear` takes a rating back. */
 export const BriefRating = Schema.Literals(["up", "down", "clear"])
 export type BriefRating = typeof BriefRating.Type
