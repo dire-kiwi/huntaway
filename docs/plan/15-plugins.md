@@ -12,7 +12,7 @@ its own (below, What's next).
 A package that default-exports `definePlugin({ id, name, version, description?, migrations?, make })` from
 `@huntaway/plugin` (`packages/plugin`). It runs **in the server's process, on the server's `effect`** (a peer
 dependency), so its code is written as the board's is: services, `Effect.fn`, schemas, tagged errors. The example,
-`packages/plugin/example/notes.ts`, uses every part in one file; the demo board runs it.
+`packages/plugin/src/example/notes.ts`, uses every part in one file; the demo board runs it.
 
 - `id` (`[a-z][a-z0-9_]{0,31}`, not one of `RESERVED_IDS`: the board's server names and first path segments) names
   its MCP server (`mcp__<id>__<tool>`), its pages (`/<id>/…`), its routes (`/plugins/<id>/…`) and its data folder.
@@ -64,7 +64,7 @@ the run, its task (id, key, title, kind, status), project and profile, whether i
 | `task`     | a section of a task's Details, on its host; left out when `empty`      | `task` is true          |
 
 The web app reads a page with `plugins.page` on the plugin's host and shows its HTML in a frame as documents are
-(`components/plugins/pluginFrame.ts`): `sandbox="allow-scripts"` with no same origin, under `FRAME_CSP` (no network:
+(`components/plugins/frameSource.ts`): `sandbox="allow-scripts"` with no same origin, under `FRAME_CSP` (no network:
 images are `data:`/`blob:` URLs, data comes through the bridge), WebRTC taken away. The frame's `:root` has the
 board's theme as its own CSS variables (`--color-*`, `--font-*`), and `window.huntaway` is the bridge:
 
@@ -119,7 +119,7 @@ list, plus `notes` on a demo board. Being a dependency, it can have native or We
 `ProfileRepo`, `ProjectRepo`, `TaskRefs`, `Runs`, `Events`), `Plugins` (starts them in order, defines their servers,
 answers `plugins.*`, holds their routes). Transports: `rpc/plugins.ts`, `http/plugins.ts`. Contract:
 `packages/contracts/src/plugin.ts`, `rpc/plugins.ts` (`PluginRpcs`, in `HostRpcs`), the `plugin` event. Web:
-`components/plugins/` (`PluginPage`, `PluginFrame`, `pluginFrame.ts`), `layout/sidebar/PluginEntries`,
+`components/plugins/` (`PluginPage`, `PluginFrame`, `frameSource.ts`), `layout/sidebar/PluginEntries`,
 `settings/Plugins`, `task/view/details/PluginSections`.
 
 ## Asked for by the docs project, and where it stands

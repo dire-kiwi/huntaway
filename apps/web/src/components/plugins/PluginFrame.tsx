@@ -7,7 +7,7 @@ import { exitError, runExit } from "../../state/mutation"
 import { navigate, openTask } from "../../state/route"
 import { followsFrameInput, fromFrame, openable, trackBoardInput } from "../task/htmlFrame"
 import { Loading } from "../ui/Loading"
-import { boardVars, pluginFrame, type FrameContext } from "./pluginFrame"
+import { boardVars, pluginFrame, type FrameContext } from "./frameSource"
 
 // HE-34: one of a plugin's pages in its frame (docs/plan/15-plugins.md, Pages): rendered by the plugin on its host
 // (`plugins.page`, read again on its events with `reload`), and the board's end of the frame's bridge.

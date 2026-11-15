@@ -1,5 +1,5 @@
 {
   // No DOM and no Node types: a plugin's code runs in the server, but the API names nothing of Node's.
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "test", "example"]
+  "include": ["src", "test"]
 }

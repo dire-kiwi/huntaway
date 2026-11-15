@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { Effect, FileSystem, Result, Option, Redacted, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { SqlClient } from "effect/sql"
-import { boardScopes, TaskId } from "@huntaway/contracts"
+import { boardScopes, PluginRpcs, TaskId } from "@huntaway/contracts"
 import type { SessionShape } from "@huntaway/contracts"
 import { definePlugin, Page, PluginError, PluginHost, PluginImport, pluginTool } from "@huntaway/plugin"
 import type { Plugin } from "@huntaway/plugin"
@@ -193,6 +193,7 @@ describe("a plugin that can't start", () => {
     })
     const refusing = definePlugin({ id: "refusing", name: "Refusing", version: "1", make: Effect.fail(PluginError.failed("no config")) })
     const reserved = definePlugin({ id: "docs", name: "Docs", version: "1", make: Effect.succeed({}) })
+    const misnamed = definePlugin({ id: "My-Plugin", name: "Mine", version: "1", make: Effect.succeed({}) })
     return run(
       Effect.gen(function* () {
         const list = yield* (yield* Plugins).list
@@ -202,13 +203,19 @@ describe("a plugin that can't start", () => {
             ["broken", list[0]?.error?.slice(0, 40) ?? "?"],
             ["refusing", "no config"],
             ["docs", "docs is one of the board's own names, so"],
+            ["My-Plugin", "a plugin's id is a lowercase letter, the"],
             ["notes", null],
           ],
         )
         assert.isNotNull(list[0]?.error)
         assert.isFalse(yield* (yield* McpServers).known("broken"))
+        // The list encodes as `plugins.list` answers it, the plugin with a bad id included, so the board can say why.
+        const rpc = PluginRpcs.requests.get("plugins.list")
+        assert.isDefined(rpc)
+        const encoded = yield* Schema.encodeUnknownEffect(rpc?.successSchema ?? Schema.Never)(list)
+        assert.deepStrictEqual(encoded, list)
       }),
-      [broken, refusing, reserved, notes],
+      [broken, refusing, reserved, misnamed, notes],
     )
   })
 })

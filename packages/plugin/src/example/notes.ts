@@ -2,8 +2,8 @@ import { DateTime, Effect, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { HttpServerResponse } from "effect/http"
 import { SqlClient } from "effect/sql"
-import { definePlugin, Page, pluginCall, PluginError, PluginHost, pluginTool } from "../src/index.ts"
-import type { CallContext } from "../src/index.ts"
+import { definePlugin, Page, pluginCall, PluginError, PluginHost, pluginTool } from "../index.ts"
+import type { CallContext } from "../index.ts"
 
 // An example plugin, and the one the API's tests and the demo board run (docs/plan/15-plugins.md): agents keep notes
 // with its MCP server (`mcp__notes__add_note`, `list_notes`), people read them on its page (`/notes/<profile id>`),

@@ -14,7 +14,11 @@ export type PluginSlot = typeof PluginSlot.Type
 
 /** A plugin as its host has it. `error`: it failed to start (a migration, its `make`), so it has none of its parts. */
 export const PluginInfo = Schema.Struct({
-  id: PluginId,
+  /**
+   * Not `PluginId`: a plugin refused for its id is listed too, with why, and the list as a whole must still encode
+   * (HE-34's review).
+   */
+  id: Schema.String,
   name: Schema.String,
   version: Schema.String,
   description: Schema.NullOr(Schema.String),
