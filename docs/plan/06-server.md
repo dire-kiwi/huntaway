@@ -32,6 +32,7 @@ automations   Automations · Scheduler · Webhooks · Routines
 docs          TaskDocuments · Docs · DocImages · HostedDocs
 assistant     Assistant · Memory · Tracked · Brief
 mcp           BoardTools · ToolCalls · Wait · GhTools · DocsTools · DesktopTools · McpEndpoint
+plugins       InstalledPlugins · Plugins (HE-34, 15-plugins.md)
 push          Push
 hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
 terminal      Terminals · Pty

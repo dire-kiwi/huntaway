@@ -75,6 +75,8 @@ export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   "docs.version": (board, p) => (p.version === null ? docsSeq(board, "docs", p.profile_id) : 0),
   "docs.comments": (board, p) => docsSeq(board, "comments", p.profile_id, p.slug),
   "docs.hostedStatus": (board, p) => docsSeq(board, "site", p.profile_id),
+  // HE-34: a plugin's pages are rendered again on its events that say so (`reload`).
+  "plugins.page": (board, p) => board.plugins.get(p.plugin)?.reload ?? 0,
   // A task's skills are its config's (the old SkillMenu's cache was per config).
   "tasks.skills": (board, p) => board.tasks.get(p.id)?.claude_config_id ?? "",
   // A project's system prompt is made from its settings and the host's default mode (anyone's change to either).

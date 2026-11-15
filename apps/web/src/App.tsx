@@ -23,6 +23,7 @@ import { useDrawer, useNarrow } from "./narrow"
 import { boardTaskUrl, groupTaskUrl, hasPanel, profileTaskUrl } from "./router"
 import { useBoard } from "./state/board"
 import { navigate, usePanel, useRoute, useTaskModal } from "./state/route"
+import { PluginPage } from "./components/plugins/PluginPage"
 
 // 6.11: the compare view of the tasks made from one prompt, in a chunk of its own.
 const CompareView = lazy(() => import("./components/changes/Compare").then((m) => ({ default: m.CompareView })))
@@ -126,6 +127,7 @@ export function App() {
             {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}
             {route.name === "guide" && <Guide page={route.page} />}
             {route.name === "host" && <HostPage key={route.hostId} hostId={route.hostId} />}
+            {route.name === "plugin" && <PluginPage key={route.plugin} route={route} />}
           </div>
           {panel && hasPanel(route) && <TaskPanel panel={panel} />}
         </div>

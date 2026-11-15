@@ -51,6 +51,7 @@ packages/
   contracts/              @huntaway/contracts: schemas, errors, RPC groups, HTTP endpoints, events, the thread protocol
   client/                 @huntaway/client: host sessions, atoms, queries and mutations, for the web app
   shared/                 @huntaway/shared: plain functions with no effect import, used by hooks, server and clients
+  plugin/                 @huntaway/plugin (HE-34): the plugin API, and the example notes plugin (15-plugins.md)
   testing/                @huntaway/testing: fake agent CLIs, fake gh and GitHub, git and board fixtures, test layers
 rust/
   shim/                   ia-shim, unchanged
@@ -68,6 +69,7 @@ docs/
 | `@huntaway/shared`   | Approval-rule matching, the shell-command reader the gh hook uses, task-key and slug helpers, text limits                           | nothing                                 | import `effect` (the hooks load it per tool call) |
 | `@huntaway/contracts`| Branded ids, domain structs, tagged errors, the RPC groups, the HTTP endpoints, `BoardEvent`, the thread protocol and its pure reducer | `effect`, `@huntaway/shared`            | Node or DOM APIs; anything that runs at import    |
 | `@huntaway/client`   | `HostSession` (one RPC connection), the session directory, board and thread atoms, queries, mutations, optimistic updates           | `effect`, `@effect/atom-react`, contracts, shared | Node, DOM or React Native APIs (the apps provide storage and sockets as layers) |
+| `@huntaway/plugin`   | The plugin API (`definePlugin`, `PluginHost`, `pluginTool`, `pluginCall`, `Page`) and the example plugin (15-plugins.md) | `effect`                                | import the board's packages: a plugin depends on it and `effect` alone |
 | `@huntaway/testing`  | Fakes and fixtures, including the recorded Claude and Codex sessions                                                                | anything                                | be imported by non-test code                      |
 
 The packages ship their TypeScript sources (`"exports": "./src/index.ts"`), with no build step, as `packages/client`
