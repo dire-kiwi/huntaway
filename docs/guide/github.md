@@ -43,7 +43,7 @@ request is told it was merged and marks the task done itself, as its project's i
 if its run ends without doing so, the next read moves the task.
 
 A project can have its tasks' pull requests watched while they're in _In review_ (_Watch pull
-requests in review_ in its settings' Review tab, `watch_pull_requests`): every 2 minutes,
+requests in review_ in its settings' Pull requests tab, `watch_pull_requests`): every 2 minutes,
 while the agent is idle, the host reads the pull request (as a `wait` does, with the same record of
 what the agent has been told) and wakes the agent with failed checks and conflicts (`failures`),
 or with comments and reviews from people who can push to the repository too (`all`).
@@ -78,7 +78,7 @@ shows a dot linking to it: yellow until the URL answers `200`, then green. The t
 checks it every 2 seconds while the board is visible.
 
 A project whose pull requests get preview deployments can say where, under _Pull request
-previews_ in its settings' Review tab (`pr_preview_url`), with `{pr}` for the pull
+previews_ in its settings' Pull requests tab (`pr_preview_url`), with `{pr}` for the pull
 request's number, e.g. `https://pr{pr}.example.com/`. A task then gets its pull request's preview
 as its preview URL whenever its pull request is set or found (see above), and saving the setting
 fills it in for the project's tasks that already have one (except done tasks, whose previews are

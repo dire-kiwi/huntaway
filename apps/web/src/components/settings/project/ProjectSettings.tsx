@@ -2,8 +2,8 @@ import { STATUSES, type HostProject as Project } from "@huntaway/client"
 import type { ProjectPatch } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Exit } from "effect"
-import { Bot, GitBranch, Loader2, MessageSquareText, Puzzle, ScanSearch, SlidersHorizontal, SquareTerminal, Workflow, Zap } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { Bot, GitBranch, GitPullRequest, Loader2, MessageSquareText, Puzzle, ScanSearch, SlidersHorizontal, SquareTerminal, Workflow, Zap } from "lucide-react"
+import { Fragment, useMemo, useState, type ReactNode } from "react"
 import { groupNames } from "../../../projectGroups"
 import { useBoard } from "../../../state/board"
 import { exitError, useMutation } from "../../../state/mutation"
@@ -11,116 +11,149 @@ import { navigate } from "../../../state/route"
 import { ArchiveProjectModal } from "../ArchivedProjects"
 import { ProjectAgentTools } from "../AgentTools"
 import { ProjectAutomations } from "../Automations"
+import { GuideLink } from "../Guide"
 import { ProjectWorkflows } from "../Workflows"
-import { Button, ConfirmModal, MenuButton } from "../../ui"
+import { Button, ConfirmModal, Help, MenuButton } from "../../ui"
 import { toJson } from "../../ui/json"
 import { AgentsTab } from "./AgentsTab"
 import { GeneralTab } from "./GeneralTab"
 import { PromptsTab } from "./PromptsTab"
+import { PullRequestsTab } from "./PullRequestsTab"
 import { ReviewTab } from "./ReviewTab"
 import { ProjectStatusScripts } from "./StatusScriptsTab"
 import { WorktreesTab } from "./WorktreesTab"
 
 // Every host has every tab, so the old API gates are gone (docs/plan/09-frontend.md). The tabs that are other
-// areas' are theirs: Skills and MCP (6.4), Automations (6.5), Workflows (6.6).
+// areas' are theirs: Skills and MCP (6.4), Automations (6.5), Workflows (6.6). What a setting does is behind the ?
+// beside its label (`Help`), not in a line under it (HE-32).
 
 /** A project's fields as the form edits them. */
 export type ProjectForm = { -readonly [K in keyof Project]: Project[K] }
 /** Changes one field of the form. */
 export type SetField = <K extends keyof Project>(k: K, v: Project[K]) => void
 
-type ProjectTab = "general" | "agents" | "worktrees" | "review" | "prompts" | "scripts" | "tools" | "automations" | "workflows"
+type ProjectTab = "general" | "agents" | "tools" | "worktrees" | "prompts" | "review" | "pull-requests" | "workflows" | "automations" | "scripts"
 
-/** The project settings' sections, in their order down the side. `fields` are the ones saved with Save
- *  changes, so a section with unsaved changes is marked; the others save as they're changed. */
+/** One of the project settings' sections. `description` is a line under its heading, and `help` the rest, behind
+ *  the heading's ?. `fields` are the ones saved with Save changes, so a section with unsaved changes is marked; the
+ *  others save as they're changed. */
 interface TabDef {
   id: ProjectTab
   label: string
   icon: ReactNode
   description: string
+  help?: ReactNode
   fields: (keyof Project)[]
 }
 
-const PROJECT_TABS: readonly [TabDef, ...TabDef[]] = [
-  {
-    id: "general",
-    label: "General",
-    icon: <SlidersHorizontal size={14} />,
-    description: "The project's name, key and folder.",
-    fields: ["name", "key", "repo_path", "group_name"],
-  },
-  {
-    id: "agents",
-    label: "Agents",
-    icon: <Bot size={14} />,
-    description: "How the project's agents run. Each setting overrides the profile's or the host's.",
-    fields: ["model", "claude_config_ids", "github_account", "permission_mode"],
-  },
-  {
-    id: "worktrees",
-    label: "Worktrees",
-    icon: <GitBranch size={14} />,
-    description: "Where tasks do their work, the files each task's worktree gets from the repository, and the scripts that set up and tear it down.",
-    fields: ["base_branch", "use_worktrees", "worktrees_root", "copy_files", "link_folders", "setup_script", "teardown_script"],
-  },
-  {
-    id: "review",
-    label: "Review",
-    icon: <ScanSearch size={14} />,
-    description:
-      "Reviewer agents that check each task's changes before it's merged, a summary of the changes once they pass, whether it gets a pull request, where that's previewed, whether merges wait for your approval, and what happens once it's merged.",
-    fields: [
-      "auto_review",
-      "review_rounds",
-      "reviewers",
-      "auto_summary",
-      "summarizers",
-      "pull_requests",
-      "done_when_merged",
-      "merge_approval",
-      "require_pr_approval",
-      "watch_pull_requests",
-      "pr_preview_url",
-    ],
-  },
-  {
-    id: "prompts",
-    label: "Prompts",
-    icon: <MessageSquareText size={14} />,
-    description: "What the board tells agents as a task moves across the board. Agents can change these too, when you ask them.",
-    fields: ["start_prompt", "review_prompt", "merge_prompt"],
-  },
-  {
-    id: "scripts",
-    label: "Status scripts",
-    icon: <SquareTerminal size={14} />,
-    description:
-      "Run with bash when a task moves to another column, in its worktree (or the repository without one), e.g. to send a notification or clean up a finished build. Output shows in the task's thread.",
-    fields: ["status_script", "status_scripts"],
-  },
-  {
-    id: "tools",
-    label: "Skills and MCP",
-    icon: <Puzzle size={14} />,
-    description: "The skills and MCP servers the project's agents get. Saved as you change them.",
-    fields: [],
-  },
-  {
-    id: "automations",
-    label: "Automations",
-    icon: <Zap size={14} />,
-    description: "Create a task, or send a message to one, on a schedule or when a webhook is delivered (a new GitHub issue, say). Saved as you change them.",
-    fields: [],
-  },
-  {
-    id: "workflows",
-    label: "Workflows",
-    icon: <Workflow size={14} />,
-    description:
-      "A task's way across the board: the prompt its agent is sent in each column, and the steps once that work is done (checks, agents that review or report on the work in tabs of the task, pull requests, messages to the task's agent, and the next column). Saved as you change them.",
-    fields: [],
-  },
+const GENERAL: TabDef = {
+  id: "general",
+  label: "General",
+  icon: <SlidersHorizontal size={14} />,
+  description: "The project's name, key and folder.",
+  fields: ["name", "key", "repo_path", "group_name"],
+}
+
+/** The sections in their groups down the side: the project, its agents, a task's way to merged, and what runs by itself. */
+const TAB_GROUPS: ReadonlyArray<ReadonlyArray<TabDef>> = [
+  [GENERAL],
+  [
+    {
+      id: "agents",
+      label: "Agents",
+      icon: <Bot size={14} />,
+      description: "How the project's agents run. What's left unset follows the profile or the host.",
+      fields: ["model", "claude_config_ids", "github_account", "permission_mode"],
+    },
+    {
+      id: "tools",
+      label: "Skills and MCP",
+      icon: <Puzzle size={14} />,
+      description: "The skills and MCP servers the project's agents get. Saved as you change them.",
+      fields: [],
+    },
+  ],
+  [
+    {
+      id: "worktrees",
+      label: "Worktrees",
+      icon: <GitBranch size={14} />,
+      description: "Where tasks do their work, and how a task's worktree is set up and removed.",
+      fields: ["base_branch", "use_worktrees", "worktrees_root", "copy_files", "link_folders", "setup_script", "teardown_script"],
+    },
+    {
+      id: "prompts",
+      label: "Prompts",
+      icon: <MessageSquareText size={14} />,
+      description: "What the board tells agents as a task moves across it.",
+      help: "Each is the host's default until the project has its own. Agents can change them too, when you ask them.",
+      fields: ["start_prompt", "review_prompt", "merge_prompt"],
+    },
+    {
+      id: "review",
+      label: "Review",
+      icon: <ScanSearch size={14} />,
+      description: "Agents that review and summarise each task's changes.",
+      fields: ["auto_review", "review_rounds", "reviewers", "auto_summary", "summarizers"],
+    },
+    {
+      id: "pull-requests",
+      label: "Pull requests",
+      icon: <GitPullRequest size={14} />,
+      description: "Each task's pull request, and when it's merged.",
+      fields: ["pull_requests", "watch_pull_requests", "pr_preview_url", "require_pr_approval", "merge_approval", "done_when_merged"],
+    },
+  ],
+  [
+    {
+      id: "workflows",
+      label: "Workflows",
+      icon: <Workflow size={14} />,
+      description: "A task's way across the board, drawn as steps. Saved as you change them.",
+      help: (
+        <>
+          <span className="block">
+            Each <i>column</i> step is a column: a task entering it has its agent sent the column&apos;s prompt, and once that work is done the steps after it
+            run (checks, agents that review or report in tabs of the task, pull requests, messages to the task&apos;s agent, and the next column).
+          </span>
+          <span className="block">
+            <i>Board&apos;s default</i> is what the board does without workflows, as one to change. <GuideLink page="workflows">Workflows</GuideLink> in the
+            guide explains each step.
+          </span>
+        </>
+      ),
+      fields: [],
+    },
+    {
+      id: "automations",
+      label: "Automations",
+      icon: <Zap size={14} />,
+      description: "Create a task, or message one, on a schedule or from a webhook. Saved as you change them.",
+      fields: [],
+    },
+    {
+      id: "scripts",
+      label: "Status scripts",
+      icon: <SquareTerminal size={14} />,
+      description: "Run with bash when a task moves to another column.",
+      help: (
+        <>
+          <span className="block">
+            They run in the task&apos;s worktree (or the repository without one), e.g. to send a notification or clean up a finished build. Output shows in the
+            task&apos;s thread.
+          </span>
+          <span className="block">
+            Variables: <code>$IA_OLD_STATUS</code>, <code>$IA_NEW_STATUS</code> (e.g. in_review), <code>$IA_TASK_KEY</code>, <code>$IA_TASK_TITLE</code>,{" "}
+            <code>$IA_RESOLUTION</code>, <code>$IA_PR_URL</code> and the setup script&apos;s.
+          </span>
+        </>
+      ),
+      fields: ["status_script", "status_scripts"],
+    },
+  ],
 ]
+
+const PROJECT_TABS: ReadonlyArray<TabDef> = TAB_GROUPS.flat()
 
 /** Whether an edit to a field changes it: a blank text is no value, as saving makes it. */
 const sameValue = (a: unknown, b: unknown): boolean => toJson(a === "" ? null : (a ?? null)) === toJson(b === "" ? null : (b ?? null))
@@ -146,7 +179,7 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
   if (!project) return <div className="p-8 text-muted">Project not found.</div>
   const form: ProjectForm = Object.assign({}, project, edits)
   const tabs = PROJECT_TABS
-  const current = tabs.find((t) => t.id === tab) ?? PROJECT_TABS[0]
+  const current = tabs.find((t) => t.id === tab) ?? GENERAL
   const set: SetField = (k, v) => {
     setEdits((e) => ({ ...e, [k]: v }))
     setSaved(false)
@@ -200,29 +233,42 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
             aria-orientation="vertical"
             className="flex shrink-0 gap-0.5 overflow-x-auto md:sticky md:top-6 md:w-48 md:flex-col md:self-start"
           >
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                id={`project-tab-${t.id}`}
-                aria-selected={t === current}
-                aria-controls="project-tab-panel"
-                onClick={() => navigate({ name: "projectSettings", projectId, tab: t.id }, true)}
-                className={clsx(
-                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px]",
-                  t === current ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
-                )}
-              >
-                <span className={t === current ? "text-accent" : "text-faint"}>{t.icon}</span>
-                <span className="flex-1 whitespace-nowrap">{t.label}</span>
-                {unsaved.includes(t) && <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Unsaved changes" aria-label="Unsaved changes" />}
-              </button>
+            {TAB_GROUPS.map((group, i) => (
+              <Fragment key={group[0]?.id}>
+                {/* A line between the groups: across the side list, down the row of tabs when they're along the top. */}
+                {i > 0 && <span aria-hidden className="mx-1.5 w-px shrink-0 self-stretch bg-line md:mx-2.5 md:my-2 md:h-px md:w-auto" />}
+                {group.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    id={`project-tab-${t.id}`}
+                    aria-selected={t === current}
+                    aria-controls="project-tab-panel"
+                    onClick={() => navigate({ name: "projectSettings", projectId, tab: t.id }, true)}
+                    className={clsx(
+                      "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px]",
+                      t === current ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
+                    )}
+                  >
+                    <span className={t === current ? "text-accent" : "text-faint"}>{t.icon}</span>
+                    <span className="flex-1 whitespace-nowrap">{t.label}</span>
+                    {unsaved.includes(t) && <span className="h-1.5 w-1.5 rounded-full bg-accent" title="Unsaved changes" aria-label="Unsaved changes" />}
+                  </button>
+                ))}
+              </Fragment>
             ))}
           </nav>
           <div id="project-tab-panel" role="tabpanel" aria-labelledby={`project-tab-${current.id}`} className="min-w-0 flex-1 space-y-6">
             <div className="space-y-1">
-              <h2 className="text-[15px] font-semibold">{current.label}</h2>
+              <div className="flex items-center gap-1.5">
+                <h2 className="text-[15px] font-semibold">{current.label}</h2>
+                {current.help && (
+                  <Help key={current.id} label={current.label}>
+                    {current.help}
+                  </Help>
+                )}
+              </div>
               <p className="text-[12.5px] text-faint">{current.description}</p>
             </div>
 
@@ -245,6 +291,8 @@ export function ProjectSettings({ projectId, tab }: { projectId: string; tab?: s
             {current.id === "worktrees" && <WorktreesTab project={project} form={form} set={set} />}
 
             {current.id === "review" && <ReviewTab form={form} set={set} />}
+
+            {current.id === "pull-requests" && <PullRequestsTab form={form} set={set} />}
 
             {current.id === "prompts" && <PromptsTab project={project} form={form} set={set} />}
 

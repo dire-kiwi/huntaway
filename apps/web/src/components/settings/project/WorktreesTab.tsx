@@ -5,10 +5,11 @@ import { Exit } from "effect"
 import { Loader2 } from "lucide-react"
 import { useState } from "react"
 import { useMutation } from "../../../state/mutation"
-import { Button, Field, Input, Textarea, Toggle } from "../../ui"
+import { Button, Field, Help, Input, Textarea, Toggle } from "../../ui"
+import { Group } from "./parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
-/** The Worktrees tab: whether tasks get worktrees, where, what each gets from the repository, and its scripts. */
+/** The Worktrees tab: whether tasks get worktrees, where, what each new one gets from the repository, and how they're removed. */
 export function WorktreesTab({ project, form, set }: { project: Project; form: ProjectForm; set: SetField }) {
   return (
     <>
@@ -19,7 +20,7 @@ export function WorktreesTab({ project, form, set }: { project: Project; form: P
         )}
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Base branch" hint="New worktree branches start from here">
+        <Field label="Base branch" help="The branch new tasks' branches start from.">
           <Input
             className="font-mono text-[12px]"
             value={form.base_branch ?? ""}
@@ -31,65 +32,68 @@ export function WorktreesTab({ project, form, set }: { project: Project; form: P
           <Input className="font-mono text-[12px]" value={form.worktrees_root} onChange={(e) => set("worktrees_root", e.target.value)} />
         </Field>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <Group title="New worktrees">
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="Files to copy"
+            help={
+              <>
+                Git-ignored files copied from the repository into each new worktree, before the setup script. One .gitignore-style pattern per line:{" "}
+                <code>.env</code> at any depth, <code>/.env</code> only at the top. A <code>.worktreeinclude</code> in the repository is read too.
+              </>
+            }
+          >
+            <Textarea
+              rows={4}
+              className="font-mono text-[12px]"
+              placeholder={".env\n/config/*.local.json"}
+              value={form.copy_files}
+              onChange={(e) => set("copy_files", e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Folders to link"
+            help="Git-ignored folders linked into each new worktree instead of copied, one path per line. Changes made through a link change the original."
+          >
+            <Textarea
+              rows={4}
+              className="font-mono text-[12px]"
+              placeholder={"node_modules\nmodels/cache"}
+              value={form.link_folders}
+              onChange={(e) => set("link_folders", e.target.value)}
+            />
+          </Field>
+        </div>
         <Field
-          label="Files to copy"
-          hint={
+          label="Setup script"
+          help={
             <>
-              Git-ignored files copied from the repository folder into each new worktree, before the setup script. One .gitignore-style pattern per line:{" "}
-              <code>.env</code> at any depth, <code>/.env</code> only at the top. A <code>.worktreeinclude</code> in the repository is read too. Files the
-              worktree has already are left alone.
+              Runs with bash in each new worktree, e.g. to install dependencies. Variables: <code>$IA_REPO_PATH</code>, <code>$IA_WORKTREE_PATH</code>,{" "}
+              <code>$IA_BRANCH</code>, <code>$IA_TASK_ID</code>, <code>$IA_TASK_NUMBER</code>, <code>$IA_PROJECT_KEY</code>.
             </>
           }
         >
           <Textarea
-            rows={4}
+            rows={5}
             className="font-mono text-[12px]"
-            placeholder={".env\n/config/*.local.json"}
-            value={form.copy_files}
-            onChange={(e) => set("copy_files", e.target.value)}
+            placeholder="npm install"
+            value={form.setup_script}
+            onChange={(e) => set("setup_script", e.target.value)}
           />
         </Field>
-        <Field
-          label="Folders to link"
-          hint="Git-ignored folders of the repository linked into each new worktree instead of copied, one path per line. Changes made through a link change the original; removing the worktree only removes the link."
-        >
+      </Group>
+      <Group title="Removing worktrees">
+        <Field label="Teardown script" help="Runs in a worktree before it's removed, e.g. to stop dev servers or drop a database.">
           <Textarea
-            rows={4}
+            rows={3}
             className="font-mono text-[12px]"
-            placeholder={"node_modules\nmodels/cache"}
-            value={form.link_folders}
-            onChange={(e) => set("link_folders", e.target.value)}
+            placeholder="docker compose down"
+            value={form.teardown_script}
+            onChange={(e) => set("teardown_script", e.target.value)}
           />
         </Field>
-      </div>
-      <Field
-        label="Setup script"
-        hint={
-          <>
-            Runs with bash in each new worktree, e.g. installing dependencies. Available variables: $IA_REPO_PATH, $IA_WORKTREE_PATH, $IA_BRANCH, $IA_TASK_ID,
-            $IA_TASK_NUMBER, $IA_PROJECT_KEY.
-          </>
-        }
-      >
-        <Textarea
-          rows={5}
-          className="font-mono text-[12px]"
-          placeholder="npm install"
-          value={form.setup_script}
-          onChange={(e) => set("setup_script", e.target.value)}
-        />
-      </Field>
-      <Field label="Teardown script" hint="Runs in the worktree before it's removed (e.g. stopping dev servers, dropping a database).">
-        <Textarea
-          rows={3}
-          className="font-mono text-[12px]"
-          placeholder="docker compose down"
-          value={form.teardown_script}
-          onChange={(e) => set("teardown_script", e.target.value)}
-        />
-      </Field>
-      <RemoveMergedWorktrees project={project} />
+        <RemoveMergedWorktrees project={project} />
+      </Group>
     </>
   )
 }
@@ -107,19 +111,19 @@ function RemoveMergedWorktrees({ project }: { project: Project }) {
   const removed = results?.filter((r) => r.removed).length ?? 0
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <Button size="sm" disabled={busy} onClick={run}>
           {busy && <Loader2 size={12} className="animate-spin" />} Remove merged worktrees
         </Button>
+        <Help label="Remove merged worktrees">
+          Removes the worktrees of done tasks whose work is merged and that have nothing uncommitted or untracked. The tasks and their branches are kept, and a
+          worktree is set up again if its task&apos;s agent runs again.
+        </Help>
         {results && (
           <span className="text-[12px] text-muted">
             {results.length === 0 ? "No done tasks have worktrees." : `Removed ${removed}, kept ${results.length - removed}.`}
           </span>
         )}
-      </div>
-      <div className="text-[12px] text-faint">
-        Removes the worktrees of done tasks whose work is merged and that have no uncommitted or untracked files (ignored files, such as build output, go with
-        them). The tasks and branches are kept, and a task's worktree is set up again if its agent runs again.
       </div>
       {err && <div className="text-xs text-red-400">{err}</div>}
       {results && results.length > 0 && (

@@ -2,6 +2,7 @@ import { clsx } from "clsx"
 import { Menu, X } from "lucide-react"
 import type { ButtonHTMLAttributes, ComponentProps, InputHTMLAttributes, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react"
 import { useDrawer, useNarrow } from "../../narrow"
+import { Help } from "./Help"
 
 export function Button({
   variant = "secondary",
@@ -73,13 +74,31 @@ export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
   )
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: ReactNode | undefined; children: ReactNode }) {
+/** A labelled control. `hint` is a line under it; `help` is behind a ? beside the label instead (`Help`). */
+export function Field({ label, hint, help, children }: { label: string; hint?: ReactNode | undefined; help?: ReactNode | undefined; children: ReactNode }) {
+  if (!help)
+    return (
+      <label className="block space-y-1.5">
+        <span className="block text-xs font-medium text-muted">{label}</span>
+        {children}
+        {hint && <span className="block text-xs text-faint">{hint}</span>}
+      </label>
+    )
+  // The ? is beside the label's text but not in the `<label>` (which would name it, and press it on a click of the
+  // text): the label's parts are laid out in this grid (`contents`), with the ? in the first row's second column.
   return (
-    <label className="block space-y-1.5">
-      <span className="block text-xs font-medium text-muted">{label}</span>
-      {children}
-      {hint && <span className="block text-xs text-faint">{hint}</span>}
-    </label>
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
+      <Help label={label} className="col-start-2 row-start-1 justify-self-start">
+        {help}
+      </Help>
+      <label className="contents">
+        <span className="col-start-1 row-start-1 text-xs font-medium text-muted">{label}</span>
+        <div className="col-span-2 row-start-2 min-w-0 space-y-1.5">
+          {children}
+          {hint && <span className="block text-xs text-faint">{hint}</span>}
+        </div>
+      </label>
+    </div>
   )
 }
 
@@ -91,6 +110,16 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
       </span>
       {label}
     </button>
+  )
+}
+
+/** A switch with a ? after its label, for what it turns on. */
+export function ToggleField({ checked, onChange, label, help }: { checked: boolean; onChange: (v: boolean) => void; label: string; help: ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Toggle checked={checked} onChange={onChange} label={label} />
+      <Help label={label}>{help}</Help>
+    </div>
   )
 }
 

@@ -4,7 +4,8 @@ import { Agent, type DefaultPrompts, type SystemPromptOptions } from "@huntaway/
 import { clsx } from "clsx"
 import { Schema } from "effect"
 import { useState } from "react"
-import { resultError, resultValue, Textarea, Toggle } from "../../ui"
+import { Help, resultError, resultValue, Textarea, Toggle } from "../../ui"
+import { Group } from "./parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 /** A prompt a project can have its own of. */
@@ -23,21 +24,21 @@ export function PromptsTab({ project, form, set }: { project: Project; form: Pro
   )
 }
 
-const PROMPTS: { field: PromptField; label: string; hint: string }[] = [
+const PROMPTS: { field: PromptField; label: string; help: string }[] = [
   {
     field: "start_prompt",
-    label: "In progress: starting a task",
-    hint: "Sent to the task's agent when it starts, after the task's title and description (and before any message it's started with).",
+    label: "Start prompt",
+    help: "Sent to a task's agent when the task starts (In progress), after its title and description.",
   },
   {
     field: "review_prompt",
-    label: "In review: reviewing its changes",
-    hint: "What the reviewer looks for, when reviews are on. It comes after where the changes are; the board adds how to report the verdict.",
+    label: "Review prompt",
+    help: "What a reviewer looks for (In review), when reviews are on. The board adds where the changes are and how to report the verdict.",
   },
   {
     field: "merge_prompt",
-    label: "Ready for merge: merging it",
-    hint: "How the agent merges. It comes after which branch to merge into which; the board adds asking you if it can't merge, and moving the task to Done.",
+    label: "Merge prompt",
+    help: "How the agent merges (Ready for merge). The board adds which branch to merge into which, and moving the task to Done.",
   },
 ]
 
@@ -51,14 +52,15 @@ function ProjectPrompts({ project, onChange }: { project: ProjectForm; onChange:
     <div className="space-y-5">
       {err && <div className="text-xs text-red-400">Couldn&apos;t load the default prompts: {err}</div>}
       {defaults &&
-        PROMPTS.map(({ field, label, hint }) => {
+        PROMPTS.map(({ field, label, help }) => {
           const own = project[field]
           const custom = own != null
           return (
             <div key={field} className="space-y-1.5">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span className="text-xs font-medium text-muted">{label}</span>
-                <span className={clsx("rounded px-1.5 text-[11px]", custom ? "bg-accent/15 text-accent" : "bg-line text-faint")}>
+                <Help label={label}>{help}</Help>
+                <span className={clsx("ml-0.5 rounded px-1.5 text-[11px]", custom ? "bg-accent/15 text-accent" : "bg-line text-faint")}>
                   {custom ? "Custom" : "Default"}
                 </span>
                 {custom && (
@@ -70,11 +72,11 @@ function ProjectPrompts({ project, onChange }: { project: ProjectForm; onChange:
               <Textarea
                 rows={4}
                 className="text-[12.5px]"
+                aria-label={label}
                 value={own ?? defaults[field]}
                 // Back to the default text is the default, so later changes to it apply.
                 onChange={(e) => onChange(field, e.target.value === defaults[field] ? null : e.target.value)}
               />
-              <span className="block text-xs text-faint">{hint}</span>
             </div>
           )
         })}
@@ -110,14 +112,10 @@ function SystemPromptPreview({ project }: { project: Project }) {
   if (read !== undefined && read !== preview) setPreview(read)
   const shownRuntime = runtime ?? preview?.runtime ?? "claude"
   return (
-    <div className="space-y-2.5 border-t border-line pt-5">
-      <div className="space-y-1">
-        <span className="block text-xs font-medium text-muted">System prompt</span>
-        <span className="block text-xs text-faint">
-          What the board adds to the agent's own system prompt for a new thread in this project, with the options picked here and the project's saved settings.
-          It's for the project's next task number, with a placeholder title and id. It isn't editable.
-        </span>
-      </div>
+    <Group
+      title="System prompt"
+      help="What the board adds to the agent's own system prompt for a new thread in this project, with the options picked here and the project's saved settings. It's for the project's next task number, with a placeholder title and id, and isn't editable."
+    >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <select
           className={pickerClass}
@@ -180,6 +178,6 @@ function SystemPromptPreview({ project }: { project: Project }) {
           {preview?.text ?? "Loading…"}
         </pre>
       )}
-    </div>
+    </Group>
   )
 }

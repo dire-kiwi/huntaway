@@ -1,5 +1,6 @@
 // The shared building blocks: controls, dialogs and menus, the status and link badges cards and rows show, and times.
 export * from "./controls"
+export * from "./Help"
 export * from "./hooks"
 export * from "./Modal"
 export * from "./ContextMenu"

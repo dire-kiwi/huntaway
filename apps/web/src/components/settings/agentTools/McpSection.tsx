@@ -43,7 +43,7 @@ export function McpSection({
           <Plus size={13} /> Add server
         </Button>
       }
-      hint="This project's own MCP servers, on top of the board's. Their tools ask for approval like any other, unless you allow them. Global ones follow the profile's default unless you switch them here."
+      help="This project's own MCP servers, on top of the board's. Their tools ask for approval like any other, unless you allow them. Global ones follow the profile's default unless you switch them here."
     >
       {tools.mcp_servers.length > 0 && (
         <div className="divide-y divide-line/70 rounded-md border border-line/70">

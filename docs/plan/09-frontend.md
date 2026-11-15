@@ -461,6 +461,18 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   6.11: gh's accounts in `GithubAccountSelect` (`profiles.githubAccounts`, a stub that lists none), config archives, and
   connecting Asana (`AsanaAccount`). Terminal tools (6.1), Telemetry (6.9) and Desktop (6.10) are `Slot`s on the host
   page.
+- **The project settings laid out again (HE-32), where the old page was copied.** What a setting does is behind a ?
+  beside its label (`ui/Help.tsx`: shown while the pointer or the keyboard's focus is on it, kept open by a click, placed
+  in the window so the scrolling page doesn't cut it off), not in a line under the field, and says less. `Field` takes
+  it as `help` (the ? is beside the label's text but outside the `<label>`), a switch as `ToggleField`, a tab as its
+  `help`, the agent tools' `Section` as `help`. Only what a field's state says stays under it (what a profile's
+  reviewers are, what saving a changed repository path does). The tabs are in four groups down the side, with a line
+  between: General; Agents, Skills and MCP; Worktrees, Prompts, Review, Pull requests (a task's way to merged);
+  Workflows, Automations, Status scripts. Pull requests (`/settings/pull-requests`, `PullRequestsTab.tsx`) is the half
+  of the old Review tab that wasn't reviews or summaries: the pull request switch, watching and previews, then
+  _Merging_ (GitHub approval, merge approval, Done when merged). Within a tab, settings that belong together are under
+  a heading (`project/parts.tsx`'s `Group`). The project's own agent configs are a select like its other inherited
+  settings, and the prompts are named Start, Review and Merge prompt.
 - **HE-6's parts, after it merged.** Settings → Server is the old one over `admin.status` (polled, and on focus) with
   `host.info`'s machine and data folder: Rebuild & restart, Update to a deployed commit, the source checkout and the
   deployment and their new commits, and under `settings/server/` the release checks (`Releases`: Check now, the

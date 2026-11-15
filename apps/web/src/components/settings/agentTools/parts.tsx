@@ -6,7 +6,7 @@ import { useMemo, useState, type ReactNode } from "react"
 import type { McpServer, McpServerConfig, Skill } from "@huntaway/contracts"
 import type { CallError, Methods } from "@huntaway/client"
 import { exitError } from "../../../state/mutation"
-import { Button, Input, Toggle, timeAgo } from "../../ui"
+import { Button, Help, Input, Toggle, timeAgo } from "../../ui"
 
 // What the agent tools' settings share (huntaway's settings/AgentTools.tsx `Section`, `OtherList`, `describe`, and
 // McpSection's `serverSummary`), apart so the sections and the pages that hold them don't import each other.
@@ -28,14 +28,15 @@ export const serverSummary = (c: McpServerConfig) =>
 
 export const describe = (i: Skill | McpServer) => ("content" in i ? i.description : serverSummary(i.config))
 
-export function Section({ title, action, hint, children }: { title: string; action: ReactNode; hint: ReactNode; children: ReactNode }) {
+/** A card of skills or servers, with what it's for behind a ? beside its title. */
+export function Section({ title, action, help, children }: { title: string; action: ReactNode; help: ReactNode; children: ReactNode }) {
   return (
     <div className="space-y-3 rounded-xl border border-line p-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-1.5">
         <div className="text-[13px] font-medium">{title}</div>
-        {action}
+        <Help label={title}>{help}</Help>
+        <div className="ml-auto">{action}</div>
       </div>
-      <div className="text-[12px] text-faint">{hint}</div>
       {children}
     </div>
   )
