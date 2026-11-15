@@ -28,9 +28,12 @@ const hideDoneAtom = storedBare("ia.details.trackedHideDone", Schema.Literals(["
 
 const statusLabel = (t: Task) => (t.status === "done" ? (isMerged(t) ? "merged" : "closed") : (STATUSES.find((s) => s.id === t.status)?.label ?? t.status))
 
-/** Opens what an item follows: its task over the page, or its link. */
-const open = (item: TrackedItem, linked: Task | undefined) => {
-  if (linked) openTaskModal(linked.id)
+/**
+ * Opens what an item follows: its task over the page (HE-19), which the dialog looks up on the connected hosts when it
+ * isn't on the board (in an archived project, or on a host this board doesn't list), or else its link.
+ */
+const open = (item: TrackedItem) => {
+  if (item.task_id) openTaskModal(item.task_id)
   else if (item.url) window.open(item.url, "_blank", "noopener")
 }
 
@@ -53,17 +56,17 @@ export function TrackedWork({ task }: { task: Task }) {
   const shown = hideDone ? rows.filter((r) => r.status !== "done") : rows
   // What comes back arrives as the task's event.
   const remove = (ids: string[]) => void removeTracked(task.host_id, { id: task.id, ids })
-  const itemMenu = (e: MouseEvent, item: TrackedItem, linked: Task | undefined) => {
+  const itemMenu = (e: MouseEvent, item: TrackedItem) => {
     e.preventDefault()
-    const url = item.url
+    const { task_id: taskId, url } = item
     setMenu({
       x: e.clientX,
       y: e.clientY,
       title: item.title,
       items: [
-        ...(linked ? [{ label: `Open ${item.task_key ?? "the task"}`, onSelect: () => openTaskModal(linked.id) }] : []),
+        ...(taskId ? [{ label: `Open ${item.task_key ?? "the task"}`, onSelect: () => openTaskModal(taskId) }] : []),
         ...(url ? [{ label: "Open link", onSelect: () => void window.open(url, "_blank", "noopener") }] : []),
-        { label: "Remove from the list", divider: !!(linked || url), onSelect: () => remove([item.id]) },
+        { label: "Remove from the list", divider: !!(taskId || url), onSelect: () => remove([item.id]) },
       ],
     })
   }
@@ -98,17 +101,17 @@ export function TrackedWork({ task }: { task: Task }) {
           ]
             .filter(Boolean)
             .join("\n")
-          const clickable = !!(linked || item.url)
+          const clickable = !!(item.task_id || item.url)
           return (
             <button
               key={item.id}
               title={tip}
               data-status={status}
-              onClick={() => open(item, linked)}
-              onContextMenu={(e) => itemMenu(e, item, linked)}
+              onClick={() => open(item)}
+              onContextMenu={(e) => itemMenu(e, item)}
               className={clsx(
                 "flex w-full items-start gap-2 rounded-md px-1.5 py-1 text-left",
-                linked && modalTask === linked.id ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
+                item.task_id && modalTask === item.task_id ? "bg-raised text-fg" : "text-muted hover:bg-white/[0.04] hover:text-fg",
                 !clickable && "cursor-default",
                 status === "done" && "opacity-60",
               )}

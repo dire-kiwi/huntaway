@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
+import { DatabaseSync } from "node:sqlite"
+import { join } from "node:path"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, gate, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
+import { eventually, gate, makeProject, makeTask, routeRpc, seedBoard, startServer, withBrowser } from "./harness.mjs"
 
 // The profile's assistant (6.7; the old assistant.test.mjs): its page, its Memory tab, and its approval rules and action
 // log. The old checks called `/profiles/{id}/assistant…` and routed `POST /assistant/memory/file`; these call the
@@ -231,5 +233,49 @@ test("the rules dialog won't save two rules for one tool, and what it saves deci
     )
     // Put back for the other tests.
     await server.rpc("approvalRules.set", { profile_id: profile.id, update: { reset: true } })
+  })
+})
+
+/**
+ * Puts `items` on assistant `assistant`'s tracked list in the server's database, as `track_work` leaves them (the board
+ * has no RPC that adds to it, and no agent runs here). The page reads it with the board's snapshot when it opens.
+ */
+const seedTracked = (assistant, items) => {
+  const at = "2026-11-01T09:00:00.000Z"
+  const db = new DatabaseSync(join(server.dataDir, "board.db"))
+  try {
+    db.exec("PRAGMA busy_timeout = 5000")
+    const tracked = items.map((i) => ({ note: null, url: null, task_id: null, task_key: null, status: "working", created_at: at, updated_at: at, ...i }))
+    db.prepare("UPDATE tasks SET tracked = ? WHERE id = ?").run(JSON.stringify(tracked), assistant.id)
+  } finally {
+    db.close()
+  }
+}
+
+// HE-19: an item that follows a task opens the task in a dialog over the assistant's page, the board's tasks or not (one
+// in an archived project isn't on the board, and the dialog looks it up).
+test("the assistant's tracked work opens the tasks it follows in a dialog", async () => {
+  const assistant = await server.rpc("assistant.get", { profile_id: profile.id })
+  const shelf = await makeProject(server, profile, "Shelf", "SHE")
+  const shelved = await makeTask(server, shelf, { title: "A task on the shelf" })
+  await server.rpc("projects.update", { id: shelf.id, patch: { archived: true } })
+  const live = await makeProject(server, profile, "Live", "LIV")
+  const followed = await makeTask(server, live, { title: "A followed task" })
+  seedTracked(assistant, [
+    { id: "a", title: "Following the live one", task_id: followed.id, task_key: followed.key },
+    { id: "b", title: "Following the archived one", task_id: shelved.id, task_key: shelved.key },
+  ])
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    const dialog = page.getByRole("dialog", { name: "Task" })
+    for (const [item, task] of [
+      ["Following the live one", followed],
+      ["Following the archived one", shelved],
+    ]) {
+      await ui.run(["goto /assistant/Default", `wait ${item}`, `click ${item}`])
+      await dialog.getByText(task.title, { exact: true }).first().waitFor()
+      assert.equal(new URL(page.url()).searchParams.get("modal"), task.id)
+      assert.equal(new URL(page.url()).pathname, "/assistant/Default")
+    }
   })
 })
