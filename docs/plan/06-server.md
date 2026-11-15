@@ -1225,10 +1225,17 @@ Electron's Node can speak it. A Rust or worker-thread relay waits for a measurem
   host out. Copied at create, at start, and by `syncAgents`; written as the desktop user (`cua`) through `docker exec`.
 - **Viewing**: `view` asks spacesd for a viewer ticket (an hour; `ALLOW_ACTIVATION` with clipboard and `~` for files, or
   `VIEW_ONLY`) and makes a relay ticket (an hour, many requests: the viewer makes many) for `/api/spaces/v/<ticket>/`
-  (`http/spaces.ts`), which passes the rest of the path to spacesd: its page (with `frame-ancestors 'self'` in place
-  of `'none'`), its gRPC-Web calls and its media WebSocket, piped by `hosts/pipe.ts` with each side's pace passed on
-  and no compression. spacesd's viewer ticket travels in the URL's fragment and never reaches a server. The board frames
-  it sandboxed without `allow-same-origin`, so Cua's code can't read the board's storage.
+  (`http/spaces.ts`), which passes the rest of the path to spacesd: its page, its gRPC-Web calls and its media
+  WebSocket, piped by `hosts/pipe.ts` with each side's pace passed on and no compression. spacesd's viewer ticket travels
+  in the URL's fragment and never reaches a server.
+- **Every relayed answer is sandboxed** (`spacesd.ts`'s `responseHeaders`, found on review): whatever answers on the
+  Space's port is the Space's to choose (its user has passwordless sudo, so anything in it can replace spacesd), and it
+  is served from the board's origin, where the board's token is in `localStorage`. So the relay puts its own
+  `sandbox allow-scripts allow-forms allow-popups allow-downloads allow-pointer-lock` (no `allow-same-origin`) and
+  `frame-ancestors 'self'` into each answer's CSP, in place of any the Space gave, or as the CSP when it gave none, and
+  drops `Set-Cookie`, `Service-Worker-Allowed` and `Clear-Site-Data`. The page then has an opaque origin however it is
+  opened (the board's frame, which is sandboxed too, or a window of its own), and spacesd's viewer works there: it keeps
+  its ticket in the fragment and reaches the relay by relative URLs.
 
 ## Hook commands<a id="hook-commands"></a>
 

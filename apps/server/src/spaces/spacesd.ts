@@ -160,16 +160,36 @@ export const requestHeaders = (headers: Readonly<Record<string, string | undefin
   )
 
 /**
- * The headers of spacesd's answer as the relay gives them: without the hop-by-hop ones, a redirect kept under the
- * relay's path (`prefix`), and the viewer allowed in the board's own frames (spacesd's `frame-ancestors 'none'`).
+ * The sandbox every relayed answer is put in, whichever way it is opened (the board's frame, a window of its own): an
+ * opaque origin, without `allow-same-origin`. What answers on a Space's port is whatever runs in the Space (its user has
+ * sudo), so it must never run as the board's origin, where it could read the board's token.
  */
-export const responseHeaders = (headers: Readonly<Record<string, string | undefined>>, prefix: string): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(headers).flatMap(([k, v]) => {
-      const key = k.toLowerCase()
-      if (v === undefined || HOP_BY_HOP.has(key)) return []
-      if (key === "location" && v.startsWith("/") && !v.startsWith("//")) return [[key, `${prefix}${v}`]]
-      if (key === "content-security-policy") return [[key, v.replace(/frame-ancestors[^;]*/u, "frame-ancestors 'self'")]]
-      return [[key, v]]
-    }),
-  )
+export const SANDBOX = "sandbox allow-scripts allow-forms allow-popups allow-downloads allow-pointer-lock"
+
+/** Headers an answer from a Space may not set on the board's origin. */
+const DROPPED = new Set(["set-cookie", "set-cookie2", "service-worker-allowed", "clear-site-data"])
+
+/** spacesd's CSP (or none) with the relay's sandbox in place of any it gives, and only the board's own frames allowed. */
+export const sandboxedCsp = (csp: string | null): string => {
+  const kept = (csp ?? "")
+    .split(";")
+    .map((d) => d.trim())
+    .filter((d) => d !== "" && !/^(sandbox|frame-ancestors)(\s|$)/iu.test(d))
+  return [...kept, "frame-ancestors 'self'", SANDBOX].join("; ")
+}
+
+/**
+ * The headers of spacesd's answer as the relay gives them: without the hop-by-hop ones or any that would change the
+ * board's origin (cookies, service workers, clearing its storage), a redirect kept under the relay's path (`prefix`),
+ * and always sandboxed (`sandboxedCsp`).
+ */
+export const responseHeaders = (headers: Readonly<Record<string, string | undefined>>, prefix: string): Record<string, string> => {
+  const csp = Object.entries(headers).find(([k, v]) => k.toLowerCase() === "content-security-policy" && v !== undefined)?.[1] ?? null
+  const passed = Object.entries(headers).flatMap(([k, v]): ReadonlyArray<readonly [string, string]> => {
+    const key = k.toLowerCase()
+    if (v === undefined || HOP_BY_HOP.has(key) || DROPPED.has(key) || key === "content-security-policy") return []
+    if (key === "location" && v.startsWith("/") && !v.startsWith("//")) return [[key, `${prefix}${v}`]]
+    return [[key, v]]
+  })
+  return Object.fromEntries([...passed, ["content-security-policy", sandboxedCsp(csp)]])
+}

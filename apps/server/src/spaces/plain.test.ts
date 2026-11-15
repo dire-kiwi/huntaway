@@ -3,7 +3,7 @@ import { Option, Schema } from "effect"
 import { AgentConfigId, Timestamp } from "@huntaway/contracts"
 import { claudeCredentials, claudeFiles, claudeSettings, codexAuth } from "./agentFiles.ts"
 import { imageTag, LABEL, nameProblem, parseInspect, portOf, runArgs, tokenOf, toSpace } from "./containers.ts"
-import { parseViewerTicket, POLICY_ALLOW_ACTIVATION, requestHeaders, responseHeaders, viewerTicketRequest } from "./spacesd.ts"
+import { parseViewerTicket, POLICY_ALLOW_ACTIVATION, requestHeaders, responseHeaders, SANDBOX, viewerTicketRequest } from "./spacesd.ts"
 
 // Spaces' plain parts (HE-35): the containers' arguments and what's read of them, the one gRPC-Web message, the relay's
 // headers, and what of a config goes into a Space.
@@ -42,7 +42,7 @@ describe("spacesd's viewer ticket", () => {
 })
 
 describe("the relay's headers", () => {
-  it("lets the board frame the viewer and keeps redirects under the relay", () => {
+  it("lets the board frame the viewer, sandboxed, and keeps redirects under the relay", () => {
     const out = responseHeaders(
       {
         "content-security-policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'none'",
@@ -54,10 +54,28 @@ describe("the relay's headers", () => {
       "/api/spaces/v/t",
     )
     assert.deepStrictEqual(out, {
-      "content-security-policy": "default-src 'self'; frame-ancestors 'self'; base-uri 'none'",
+      "content-security-policy": `default-src 'self'; base-uri 'none'; frame-ancestors 'self'; ${SANDBOX}`,
       location: "/api/spaces/v/t/viewer/",
       "x-content-type-options": "nosniff",
     })
+  })
+
+  it("sandboxes every answer, whatever the Space serves, and lets none of them touch the board's origin", () => {
+    // Something else listening on the Space's port: no CSP, its own sandbox with allow-same-origin, cookies, a service
+    // worker for the whole origin, and the board's storage cleared.
+    const out = responseHeaders(
+      {
+        "Content-Type": "text/html",
+        "Set-Cookie": "ia.token=x; Path=/",
+        "service-worker-allowed": "/",
+        "clear-site-data": '"storage"',
+      },
+      "/api/spaces/v/t",
+    )
+    assert.deepStrictEqual(out, { "content-type": "text/html", "content-security-policy": `frame-ancestors 'self'; ${SANDBOX}` })
+    const own = responseHeaders({ "Content-Security-Policy": "sandbox allow-scripts allow-same-origin; script-src *" }, "/p")
+    assert.strictEqual(own["content-security-policy"], `script-src *; frame-ancestors 'self'; ${SANDBOX}`)
+    assert.notInclude(SANDBOX, "allow-same-origin")
   })
 
   it("passes on the viewer's own headers, not the board's cookies or the connection's", () => {
