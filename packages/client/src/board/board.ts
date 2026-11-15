@@ -2,7 +2,7 @@ import { Option } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
 import type { Host, HostId, HostSettings } from "@huntaway/contracts"
 import type { SessionView } from "../session/HostSession.ts"
-import { hostSessionAtom, hubHostListAtom, localHostIdAtom, tokenPendingAtom } from "../session/sessions.ts"
+import { hostSessionAtom, hubHostListAtom, hubHostsAtom, localHostIdAtom, tokenPendingAtom } from "../session/sessions.ts"
 import {
   sameJson,
   type HostAgentConfig,
@@ -27,7 +27,11 @@ export interface Board {
   readonly authed: boolean | null
   /** The page's own server's session is live. */
   readonly connected: boolean
-  /** The page's own host's first snapshot has arrived. */
+  /**
+   * The page's own host's first snapshot has arrived, the hub has listed the hosts it links, and every one of them it
+   * says is connected has sent its first board too (or its session gave up): what isn't on the board by then isn't
+   * anywhere. It stays true once it is, so a host reconnecting later doesn't blank the page.
+   */
   readonly loaded: boolean
   /** The page's own host first, then every host the hub links (offline ones too, with their last board). */
   readonly hosts: ReadonlyArray<Host>
@@ -144,10 +148,18 @@ function keepRecord<T>(prev: Readonly<Record<string, T>>, next: Readonly<Record<
 }
 
 /**
- * The hosts' boards merged (pure). `prev` is the board this replaces, whose unchanged lists and records are kept as they
- * were. Hosts come in order, the page's own first; a task id two hosts have is the first host's.
+ * A linked host whose first board is still on its way: the hub says it is connected and its session hasn't failed
+ * (offline, unauthorized, needs an update) yet.
  */
-export function mergeBoards(prev: Board, parts: ReadonlyArray<HostPart>, localHostId: HostId | null): Board {
+const awaitingBoard = (p: HostPart): boolean =>
+  p.board === undefined && p.entry?.connected === true && (p.session.state._tag === "connecting" || p.session.state._tag === "live")
+
+/**
+ * The hosts' boards merged (pure). `prev` is the board this replaces, whose unchanged lists and records are kept as they
+ * were. Hosts come in order, the page's own first; a task id two hosts have is the first host's. `listed` says the hub
+ * has said which hosts it links (so `parts` has them all).
+ */
+export function mergeBoards(prev: Board, parts: ReadonlyArray<HostPart>, localHostId: HostId | null, listed = true): Board {
   const local = parts.find((p) => p.host_id === localHostId)
   const boards = parts.flatMap((p) => (p.board ? [p.board] : []))
   const hosts = parts.map((p) => {
@@ -170,7 +182,7 @@ export function mergeBoards(prev: Board, parts: ReadonlyArray<HostPart>, localHo
   return {
     authed: state === "unauthorized" ? false : state === "live" || local?.board ? true : null,
     connected: state === "live",
-    loaded: !!local?.board,
+    loaded: prev.loaded || (!!local?.board && listed && !parts.some((p) => p !== local && awaitingBoard(p))),
     hosts: keepList(prev.hosts, hosts),
     localHostId,
     profiles: keepList(
@@ -229,10 +241,12 @@ export const serverBoardAtom: Atom.Atom<Board> = Atom.make((get) => {
       board: outdated ? undefined : Option.getOrUndefined(AsyncResult.value(get(hostBoardAtom(host)))),
     }
   })
+  const hubHosts = get(hubHostsAtom)
   return mergeBoards(
     Option.getOrElse(get.self<Board>(), () => emptyBoard),
     parts,
     local,
+    Option.isSome(AsyncResult.value(hubHosts)) || AsyncResult.isFailure(hubHosts),
   )
 }).pipe(Atom.keepAlive)
 
