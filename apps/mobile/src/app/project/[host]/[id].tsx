@@ -77,7 +77,7 @@ function NewTask({ host, projectId, onClose }: { readonly host: string; readonly
   const [start, setStart] = useState(true)
   const [{ busy, error }, run] = useAction()
   const create = () =>
-    void run(
+    run(
       mutate("tasks.create", host, {
         task: {
           project_id: ProjectId.make(projectId),
@@ -88,11 +88,12 @@ function NewTask({ host, projectId, onClose }: { readonly host: string; readonly
           ...(start ? { start: true } : {}),
         },
       }),
-    ).then((exit) => {
-      if (Exit.isFailure(exit)) return
-      onClose()
-      router.push({ pathname: "/task/[host]/[id]", params: { host, id: exit.value.id } })
-    })
+      (exit) => {
+        if (Exit.isFailure(exit)) return
+        onClose()
+        router.push({ pathname: "/task/[host]/[id]", params: { host, id: exit.value.id } })
+      },
+    )
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView

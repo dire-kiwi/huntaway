@@ -1,5 +1,5 @@
 import { Cause, Effect, Exit } from "effect"
-import { AtomRegistry } from "effect/reactivity"
+import { Atom, type AtomRegistry } from "effect/reactivity"
 import { useCallback, useState } from "react"
 import { registry } from "./registry"
 
@@ -7,9 +7,27 @@ import { registry } from "./registry"
 // run through the registry from a handler, its state (busy, why it failed) the component's own. What it changes comes
 // back as the board's events.
 
-/** Runs `effect` through the registry and gives its exit. The promise never rejects. */
-export const runExit = <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>): Promise<Exit.Exit<A, E>> =>
-  Effect.runPromise(Effect.exit(effect).pipe(Effect.provideService(AtomRegistry.AtomRegistry, registry)))
+/**
+ * Runs `effect` through the registry (as the web app's `runExit`: a one-off `Atom.fn`, mounted until it ends) and calls
+ * `done` with its exit. Callbacks rather than a promise: making one would need `Promise.withResolvers`, which Hermes
+ * may not have.
+ */
+export function runExit<A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>, done: (exit: Exit.Exit<A, E>) => void): void {
+  let unmount: (() => void) | undefined
+  const fn = Atom.fn<void>()(() =>
+    Effect.exit(effect).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          done(exit)
+          // Not from inside the run itself: unmounting interrupts it.
+          void Promise.resolve().then(() => unmount?.())
+        }),
+      ),
+    ),
+  )
+  unmount = registry.mount(fn)
+  registry.set(fn, undefined)
+}
 
 /** Whether a component's own action is running, and why it failed last (null once it runs again). */
 export interface ActionState {
@@ -17,18 +35,21 @@ export interface ActionState {
   readonly error: string | null
 }
 
+/** Runs an effect as the component's own action, then `onExit` with how it ended. */
+export type Run = <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>, onExit?: (exit: Exit.Exit<A, E>) => void) => void
+
 /**
- * A component's own action: `run(effect)` resolves with its exit and never rejects; `state` says whether any run is
- * going and why the last one failed. A run is the app's, not the component's: leaving the screen does not stop a send.
+ * A component's own action: `run(effect, onExit)`; `state` says whether any run is going and why the last one failed.
+ * A run is the app's, not the component's: leaving the screen does not stop a send.
  */
-export function useAction(): readonly [ActionState, <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>) => Promise<Exit.Exit<A, E>>] {
+export function useAction(): readonly [ActionState, Run] {
   const [own, setOwn] = useState<{ readonly running: number; readonly error: string | null }>({ running: 0, error: null })
-  const run = useCallback(<A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry>): Promise<Exit.Exit<A, E>> => {
+  const run = useCallback<Run>((effect, onExit) => {
     setOwn((st) => ({ running: st.running + 1, error: null }))
-    return runExit(effect).then((exit) => {
+    runExit(effect, (exit) => {
       const error = exitError(exit)
       setOwn((st) => ({ running: st.running - 1, error: error ?? st.error }))
-      return exit
+      onExit?.(exit)
     })
   }, [])
   return [{ busy: own.running > 0, error: own.error }, run]

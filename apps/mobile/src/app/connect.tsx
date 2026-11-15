@@ -21,7 +21,7 @@ export default function ConnectScreen() {
     if ("error" in parsed) return setError(parsed.error)
     setBusy(true)
     setError(null)
-    void connect({ url: parsed.url, token: parsed.token === "" ? token.trim() : parsed.token }).then((why) => {
+    connect({ url: parsed.url, token: parsed.token === "" ? token.trim() : parsed.token }, (why) => {
       setBusy(false)
       if (why !== null) return setError(why)
       if (router.canGoBack()) router.back()

@@ -38,11 +38,12 @@ const ANSWER_WITHIN = "10 seconds"
 
 /**
  * Connects to `link`: the board must answer `public.health` first; a link with no token takes the one a board started
- * with `--open-token` hands out. Kept in the keychain once it answers. On failure the app stays on the board it had,
- * and the promise resolves with why.
+ * with `--open-token` hands out. Kept in the keychain once it answers. On failure the app stays on the board it had.
+ * `done` gets why it failed, or null.
  */
-export function connect(link: BoardLink): Promise<string | null> {
+export function connect(link: BoardLink, done: (why: string | null) => void): void {
   const before = registry.get(connectionAtom)
+  const unanswered = `${link.url} didn't answer. Is the address right, and is the phone on its network?`
   use({ url: link.url, token: link.token })
   const check = Effect.gen(function* () {
     yield* callHub("public.health", undefined)
@@ -50,22 +51,21 @@ export function connect(link: BoardLink): Promise<string | null> {
     const open = yield* callHub("public.openToken", undefined).pipe(Effect.option)
     if (open._tag === "None") return yield* Effect.fail("This board needs its token: copy its link from Settings → Network access on the board.")
     return open.value.token
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: ANSWER_WITHIN,
-      orElse: () => Effect.fail(`${link.url} didn't answer. Is the address right, and is the phone on its network?`),
-    }),
-  )
-  return runExit(check).then((exit) => {
+  }).pipe(Effect.timeoutOrElse({ duration: ANSWER_WITHIN, orElse: () => Effect.fail(unanswered) }))
+  runExit(check, (exit) => {
     if (Exit.isFailure(exit)) {
       use(before._tag === "board" ? before.link : null)
+      // A socket that can't open at all may end the call without a failure of its own to tell.
       const why = Exit.findErrorOption(exit)
-      return why._tag === "Some" && typeof why.value === "string" ? why.value : (exitError(exit) ?? "Couldn't connect.")
+      const detail = exitError(exit)
+      return done(
+        why._tag === "Some" && typeof why.value === "string" ? why.value : detail === null || detail === "" ? unanswered : `${unanswered} (${detail})`,
+      )
     }
     const kept = { url: link.url, token: exit.value }
     use(kept)
     registry.set(connectionAtom, { _tag: "board", link: kept })
-    return Promise.all([save(URL_KEY, kept.url), save(TOKEN_KEY, kept.token)]).then(() => null)
+    void Promise.all([save(URL_KEY, kept.url), save(TOKEN_KEY, kept.token)]).then(() => done(null))
   })
 }
 

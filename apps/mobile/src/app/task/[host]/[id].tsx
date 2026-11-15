@@ -31,9 +31,9 @@ export default function TaskScreen() {
       </View>
     )
   const agent = agentState(task)
-  const stop = () => void run(mutate("tasks.stop", host, { id: TaskId.make(id) }))
+  const stop = () => run(mutate("tasks.stop", host, { id: TaskId.make(id) }))
   // An empty message starts its agent, and moves it to In progress.
-  const start = () => void run(mutate("tasks.send", host, { id: TaskId.make(id), text: "" }))
+  const start = () => run(mutate("tasks.send", host, { id: TaskId.make(id), text: "" }))
   return (
     <KeyboardAvoidingView style={s.screen} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}>
       <Stack.Screen

@@ -19,6 +19,7 @@
     "@huntaway/contracts": "workspace:*",
     "effect": "catalog:",
     "expo": "58.0.25",
+    "expo-build-properties": "58.0.12",
     "expo-constants": "58.0.16",
     "expo-linking": "58.0.17",
     "expo-router": "58.0.31",

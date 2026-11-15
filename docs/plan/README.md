@@ -30,7 +30,7 @@ specification of behaviour and not of structure.
   one-off importer then converts the old database and copies what it needs; the old folder is never written and is
   the way back. An imported board is the old host, so the importer runs for the switch or as a rehearsal that only
   a read-only server will open. Subprojects, Telegram and every compatibility layer are left behind. The phone app
-  is left for later.
+  was left for later, and is back since HE-20 (`apps/mobile`, on `packages/client`).
 - **Work**: about 65 tasks in ten milestones. After M4 a task can go from To do to Done on the new server, and this
   repository's own work can move onto it.
 
@@ -77,7 +77,7 @@ is built on it.
 ## Settled on review
 
 - Subprojects' rows are kept as ordinary tasks.
-- The phone app is left out for now.
+- The phone app is left out for now. (HE-20 has since built it on `packages/client`: [09-frontend.md](09-frontend.md#the-phone-app).)
 - The new server gets a data folder of its own.
 
 What is still open is in [14-dropped-and-open.md](14-dropped-and-open.md#open-questions).

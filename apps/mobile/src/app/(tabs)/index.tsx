@@ -35,7 +35,7 @@ function PromptCard({ item }: { readonly item: Extract<InboxItem, { type: "promp
   const { prompt, task, host_id } = item
   // A question or a plan has its own card in the thread.
   const answersHere = !QUESTION_TOOLS.includes(prompt.tool_name) && prompt.tool_name !== "ExitPlanMode"
-  const decide = (decision: "allow" | "deny") => void run(mutate("permissions.answer", host_id, { id: RequestId.make(prompt.id), answer: { decision } }))
+  const decide = (decision: "allow" | "deny") => run(mutate("permissions.answer", host_id, { id: RequestId.make(prompt.id), answer: { decision } }))
   return (
     <Pressable style={[s.card, { borderColor: colors.amber }]} onPress={() => openTask(host_id, prompt.task_id)}>
       <Text style={s.faint}>{task === undefined ? prompt.task_id : `${task.key} · ${task.title}`}</Text>

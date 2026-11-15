@@ -73,9 +73,9 @@ function PermissionBody({ host, request }: { readonly host: string; readonly req
         </Text>
       )}
       <View style={s.row}>
-        <Button title="Allow" kind="primary" small busy={busy} onPress={() => void run(answer(host, request.id, { decision: "allow" }))} />
-        <Button title="Always" small disabled={busy} onPress={() => void run(answer(host, request.id, { decision: "allow_always" }))} />
-        <Button title="Deny" kind="danger" small disabled={busy} onPress={() => void run(answer(host, request.id, { decision: "deny" }))} />
+        <Button title="Allow" kind="primary" small busy={busy} onPress={() => run(answer(host, request.id, { decision: "allow" }))} />
+        <Button title="Always" small disabled={busy} onPress={() => run(answer(host, request.id, { decision: "allow_always" }))} />
+        <Button title="Deny" kind="danger" small disabled={busy} onPress={() => run(answer(host, request.id, { decision: "deny" }))} />
       </View>
       {error !== null && <ErrorText>{error}</ErrorText>}
     </>
@@ -90,12 +90,12 @@ function PlanBody({ host, request }: { readonly host: string; readonly request: 
       <Markdown text={request.plan} />
       {feedback === null ? (
         <View style={s.wrap}>
-          <Button title="Approve" kind="primary" small busy={busy} onPress={() => void run(answer(host, request.id, { decision: "allow", mode: "default" }))} />
+          <Button title="Approve" kind="primary" small busy={busy} onPress={() => run(answer(host, request.id, { decision: "allow", mode: "default" }))} />
           <Button
             title="Approve, accept edits"
             small
             disabled={busy}
-            onPress={() => void run(answer(host, request.id, { decision: "allow", mode: "acceptEdits" }))}
+            onPress={() => run(answer(host, request.id, { decision: "allow", mode: "acceptEdits" }))}
           />
           <Button title="Keep planning" small disabled={busy} onPress={() => setFeedback("")} />
         </View>
@@ -115,7 +115,7 @@ function PlanBody({ host, request }: { readonly host: string; readonly request: 
               kind="primary"
               small
               busy={busy}
-              onPress={() => void run(answer(host, request.id, { decision: "deny", feedback: feedback.trim() }))}
+              onPress={() => run(answer(host, request.id, { decision: "deny", feedback: feedback.trim() }))}
             />
             <Button title="Cancel" small kind="ghost" onPress={() => setFeedback(null)} />
           </View>
@@ -148,8 +148,8 @@ function QuestionBody({
     if (board) {
       const text = typed[0]?.trim() ?? ""
       const choices = (list[0] ?? []).filter((c) => c !== text)
-      void run(mutate("threads.answerQuestion", host, { task_id: TaskId.make(taskId), request_id: request.id, choices, text: text === "" ? null : text }))
-    } else void run(answer(host, request.id, { decision: "allow", answers: list.map((a) => [...a]) }))
+      run(mutate("threads.answerQuestion", host, { task_id: TaskId.make(taskId), request_id: request.id, choices, text: text === "" ? null : text }))
+    } else run(answer(host, request.id, { decision: "allow", answers: list.map((a) => [...a]) }))
   }
   const single = questions.length === 1 && questions[0]?.multi_select !== true && (questions[0]?.options?.length ?? 0) > 0
   const pick = (qi: number, label: string, multi: boolean): void => {
@@ -192,13 +192,7 @@ function QuestionBody({
       <View style={s.row}>
         <Button title="Send" kind="primary" small busy={busy} disabled={answers.some((a) => a.length === 0)} onPress={() => send(answers)} />
         {!board && (
-          <Button
-            title="Dismiss"
-            small
-            kind="ghost"
-            disabled={busy}
-            onPress={() => void run(answer(host, request.id, { decision: "deny", message: DISMISSED }))}
-          />
+          <Button title="Dismiss" small kind="ghost" disabled={busy} onPress={() => run(answer(host, request.id, { decision: "deny", message: DISMISSED }))} />
         )}
       </View>
       {error !== null && <ErrorText>{error}</ErrorText>}
