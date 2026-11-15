@@ -30,6 +30,7 @@ import { useNarrow } from "../../narrow"
 import { openingTab } from "./openingTab"
 import { useSubagentView } from "./thread/subagentView"
 import { AgentIcon } from "../ui/AgentIcon"
+import { AgentsPill } from "../layout/AgentsPill"
 import { ContextPill } from "./Context"
 import { TaskTypeBadge } from "./documentInfo"
 import { ReminderButton, StarButton, useCanMark } from "./Reminders"
@@ -51,9 +52,7 @@ import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowT
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
 // left out here, each with a note: the browser pane (M6; the desktop view, 6.10, has a fixed half of the width until the
-// browser's splitter comes),
-// and the Agents pill (layout/AgentsPill, with the layout's later pieces). Subprojects are a
-// legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
+// browser's splitter comes). Subprojects are a legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
 // are 6.7's.
 
 /** The column beside the main area, where there's room: the key items, or beside the Details tab the rest of the details. */
@@ -353,6 +352,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const controls = (
     <>
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
+      <AgentsPill task={task} onReveal={() => setTab("thread")} />
       <ContextPill task={task} />
       <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
         {tabs.map((t) => (

@@ -248,8 +248,8 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   memory, brief, routines and action log, and finding a routine's thread on other hosts (M6); Asana links (6.11);
   approval rules in Details (3.6, 6.12); worktree set-up and tear-down (4.1); "Stacked on" and "Landing after" in
   Details (4.8); fix-checks buttons (4.5, 4.6); the context breakdown's lists and "carry on" (2.8); Codex config models
-  (M5); a review thread's own view (M4). The Agents pill (`layout/AgentsPill`) is still HE-3's cut. Subprojects are a
-  legacy branch, deleted.
+  (M5); a review thread's own view (M4); the Agents pill (`layout/AgentsPill`, HE-40), in the task view's and a review
+  thread's header. Subprojects are a legacy branch, deleted.
 - **Smaller changes the lint asked for**: the thread notes its top row as it is scrolled and after each change (not
   while it draws) to keep the place when older items come in; its source of rows is filled by an effect; tool groups'
   stable keys are kept per thread for the page's life. A host's tagged errors have no message, so `errorText` reads

@@ -4,9 +4,6 @@
 // `page.route`.
 //
 // Dropped from the old check:
-// - "a subagent from before the window opens from the Agents list…" and "a failed page while loading back to a subagent
-//   can be tried again from its view": the Agents list (layout/AgentsPill) isn't on this server yet, and a subagent whose
-//   call is before the window has no row to open it from.
 // - "items added and changed while the window loads are in the thread once", "a permission answered while its page
 //   loads shows the answer", "a closed thread's catch-up after a reconnect…", "a thread opened again has what came while
 //   it was closed, and a resync catches it up…", "an open thread catches up from its seq when the events socket
@@ -108,6 +105,8 @@ test("a long thread opens at its latest window and loads older pages as it's scr
     )
     assert.equal(await page.getByText("Step 200 of the job.", { exact: true }).count(), 0)
     assert.equal(await page.getByText("Step 201 of the job.", { exact: true }).count(), 1)
+    // The subagent started before the window is in the Agents list (stopped with the run).
+    assert.match(await page.getByTitle("Subagents in this thread").innerText(), /1 done/)
 
     // At the top: the page before comes in above, and what was on screen stays put.
     await threadScroller(page).evaluate((el) => (el.scrollTop = 0))
@@ -132,6 +131,28 @@ test("a long thread opens at its latest window and loads older pages as it's scr
   })
 })
 
+test("a subagent from before the window opens from the Agents list, and the thread comes back where it was", async () => {
+  const task = await newTask("Long job, subagent")
+  seedThread(server, task, longThread())
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await noAnchoring(page)
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Step 350 of the job.", "wait Load earlier messages"])
+    await threadScroller(page).evaluate((el) => (el.scrollTop = el.scrollHeight - el.clientHeight - 1500))
+    const shown = await topItem(page)
+
+    await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('Watch the logs')", "wait Show in thread"])
+    // It loads back to the subagent's start, for what it did.
+    await ui.run(["wait Watcher reading the logs.", "wait Watch the logs as it goes.", "gone Load earlier messages", "gone Step 350 of the job."])
+
+    await ui.run(["press Escape", "wait Step 350 of the job.", "gone Show in thread"])
+    await eventually(async () => {
+      const back = await itemAt(page, shown.text)
+      assert.ok(Math.abs(back.y - shown.y) <= 2, `${JSON.stringify(shown)} → ${JSON.stringify(back)}`)
+    })
+  })
+})
+
 test("a failed page can be tried again", async () => {
   const task = await newTask("Long job, offline")
   seedThread(server, task, longThread())
@@ -144,6 +165,27 @@ test("a failed page can be tried again", async () => {
     await ui.run(["wait Couldn't load earlier messages. Try again"])
     failing = false
     await ui.run(["click Couldn't load earlier messages. Try again", "wait Step 200 of the job."])
+  })
+})
+
+// IA-169 review: the subagent's view hid the row with the retry, and nothing loaded it again.
+test("a failed page while loading back to a subagent can be tried again from its view", async () => {
+  const task = await newTask("Long job, subagent offline")
+  seedThread(server, task, longThread())
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    let failing = true
+    await routeRpc(page, (r) => (r.tag === "threads.page" && failing ? failure({ _tag: "NotFound", what: "task", id: task.id }) : undefined))
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Step 350 of the job."])
+    await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('Watch the logs')", "wait Show in thread"])
+    await ui.run(["wait Couldn't load earlier messages. Try again", "gone Watcher reading the logs."])
+    failing = false
+    await ui.run([
+      "click Couldn't load earlier messages. Try again",
+      "wait Watcher reading the logs.",
+      "gone Load earlier messages",
+      "gone Couldn't load earlier messages",
+    ])
   })
 })
 

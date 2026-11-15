@@ -1,6 +1,5 @@
 // A review thread's own view (plan task 4.6; the old view/ReviewThreadView.tsx): a reviewer's, summarizer's or workflow
-// step's conversation, beside the review or summary it's working on. Left out until the layout's later pieces: the
-// Agents pill (layout/AgentsPill).
+// step's conversation, beside the review or summary it's working on.
 import { isSummaryThread, isWorkflowThread, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
 import { ChevronLeft, ChevronRight, GitBranch, Square, X } from "lucide-react"
@@ -9,6 +8,7 @@ import { useBoard } from "../../../state/board"
 import { navigate, openTask } from "../../../state/route"
 import { exitError, useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
+import { AgentsPill } from "../../layout/AgentsPill"
 import { ContextPill } from "../Context"
 import { ChangeSummaryView, reviewParts, ReviewSummary } from "../Review"
 import { Thread } from "../Thread"
@@ -76,6 +76,7 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
           )}
         </h1>
         <div className="no-drag ml-auto flex items-center gap-2">
+          <AgentsPill task={thread} />
           <ContextPill task={thread} />
           {thread.running && (
             <Button size="sm" onClick={stop}>

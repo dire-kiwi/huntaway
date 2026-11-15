@@ -8,17 +8,13 @@
 // fake claude (`--fake-claude`), whose "fake-skill-fork" prompt marker prints that same shape (packages/testing/bin/
 // fake-claude.ts), so the server's own translator makes the thread; the translator's handling of it is also the
 // recorded `skill-fork` session (packages/testing/fixtures/threads/claude). Changed or dropped:
-// - The subagent is opened from its row ("Open subagent thread"), where the old checks picked it from the Agents list
-//   ("Subagents in this thread", with its "1 running"/"1 done" counts): that list isn't on this server
-//   (subagentThread.test.mjs and threadPages.test.mjs dropped it too). So the older review's subagent is reached by
-//   loading the earlier part of the thread.
 // - The old first case was a review thread of another task (written into the database); the kind of thread doesn't
 //   change how a forked skill is drawn, so it is a task of its own here.
 // - The main agent's last words are the fake's reply, and the thread's turn end is waited for in place of "Main reviewer
 //   summary.".
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
-import { eventually, makeTask, seedBoard, seedThread, startServer, threadScroller, withBrowser } from "./harness.mjs"
+import { eventually, makeTask, seedBoard, seedThread, startServer, withBrowser } from "./harness.mjs"
 
 let server, board
 beforeAll(async () => {
@@ -39,14 +35,16 @@ test("a streamed forked Skill becomes a running subagent, then completes with it
     await ui.run([`goto /p/${board.project.id}?task=${task.id}`, `wait ${row}`, "wait Claude wants to use", "wait from /code-review"])
     // Its child's Bash call waits for an answer: the subagent runs, and its own view shows what it waits on.
     assert.match(await page.locator(row).first().innerText(), /needs approval|running/)
+    assert.match(await page.getByTitle("Subagents in this thread").innerText(), /1 running/)
     await ui.run([openRow, "wait Show in thread", "wait git diff main...HEAD"])
     await ui.run(["press Escape", "gone Show in thread", "click Allow"])
     await ui.run(["wait Turn complete", openRow, "wait No runtime bugs found.", "click git diff main...HEAD", "wait The reviewed diff."])
+    assert.match(await page.getByTitle("Subagents in this thread").innerText(), /1 done/)
     await ui.run(["press Escape", "gone Show in thread", "wait Turn complete"])
   })
 })
 
-test("an older forked Skill, before the thread's window, opens with its transcript and report", async () => {
+test("an older forked Skill, before the thread's window, opens from Agents with its transcript and report", async () => {
   const task = await makeTask(server, board.project, { title: "Review of work" })
   await server.rpc("tasks.send", { id: task.id, text: PROMPT })
   // Its child's Bash call allowed, and its turn over.
@@ -67,10 +65,9 @@ test("an older forked Skill, before the thread's window, opens with its transcri
     const { page } = ui
     await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Review follow-up 320.", "wait Load earlier messages"])
     assert.equal(await page.getByText("No runtime bugs found.").count(), 0, "the Skill's launch is before the window")
-    // Scrolled to the top, the page before the window loads. (Clicking "Load earlier messages" raced that: scrolling the
-    // button into view starts the load, which takes the button away before the click lands.)
-    await threadScroller(page).evaluate((el) => (el.scrollTop = 0))
-    await ui.run([`wait ${row}`, openRow, "wait Show in thread"])
+    // The window knows the subagent started before it: picking it loads back to its start.
+    assert.match(await page.getByTitle("Subagents in this thread").innerText(), /1 done/)
+    await ui.run(["click Subagents in this thread", "click css=.shadow-xl button:has-text('/code-review')", "wait Show in thread"])
     await ui.run(["wait git diff main...HEAD", "wait Permission for Bash", "wait No runtime bugs found."])
     await ui.run(["click git diff main...HEAD", "wait The reviewed diff.", "gone Review follow-up 320."])
     await ui.run(["click Show in thread", "gone Show in thread", `wait ${row}`])

@@ -1,12 +1,8 @@
 // A subagent's own thread view (IA-127, IA-131), from the old subagentThread check. The thread is put into the server's
-// database before the page opens it (threads.mjs: `seedThread`). The Agents list (layout/AgentsPill) isn't on this
-// server yet, so a subagent is opened from its row ("Open subagent thread"), where the old checks picked it from the list.
+// database before the page opens it (threads.mjs: `seedThread`). A subagent opens from the Agents list
+// (layout/AgentsPill, "Subagents in this thread") or from its row ("Open subagent thread").
 //
 // Dropped from the old check:
-// - Opening a subagent from the Agents list while another tab shows (the list switching to the thread), and Escape with
-//   the Agents list open: the list isn't here yet.
-// - "Show in thread" reaching a subagent hidden by a group's limit on tool calls: with no Agents list, a hidden subagent
-//   has no way in but its group, which shows it.
 // - "Codex children show their metadata, nested transcript and permission source": Codex's translator comes with M5.
 import assert from "node:assert/strict"
 import { afterAll, beforeAll, test } from "vite-plus/test"
@@ -112,6 +108,9 @@ async function threadTask(title) {
   return task
 }
 
+/** Opens the subagent `name`'s own thread from the Agents list. */
+const fromList = (name) => ["click Subagents in this thread", `click css=.shadow-xl button:has-text('${name}')`]
+
 /** Opens the subagent `name`'s own thread from its row. */
 const openRow = (name) => `click css=[data-tool-row]:has-text('${name}') [aria-label='Open subagent thread'] >> visible=true`
 
@@ -128,12 +127,13 @@ async function inView(page, text) {
   }, 3000)
 }
 
-// IA-127: picking a subagent only scrolled to its row in the main thread.
+// IA-127: picking a subagent from the Agents list only scrolled to its row in the main thread.
 test("a subagent opens in its own thread view, and goes back to the main thread", async () => {
   const task = await threadTask("Subagents")
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", openRow("Explore config")])
+    // From another tab: the list switches to the thread.
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", "click Details", ...fromList("Explore config")])
     await ui.run(["wait Show in thread", "wait Find where the configuration is loaded.", "wait Subagent searching now.", "wait Subagent report."])
     // Its permission prompt is in its thread, without the link to itself; the main thread isn't shown.
     await ui.run(["wait Permission for Bash", "gone from Explore config", "gone Main agent's summary."])
@@ -155,10 +155,14 @@ test("a subagent opens in its own thread view, and goes back to the main thread"
 test("escape with a menu open in a subagent's thread only closes the menu", async () => {
   const task = await threadTask("Subagent menus")
   await withBrowser(server, {}, async (ui) => {
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", openRow("Explore config")])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", ...fromList("Explore config")])
     await ui.run(["wait Subagent searching now.", "gone Main agent's summary."])
 
-    // The composer's permission mode menu.
+    // The Agents list.
+    await ui.run(["click Subagents in this thread", "wait css=.shadow-xl button:has-text('Look for tests')", "press Escape"])
+    await ui.run(["gone css=.shadow-xl button:has-text('Look for tests')", "wait Subagent searching now.", "wait Show in thread", "gone Main agent's summary."])
+
+    // The composer's permission mode menu too.
     await ui.run(["click css=[title^='Permission mode']", "wait css=.bottom-full.shadow-xl", "press Escape"])
     await ui.run(["gone css=.bottom-full.shadow-xl", "wait Subagent searching now.", "wait Show in thread"])
 
@@ -201,16 +205,46 @@ test("a reopened task shows its main thread, not the subagent last viewed", asyn
 })
 
 // IA-127 review: "Show in thread" left a row collapsed and out of view when it only mounted as the reveal expanded what
-// was around it: a nested subagent inside a collapsed one.
-test("show in thread reaches a nested subagent", async () => {
+// was around it: a nested subagent inside a collapsed one, or one hidden by a group's limit on tool calls.
+test("show in thread reaches a nested subagent and one in a group's hidden calls", async () => {
   const task = await threadTask("Hidden subagents")
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await ui.run(["size 1900x500", `goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary."])
     await ui.run(["gone Subagent searching now.", "gone Hidden subagent's answer.", "wait Show 1 earlier tool call"])
 
-    await ui.run([openRow("Explore config"), "wait Subagent searching now.", openRow("Check env"), "wait Nested subagent's answer.", "click Show in thread"])
+    await ui.run([...fromList("Check env"), "wait Nested subagent's answer.", "click Show in thread"])
     await ui.run(["gone Show in thread", "wait Subagent searching now."])
     await inView(page, "Nested subagent's answer.")
+
+    await ui.run([...fromList("Look for tests"), "wait Show in thread", "click Show in thread"])
+    await ui.run(["gone Show in thread", "gone Show 1 earlier tool call"])
+    await inView(page, "Hidden subagent's answer.")
+  })
+})
+
+// HE-40: in the narrow layout the Agents list is a sheet along the window's bottom; the header's row of controls fades
+// its end out with a mask, which hid the sheet when it was drawn inside that row.
+test("the Agents list shows in the narrow layout, and opens a subagent", async () => {
+  const task = await threadTask("Subagents narrow")
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    await ui.run([
+      "size 600x900",
+      `goto /p/${board.project.id}?task=${task.id}`,
+      "click Thread",
+      "wait Main agent's summary.",
+      "click Subagents in this thread",
+    ])
+    const item = page.locator(".shadow-xl button:has-text('Explore config')")
+    await item.waitFor()
+    // It's the element on top where it's drawn, not under the thread's composer.
+    const onTop = await item.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+    })
+    assert.ok(onTop, "the list is hidden under something")
+    await item.click()
+    await ui.run(["wait Show in thread", "wait Subagent searching now.", "gone css=.shadow-xl button:has-text('Explore config')"])
   })
 })
