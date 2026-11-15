@@ -1,7 +1,7 @@
 // The fake host for the component checks (docs/plan/09-frontend.md, Tests): `fakeHost(board)` is an in-memory host
 // that the page's session connects to in place of the websocket (mount.tsx installs its transport). It answers
-// `board.watch` from the board (builders.ts) and the events a check emits, the task basics as the server does, and
-// what a check adds with `on`. It keeps every call; one it has no handler for fails the check (mount.tsx's cleanUp)
+// `board.watch` from the board (builders.ts) and the events a check emits, `hub.hosts.watch` with itself alone, the
+// task basics as the server does, and what a check adds with `on`. It keeps every call; one it has no handler for fails the check (mount.tsx's cleanUp)
 // unless it is `allow`ed: the fake says what it does not know rather than answer something made up.
 import { Effect, Layer, Predicate, Queue, Stream } from "effect"
 import {
@@ -110,7 +110,11 @@ export function fakeHost(b: Board): FakeHost {
     return Effect.die(new Error(`the fake host has no handler for ${method}`))
   }
 
-  const flat = (method: string, payload: unknown): unknown => (method === "board.watch" ? watch : answer(method, payload))
+  // The hub's directory, as the server's is with no host linked: this host alone, and no change after.
+  const hubHosts = Stream.concat(Stream.succeed([b.host]), Stream.never)
+
+  const flat = (method: string, payload: unknown): unknown =>
+    method === "board.watch" ? watch : method === "hub.hosts.watch" ? hubHosts : answer(method, payload)
   const layer = Layer.mergeAll(Layer.effect(HostClient, isFlat(flat) ? Effect.succeed(flat) : Effect.die(new Error("not a client"))), HostSession.layer(true))
 
   const host: FakeHost = {

@@ -11,7 +11,7 @@ import {
   withPatch,
   withPendingMarks,
 } from "../src/index.ts"
-import { info, project, snapshot, task } from "./fixtures.ts"
+import { hostEntry, info, profile, project, snapshot, task } from "./fixtures.ts"
 
 const A = HostId.make("host-a")
 const B = HostId.make("host-b")
@@ -78,6 +78,25 @@ describe("mergeBoards", () => {
     const refused = with_({ state: { _tag: "unauthorized" }, info: null }, undefined)
     expect([refused.authed, refused.connected]).toEqual([false, false])
     expect(mergeBoards(emptyBoard, [], null).authed).toBeNull()
+  })
+
+  it("is loaded once the hub has listed its hosts and each connected one has sent its board, and stays loaded", () => {
+    const own: HostPart = { host_id: A, session: live("host-a"), board: boardOf(A, snapshot({ profiles: [] })) }
+    const linked = (p: Partial<HostPart>): HostPart => ({ host_id: B, session: live("host-b"), board: undefined, entry: hostEntry("host-b"), ...p })
+    // A hub that runs no agents: its profiles are a linked host's, so none shows until that host's board has come.
+    expect(mergeBoards(emptyBoard, [own], A, false).loaded).toBe(false)
+    const waiting = mergeBoards(emptyBoard, [own, linked({ session: { state: { _tag: "connecting" }, info: null } })], A)
+    expect([waiting.loaded, waiting.profiles.length]).toEqual([false, 0])
+    expect(mergeBoards(emptyBoard, [own, linked({})], A).loaded).toBe(false)
+    const both = mergeBoards(waiting, [own, linked({ board: boardOf(B, snapshot({ profiles: [profile()] })) })], A)
+    expect([both.loaded, both.profiles.length]).toEqual([true, 1])
+    // Once loaded, a linked host reconnecting doesn't take it back.
+    expect(mergeBoards(both, [own, linked({ session: { state: { _tag: "connecting" }, info: null } })], A).loaded).toBe(true)
+    // A linked host that is away, that failed, or that needs an update isn't waited for.
+    const offline = { state: { _tag: "offline", since: 0, error: "dropped" }, info: null } as const
+    expect(mergeBoards(emptyBoard, [own, linked({ entry: hostEntry("host-b", { connected: false }) })], A).loaded).toBe(true)
+    expect(mergeBoards(emptyBoard, [own, linked({ session: offline })], A).loaded).toBe(true)
+    expect(mergeBoards(emptyBoard, [own, linked({ session: { state: { _tag: "needs_update", protocol: 0 }, info: null } })], A).loaded).toBe(true)
   })
 
   it("keeps the lists and records that did not change, so selectors of them see no change", () => {

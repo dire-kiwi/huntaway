@@ -117,6 +117,11 @@ export interface Board {
 }
 ```
 
+`loaded` waits for more than the page's own host's snapshot: the hub's host list too, and the first board of every
+linked host the hub says is connected (one whose session went offline, was refused or needs an update isn't waited
+for). A hub that runs no agents has its profiles on a linked host, and without this the onboarding screen showed on
+every reload until that host's board came. Once true it stays true.
+
 It has the old store's field names on purpose, so that 241 selector call sites change by one word. Task ids are
 still unique per host only; `taskAtom({ host_id, id })` is the exact lookup, and new code uses it.
 
