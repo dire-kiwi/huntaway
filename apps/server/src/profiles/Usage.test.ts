@@ -188,6 +188,39 @@ describe("usage limits", () => {
     assert.deepStrictEqual(poolLimits([]), [])
   })
 
+  it("a pool's limits are the accounts' that can still serve, until none can", () => {
+    // Its weekly limit is used up (and resets first), though it has Fable's left: it's out, whatever Fable says.
+    const out = acct([
+      lim("session", 20.0, "2026-11-12T03:00:00Z"),
+      lim("weekly", 100.0, "2026-11-13T00:00:00Z"),
+      lim("weekly:fable", 40.0, "2026-11-13T00:00:00Z"),
+    ])
+    const room = acct([lim("session", 10.0, "2026-11-12T04:00:00Z"), lim("weekly", 50.0, "2026-11-15T00:00:00Z"), lim("weekly:fable", 0, null)])
+    assert.deepStrictEqual(poolLimits([out, room]), [
+      lim("session", 10.0, "2026-11-12T04:00:00Z"),
+      lim("weekly", 50.0, "2026-11-15T00:00:00Z"),
+      lim("weekly:fable", 0, null),
+    ])
+    // Fable's limit used up stops only Fable: its session and weekly limits still count.
+    const noFable = acct([
+      lim("session", 20.0, "2026-11-12T03:00:00Z"),
+      lim("weekly", 30.0, "2026-11-13T00:00:00Z"),
+      lim("weekly:fable", 100.0, "2026-11-13T00:00:00Z"),
+    ])
+    assert.deepStrictEqual(poolLimits([noFable, room]), [
+      lim("session", 20.0, "2026-11-12T03:00:00Z"),
+      lim("weekly", 30.0, "2026-11-13T00:00:00Z"),
+      lim("weekly:fable", 0, null),
+    ])
+    // When every account is out, the one back first: its session resets before the other's weekly limit.
+    const soon = acct([lim("session", 100.0, "2026-11-12T05:00:00Z"), lim("weekly", 70.0, "2026-11-14T00:00:00Z")])
+    assert.deepStrictEqual(poolLimits([out, soon]), [
+      lim("session", 100.0, "2026-11-12T05:00:00Z"),
+      lim("weekly", 70.0, "2026-11-14T00:00:00Z"),
+      lim("weekly:fable", 40.0, "2026-11-13T00:00:00Z"),
+    ])
+  })
+
   it("a reset is due a minute after", () => {
     assert.isFalse(isResetDue(rfc3339(NOW_SECS + 60), NOW))
     assert.isFalse(isResetDue(rfc3339(NOW_SECS - 30), NOW))

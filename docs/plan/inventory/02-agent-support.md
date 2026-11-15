@@ -61,7 +61,9 @@ assistant (thread, memory workspace with git history, tracked work, morning brie
   `provider=="claude" && disabled!==true`; per account `POST <url>/v8/management/requests/api-call` `{auth_index (stringified), method:"GET", url: USAGE_URL,
   header:{Authorization:"Bearer $TOKEN$", "anthropic-beta":…}}` → `{status_code, body}`. Account name = email ?? label ?? name. `unavailable` → error
   "Unavailable: <status_message>". Plan string = "N account(s)". `pool_limits`: per limit id, the account whose window resets first among those with percent>0
-  (accounts at 0% last; no reset time after those with one). Hint when error mentions "remote management disabled".
+  (accounts at 0% last; no reset time after those with one), of the accounts that can serve it: one with that limit, or its session or weekly
+  one, at 100% only counts when none can, and then the one back first (the latest reset of what stops it) wins. (The new board's: the old one
+  picked a used-up account, which then showed for the pool.) Hint when error mentions "remote management disabled".
 - A fresh fetch replaces `limits` wholesale; a failed one keeps old numbers and sets `error`.
 - Live updates from runs: `on_rate_limit_event(config, v)` (Claude `rate_limit_event`: `rate_limit_info.unifiedWindows.{five_hour,seven_day}.{utilization 0-1,
   resetsAt unix}` merged in) and `set_limits` (Codex `account/rateLimits/updated`). Proxy configs: `on_proxy_rate_limit_event` only updates out-ness.

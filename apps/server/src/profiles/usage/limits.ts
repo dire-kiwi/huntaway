@@ -96,28 +96,51 @@ export const mergeLimits = (limits: ReadonlyArray<UsageLimit>, fresh: ReadonlyAr
   return out.toSorted(order)
 }
 
-/**
- * A pool's limits from its accounts': each limit is the one of the account whose window ends first (the usage that's
- * lost soonest if it isn't spent), leaving out accounts that have used none of it (0%), whose window hasn't really
- * begun. A limit with no reset time comes after those with one, and when every account is at 0% it's the first to
- * reset of those. Accounts without numbers are left out.
- */
-/** Used ones first, then by when they reset (none last). */
-const poolKey = (l: UsageLimit): readonly [number, number] => [l.percent > 0 ? 0 : 1, (l.resets_at !== null ? parseTime(l.resets_at) : null) ?? Infinity]
+/** When a limit resets (ms since the epoch), or `Infinity` when that isn't known. */
+const resetOf = (l: UsageLimit): number => (l.resets_at !== null ? parseTime(l.resets_at) : null) ?? Infinity
 
-export const poolLimits = (accounts: ReadonlyArray<UsageAccount>): Array<UsageLimit> => {
-  const out: Array<UsageLimit> = []
-  for (const l of accounts.flatMap((a) => a.limits)) {
-    const i = out.findIndex((x) => x.id === l.id)
-    const have = out[i]
-    if (have === undefined) {
-      out.push({ ...l })
-      continue
-    }
-    const [a, b] = [poolKey(l), poolKey(have)]
-    if (a[0] < b[0] || (a[0] === b[0] && a[1] < b[1])) out[i] = { ...l }
+/**
+ * When `account` can serve what `limit` limits again: 0 when it can now, else when the last of what stops it resets
+ * (`Infinity` when that isn't known). It's stopped by that limit used up, or its session or weekly (all models) one,
+ * which stop every model: an account whose weekly limit is used up is out, however much of a model's own weekly limit
+ * (Fable's, say) it has left.
+ */
+const backAt = (account: UsageAccount, limit: UsageLimit): number =>
+  [limit, ...account.limits.filter((l) => l.id === "session" || l.id === "weekly")]
+    .filter((l) => l.percent >= 100)
+    .reduce((at, l) => Math.max(at, resetOf(l)), 0)
+
+/** Those that can serve first (else the first back), then used ones, then by when they reset (none last). */
+const poolKey = (account: UsageAccount, l: UsageLimit): readonly [number, number, number] => [backAt(account, l), l.percent > 0 ? 0 : 1, resetOf(l)]
+
+const before = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): boolean => {
+  for (let i = 0; i < a.length; i++) {
+    const [x, y] = [a[i] ?? 0, b[i] ?? 0]
+    if (x !== y) return x < y
   }
-  return out
+  return false
+}
+
+/**
+ * A pool's limits from its accounts': each limit is the one of the account the proxy can still use whose window ends
+ * first (the usage that's lost soonest if it isn't spent), leaving out accounts that have used none of it (0%), whose
+ * window hasn't really begun. An account that can't serve it (`backAt`: it's used up, or its session or weekly limit
+ * is) only counts when none can, so the pool shows the accounts its requests go to, and when they're all out, the one
+ * that's back first. A limit with no reset time comes after those with one, and when every account is at 0% it's the
+ * first to reset of those. Accounts without numbers are left out.
+ */
+export const poolLimits = (accounts: ReadonlyArray<UsageAccount>): Array<UsageLimit> => {
+  const out: Array<{ readonly limit: UsageLimit; readonly key: ReadonlyArray<number> }> = []
+  for (const account of accounts) {
+    for (const l of account.limits) {
+      const key = poolKey(account, l)
+      const i = out.findIndex((x) => x.limit.id === l.id)
+      const have = out[i]
+      if (have === undefined) out.push({ limit: { ...l }, key })
+      else if (before(key, have.key)) out[i] = { limit: { ...l }, key }
+    }
+  }
+  return out.map((x) => x.limit)
 }
 
 /** What a `rate_limit_event` says: whether its config is out (until when; null when not known), or allowed again. */
