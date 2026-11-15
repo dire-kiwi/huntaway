@@ -333,3 +333,6 @@ that sync (see _Settings sync_ in Hosts). The experiments:
   with the assistant's Google tools, its prompt shows the mail or the event as it will go out rather than the tool's
   input. A mail reads **Send** and **Discard** and can be edited first (on Claude Code); an event reads **Add the
   event** (or **Change the event**) and **Discard**. See _Mail and events as drafts_ in the assistant's guide.
+- **Assistant check-ins**: the assistant's _Routines_ tab offers **Add check-ins**, a light counterpart to the morning
+  brief. At the times you pick (11:00 and 16:30 on weekdays to start with) the assistant looks over your boards and
+  messages you only if something needs you; otherwise it stays quiet. See _Check-ins_ in Integrations.

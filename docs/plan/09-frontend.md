@@ -729,6 +729,28 @@ name and a line on what it does. All are off at first.
   `Permissions.test.ts` (the input Claude is told, the thread and the action log; refused for a question, a deny and
   Codex). The fake `claude`'s `fake-ask-mail`/`fake-ask-event` call the run's `google` MCP server (the stub) once
   allowed.
+- **Assistant check-ins** (`check_ins`, HE-24; HE-17's write-up of bot-hq, idea 7). The assistant's Routines tab
+  (`task/Routines.tsx`) shows **Add check-ins** beside New routine while the experiment is on and the profile has no
+  routine called _Check-in_; it opens `CheckInSetup`: the times (`settings/automations/TimesInput.tsx`, which the
+  routine editor uses too), the days, and a Google box shown only once `assistant.google` says it's connected. It
+  calls `assistant.addCheckIn`, which the server refuses (`Invalid`) while the experiment is off, so the server's
+  template is the experiment's too. The routine (`assistant/checkInText.ts`, `Brief.addCheckIn`) runs in a fresh
+  thread, with a message that reads the boards through the board's tools and replies with one short message or
+  `NO_REPLY`, and is told `{{last_run}}` and `{{quiet_runs}}` (the back-off: the more quiet check-ins in a row, the
+  higher the bar).
+  - **Not while you're talking to it.** Decided: the server gives a routine's precheck an environment variable,
+    `HUNTAWAY_MINUTES_SINCE_USER_MESSAGE`, and the check-in's precheck exits 1 under 20. A `huntaway` CLI call from
+    the precheck would need the board's token and address in the precheck's environment, and a check the server
+    makes itself would be a new field on every automation (its column, its editor, its sync); the variable is one
+    line of the server, the rule stays the user's to read and change in the precheck, and the run is recorded as
+    skipped with why (_you messaged the assistant 5 min ago_) as any precheck's.
+  - **Several times a day.** A daily trigger takes several times (`11:00, 16:30`), so the check-ins are one routine:
+    a cron expression can't say 11:00 and 16:30, and one routine per time would be several to change. This isn't the
+    experiment's alone: any routine's editor can add a time (+) and take one out (×).
+  - **Checks.** `apps/server/src/assistant/CheckIn.test.ts` (the template, refused while off; on its schedule with the
+    test clock, a run skipped because the user has just written, a quiet one, and one that reports);
+    `Automations.test.ts` and `schedule.test.ts` (several times, `{{last_run}}`, `{{quiet_runs}}`);
+    `tests/ui/checkIns.test.mjs` (nothing while off; Add check-ins; the editor's times).
 
 ### Logic that must not be lost on the way
 

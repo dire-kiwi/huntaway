@@ -30,7 +30,7 @@ new GitHub issue to triage. Each one has a trigger and an action, can be switche
 lists its latest runs and deliveries (when, what started it, what happened, and the task).
 
 - **Triggers.** An interval (at least 5 minutes, counted from when it's turned on or its schedule
-  changes); a time of day on some weekdays, in the host's time zone; a **cron** expression (five
+  changes); a time of day, or several (`11:00, 16:30`, up to 24), on some weekdays, in the host's time zone; a **cron** expression (five
   fields, `minute hour day-of-month month day-of-week`, with ranges, steps, lists and names, in the
   host's time zone; as in Vixie cron, a day has to match both day fields if either starts with
   `*`, such as `*/2`, and either of them otherwise); a moment (**at**: it runs once, late if
@@ -48,7 +48,9 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
   task it made and started, or the run that took its message in (not the task's later work, which
   is yours). The runs from the last two days that made or messaged a task are kept past the history
   limit, so a busy automation's skipped deliveries can't push today's costs out. A routine's
-  precheck runs only in the assistant's own workspace, not one that's become a symlink.
+  precheck runs only in the assistant's own workspace, not one that's become a symlink, and has
+  `HUNTAWAY_MINUTES_SINCE_USER_MESSAGE`: the whole minutes since you last sent the assistant a message
+  in its own thread (not a routine's or the board's), unset if you never have.
 - **Actions.** Create a task in the project from a template: title, description, type (code or
   scratch), labels (plan, artifact, diagram), agent config, model, effort, To do or Backlog, and whether to
   start its agent. Or send a message to one of the project's tasks (to its agent as it works, if
@@ -57,7 +59,9 @@ lists its latest runs and deliveries (when, what started it, what happened, and 
   the JSON body, `*` for every item of a list), `{{headers.x-github-event}}`, `{{query.name}}`,
   `{{event}}` (X-GitHub-Event), `{{action}}`, `{{labels}}` (the issue's, pull request's or
   discussion's label names) and `{{delivery}}`. From the board: `{{date}}`, `{{time}}`, `{{now}}`,
-  `{{automation}}` and `{{count}}` (deliveries coalesced into the run). A value from a delivery
+  `{{automation}}`, `{{count}}` (deliveries coalesced into the run), `{{last_run}}` (when its last
+  run that went ahead, made or messaged its task, started: a time like `{{now}}`, or _never_) and
+  `{{quiet_runs}}` (how many of those latest runs in a row were quiet). A value from a delivery
   is untrusted: in a description or message it's wrapped in `<untrusted-data>` tags (which it
   can't close), and the agent is told that what's inside them, and the title, is data, not
   instructions. Titles are one line of at most 200 characters.
@@ -177,6 +181,22 @@ and the last 30 kept, and every run of the assistant reads it, the brief's inclu
 The brief's page has no part in the ratings: it's shown in a frame that runs no scripts and is sent nothing, with its refreshes, frames and handlers taken out and nothing
 loaded from elsewhere (no tracking pixels), and links open in a new tab; only the board's own buttons
 rate, so what the run wrote from your mail can't rate items into memory.
+
+**Check-ins** (an experiment: Settings → _Experiments_ → _Assistant check-ins_; while it's off none
+of this shows) are a lighter routine template than the brief. With it on, the assistant's **Routines**
+tab offers **Add check-ins**, at the times and on the days you pick (11:00 and 16:30 on weekdays to
+start with; `assistant.addCheckIn` with `{times, weekdays, google}`, refused while the experiment is
+off), as a routine called _Check-in_ in a fresh thread, which you can change like any other. Its run
+reads, through the board's tools, what needs your attention or is ready to review on your boards, the
+assistant's tracked work and its routines' latest runs, and decides whether something genuinely needs
+you: a decision you owe, something finished you were waiting for, something stuck. If so it replies with
+one short message, posted to the assistant's thread as its report and pushed like any; otherwise
+`NO_REPLY`, and the run is quiet. Its message is told when the last check-in ran and how many in a row
+were quiet (`{{last_run}}`, `{{quiet_runs}}`), and the more were, the higher the bar. It doesn't look at
+Google unless you tick _Look at today's mail and calendar too_, offered once Google is connected. It
+leaves you be while you're talking to the assistant: its precheck skips the run (exit 1, _you messaged
+the assistant 5 min ago_) when you sent the assistant a message in the last 20 minutes; change the 20 in
+the precheck to change that.
 
 **Reaching the webhook.** The board usually listens on localhost or a LAN, where GitHub can't
 reach it. Expose only the webhook path, `/api/hooks/`, on the host that has the project:

@@ -19,6 +19,12 @@ export const EXPERIMENTS = [
     description:
       "When an agent asks to send a mail or to add or change a calendar event (the assistant's Google tools), its prompt shows the mail or the event as it will go out, rather than the tool's input: Send or Discard a mail, and edit its To, Subject and body before sending it (on Claude Code).",
   },
+  {
+    id: "check_ins",
+    name: "Assistant check-ins",
+    description:
+      "The assistant's Routines tab offers Add check-ins: at the times you pick (say 11:00 and 16:30 on weekdays) the assistant looks over your boards and messages you only if something needs you, and stays quiet otherwise. It leaves you be while you're talking to it.",
+  },
 ] as const
 
 /** An experiment's id. */

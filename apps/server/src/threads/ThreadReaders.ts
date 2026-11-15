@@ -66,6 +66,8 @@ export interface ThreadReadersShape {
   readonly userReplies: (task: TaskId, limit: number | null) => Effect.Effect<UserReplies>
   /** Whether the user (not the board, not another agent) sent the agent a message after `since`. */
   readonly userWroteSince: (task: TaskId, since: Timestamp) => Effect.Effect<boolean>
+  /** When the user (not the board, another agent or a routine) last sent the agent a message; null if never. */
+  readonly userLastWrote: (task: TaskId) => Effect.Effect<Timestamp | null>
   /** Whether the agent was sent a message (anyone's) at or after `at`. */
   readonly userMessagedSince: (task: TaskId, at: Timestamp) => Effect.Effect<boolean>
   /** Whether the conversation has moved on since write `n` (a question's or a prompt's): a message was sent after it. */
@@ -334,6 +336,12 @@ export class ThreadReaders extends Context.Service<ThreadReaders, ThreadReadersS
           return false
         })
 
+      const userLastWrote = (task: TaskId) =>
+        scan(task, { types: ["user_message"] }, (entries) => {
+          for (const e of entries) if (e.meta.auto !== true && e.meta.from_agent !== true && e.meta.routine !== true) return e.created_at
+          return null
+        })
+
       const userMessage = (task: TaskId, n: WriteNo) =>
         Effect.map(store.item(task, `legacy:${n}`), (e) => (e === null || e.item.type !== "user_message" ? null : userData(e)))
       const lastUserMessage = (task: TaskId) => Effect.map(first(task, { types: ["user_message"] }), (e) => (e === null ? null : userData(e)))
@@ -400,6 +408,7 @@ export class ThreadReaders extends Context.Service<ThreadReaders, ThreadReadersS
         lastTurnEnd,
         userReplies,
         userWroteSince,
+        userLastWrote,
         userMessagedSince: store.userMessagedSince,
         movedOn: store.userMessageAfter,
         firstUserMessage: store.firstUserMessage,

@@ -16,6 +16,7 @@ import { type Unit, type Draft, LABELS, localInput, draftOf, inputMillis, inputO
 const UNITS: ReadonlyArray<Unit> = ["minutes", "hours", "days"]
 import { Segmented, selectClass } from "./controls"
 import { GuardFields } from "./GuardFields"
+import { timeOfTimes, timesOf, TimesInput } from "./TimesInput"
 import { WebhookFields } from "./WebhookFields"
 
 export function AutomationEditor({
@@ -182,7 +183,7 @@ export function AutomationEditor({
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2 text-[13px]">
                 At
-                <Input type="time" className="w-28" aria-label="Time" value={d.time} onChange={(e) => set("time", e.target.value)} />
+                <TimesInput initial={timesOf(d.time)} onChange={(times) => set("time", timeOfTimes(times))} />
                 on
                 {WEEKDAYS.map((w) => {
                   const on = d.weekdays.includes(w)

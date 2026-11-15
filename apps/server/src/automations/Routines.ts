@@ -100,6 +100,8 @@ export interface RoutinesShape {
   readonly stillRunning: (a: StoredAutomation) => Effect.Effect<Task | null>
   /** Deletes routine threads that finished more than `KEEP_THREAD_DAYS` ago (their runs and reports stay). */
   readonly pruneThreads: (now: number) => Effect.Effect<void>
+  /** When the user last messaged the assistant in its own thread (epoch milliseconds); null if never. A routine's precheck reads it. */
+  readonly userLastWrote: (assistant: TaskId) => Effect.Effect<number | null>
   /** An automation (or its runs) changed: `automations_changed`. */
   readonly changed: (a: Pick<StoredAutomation, "id" | "project_id" | "profile_id">) => Effect.Effect<void>
   /** The host's zone, which routines' days and templates' times are in. */
@@ -304,7 +306,9 @@ export class Routines extends Context.Service<Routines, RoutinesShape>()("huntaw
         }
       })
 
-      return Routines.of({ message, finished, runEnded, unreadReports, markRead, spentToday, stillRunning, pruneThreads, changed, zone })
+      const userLastWrote = (assistant: TaskId) => Effect.map(readers.userLastWrote(assistant), (at) => (at === null ? null : parseTime(at)))
+
+      return Routines.of({ message, finished, runEnded, unreadReports, markRead, spentToday, stillRunning, pruneThreads, userLastWrote, changed, zone })
     }),
   )
 }

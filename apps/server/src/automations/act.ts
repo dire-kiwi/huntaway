@@ -8,13 +8,13 @@ import type { RunsShape } from "../runs/Runs.ts"
 import { expandTilde } from "../settings/Folders.ts"
 import type { TasksShape } from "../tasks/Tasks.ts"
 import type { AutomationRepoShape, StoredAutomation, StoredRun } from "./AutomationRepo.ts"
-import { eventLabel, render, untrustedNote } from "./delivery.ts"
+import { eventLabel, namesHistory, render, untrustedNote } from "./delivery.ts"
 import type { Delivery, Vars } from "./delivery.ts"
-import { failed, runPrecheck, skipped } from "./precheck.ts"
+import { failed, runPrecheck, SINCE_USER_MESSAGE_ENV, skipped } from "./precheck.ts"
 import type { RunStopped } from "./precheck.ts"
 import type { RoutineHostShape } from "./RoutineHost.ts"
 import type { RoutinesShape } from "./Routines.ts"
-import { activeContains, activeText, formatLocal, isoOf } from "./schedule.ts"
+import { activeContains, activeText, formatLocal, isoOf, MINUTE, parseTime } from "./schedule.ts"
 import type { Zone } from "./schedule.ts"
 
 // Running an automation once it's due or asked for (huntaway's automations/running.ts `run_action`, `guards`, `act`):
@@ -84,16 +84,23 @@ const why = (e: { readonly _tag: string; readonly reason?: string; readonly deta
 
 const cantPrecheck = (e: string) => failed(`couldn't run its precheck: ${e}`)
 
-/** Where a precheck runs: the assistant's workspace for a routine, the project's folder for a project's automation. */
-const precheckDir = Effect.fnUntraced(function* (d: ActDeps, a: StoredAutomation) {
+/**
+ * Where a precheck runs, and its environment: the assistant's workspace for a routine, with the whole minutes since the
+ * user last messaged the assistant (`SINCE_USER_MESSAGE_ENV`, unset if they never have); the project's folder for a
+ * project's automation.
+ */
+const precheckPlace = Effect.fnUntraced(function* (d: ActDeps, a: StoredAutomation, now: number) {
   if (a.project_id !== null) {
     const p = yield* d.projects.get(a.project_id)
     if (p._tag === "None") return yield* cantPrecheck("the project is gone")
-    return expandTilde(p.value.repo_path, d.home)
+    return { dir: expandTilde(p.value.repo_path, d.home), env: d.agentEnv }
   }
   const assistant = yield* d.host.assistant(a.profile_id).pipe(Effect.mapError((e) => cantPrecheck(e.reason)))
   // Only its own workspace: not one that's become a symlink, which could be another's.
-  return yield* d.host.workspace(assistant).pipe(Effect.mapError((e) => cantPrecheck(e.reason)))
+  const dir = yield* d.host.workspace(assistant).pipe(Effect.mapError((e) => cantPrecheck(e.reason)))
+  const wrote = yield* d.routines.userLastWrote(assistant.id)
+  const env = wrote === null ? d.agentEnv : { ...d.agentEnv, [SINCE_USER_MESSAGE_ENV]: String(Math.max(0, Math.floor((now - wrote) / MINUTE))) }
+  return { dir, env }
 })
 
 /** What a run checks before it does anything; what its precheck printed, if it has one. */
@@ -119,7 +126,8 @@ const guards = Effect.fnUntraced(function* (d: ActDeps, a: StoredAutomation, sou
     if (t !== null) return yield* skipped(`Skipped: its last run (A-${t.number}) is still going`)
   }
   if (a.precheck === null) return null
-  return yield* runPrecheck(d.spawner, d.agentEnv, a.precheck, yield* precheckDir(d, a))
+  const place = yield* precheckPlace(d, a, now)
+  return yield* runPrecheck(d.spawner, place.env, a.precheck, place.dir)
 })
 
 /** The task the action made or messaged; or why it couldn't (with the task, if it made one but couldn't start it). */
@@ -176,6 +184,25 @@ const action = Effect.fnUntraced(function* (d: ActDeps, a: StoredAutomation, run
   return t.id
 })
 
+/** How many earlier runs `history` looks through. */
+const HISTORY_RUNS = 50
+
+/**
+ * The automation's runs before `run`, for `{{last_run}}` and `{{quiet_runs}}`: when the latest that went ahead (made or
+ * messaged its task) started, and how many of the latest that went ahead were quiet in a row. Skipped and failed runs,
+ * and runs whose agent hasn't ended, don't count.
+ */
+const history = Effect.fnUntraced(function* (d: ActDeps, a: StoredAutomation, run: string) {
+  const ahead = (yield* d.repo.runs(a.id, HISTORY_RUNS)).filter((r) => r.id !== run && r.status === "ok")
+  let quietRuns = 0
+  for (const r of ahead) {
+    if (r.outcome === null) continue
+    if (r.outcome !== "quiet") break
+    quietRuns++
+  }
+  return { lastRun: ahead[0] === undefined ? null : parseTime(ahead[0].created_at), quietRuns }
+})
+
 /** Takes the automation's place among those starting a fresh thread; false if it's there already. */
 const takeStart = (starting: Ref.Ref<ReadonlySet<string>>, id: string) =>
   Ref.modify(starting, (all): readonly [boolean, ReadonlySet<string>] => (all.has(id) ? [false, all] : [true, new Set([...all, id])]))
@@ -194,7 +221,9 @@ export const act = (d: ActDeps, a: StoredAutomation, run: string, source: RunSou
       // Where Google stands for a routine that asks, as it starts.
       const google =
         a.action.kind === "message_assistant" && a.project_id === null && a.action.message.includes("{{google}}") ? yield* d.host.google(a.profile_id) : null
-      const vars: Vars = { automation: a.name, source, delivery, count, now, zone: d.zone, precheck, google }
+      const template = a.action.kind === "create_task" ? `${a.action.title}\n${a.action.description}` : a.action.message
+      const past = namesHistory(template) ? yield* history(d, a, run) : undefined
+      const vars: Vars = { automation: a.name, source, delivery, count, now, zone: d.zone, precheck, google, history: past }
       return yield* action(d, a, run, vars, ev)
     })
     const guarded: Effect.Effect<TaskId, RunStopped> = waits

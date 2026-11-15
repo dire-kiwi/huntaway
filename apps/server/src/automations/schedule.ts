@@ -135,6 +135,20 @@ export const parseDailyTime = (t: string): number | null => {
   return h < 24 && mi < 60 ? h * 60 + mi : null
 }
 
+/**
+ * A daily trigger's `time`: one time of day, or several separated by commas (`11:00, 16:30`), as minutes from
+ * midnight in order, each once. Null if one of them isn't a time.
+ */
+export const parseDailyTimes = (t: string): ReadonlyArray<number> | null => {
+  const out = new Set<number>()
+  for (const part of t.split(",")) {
+    const at = parseDailyTime(part)
+    if (at === null) return null
+    out.add(at)
+  }
+  return [...out].toSorted((a, b) => a - b)
+}
+
 /** A weekday's days from Monday. */
 export const weekdayIndex = (d: string): number | null => {
   const i = WEEKDAYS.findIndex((w) => w === d.trim().toLowerCase())
@@ -206,13 +220,19 @@ export const nextAfter = (trigger: Trigger, now: number, zone: Zone): number | n
     case "interval":
       return now + trigger.every_minutes * MINUTE
     case "daily": {
-      const at = parseDailyTime(trigger.time)
-      if (at === null) return null
+      const times = parseDailyTimes(trigger.time)
+      if (times === null) return null
       const days = trigger.weekdays.flatMap((d) => {
         const i = weekdayIndex(d)
         return i === null ? [] : [i]
       })
-      return nextDaily(zone, at, days, now)
+      // The soonest of its times.
+      let next: number | null = null
+      for (const at of times) {
+        const n = nextDaily(zone, at, days, now)
+        if (n !== null && (next === null || n < next)) next = n
+      }
+      return next
     }
     case "cron": {
       const cron = parseCron(trigger.expr, zone)
