@@ -558,6 +558,57 @@ describe("Permissions: approval rules and expiry", () => {
     ),
   )
 
+  it.effect("a mail sent as the user edited it: Claude runs it so, the thread and the action log say what was sent", () =>
+    run(
+      Effect.gen(function* () {
+        const { task, agent } = yield* assistant([["mcp__google__send*", "ask"]], "default")
+        const input = { to: "kim@example.com", subject: "Invoice", body: "Paid.", body_format: "plain" }
+        const p = yield* asked(agent, "c", "mcp__google__send_gmail_message", input)
+        const edited = { ...input, to: "kim@example.org", body: "Paid on Monday." }
+        // Only as an allow.
+        assert.strictEqual(yield* tag(answer(p.id, { decision: "deny", input: edited })), "Invalid")
+        yield* answer(p.id, { decision: "allow", input: edited })
+        assert.deepStrictEqual(yield* Fiber.join(p.told), { behavior: "allow", updatedInput: edited })
+        const shown = yield* card(task, p.id)
+        assert.deepStrictEqual([shown["status"], shown["edited"]], ["allowed", true])
+        const stored = yield* (yield* ThreadStore).request(task, p.id)
+        assert.deepStrictEqual(stored?.request.type === "permission" ? stored.request.input : null, edited)
+        const [latest] = yield* (yield* ApprovalRules).log({ profile_id: ProfileId.make("p") })
+        assert.deepStrictEqual(
+          [latest?.outcome, latest?.summary],
+          ["allowed", "body: Paid on Monday., body_format: plain, subject: Invoice, to: kim@example.org"],
+        )
+        // The same input as asked isn't an edit.
+        const again = yield* asked(agent, "d", "mcp__google__send_gmail_message", input)
+        yield* answer(again.id, { decision: "allow", input: { ...input } })
+        assert.deepStrictEqual(yield* Fiber.join(again.told), { behavior: "allow", updatedInput: input })
+        assert.strictEqual((yield* card(task, again.id))["edited"], undefined)
+      }),
+    ),
+  )
+
+  it.effect("an edited input is refused for a question, and for a Codex run's prompt", () =>
+    run(
+      Effect.gen(function* () {
+        const { agent } = yield* runningTask()
+        const q = yield* asked(agent, "q", "AskUserQuestion", twoQuestions)
+        assert.strictEqual(yield* tag(answer(q.id, { decision: "allow", input: { questions: [] } })), "Invalid")
+        const permissions = yield* Permissions
+        const codex = { id: 7, method: "mcpServer/elicitation/request" }
+        const told = yield* Effect.forkChild(
+          permissions.ask(
+            { run: agent.run, call_id: "x" },
+            { tool_name: "mcp__google__send_gmail_message", input: { message: "Send?", arguments: { to: "a@b.c" } }, tool_use_id: null, codex },
+          ),
+        )
+        const id = yield* permissions.asking("x")
+        assert.strictEqual(yield* tag(answer(id, { decision: "allow", input: { message: "Send?", arguments: { to: "d@e.f" } } })), "Invalid")
+        yield* answer(id, { decision: "allow" })
+        assert.strictEqual((yield* Fiber.join(told)).behavior, "allow")
+      }),
+    ),
+  )
+
   it.effect("never rules block, and Don't ask denies what a rule asks", () =>
     run(
       Effect.gen(function* () {

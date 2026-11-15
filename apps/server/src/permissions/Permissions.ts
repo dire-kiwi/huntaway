@@ -697,6 +697,17 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           input = { ...(Predicate.isObject(input) && !Array.isArray(input) ? input : {}), answers: toolAnswers(row.tool_name, input, answers) }
         }
         let edited = false
+        // A tool call allowed as the user edited it (a draft mail's To, Subject and body): Claude Code runs it with the
+        // input it's answered with, Codex's approval has no input to change.
+        const given = a.input ?? null
+        if (given !== null) {
+          const codex = (yield* store.request(row.task_id, row.id))?.request.metadata?.["codex"] !== undefined
+          if (!allowIt || row.kind !== "tool" || question || plan || codex) {
+            return yield* new Invalid({ field: "input", reason: "only a tool call of a Claude Code run, allowed, takes an edited input" })
+          }
+        }
+        const editedTo = given !== null && (yield* toJson(given)) !== (yield* toJson(input ?? null)) ? given : null
+        if (editedTo !== null) input = editedTo
         if (allowIt && row.kind === "automation" && a.automation !== undefined && a.automation !== null) {
           const made = withModelEffort(input, a.automation)
           if (Result.isFailure(made)) return yield* new Invalid({ field: "automation", reason: made.failure })
@@ -716,6 +727,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           ...(feedback === null ? {} : { feedback }),
           ...(picked === null ? {} : { mode: picked }),
           ...(late ? { late: true } : {}),
+          ...(editedTo === null ? {} : { edited: true }),
         }
         /** The thread's request settled as the row now is, in the caller's transaction. */
         const shown = Effect.gen(function* () {
@@ -753,7 +765,8 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           }),
         )
         yield* offer(done.made)
-        if (row.rule !== null) yield* rules.settle(id, status, by)
+        // The action log says what was sent, as edited.
+        if (row.rule !== null) yield* rules.settle(id, status, by, editedTo === null ? undefined : { input: editedTo })
         yield* wake(id)
         if (done.modeChanged) yield* applyMode(row.task_id)
         if (!late) return status

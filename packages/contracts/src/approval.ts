@@ -276,6 +276,12 @@ export const PermissionAnswer = Schema.Struct({
   mode: Schema.optionalKey(Schema.NullOr(PermissionMode)),
   /** A plan, denied: what the user wants changed. */
   feedback: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * A tool call of a Claude Code run, allowed: the input it runs with in place of the one it asked with, as the user
+   * edited it (a draft mail's To, Subject and body). An object; refused for a question, a plan, the board's own approvals
+   * and a Codex run's prompt, whose approval can't carry it.
+   */
+  input: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
   /** An automation that creates tasks, approved: the model and effort its tasks run with (left out: as the agent asked). */
   automation: Schema.optionalKey(
     Schema.NullOr(Schema.Struct({ model: Schema.optionalKey(Schema.NullOr(Schema.String)), effort: Schema.optionalKey(Schema.NullOr(Schema.String)) })),
