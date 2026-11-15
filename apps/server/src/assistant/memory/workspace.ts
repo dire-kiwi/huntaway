@@ -4,6 +4,8 @@ import { Invalid, NotFound, Unavailable } from "@huntaway/contracts"
 import type { MemoryFileInfo } from "@huntaway/contracts"
 import type { ProcShape } from "../../platform/Proc.ts"
 import { LOG_DIR } from "../../prompts/memory.ts"
+import type { Note } from "../../prompts/memory.ts"
+import { MAX_NOTES, mayBeNote, parseNote } from "./notes.ts"
 import {
   BRIEF_FILE,
   BRIEF_ITEMS_FILE,
@@ -172,6 +174,27 @@ export const makeWorkspace = ({ fs, proc }: WorkspaceDeps) => {
     const bytes = yield* readPlain(path.value)
     if (Option.isNone(bytes)) return null
     return new TextDecoder().decode(bytes.value)
+  })
+
+  /**
+   * The notes by topic in the workspace's `memory/` folder (HE-36), by name: each with its text after the frontmatter.
+   * Not what's through a symlink, a file over `MAX_FILE`, nor more than `MAX_NOTES` of them.
+   */
+  const readNotes = Effect.fnUntraced(function* (dir: string) {
+    const folder = `${dir}/${LOG_DIR}`
+    const out: Array<{ readonly note: Note; readonly body: string }> = []
+    if (!(yield* isRealDir(folder))) return out
+    const names = (yield* fs.readDirectory(folder).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter(mayBeNote).toSorted()
+    for (const name of names.slice(0, MAX_LISTED)) {
+      if (out.length >= MAX_NOTES) break
+      const meta = yield* lstat(`${folder}/${name}`)
+      if (Option.isNone(meta) || meta.value.type !== "File" || Number(meta.value.size) > MAX_FILE) continue
+      const rel = `${LOG_DIR}/${name}`
+      const text = yield* readForPrompt(dir, rel)
+      const parsed = text === null ? null : parseNote(rel, text)
+      if (parsed !== null) out.push(parsed)
+    }
+    return out
   })
 
   /**
@@ -361,6 +384,7 @@ export const makeWorkspace = ({ fs, proc }: WorkspaceDeps) => {
     isRepo,
     readPlain,
     readForPrompt,
+    readNotes,
     resolve,
     readText,
     writeFile,

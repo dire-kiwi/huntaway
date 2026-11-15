@@ -51,7 +51,7 @@ export const AssistantHooks = Layer.effectDiscard(
         if (owner === null) return null
         // Only in a workspace of its own: not one that's become a symlink, which could be another's.
         const dir = yield* memory.checked(owner).pipe(Effect.mapError((e) => new WorkspaceRefused({ reason: `the assistant's workspace: ${e.reason}` })))
-        const told = yield* memory.forRun(owner, run === undefined ? null : { thread: t, compact: run.compact })
+        const told = yield* memory.forRun(owner, run === undefined ? null : { thread: t, compact: run.compact, message: run.message })
         return { cwd: dir, memory: told.system, update: told.update, told: told.told }
       }),
       reports: Effect.fnUntraced(function* (t: Task) {

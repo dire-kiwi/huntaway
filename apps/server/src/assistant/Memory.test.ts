@@ -38,6 +38,7 @@ const facts = (todayLog: MemoryFile, user: MemoryFile = { _tag: "Empty" }): Memo
   memory: { _tag: "Missing" },
   yesterdayLog: { rel: "memory/2026-11-14.md", file: { _tag: "Missing" } },
   todayLog: { rel: "memory/2026-11-15.md", file: todayLog },
+  notes: [],
 })
 
 const memoryLayer = Memory.layer.pipe(Layer.provide(ContextStatsRepo.layer), Layer.provideMerge(TestPlatform()))
