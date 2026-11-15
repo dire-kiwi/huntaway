@@ -103,6 +103,8 @@ export interface ThreadStoreShape {
   readonly userMessagesBetween: (profile: ProfileId, from: Timestamp, to: Timestamp) => Effect.Effect<ReadonlyArray<ProfileUserMessage>>
   /** The open question requests, oldest first. */
   readonly openQuestions: (task: TaskId) => Effect.Effect<ReadonlyArray<StoredRequest>>
+  /** The open connection cards (`assistant/connectionText.ts`) in the assistants' and their routines' threads, by thread. */
+  readonly openConnections: Effect.Effect<ReadonlyArray<{ readonly task_id: TaskId; readonly stored: StoredRequest }>>
   /** Whether a question request's metadata names call `callId`. */
   readonly askedIn: (task: TaskId, callId: string) => Effect.Effect<boolean>
   /** The routines' report notices whose report is not `read`, oldest first. */
@@ -125,6 +127,7 @@ const ITEM = "pos, write_no, created_at, data, meta"
 /** A request's row as the store reads it. */
 export const RequestRow = Schema.Struct({ write_no: Schema.NullOr(WriteNo), data: Schema.fromJsonString(ThreadRequest) })
 const toStoredRequest = (row: typeof RequestRow.Type): StoredRequest => ({ request: row.data, write_no: row.write_no })
+const TaskRequestRow = Schema.Struct({ ...RequestRow.fields, task_id: TaskId })
 
 const EventRow = Schema.Struct({ data: Schema.fromJsonString(Schema.Union([SavedEvent, UnknownEvent])) })
 const ProfileItemRow = Schema.Struct({ ...ItemRow.fields, task_id: TaskId })
@@ -135,6 +138,7 @@ const N = Schema.Struct({ n: Schema.NullOr(Schema.Finite) })
 // Each row schema's reader, its decoder made once.
 const itemRows = rowsOf(ItemRow)
 const requestRows = rowsOf(RequestRow)
+const taskRequestRows = rowsOf(TaskRequestRow)
 const eventRows = rowsOf(EventRow)
 const profileItemRows = rowsOf(ProfileItemRow)
 const posRows = rowsOf(Pos)
@@ -437,6 +441,12 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
           requestRows(sql`SELECT write_no, data FROM thread_requests WHERE task_id = ${task} AND +type = 'question' AND open = 1 ORDER BY pos`),
           (rows) => rows.map(toStoredRequest),
         )
+      const openConnections = Effect.map(
+        taskRequestRows(sql`SELECT r.task_id, r.write_no, r.data FROM tasks t JOIN thread_requests r ON r.task_id = t.id
+          WHERE t.task_type IN ('assistant', 'routine') AND r.type = 'question' AND r.open = 1
+            AND json_extract(r.data, '$.metadata.connection') IS NOT NULL ORDER BY r.task_id, r.pos`),
+        (rows) => rows.map((r) => ({ task_id: r.task_id, stored: toStoredRequest(r) })),
+      )
       const askedIn = (task: TaskId, callId: string) =>
         exists(
           sql`SELECT EXISTS(SELECT 1 FROM thread_requests WHERE task_id = ${task} AND +type = 'question'
@@ -469,6 +479,7 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreShape>(
         firstUserMessage,
         userMessagesBetween,
         openQuestions,
+        openConnections,
         askedIn,
         unreadReports,
       })

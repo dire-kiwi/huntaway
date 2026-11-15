@@ -69,9 +69,10 @@ describe("the board's tools on a whole server", () => {
           )
       const listed = yield* rpc(1, "tools/list", {})
       const names = (listed.result.tools ?? []).map((t) => t.name)
-      assert.deepStrictEqual(names.slice(0, 9), [
+      assert.deepStrictEqual(names.slice(0, 10), [
         "request_user_input",
         "finish_work",
+        "request_connection",
         "track_work",
         "untrack_work",
         "list_tracked_work",

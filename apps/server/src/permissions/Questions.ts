@@ -220,7 +220,10 @@ export class Questions extends Context.Service<Questions, QuestionsShape>()("hun
         const stored = yield* store.request(task, requestId)
         // A board card (an agent's own questions are answered as its prompt, `Permissions`).
         const asked = stored?.request
-        if (stored === null || asked?.type !== "question" || asked.metadata?.["call_id"] === undefined) return yield* notFound
+        // (A connection card is settled from its own buttons, `assistant/Connections.ts`.)
+        if (stored === null || asked?.type !== "question" || asked.metadata?.["call_id"] === undefined || asked.metadata["connection"] !== undefined) {
+          return yield* notFound
+        }
         const [q] = asked.questions
         if (asked.resolution !== undefined) return yield* new QuestionClosed({ reason: "answered", detail: "this question has been answered already" })
         if (stored.write_no !== null && (yield* readers.movedOn(task, stored.write_no))) {

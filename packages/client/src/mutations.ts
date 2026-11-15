@@ -41,7 +41,11 @@ export const mutations = {
   // A prompt's answer: the request and the thread's card change with the events that follow.
   permissions: { answer: mutation("permissions.answer") },
   // A board question's answer, sent to the agent as the user's message.
-  threads: { answerQuestion: mutation("threads.answerQuestion") },
+  threads: {
+    answerQuestion: mutation("threads.answerQuestion"),
+    checkConnection: mutation("threads.checkConnection"),
+    skipConnection: mutation("threads.skipConnection"),
+  },
   // Rewinding a task to before a turn, and keeping its conversation as it is: the task and its turns change with the
   // events that follow.
   checkpoints: { rewind: mutation("checkpoints.rewind"), cancelRewind: mutation("checkpoints.cancelRewind") },
