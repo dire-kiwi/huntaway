@@ -185,6 +185,6 @@ export default defineConfig({
     ],
   },
   test: {
-    projects: ["apps/server", "apps/web", "apps/desktop", "packages/*"],
+    projects: ["apps/server", "apps/web", "apps/desktop", "apps/mobile", "packages/*"],
   },
 })
