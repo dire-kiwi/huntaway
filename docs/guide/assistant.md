@@ -196,7 +196,8 @@ waits in _Needs attention_ meanwhile. Once Google is connected, whether you pres
 by itself (it looks every 30 seconds while a card is open, trying the refresh token with Google, as **Test** does), the
 card says _Connected as <your address>_ and the assistant is told "Google is connected now (as <address>). Carry on with
 what you were doing."; **Skip** tells it "The user skipped connecting Google. Carry on without it." The card settles
-once: a message of yours sent before it's settled settles it too, as it does a question. If Google turns out to be
+once: a message of yours sent before it's settled settles it too, as it does a question; one the conversation moved past
+otherwise (a routine's message, another agent's) is closed, not answered, at the board's next look. If Google turns out to be
 connected when it asks, there's no card and it tries again. The routines' threads have the tool too, but a routine's
 run, with nobody there, puts up no card: it carries on without Google and says in its report that Google isn't
 connected. The RPCs are `threads.checkConnection` and `threads.skipConnection` (`{"task_id", "request_id"}`).

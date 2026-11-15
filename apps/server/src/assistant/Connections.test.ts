@@ -16,7 +16,7 @@ import { RunRepo } from "../runs/RunRepo.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Threads } from "../threads/Threads.ts"
 import { Connections } from "./Connections.ts"
-import { alreadyConnected, ASKED, connectedResolution, connectedText, skippedResolution, skippedText, unattended } from "./connectionText.ts"
+import { alreadyConnected, ASKED, connectedResolution, connectedText, movedOnResolution, skippedResolution, skippedText, unattended } from "./connectionText.ts"
 import { Google } from "./Google.ts"
 import { CLIENT_SECRET_ENV, CREDENTIALS_ENV, SCOPES, SERVER, serverConfig } from "./googleText.ts"
 
@@ -29,9 +29,11 @@ const json = (v: unknown): string => Result.getOrElse(encodeJson(v), () => "")
 
 const CLIENT = '{"installed": {"client_id": "id.apps.googleusercontent.com", "client_secret": "shh"}}'
 
-/** A token endpoint of the test's own: it takes refresh token "good" only. Its URL. */
+/** A token endpoint of the test's own: it takes refresh token "good" only. Its URL, and how many requests it has had. */
 const tokenEndpoint = Effect.gen(function* () {
+  let asked = 0
   const server = createServer((req, res) => {
+    asked += 1
     let body = ""
     req.on("data", (c: Buffer) => (body += c.toString()))
     req.on("end", () => {
@@ -45,20 +47,22 @@ const tokenEndpoint = Effect.gen(function* () {
   })
   yield* Effect.addFinalizer(() => Effect.sync(() => server.close()))
   const address = server.address()
-  return `http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}/token`
+  return { uri: `http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}/token`, asked: () => asked }
 })
 
 /** The profile's Google, set up step by step in a folder of the test's own. */
 const stubGoogle = (p: Profile) =>
   Effect.gen(function* () {
     const dir = mkdtempSync(`${tmpdir()}/huntaway-connections-`)
-    const uri = yield* tokenEndpoint
+    const { uri, asked } = yield* tokenEndpoint
     const bin = `${dir}/uvx`
     writeFileSync(bin, "#!/bin/sh\n")
     chmodSync(bin, 0o755)
     const base = serverConfig("/home/nobody", null)
     const config = { ...base, command: bin, env: { ...base.env, [CLIENT_SECRET_ENV]: `${dir}/client_secret.json`, [CREDENTIALS_ENV]: `${dir}/credentials` } }
     return {
+      /** How many times Google's (the test's) token endpoint has been asked. */
+      asked,
       /** The server added, switched on, and its OAuth client there: not signed in yet. */
       server: Effect.gen(function* () {
         yield* (yield* Google).setup(p.id)
@@ -186,6 +190,18 @@ describe("request_connection", () => {
       assert.isTrue(sent(yield* taskOf(thread), connectedText("google", "sam@example.com")))
       assert.strictEqual(yield* connections.sweep, 0)
       assert.strictEqual(yield* failure(connections.check(thread, "legacy:999999")), "QuestionNotFound")
+
+      // A card the conversation moved past without settling it (a routine's message, which doesn't settle questions) is
+      // closed by the sweep, unanswered and without asking Google, and isn't read again.
+      yield* google.signIn("revoked")
+      yield* askGoogle(me)
+      yield* (yield* Threads).userMessage(thread, "the daily check", { routine: true })
+      yield* google.signIn("good")
+      const before = google.asked()
+      assert.strictEqual(yield* connections.sweep, 0)
+      assert.deepStrictEqual((yield* requests(thread)).at(-1)?.resolution, movedOnResolution)
+      assert.strictEqual(yield* connections.sweep, 0)
+      assert.strictEqual(google.asked(), before)
     }).pipe(Effect.scoped, Effect.provide(TestMcp())),
   )
 

@@ -863,7 +863,10 @@ tool (`THREAD_TOOLS`: an agent on another host is refused), rerunnable and allow
   `sweep` is the board noticing on its own: `Connections.watcher` (in `AreasLive`, not in tests, which run `sweep`)
   every 30 seconds reads the open cards of the assistants' and routines' threads (`ThreadStore.openConnections`, only
   while one may be open: a flag set when a card is opened and at start) and settles those whose connection is made,
-  reading each profile's state once a pass.
+  reading each profile's state once a pass. A card the conversation moved past without settling it (a message that
+  doesn't settle questions: a routine's run, a routine in `thread` mode, another agent's `send_to_task`) is closed by the
+  sweep first, unanswered (`movedOnResolution`, a `cancel` the web app shows as not answered), before any state is read,
+  so it isn't read (or Google asked) again every pass.
 - **Another connection** (an MCP server switched off for the profile, say) is a kind in `CONNECTION_KINDS` with a
   label, a branch of `Connections.state`, and a card in the web app's `LABELS` with its own set-up dialog.
 - **Web**: `components/task/thread/ConnectionCard.tsx` (an item `connection` in the thread model): what's missing (the

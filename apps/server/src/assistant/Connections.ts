@@ -10,13 +10,23 @@ import { ThreadReaders } from "../threads/ThreadReaders.ts"
 import { Threads } from "../threads/Threads.ts"
 import { ThreadStore } from "../threads/ThreadStore.ts"
 import type { RequestResolution } from "@huntaway/contracts"
-import { connectedResolution, connectedText, connectionOf, connectionRequest, skippedResolution, skippedText, SWEEP_EVERY } from "./connectionText.ts"
+import {
+  connectedResolution,
+  connectedText,
+  connectionOf,
+  connectionRequest,
+  movedOnResolution,
+  skippedResolution,
+  skippedText,
+  SWEEP_EVERY,
+} from "./connectionText.ts"
 import type { ConnectionKind, ConnectionState } from "./connectionText.ts"
 import { Google } from "./Google.ts"
 
 // The assistant's connection cards (HE-28; the plain parts are connectionText.ts): `request_connection` puts one in the
 // thread (`ask`) when what it asks for isn't there; it's settled once, from its card (`check`, `skip`), by the board
-// noticing the connection is made (`sweep`, every `SWEEP_EVERY` while any card is open), or by a message from the user
+// noticing the connection is made (`sweep`, every `SWEEP_EVERY` while any card is open; it closes a card the conversation
+// moved past without settling it), or by a message from the user
 // (`Questions.settle`, as for questions: a card is a board question). Settling it sends the agent its message to carry on.
 
 export interface ConnectionsShape {
@@ -135,6 +145,12 @@ export class Connections extends Context.Service<Connections, ConnectionsShape>(
           const kind = connectionOf(stored.request)
           const t = yield* tasks.get(task_id)
           if (kind === null || t === null) continue
+          // Moved past without being settled (a message that doesn't settle questions: a routine's, another agent's):
+          // closed unanswered, before any state is read, so it isn't read again every pass.
+          if (stored.write_no !== null && (yield* readers.movedOn(task_id, stored.write_no))) {
+            yield* threads.resolveRequest(task_id, stored.request.id, movedOnResolution).pipe(Effect.ignore)
+            continue
+          }
           const key = `${kind}\u0000${t.profile_id}`
           const now = seen.get(key) ?? (yield* state(kind, t.profile_id))
           seen.set(key, now)

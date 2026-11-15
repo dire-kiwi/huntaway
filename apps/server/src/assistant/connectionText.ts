@@ -83,3 +83,9 @@ export const connectedResolution = (account: string | null): RequestResolution =
   message: account === null ? "Connected" : `Connected as ${account}`,
 })
 export const skippedResolution: RequestResolution = { outcome: "answer", answers: { [QUESTION_ID]: [SKIPPED] }, message: "Skipped" }
+/**
+ * A card the conversation moved past without settling it (a routine's message, another agent's `send_to_task`): closed
+ * by the board's sweep, unanswered, so it isn't read again. Its message starts as a question's expiry does, which the web
+ * app shows as not answered.
+ */
+export const movedOnResolution: RequestResolution = { outcome: "cancel", message: "Expired: the conversation moved on before it was settled" }
