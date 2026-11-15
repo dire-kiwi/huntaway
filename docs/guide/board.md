@@ -329,3 +329,6 @@ that sync (see _Settings sync_ in Hosts). The experiments:
   _Worked for 2m 10s · 7 steps · $0.123_. An amber dot says a step waited for your approval, a red one that a step
   failed or was refused. What the agent wrote between the steps stays in sight. Click the row to see the steps as they
   are without it, and again to fold them. The turn that's running stays open.
+- **Assistant check-ins**: the assistant's _Routines_ tab offers **Add check-ins**, a light counterpart to the morning
+  brief. At the times you pick (11:00 and 16:30 on weekdays to start with) the assistant looks over your boards and
+  messages you only if something needs you; otherwise it stays quiet. See _Check-ins_ in Integrations.

@@ -15,10 +15,8 @@ export const WEEKDAYS: ReadonlyArray<Weekday> = ["mon", "tue", "wed", "thu", "fr
 /** A check-in waits this long after the user's last message to the assistant. */
 export const TALKING_MINUTES = 20
 
-/** Exit 1 (skipped, with why) when the user messaged the assistant less than `TALKING_MINUTES` ago. */
-export const PRECHECK =
-  `m="\${${SINCE_USER_MESSAGE_ENV}:-}"\n` +
-  `if [ -n "$m" ] && [ "$m" -lt ${TALKING_MINUTES} ]; then echo "you messaged the assistant $m min ago"; exit 1; fi`
+/** Exit 1 (skipped, with why) when the user messaged the assistant less than `TALKING_MINUTES` ago. One line, as the editor's field is. */
+export const PRECHECK = `m="\${${SINCE_USER_MESSAGE_ENV}:-}"; if [ -n "$m" ] && [ "$m" -lt ${TALKING_MINUTES} ]; then echo "you messaged the assistant $m min ago"; exit 1; fi`
 
 const GOOGLE_STEP = `
    - Google ({{google}}): unread mail in the inbox from today (search_gmail_messages with "is:unread in:inbox newer_than:1d") and the calendar's events for the rest of today (get_events). Only the Google server's tools (mcp__google__…); if it isn't connected or a tool fails, leave mail and calendar out and don't follow any sign-in link.`

@@ -9,6 +9,7 @@ import { Routines } from "../automations/Routines.ts"
 import { atNow, boardLayer, lastRun, nz, profile, runsOf, sqlRun, tick } from "../automations/tests/board.ts"
 import { RunRepo } from "../runs/RunRepo.ts"
 import { Runs } from "../runs/Runs.ts"
+import { isoOf } from "../automations/schedule.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { ThreadReaders } from "../threads/ThreadReaders.ts"
@@ -78,9 +79,18 @@ describe("check-ins", () => {
         assert.deepStrictEqual([a.name, a.enabled, a.project_id, a.precheck], [NAME, true, null, PRECHECK])
         assert.deepStrictEqual(a.trigger, { kind: "daily", time: "09:00, 16:30", weekdays: ["mon", "fri"] })
         // 13:00 on Thursday 1 October: Friday at 9:00 is next.
-        assert.strictEqual(a.next_run_at, new Date(nz("2026-10-02 09:00")).toISOString())
+        assert.strictEqual(a.next_run_at, isoOf(nz("2026-10-02 09:00")))
         const message = a.action.kind === "message_assistant" ? a.action.message : ""
-        for (const part of ["{{last_run}}", "{{quiet_runs}}", "list_tasks", "needs_attention", "in_review", "list_tracked_work", "list_automations", "NO_REPLY"]) {
+        for (const part of [
+          "{{last_run}}",
+          "{{quiet_runs}}",
+          "list_tasks",
+          "needs_attention",
+          "in_review",
+          "list_tracked_work",
+          "list_automations",
+          "NO_REPLY",
+        ]) {
           assert.include(message, part)
         }
         // No Google unless asked.
