@@ -838,6 +838,13 @@ As built in 3.3 (HE-4), `permissions/Permissions.ts` (+ `PermissionRepo.ts`, the
   `user`, and `push` for a paired device's session), `expireFor` callers for projects, automations and workflows (their
   areas). `permissions.answer` takes the old body (`decision`, `message`, `answers`, `mode`, `feedback`, `automation`);
   the thread's `respond` command (`threads.command`) is not served.
+- **An edited input** (HE-23, for the drafts experiment): `permissions.answer`'s `input`, an object, is what a tool call
+  allowed runs with in place of the one it asked with. Only a `tool` prompt of a Claude run takes it (not a question,
+  a plan, the board's approvals, or a Codex prompt, whose request metadata has `codex`: Codex's MCP approval is an
+  elicitation answered `accept` or `decline`, with no arguments); else `Invalid` (`input`). An input the same as the
+  one asked (by its JSON) isn't an edit. An edit is written to the row (so `allowed` tells Claude `updatedInput` with
+  it), the thread's request (its `input`, and `edited: true` in its metadata) and the action log
+  (`ApprovalRules.settle`'s `edited` rewrites the entry's `summary`).
 
 As built in 3.4 (HE-4), `permissions/Approvals.ts`:
 

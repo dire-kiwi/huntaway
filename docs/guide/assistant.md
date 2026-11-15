@@ -130,6 +130,29 @@ and who answered (you on the board, nobody in time, the mode, the rule, its run 
 prompt you sent the thread a message instead of answering is skipped, see _Permissions_ in concepts.md; an entry from
 the old board can also say a notification or Telegram).
 
+### Mail and events as drafts
+
+With the experiment **Show outgoing mail and events as drafts** on (Settings → _Experiments_), a prompt for one of the
+Google server's tools you'd read as a message shows that message, in the assistant's thread or any other:
+
+- **A mail** (`send_gmail_message`, and `draft_gmail_message` when a rule asks about it) shows as it would go out: To,
+  Cc and Bcc, the Subject, and the body, as plain text or, for an HTML mail, drawn in a sandboxed frame that runs no
+  scripts and loads nothing from elsewhere (no remote images), as documents are. A reply says it's in its thread, a
+  forward that it forwards a message, and attachments are named. **Allow** reads **Send** (or **Save draft**),
+  **Deny** reads **Discard**, and _Always allow_ is where it always is (not for what a rule asks about, which asks
+  each time).
+- **Edit** (on Claude Code) makes To, Cc, Bcc, the Subject and the body fields to change (an HTML body as its markup);
+  the card says it's edited, and **Send as edited** sends it as it now is: the agent's run calls the tool with your
+  version, and is told so. **Undo edits** puts the mail back as the agent wrote it. Once sent, the card says _Sent as
+  you edited it_, its mail is the one sent, and the **Actions** tab's entry has what was sent. Codex's approval of an
+  MCP tool can only say yes or no, so on Codex the card has no **Edit**.
+- **An event** made or changed (`manage_event`, `create` or `update`) shows its title, when it is in its own time
+  zone, its attendees, place and description (and whether it adds Google Meet, or repeats); a change says what it
+  changes (_Changes the time and the place, to:_) and shows the new values. Its buttons are **Add the event** (or
+  **Change the event**) and **Discard**.
+
+Anything else, an event's deletion or reply included, is the usual card, as everything is with the experiment off.
+
 ## Google for the assistant
 
 The assistant reaches Gmail, Calendar and Drive through a Google Workspace MCP server on
@@ -215,6 +238,9 @@ this one) stands in for workspace-mcp: an MCP server over stdio
 with a few of its tools by name and canned mail, events and files for today (one mail a prompt
 injection), which logs each call to `$STUB_GOOGLE_LOG`. Make it the Google server's command
 (`{"command": "python3", "args": ["-I", "<path>/scripts/stub-google-mcp.py"]}`) in Settings → Skills and MCP.
+With `--fake-claude`, a message to the assistant with `fake-ask-mail` (or `fake-ask-event`) in it asks to send a mail
+(or add an event) with it, and once allowed calls the stub with the input allowed, so the stub's log has the mail as
+you edited it.
 
 ## An assistant host
 

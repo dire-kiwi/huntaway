@@ -1,13 +1,16 @@
 import { clsx } from "clsx"
 import { Bot, Brain, Check, ChevronRight, CircleAlert, Clock, Layers, ShieldQuestion } from "lucide-react"
 import { memo, useState, type ReactNode } from "react"
-import { QUESTION_TOOLS } from "@huntaway/client"
+import { useAtomValue } from "@effect/atom-react"
+import { experimentsAtom, QUESTION_TOOLS } from "@huntaway/client"
 import { useAction } from "../../../state/mutation"
 import { Button, duration, localeTimeString } from "../../ui"
 import { useSubagentView, subagentTitle } from "./subagentView"
 import { answerPrompt } from "./promptAnswers"
 import { AskCard, BoardQuestionCard, PlanCard, questionsOf, SkippedLine } from "./requestCards"
 import { ConnectionCard } from "./ConnectionCard"
+import { DraftCard } from "./draftCards"
+import { draftOf } from "./drafts"
 import { useThread } from "./context"
 import { Markdown } from "./Markdown"
 import type { CompactMeta, ConnectionData, PromptData, QuestionData, ResultData } from "./threadModel"
@@ -85,14 +88,28 @@ export function ConnectionRow({ id, data, hostId }: { id: number; data: Connecti
   return <ConnectionCard id={id} data={data} hostId={hostId} taskId={taskId} movedOn={movedOn} />
 }
 
-/** A permission prompt: a question or a plan gets its own card. */
+/**
+ * A permission prompt: a question or a plan gets its own card, and with the "Show outgoing mail and events as drafts"
+ * experiment on, a mail to send or an event to make or change is shown as one (draftCards.tsx).
+ */
 export function PromptCard({ id, data, hostId }: { id: number; data: PromptData; hostId: string }) {
   const taskId = useThread((t) => t.taskId)
   // A message's been sent to the agent since: one whose run ended isn't answered any more.
   const movedOn = useThread((t) => t.lastSent > id)
+  const drafts = useAtomValue(experimentsAtom, (on) => on.includes("draft_cards"))
   if (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length)
     return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} movedOn={movedOn} />
   if (data.tool_name === "ExitPlanMode") return <PlanCard data={data} hostId={hostId} taskId={taskId} from={<PromptFrom data={data} />} movedOn={movedOn} />
+  const draft = drafts && !data.kind ? draftOf(data.tool_name, data.input) : null
+  if (draft) {
+    const footer = (
+      <>
+        <PromptRule data={data} pending={data.status === "pending"} />
+        <SkippedLine status={data.status} />
+      </>
+    )
+    return <DraftCard draft={draft} data={data} hostId={hostId} from={<PromptFrom data={data} />} footer={footer} />
+  }
   return <PermissionCard data={data} hostId={hostId} />
 }
 
