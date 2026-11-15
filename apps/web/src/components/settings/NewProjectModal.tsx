@@ -1,7 +1,9 @@
 // `projects.create`, `projects.clone` and `projects.createOnGithub` (6.11); the project arrives on the board with the
-// `project` event. Picking the host, and making the profile on a host that hasn't got it, are the hosts' (M7): the project
-// goes on the page's own host, in one of its profiles.
-import { mutate } from "@huntaway/client"
+// `project` event. The project goes on any host that can run agents (HE-38): on one without the picked profile, the
+// profile is made there first, with the configs picked, or with the folder typed as its first config when the host has
+// none (as Settings → Profiles does).
+import { canRunAgents, mutate } from "@huntaway/client"
+import { AgentConfigId } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Effect, Exit, Fiber } from "effect"
 import { Folder, Globe, Loader2, Lock } from "lucide-react"
@@ -9,23 +11,34 @@ import { useEffect, useRef, useState } from "react"
 import { board, useBoard } from "../../state/board"
 import { useAction } from "../../state/mutation"
 import { navigate } from "../../state/route"
-import { defaultAgentHost, profileNames } from "../boardHelpers"
+import { defaultAgentHost, profileNames, useShallow } from "../boardHelpers"
+import { ConfigPicker } from "./ClaudeConfigs"
 import { clonePath, defaultCloneDir, loadProjectSource, saveProjectSource, type ProjectSource } from "./repoSource"
 import { DirPicker } from "./DirPicker"
 import { GithubMark, GithubRepoPicker, type RepoChoice } from "./GithubRepos"
+import { HostSelect } from "./hosts/profileFields"
 import { Button, Field, Input, Modal, ModalFooter } from "../ui"
 
 /** The last folder in a path. */
 const lastPart = (path: string) => path.split("/").findLast((p) => p !== "")
 
-/** Adds a project, in `profile` to start with: a folder on the host, or a GitHub repository it clones. */
+/** Adds a project, in `profile` to start with: a folder on a host, or a GitHub repository it clones. */
 export function NewProjectModal({ profile, onClose }: { profile?: string | undefined; onClose: () => void }) {
   const [names] = useState(() => profileNames(board.get().profiles))
   // With every profile on the board, the project's profile is picked here.
   const [profileName, setProfileName] = useState(profile !== undefined && names.includes(profile) ? profile : (names[0] ?? ""))
-  const [host] = useState(() => defaultAgentHost() ?? board.get().localHostId ?? "")
+  const [host, setHost] = useState(() => defaultAgentHost() ?? board.get().localHostId ?? "")
+  const hostCount = useBoard((s) => s.hosts.filter((h) => canRunAgents(h)).length)
   const profileRow = useBoard((s) => s.profiles.find((p) => p.host_id === host && p.name === profileName))
   const profileId = profileRow?.id
+  // Without the profile on the host, it's made there: with the host's configs picked, or the folder typed as its first.
+  const hostConfigs = useBoard(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === host)))
+  const pickConfigs = hostConfigs.length > 0
+  const [configIds, setConfigIds] = useState<ReadonlyArray<string>>([])
+  const pickedConfigs = configIds.filter((id) => hostConfigs.some((c) => c.id === id))
+  const [configDir, setConfigDir] = useState("~/.claude")
+  const canMakeProfile = profileName.trim() !== "" && (pickConfigs ? pickedConfigs.length > 0 : configDir.trim() !== "")
+  const ready = profileId !== undefined || canMakeProfile
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
   const [key, setKey] = useState("")
@@ -64,29 +77,36 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
     setHidden(true)
   }
   const submit = (): void => {
-    if (profileId === undefined || busy) return
+    if (!ready || busy) return
     setHidden(false)
     const key_ = key || undefined
-    const add =
-      fromGithub && repo
-        ? mutate("projects.clone", host, { clone: { profile_id: profileId, repo: repo.full_name, repo_path: clonePathNow.trim(), name, key: key_ } }).pipe(
-            Effect.map((project) => ({ project, github: undefined })),
-          )
-        : creating
-          ? mutate("projects.createOnGithub", host, {
-              project: {
-                profile_id: profileId,
-                repo_path: path,
-                visibility,
-                repo_name: repoName.trim() || undefined,
-                owner: owner.trim() || undefined,
-                name,
-                key: key_,
-              },
-            })
-          : mutate("projects.create", host, { project: { profile_id: profileId, name, repo_path: path, key: key_ } }).pipe(
-              Effect.map((project) => ({ project, github: undefined })),
-            )
+    const add = Effect.gen(function* () {
+      // The profile has to be on the project's host first.
+      let pid = profileId
+      if (pid === undefined) {
+        const ids = pickConfigs
+          ? pickedConfigs.map((id) => AgentConfigId.make(id))
+          : [(yield* mutate("configs.create", host, { config: { name: profileName, config_dir: configDir.trim() } })).id]
+        pid = (yield* mutate("profiles.create", host, { profile: { name: profileName, claude_config_ids: ids } })).id
+      }
+      if (fromGithub && repo) {
+        const clone = { profile_id: pid, repo: repo.full_name, repo_path: clonePathNow.trim(), name, key: key_ }
+        return { project: yield* mutate("projects.clone", host, { clone }), github: undefined }
+      }
+      if (creating) {
+        const project = {
+          profile_id: pid,
+          repo_path: path,
+          visibility,
+          repo_name: repoName.trim() || undefined,
+          owner: owner.trim() || undefined,
+          name,
+          key: key_,
+        }
+        return yield* mutate("projects.createOnGithub", host, { project })
+      }
+      return { project: yield* mutate("projects.create", host, { project: { profile_id: pid, name, repo_path: path, key: key_ } }), github: undefined }
+    })
     // A clone can take a while, and the dialog can be closed meanwhile: the clone goes on (detached, so the dialog's
     // action ending with it doesn't stop it), and a closed dialog does nothing with its answer.
     void run(Effect.forkDetach(add, { startImmediately: true }).pipe(Effect.flatMap(Fiber.join))).then((exit) => {
@@ -157,6 +177,21 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
             </button>
           ))}
         </div>
+        {hostCount > 1 && (
+          <Field label="Host" hint="The machine the repository is on. Its agents run there.">
+            <HostSelect
+              value={host}
+              onChange={(h) => {
+                setHost(h)
+                setConfigIds([])
+                setPath("")
+                setRepo(null)
+                setDest(null)
+                setHidden(true)
+              }}
+            />
+          </Field>
+        )}
         {names.length > 1 && (
           <Field label="Profile" hint="The Claude profile the project's agents run under.">
             <select
@@ -250,7 +285,19 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
             )}
           </>
         )}
-        {!profileId && <div className="text-[12.5px] text-faint">This host has no profile called {profileName}.</div>}
+        {!profileId &&
+          (pickConfigs ? (
+            <Field label={`Configs for "${profileName}" on this host`} hint="This host has no such profile yet; it's created with these configs.">
+              <ConfigPicker hostId={host} value={configIds} onChange={setConfigIds} />
+            </Field>
+          ) : (
+            <Field
+              label={`Claude config directory for "${profileName}" on this host`}
+              hint="This host has no such profile yet; it's created with this directory."
+            >
+              <Input value={configDir} onChange={(e) => setConfigDir(e.target.value)} className="font-mono text-[12px]" spellCheck={false} />
+            </Field>
+          ))}
         <div className="grid grid-cols-[1fr_120px] gap-3">
           <Field label="Name">
             <Input value={name} placeholder={lastPart(fromGithub ? clonePathNow : path) ?? "Project"} onChange={(e) => setName(e.target.value)} />
@@ -266,11 +313,11 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
               Cancel
             </Button>
             {fromGithub ? (
-              <Button variant="primary" disabled={busy || !profileId || !repo || !clonePathNow.trim()} onClick={submit}>
+              <Button variant="primary" disabled={busy || !ready || !repo || !clonePathNow.trim()} onClick={submit}>
                 {busy && <Loader2 size={13} className="animate-spin" />} {busy ? "Cloning…" : "Clone and add project"}
               </Button>
             ) : (
-              <Button variant="primary" disabled={busy || !profileId || !path || (creating && !(repoName.trim() || folderName))} onClick={submit}>
+              <Button variant="primary" disabled={busy || !ready || !path || (creating && !(repoName.trim() || folderName))} onClick={submit}>
                 {busy && creating && <Loader2 size={13} className="animate-spin" />}{" "}
                 {creating ? (busy ? "Creating…" : `Create ${visibility} repository and add project`) : "Add project"}
               </Button>
