@@ -11,6 +11,7 @@ const OUTCOME_STYLE: Record<ApprovalAction["outcome"], string> = {
   allowed: "bg-emerald-500/10 text-emerald-300",
   denied: "bg-red-500/10 text-red-300",
   expired: "bg-white/5 text-muted",
+  skipped: "bg-white/5 text-muted",
   blocked: "bg-red-500/10 text-red-300",
 }
 
@@ -32,6 +33,7 @@ const EXPIRED_BY: Record<string, string> = {
 function outcomeText(a: ApprovalAction) {
   if (a.outcome === "pending") return "Waiting for your answer"
   if (a.outcome === "blocked") return "Blocked by a never rule"
+  if (a.outcome === "skipped") return "Skipped: you sent a message instead of answering"
   if (a.outcome === "expired") return (a.answered_by && EXPIRED_BY[a.answered_by]) || "Expired"
   return a.answered_by ? `${a.outcome.charAt(0).toUpperCase()}${a.outcome.slice(1)} by ${BY[a.answered_by] ?? a.answered_by}` : a.outcome
 }

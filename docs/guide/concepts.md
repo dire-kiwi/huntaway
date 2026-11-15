@@ -995,6 +995,19 @@
   tools, has no prompt tool (until HA-225 it had the board's MCP server's `permission_prompt`). Codex's approvals come on the
   run's output too (the app-server's requests, which its adapter writes there) and get the same
   card, which names the agent asking; a Codex `/compact` declines them.
+  - **A message skips it.** An agent waiting on a prompt can't read anything you send until the
+    prompt is settled, so a message you send the thread while one is open (typed in it, or
+    `assistant.send`) settles it as **skipped** instead of waiting behind it: the call is denied,
+    the agent is told you sent a message instead of answering and not to retry unless your message
+    asks it to, and it reads your message straight away, in the same run. The card shows
+    _Skipped: you sent a message_, and the assistant's Actions log records it as skipped, by your
+    message. This holds for Claude's and Codex's prompts in every thread, a subagent's (shown on its
+    parent thread), and the board's own approvals (project changes, task deletions, automations
+    and workflows), which hold the agent's call in the same way. Questions and plans aren't
+    skipped (below). Another agent's `send_to_task` and the board's own prompts don't skip
+    anything, nor does a blank message. Stop doesn't answer an open prompt either: the agent is
+    interrupted, and the prompt expires with its turn. Of an answer and a message at the same
+    moment (or two tabs), only the first settles it.
 - **Questions and plans** are cards in the thread rather than approvals, and the task's
   card says what's asked ("Which database should the cache use?", "Plan ready for approval: …").
   Keys 1–9 pick an option in the latest one that's waiting, unless you're typing.

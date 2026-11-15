@@ -119,9 +119,10 @@ it) is denied if nobody answers it within the profile's expiry (30 minutes by de
 `expiry_minutes`, 0 for never), and the agent is told to carry on without it. Prompts raised before
 this, ones the user's own turns raise, and project tasks' (even ones an automation started) wait as
 they always did. Each call a rule asked about or blocked goes in the assistant's **Actions** tab
-(`approvalRules.log`): what it was called with, the rule, how it ended (allowed, denied, expired or blocked) and who
-answered (you on the board, nobody in time, the mode, the rule, or its run ending first; an entry from the old board
-can also say a notification or Telegram).
+(`approvalRules.log`): what it was called with, the rule, how it ended (allowed, denied, expired, skipped or blocked)
+and who answered (you on the board, nobody in time, the mode, the rule, its run ending first, or your message: a
+prompt you sent the thread a message instead of answering is skipped, see _Permissions_ in concepts.md; an entry from
+the old board can also say a notification or Telegram).
 
 ## Google for the assistant
 
