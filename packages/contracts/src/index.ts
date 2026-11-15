@@ -10,6 +10,8 @@ export * from "./automation.ts"
 export * from "./capabilities.ts"
 // 6.10: computer use.
 export * from "./desktop.ts"
+// HE-35: Spaces.
+export * from "./space.ts"
 export * from "./dirs.ts"
 export * from "./docs.ts"
 export * from "./errors.ts"
@@ -43,6 +45,8 @@ export * from "./rpc/board.ts"
 export * from "./rpc/checkpoints.ts"
 // 6.10: computer use.
 export * from "./rpc/desktop.ts"
+// HE-35: Spaces.
+export * from "./rpc/spaces.ts"
 export * from "./rpc/docs.ts"
 export * from "./rpc/git.ts"
 export * from "./rpc/host.ts"

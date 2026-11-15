@@ -12,6 +12,7 @@ import { BoardRpcs } from "./board.ts"
 import { CheckpointRpcs } from "./checkpoints.ts"
 // 6.10: computer use.
 import { DesktopRpcs } from "./desktop.ts"
+import { SpacesRpcs } from "./spaces.ts"
 import { DocRpcs } from "./docs.ts"
 import { GitRpcs } from "./git.ts"
 import { HostRpcGroup } from "./host.ts"
@@ -67,6 +68,8 @@ export const HostRpcs = HostRpcGroup.merge(
   GithubRepoRpcs,
   // 6.10: computer use.
   DesktopRpcs,
+  // HE-35
+  SpacesRpcs,
   AgentToolsRpcs,
   PushRpcs,
   TaskDocumentRpcs,

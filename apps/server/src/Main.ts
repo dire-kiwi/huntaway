@@ -32,6 +32,8 @@ import {
   DocRpcs,
   // 6.10: computer use.
   DesktopRpcs,
+  // HE-35
+  SpacesRpcs,
   GitRpcs,
   HostRpcGroup,
   HubHostRpcs,
@@ -127,6 +129,8 @@ import { Desktop } from "./desktop/Desktop.ts"
 import { DesktopClaims } from "./desktop/DesktopClaims.ts"
 import { DesktopOpRepo } from "./desktop/DesktopOpRepo.ts"
 import { DesktopTools } from "./desktop/DesktopTools.ts"
+import { Docker } from "./spaces/Docker.ts"
+import { Spaces } from "./spaces/Spaces.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
 import { CheckpointRepo } from "./git/CheckpointRepo.ts"
 import { Checkpoints } from "./git/Checkpoints.ts"
@@ -248,6 +252,7 @@ import { ToolHandlers } from "./rpc/tools.ts"
 import { CheckpointHandlers } from "./rpc/checkpoints.ts"
 // 6.10: computer use.
 import { DesktopHandlers } from "./rpc/desktop.ts"
+import { SpacesHandlers } from "./rpc/spaces.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { HostHandlers } from "./rpc/host.ts"
 import { PenHandlers } from "./rpc/pens.ts"
@@ -290,6 +295,7 @@ import { AnalyticsHandlers } from "./rpc/analytics.ts"
 import { TelemetryHandlers } from "./rpc/telemetry.ts"
 // 6.1: terminals.
 import { TerminalRoute } from "./http/terminal.ts"
+import { SpacesRoute } from "./http/spaces.ts"
 import { TerminalHandlers } from "./rpc/terminal.ts"
 import { Pty } from "./terminal/Pty.ts"
 import { Terminals } from "./terminal/Terminals.ts"
@@ -629,6 +635,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
     Layer.provideMerge(Terminals.registered.pipe(Layer.provideMerge(Terminals.layer), Layer.provideMerge(Pty.layer))),
     // 6.10: computer use, over the MCP area it registers its server with.
     Layer.provideMerge(DesktopLive),
+    // HE-35: Spaces, Linux desktops in Docker.
+    Layer.provideMerge(Spaces.layer.pipe(Layer.provideMerge(Docker.layer))),
     // 6.8: push, watching the board's events for what devices want.
     Layer.provideMerge(PushLive),
     // HE-34: the plugins, over the MCP area they define their servers with.
@@ -713,6 +721,8 @@ export const Served = PublicRpcs.merge(
   GithubRepoRpcs,
   // 6.10: computer use.
   DesktopRpcs,
+  // HE-35
+  SpacesRpcs,
   // 6.4
   AgentToolsRpcs,
   // 6.9
@@ -762,6 +772,8 @@ export const HandlersLive = Layer.mergeAll(
   GithubRepoHandlers,
   // 6.10: computer use.
   DesktopHandlers,
+  // HE-35
+  SpacesHandlers,
   // 6.4
   AgentToolsHandlers,
   // 6.9
@@ -794,6 +806,7 @@ export const RoutesLive = Layer.mergeAll(
   McpHttpRoute,
   OtlpRoute /* 6.9 */,
   TerminalRoute /* 6.1 */,
+  SpacesRoute /* HE-35 */,
   // 6.5: automations' webhooks.
   WebhookRoute,
   // HE-34: the plugins' routes.

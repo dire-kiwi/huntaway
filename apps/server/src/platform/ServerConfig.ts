@@ -158,6 +158,9 @@ export const SERVE_ENV = [
   "HUNTAWAY_CUA_DRIVER",
   "HUNTAWAY_CUA_DRIVER_RELEASE",
   "HUNTAWAY_DESKTOP_LOCKED",
+  // HE-35: the Docker CLI Spaces run, and the image they are built on.
+  "HUNTAWAY_DOCKER",
+  "HUNTAWAY_SPACES_IMAGE",
   // The task an agent works on, which a server started by another board's agent (a test server) has.
   "HUNTAWAY_TASK_ID",
 ] as const
@@ -298,6 +301,10 @@ export interface ServerConfigShape {
   readonly cuaDriver: string | null
   /** 6.10: `HUNTAWAY_CUA_DRIVER_RELEASE` (JSON), the release the host's page installs instead of the pinned one (a fake download in tests). */
   readonly cuaRelease: CuaReleaseConfig | null
+  /** HE-35: `HUNTAWAY_DOCKER`, the Docker CLI Spaces run (default `docker` on PATH; tests give none). */
+  readonly dockerBin: string
+  /** HE-35: `HUNTAWAY_SPACES_IMAGE`, the image Spaces are built on (default Cua's Linux image with spacesd). */
+  readonly spacesImage: string
   /** 6.10: `HUNTAWAY_DESKTOP_LOCKED` (`1` or `0`), whether the screen is locked, instead of asking the session (tests). */
   readonly desktopLocked: boolean | null
   /** 6.9: `--telemetry-url`/`HUNTAWAY_TELEMETRY_URL`, used while the host's settings name no ClickHouse. */
@@ -433,6 +440,9 @@ const updateConfig = (args: ServeArgs, home: string, exe: string | null, expand:
 export const VERSION = "0.1.0"
 
 /** The server's configuration: flags and environment, read once. */
+/** HE-35: the image Spaces are built on: Cua's Linux image, Ubuntu with XFCE, spacesd, Cua Driver and Node. */
+export const SPACES_IMAGE = "ghcr.io/trycua/linux:24.04"
+
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()("huntaway-server/platform/ServerConfig") {
   /** From the parsed flags; the rest of the environment is read here too. */
   static readonly layerFrom = (args: ServeArgs) =>
@@ -451,6 +461,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         const cuaDriver = yield* Config.String("HUNTAWAY_CUA_DRIVER").pipe(Config.option)
         const cuaRelease = yield* Config.schema(Schema.fromJsonString(CuaReleaseConfig), "HUNTAWAY_CUA_DRIVER_RELEASE").pipe(Config.option)
         const desktopLocked = yield* Config.String("HUNTAWAY_DESKTOP_LOCKED").pipe(Config.option)
+        // HE-35
+        const dockerBin = yield* Config.String("HUNTAWAY_DOCKER").pipe(Config.withDefault(""))
+        const spacesImage = yield* Config.String("HUNTAWAY_SPACES_IMAGE").pipe(Config.withDefault(""))
         // 6.9
         const claudeConfigDir = yield* Config.String("CLAUDE_CONFIG_DIR").pipe(Config.option)
         const codexHome = yield* Config.String("CODEX_HOME").pipe(Config.option)
@@ -499,6 +512,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
               (v) => v === "1",
             ),
           ),
+          dockerBin: dockerBin === "" ? "docker" : expand(dockerBin),
+          spacesImage: spacesImage === "" ? SPACES_IMAGE : spacesImage,
           hubs: Option.match(args.hub ?? Option.none(), {
             onNone: () => [],
             onSome: (list) =>
@@ -560,6 +575,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
         cuaDriver: `${config.dataDir}/no-cua-driver-in-tests`,
         cuaRelease: { version: "0.0.0-none", url: "http://127.0.0.1:1/no-downloads-in-tests", bytes: 1, sha256: "0".repeat(64) },
         desktopLocked: false,
+        // HE-35: never this machine's Docker: a test gives its own `Docker` layer.
+        dockerBin: `${config.dataDir}/no-docker-in-tests`,
+        spacesImage: SPACES_IMAGE,
         hubs: [],
         hubToken: null,
         noDiscovery: true,
