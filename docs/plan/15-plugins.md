@@ -61,7 +61,7 @@ the run, its task (id, key, title, kind, status), project and profile, whether i
 | ---------- | ---------------------------------------------------------------------- | ----------------------- |
 | `page`     | `/<id>/<path>`, the board's main area; a menu entry under Docs if `nav` | always                  |
 | `settings` | Settings → Plugins, under the plugin's name                            | `settings` is set       |
-| `task`     | a section of a task's Details, on its host; left out when `empty`      | `task` is true          |
+| `task`     | a section of a task's key items and Details (HE-31), on its host; left out when `empty` | `task` is true |
 
 The web app reads a page with `plugins.page` on the plugin's host and shows its HTML in a frame as documents are
 (`components/plugins/frameSource.ts`): `sandbox="allow-scripts"` with no same origin, under `FRAME_CSP` (no network:

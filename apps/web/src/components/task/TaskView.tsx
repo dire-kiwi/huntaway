@@ -34,7 +34,8 @@ import { ContextPill } from "./Context"
 import { TaskTypeBadge } from "./documentInfo"
 import { ReminderButton, StarButton, useCanMark } from "./Reminders"
 import { Button, IconButton } from "../ui"
-import { Details } from "./view/details/Details"
+import { DetailsSide } from "./view/details/Details"
+import { KeyItems } from "./view/details/KeyItems"
 import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout"
 import { TabContent } from "./view/TabContent"
 import { TitleEditor } from "./view/Title"
@@ -54,6 +55,9 @@ import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowT
 // and the Agents pill (layout/AgentsPill, with the layout's later pieces). Subprojects are a
 // legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
 // are 6.7's.
+
+/** The column beside the main area, where there's room: the key items, or beside the Details tab the rest of the details. */
+const SIDE = "w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40"
 
 const isLabel = (t: Tab): t is DocumentType => LABELS.some((l) => l === t)
 
@@ -174,7 +178,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const host = useHost(task?.host_id)
   const profileName = useProfileName(task)
   const agents = canRunAgents(host)
-  const [rootRef, wide, measured] = useWide()
+  const [rootRef, wide] = useWide()
   const narrow = useNarrow()
   const canMark = useCanMark(task)
   const [markErr, setMarkErr] = useState<string | null>(null)
@@ -215,10 +219,6 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   }, [task, hostTools, openIds, act, closeTool])
   // A subagent's thread stays shown while the task is open: closing it (or opening another) goes back to the main thread.
   useEffect(() => () => useSubagentView.getState().show(taskId, null), [taskId])
-  // Wide enough for the details column: their tab is gone, and the thread shows instead. Not
-  // dropped before the width is known, so a task opening on its details keeps that tab when narrow.
-  if (measured && wide && tab === "details") setTab("thread")
-
   if (!task)
     return (
       <div className="flex h-full flex-col">
@@ -261,12 +261,12 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   if (task.kind === "task") tabs.push(...workflowTabs(workflows).map(workflowTab))
   // 6.7: the assistant's action log: what its approval rules asked about or blocked.
   if (assistant) tabs.push("actions")
-  tabs.push("terminal")
-  if (!wide) tabs.push("details")
-  // Until the render above drops it, a details tab while wide shows the thread beside the column.
+  // HE-31: the task's title, description and everything set by hand, last as it's the least used. The column beside the
+  // other tabs has only the key items (view/details/KeyItems.tsx).
+  tabs.push("terminal", "details")
   // A label taken off shows the thread instead; so does a tab this task hasn't got (review, summary, a workflow's). A
   // terminal tool's tab is the tools' own.
-  const shown = (wide && tab === "details") || (isLabel(tab) && !labels.includes(tab)) || (!tabs.includes(tab) && !tab.startsWith("tool:")) ? "thread" : tab
+  const shown = (isLabel(tab) && !labels.includes(tab)) || (!tabs.includes(tab) && !tab.startsWith("tool:")) ? "thread" : tab
   const docShown = labels.find((l) => l === shown)
   const key = `${keyPrefix(task, project)}-${task.number}`
   // A terminal needs the room: from the side panel it expands into the dialog.
@@ -490,7 +490,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
                 </Suspense>
               </div>
             ))}
-          <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} onShowThread={() => setTab("thread")} />
+          <TabContent task={task} project={project} mode={mode} tab={tab} shown={shown} docShown={docShown} wide={wide} onShowThread={() => setTab("thread")} />
         </main>
         {desktop && (
           <div className={clsx("min-w-0", wide ? "w-1/2 shrink-0" : "flex-1")}>
@@ -498,9 +498,19 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
           </div>
         )}
         {/* A document, the changes' panels and the terminals get the room; so do the desktop, the memory and the brief. */}
-        {wide && !desktop && !docShown && shown !== "changes" && shown !== "memory" && shown !== "brief" && !isTerminalTab(tab) && (
-          <Details key={task.id} task={task} mode={mode} className="w-[320px] shrink-0 overflow-y-auto border-l border-line bg-panel/40" />
-        )}
+        {wide &&
+          !desktop &&
+          !docShown &&
+          shown !== "changes" &&
+          shown !== "memory" &&
+          shown !== "brief" &&
+          !isTerminalTab(tab) &&
+          // Beside the Details tab, the rest of the details; beside the others, the key items (a pens thread has none).
+          (shown === "details" ? (
+            <DetailsSide key={task.id} task={task} mode={mode} className={SIDE} />
+          ) : (
+            !pensThread && <KeyItems key={task.id} task={task} className={SIDE} />
+          ))}
       </div>
     </div>
   )

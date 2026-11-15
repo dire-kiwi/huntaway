@@ -161,7 +161,7 @@ test("an edit of the description survives a change to it, and a failed save says
     const { page } = ui
     let failing = false
     await routeRpc(page, (r) => (r.tag === "tasks.update" && failing ? failure({ _tag: "Invalid", field: "description", reason: "disk full" }) : undefined))
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Old text", "click Edit description"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click details", "wait Old text", "click Edit description"])
     const field = page.locator("section:has(h3:text-is('Description')) textarea")
     await field.fill("My new text")
     await server.rpc("tasks.update", { id: task.id, patch: { description: "Changed elsewhere" } })

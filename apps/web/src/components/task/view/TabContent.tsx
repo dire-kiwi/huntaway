@@ -4,7 +4,7 @@ import { preloadable } from "../../ui/preloadable"
 import { Thread } from "../Thread"
 import { Composer } from "../thread/Composer"
 import { WithHeldChoice } from "../../board/MergesInto"
-import { Details } from "./details/Details"
+import { DetailsTab } from "./details/Details"
 import { DocumentView } from "../Document"
 import { ChangeSummaryView, ReviewSummary } from "../Review"
 // 6.7
@@ -61,11 +61,14 @@ export function TabContent({
   tab,
   shown,
   docShown,
+  wide,
   onShowThread,
 }: {
   task: Task
   project: Project | undefined
   mode: Mode
+  /** Wide enough for a column beside the tab: the Details tab leaves all but the title and description to it. */
+  wide: boolean
   tab: Tab
   shown: Tab
   docShown: DocumentType | undefined
@@ -93,7 +96,7 @@ export function TabContent({
     )
   // A document has a composer of its own, for asking for changes to it (6.2).
   if (docShown) return <DocumentView key={`${task.id}:${docShown}`} task={task} label={docShown} onShowThread={onShowThread} />
-  const content = tabView(task, mode, tab, shown, onShowThread)
+  const content = tabView(task, mode, tab, shown, wide, onShowThread)
   if (!content) return null
   // Every other tab keeps the thread's composer under it, and a message sent from it shows the thread (HA-334).
   return (
@@ -109,9 +112,9 @@ export function TabContent({
 /**
  * What a tab other than the thread or a document shows above the composer: the Changes tab (changes/Changes.tsx), the
  * review and the summary (task/Review.tsx), a workflow's tabs (task/Workflows.tsx, 6.6), the assistant's memory,
- * brief, routines and action log (6.7).
+ * brief, routines and action log (6.7), and the task's details (HE-31).
  */
-function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, onShowThread: () => void): ReactNode {
+function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, wide: boolean, onShowThread: () => void): ReactNode {
   return shown === "memory" ? (
     <Suspense fallback={null}>
       <MemoryView key={`${task.host_id}:${task.id}`} task={task} onShowThread={onShowThread} />
@@ -145,6 +148,6 @@ function tabView(task: Task, mode: Mode, tab: Tab, shown: Tab, onShowThread: () 
       <Routines assistant={task} />
     </Suspense>
   ) : shown === "details" ? (
-    <Details key={task.id} task={task} mode={mode} className="h-full overflow-y-auto" />
+    <DetailsTab key={task.id} task={task} mode={mode} columns={wide} />
   ) : null
 }

@@ -84,8 +84,8 @@ files in that profile's assistant's workspace: paths with `..`, in `.git` or thr
 is a workspace (or `assistants` folder) that's been replaced by a symlink, whose memory isn't loaded or committed
 either.
 
-**Tracked work** is what the assistant is doing or following for you, listed under _Working on_ at the top of
-its details panel: the tasks it created, its subagents' research, and plans or questions waiting on you. It keeps the list
+**Tracked work** is what the assistant is doing or following for you, listed under _Working on_ in the column
+beside its thread: the tasks it created, its subagents' research, and plans or questions waiting on you. It keeps the list
 with board tools of its own, which its instructions tell it to use: `track_work` adds an item when it takes on a request
 that goes on in the background, or changes one by its id as things change, and marks it done (or failed) when it reports
 back; `untrack_work` takes items off (by id, or the done ones); `list_tracked_work` reads the list back after a restart
@@ -105,7 +105,7 @@ message box, beside the permission mode.
 
 **Approval rules** say what the assistant may do outside the board (_allow_), asks you
 first each time (_ask_) or never does (_never_), whatever its thread's permission mode. Edit them
-under _Rules_ in its details (collapsed until opened), or with the RPCs `approvalRules.get` and
+under _Rules_ in its _Details_ tab (collapsed until opened), or with the RPCs `approvalRules.get` and
 `approvalRules.set`. A rule names a tool (`mcp__google__send_gmail_message`, `Bash`), an MCP server for all its
 tools (`mcp__google`), or a pattern with `*` (`mcp__google__*delete*`), without regard to case; when several match, never beats
 ask and ask beats allow. A tool or pattern can have only one rule. They hold for the assistant and

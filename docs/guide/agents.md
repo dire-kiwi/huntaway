@@ -63,7 +63,7 @@ attention**, but nowhere else.
   If the run that follows still leaves the list unfinished, the task goes to **Needs attention** ("Todo list
   unfinished: …") instead of the agent being asked again. Runs that stop, fail or wait for you aren't held.
 - An agent's `update_task` can't move the task out of **In progress**, and says what's unfinished.
-- When you move it (dragging its card, its card's menu, **Complete**, or the status list in its details), the board
+- When you move it (dragging its card, its card's menu, **Complete**, or the status list in its _Details_ tab), the board
   shows the unfinished items and asks first: **Move anyway** moves it all the same, for a list the agent left behind.
 
 Moves the board makes itself (a workflow's, a merged pull request's, a review's) aren't held.

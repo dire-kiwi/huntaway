@@ -1,13 +1,12 @@
-import { documentsOnly, isAssistant, isPenThread, isPensThread, isScratch, taskLabels, type HostTask as Task } from "@huntaway/client"
+import { isAssistant, taskLabels, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
 import { TaskId, type TaskPatch } from "@huntaway/contracts"
 import { Copy, GitBranch, Loader2, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../../state/board"
 import { exitError, useMutation } from "../../../../state/mutation"
-import { isGroupTask, useProject } from "../../../boardHelpers"
+import { useProject } from "../../../boardHelpers"
 import { Dependencies } from "../../../board/Dependencies"
-import { useConfirmDone } from "../../../board/ConfirmDone"
 import { IncomingSection, MergesIntoSection, useIncoming } from "../../../board/MergesInto"
 import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../../board/StackedOn"
 import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
@@ -24,6 +23,8 @@ import { Row, Section, TextInput } from "./Section"
 import { StartFromRow } from "./StartFromRow"
 import { StatusSection } from "./StatusSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
+import { taskFacts } from "./taskFacts"
+import { TodosSection } from "./TodosSection"
 import { TrackedWork } from "./TrackedWork"
 // HE-34
 import { PluginSections } from "./PluginSections"
@@ -36,23 +37,49 @@ import { useWorkflowRuns, WorkflowsList } from "../../Workflows"
 // assistant's approval rules (6.7), the stack sections "Stacked on" and "Landing after this" (4.8) and the Asana links
 // (6.11) are back.
 
-export function Details({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
+/**
+ * The Details tab (HE-31): everything about the task that's set by hand, with what the column beside the thread shows
+ * (KeyItems.tsx), so a view too narrow for that column has it all here. With `columns` the title and the description
+ * have the tab to themselves, and the rest is in the column beside it (DetailsSide); without, it's one list, the status
+ * first, as it's what a phone moves a task with.
+ */
+export function DetailsTab({ task, mode, columns }: { task: Task; mode: Mode; columns: boolean }) {
+  // The same elements either way, so a view that's widened (a side panel expanded) keeps what's being edited.
+  return (
+    <div className="h-full overflow-y-auto" data-details>
+      {!columns && <Status task={task} />}
+      <div className={clsx(columns && "mx-auto max-w-3xl py-1")}>
+        <TitleSection task={task} />
+        {/* The assistant's is the conversation itself. */}
+        {!isAssistant(task) && <DescriptionSection task={task} large={columns} />}
+      </div>
+      {!columns && <DetailsRest task={task} mode={mode} />}
+    </div>
+  )
+}
+
+/** Beside the Details tab where there's room, in the key items' place: the task's status, and everything else set by hand. */
+export function DetailsSide({ task, mode, className }: { task: Task; mode: Mode; className: string }) {
+  return (
+    <aside className={className}>
+      <Status task={task} />
+      <DetailsRest task={task} mode={mode} />
+    </aside>
+  )
+}
+
+/** The task's status, to move it on. The threads that last (the assistant's, the pens') aren't moved between columns. */
+function Status({ task }: { task: Task }) {
+  const host = useBoard((s) => s.hosts.find((h) => h.id === task.host_id))
+  return taskFacts(task).lasting ? null : <StatusSection task={task} host={host} />
+}
+
+/** The details after the task's status, title and description. */
+function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
   const project = useProject(task.project_id)
   const asana = usesAsana(useBoard((s) => s.profiles.find((p) => p.host_id === task.host_id && p.id === task.profile_id)))
-  // A group task has no repository, so nothing to review, merge or depend on. A plan, artifact or
-  // diagram has no branch to merge either.
-  const groupTask = isGroupTask(task)
-  const docsOnly = documentsOnly(task)
-  // A scratch task has no repository either.
-  const scratch = isScratch(task)
-  // Nor does the profile's assistant, which lasts: it isn't moved between columns, reviewed or merged.
-  // The pens thread (API 127) lasts too, as does each pen's own (API 128).
-  const pensThread = isPensThread(task)
-  const penThread = isPenThread(task)
-  const assistant = isAssistant(task)
-  const lasting = assistant || pensThread || penThread
+  const { groupTask, scratch, pensThread, penThread, assistant, lasting, code, showMergesInto } = taskFacts(task)
   const pen = useBoard((s) => (penThread ? s.pens.find((p) => p.host_id === task.host_id && p.thread_id === task.id) : undefined))
-  const host = useBoard((s) => s.hosts.find((h) => h.id === task.host_id))
   // What went wrong with each part, until it's tried again.
   const [errs, setErrs] = useState<Partial<Record<"worktree" | "preview" | "pr", string>>>({})
   const setErr = (part: keyof typeof errs, msg: string | null) =>
@@ -83,26 +110,16 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
     })
   }
 
-  const { confirmDone, dialog: doneDialog } = useConfirmDone()
-  // What its work merges into (API 128): a code task in a project, which merge as they did.
   const incoming = useIncoming(task.id)
   const workflows = useWorkflowRuns(task)
   // The stack levels on it, and the one it's stacked on (API 142), apart from what it merges into.
   const levels = useLevels(task.id)
-  const mergeable = task.kind === "task" && !!task.project_id && !groupTask && !docsOnly && !scratch && !lasting && !task.parent_id
-  // It needs a worktree; once it's done, only to show where it went.
-  const showMergesInto = mergeable && (task.use_worktree || !!task.branch || !!task.merges_into) && (task.status !== "done" || !!task.merges_into)
 
   return (
-    <aside className={className}>
-      {!lasting && <StatusSection task={task} host={host} confirmDone={confirmDone} />}
-
-      <TitleSection task={task} />
-
+    <>
       {assistant && <TrackedWork task={task} />}
 
-      {/* The assistant's is the conversation itself. */}
-      {!assistant && <DescriptionSection task={task} />}
+      <TodosSection task={task} />
 
       {/* With Asana turned off for the profile, only to show (and unlink) the links it has. */}
       {task.kind === "task" && ((asana && !lasting) || task.external_links.length > 0) && (
@@ -186,7 +203,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
 
       <PluginSections task={task} />
 
-      {task.kind === "task" && !groupTask && !docsOnly && !scratch && !lasting && (
+      {task.kind === "task" && code && (
         <Section title="Pull request" right={task.pr_url && <PrIcon url={task.pr_url} label className="text-[11.5px] text-faint" />}>
           <TextInput
             value={task.pr_url ?? null}
@@ -223,7 +240,7 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
         </Section>
       )}
 
-      {!groupTask && !docsOnly && !scratch && !lasting && (
+      {code && (
         <Section title="Worktree">
           {!task.use_worktree && task.worktree_state === "none" ? (
             <div className="space-y-2">
@@ -316,7 +333,6 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
 
       {teardown && <TeardownModal task={task} onClose={() => setTeardown(false)} />}
       {confirmDelete && <DeleteTaskModal task={task} mode={mode} onClose={() => setConfirmDelete(false)} />}
-      {doneDialog}
-    </aside>
+    </>
   )
 }

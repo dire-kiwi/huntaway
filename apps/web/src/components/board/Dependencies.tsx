@@ -57,8 +57,8 @@ export function DependencyBadge({ task, project, compact }: { task: Task; projec
   )
 }
 
-/** The task view's list of dependencies, with adding and removing. */
-export function Dependencies({ task, project }: { task: Task; project?: Project | null | undefined }) {
+/** The task view's list of dependencies, with adding and removing; `listOnly` leaves out adding one (the sidebar's, which shows it only when there are some). */
+export function Dependencies({ task, project, listOnly }: { task: Task; project?: Project | null | undefined; listOnly?: boolean | undefined }) {
   const deps = useDependencies(task)
   // Tasks in the same project it could depend on: not itself, not already listed, not merged.
   const candidates = useBoard(
@@ -100,7 +100,7 @@ export function Dependencies({ task, project }: { task: Task; project?: Project 
       {unmet.length > 0 && !dependencyQueued(task) && !task.running && !["done", "ready_for_merge"].includes(task.status) && (
         <div className="text-[12px] text-faint">Moved to In progress, it waits for these to be merged before its agent starts.</div>
       )}
-      {candidates.length > 0 && (
+      {!listOnly && candidates.length > 0 && (
         <select
           value=""
           onChange={(e) => e.target.value && save([...(task.depends_on ?? []), e.target.value])}
