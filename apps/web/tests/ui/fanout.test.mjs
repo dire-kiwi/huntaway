@@ -66,7 +66,7 @@ test("several models make a task each from one prompt, and their cards and detai
       `goto /p/${project.id}?task=${opus.id}`,
       "click Details",
       "wait Same prompt",
-      `click css=aside button:has-text("SHOP-${sonnet.number}")`,
+      `click css=[data-details] button:has-text("SHOP-${sonnet.number}")`,
       `assert location.search.includes('${sonnet.id}')`,
     ])
   })

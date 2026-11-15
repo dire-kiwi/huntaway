@@ -163,8 +163,8 @@ test("an edit made while the Memory tab saves stays", async () => {
   })
 })
 
-// HA-123: the assistant's approval rules are edited in its details (collapsed until opened, HA-326), and its Actions tab
-// lists what they asked about.
+// HA-123: the assistant's approval rules are edited in its Details tab (HE-31; collapsed until opened, HA-326), and its
+// Actions tab lists what they asked about.
 test("the assistant's rules can be changed, and a draft isn't saved until it's saved", async () => {
   const rules = () => server.rpc("approvalRules.get", { profile_id: profile.id })
   await withBrowser(server, {}, async (ui) => {
@@ -172,6 +172,7 @@ test("the assistant's rules can be changed, and a draft isn't saved until it's s
     await ui.run([
       "goto /assistant/Default",
       "wait Message your assistant",
+      "click Details",
       "click role=button[name='Rules']",
       "wait 7 allow",
       "wait 15 ask",
@@ -208,7 +209,14 @@ test("the assistant's rules can be changed, and a draft isn't saved until it's s
 test("the rules dialog won't save two rules for one tool, and what it saves decides as it showed", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run(["goto /assistant/Default", "wait Message your assistant", "click role=button[name='Rules']", "click Edit rules", "wait Approval rules"])
+    await ui.run([
+      "goto /assistant/Default",
+      "wait Message your assistant",
+      "click Details",
+      "click role=button[name='Rules']",
+      "click Edit rules",
+      "wait Approval rules",
+    ])
     const rows = await page.locator("[aria-label='Rules'] input").count()
     // Bash: allow, then bash: never beneath it.
     for (const [tool, decision] of [

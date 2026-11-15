@@ -15,6 +15,7 @@ import { useState } from "react"
 import { useNow } from "../../../../state/clock"
 import { exitError, useMutation } from "../../../../state/mutation"
 import { moveTask, useProject } from "../../../boardHelpers"
+import { useConfirmDone } from "../../../board/ConfirmDone"
 import { useConfirmTodos, type TaskUpdateOptions } from "../../../board/ConfirmTodos"
 import { useStackWait } from "../../../board/StackedOn"
 import { errorText, localeString, millisOf, RESOLUTION_LABELS, RunningDot, StatusIcon } from "../../../ui"
@@ -37,19 +38,10 @@ function resetsPhrase(iso: string, now: number) {
 
 const RESOLUTIONS: ReadonlyArray<Resolution> = ["done", "not_done", "wont_fix"]
 
-/** The task's status, to move it on, with what it's waiting for. `confirmDone` asks before it's moved to Done. */
-export function StatusSection({
-  task,
-  host,
-  confirmDone,
-}: {
-  task: Task
-  host: Host | undefined
-  confirmDone: (task: Task, resolution?: Resolution) => Promise<boolean>
-}) {
+/** The task's status, to move it on, with what it's waiting for (StatusNotes). It asks before it's moved to Done. */
+export function StatusSection({ task, host }: { task: Task; host: Host | undefined }) {
+  const { confirmDone, dialog: doneDialog } = useConfirmDone()
   const [err, setErr] = useState<string | null>(null)
-  // A stack level's merge waits for the one below it (API 142), not for another merge.
-  const stackWait = useStackWait(task, useProject(task.project_id))
   // Asks before a task whose todo list isn't complete leaves In progress (API 148).
   const { confirmTodos, dialog: todosDialog } = useConfirmTodos()
   const [, send] = useMutation("tasks.send")
@@ -115,6 +107,24 @@ export function StatusSection({
           </div>
         </div>
       )}
+      <StatusNotes task={task} />
+      {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
+      {todosDialog}
+      {doneDialog}
+    </Section>
+  )
+}
+
+/**
+ * What the task is waiting for, beside its status: its place in the merge queue, the tasks it depends on, why it needs
+ * attention, a usage limit, its reminder. Nothing when there's none of them.
+ */
+export function StatusNotes({ task }: { task: Task }) {
+  const [err, setErr] = useState<string | null>(null)
+  // A stack level's merge waits for the one below it (API 142), not for another merge.
+  const stackWait = useStackWait(task, useProject(task.project_id))
+  return (
+    <>
       {mergeQueued(task) && (
         <div className="mt-2 rounded-md bg-white/[0.03] px-2.5 py-2 text-[12px] text-muted">
           {stackWait ?? "Queued to merge. Another task in this project is merging; this one starts when it's done."}
@@ -156,8 +166,7 @@ export function StatusSection({
         </div>
       )}
       {err && <div className="mt-2 rounded bg-red-500/10 p-2 text-[11.5px] whitespace-pre-wrap text-red-300">{err}</div>}
-      {todosDialog}
-    </Section>
+    </>
   )
 }
 

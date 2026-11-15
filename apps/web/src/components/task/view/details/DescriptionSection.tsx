@@ -8,8 +8,8 @@ import { AttachmentList } from "../../Attachments"
 import { Markdown } from "../../thread/Markdown"
 import { Section } from "./Section"
 
-/** The task's description, to edit. */
-export function DescriptionSection({ task }: { task: Task }) {
+/** The task's description, to edit. `large`: with the room of the Details tab's main column, at the thread's text size. */
+export function DescriptionSection({ task, large }: { task: Task; large?: boolean | undefined }) {
   const [editingDesc, setEditingDesc] = useState(false)
   const [desc, setDesc] = useState(task.description)
   const [err, setErr] = useState<string | null>(null)
@@ -44,7 +44,7 @@ export function DescriptionSection({ task }: { task: Task }) {
       {editingDesc ? (
         <div className="space-y-2" data-draft={desc !== task.description || undefined}>
           <Textarea
-            rows={10}
+            rows={large ? 18 : 10}
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             onKeyDown={(e) => {
@@ -76,7 +76,7 @@ export function DescriptionSection({ task }: { task: Task }) {
           </div>
         </div>
       ) : task.description.trim() ? (
-        <Description text={task.description} hostId={task.host_id} />
+        <Description text={task.description} hostId={task.host_id} large={large} />
       ) : (
         <div className="text-[12.5px] text-faint">No description.</div>
       )}
@@ -85,10 +85,10 @@ export function DescriptionSection({ task }: { task: Task }) {
 }
 
 /** A task's description, with the files attached to it shown rather than listed. */
-function Description({ text, hostId }: { text: string; hostId: string }) {
+function Description({ text, hostId, large }: { text: string; hostId: string; large?: boolean | undefined }) {
   const { text: body, files } = useMemo(() => splitAttachments(text), [text])
   return (
-    <div className="text-[12.5px]">
+    <div className={large ? "text-[13.5px]" : "text-[12.5px]"}>
       <Markdown text={body} />
       <AttachmentList hostId={hostId} files={files} className={clsx(body && "mt-2")} />
     </div>

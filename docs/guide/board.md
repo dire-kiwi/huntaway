@@ -20,6 +20,14 @@ you're on (HA-326, `?modal=<id>`), rather than moving to its board: a task open 
 and Escape, the backdrop or the close button closes the dialog only. A routine report's thread key and the assistant's
 tracked items open the same way.
 
+An open task has its thread in the main area and, where there's room (the dialog, a wide window), a column of its
+**key items** beside it: its status with what it's waiting for, its agent's todo list, its pull request with its checks,
+its preview, its workflows, the tasks it created, depends on or merges with, and its branch, each only when there is
+one. Its title, its description and everything set by hand (the status list, labels, the pull request and preview
+links, dependencies, what it merges into, its worktree, its agent, _Delete task_) are in its **Details** tab, the last
+one; a task that hasn't started opens there. In the side panel beside the board and on a phone, with no room for the
+column, the Details tab has the key items too.
+
 The sidebar's project list is one profile's: the one whose board you opened last, which is marked
 with a bar beside its name (its initial in colour, the others' grey) and named on the _Projects_
 heading. It stays while you're on other pages, and opening a project it doesn't list (from a
@@ -260,7 +268,7 @@ tasks, so they can still be opened, resumed and deleted.
 
 Any task can have **labels**: **Plan**, **Artifact** and **Diagram**, each asking its
 agent for a document besides its other work. Add them in the _New task_ form by typing `/plan`,
-`/artifact` or `/diagram` (several at once work), in the task's details under _Labels_ (they can
+`/artifact` or `/diagram` (several at once work), in the task's _Details_ tab under _Labels_ (they can
 be added and taken off at any time; the agent hears of a change the next time it starts), or
 with `labels` on the `create_task` and `update_task` tools. The agent writes each in the task's
 own folder (`<data dir>/documents/<task id>`, which it can write in without asking, outside the

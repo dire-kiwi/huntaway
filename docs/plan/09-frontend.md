@@ -337,7 +337,7 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
 - `task/Desktop.tsx` (`useDesktopOn(hostId)` from `desktop.status`, cached a minute; `DesktopButton`; `DesktopPane`
   polling `desktop.frame` every 700 ms and `desktop.ops` every 3 s) is in the task view: the button beside the tabs on a
   host with computer use on and a driver, the pane beside the main area (half the width while wide, in its place when
-  narrow; it expands a side panel), the details column giving way. The browser's splitter isn't on this server, so the
+  narrow; it expands a side panel), the column beside the main area giving way. The browser's splitter isn't on this server, so the
   share is fixed. The old capability check (`hostHas(host, DESKTOP)`) is gone.
 - Checks: `tests/ui/desktop.test.mjs` (`--fake-claude --fake-desktop`: a run's desktop calls over its own server, then
   the pane shows the window and what it did; no button with computer use off) and `tests/ui/driver.test.mjs` (the old
@@ -857,3 +857,29 @@ What is left, a task each:
   case; the brief and the ratings answered with `routeRpc`) and `routines.test.mjs` (both old cases, on
   `--fake-claude`: a run makes its thread only where agents run, so the report is the fake agent's, not a failure).
   `assistantHost.test.mjs` came with 7.4 (HE-8). Not ported: `reminders.test.mjs` (a task's reminders, not the assistant's).
+
+### The task view's key items and Details tab (HE-31)
+
+A change from the old client, asked for on this board: the column beside a task's thread held everything about the
+task, most of it rarely used (the status list, the title, the description, labels, links to edit, the worktree).
+
+- **Key items** (`task/view/details/KeyItems.tsx`) are what that column shows now, beside every tab that leaves it room
+  (not a document, the changes, the terminals, the desktop, the memory or the brief): the status with when it last
+  moved and what it has cost, and what it waits for (`StatusNotes`, out of `StatusSection.tsx`); the agent's todo list
+  in full (`TodosSection.tsx`: the card has only its start); the assistant's tracked work; the pull request with its
+  checks and _Fix broken checks_; the preview; the workflows; the tasks from the same prompt and the ones it created;
+  what it depends on, merges into, is merged into by and is stacked with; its branch, and a worktree that failed. Each
+  only when there is one, so a task with none of them has just its status. A pens thread has no column.
+- **Details** is a tab of every task, last, at any width (`"details"`, as the narrow layout already had). It has the
+  title and the description, to read and to edit, and everything set by hand: the status list, Asana, labels,
+  dependencies, the preview and pull request links, what it merges into, the worktree, the agent and _Delete task_.
+  Where there's room the title and the description have the tab's main area (`DetailsTab`), with the composer under
+  them as under every tab, and the rest takes the key items' place beside it (`DetailsSide`); narrower, it's one list
+  with the status first, which also has the key items the view has no column for. The title and description are the
+  same elements either way, so expanding a side panel keeps an edit.
+- `openingTab` is as it was, and now holds at any width: a task not started yet (to do or backlog) opens on Details,
+  where its description is, and the rest on the thread.
+- `taskFacts.ts` has what kind of task it is (a group's, a scratch one, one that lasts, one with code) for both.
+  `StatusSection` asks before a move to Done itself (`useConfirmDone`), no longer through `Details`.
+- Checks: `tests/ui/taskDetails.test.mjs` (the key items beside the thread, the Details tab's two columns, and an edit
+  kept as the panel expands); the checks that reach a section through the Details tab are as they were.

@@ -5,20 +5,20 @@ import { useNarrow } from "../../../narrow"
 import { IconButton } from "../../ui"
 
 /**
- * "thread", "changes", "review", "summary", "terminal", "details" (when too narrow for them beside the thread),
- * `tool:<id>` for a terminal tool, or for a plan, artifact or diagram task its type, for its document.
+ * "thread", "changes", "review", "summary", "terminal", "details", `tool:<id>` for a terminal tool, or for a plan,
+ * artifact or diagram task its type, for its document.
  */
 export type Tab = string
 
 /** "page": the whole screen. "panel": beside the board. "expanded": a dialog over it. "modal": a dialog over any page, apart from the side panel (see useTaskModal). */
 export type Mode = "page" | "panel" | "expanded" | "modal"
 
-// Below this width the details move from a column beside the thread into their own tab, and the
-// header's controls into a second row.
+// Below this width the key items beside the thread are left to the Details tab, which is then one list rather than two
+// columns, and the header's controls move into a second row.
 const WIDE = 880
 
 /** Whether the element is at least WIDE (taken as wide until measured, but for the narrow layout), followed as it
- * resizes, and whether it has been measured. Use the returned ref on it. */
+ * resizes. Use the returned ref on it. */
 export function useWide() {
   const [el, setEl] = useState<HTMLElement | null>(null)
   const [width, setWidth] = useState<number | null>(null)
@@ -32,7 +32,7 @@ export function useWide() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [el])
-  return [setEl, width === null ? !narrow : width >= WIDE, width !== null] as const
+  return [setEl, width === null ? !narrow : width >= WIDE] as const
 }
 
 /** Expand into a dialog or back into the side panel, and close. The narrow layout has a back button instead. A task dialog
