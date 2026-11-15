@@ -69,7 +69,10 @@ const toolTab = (id: string) => `tool:${id}`
 /** A terminal or a terminal tool: shown expanded, without the details column. */
 const isTerminalTab = (t: Tab) => t === "terminal" || t.startsWith("tool:")
 
-/** A task beside the board, taking half the width, or expanded into a dialog over it; in the narrow layout, over the whole screen. */
+/**
+ * A task in a dialog over the board, as it opens (HE-30), or collapsed beside it taking half the width; in the narrow
+ * layout, over the whole screen.
+ */
 export function TaskPanel({ panel }: { panel: Panel }) {
   const narrow = useNarrow()
   useEffect(() => {

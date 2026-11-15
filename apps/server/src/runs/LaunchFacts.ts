@@ -271,7 +271,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const compact = run.kind === "compact"
         task = yield* prepareWork(run, task, project)
         // 6.7: the assistant and its routine threads work in its workspace, with its memory.
-        const workspace = yield* assistantLaunch.workspace(task, { compact })
+        const workspace = yield* assistantLaunch.workspace(task, { compact, message: text })
         const cwd = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
         const rewind = pendingRewind(task)
         // A labelled task's agent writes its documents in the task's own folder, wherever it works.
@@ -401,7 +401,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
         const compact = run.kind === "compact"
         const review = task.kind === "review"
         // 6.7: as Claude's launch.
-        const workspace = yield* assistantLaunch.workspace(task, { compact })
+        const workspace = yield* assistantLaunch.workspace(task, { compact, message: text })
         const cwd = workspace?.cwd ?? (yield* cwdOf(task, project?.repo_path ?? null))
         const docs = task.kind === "task" && task.labels.length > 0 ? dataDir.documents(task.id) : null
         if (docs !== null) yield* mkdir(docs)

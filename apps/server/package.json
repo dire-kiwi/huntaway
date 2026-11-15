@@ -18,6 +18,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@huntaway/contracts": "workspace:*",
+    "@huntaway/plugin": "workspace:*",
     "@huntaway/shared": "workspace:*",
     "effect": "catalog:",
     "sharp": "catalog:"

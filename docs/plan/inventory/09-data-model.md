@@ -158,7 +158,7 @@ PK `id`; FK `profile_id` -> profiles CASCADE. No indexes (the v6 rebuild dropped
 | archived_at | TEXT | project archive (soft) |
 | github_account | TEXT | |
 | done_when_merged | INTEGER NOT NULL DEFAULT 1 | |
-| watch_pull_requests | TEXT NOT NULL DEFAULT 'off' | `off` \| `failures` \| `all` |
+| watch_pull_requests | TEXT NOT NULL DEFAULT 'off' | `off` \| `failures` \| `all`; a new project is made with `failures` (HE-29) |
 | setup_task_id | TEXT | task that helps make the folder a repo (no FK) |
 | pr_preview_url | TEXT | template with `{pr}` |
 | copy_files, link_folders | TEXT NOT NULL DEFAULT '' | one pattern/folder per line |

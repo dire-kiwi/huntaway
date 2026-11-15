@@ -205,6 +205,7 @@ export function board(host: Partial<Host> = {}): Board {
       public_url: null,
       release_prereleases: false,
       settings_sync: false,
+      experiments: [],
     },
     // As it is now: a config added to it changes it.
     get me(): HostProfile {

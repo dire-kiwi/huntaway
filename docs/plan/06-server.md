@@ -32,6 +32,7 @@ automations   Automations · Scheduler · Webhooks · Routines
 docs          TaskDocuments · Docs · DocImages · HostedDocs
 assistant     Assistant · Memory · Tracked · Brief
 mcp           BoardTools · ToolCalls · Wait · GhTools · DocsTools · DesktopTools · McpEndpoint
+plugins       InstalledPlugins · Plugins (HE-34, 15-plugins.md)
 push          Push
 hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
 terminal      Terminals · Pty
@@ -854,6 +855,14 @@ answered 202 before the action runs), `Routines`, `Automations`. Cron and time-z
   profile's existing assistant row is used and none is made. 6.7 also prefaces the assistant's prompt with
   `Routines.unreadReports(assistant)` and calls `Routines.markRead` once its agent has started with them (the old
   launch's `unread_reports`/`mark_read`), and ports `task/Routines.tsx` (the editor and row take the owner as props).
+- **Added since (HE-24).** A daily trigger's `time` may be several times, `11:00, 16:30` (`parseDailyTimes`; checked
+  as each time, sorted, each once, at most `MAX_DAILY_TIMES`; `nextAfter` takes the soonest). It stays one string on
+  the wire, so a reader that knows only one time still decodes it. A routine's precheck gets
+  `HUNTAWAY_MINUTES_SINCE_USER_MESSAGE` (`precheck.ts`'s `SINCE_USER_MESSAGE_ENV`; `act.ts` from
+  `Routines.userLastWrote`, the assistant's latest user message that isn't `auto`, `from_agent` or `routine`), unset
+  when there's none. Templates that name them get `{{last_run}}` and `{{quiet_runs}}` (`act.ts`'s `history`, from the
+  latest 50 runs: those with status `ok`; a run whose agent hasn't ended is passed over, any outcome but `quiet` ends
+  the streak).
 - **Not here.** Telemetry's `automation_run` event (6.9); deleting the assistant's routine threads with it and refusing a
   thread under an assistant being deleted (the assistant is never deleted here; 6.7, with its profile); the read-only
   server's not mounting the route (`ReadOnlyMain` doesn't exist yet).
@@ -957,7 +966,7 @@ an MCP server.
   `Permissions` lets the assistant and its routine threads write its workspace without asking.
 - **The wire.** The `assistant` group (`contracts/rpc/assistant.ts`): `get`, `send`, `memory`, `memoryFile`,
   `writeMemoryFile`, `memoryHistory`, `memoryDiff`, `restoreMemory`, `importMemory`, `google`, `setupGoogle`,
-  `addBrief`, `briefFeedback`, and `tasks.removeTracked`; types in `contracts/assistant.ts`. `tasks.document` takes
+  `addBrief`, `addCheckIn` (HE-24, below), `briefFeedback`, and `tasks.removeTracked`; types in `contracts/assistant.ts`. `tasks.document` takes
   `TaskDocumentLabel` (`brief` too) and gives the brief's `items`. Errors: `NotFound`, `Invalid`, `Conflict` (`in_use`
   for an assistant elsewhere, `changed_meanwhile` for a stale save), `Unavailable` (a workspace that isn't its own, git
   failing, an assistant host before M7).

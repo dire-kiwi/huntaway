@@ -10,7 +10,7 @@ import { IconButton } from "../../ui"
  */
 export type Tab = string
 
-/** "page": the whole screen. "panel": beside the board. "expanded": a dialog over it. "modal": a dialog over any page, apart from the side panel (see useTaskModal). */
+/** "page": the whole screen. "expanded": a dialog over the board, as a task opens (HE-30). "panel": collapsed beside it. "modal": a dialog over any page, apart from the side panel (see useTaskModal). */
 export type Mode = "page" | "panel" | "expanded" | "modal"
 
 // Below this width the key items beside the thread are left to the Details tab, which is then one list rather than two
@@ -43,7 +43,7 @@ export function PanelButtons({ mode }: { mode: Exclude<Mode, "page"> }) {
   return (
     <div className="no-drag flex shrink-0 items-center gap-0.5">
       {mode !== "modal" && (
-        <IconButton title={expanded ? "Collapse into the side panel" : "Expand"} onClick={() => setPanelExpanded(!expanded)}>
+        <IconButton title={expanded ? "Collapse into the side panel" : "Expand into a dialog"} onClick={() => setPanelExpanded(!expanded)}>
           {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </IconButton>
       )}

@@ -24,6 +24,11 @@ export type Route =
   /** A page of the guide (docs/guide/<page>.md), its first one when `page` is missing. */
   | { name: "guide"; page?: string }
   | { name: "host"; hostId: string }
+  /**
+   * HE-34: a plugin's page, `/<plugin id>/<path>` (docs/plan/15-plugins.md): any first segment that isn't one of the
+   * board's own and could be a plugin's id.
+   */
+  | { name: "plugin"; plugin: string; path: string }
 
 /** A path segment, decoded; one with a malformed escape (a truncated or mangled link) is taken as it is. */
 function decode(segment: string): string {
@@ -33,6 +38,9 @@ function decode(segment: string): string {
     return segment
   }
 }
+
+/** What a plugin's id is (`@huntaway/plugin`'s rule; the board's own first segments are matched before it). */
+const PLUGIN_ID = /^[a-z][a-z0-9_]{0,31}$/
 
 export function parse(path: string): Route {
   const parts = path.split("/").filter(Boolean)
@@ -77,7 +85,9 @@ export function parse(path: string): Route {
       if (third === "settings") return { name: "projectSettings", projectId: second, ...(fourth && { tab: decode(fourth) }) }
       return { name: "board", projectId: second }
     case undefined:
+      break
     default:
+      if (PLUGIN_ID.test(first)) return { name: "plugin", plugin: first, path: parts.slice(1).map(decode).join("/") }
       break
   }
   return { name: "home" }
@@ -101,6 +111,8 @@ export function href(r: Route): string {
       return r.page ? `/guide/${encodeURIComponent(r.page)}` : "/guide"
     case "host":
       return `/hosts/${r.hostId}`
+    case "plugin":
+      return `/${r.plugin}/${r.path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`
     case "task":
       return `/t/${r.taskId}`
     case "board":
@@ -130,8 +142,9 @@ export function sameDoc(a: string, b: string): boolean {
 }
 
 /**
- * A task open beside the page in a side panel (`?task=<id>`), or expanded into a dialog over it (`&expanded`), and the
- * tasks made from the same prompt as it compared over the page (`&compare`).
+ * A task open in a dialog over the page (`?task=<id>`, HE-30), or collapsed into a side panel beside it (`&side`), and
+ * the tasks made from the same prompt as it compared over the page (`&compare`). An old link's `&expanded` is the
+ * dialog, as it was.
  */
 export interface Panel {
   readonly taskId: string
@@ -144,13 +157,13 @@ export const hasPanel = (r: Route): boolean => r.name === "board" || r.name === 
 
 export function panelUrl(path: string, panel: Panel | null): string {
   if (!panel) return path
-  return `${path}?task=${encodeURIComponent(panel.taskId)}${panel.expanded ? "&expanded" : ""}${panel.compare === true ? "&compare" : ""}`
+  return `${path}?task=${encodeURIComponent(panel.taskId)}${panel.expanded ? "" : "&side"}${panel.compare === true ? "&compare" : ""}`
 }
 
 export function parsePanel(search: string): Panel | null {
   const q = new URLSearchParams(search)
   const taskId = q.get("task")
-  return taskId ? { taskId, expanded: q.has("expanded"), compare: q.has("compare") } : null
+  return taskId ? { taskId, expanded: !q.has("side"), compare: q.has("compare") } : null
 }
 
 /** The task open in a dialog over the page (`modal=<id>`), beside the side panel's task if there is one. */
@@ -160,11 +173,11 @@ export const parseModal = (search: string): string | null => new URLSearchParams
 export const withoutModal = (pathAndSearch: string): string => pathAndSearch.replace(/([?&])modal=[^&]*&?/, "$1").replace(/[?&]$/, "")
 
 /** `/p/<project>?task=<id>`: a task open on its project's board. */
-export const boardTaskUrl = (projectId: string, taskId: string): string => panelUrl(href({ name: "board", projectId }), { taskId, expanded: false })
+export const boardTaskUrl = (projectId: string, taskId: string): string => panelUrl(href({ name: "board", projectId }), { taskId, expanded: true })
 
 /** `/profile/<name>?task=<id>`: a task open on its profile's board. */
-export const profileTaskUrl = (profile: string, taskId: string): string => panelUrl(href({ name: "profile", profile }), { taskId, expanded: false })
+export const profileTaskUrl = (profile: string, taskId: string): string => panelUrl(href({ name: "profile", profile }), { taskId, expanded: true })
 
 /** `/g/<host>/<group>?task=<id>`: a task open on a group's board. */
 export const groupTaskUrl = (hostId: string, group: string, taskId: string): string =>
-  panelUrl(href({ name: "group", hostId, group }), { taskId, expanded: false })
+  panelUrl(href({ name: "group", hostId, group }), { taskId, expanded: true })

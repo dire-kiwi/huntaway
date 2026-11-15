@@ -64,6 +64,7 @@ import { ThreadStore } from "../threads/ThreadStore.ts"
 import { PermissionRepo } from "./PermissionRepo.ts"
 import type { ExpireScope, PromptRow, PromptStatus } from "./PermissionRepo.ts"
 import {
+  EDIT_REFUSED,
   allow,
   approvalQuestion,
   checkAnswers,
@@ -80,6 +81,8 @@ import {
   reason,
   shownAnswers,
   shownKind,
+  SKIPPED,
+  skippedByMessage,
   toolAnswers,
   withModelEffort,
 } from "./prompts.ts"
@@ -94,7 +97,7 @@ import type { Decision, PromptKind } from "./prompts.ts"
 // come here through `AgentRequests` (`Permissions.registered`), answered on the run's input; the board's tools ask
 // through `McpHooks.askRule` (`askRule`), and the board's own approvals (3.4) through `approve`.
 
-export { DONT_ASK_DENIAL, EXPIRED, EXPIRED_UNANSWERED } from "./prompts.ts"
+export { DONT_ASK_DENIAL, EXPIRED, EXPIRED_UNANSWERED, SKIPPED } from "./prompts.ts"
 export type { Decision } from "./prompts.ts"
 export type { ExpireScope } from "./PermissionRepo.ts"
 
@@ -146,6 +149,12 @@ export interface PermissionsShape {
     answer: PermissionAnswer,
     by: AnsweredBy,
   ) => Effect.Effect<"allowed" | "denied", PromptNotFound | PromptNotPending | PromptMovedOn | Invalid | SendRefused | TaskNotFound>
+  /**
+   * The user sent the thread a message instead of answering (`tasks.send`, `assistant.send`): its prompts still open
+   * are skipped, denied with `SKIPPED` so that the agent reads the message next, but not its questions and plans,
+   * which a message doesn't answer. The first settling wins, as an answer's does. How many it skipped.
+   */
+  readonly skipFor: (task: TaskId) => Effect.Effect<number>
   /** Prompts waiting for an answer, oldest first: all, a task's, or a profile's. */
   readonly pending: (filter: {
     readonly task?: TaskId | undefined
@@ -689,6 +698,13 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           input = { ...(Predicate.isObject(input) && !Array.isArray(input) ? input : {}), answers: toolAnswers(row.tool_name, input, answers) }
         }
         let edited = false
+        // A tool call allowed as the user edited it (a draft mail): Claude runs it with that input; Codex's approval has none.
+        const given = a.input ?? null
+        const codex = given !== null && (yield* store.request(row.task_id, row.id))?.request.metadata?.["codex"] !== undefined
+        if (given !== null && (!allowIt || row.kind !== "tool" || question || plan || codex))
+          return yield* new Invalid({ field: "input", reason: EDIT_REFUSED })
+        const editedTo = given !== null && (yield* toJson(given)) !== (yield* toJson(input ?? null)) ? given : null
+        if (editedTo !== null) input = editedTo
         if (allowIt && row.kind === "automation" && a.automation !== undefined && a.automation !== null) {
           const made = withModelEffort(input, a.automation)
           if (Result.isFailure(made)) return yield* new Invalid({ field: "automation", reason: made.failure })
@@ -708,6 +724,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           ...(feedback === null ? {} : { feedback }),
           ...(picked === null ? {} : { mode: picked }),
           ...(late ? { late: true } : {}),
+          ...(editedTo === null ? {} : { edited: true }),
         }
         /** The thread's request settled as the row now is, in the caller's transaction. */
         const shown = Effect.gen(function* () {
@@ -745,7 +762,8 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
           }),
         )
         yield* offer(done.made)
-        if (row.rule !== null) yield* rules.settle(id, status, by)
+        // The action log says what was sent, as edited.
+        if (row.rule !== null) yield* rules.settle(id, status, by, editedTo === null ? undefined : { input: editedTo })
         yield* wake(id)
         if (done.modeChanged) yield* applyMode(row.task_id)
         if (!late) return status
@@ -776,6 +794,28 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
         }
         yield* db.tx(shown)
         return status
+      })
+
+      const skipFor = Effect.fn("Permissions.skipFor")(function* (task: TaskId) {
+        let skipped = 0
+        for (const row of (yield* repo.pending({ task })).filter((r) => skippedByMessage(r.kind, r.tool_name))) {
+          const taken = yield* db.tx(
+            Effect.gen(function* () {
+              // In one statement, so an answer given at the same moment either comes first or finds it settled.
+              if (!(yield* repo.settle(row.id, "pending", { status: "skipped", note: SKIPPED, input: row.input }))) return false
+              const now: PromptRow = { ...row, status: "skipped", note: SKIPPED }
+              yield* rewrite(now, { outcome: "deny", message: SKIPPED })
+              yield* approvalChanged(now, false)
+              return true
+            }),
+          )
+          if (!taken) continue
+          skipped += 1
+          if (row.rule !== null) yield* rules.settle(row.id, "skipped", "message")
+          yield* wake(row.id)
+        }
+        if (skipped > 0) yield* offer([yield* db.tx(backToWork(task, Actor.user))])
+        return skipped
       })
 
       const applyMode: PermissionsShape["applyMode"] = Effect.fn("Permissions.applyMode")(function* (taskId: TaskId) {
@@ -884,6 +924,7 @@ export class Permissions extends Context.Service<Permissions, PermissionsShape>(
             Option.map((row) => parsed(row.input)),
           ),
         answer,
+        skipFor,
         pending: Effect.fn("Permissions.pending")(function* (filter) {
           return (yield* repo.pending(filter)).map((r): PendingPermission => ({
             id: r.id,

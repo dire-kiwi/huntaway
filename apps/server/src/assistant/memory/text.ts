@@ -3,6 +3,7 @@ import type { MemoryCommit, MemoryFileKind } from "@huntaway/contracts"
 import { UNTRUSTED_TAG, defang } from "../../automations/delivery.ts"
 import { formatNumber, LOG_DIR, MEMORY_CAP, MEMORY_FILE, USER_FILE } from "../../prompts/memory.ts"
 import type { MemoryFile } from "../../prompts/memory.ts"
+import { isLog } from "./notes.ts"
 
 // The assistant's memory, its plain parts (huntaway's agent/assistant/memory.ts, memory/prompt.ts, memory/api.ts): the
 // files a workspace starts with, how much of a file a run is told, the paths the API takes, and git's output read.
@@ -170,7 +171,8 @@ export const checkRev = (rev: string): Result.Result<string, string> =>
 export const kindOf = (rel: string): MemoryFileKind => {
   if (rel === USER_FILE) return "user"
   if (rel === MEMORY_FILE) return "memory"
-  if (rel.startsWith(`${LOG_DIR}/`) && rel.endsWith(".md") && !rel.slice(LOG_DIR.length + 1).includes("/")) return "log"
+  // A daily log is named by its day: another file in `memory/` (a note by topic, HE-36) is one of the others.
+  if (isLog(rel)) return "log"
   return "other"
 }
 

@@ -91,6 +91,21 @@ export class AssistantRpcs extends RpcGroup.make(
     error: Errors,
   }).annotate(RequiredScope, "settings"),
   /**
+   * Adds the check-in routine (the `check_ins` experiment; `Invalid` while it's off): at each of `times` (`HH:MM`; 11:00
+   * and 16:30) on `weekdays` (Monday to Friday) in the host's time zone, the assistant messages the user only if
+   * something needs them. `google` (false) has it look at mail and the calendar too.
+   */
+  Rpc.make("assistant.addCheckIn", {
+    payload: {
+      ...profile,
+      times: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+      weekdays: Schema.optionalKey(Schema.NullOr(Schema.Array(Weekday))),
+      google: Schema.optionalKey(Schema.Boolean),
+    },
+    success: Automation,
+    error: Errors,
+  }).annotate(RequiredScope, "settings"),
+  /**
    * Rates one of the brief's items (`kind`, and its `topic`, else its `text`): it becomes (or changes, or with `clear`
    * drops) a line under "Morning brief preferences" in MEMORY.md, committed as the user's.
    */

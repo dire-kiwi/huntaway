@@ -19,7 +19,7 @@ test("an image in markdown is a link, and isn't loaded", async () => {
     const { page } = ui
     const fetched = []
     await page.route("https://images.example.invalid/**", (route) => (fetched.push(route.request().url()), route.abort()))
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click details", "wait Look:"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Look:"])
     const link = page.locator(".prose-chat a", { hasText: "the chart" })
     await link.waitFor()
     assert.equal(await link.getAttribute("href"), src)

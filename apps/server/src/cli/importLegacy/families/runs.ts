@@ -99,6 +99,8 @@ export const convertRun = (old: OldRun, now: string): Readonly<Record<string, un
     stop: live ? "interrupted" : STOP_STATES[stop_requested],
     write_no: turn_message_id,
     ended_at: live ? (ended_at ?? now) : ended_at,
+    // The old board didn't count hops between agents.
+    hops: 0,
   }
 }
 

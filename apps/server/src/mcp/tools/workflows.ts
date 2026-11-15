@@ -10,7 +10,7 @@ import { Workflows } from "../../workflows/Workflows.ts"
 import { makeReach } from "../resolve.ts"
 import { ApprovalKind, ForPlanning, ownThread, Rerunnable, ToolError } from "../tool.ts"
 import type { McpCaller } from "../tool.ts"
-import { boardTool, given, Json, PROJECT_ONE, ProfileArg, told } from "./common.ts"
+import { boardTool, given, Json, MAX_HOPS, nextHops, PROJECT_ONE, ProfileArg, told, tooManyHops } from "./common.ts"
 
 // The workflow tools (docs/plan/inventory/06-integrations.md 7; the old mcp/schemas/workflows.ts and mcp/tools/
 // workflows.ts): listing, creating, changing, deleting and running a project's workflows. Creating one, changing what it
@@ -259,6 +259,8 @@ export const workflowTools = Effect.gen(function* () {
 
   const runWorkflow = boardTool(RunWorkflow, (params, caller) =>
     Effect.gen(function* () {
+      // Its steps' prompts are the workflow's, at 0 hops; but an agent past the limit doesn't wake more agents this way.
+      if (nextHops(caller) > MAX_HOPS) return yield* ToolError.other(tooManyHops("The workflow wasn't run"))
       const profile = given(params.profile)
       const [w, p] = yield* resolve(caller, params.workflow_id, given(params.project_id), profile)
       const r = params.task_id.trim()

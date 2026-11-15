@@ -46,7 +46,8 @@ A project can have its tasks' pull requests watched while they're in _In review_
 requests in review_ in its settings' Review tab, `watch_pull_requests`): every 2 minutes,
 while the agent is idle, the host reads the pull request (as a `wait` does, with the same record of
 what the agent has been told) and wakes the agent with failed checks and conflicts (`failures`),
-or with comments and reviews from people who can push to the repository too (`all`).
+or with comments and reviews from people who can push to the repository too (`all`). A new project
+watches for `failures`; turn it `off` there to stop it.
 
 ## Failed checks
 

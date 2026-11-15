@@ -33,6 +33,7 @@ export interface RunColumns {
   readonly turn_start_tokens?: number | null | undefined
   readonly turn_tokens?: number | null | undefined
   readonly out_offset?: number | undefined
+  readonly hops?: number | undefined
 }
 
 interface Found {
@@ -46,6 +47,8 @@ export interface NewRun {
   readonly id: RunId
   readonly task_id: TaskId
   readonly kind: RunKind
+  /** The hops of the message it starts with (0 when not given). */
+  readonly hops?: number | undefined
   readonly created_at: Timestamp
 }
 
@@ -131,7 +134,8 @@ export class RunRepo extends Context.Service<RunRepo, RunRepoShape>()("huntaway-
 
       const insert = (run: NewRun) =>
         Effect.gen(function* () {
-          yield* sql`INSERT INTO runs (id, task_id, kind, status, created_at) VALUES (${run.id}, ${run.task_id}, ${run.kind}, 'preparing', ${run.created_at})`
+          yield* sql`INSERT INTO runs (id, task_id, kind, status, hops, created_at)
+            VALUES (${run.id}, ${run.task_id}, ${run.kind}, 'preparing', ${run.hops ?? 0}, ${run.created_at})`
           const row = yield* get(run.id)
           if (Option.isNone(row)) return yield* Effect.die(`run ${run.id} was not inserted`)
           return row.value

@@ -76,8 +76,16 @@ export interface ApprovalRulesShape {
    * nor a board tool, which the board logs itself).
    */
   readonly blocked: (task: RuledTask, tool: string, input: unknown) => Effect.Effect<void>
-  /** Prompt `request` was answered, expired, or its run ended first: its entry says so. Emits `approval_log` if it had one. */
-  readonly settle: (request: RequestId, outcome: "allowed" | "denied" | "expired", by: AnsweredBy) => Effect.Effect<void>
+  /**
+   * Prompt `request` was answered, expired, or its run ended first: its entry says so, and with `edited` what the call
+   * was allowed with instead (the user edited its input). Emits `approval_log` if it had one.
+   */
+  readonly settle: (
+    request: RequestId,
+    outcome: "allowed" | "denied" | "expired" | "skipped",
+    by: AnsweredBy,
+    edited?: { readonly input: unknown },
+  ) => Effect.Effect<void>
   /** A profile's action log, newest first: `limit` entries (200 unless given, 1 to 500). */
   readonly log: (filter: {
     readonly profile_id: ProfileId
@@ -208,12 +216,18 @@ export class ApprovalRules extends Context.Service<ApprovalRules, ApprovalRulesS
           yield* record({ task, tool, input, rule: { tool: rule.tool, decision: "never" }, result: { outcome: "blocked", by: "rule" } })
         }),
 
-        settle: Effect.fn("ApprovalRules.settle")(function* (request: RequestId, outcome: "allowed" | "denied" | "expired", by: AnsweredBy) {
+        settle: Effect.fn("ApprovalRules.settle")(function* (
+          request: RequestId,
+          outcome: "allowed" | "denied" | "expired" | "skipped",
+          by: AnsweredBy,
+          edited?: { readonly input: unknown },
+        ) {
           const now = yield* nowTimestamp
+          const summary = edited === undefined ? null : yield* summarize(edited.input)
           yield* db
             .tx(
               Effect.gen(function* () {
-                const row = yield* repo.settle(request, outcome, by, now)
+                const row = yield* repo.settle(request, outcome, by, now, summary)
                 if (row === null) return null
                 const { profile_id, ...action } = row
                 yield* emitAction(action, profile_id)

@@ -26,6 +26,8 @@ import { CreatedTasksSection, FanoutSection } from "./TaskLists"
 import { taskFacts } from "./taskFacts"
 import { TodosSection } from "./TodosSection"
 import { TrackedWork } from "./TrackedWork"
+// HE-34
+import { PluginSections } from "./PluginSections"
 // 6.7
 import { RulesSection } from "../../ApprovalRules"
 // 6.6
@@ -198,6 +200,8 @@ function DetailsRest({ task, mode }: { task: Task; mode: Mode }) {
           <WorkflowsList task={task} />
         </Section>
       )}
+
+      <PluginSections task={task} />
 
       {task.kind === "task" && code && (
         <Section title="Pull request" right={task.pr_url && <PrIcon url={task.pr_url} label className="text-[11.5px] text-faint" />}>

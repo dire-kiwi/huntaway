@@ -25,6 +25,11 @@ export const RemoteToolCall = Schema.Struct({
   args: Schema.Unknown,
   /** The agent's call id (up-calls: the hub runs each at most once by it), or null for a call down a link. */
   call_id: Schema.NullOr(Schema.String),
+  /**
+   * The hops of the calling agent's turn (docs/plan/07-agents.md, Hops between agents), so that a message it sends a
+   * task there goes one further; a host on an older build leaves it out (0).
+   */
+  hops: Schema.optionalKey(Schema.Int),
 })
 export interface RemoteToolCall extends Schema.Schema.Type<typeof RemoteToolCall> {}
 

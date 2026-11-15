@@ -7,7 +7,7 @@ import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { AutomationRepo } from "./AutomationRepo.ts"
 import { Automations } from "./Automations.ts"
-import { defang, render, sortedJson, UNTRUSTED_TAG } from "./delivery.ts"
+import { defang, namesHistory, render, sortedJson, UNTRUSTED_TAG } from "./delivery.ts"
 import type { Vars } from "./delivery.ts"
 import { Timestamp } from "@huntaway/contracts"
 import type { NewAutomation, Project, Trigger, TriggerInput, Weekday } from "@huntaway/contracts"
@@ -79,6 +79,12 @@ describe("triggers", () => {
       assert.deepStrictEqual(yield* check(dailyIn(" 9:05", ["fri", "mon", "Fri"])), daily("09:05", ["mon", "fri"]))
       assert.deepStrictEqual(yield* check(dailyIn("09:05", WEEKDAYS)), daily("09:05", []))
       assert.include(yield* refused(dailyIn("25:00", [])), "time of day")
+      // HE-24: several times of day, in order, each once.
+      assert.deepStrictEqual(yield* check(dailyIn("16:30, 9:00,16:30", [])), daily("09:00, 16:30", []))
+      assert.include(yield* refused(dailyIn("11:00, 25:00", [])), "time of day")
+      assert.include(yield* refused(dailyIn("11:00,", [])), "time of day")
+      const many = Array.from({ length: 25 }, (_, i) => `${i % 24}:${i < 24 ? "00" : "30"}`).join(", ")
+      assert.include(yield* refused(dailyIn(many, [])), "at most 24 times a day")
       assert.include(yield* refused(dailyIn("09:00", ["someday"])), "weekdays must be from")
       assert.include(yield* refused({ kind: "interval", every_minutes: 1 }), "every_minutes")
       yield* check({ kind: "interval", every_minutes: 60 })
@@ -664,5 +670,11 @@ describe("templates", () => {
     // From the board: the host's date and time.
     const board_: Vars = { ...vars, delivery: null }
     assert.deepStrictEqual(render("{{date}} {{time}} {{now}}", board_, "text"), ["2026-10-01 13:00 2026-10-01T13:00:00+13:00", false])
+    // HE-24: the automation's earlier runs, for a template that names them (none without).
+    assert.deepStrictEqual(render("{{last_run}} {{quiet_runs}}", board_, "text"), [" ", false])
+    const past: Vars = { ...board_, history: { lastRun: NOW - 3 * 3600_000, quietRuns: 2 } }
+    assert.deepStrictEqual(render("{{last_run}} {{ quiet_runs }}", past, "text"), ["2026-10-01T10:00:00+13:00 2", false])
+    assert.deepStrictEqual(render("{{last_run}}", { ...past, history: { lastRun: null, quietRuns: 0 } }, "text"), ["never", false])
+    assert.isTrue(namesHistory("a {{ quiet_runs }} b") && namesHistory("{{last_run}}") && !namesHistory("{{last_runs}} {{now}}"))
   })
 })

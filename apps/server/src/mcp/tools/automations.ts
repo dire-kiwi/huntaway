@@ -35,7 +35,7 @@ const TriggerArg = Schema.Struct({
   expr: Schema.optionalKey(Schema.String.annotate({ description: "For cron: the expression" })),
   at: Schema.optionalKey(Schema.String.annotate({ description: "For at: when it runs" })),
   every_minutes: Schema.optionalKey(Schema.Int.annotate({ description: `At least ${MIN_INTERVAL_MINUTES}` })),
-  time: Schema.optionalKey(Schema.String.annotate({ description: "A time of day like 09:30" })),
+  time: Schema.optionalKey(Schema.String.annotate({ description: "A time of day like 09:30, or several separated by commas like 11:00, 16:30" })),
   weekdays: Schema.optionalKey(Schema.Array(Weekday)),
   filters: Schema.optionalKey(
     Schema.Array(Schema.Struct({ path: Schema.String, op: FilterOp, value: Schema.optionalKey(Schema.Unknown) })).annotate({
@@ -53,7 +53,7 @@ const TriggerArg = Schema.Struct({
 }).annotate({
   description:
     `What starts it: {kind: 'interval', every_minutes} (${MIN_INTERVAL_MINUTES} minutes to 31 days, counted from when it's turned on or changed); ` +
-    "{kind: 'daily', time: 'HH:MM', weekdays} (in the host's time zone, on those weekdays, or every day with none); " +
+    "{kind: 'daily', time: 'HH:MM', weekdays} (in the host's time zone, on those weekdays, or every day with none; several times as 'HH:MM, HH:MM'); " +
     "{kind: 'cron', expr} (5 fields: minute hour day-of-month month day-of-week, in the host's time zone, e.g. '0 8 * * mon-fri'); " +
     "{kind: 'at', at} (once, at a time like '2026-11-05 09:30' in the host's time zone or RFC 3339; then it turns itself off); " +
     "or {kind: 'webhook', filters, coalesce_seconds, coalesce_key}: each POST to its URL that passes all the filters. " +
@@ -89,7 +89,7 @@ const ActionArg = Schema.Struct({
     "mode 'fresh' (the default) runs it in a new thread under the assistant, whose last message is posted to the assistant as a report unless it's NO_REPLY; " +
     "'thread' sends it to the assistant's own thread. Title, description and message are templates: " +
     "{{body.<path>}}, {{headers.<name>}}, {{query.<name>}}, {{event}}, {{action}}, {{labels}} and {{delivery}} from a webhook delivery, and {{precheck}} (what the precheck printed) " +
-    "(marked as untrusted data for the agent), and {{date}}, {{time}}, {{now}}, {{automation}} and {{count}} from the board.",
+    "(marked as untrusted data for the agent), and {{date}}, {{time}}, {{now}}, {{automation}}, {{count}}, {{last_run}} (when its last run that went ahead started, or never) and {{quiet_runs}} (how many of its latest runs in a row were quiet) from the board.",
 })
 
 const guardFields = {
@@ -108,7 +108,7 @@ const guardFields = {
   precheck: Schema.optionalKey(
     Schema.NullOr(Schema.String).annotate({
       description:
-        "A bash command run before each run, in the assistant's workspace (or the project's folder): exit 0 runs it, with what it printed as {{precheck}}; exit 1 skips the run (nothing new); anything else fails it. null or blank for none",
+        "A bash command run before each run, in the assistant's workspace (or the project's folder): exit 0 runs it, with what it printed as {{precheck}}; exit 1 skips the run (nothing new); anything else fails it. A routine's has HUNTAWAY_MINUTES_SINCE_USER_MESSAGE, the whole minutes since the user last messaged the assistant (unset if never). null or blank for none",
     }),
   ),
   budget_usd: Schema.optionalKey(

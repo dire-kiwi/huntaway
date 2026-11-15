@@ -8,6 +8,8 @@ import { levelsTitle, stackedBelowId, stackedOnTitle, useLevels } from "../../..
 import { LevelsSection, StackedOnSection } from "../../../board/stackSections"
 import { ActivityTime, BranchIcon, cost, PrIcon, PreviewDot, ResolutionBadge, RunningDot, StatusIcon } from "../../../ui"
 import { FailedChecks } from "./FailedChecks"
+// HE-34
+import { PluginSections } from "./PluginSections"
 import { Section } from "./Section"
 import { StatusNotes } from "./StatusSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
@@ -20,7 +22,7 @@ import { useWorkflowRuns, WorkflowsList } from "../../Workflows"
 /**
  * The column beside a task's thread (HE-31): what there is to know about the task while following it, each part only
  * when it has something to say. Its status and what it waits for, its agent's todo list, its pull request with its
- * checks, its preview, its workflows, the tasks it made, depends on or merges with, and its branch. Everything that's
+ * checks, its preview, its workflows, the plugins' panels, the tasks it made, depends on or merges with, and its branch. Everything that's
  * set by hand (its title and description, its status, its labels, its links and its worktree) is in the Details tab
  * (Details.tsx), which also has all of this for a view too narrow for the column.
  */
@@ -81,6 +83,9 @@ export function KeyItems({ task, className }: { task: Task; className: string })
           <WorkflowsList task={task} />
         </Section>
       )}
+
+      {/* A plugin's panel is there to be seen with the task: here, as in its Details. */}
+      <PluginSections task={task} />
 
       {task.fanout_id && <FanoutSection task={task} />}
 

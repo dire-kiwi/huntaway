@@ -675,6 +675,83 @@ and the override went with the last one.
   a board trigger), `tests/unit/ui/{dates,reminders}.test.ts` (run in several time zones), `analyticsRange.test.ts`,
   `automationDraft.test.ts`; `tests/unit/state/fakeHost.test.ts` calls through `runExit` and `mutate`.
 
+### Experiments (HE-22)
+
+Settings → **Experiments** (`settings/Experiments.tsx`) lists the features still being tried, each with a switch, its
+name and a line on what it does. All are off at first.
+
+- **One list.** `EXPERIMENTS` in `packages/contracts/src/experiments.ts` is every experiment (`id`, `name`,
+  `description`), and `ExperimentId` its ids. Adding one is an entry there: the tab lists it, the host keeps its switch
+  and settings sync carries it, with nothing else to change. What the experiment does reads
+  `experiments.includes("<id>")`.
+- **Per board, not per profile.** They are a host's settings (`HostSettings.experiments`, the ids switched on: optional
+  and open strings on the wire, read through `knownExperiments`; see [05-protocol.md](05-protocol.md#rpc-groups)), so they
+  hold in every browser and the desktop app, and the server can read them (`HostSettings.get`) for an experiment of
+  its own. The web app reads the page's own host's: `experimentsAtom` in `packages/client` (`board.ts`), from the
+  board's `hostSettings[localHostId]`, which `settings_changed` keeps. The tab sets them on that host with
+  `host.updateSettings` (`experiments`: the whole list to have on), showing the list it saved until the host's
+  settings have it. A per-profile switch would need a profile picked for pages that show several; nothing tried so
+  far is about one profile.
+- **Synced** like the other host-wide settings (docs/plan/08-hosts.md): each experiment is its own field
+  (`global/experiment_<id>`), so two switched on two hosts apart don't conflict. A linked host that doesn't sync keeps
+  its own, which the page doesn't read (it reads its own host's).
+- **Fold finished turns** (`fold_turns`, `task/thread/turnFold.ts`, `FoldedTurnRow` in `items.tsx`, used by
+  `ItemList`). A turn runs from a message to the agent (the user's, or the board's: an `auto` user item) to its
+  `result` item; a message sent while it worked (`steered`) is part of it, and a compaction's result ends one without
+  folding. A finished turn with tool calls folds its tool groups, its answered tool permission prompts and its result
+  line into one row, where its first tool group was: "Worked for 2m 10s · 7 steps · $0.123", with an amber dot if a
+  tool prompt came up and a red one if a call failed or a prompt was denied; "Interrupted" or "Ended: <subtype>" is
+  added as the result line says. The time is the result's `duration_ms`, shown between 1 s and 12 h (as bot-hq does),
+  else just "Worked". Its text, thinking, questions, plans and the board's own approvals stay as they are. Clicking it
+  draws the turn as it is without the experiment (the result line too) under the row, and again folds it; which are
+  open is `ItemList`'s state. A request to reveal a subagent whose call is in a folded turn opens the turn. A turn
+  without a result yet, the running one, stays open.
+- **Checks.** `tests/unit/turnFold.test.ts`; `tests/ui/foldTurns.test.mjs` (the switch on and off, a turn with a failed
+  call and one that waited for approval); `apps/server/src/settings/HostSettings.test.ts` (the rows).
+- **Show outgoing mail and events as drafts** (`draft_cards`, HE-23; from bot-hq's draft card, which never had a server
+  side). `task/thread/drafts.ts` reads a prompt's tool and input (pure): workspace-mcp 2.3.0's `send_gmail_message` and
+  `draft_gmail_message` (any `mcp__<server>__` prefix; `to`, `cc`, `bcc`, `subject`, `body`, `body_format`,
+  `thread_id`, `forward_message_id`, `attachments`) are a mail, and `manage_event` with `action` `create` or `update`
+  (and the older `create_event`/`modify_event`) an event; a Codex prompt's `{message, arguments}` is read for its
+  arguments; anything else is null, and `PromptCard` (items.tsx) draws the usual `PermissionCard`. `draftCards.tsx`
+  draws them: a mail's To/Cc/Bcc/Subject and body (plain text, or HTML in a `srcdoc` frame sandboxed without scripts
+  and with `MAIL_CSP` first: inline styles and data: images only; it's `allow-same-origin` only so the page sizes it
+  to its content), **Send**/**Discard** for Allow/Deny with _Always allow_ kept as `PermissionCard` has it; an
+  event's title, `eventWhen` (its own wall clock and zone, not the viewer's), attendees, place and description, and
+  for an update `changes` ("the time", "the place"…, the fields it sets). Edit (not on Codex: `agent` is `codex` when
+  the request's metadata has `codex`) turns the mail's fields into inputs; `editedInput` is the tool's input with
+  them, sent as `permissions.answer`'s `input` (07-agents.md, 3.3) and shown as "Edited" until then and "Sent as you
+  edited it" after (`edited` in the request's metadata). Settled, a card folds to a line ("To kim@… · Invoice 4411")
+  that opens. Events aren't edited: their fields are many and the time zones easy to get wrong.
+- **Checks.** `tests/unit/drafts.test.ts` (the tools, Codex's shape, times, the edited input, the frame's policy);
+  `tests/ui/draftCards.test.mjs` (off and on, a mail edited and sent and the fake agent's reply with the edited input,
+  an event discarded, an HTML mail's frame running and loading nothing, Codex without Edit);
+  `Permissions.test.ts` (the input Claude is told, the thread and the action log; refused for a question, a deny and
+  Codex). The fake `claude`'s `fake-ask-mail`/`fake-ask-event` call the run's `google` MCP server (the stub) once
+  allowed.
+- **Assistant check-ins** (`check_ins`, HE-24; HE-17's write-up of bot-hq, idea 7). The assistant's Routines tab
+  (`task/Routines.tsx`) shows **Add check-ins** beside New routine while the experiment is on and the profile has no
+  routine called _Check-in_; it opens `CheckInSetup`: the times (`settings/automations/TimesInput.tsx`, which the
+  routine editor uses too), the days, and a Google box shown only once `assistant.google` says it's connected. It
+  calls `assistant.addCheckIn`, which the server refuses (`Invalid`) while the experiment is off, so the server's
+  template is the experiment's too. The routine (`assistant/checkInText.ts`, `Brief.addCheckIn`) runs in a fresh
+  thread, with a message that reads the boards through the board's tools and replies with one short message or
+  `NO_REPLY`, and is told `{{last_run}}` and `{{quiet_runs}}` (the back-off: the more quiet check-ins in a row, the
+  higher the bar).
+  - **Not while you're talking to it.** Decided: the server gives a routine's precheck an environment variable,
+    `HUNTAWAY_MINUTES_SINCE_USER_MESSAGE`, and the check-in's precheck exits 1 under 20. A `huntaway` CLI call from
+    the precheck would need the board's token and address in the precheck's environment, and a check the server
+    makes itself would be a new field on every automation (its column, its editor, its sync); the variable is one
+    line of the server, the rule stays the user's to read and change in the precheck, and the run is recorded as
+    skipped with why (_you messaged the assistant 5 min ago_) as any precheck's.
+  - **Several times a day.** A daily trigger takes several times (`11:00, 16:30`), so the check-ins are one routine:
+    a cron expression can't say 11:00 and 16:30, and one routine per time would be several to change. This isn't the
+    experiment's alone: any routine's editor can add a time (+) and take one out (×).
+  - **Checks.** `apps/server/src/assistant/CheckIn.test.ts` (the template, refused while off; on its schedule with the
+    test clock, a run skipped because the user has just written, a quiet one, and one that reports);
+    `Automations.test.ts` and `schedule.test.ts` (several times, `{{last_run}}`, `{{quiet_runs}}`);
+    `tests/ui/checkIns.test.mjs` (nothing while off; Add check-ins; the editor's times).
+
 ### Logic that must not be lost on the way
 
 These live in components or module-level state today, outside the store, and are easy to drop when "the store and
@@ -867,7 +944,7 @@ task, most of it rarely used (the status list, the title, the description, label
   (not a document, the changes, the terminals, the desktop, the memory or the brief): the status with when it last
   moved and what it has cost, and what it waits for (`StatusNotes`, out of `StatusSection.tsx`); the agent's todo list
   in full (`TodosSection.tsx`: the card has only its start); the assistant's tracked work; the pull request with its
-  checks and _Fix broken checks_; the preview; the workflows; the tasks from the same prompt and the ones it created;
+  checks and _Fix broken checks_; the preview; the workflows; the plugins' panels (HE-34); the tasks from the same prompt and the ones it created;
   what it depends on, merges into, is merged into by and is stacked with; its branch, and a worktree that failed. Each
   only when there is one, so a task with none of them has just its status. A pens thread has no column.
 - **Details** is a tab of every task, last, at any width (`"details"`, as the narrow layout already had). It has the

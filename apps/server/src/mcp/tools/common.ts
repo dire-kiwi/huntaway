@@ -109,3 +109,19 @@ export const told = <A, E extends ServiceError, R>(self: Effect.Effect<A, E, R>)
  * here to ask in.
  */
 export const asker = (caller: McpCaller) => (caller.run === null ? null : { run: caller.run, call_id: caller.call_id })
+
+/**
+ * The most hops a message one agent sends another may be (docs/plan/07-agents.md, Hops between agents): A→B→A→B goes,
+ * the next is refused. Enough for an answer and a follow-up each way; two agents that keep answering each other stop
+ * after that, rather than run on someone's usage until a person notices.
+ */
+export const MAX_HOPS = 3
+
+/** The hops of what the caller wakes another task's agent with: one more than its turn's. */
+export const nextHops = (caller: McpCaller): number => caller.hops + 1
+
+/** Why the board wouldn't wake another agent for the caller: it would be past `MAX_HOPS`. */
+export const tooManyHops = (what: string) =>
+  `${what}: agents have been waking one another without the user (by messages or tasks they start) ${MAX_HOPS} times in a row, ` +
+  "as many as the board lets go. Stop messaging other tasks' agents and report to the user instead: say what you'd have sent and to whom, " +
+  "with request_user_input if you need their answer."

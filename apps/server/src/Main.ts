@@ -159,7 +159,7 @@ import { Listening } from "./platform/Listening.ts"
 import { Migrations } from "./platform/Migrations.ts"
 import { Proc } from "./platform/Proc.ts"
 import { Secrets } from "./platform/Secrets.ts"
-import type { ServerConfig } from "./platform/ServerConfig.ts"
+import { ServerConfig } from "./platform/ServerConfig.ts"
 import { Board } from "./board/Board.ts"
 import { DemoLive } from "./lifecycle/Demo.ts"
 import { Reactor } from "./lifecycle/Reactor.ts"
@@ -300,6 +300,14 @@ import { WorkflowEngine } from "./workflows/WorkflowEngine.ts"
 import { Workflows } from "./workflows/Workflows.ts"
 import { WorkflowApprovals } from "./workflows/WorkflowApprovals.ts"
 import { WorkflowStore } from "./workflows/WorkflowStore.ts"
+// HE-34: plugins.
+import notes from "@huntaway/plugin/example/notes"
+import { PluginRpcs } from "@huntaway/contracts"
+import { PluginRoutes } from "./http/plugins.ts"
+import { installed } from "./plugins/installed.ts"
+import { InstalledPlugins } from "./plugins/InstalledPlugins.ts"
+import { Plugins } from "./plugins/Plugins.ts"
+import { PluginHandlers } from "./rpc/plugins.ts"
 
 // The composition root (docs/plan/06-server.md, Startup): every layer, in startup order. Nothing else wires layers,
 // so a test can replace any of them. An area adds its layer to its line below, in the dependency order of
@@ -589,8 +597,23 @@ const DocsLive = Docs.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(DocRepo.layer, DocsSiteRepo.layer, DocImages.layer, DocsRender.layer)),
 )
 
-/** Every area's services, with `models` for the board's own model calls. */
-export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>) =>
+/**
+ * HE-34: the plugins the server runs: those it's built with (`plugins/installed.ts`), and on a demo board the example
+ * `notes` plugin too (`@huntaway/plugin/example/notes`), to show what a plugin adds.
+ */
+export const InstalledLive = Layer.effect(
+  InstalledPlugins,
+  Effect.gen(function* () {
+    const config = yield* ServerConfig
+    return InstalledPlugins.of({ plugins: config.demo ? [...installed, notes] : installed })
+  }),
+)
+
+/** Every area's services, with `models` for the board's own model calls and `plugins` for the plugins it runs. */
+export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
+  models: ModelCalls<T, E1, R1, E2, R2, C, E3, R3>,
+  plugins: Layer.Layer<InstalledPlugins, never, ServerConfig> = InstalledLive,
+) =>
   // The demo board is seeded once every area is built, before Recovery runs.
   Layer.mergeAll(Reactor.layer, RecoveryLive, Board.layer).pipe(
     Layer.provideMerge(DemoLive),
@@ -608,6 +631,8 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(models: ModelCalls<T, E
     Layer.provideMerge(DesktopLive),
     // 6.8: push, watching the board's events for what devices want.
     Layer.provideMerge(PushLive),
+    // HE-34: the plugins, over the MCP area they define their servers with.
+    Layer.provideMerge(Plugins.layer.pipe(Layer.provide(plugins))),
     // The board's hooks: `Wait`'s and `Permissions`' (3.3) in one.
     Layer.provideMerge(mcpLayer(BoardHooks)),
     // The links' connections, which the board's calls go to other hosts through.
@@ -701,6 +726,8 @@ export const Served = PublicRpcs.merge(
   AssistantRpcs,
   // 6.6
   WorkflowRpcs,
+  // HE-34
+  PluginRpcs,
 )
 
 /** Their handlers. One line per area. */
@@ -748,6 +775,8 @@ export const HandlersLive = Layer.mergeAll(
   AssistantHandlers,
   // 6.6
   WorkflowHandlers,
+  // HE-34
+  PluginHandlers,
 ).pipe(Layer.provideMerge(AuthLive))
 
 /** The RPC groups over a websocket and over HTTP POST, on `/api/rpc`. */
@@ -767,6 +796,8 @@ export const RoutesLive = Layer.mergeAll(
   TerminalRoute /* 6.1 */,
   // 6.5: automations' webhooks.
   WebhookRoute,
+  // HE-34: the plugins' routes.
+  PluginRoutes,
   ApiNotFound,
   StaticUi,
   HttpRouter.cors({ maxAge: 86400 }),

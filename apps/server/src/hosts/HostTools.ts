@@ -58,7 +58,7 @@ export class HostTools extends Context.Service<HostTools, HostToolsShape>()("hun
               `the user can pick ${link.name} as the profile's Assistant host in Settings → Profiles there`,
           )
         }
-        return yield* toolCalls.upCall({ host, call_id: call.call_id, profile: call.profile, tool: call.tool, args: call.args })
+        return yield* toolCalls.upCall({ host, call_id: call.call_id, profile: call.profile, tool: call.tool, args: call.args, hops: call.hops ?? 0 })
       })
 
       const call = Effect.fn("HostTools.call")(function* (payload: RemoteToolCall & { readonly up: boolean }, session: SessionShape, over: Rpc.ServerClient) {

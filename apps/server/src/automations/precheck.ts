@@ -10,6 +10,13 @@ import { cut } from "./delivery.ts"
 // run before each run, in the assistant's workspace or the project's folder, for up to two minutes. Exit 0 goes on with
 // what it printed (`{{precheck}}`); exit 1 skips the run; anything else fails it.
 
+/**
+ * What a routine's precheck is given (as well as the agents' environment): the whole minutes since the user last messaged
+ * the assistant in its own thread, unset if they never have. The check-in's (assistant/checkInText.ts) skips its run while
+ * the user is talking to the assistant.
+ */
+export const SINCE_USER_MESSAGE_ENV = "HUNTAWAY_MINUTES_SINCE_USER_MESSAGE"
+
 /** How long a precheck may run before it's stopped (and the run fails). */
 export const PRECHECK_LIMIT = "120 seconds"
 /** What a precheck prints that a template gets, at most. */

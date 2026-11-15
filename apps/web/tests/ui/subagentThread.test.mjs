@@ -173,7 +173,8 @@ test("a reopened task shows its main thread, not the subagent last viewed", asyn
   const other = await server.rpc("tasks.create", { task: { project_id: board.project.id, title: "Another task", status: "todo" } })
   await withBrowser(server, {}, async (ui) => {
     const open = [openRow("Explore config"), "wait Subagent searching now.", "gone Main agent's summary."]
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Thread", "wait Main agent's summary.", ...open])
+    // In the side panel, where another card can be opened beside it.
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}&side`, "click Thread", "wait Main agent's summary.", ...open])
     // Expanding the panel and back keeps it.
     await ui.run(["click Expand", "wait Subagent searching now.", "click Collapse into the side panel", "wait Subagent searching now."])
 
@@ -186,8 +187,15 @@ test("a reopened task shows its main thread, not the subagent last viewed", asyn
       "gone Show in thread",
     ])
 
-    // Opening another task in the panel and coming back does too.
-    await ui.run([...open, `click css=[data-task='${other.id}']`, "gone Show in thread", `click css=[data-task='${task.id}']`, "click Thread"])
+    // Opening another task in the side panel (a card opens in a dialog, over the others) and coming back does too.
+    await ui.run([
+      "click Collapse into the side panel",
+      ...open,
+      `click css=[data-task='${other.id}']`,
+      "gone Show in thread",
+      `click css=[data-task='${task.id}']`,
+      "click Thread",
+    ])
     await ui.run(["wait Main agent's summary.", "gone Show in thread"])
   })
 })

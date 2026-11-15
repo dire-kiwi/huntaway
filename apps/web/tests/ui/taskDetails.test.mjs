@@ -26,7 +26,7 @@ test("the column beside the thread has the task's key items, and nothing to set 
   await updateTask(server, work, { pr_url: "https://github.com/acme/demo/pull/12", preview_url: "http://127.0.0.1:9/try", depends_on: [waiting.id] })
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${project.id}?task=${work.id}&expanded`, `wait ${KEY}`])
+    await ui.run([`goto /p/${project.id}?task=${work.id}`, `wait ${KEY}`])
     assert.deepEqual(await sections(page, KEY), ["Status", "Todo list", "Pull request", "Preview", "Depends on"])
     // Its status as a line, not the list to move it with; the whole todo list, where its card has five of the seven.
     assert.equal(await page.locator(`${KEY.slice(4)} [data-status]`).getAttribute("data-status"), "in_progress")
@@ -41,7 +41,7 @@ test("the column beside the thread has the task's key items, and nothing to set 
     // Nothing to add a dependency with here, nor the links' fields.
     assert.equal(await page.locator(`${KEY.slice(4)} select, ${KEY.slice(4)} input`).count(), 0)
     // A task with none of them has only its status.
-    await ui.run([`goto /p/${project.id}?task=${waiting.id}&expanded`, `wait ${KEY} >> text=Needs attention`])
+    await ui.run([`goto /p/${project.id}?task=${waiting.id}`, `wait ${KEY} >> text=Needs attention`])
     assert.deepEqual(await sections(page, KEY), ["Status"])
   })
 })
@@ -51,7 +51,7 @@ test("the Details tab has the title and the description, with the rest beside th
   await updateTask(server, task, { description: "What was asked for." })
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${project.id}?task=${task.id}&expanded`, `wait ${KEY}`, "click Details", `wait ${DETAILS} >> text=What was asked for.`])
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, `wait ${KEY}`, "click Details", `wait ${DETAILS} >> text=What was asked for.`])
     // The key items give way to the rest of the details, the status list first.
     assert.equal(await page.locator(KEY.slice(4)).count(), 0)
     assert.deepEqual(await sections(page, DETAILS), ["Title", "Description"])
@@ -73,13 +73,19 @@ test("a task not started opens on its details, and an edit there is kept as the 
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     // Beside the board there's no room for a column: the Details tab is one list, with the status first.
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, `wait ${DETAILS}`])
+    await ui.run([`goto /p/${project.id}?task=${task.id}&side`, `wait ${DETAILS}`])
     assert.deepEqual((await sections(page, DETAILS)).slice(0, 3), ["Status", "Title", "Description"])
-    await ui.run(["click Edit description", "press Control+a", "type A draft to keep", "click Expand", `wait css=aside:has(h3:text-is('Status'))`])
+    await ui.run([
+      "click Edit description",
+      "press Control+a",
+      "type A draft to keep",
+      "click Expand into a dialog",
+      `wait css=aside:has(h3:text-is('Status'))`,
+    ])
     assert.deepEqual(await sections(page, DETAILS), ["Title", "Description"])
     assert.equal(await page.locator(`${DETAILS.slice(4)} textarea`).inputValue(), "A draft to keep")
-    // Expanded, it still opens on its details.
-    await ui.run([`goto /p/${project.id}?task=${task.id}&expanded`, `wait ${DETAILS} >> text=Description`])
+    // In the dialog, as a task opens, it's on its details too.
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, `wait ${DETAILS} >> text=Description`])
     assert.equal(await page.locator(KEY.slice(4)).count(), 0)
   })
 })

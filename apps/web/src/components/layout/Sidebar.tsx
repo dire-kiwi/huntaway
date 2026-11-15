@@ -11,6 +11,7 @@ import { ReloadButton, UpdateButton } from "../settings/Server"
 import { UsagePanel } from "../settings/Usage"
 // 6.3
 import { DocsEntry } from "./sidebar/DocsEntry"
+import { PluginEntries } from "./sidebar/PluginEntries"
 // 6.7
 import { AssistantEntry } from "./sidebar/AssistantEntry"
 import { ContextMenu, IconButton } from "../ui"
@@ -96,6 +97,10 @@ export function Sidebar({ route, drawer }: { route: Route; drawer?: boolean | un
             <DocsEntry route={route} profile={active} />
           </div>
         )}
+        {/* HE-34: the plugins' pages. */}
+        <div className="pb-3 empty:hidden">
+          <PluginEntries route={route} />
+        </div>
         <MarkedTasks route={route} />
         {favoriteList.length > 0 && (
           <div className="pb-3">

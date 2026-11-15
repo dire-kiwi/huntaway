@@ -11,8 +11,22 @@ export const LOG_DIR = "memory"
 /** How many characters of each file a run is told, and how many bytes. */
 export const MEMORY_CAP = 8000
 export const MEMORY_CAP_BYTES = 16 * 1024
-/** The tag a memory update is wrapped in. */
+/** The tag a memory update is wrapped in, and the one notes put before a message are (HE-36). */
 export const UPDATE_TAG = "memory-update"
+export const NOTES_TAG = "memory-notes"
+
+/** What a note by topic is about, as Claude Code's memories say. */
+export const NOTE_TYPES = ["user", "feedback", "project", "reference"] as const
+export type NoteType = (typeof NOTE_TYPES)[number]
+
+/** A note by topic (`memory/<topic>.md` with keywords in its frontmatter): listed by name and description, not loaded. */
+export interface Note {
+  readonly rel: string
+  readonly name: string
+  readonly description: string
+  readonly type: NoteType | null
+  readonly keywords: ReadonlyArray<string>
+}
 
 /** `n` with commas between thousands. */
 export const formatNumber = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
@@ -33,6 +47,8 @@ export interface MemoryFacts {
   /** `memory/<yesterday>.md` and `memory/<today>.md`. */
   readonly yesterdayLog: { readonly rel: string; readonly file: MemoryFile }
   readonly todayLog: { readonly rel: string; readonly file: MemoryFile }
+  /** The notes by topic, by path. */
+  readonly notes: ReadonlyArray<Note>
 }
 
 /** What changed in a file since the conversation was last told it: what it says now, or (a log) what was added at its end. */
@@ -75,7 +91,12 @@ export const memory = (t: MemoryFacts): string => {
     `- \`${USER_FILE}\`: who the user is and their preferences.\n` +
     `- \`${MEMORY_FILE}\`: lasting facts, decisions and things to keep in mind.\n` +
     `- \`${LOG_DIR}/YYYY-MM-DD.md\`: a log for each day (today is ${t.today}, in the host's time zone). Today's and yesterday's are ` +
-    "below; read older ones when you need them.\n\n" +
+    "below; read older ones when you need them.\n" +
+    `- \`${LOG_DIR}/<topic>.md\`: notes by topic, for what's too long or too seldom needed to keep in \`${MEMORY_FILE}\`. ` +
+    "Only their paths, names and descriptions are below, not what they say. When the user's message names one of a " +
+    `note's keywords, the board puts the note before the message, in a \`<${NOTES_TAG}>\`. When its topic comes up any ` +
+    "other way (in your own work, a routine, or in words that aren't its keywords), read the note at its path before you " +
+    "answer or act on it: don't go on its line below alone.\n\n" +
     `When the user tells you something worth remembering, or asks you to remember something, write it to \`${USER_FILE}\` ` +
     `(about them) or \`${MEMORY_FILE}\` (anything else) straight away, as a short line under a fitting heading: change a line ` +
     "that it updates rather than adding one that contradicts it. When they ask you to forget something, remove it from " +
@@ -83,20 +104,67 @@ export const memory = (t: MemoryFacts): string => {
     "happened, add a line or two to today's log (making it if it isn't there): what was asked, what you did, and " +
     `what's still pending. Keep \`${USER_FILE}\` and \`${MEMORY_FILE}\` under ${capText} characters each, since only that much of ` +
     "them is loaded: keep details in other files in the workspace and a line here that points to them. Don't keep " +
-    "passwords, tokens or other secrets in them. The user can read and edit these files in the board's Memory tab. " +
+    "passwords, tokens or other secrets in your memory. To keep a topic as a note, start its file in " +
+    `\`${LOG_DIR}/\` with frontmatter between \`---\` lines: \`name\`, a one-line \`description\` of what it's about, ` +
+    "`keywords` (a list of words the user would use for it: whole words in any case, and `invoic*` for any word that " +
+    `starts so) and a \`type\` (${NOTE_TYPES.map((n) => `\`${n}\``).join(", ")}) under \`metadata\`; a file there with no ` +
+    "keywords isn't a note. The user can read and edit these files in the board's Memory tab. " +
     "After each of your turns the board keeps a history of the workspace, in a git repository of its own outside it: " +
     "the files that `.gitignore` lists and files over 1 MB are left out of it, so keep downloads and the like in a " +
     "folder it lists."
   for (const [rel, label, tail, missing, f] of files(t)) s += section(rel, label, tail, missing, f)
+  return s + notesIndex(t.notes)
+}
+
+/** The notes' section: a line for each, with its path, type, name and description (HE-36). */
+export const notesIndex = (notes: ReadonlyArray<Note>): string => {
+  let s = "\n\n### Notes by topic\n\n"
+  if (notes.length === 0) return s + `There are no notes by topic in \`${LOG_DIR}/\` yet.`
+  s += "Read a note at its path when its topic comes up, unless it's in a `<" + NOTES_TAG + ">` already:"
+  for (const n of notes) {
+    const type = n.type === null ? "" : ` (${n.type})`
+    s += `\n- \`${n.rel}\`${type}: ${n.name}${n.description === "" ? "" : ` — ${n.description}`}`
+  }
   return s
+}
+
+/** A note put before a message: its body as the board read it, or cut (HE-36). */
+export interface NoteLoaded {
+  readonly note: Note
+  readonly file: MemoryFile
+}
+
+/**
+ * What a run is told of its notes before its message: the notes `loaded` (named by its message, or changed since its
+ * conversation was told them), and the others its message named that aren't (past `MAX_NOTES_LOADED`). "" for none.
+ */
+export const notesBefore = (loaded: ReadonlyArray<NoteLoaded>, more: ReadonlyArray<Note>): string => {
+  if (loaded.length === 0 && more.length === 0) return ""
+  const capText = formatNumber(MEMORY_CAP)
+  let body = ""
+  for (const { note, file } of loaded) {
+    body += `\n\n### ${note.name} (${note.rel})\n\n`
+    if (file._tag !== "Shown") {
+      body += `\`${note.rel}\` has nothing after its frontmatter.`
+      continue
+    }
+    if (file.cut) body += `(\`${note.rel}\` is ${formatNumber(file.total)} characters, over the ${capText} that are loaded: read the file for the rest.)\n\n`
+    body += `<memory-file path="${note.rel}">\n${file.shown.trimEnd()}\n</memory-file>`
+  }
+  if (more.length > 0)
+    body += `\n\nThe message names notes that aren't loaded here too: ${more.map((n) => `\`${n.rel}\``).join(", ")}. Read them if you need them.`
+  const intro =
+    "Your notes by topic that this message names a keyword of (or that changed since you were shown them), as they are now, " +
+    "which replace what you were shown of them before:"
+  return `<${NOTES_TAG}>\n${intro}${body}\n</${NOTES_TAG}>\n\n`
 }
 
 /**
  * What a later run of a conversation is told before its message: all of `t` (`changes` null: the conversation may not
  * have what it was told, after a compaction, say, or it's another day), or the files `changes` names (by path) as they
- * changed. "" when nothing did.
+ * changed, and the notes' list when `notesChanged`. "" when nothing did.
  */
-export const memoryUpdate = (t: MemoryFacts, changes: ReadonlyMap<string, MemoryChange> | null): string => {
+export const memoryUpdate = (t: MemoryFacts, changes: ReadonlyMap<string, MemoryChange> | null, notesChanged = false): string => {
   let body = ""
   for (const [rel, label, tail, missing, f] of files(t)) {
     if (changes === null) {
@@ -110,6 +178,7 @@ export const memoryUpdate = (t: MemoryFacts, changes: ReadonlyMap<string, Memory
         ? section(rel, label, tail, missing, c.file)
         : `\n\n### ${label}: added at its end\n\n<memory-file path="${rel}" part="end">\n${c.added.trimEnd()}\n</memory-file>`
   }
+  if (changes === null || notesChanged) body += notesIndex(t.notes)
   if (body === "") return ""
   const intro =
     changes === null

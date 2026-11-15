@@ -22,7 +22,7 @@ tracked items open the same way.
 
 An open task has its thread in the main area and, where there's room (the dialog, a wide window), a column of its
 **key items** beside it: its status with what it's waiting for, its agent's todo list, its pull request with its checks,
-its preview, its workflows, the tasks it created, depends on or merges with, and its branch, each only when there is
+its preview, its workflows, a plugin's panel, the tasks it created, depends on or merges with, and its branch, each only when there is
 one. Its title, its description and everything set by hand (the status list, labels, the pull request and preview
 links, dependencies, what it merges into, its worktree, its agent, _Delete task_) are in its **Details** tab, the last
 one; a task that hasn't started opens there. In the side panel beside the board and on a phone, with no room for the
@@ -326,3 +326,21 @@ it's in that project (or with `project_id` on `create_task`): numbered with the 
 repository without changing it. Like a document task it has no worktree, review or merge: moving it to _Ready for merge_
 marks it done. Scratch tasks replace the scratch chats of earlier versions: those became done scratch tasks (in no
 project, whichever project they were in) that keep working in their old folder, so their conversations carry on.
+
+**Experiments** (Settings → _Experiments_) are features still being tried, each with a switch and a line on what it
+does. They may change or go away. All are off until you switch one on, and a switch is for the whole board: it's kept
+on the board's own host, so it holds in every browser and the desktop app, and settings sync carries it to the hosts
+that sync (see _Settings sync_ in Hosts). The experiments:
+
+- **Fold finished turns**: once a turn has finished (from your message, or the board's, to the agent's result), its tool
+  calls, the approvals they asked for and its _Turn complete_ line fold into one row where its first tool call was:
+  _Worked for 2m 10s · 7 steps · $0.123_. An amber dot says a step waited for your approval, a red one that a step
+  failed or was refused. What the agent wrote between the steps stays in sight. Click the row to see the steps as they
+  are without it, and again to fold them. The turn that's running stays open.
+- **Show outgoing mail and events as drafts**: when an agent asks to send a mail or to add or change a calendar event
+  with the assistant's Google tools, its prompt shows the mail or the event as it will go out rather than the tool's
+  input. A mail reads **Send** and **Discard** and can be edited first (on Claude Code); an event reads **Add the
+  event** (or **Change the event**) and **Discard**. See _Mail and events as drafts_ in the assistant's guide.
+- **Assistant check-ins**: the assistant's _Routines_ tab offers **Add check-ins**, a light counterpart to the morning
+  brief. At the times you pick (11:00 and 16:30 on weekdays to start with) the assistant looks over your boards and
+  messages you only if something needs you; otherwise it stays quiet. See _Check-ins_ in Integrations.

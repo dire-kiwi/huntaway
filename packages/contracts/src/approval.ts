@@ -130,7 +130,8 @@ export const WorkflowChange = Schema.Struct({
 })
 export interface WorkflowChange extends Schema.Schema.Type<typeof WorkflowChange> {}
 
-export const ApprovalStatus = Schema.Literals(["pending", "allowed", "denied", "expired"])
+/** `skipped`: the user sent the thread a message instead of answering (it was denied). */
+export const ApprovalStatus = Schema.Literals(["pending", "allowed", "denied", "expired", "skipped"])
 export type ApprovalStatus = typeof ApprovalStatus.Type
 
 const Request = {
@@ -213,14 +214,15 @@ export const ApprovalRulesUpdate = Schema.Struct({
 export interface ApprovalRulesUpdate extends Schema.Schema.Type<typeof ApprovalRulesUpdate> {}
 
 /** What became of a call a rule asked about or turned away. */
-export const ActionOutcome = Schema.Literals(["pending", "allowed", "denied", "expired", "blocked"])
+export const ActionOutcome = Schema.Literals(["pending", "allowed", "denied", "expired", "skipped", "blocked"])
 export type ActionOutcome = typeof ActionOutcome.Type
 
 /**
  * Who settled it: `user` (on the board), `push` (a notification), `telegram` (its buttons, on an imported board),
- * `expiry` (nobody, in time), `mode` (Don't ask), `rule`, or `ended` (its run ended first).
+ * `expiry` (nobody, in time), `mode` (Don't ask), `rule`, `ended` (its run ended first), or `message` (the user sent
+ * the thread a message instead of answering: skipped).
  */
-export const AnsweredBy = Schema.Literals(["user", "push", "telegram", "expiry", "mode", "rule", "ended"])
+export const AnsweredBy = Schema.Literals(["user", "push", "telegram", "expiry", "mode", "rule", "ended", "message"])
 export type AnsweredBy = typeof AnsweredBy.Type
 
 /** A call that hit an ask or never rule: a row of the action log (`approval_log`). */
@@ -274,6 +276,12 @@ export const PermissionAnswer = Schema.Struct({
   mode: Schema.optionalKey(Schema.NullOr(PermissionMode)),
   /** A plan, denied: what the user wants changed. */
   feedback: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * A tool call of a Claude Code run, allowed: the input it runs with in place of the one it asked with, as the user
+   * edited it (a draft mail's To, Subject and body). An object; refused for a question, a plan, the board's own approvals
+   * and a Codex run's prompt, whose approval can't carry it.
+   */
+  input: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
   /** An automation that creates tasks, approved: the model and effort its tasks run with (left out: as the agent asked). */
   automation: Schema.optionalKey(
     Schema.NullOr(Schema.Struct({ model: Schema.optionalKey(Schema.NullOr(Schema.String)), effort: Schema.optionalKey(Schema.NullOr(Schema.String)) })),

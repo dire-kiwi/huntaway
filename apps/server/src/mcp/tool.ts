@@ -12,9 +12,18 @@ import type { Run } from "../runs/Run.ts"
 // them. Tool names, argument names and descriptions are copied from the old server exactly: prompts, approval rules
 // and agents' habits depend on them.
 
-/** The board's MCP servers: its own tools, GitHub through `gh`, the profile's documents, the host's desktop. */
-export const ServerName = Schema.Literals(["huntaway", "gh", "docs", "desktop"])
+/** The board's own MCP servers: its own tools, GitHub through `gh`, the profile's documents, the host's desktop. */
+export const BuiltInServer = Schema.Literals(["huntaway", "gh", "docs", "desktop"])
+export type BuiltInServer = typeof BuiltInServer.Type
+
+/**
+ * An MCP server the board serves: one of its own (`BuiltInServer`), or a plugin's, named by the plugin's id (HE-34,
+ * docs/plan/15-plugins.md; `McpServers.define`).
+ */
+export const ServerName = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]{0,31}$/))
 export type ServerName = typeof ServerName.Type
+
+export const isBuiltInServer = Schema.is(BuiltInServer)
 
 /** The board's own server. */
 export const BOARD_SERVER: ServerName = "huntaway"
@@ -70,6 +79,11 @@ export interface McpCaller {
   readonly profile: CallerProfile
   /** The thread's permission mode at the call: its own, else its project's, else the host's default. */
   readonly mode: PermissionMode
+  /**
+   * The hops of the caller's turn (its run's; another host's agent's, as its host passed them): a message it sends
+   * another task's agent goes one further (docs/plan/07-agents.md, Hops between agents).
+   */
+  readonly hops: number
 }
 
 /** The caller's profile as the tools read it: its id here (null: this host has none of that name) and its name. */

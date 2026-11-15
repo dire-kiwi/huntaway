@@ -97,6 +97,23 @@ describe("HostSettings", () => {
       assert.strictEqual(yield* (yield* SettingsRepo).get("release_prereleases"), null)
     }).pipe(Effect.scoped, Effect.provide(TestBoard())),
   )
+
+  it.effect("keeps the experiments switched on, each as its own row, all off at first", () =>
+    Effect.gen(function* () {
+      const settings = yield* HostSettings
+      const repo = yield* SettingsRepo
+      assert.deepStrictEqual((yield* settings.get).experiments, [])
+      assert.deepStrictEqual((yield* settings.update({ experiments: ["fold_turns"] })).experiments, ["fold_turns"])
+      assert.strictEqual(yield* repo.get("experiment_fold_turns"), "true")
+      // A patch without the list leaves them; an empty list switches them all off.
+      assert.deepStrictEqual((yield* settings.update({ default_model: "opus" })).experiments, ["fold_turns"])
+      assert.deepStrictEqual((yield* settings.update({ experiments: [] })).experiments, [])
+      assert.strictEqual(yield* repo.get("experiment_fold_turns"), null)
+      // A row for an experiment this build doesn't have is ignored.
+      yield* repo.set("experiment_gone", "true")
+      assert.deepStrictEqual((yield* settings.get).experiments, [])
+    }).pipe(Effect.provide(TestBoard())),
+  )
 })
 
 describe("JsonColumn", () => {

@@ -60,7 +60,7 @@ const eventId = Effect.fnUntraced(function* (server: ServerName, call: CallId, r
   return `${server}.${call}.${yield* b64(rpcId)}${progress === undefined ? "" : `.${yield* b64(progress)}`}`
 })
 
-const EVENT_ID = /^([a-z_]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)(?:\.([A-Za-z0-9_-]*))?$/
+const EVENT_ID = /^([a-z][a-z0-9_]*)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]*)(?:\.([A-Za-z0-9_-]*))?$/
 
 const isRpcId = (u: unknown): u is RpcId => typeof u === "string" || typeof u === "number"
 
@@ -144,7 +144,7 @@ export const McpHttpRoute = HttpRouter.use(
     const serve = Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerRequest) {
       const params = yield* HttpRouter.params
       const server = Schema.decodeUnknownOption(ServerName)(params["server"])
-      if (Option.isNone(server) || params["run"] === undefined) return notFound
+      if (Option.isNone(server) || params["run"] === undefined || !(yield* servers.known(server.value))) return notFound
       const run = RunId.make(params["run"])
       const auth = request.headers["authorization"]
       const authorised = auth !== undefined && auth.startsWith("Bearer ") && (yield* identity.isRunSecret(run, auth.slice("Bearer ".length)))
@@ -162,7 +162,8 @@ export const McpHttpRoute = HttpRouter.use(
       }
       if (request.method !== "POST") return notAllowed
 
-      const limit = server.value === "docs" ? DOCS_BODY_LIMIT : BODY_LIMIT
+      const own = yield* servers.maxRequestBytes(server.value)
+      const limit = server.value === "docs" ? DOCS_BODY_LIMIT : own === null ? BODY_LIMIT : ByteSize.bytes(own)
       const text = yield* Effect.option(Effect.provideService(request.text, HttpIncomingMessage.MaxBodySize, limit))
       const body = Option.flatMap(text, (t) => Schema.decodeOption(JsonValue)(t))
       if (Option.isNone(body)) return json(400, rpcError(null, PARSE_ERROR, "Parse error"))
@@ -172,7 +173,7 @@ export const McpHttpRoute = HttpRouter.use(
       if (message._tag !== "Request" || message.method === "") return HttpServerResponse.empty({ status: 202 })
       if (message.method !== "tools/call") {
         const account = settings.github_account === null ? null : parseAccount(settings.github_account)
-        return json(200, yield* servers.answer(server.value, settings.review, message, account === null ? null : accountName(account)))
+        return json(200, yield* servers.answer(server.value, settings.review, message, account === null ? null : accountName(account), run))
       }
 
       const call = CallId.make(yield* random.uuidV4().pipe(Effect.orDie))

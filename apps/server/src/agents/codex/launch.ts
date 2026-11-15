@@ -5,7 +5,7 @@ import type { Rules } from "@huntaway/shared"
 import type { LaunchSpec } from "../AgentDriver.ts"
 import { DESKTOP_SERVER, desktopDisallowed, DOCS_SERVER, GH_SERVER, GH_WRITES, toolPrefix, usesServer } from "../claude/access.ts"
 import type { RunTools } from "../claude/access.ts"
-import { boardServers, TASK_ENV, userInput } from "../claude/launch.ts"
+import { boardServers, pluginServers, TASK_ENV, userInput } from "../claude/launch.ts"
 import type { BoardManifest, ServedServers } from "../claude/launch.ts"
 import { boardTools } from "./requests.ts"
 import { codexPolicy } from "./servers.ts"
@@ -112,6 +112,7 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
       gh: usesServer(tools, GH_SERVER, input.served.gh),
       docs: usesServer(tools, DOCS_SERVER, input.served.docs),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
+      plugins: pluginServers(tools, input.served),
     }
     const ownGh = Object.hasOwn(tools.mcp_servers, GH_SERVER)
     // Reviewers read and report.
@@ -153,7 +154,12 @@ export const codexLaunch = (input: CodexLaunchInput): Effect.Effect<CodexLaunch,
         filesystem,
         skills_dir: tools.skills_dir === null ? null : `${tools.skills_dir}/.claude/skills`,
         // The project's servers it allows, and the docs server, whose tools only touch the profile's documents.
-        approved_mcp_servers: [...Object.keys(tools.mcp_servers).filter((n) => tools.allowed.includes(toolPrefix(n))), ...(servers.docs ? [DOCS_SERVER] : [])],
+        approved_mcp_servers: [
+          ...Object.keys(tools.mcp_servers).filter((n) => tools.allowed.includes(toolPrefix(n))),
+          ...(servers.docs ? [DOCS_SERVER] : []),
+          // HE-34: the plugins' servers whose tools only touch their own data.
+          ...(servers.plugins ?? []).filter((p) => p.preApproved).map((p) => p.name),
+        ],
         disabled_mcp_tools: disabled,
         // Codex's reviewer reviews the board's waits on its MCP server; a dynamic tool's call is the board's to ask about.
         review_waits: approvalsReviewer === "auto_review" && !dynamic,

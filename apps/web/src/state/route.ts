@@ -67,7 +67,7 @@ export function useRoute(): Route {
   return useAtomValue(pathAtom, parse)
 }
 
-/** The task open beside the page (`?task=`), expanded into a dialog (`&expanded`), compared (`&compare`). */
+/** The task open over the page (`?task=`): in a dialog, or in the side panel (`&side`), compared (`&compare`). */
 export function usePanel(): Panel | null {
   return useAtomValue(searchAtom, parsePanel)
 }
@@ -83,13 +83,13 @@ export function useTaskModal(): string | null {
 }
 
 /**
- * Opens a task in the side panel of the current page, keeping it expanded if it was. Off the boards, goes to
+ * Opens a task over the current page: in a dialog, or in the side panel if the open task was collapsed into it. Off the boards, goes to
  * `/t/<id>`, which moves on to the task's board once it is known.
  */
 export function openTask(taskId: string, options: { readonly expanded?: boolean; readonly replace?: boolean } = {}): void {
   const path = window.location.pathname
   if (!hasPanel(parse(path))) return navigate({ name: "task", taskId }, options.replace === true)
-  const expanded = options.expanded ?? parsePanel(window.location.search)?.expanded ?? false
+  const expanded = options.expanded ?? parsePanel(window.location.search)?.expanded ?? true
   navigate(panelUrl(path, { taskId, expanded }), options.replace === true)
 }
 
@@ -114,7 +114,7 @@ export function setPanelExpanded(expanded: boolean): void {
 export function openCompare(taskId: string): void {
   const path = window.location.pathname
   if (!hasPanel(parse(path))) return navigate({ name: "task", taskId })
-  navigate(panelUrl(path, { taskId, expanded: parsePanel(window.location.search)?.expanded ?? false, compare: true }))
+  navigate(panelUrl(path, { taskId, expanded: parsePanel(window.location.search)?.expanded ?? true, compare: true }))
 }
 
 export function closeCompare(): void {

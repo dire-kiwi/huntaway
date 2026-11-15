@@ -19,7 +19,7 @@ test("a deletion that fails says so and keeps the dialog open", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await routeRpc(page, (r) => (r.tag === "tasks.delete" ? failure({ _tag: "Conflict", reason: "merging", detail: "the task is being merged" }) : undefined))
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Details", "click Delete task", "wait This stops any running agent"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Delete task", "wait This stops any running agent"])
     await page.getByRole("button", { name: /^Delete$/ }).click()
     await ui.run(["wait the task is being merged"])
     assert.ok(await page.getByRole("button", { name: /^Delete$/ }).isVisible(), "the dialog stays open")

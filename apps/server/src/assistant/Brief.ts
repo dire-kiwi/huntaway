@@ -1,6 +1,18 @@
 import { Context, DateTime, Effect, Layer, Result } from "effect"
 import { Invalid, NotFound } from "@huntaway/contracts"
-import type { Automation, BriefFeedback, BriefRating, Conflict, ProfileId, Task, TaskDocument, TaskId, Unavailable, Weekday } from "@huntaway/contracts"
+import type {
+  Automation,
+  BriefFeedback,
+  NewAutomation,
+  BriefRating,
+  Conflict,
+  ProfileId,
+  Task,
+  TaskDocument,
+  TaskId,
+  Unavailable,
+  Weekday,
+} from "@huntaway/contracts"
 import { Automations } from "../automations/Automations.ts"
 import { localDay, TaskDocuments } from "../docs/TaskDocuments.ts"
 import { TaskDocumentRepo } from "../docs/TaskDocumentRepo.ts"
@@ -8,10 +20,12 @@ import { nowTimestamp } from "../platform/columns.ts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
 import { MEMORY_FILE } from "../prompts/memory.ts"
+import { HostSettings } from "../settings/HostSettings.ts"
 import { TaskRepo } from "../tasks/TaskRepo.ts"
 import { TaskNotFound } from "../tasks/Tasks.ts"
 import { Assistant } from "./Assistant.ts"
 import { apply, cleanTopic, DEFAULT_TIME, ITEMS_LABEL, items, kindOf, LABEL, line, routine, WEEKDAYS } from "./briefText.ts"
+import { DEFAULT_TIMES, routine as checkInRoutine, WEEKDAYS as CHECK_IN_WEEKDAYS } from "./checkInText.ts"
 import { BRIEF_FILE, BRIEF_ITEMS_FILE } from "./memory/text.ts"
 import { Memory } from "./Memory.ts"
 
@@ -19,10 +33,22 @@ import { Memory } from "./Memory.ts"
 // half of agent/documents.ts): the template that adds its routine, the assistant's `brief` document (`brief.html` in its
 // workspace, which its routine threads write) kept one version a day with its items (`brief.json`, `brief_items`), and
 // the user's ratings of the items, which go into MEMORY.md for later briefs to follow. The plain parts are `brief.ts`.
+// Also the check-in's template (the `check_ins` experiment), whose plain parts are `checkInText.ts`.
 
 export interface BriefShape {
   /** Adds the morning brief routine to the profile: on `weekdays` (Monday to Friday) at `time` (07:30), in a fresh thread. */
   readonly add: (profile: ProfileId, time: string | null, weekdays: ReadonlyArray<Weekday> | null) => Effect.Effect<Automation, NotFound | Invalid | Conflict>
+  /**
+   * Adds the check-in routine (the `check_ins` experiment: refused while it's off) to the profile: at each of `times`
+   * (11:00 and 16:30) on `weekdays` (Monday to Friday), in a fresh thread; with `google`, it looks at mail and the
+   * calendar too.
+   */
+  readonly addCheckIn: (
+    profile: ProfileId,
+    times: ReadonlyArray<string> | null,
+    weekdays: ReadonlyArray<Weekday> | null,
+    google: boolean,
+  ) => Effect.Effect<Automation, NotFound | Invalid | Conflict>
   /** Rates one of the brief's items: its line in MEMORY.md, committed as the user's. */
   readonly feedback: (
     profile: ProfileId,
@@ -50,15 +76,35 @@ export class Brief extends Context.Service<Brief, BriefShape>()("huntaway-server
       const tasks = yield* TaskRepo
       const db = yield* Db
       const events = yield* Events
+      const settings = yield* HostSettings
+
+      /** A routine template's routine, on the assistant's host. */
+      const addRoutine = Effect.fnUntraced(function* (profile: ProfileId, input: NewAutomation) {
+        yield* assistant.here(profile)
+        const made = yield* automations
+          .create({ _tag: "Profile", id: profile }, input)
+          .pipe(Effect.catchTags({ ProfileNotFound: () => Effect.fail(new NotFound({ what: "profile", id: profile })), ProjectNotFound: Effect.die }))
+        return yield* automations.wire(made)
+      })
 
       const add = Effect.fn("Brief.add")(function* (profile: ProfileId, time: string | null, weekdays: ReadonlyArray<Weekday> | null) {
         const at = time !== null && time.trim() !== "" ? time.trim() : DEFAULT_TIME
         const days = weekdays !== null && weekdays.length > 0 ? weekdays : WEEKDAYS
-        yield* assistant.here(profile)
-        const made = yield* automations
-          .create({ _tag: "Profile", id: profile }, routine(at, days))
-          .pipe(Effect.catchTags({ ProfileNotFound: () => Effect.fail(new NotFound({ what: "profile", id: profile })), ProjectNotFound: Effect.die }))
-        return yield* automations.wire(made)
+        return yield* addRoutine(profile, routine(at, days))
+      })
+
+      const addCheckIn = Effect.fn("Brief.addCheckIn")(function* (
+        profile: ProfileId,
+        times: ReadonlyArray<string> | null,
+        weekdays: ReadonlyArray<Weekday> | null,
+        google: boolean,
+      ) {
+        if (!(yield* settings.get).experiments?.includes("check_ins")) {
+          return yield* new Invalid({ field: "experiment", reason: "check-ins are an experiment: switch them on in Settings → Experiments" })
+        }
+        const at = (times ?? []).map((t) => t.trim()).filter((t) => t !== "")
+        const days = weekdays !== null && weekdays.length > 0 ? weekdays : CHECK_IN_WEEKDAYS
+        return yield* addRoutine(profile, checkInRoutine(at.length > 0 ? at : DEFAULT_TIMES, days, google))
       })
 
       const feedback = Effect.fn("Brief.feedback")(function* (
@@ -145,7 +191,7 @@ export class Brief extends Context.Service<Brief, BriefShape>()("huntaway-server
         )
       })
 
-      return Brief.of({ add, feedback, document, keep })
+      return Brief.of({ add, addCheckIn, feedback, document, keep })
     }),
   )
 }

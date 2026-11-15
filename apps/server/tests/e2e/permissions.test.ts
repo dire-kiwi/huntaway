@@ -74,4 +74,48 @@ describe.skipIf(shim === null)("permission prompts on a whole server", () => {
       assert.deepStrictEqual(yield* http["permissions.pending"]({}), [])
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
+
+  it.live("a message sent while a prompt is open skips it: the agent is denied and reads the message in the same run", () =>
+    Effect.gen(function* () {
+      const { port, token } = yield* startServer(["--claude-bin", FAKE_CLAUDE])
+      const http = yield* RpcClient.make(CliRpcs).pipe(Effect.provide(httpRpcClientLayer(`http://127.0.0.1:${port}`, token)))
+      const profile = yield* http["profiles.create"]({ profile: { name: "me" } })
+      const task = yield* http["tasks.create"]({ task: { profile_id: profile.id, title: "Ask" } })
+
+      const { reply, skipped } = yield* Effect.gen(function* () {
+        const socket = yield* RpcClient.make(CliRpcs)
+        const watch = socket["threads.watch"]({ task_id: task.id, limit: 50 })
+        const requests = watch.pipe(Stream.flatMap((m) => Stream.fromIterable(isSnapshot(m) ? m.requests : isOpened(m) ? [m.request] : [])))
+        const open = yield* requests.pipe(
+          Stream.filter((r) => r.type === "permission" && r.resolution === undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        const settled = yield* requests.pipe(
+          Stream.filter((r) => r.type === "permission" && r.resolution !== undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        const replied = yield* watch.pipe(
+          Stream.flatMap((m) => Stream.fromIterable(isSnapshot(m) ? m.items : isAdded(m) ? [m.item] : [])),
+          Stream.filter((item: Item) => item.type === "assistant_message"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* http["tasks.send"]({ id: task.id, text: "fake-ask-permission" })
+        yield* Fiber.join(open)
+        // Instead of answering, the user says something else.
+        yield* http["tasks.send"]({ id: task.id, text: "No, run the tests instead" })
+        return { reply: yield* Fiber.join(replied), skipped: yield* Fiber.join(settled) }
+      }).pipe(Effect.scoped, Effect.provide(socketRpcClientLayer(port, token)))
+
+      const text = reply._tag === "Some" && reply.value.type === "assistant_message" ? reply.value.text : ""
+      // The tool call was denied as skipped, and the message taken in by the same run.
+      assert.include(text, "permission Bash: deny: Skipped: the user did not approve this.")
+      assert.include(text, "(and to: No, run the tests instead)")
+      const card = skipped._tag === "Some" ? skipped.value : null
+      assert.deepStrictEqual([card?.metadata?.["status"], card?.resolution?.outcome], ["skipped", "deny"])
+      assert.deepStrictEqual(yield* http["permissions.pending"]({}), [])
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
 })

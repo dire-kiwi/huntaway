@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync, existsSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { assert, layer } from "@effect/vitest"
 import { DateTime, Effect, Fiber, Result, Schema, Stream } from "effect"
@@ -16,6 +16,7 @@ import { Actor } from "../platform/Changes.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Events } from "../platform/Events.ts"
 import { MEMORY_FILE, USER_FILE } from "../prompts/memory.ts"
+import { Permissions, SKIPPED } from "../permissions/Permissions.ts"
 import { Profiles } from "../profiles/Profiles.ts"
 import { AssistantLaunch } from "../runs/AssistantLaunch.ts"
 import { LaunchFacts } from "../runs/LaunchFacts.ts"
@@ -135,6 +136,27 @@ layer(board)("Assistant", (it) => {
     }),
   )
 
+  it.effect("a message to the assistant skips the permission prompt it is waiting on, and goes to its agent", () =>
+    Effect.gen(function* () {
+      const p = yield* profile("skip")
+      const a = yield* (yield* Assistant).get(p.id)
+      yield* (yield* TaskRepo).write(a.id, { running: true }, a.created_at)
+      const agent = yield* fakeAgent({ task: a.id })
+      const permissions = yield* Permissions
+      const told = yield* Effect.forkChild(
+        permissions.ask({ run: agent.run, call_id: "c" }, { tool_name: "Bash", input: { command: "ls" }, tool_use_id: null }),
+      )
+      yield* Effect.raceFirst(
+        permissions.asking("c"),
+        Effect.flatMap(Fiber.join(told), (d) => Effect.die(`decided without asking: ${json(d)}`)),
+      )
+      yield* (yield* Assistant).send(p.id, "Never mind that").pipe(Effect.orDie)
+      assert.deepStrictEqual(yield* Fiber.join(told), { behavior: "deny", message: SKIPPED })
+      // The message went to the agent.
+      assert.include(json(yield* agent.input), "Never mind that")
+    }),
+  )
+
   it.effect("its runs work in its workspace, told its memory last; a routine thread's in its assistant's", () =>
     Effect.gen(function* () {
       const p = yield* profile("runs")
@@ -148,7 +170,10 @@ layer(board)("Assistant", (it) => {
       // The memory comes last in what it's told.
       const told = yield* (yield* Prompts).system(a.id, { codex: false, permission_mode: "default", memory: ws.memory }).pipe(Effect.orDie)
       assert.include(told, "personal assistant")
-      assert.isTrue(told.trimEnd().endsWith("There's no log for today yet."), told.slice(-300))
+      assert.isTrue(
+        told.trimEnd().endsWith("There's no log for today yet.\n\n### Notes by topic\n\nThere are no notes by topic in `memory/` yet."),
+        told.slice(-300),
+      )
       // A routine thread works in its assistant's workspace, with its memory.
       const thread = yield* threadUnder(a)
       const its = (yield* launch.workspace(thread)) ?? assert.fail("no workspace for the routine")
@@ -305,6 +330,63 @@ layer(board)("Assistant", (it) => {
       const command = yield* facts.claude((yield* fakeAgent({ task: a.id })).run, "/remember the car")
       assert.include(command.spec.prompt, '"content":"/remember the car\\n\\n<memory-update>')
       assert.include(command.spec.prompt, "- The car is red")
+    }),
+  )
+
+  it.effect("a note by topic is listed, and put before a message that names its keyword, once a conversation", () =>
+    Effect.gen(function* () {
+      const p = yield* profile("notes")
+      const { task: a, dir } = yield* opened(p)
+      const launch = yield* AssistantLaunch
+      const repo = yield* TaskRepo
+      mkdirSync(`${dir}/memory`, { recursive: true })
+      const invoices =
+        "---\nname: Invoices\ndescription: How the user bills clients\nkeywords: [invoice, billing]\nmetadata:\n  type: project\n---\n- Sent on the 1st.\n"
+      writeFileSync(`${dir}/memory/invoices.md`, invoices)
+      // A file there with no keywords is as before: neither listed nor loaded.
+      writeFileSync(`${dir}/memory/plain.md`, "---\nname: Plain\ndescription: no keywords\n---\n- PLAIN BODY\n")
+      const runOf = (t: Task, message: string) =>
+        Effect.gen(function* () {
+          const w = (yield* launch.workspace(t, { compact: false, message })) ?? assert.fail("no workspace")
+          yield* w.told
+          return w
+        })
+      // The instructions list it, by path, name and description only.
+      const first = yield* runOf(a, "Good morning")
+      assert.include(first.memory, "- `memory/invoices.md` (project): Invoices — How the user bills clients")
+      assert.notInclude(first.memory, "Sent on the 1st")
+      assert.notInclude(first.memory, "memory/plain.md")
+      // A message that names none of its keywords isn't told it.
+      assert.strictEqual(first.update, "")
+      // One that does is told it before the message, even a new conversation's.
+      const named = yield* runOf(a, "Did the Invoice for May go out?")
+      assert.include(named.update, "<memory-notes>\nYour notes by topic")
+      assert.include(named.update, '<memory-file path="memory/invoices.md">\n- Sent on the 1st.\n</memory-file>')
+      assert.notInclude(named.update, "PLAIN BODY")
+      // A later run of the conversation that has it isn't told it again, until it changes.
+      yield* repo.write(a.id, { session_id: "n1" }, a.created_at)
+      const s1 = (yield* repo.get(a.id)) ?? assert.fail("no assistant")
+      // (Its first run's session is the one its agent started, which had it.)
+      assert.strictEqual((yield* runOf(s1, "billing again")).update, "")
+      writeFileSync(`${dir}/memory/invoices.md`, invoices.replace("the 1st", "the 2nd"))
+      const changed = (yield* runOf(s1, "Hello")).update
+      assert.include(changed, "- Sent on the 2nd.")
+      // Another session can't be sure it has it: told it again when its message names it, not otherwise.
+      yield* repo.write(a.id, { session_id: "n2" }, a.created_at)
+      const s2 = (yield* repo.get(a.id)) ?? assert.fail("no assistant")
+      assert.notInclude((yield* runOf(s2, "Hello")).update, "<memory-notes>\n")
+      assert.include((yield* runOf(s2, "billing")).update, "- Sent on the 2nd.")
+      // A note made meanwhile changes the list, which the next run is told.
+      writeFileSync(`${dir}/memory/car.md`, "---\nname: The car\ndescription: Its service history\nkeywords: car\n---\n- Serviced in March.\n")
+      const listed = (yield* runOf(s1, "Hello")).update
+      assert.include(listed, "<memory-update>")
+      assert.include(listed, "- `memory/car.md`: The car — Its service history")
+      assert.notInclude(listed, "Serviced in March")
+      // A launch puts the note before the message.
+      const facts = yield* LaunchFacts
+      const prepared = yield* facts.claude((yield* fakeAgent({ task: a.id })).run, "When is the car due?")
+      const sent = prepared.spec.prompt
+      assert.isTrue(sent.indexOf("- Serviced in March.") >= 0 && sent.indexOf("- Serviced in March.") < sent.indexOf("When is the car due?"), sent)
     }),
   )
 

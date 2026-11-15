@@ -294,12 +294,12 @@ Hand-rolled History API router: `parse(path) → Route`, `href(route)`, `navigat
 | `/hosts/<hostId>` | `host` | `HostPage` |
 
 Query parameters, valid on any path:
-- `?task=<id>`: the task open in the side panel (`usePanel`), only drawn on `board`, `group`, `profile`, `subproject` (`hasPanel`). `&expanded`: as a dialog. `&compare`: the Compare view over the page.
+- `?task=<id>`: the task open over the page (`usePanel`), only drawn on `board`, `group`, `profile`, `subproject` (`hasPanel`): in a dialog (HE-30; the old server's side panel was the default and `&expanded` the dialog, which an old link still opens). `&side`: collapsed into the side panel. `&compare`: the Compare view over the page.
 - `?modal=<id>`: a task in a dialog over any page, beside the side panel's task (HA-326).
 - `?token=<t>`: captured and stripped at boot.
 
 Rules:
-- `openTask(id)`: on a panel page, sets `?task=` keeping `expanded`; elsewhere navigates to `/t/<id>`.
+- `openTask(id)`: on a panel page, sets `?task=` keeping `&side` if the open task had it (else the dialog); elsewhere navigates to `/t/<id>`.
 - `/t/<id>` redirect targets (`App.tsx`): assistant → `/assistant/<profile>`; routine thread → stays; group task → `/g/<host>/<group>?task=`; scratch task → `/profile/<name>?task=`; subproject child → `/t/<sub>/board?task=`; else `/p/<project>?task=`.
 - History state keeps `{from}` (where the user came from) for the docs page's back link; moves within one document keep the earlier `from`.
 - Segments are `decodeURIComponent`-decoded; a malformed escape is kept as is.

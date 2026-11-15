@@ -661,6 +661,48 @@ docs note (`docsTools`).
   old server threw, after making the task, which an agent could retry into a duplicate); `update_task` on a host that
   can't run agents leaves the task in In progress, as before.
 
+### Hops between agents (HE-26)<a id="hops-between-agents"></a>
+
+New (bot-hq's rule, from HE-17's write-up): two agents that answer each other with `send_to_task` could keep each other
+running for as long as nobody looks, each run on someone's usage. So a message one agent sends another counts **hops**:
+
+- A message's hops are one more than the hops of the sending agent's turn; the user's messages and the board's own
+  prompts (merge requests, review fixes, PR news, workflow steps, automations' and routines' messages) are 0. A turn's
+  hops are those of the message it took in last: the run's start (the fewest hops of the messages it takes at once, so
+  a run that starts with the user's message among them is at 0), then each steer as the agent takes it in
+  (`RunInput.steered`), so the user's message steered in starts the count again.
+- They are kept where the message is: `task_queue.hops`, `task_steers.hops` (a steer the run never took in goes back to
+  the queue with its hops), and `runs.hops` (set by `Runs.register` and `RunInput.steered`). Nothing is in memory, so a
+  restart keeps the count. `ToolCalls` reads the run's row on each call; `McpCaller.hops` is its `hops`.
+- Across hosts and boards: another profile's board on this host is the same `Runs.send`. To another host, the call
+  carries the caller's hops (`RemoteToolCall.hops`, optional: a host on a build before it sends none, read as 0) on
+  `tools.call` and `link.upcalls`, and that host's caller (`remoteCaller`) has them.
+- **`MAX_HOPS` = 3** (`mcp/tools/common.ts`), bot-hq's number: A→B→A→B goes (an ask, an answer, a follow-up and its
+  answer), and the next is refused. That is enough for the exchanges agents have on this board (a task asking another
+  for something and hearing back, a task reporting to the one that made it), while two agents caught answering each
+  other stop after two rounds rather than after the usage runs out. A constant, not a setting, until someone needs
+  it higher.
+- Past it, `send_to_task` fails (a tool error in the thread, as any refusal) with: "The message wasn't sent: agents
+  have been waking one another without the user (by messages or tasks they start) 3 times in a row, as many as the
+  board lets go. Stop messaging other tasks' agents and report to the user instead…". It is checked before the task is
+  looked for, so it holds wherever that task is.
+
+What else counts, and why:
+
+- **`create_task` with a start, and `update_task` starting a task**: one hop each, as they wake another agent on the
+  agent's behalf; otherwise a loop could go on through new tasks (A makes B, B messages A, A makes another…). Past the
+  limit the task is made (or moved) all the same, its agent not started, and the result's `note` says why, as for
+  the other refusals of a start.
+- **`run_workflow`**: refused past the limit, as it wakes agents too. The workflow's own prompts are the board's (0):
+  they come from the user's graph, which bounds them, and carrying a count through a workflow run's steps would be
+  state of its own for a path no one has seen loop.
+- **Automations' `send_to_task` and `create_task` actions, routines**: 0. They are the user's rules (an agent's change
+  to one needs the user's approval), sent as the board.
+- **The todo-list nudge** at a run's end carries the ended run's hops: it carries on that agent's own work, and an
+  agent told to stop shouldn't get a fresh count from the board asking it to finish its list.
+- **The assistant and pens' threads** are agents with the same tools, so their messages count the same way; the user's
+  messages to them are 0.
+
 ### `wait`
 
 `Wait` owns the blocking tool: a wait is a fiber in a `FiberMap` keyed by run, racing a deadline, changes to watched
@@ -739,6 +781,8 @@ export class Permissions extends Context.Service<Permissions, {
 - **Board changes that always ask** (create a project, risky project fields, delete a task, automations,
   workflows) are `Approvals`: it works out what would change, asks, and applies exactly the fields shown.
 - `Questions` is `request_user_input`: a card that is not waited on, answered later as the user's message.
+- **A message from the user skips what is open** (HE-27, bot-hq's rule): an agent holding a prompt can't read a
+  message until the prompt is settled, so the user's message settles it as skipped (below).
 
 As built in 3.2 (HE-4), `permissions/Questions.ts`: a card is a question request in the thread (`legacy:<n>`, one
 question `q`, metadata the card and the `call_id` that asked), opened with `Threads.openRequest` once per call
@@ -794,6 +838,13 @@ As built in 3.3 (HE-4), `permissions/Permissions.ts` (+ `PermissionRepo.ts`, the
   `user`, and `push` for a paired device's session), `expireFor` callers for projects, automations and workflows (their
   areas). `permissions.answer` takes the old body (`decision`, `message`, `answers`, `mode`, `feedback`, `automation`);
   the thread's `respond` command (`threads.command`) is not served.
+- **An edited input** (HE-23, for the drafts experiment): `permissions.answer`'s `input`, an object, is what a tool call
+  allowed runs with in place of the one it asked with. Only a `tool` prompt of a Claude run takes it (not a question,
+  a plan, the board's approvals, or a Codex prompt, whose request metadata has `codex`: Codex's MCP approval is an
+  elicitation answered `accept` or `decline`, with no arguments); else `Invalid` (`input`). An input the same as the
+  one asked (by its JSON) isn't an edit. An edit is written to the row (so `allowed` tells Claude `updatedInput` with
+  it), the thread's request (its `input`, and `edited: true` in its metadata) and the action log
+  (`ApprovalRules.settle`'s `edited` rewrites the entry's `summary`).
 
 As built in 3.4 (HE-4), `permissions/Approvals.ts`:
 
@@ -836,6 +887,34 @@ As built in 3.4 (HE-4), `permissions/Approvals.ts`:
 - **Web** (step 1): `apps/web/src/components/task/thread/approvalDetails.tsx` has the old `ProjectChangeDetail`,
   `ProjectCreationDetail` and `TaskDeletionDetail`; the approval card shows them while it waits (or once opened) and a
   line otherwise. The browser check is `apps/web/tests/ui/boardApprovals.test.mjs` (the old suite had none).
+
+As built in HE-27, a message skips the prompts that are open (`Permissions.skipFor(task)`):
+
+- **When**: after the user's message is sent (`Runs.send` with `source: "user"`, so a live run has it on its input
+  first) and isn't blank, in `tasks.send` and `Assistant.send`, beside `Questions.settle(task, "replied")`. Not
+  `Runs.send` itself: another agent's `send_to_task`, the board's own prompts (review fixes, an automatic
+  `/compact`) and a late answer's message also go through it, and none of them is the user choosing not to answer.
+- **What**: the task's pending prompts but questions and plans (`skippedByMessage`: `kind` not `tool`, or a tool that
+  isn't `AskUserQuestion`, `request_user_input` or `ExitPlanMode`), so a subagent's (the parent thread's task) too.
+  Each is one conditional update `pending → skipped` (the new `PromptStatus`, and `ApprovalStatus`), so of it and an
+  answer only the first is taken; its request is written again from the row with `{ outcome: "deny", message:
+  SKIPPED }`, its waiter woken (the call is denied with `SKIPPED`: "Skipped: the user did not approve this. They sent
+  you a new message instead of answering, so read it now, and don't retry this unless their message asks you to."),
+  a rule's entry settled as `skipped` by `message` (new in `ActionOutcome` and `AnsweredBy`), and the task back to
+  work once nothing is pending. Claude's `can_use_tool` is answered `deny`; Codex's approval `decline` (its turn goes
+  on, with the message steered into it).
+- **Decided**: the board's own approvals (project changes, deletions, automations, workflows) are skipped too: the
+  agent's tool call waits on the card just as a `can_use_tool` does, so the message would sit behind it; the agent is
+  told "The user didn't approve …: Skipped: …" and can ask again if the message says to. **Stop** skips nothing: it
+  interrupts the turn, Claude Code cancels the open request (`control_cancel_request`, and Codex resolves it), so the
+  prompt expires with the turn (`onCancel`, or the run's `ended`); answering it first would let the agent take its
+  next step before the interrupt lands.
+- **Web**: a skipped card (`PermissionCard`, `ApprovalCard`) shows the `skipped` badge and _Skipped: you sent a
+  message_ (`SkippedLine`); the Actions log's outcome says "Skipped: you sent a message instead of answering".
+- **Tests**: `permissions/Permissions.test.ts` (what is skipped and what waits, the action log, first wins, a
+  subagent's `can_use_tool` denied on the input), `assistant/Assistant.test.ts` (`Assistant.send`), and on a whole
+  server with the fake agents: `tests/e2e/permissions.test.ts` (fake-claude's reply has the deny and the message, in
+  one run) and `tests/e2e/codex.test.ts` (declined, and the message steered into the same turn).
 
 ### As built in HE-28: `request_connection`
 

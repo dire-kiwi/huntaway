@@ -34,6 +34,8 @@ const order: ReadonlyArray<ReadonlyArray<string>> = [
   ["docs"],
   ["assistant"],
   ["mcp"],
+  // HE-34: the plugins, which define their servers with the MCP area and send through the runs area.
+  ["plugins"],
   ["push"],
   ["hosts"],
   ["terminal"],

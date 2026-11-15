@@ -68,7 +68,20 @@ export interface ServedServers {
   readonly docs: boolean
   /** Computer use is on for this host and it has a driver. */
   readonly desktop: boolean
+  /** HE-34: the plugins' servers (docs/plan/15-plugins.md), by their plugins' ids. None when missing. */
+  readonly plugins?: ReadonlyArray<PluginServer> | undefined
 }
+
+/** A plugin's MCP server, as a launch gives it to a run. */
+export interface PluginServer {
+  readonly name: string
+  /** Its tools are called without asking (`--allowedTools mcp__<name>`, Codex's approved servers). */
+  readonly preApproved: boolean
+}
+
+/** The plugins' servers a run gets: those its project neither turns off nor has a server of its own by the name of. */
+export const pluginServers = (tools: RunTools, served: ServedServers): ReadonlyArray<PluginServer> =>
+  (served.plugins ?? []).filter((p) => usesServer(tools, p.name, true))
 
 export interface ClaudeLaunchInput {
   readonly run: string
@@ -167,6 +180,8 @@ export const boardServers = (input: Pick<ClaudeLaunchInput, "mcp" | "tools">, se
   if (servers.gh) out[GH_SERVER] = { type: "http", url: url(GH_SERVER), headers, timeout: GH_TIMEOUT_MS }
   if (servers.docs) out[DOCS_SERVER] = { type: "http", url: url(DOCS_SERVER), headers }
   if (servers.desktop) out[DESKTOP_SERVER] = { type: "http", url: url(DESKTOP_SERVER), headers, timeout: DESKTOP_TIMEOUT_MS }
+  // HE-34: the plugins' (already narrowed to the run's, `pluginServers`).
+  for (const p of servers.plugins ?? []) out[p.name] = { type: "http", url: url(p.name), headers }
   // The project's own (which may replace any but the board's).
   for (const [name, server] of Object.entries(input.tools.mcp_servers)) if (name !== BOARD_SERVER) out[name] = server
   return out
@@ -189,6 +204,7 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
       gh: usesServer(tools, GH_SERVER, input.served.gh),
       docs: usesServer(tools, DOCS_SERVER, input.served.docs),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
+      plugins: pluginServers(tools, input.served),
     }
     const args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
     // Echoed back, the messages show where in the turn the agent took them in.
@@ -215,6 +231,7 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
     args.push("--allowedTools", ...boardToolsAllowed(input.permissionMode, toolNames(input.mcp.manifest)))
     if (servers.docs) args.push(`mcp__${DOCS_SERVER}`)
     if (servers.desktop) args.push(...desktopAllowed())
+    for (const p of servers.plugins ?? []) if (p.preApproved) args.push(`mcp__${p.name}`)
     const ownGh = Object.hasOwn(tools.mcp_servers, GH_SERVER)
     if (!ownGh) args.push(...ghAllowed(task).map(ghTool))
     args.push(...tools.allowed)
