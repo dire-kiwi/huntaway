@@ -52,6 +52,7 @@ specification of behaviour and not of structure.
 | [12-conventions.md](12-conventions.md)             | How code is written here: Effect 4 names, services, errors, schemas, concurrency, linting, structural tests |
 | [13-milestones.md](13-milestones.md)               | The tasks, what each needs and reads, what "done" means                                             |
 | [14-dropped-and-open.md](14-dropped-and-open.md)   | What is left behind, the decisions taken, open questions, risks, what was not verified               |
+| [15-plugins.md](15-plugins.md)                     | HE-34: plugins: their MCP servers, pages, calls, routes and databases, and the board's services they use |
 | [inventory/](inventory/README.md)                  | What the old code does, area by area: eleven notes, the checklist the port is held to               |
 | [spike/](spike/README.md)                          | Code that was run against Effect 4.1.4: contracts, a server, clients, atoms, an MCP server, a test, the lint configuration |
 

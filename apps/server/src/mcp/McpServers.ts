@@ -1,10 +1,11 @@
 import { Context, Effect, Layer, Ref, Schema } from "effect"
+import type { RunId } from "@huntaway/contracts"
 import { Tool } from "effect/ai"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { askedProtocol, METHOD_NOT_FOUND, rpcError, rpcResult } from "./jsonrpc.ts"
 import type { RpcResponse } from "./jsonrpc.ts"
-import { annotation, BOARD_SERVER, ForReviewers, listed, ownThread, ReviewersOnly, ToolError, toolArguments } from "./tool.ts"
-import type { ListedTool, LocalCaller, McpCaller, ServerName, ToolArguments, ToolHandler } from "./tool.ts"
+import { annotation, BOARD_SERVER, ForReviewers, isBuiltInServer, listed, ownThread, ReviewersOnly, ToolError, toolArguments } from "./tool.ts"
+import type { BuiltInServer, ListedTool, LocalCaller, McpCaller, ServerName, ToolArguments, ToolHandler } from "./tool.ts"
 
 // The board's MCP servers (docs/plan/07-agents.md, Board tools): which tools each has, with their handlers, and the
 // part of the protocol that calls nothing (`initialize`, `ping`, `tools/list`). Areas register their tools' handlers
@@ -71,7 +72,7 @@ export const DESKTOP_INSTRUCTIONS =
   "using the desktop, stop and say so; don't try to unlock it."
 
 /** What each server says it is in `initialize` (`serverInfo.name`, `instructions`). gh's name the run's account (`ghInstructions`). */
-export const SERVER_INFO: { readonly [S in ServerName]: { readonly name: string; readonly instructions: string | null } } = {
+export const SERVER_INFO: { readonly [S in BuiltInServer]: { readonly name: string; readonly instructions: string | null } } = {
   huntaway: { name: "huntaway", instructions: INSTRUCTIONS },
   gh: { name: "huntaway-gh", instructions: GH_INSTRUCTIONS },
   docs: { name: "huntaway-docs", instructions: DOCS_INSTRUCTIONS },
@@ -143,7 +144,32 @@ const listedOn = (server: ServerName, tool: Tool.Any): ListedTool =>
 const offered = (server: ServerName, registered: RegisteredTool, review: boolean) =>
   server !== BOARD_SERVER ? true : review ? annotation(registered.tool, ForReviewers) : !annotation(registered.tool, ReviewersOnly)
 
+/**
+ * HE-34: a server that isn't one of the board's own (a plugin's, docs/plan/15-plugins.md): what it says of itself, and
+ * what it offers each run.
+ */
+export interface DefinedServer {
+  /** `serverInfo.name` in `initialize`. */
+  readonly title: string
+  /** `initialize`'s instructions for run `run`. */
+  readonly instructions: (run: RunId) => Effect.Effect<string | null>
+  /** Whether run `run` is offered `tool` (`tools/list`). */
+  readonly offers: (run: RunId, tool: string) => Effect.Effect<boolean>
+  /** Its tools are called without asking. */
+  readonly preApproved: boolean
+  /** The largest request it takes, in bytes. */
+  readonly maxRequestBytes: number
+}
+
 export interface McpServersShape {
+  /** HE-34: a server of a plugin's, before its tools are added. A name already defined is replaced. */
+  readonly define: (server: ServerName, definition: DefinedServer) => Effect.Effect<void>
+  /** The servers defined (`define`) that have tools, in the order they were defined: what launches add to runs. */
+  readonly defined: Effect.Effect<ReadonlyArray<{ readonly name: ServerName; readonly preApproved: boolean }>>
+  /** Whether the board serves `server`: one of its own, or one defined. */
+  readonly known: (server: ServerName) => Effect.Effect<boolean>
+  /** A defined server's largest request, in bytes (null for the board's own: the transport's own limit). */
+  readonly maxRequestBytes: (server: ServerName) => Effect.Effect<number | null>
   /** Adds tools to a server, after the ones it has (the order `tools/list` shows them in). A name already there is replaced. */
   readonly add: (server: ServerName, tools: ReadonlyArray<RegisteredTool>) => Effect.Effect<void>
   /**
@@ -155,8 +181,11 @@ export interface McpServersShape {
   readonly serves: (server: ServerName) => Effect.Effect<boolean>
   /** A server's tool by name. */
   readonly find: (server: ServerName, name: string) => Effect.Effect<RegisteredTool | undefined>
-  /** The tools a server offers a run (`tools/list`): a review thread's the reviewers' tools. */
-  readonly tools: (server: ServerName, review: boolean) => Effect.Effect<ReadonlyArray<ListedTool>>
+  /**
+   * The tools a server offers a run (`tools/list`): a review thread's the reviewers' tools; a defined server's those it
+   * offers `run` (all, without one).
+   */
+  readonly tools: (server: ServerName, review: boolean, run?: RunId) => Effect.Effect<ReadonlyArray<ListedTool>>
   /** A server's answer to `initialize` for a client that asks for `protocol` (gh's naming the run's GitHub account). */
   readonly initializeResult: (server: ServerName, protocol: string, account?: string | null) => Readonly<Record<string, unknown>>
   /** The answer to a request that calls nothing: `initialize`, `ping`, `tools/list`; anything else but `tools/call` is -32601. */
@@ -165,6 +194,8 @@ export interface McpServersShape {
     review: boolean,
     request: { readonly id: string | number; readonly method: string; readonly params: unknown },
     account?: string | null,
+    /** The run asking: a defined server's instructions and tools are its. */
+    run?: RunId,
   ) => Effect.Effect<RpcResponse>
 }
 
@@ -173,52 +204,78 @@ export class McpServers extends Context.Service<McpServers, McpServersShape>()("
     McpServers,
     Effect.gen(function* () {
       const config = yield* ServerConfig
-      const registry = yield* Ref.make<{ readonly [S in ServerName]: ReadonlyArray<RegisteredTool> }>({ huntaway: [], gh: [], docs: [], desktop: [] })
+      const registry = yield* Ref.make<Readonly<Record<ServerName, ReadonlyArray<RegisteredTool>>>>({ huntaway: [], gh: [], docs: [], desktop: [] })
+      const definitions = yield* Ref.make<ReadonlyMap<ServerName, DefinedServer>>(new Map())
 
-      const gates = yield* Ref.make<{ readonly [S in ServerName]?: Effect.Effect<boolean> }>({})
+      const gates = yield* Ref.make<Readonly<Record<ServerName, Effect.Effect<boolean>>>>({})
 
-      const find = (server: ServerName, name: string) => Effect.map(Ref.get(registry), (all) => all[server].find((r) => r.tool.name === name))
-      const tools = (server: ServerName, review: boolean) =>
-        Effect.map(Ref.get(registry), (all) => all[server].filter((r) => offered(server, r, review)).map((r) => listedOn(server, r.tool)))
+      const toolsOf = (server: ServerName) => Effect.map(Ref.get(registry), (all) => all[server] ?? [])
+      const find = (server: ServerName, name: string) => Effect.map(toolsOf(server), (all) => all.find((r) => r.tool.name === name))
+      const tools = Effect.fnUntraced(function* (server: ServerName, review: boolean, run?: RunId) {
+        const all = (yield* toolsOf(server)).filter((r) => offered(server, r, review))
+        const definition = (yield* Ref.get(definitions)).get(server)
+        const mine =
+          definition === undefined || run === undefined ? all : yield* Effect.filter(all, (r) => definition.offers(run, r.tool.name), { concurrency: 1 })
+        return mine.map((r) => listedOn(server, r.tool))
+      })
 
-      const initializeResult = (server: ServerName, protocol: string, account: string | null = null) => {
-        const info = SERVER_INFO[server]
-        const result = { protocolVersion: protocol, capabilities: { tools: {} }, serverInfo: { name: info.name, version: config.version } }
-        const instructions = server === "gh" ? ghInstructions(account) : info.instructions
+      const resultOf = (protocol: string, name: string, instructions: string | null) => {
+        const result = { protocolVersion: protocol, capabilities: { tools: {} }, serverInfo: { name, version: config.version } }
         return instructions === null ? result : { ...result, instructions }
       }
+      const initializeResult = (server: ServerName, protocol: string, account: string | null = null) => {
+        if (!isBuiltInServer(server)) return resultOf(protocol, server, null)
+        const info = SERVER_INFO[server]
+        return resultOf(protocol, info.name, server === "gh" ? ghInstructions(account) : info.instructions)
+      }
+      /** `initialize`'s answer: a defined server's with its instructions for the run. */
+      const initialize = Effect.fnUntraced(function* (server: ServerName, protocol: string, account: string | null, run: RunId | undefined) {
+        const definition = (yield* Ref.get(definitions)).get(server)
+        if (definition === undefined) return initializeResult(server, protocol, account)
+        return resultOf(protocol, definition.title, run === undefined ? null : yield* definition.instructions(run))
+      })
 
       return McpServers.of({
+        define: (server, definition) => Ref.update(definitions, (all) => new Map(all).set(server, definition)),
+        defined: Effect.gen(function* () {
+          const all = yield* Ref.get(registry)
+          const defs = yield* Ref.get(definitions)
+          return [...defs].filter(([name]) => (all[name] ?? []).length > 0).map(([name, d]) => ({ name, preApproved: d.preApproved }))
+        }),
+        known: (server) => (isBuiltInServer(server) ? Effect.succeed(true) : Effect.map(Ref.get(definitions), (all) => all.has(server))),
+        maxRequestBytes: (server) => Effect.map(Ref.get(definitions), (all) => all.get(server)?.maxRequestBytes ?? null),
         add: (server, added) =>
           Ref.update(registry, (all) => {
             const names = new Set(added.map((r) => r.tool.name))
-            return { ...all, [server]: [...all[server].filter((r) => !names.has(r.tool.name)), ...added] }
+            return { ...all, [server]: [...(all[server] ?? []).filter((r) => !names.has(r.tool.name)), ...added] }
           }),
         serveWhen: (server, gate) => Ref.update(gates, (all) => ({ ...all, [server]: gate })),
         serves: (server) =>
           Effect.gen(function* () {
-            if ((yield* Ref.get(registry))[server].length === 0) return false
+            if (((yield* Ref.get(registry))[server] ?? []).length === 0) return false
             const gate = (yield* Ref.get(gates))[server]
             return gate === undefined ? true : yield* gate
           }),
         find,
         tools,
         initializeResult,
-        answer: Effect.fn("McpServers.answer")(function* (server, review, request, account) {
+        answer: Effect.fn("McpServers.answer")(function* (server, review, request, account, run) {
           switch (request.method) {
             case "initialize":
-              return rpcResult(request.id, initializeResult(server, askedProtocol(request.params), account ?? null))
+              return rpcResult(request.id, yield* initialize(server, askedProtocol(request.params), account ?? null, run))
             case "ping":
               return rpcResult(request.id, {})
             case "tools/list":
-              return rpcResult(request.id, { tools: yield* tools(server, review) })
-            // 6.3: the docs server answers these as the hosted one does, with none.
+              return rpcResult(request.id, { tools: yield* tools(server, review, run) })
+            // 6.3: the docs server answers these as the hosted one does, with none; so do plugins' (HE-34).
             case "resources/list":
-              return server === "docs"
+              return server === "docs" || !isBuiltInServer(server)
                 ? rpcResult(request.id, { resources: [] })
                 : rpcError(request.id, METHOD_NOT_FOUND, `method not found: ${request.method}`)
             case "prompts/list":
-              return server === "docs" ? rpcResult(request.id, { prompts: [] }) : rpcError(request.id, METHOD_NOT_FOUND, `method not found: ${request.method}`)
+              return server === "docs" || !isBuiltInServer(server)
+                ? rpcResult(request.id, { prompts: [] })
+                : rpcError(request.id, METHOD_NOT_FOUND, `method not found: ${request.method}`)
             default:
               return rpcError(request.id, METHOD_NOT_FOUND, `method not found: ${request.method}`)
           }

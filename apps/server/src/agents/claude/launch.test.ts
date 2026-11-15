@@ -121,6 +121,26 @@ describe("claudeLaunch", () => {
     }),
   )
 
+  // HE-34
+  it.effect("a run gets the plugins' servers, a pre-approved one's tools allowed, but one its project turns off", () =>
+    Effect.gen(function* () {
+      const golden = goldenOf("a task's first run")
+      const plugins = [
+        { name: "notes", preApproved: true },
+        { name: "asks", preApproved: false },
+        { name: "off", preApproved: true },
+      ]
+      const tools = { ...noRunTools, disallowed: ["mcp__off"] }
+      const spec = yield* claudeLaunch({ ...inputOf(golden, {}), tools, served: { gh: false, docs: false, desktop: false, plugins } })
+      assert.deepStrictEqual(spec.mcpServers, {
+        notes: { type: "http", url: "/api/mcp/RUN/notes", headers: { Authorization: "Bearer SECRET" } },
+        asks: { type: "http", url: "/api/mcp/RUN/asks", headers: { Authorization: "Bearer SECRET" } },
+      })
+      assert.isTrue(spec.args.includes("mcp__notes"))
+      assert.isFalse(spec.args.includes("mcp__asks"))
+    }),
+  )
+
   it.effect("the initialize line names the board's in-process server", () =>
     Effect.gen(function* () {
       const line = yield* initializeLine("r1", { initializeResult: { protocolVersion: "2025-11-25" }, toolsListResult: { tools: [] } })

@@ -24,6 +24,11 @@ export type Route =
   /** A page of the guide (docs/guide/<page>.md), its first one when `page` is missing. */
   | { name: "guide"; page?: string }
   | { name: "host"; hostId: string }
+  /**
+   * HE-34: a plugin's page, `/<plugin id>/<path>` (docs/plan/15-plugins.md): any first segment that isn't one of the
+   * board's own and could be a plugin's id.
+   */
+  | { name: "plugin"; plugin: string; path: string }
 
 /** A path segment, decoded; one with a malformed escape (a truncated or mangled link) is taken as it is. */
 function decode(segment: string): string {
@@ -33,6 +38,9 @@ function decode(segment: string): string {
     return segment
   }
 }
+
+/** What a plugin's id is (`@huntaway/plugin`'s rule; the board's own first segments are matched before it). */
+const PLUGIN_ID = /^[a-z][a-z0-9_]{0,31}$/
 
 export function parse(path: string): Route {
   const parts = path.split("/").filter(Boolean)
@@ -77,7 +85,9 @@ export function parse(path: string): Route {
       if (third === "settings") return { name: "projectSettings", projectId: second, ...(fourth && { tab: decode(fourth) }) }
       return { name: "board", projectId: second }
     case undefined:
+      break
     default:
+      if (PLUGIN_ID.test(first)) return { name: "plugin", plugin: first, path: parts.slice(1).map(decode).join("/") }
       break
   }
   return { name: "home" }
@@ -101,6 +111,8 @@ export function href(r: Route): string {
       return r.page ? `/guide/${encodeURIComponent(r.page)}` : "/guide"
     case "host":
       return `/hosts/${r.hostId}`
+    case "plugin":
+      return `/${r.plugin}/${r.path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`
     case "task":
       return `/t/${r.taskId}`
     case "board":

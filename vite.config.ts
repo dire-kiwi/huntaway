@@ -123,6 +123,18 @@ export default defineConfig({
           ]),
         },
       },
+      // HE-34: the plugin API, which plugins in other repositories build against: effect and nothing of the board's.
+      {
+        files: ["packages/plugin/**"],
+        rules: {
+          "no-restricted-imports": restrict([
+            noNode,
+            noTesting,
+            noApps,
+            { group: ["@huntaway/*", "@effect/*", "react"], message: "packages/plugin imports only effect: a plugin depends on it and effect alone." },
+          ]),
+        },
+      },
       {
         files: ["packages/client/**"],
         rules: { "no-restricted-imports": restrict([noNode, noTesting, noApps]) },

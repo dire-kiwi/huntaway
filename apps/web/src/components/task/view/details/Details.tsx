@@ -25,6 +25,8 @@ import { StartFromRow } from "./StartFromRow"
 import { StatusSection } from "./StatusSection"
 import { CreatedTasksSection, FanoutSection } from "./TaskLists"
 import { TrackedWork } from "./TrackedWork"
+// HE-34
+import { PluginSections } from "./PluginSections"
 // 6.7
 import { RulesSection } from "../../ApprovalRules"
 // 6.6
@@ -181,6 +183,8 @@ export function Details({ task, mode, className }: { task: Task; mode: Mode; cla
           <WorkflowsList task={task} />
         </Section>
       )}
+
+      <PluginSections task={task} />
 
       {task.kind === "task" && !groupTask && !docsOnly && !scratch && !lasting && (
         <Section title="Pull request" right={task.pr_url && <PrIcon url={task.pr_url} label className="text-[11.5px] text-faint" />}>

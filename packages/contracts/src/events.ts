@@ -116,6 +116,19 @@ export const DocsSiteChanged = Schema.Struct({ type: Schema.Literal("docs_site")
 export const WorkflowsChanged = Schema.Struct({ type: Schema.Literal("workflows_changed"), project_id: ProjectId, workflow_id: WorkflowId, ...seq })
 /** 6.6: a task's workflow runs changed: they are read again (`workflows.runsOfTask`). */
 export const WorkflowRunsChanged = Schema.Struct({ type: Schema.Literal("workflow_runs_changed"), task_id: TaskId, ...seq })
+/**
+ * HE-34: something a plugin tells the web UI (`PluginHost.emit`): its frames get it; `reload` renders its pages again.
+ * `data` is the plugin's own JSON.
+ */
+export const PluginEventChanged = Schema.Struct({
+  type: Schema.Literal("plugin"),
+  plugin: Schema.String,
+  topic: Schema.String,
+  profile_id: Schema.NullOr(ProfileId),
+  data: Schema.Unknown,
+  reload: Schema.Boolean,
+  ...seq,
+})
 
 export const BoardEvent = Schema.Union([
   Hello,
@@ -148,6 +161,8 @@ export const BoardEvent = Schema.Union([
   // 6.6
   WorkflowsChanged,
   WorkflowRunsChanged,
+  // HE-34
+  PluginEventChanged,
 ])
 export type BoardEvent = typeof BoardEvent.Type
 

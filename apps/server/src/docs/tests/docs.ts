@@ -56,12 +56,12 @@ export interface Answer {
   readonly text: string
 }
 
-/** A call of a docs tool by `c`'s agent, through `ToolCalls`. */
-export const tool = (c: Caller, name: string, args: unknown = {}) =>
+/** A call of a docs tool (or `server`'s: a plugin's, HE-34) by `c`'s agent, through `ToolCalls`. */
+export const tool = (c: Caller, name: string, args: unknown = {}, server = "docs") =>
   Effect.gen(function* () {
     const id = CallId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4())
-    const result = yield* (yield* ToolCalls).call({ call_id: id, run: c.agent.run.id, server: "docs", tool: name, args })
-    const out = yield* callResult(result, "docs")
+    const result = yield* (yield* ToolCalls).call({ call_id: id, run: c.agent.run.id, server, tool: name, args })
+    const out = yield* callResult(result, server)
     if (!Schema.is(Said)(out)) return assert.fail("not a tool's result")
     const text = out.content.map((x) => x.text).join("")
     const answer: Answer = { v: out.structuredContent ?? text, error: out.isError === true, text }
@@ -69,12 +69,12 @@ export const tool = (c: Caller, name: string, args: unknown = {}) =>
   })
 
 /** A call that succeeds: its JSON. */
-export const ok = (c: Caller, name: string, args: unknown = {}) =>
-  Effect.map(tool(c, name, args), (a) => (a.error ? assert.fail(`${name} failed: ${a.text}`) : a.v))
+export const ok = (c: Caller, name: string, args: unknown = {}, server = "docs") =>
+  Effect.map(tool(c, name, args, server), (a) => (a.error ? assert.fail(`${name} failed: ${a.text}`) : a.v))
 
 /** A call that fails: its message. */
-export const refused = (c: Caller, name: string, args: unknown = {}) =>
-  Effect.map(tool(c, name, args), (a) => (a.error ? a.text : assert.fail(`${name} didn't fail: ${a.text}`)))
+export const refused = (c: Caller, name: string, args: unknown = {}, server = "docs") =>
+  Effect.map(tool(c, name, args, server), (a) => (a.error ? a.text : assert.fail(`${name} didn't fail: ${a.text}`)))
 
 /** What is at `path` in a JSON value (undefined if it isn't there): a field's name, or a list's index. */
 export const at = (v: unknown, ...path: ReadonlyArray<string | number>): unknown =>

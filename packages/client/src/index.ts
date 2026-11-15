@@ -8,6 +8,8 @@ export * from "./board/docs.ts"
 export * from "./board/hostBoard.ts"
 export * from "./board/live.ts"
 export * from "./board/marks.ts"
+// HE-34
+export * from "./board/plugins.ts"
 export * from "./board/tasks.ts"
 export * from "./board/taskDocument.ts"
 export * from "./board/turns.ts"
