@@ -130,8 +130,9 @@ export function sameDoc(a: string, b: string): boolean {
 }
 
 /**
- * A task open beside the page in a side panel (`?task=<id>`), or expanded into a dialog over it (`&expanded`), and the
- * tasks made from the same prompt as it compared over the page (`&compare`).
+ * A task open in a dialog over the page (`?task=<id>`, HE-30), or collapsed into a side panel beside it (`&side`), and
+ * the tasks made from the same prompt as it compared over the page (`&compare`). An old link's `&expanded` is the
+ * dialog, as it was.
  */
 export interface Panel {
   readonly taskId: string
@@ -144,13 +145,13 @@ export const hasPanel = (r: Route): boolean => r.name === "board" || r.name === 
 
 export function panelUrl(path: string, panel: Panel | null): string {
   if (!panel) return path
-  return `${path}?task=${encodeURIComponent(panel.taskId)}${panel.expanded ? "&expanded" : ""}${panel.compare === true ? "&compare" : ""}`
+  return `${path}?task=${encodeURIComponent(panel.taskId)}${panel.expanded ? "" : "&side"}${panel.compare === true ? "&compare" : ""}`
 }
 
 export function parsePanel(search: string): Panel | null {
   const q = new URLSearchParams(search)
   const taskId = q.get("task")
-  return taskId ? { taskId, expanded: q.has("expanded"), compare: q.has("compare") } : null
+  return taskId ? { taskId, expanded: !q.has("side"), compare: q.has("compare") } : null
 }
 
 /** The task open in a dialog over the page (`modal=<id>`), beside the side panel's task if there is one. */
@@ -160,11 +161,11 @@ export const parseModal = (search: string): string | null => new URLSearchParams
 export const withoutModal = (pathAndSearch: string): string => pathAndSearch.replace(/([?&])modal=[^&]*&?/, "$1").replace(/[?&]$/, "")
 
 /** `/p/<project>?task=<id>`: a task open on its project's board. */
-export const boardTaskUrl = (projectId: string, taskId: string): string => panelUrl(href({ name: "board", projectId }), { taskId, expanded: false })
+export const boardTaskUrl = (projectId: string, taskId: string): string => panelUrl(href({ name: "board", projectId }), { taskId, expanded: true })
 
 /** `/profile/<name>?task=<id>`: a task open on its profile's board. */
-export const profileTaskUrl = (profile: string, taskId: string): string => panelUrl(href({ name: "profile", profile }), { taskId, expanded: false })
+export const profileTaskUrl = (profile: string, taskId: string): string => panelUrl(href({ name: "profile", profile }), { taskId, expanded: true })
 
 /** `/g/<host>/<group>?task=<id>`: a task open on a group's board. */
 export const groupTaskUrl = (hostId: string, group: string, taskId: string): string =>
-  panelUrl(href({ name: "group", hostId, group }), { taskId, expanded: false })
+  panelUrl(href({ name: "group", hostId, group }), { taskId, expanded: true })

@@ -52,7 +52,7 @@ test("cards show what a task merges into, and how many merging into a task are m
 test("the sidebar picks what a task merges into", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${project.id}?task=${plain.id}`, "click Details", "wait Merges into"])
+    await ui.run([`goto /p/${project.id}?task=${plain.id}`, "wait Merges into"])
     const picker = page.locator('select[aria-label="Merges into"]')
     // Not itself or a done task; newest first.
     const options = await picker.locator("option").allInnerTexts()
@@ -62,7 +62,7 @@ test("the sidebar picks what a task merges into", async () => {
     assert.deepEqual(t.start_from, { type: "task", task_id: target.id })
     await ui.run(["wait 1/3"])
     // The task it merges into lists it.
-    await ui.run([`goto /p/${project.id}?task=${target.id}`, "click Details", "wait Merging into this", "wait Shipping options"])
+    await ui.run([`goto /p/${project.id}?task=${target.id}`, "wait Merging into this", "wait Shipping options"])
   })
 })
 

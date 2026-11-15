@@ -47,11 +47,9 @@ test("a task changed in one tab, or elsewhere, shows in another tab's open task 
     await other.locator("header h1", { hasText: "Live: renamed by a script" }).waitFor()
 
     // Its status, in the second tab's details: moved by a script, then from the first tab's details.
-    await other.getByRole("button", { name: /^details$/i }).click()
     await eventually(async () => assert.equal(await statusShown(other), "In review"))
     await server.rpc("tasks.update", { id: task.id, patch: { status: "needs_attention" } })
     await eventually(async () => assert.equal(await statusShown(other), "Needs attention"))
-    await ui.run(["click details"])
     await page.locator("section:has(h3:text-is('Status')) button", { hasText: "In review" }).click()
     await eventually(async () => assert.equal(await statusShown(other), "In review"))
     await other.close()

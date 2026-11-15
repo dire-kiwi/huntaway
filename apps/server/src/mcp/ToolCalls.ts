@@ -70,8 +70,8 @@ export interface CallInput {
   readonly args: unknown
   /** Set for a call that came on the run's output: it is answered on the run's input before it is recorded done. */
   readonly answer?: ControlAnswer | undefined
-  /** Set for a call another host's agent passed up its link (`upCall`): that host, and the caller's profile's name. */
-  readonly from?: { readonly host: string; readonly profile: string } | undefined
+  /** Set for a call another host's agent passed up its link (`upCall`): that host, the caller's profile's name and its hops. */
+  readonly from?: { readonly host: string; readonly profile: string; readonly hops: number } | undefined
 }
 
 /** A call that an agent on linked host `host` passed up its link to this host, its hub. */
@@ -82,6 +82,8 @@ export interface UpCallInput {
   readonly profile: string
   readonly tool: string
   readonly args: unknown
+  /** The hops of the agent's turn there. */
+  readonly hops: number
 }
 
 /** The run id up-calls from `host` are recorded under in `mcp_calls`, and their call id. */
@@ -216,7 +218,15 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
         if (Option.isNone(profile)) return yield* ToolError.other("unknown profile")
         // A tool the server doesn't have, once the run is known to be one that may call.
         if (registered === undefined) return yield* ToolError.other(`unknown tool ${tool}`)
-        const caller: LocalCaller = { call_id: input.call_id, server, run: run.value, task, profile: profile.value, mode: yield* modeOf(task) }
+        const caller: LocalCaller = {
+          call_id: input.call_id,
+          server,
+          run: run.value,
+          task,
+          profile: profile.value,
+          mode: yield* modeOf(task),
+          hops: run.value.hops,
+        }
         if (server === BOARD_SERVER) {
           // Whatever the run's tool list offers, a reviewer only reads.
           if (task.kind === "review" && !annotation(registered.tool, ForReviewers)) {
@@ -243,7 +253,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
        * Another host's agent as a caller here: this host's profile of its name, else one with no id that reaches only the
        * boards of the profiles that let that name in (none: it isn't found). No run, no thread, no mode of its own.
        */
-      const remoteCaller = Effect.fnUntraced(function* (name: string, callId: CallId) {
+      const remoteCaller = Effect.fnUntraced(function* (name: string, callId: CallId, hops: number) {
         const all = yield* profiles.list
         const own = all.find((p) => p.name === name)
         if (own === undefined && !all.some((p) => grants(p, name))) {
@@ -256,6 +266,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
           task: null,
           profile: own ?? { id: null, name },
           mode: "default",
+          hops,
         }
         return caller
       })
@@ -269,9 +280,9 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
       })
 
       /** An up-call (`from`): the gates for another host's agent, then the tool here or on this host's other links. */
-      const upGated = Effect.fnUntraced(function* (input: CallInput, from: { readonly host: string; readonly profile: string }) {
+      const upGated = Effect.fnUntraced(function* (input: CallInput, from: NonNullable<CallInput["from"]>) {
         const { registered, args } = yield* remoteTool(input.tool, input.args)
-        const caller = yield* remoteCaller(from.profile, input.call_id)
+        const caller = yield* remoteCaller(from.profile, input.call_id, from.hops)
         return yield* across.run({ caller, tool: input.tool, args, local: (a) => registered.run(a, caller), from: from.host, upById: true })
       })
 
@@ -469,7 +480,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
       const remote = Effect.fn("ToolCalls.remote")(function* (input: RemoteToolCall) {
         const ran = yield* Effect.gen(function* () {
           const { registered, args } = yield* remoteTool(input.tool, input.args)
-          const caller = yield* remoteCaller(input.profile, CallId.make(input.call_id ?? (yield* random.uuidV4())))
+          const caller = yield* remoteCaller(input.profile, CallId.make(input.call_id ?? (yield* random.uuidV4())), input.hops ?? 0)
           // Here only: a call down a link is never passed on.
           return yield* registered.run(args, caller).pipe(Effect.mapError((e) => (e.notFound ? ToolError.notFound(`not found: ${e.message}`) : e)))
         }).pipe(Effect.result)
@@ -483,7 +494,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
           server: BOARD_SERVER,
           tool: input.tool,
           args: input.args,
-          from: { host: input.host, profile: input.profile },
+          from: { host: input.host, profile: input.profile, hops: input.hops },
         })
         return outcomeOf(result)
       })

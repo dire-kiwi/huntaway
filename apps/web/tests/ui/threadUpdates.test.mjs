@@ -76,7 +76,7 @@ test("a message sent while its composer is gone doesn't come back as a draft", a
   const other = await newTask("Updates: other", { status: "todo" })
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click thread", "click css=textarea", "type Send this once", "press Enter"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}&side`, "click thread", "click css=textarea", "type Send this once", "press Enter"])
     await page.locator(`[data-task="${other.id}"]`).click()
     await page.locator("header").getByText("Updates: other").first().waitFor()
     await page.locator(`[data-task="${task.id}"]`).click()

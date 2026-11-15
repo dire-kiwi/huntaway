@@ -661,6 +661,48 @@ docs note (`docsTools`).
   old server threw, after making the task, which an agent could retry into a duplicate); `update_task` on a host that
   can't run agents leaves the task in In progress, as before.
 
+### Hops between agents (HE-26)<a id="hops-between-agents"></a>
+
+New (bot-hq's rule, from HE-17's write-up): two agents that answer each other with `send_to_task` could keep each other
+running for as long as nobody looks, each run on someone's usage. So a message one agent sends another counts **hops**:
+
+- A message's hops are one more than the hops of the sending agent's turn; the user's messages and the board's own
+  prompts (merge requests, review fixes, PR news, workflow steps, automations' and routines' messages) are 0. A turn's
+  hops are those of the message it took in last: the run's start (the fewest hops of the messages it takes at once, so
+  a run that starts with the user's message among them is at 0), then each steer as the agent takes it in
+  (`RunInput.steered`), so the user's message steered in starts the count again.
+- They are kept where the message is: `task_queue.hops`, `task_steers.hops` (a steer the run never took in goes back to
+  the queue with its hops), and `runs.hops` (set by `Runs.register` and `RunInput.steered`). Nothing is in memory, so a
+  restart keeps the count. `ToolCalls` reads the run's row on each call; `McpCaller.hops` is its `hops`.
+- Across hosts and boards: another profile's board on this host is the same `Runs.send`. To another host, the call
+  carries the caller's hops (`RemoteToolCall.hops`, optional: a host on a build before it sends none, read as 0) on
+  `tools.call` and `link.upcalls`, and that host's caller (`remoteCaller`) has them.
+- **`MAX_HOPS` = 3** (`mcp/tools/common.ts`), bot-hq's number: A→B→A→B goes (an ask, an answer, a follow-up and its
+  answer), and the next is refused. That is enough for the exchanges agents have on this board (a task asking another
+  for something and hearing back, a task reporting to the one that made it), while two agents caught answering each
+  other stop after two rounds rather than after the usage runs out. A constant, not a setting, until someone needs
+  it higher.
+- Past it, `send_to_task` fails (a tool error in the thread, as any refusal) with: "The message wasn't sent: agents
+  have been waking one another without the user (by messages or tasks they start) 3 times in a row, as many as the
+  board lets go. Stop messaging other tasks' agents and report to the user instead…". It is checked before the task is
+  looked for, so it holds wherever that task is.
+
+What else counts, and why:
+
+- **`create_task` with a start, and `update_task` starting a task**: one hop each, as they wake another agent on the
+  agent's behalf; otherwise a loop could go on through new tasks (A makes B, B messages A, A makes another…). Past the
+  limit the task is made (or moved) all the same, its agent not started, and the result's `note` says why, as for
+  the other refusals of a start.
+- **`run_workflow`**: refused past the limit, as it wakes agents too. The workflow's own prompts are the board's (0):
+  they come from the user's graph, which bounds them, and carrying a count through a workflow run's steps would be
+  state of its own for a path no one has seen loop.
+- **Automations' `send_to_task` and `create_task` actions, routines**: 0. They are the user's rules (an agent's change
+  to one needs the user's approval), sent as the board.
+- **The todo-list nudge** at a run's end carries the ended run's hops: it carries on that agent's own work, and an
+  agent told to stop shouldn't get a fresh count from the board asking it to finish its list.
+- **The assistant and pens' threads** are agents with the same tools, so their messages count the same way; the user's
+  messages to them are 0.
+
 ### `wait`
 
 `Wait` owns the blocking tool: a wait is a fiber in a `FiberMap` keyed by run, racing a deadline, changes to watched
@@ -796,6 +838,13 @@ As built in 3.3 (HE-4), `permissions/Permissions.ts` (+ `PermissionRepo.ts`, the
   `user`, and `push` for a paired device's session), `expireFor` callers for projects, automations and workflows (their
   areas). `permissions.answer` takes the old body (`decision`, `message`, `answers`, `mode`, `feedback`, `automation`);
   the thread's `respond` command (`threads.command`) is not served.
+- **An edited input** (HE-23, for the drafts experiment): `permissions.answer`'s `input`, an object, is what a tool call
+  allowed runs with in place of the one it asked with. Only a `tool` prompt of a Claude run takes it (not a question,
+  a plan, the board's approvals, or a Codex prompt, whose request metadata has `codex`: Codex's MCP approval is an
+  elicitation answered `accept` or `decline`, with no arguments); else `Invalid` (`input`). An input the same as the
+  one asked (by its JSON) isn't an edit. An edit is written to the row (so `allowed` tells Claude `updatedInput` with
+  it), the thread's request (its `input`, and `edited: true` in its metadata) and the action log
+  (`ApprovalRules.settle`'s `edited` rewrites the entry's `summary`).
 
 As built in 3.4 (HE-4), `permissions/Approvals.ts`:
 

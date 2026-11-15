@@ -53,7 +53,7 @@ test("a rename doesn't follow the panel to another task", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     await ui.run([
-      `goto /p/${board.project.id}?task=${a.id}`,
+      `goto /p/${board.project.id}?task=${a.id}&side`,
       "wait css=h1:has-text('First task')",
       `click css=[data-task='${b.id}']`,
       "wait css=h1:has-text('Second task')",
@@ -88,7 +88,7 @@ test("the details' Title section renames and unpins the title", async () => {
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     const section = "css=section:has(h3:text-is('Title'))"
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Details", "click Edit title", "press Control+a", "type Renamed in the details"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Edit title", "press Control+a", "type Renamed in the details"])
     // Escape leaves the panel open, and the title as it was.
     await ui.run(["press Escape", `gone ${section} >> input`, "click Edit title"])
     assert.equal(await page.locator(`${section.slice(4)} input`).inputValue(), "Before the details")

@@ -25,7 +25,7 @@ test("In progress from a task's Details starts its agent", async () => {
   const task = await server.rpc("tasks.create", { task: { project_id: board.project.id, title: "Start me", description: "Say hello." } })
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click Details"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`])
     await page.locator("section:has(h3:text-is('Status')) button", { hasText: "In progress" }).click()
     await ui.run(["click Thread", "wait Fake reply to:"])
   })

@@ -110,7 +110,7 @@ test("a stack level waits for the one below it, and says so", async () => {
     const badge = card(page, up).locator("button[title^='Lands after SHOP-1']")
     assert.match(await badge.innerText(), /waits for\s*(SHOP-)?1/)
     assert.equal(await card(page, up).locator("[title^='Queued to merge']").count(), 0)
-    await ui.run([`goto /p/${project.id}?task=${up.id}`, "click Details", "wait Waits for SHOP-1, which it lands after, to be merged", "wait Lands after"])
+    await ui.run([`goto /p/${project.id}?task=${up.id}`, "wait Waits for SHOP-1, which it lands after, to be merged", "wait Lands after"])
     // Nothing merges it meanwhile.
     const t = await task(up.id)
     assert.deepEqual([t.status, t.merging, t.running], ["ready_for_merge", true, false])

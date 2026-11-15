@@ -97,6 +97,9 @@ describe("decideSend", () => {
   })
 })
 
+/** A queued part from `source`, `hops` along. */
+const part = (source: "user" | "agent", hops: number) => ({ text: source, source, automation_run_id: null, hops })
+
 describe("the queue", () => {
   it("joins queued messages with a blank line; from other agents only if all of them are", () => {
     const q = combine([
@@ -104,14 +107,14 @@ describe("the queue", () => {
       { text: "second", source: "agent", automation_run_id: null },
       { text: "third", source: "user", automation_run_id: null },
     ])
-    assert.deepStrictEqual(q, { text: "first\n\nsecond\n\nthird", fromAgent: false, userText: "first\n\nthird", routine: false, automationRuns: [] })
+    assert.deepStrictEqual(q, { text: "first\n\nsecond\n\nthird", fromAgent: false, userText: "first\n\nthird", routine: false, automationRuns: [], hops: 0 })
     assert.deepStrictEqual(
       combine([
         { text: "a", source: "agent", automation_run_id: null },
         { text: "", source: "automation", automation_run_id: "ar1" },
         { text: "b", source: "routine", automation_run_id: "ar2" },
       ]),
-      { text: "a\n\nb", fromAgent: false, userText: "", routine: false, automationRuns: ["ar1", "ar2"] },
+      { text: "a\n\nb", fromAgent: false, userText: "", routine: false, automationRuns: ["ar1", "ar2"], hops: 0 },
     )
     assert.deepStrictEqual(combine([{ text: "daily", source: "routine", automation_run_id: "ar" }]), {
       text: "daily",
@@ -119,7 +122,15 @@ describe("the queue", () => {
       userText: null,
       routine: true,
       automationRuns: ["ar"],
+      hops: 0,
     })
+  })
+
+  it("starts a run at the fewest hops of its parts: with the user's among them, none", () => {
+    assert.strictEqual(combine([part("agent", 2), part("agent", 1)]).hops, 1)
+    assert.strictEqual(combine([part("agent", 2), part("user", 0)]).hops, 0)
+    assert.strictEqual(combine([{ text: "", source: "agent", automation_run_id: null, hops: 3 }]).hops, 3)
+    assert.strictEqual(combine([]).hops, 0)
   })
 
   it("knows the board's commands, and not what only starts the same way", () => {

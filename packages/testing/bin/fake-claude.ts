@@ -33,9 +33,12 @@
 // Messages steered into a run (stream-json lines on stdin after the prompt, while it sleeps) are echoed back as Claude
 // Code does (`isReplay`), and answered in its reply. A run started with `--permission-prompt-tool stdio` asks for
 // permission as Claude Code does, with a `can_use_tool` control request on stdout, for each of these in its prompt:
-// "fake-ask-permission" (a Bash call), "fake-ask-question" (AskUserQuestion) and "fake-ask-plan" (ExitPlanMode). It
+// "fake-ask-permission" (a Bash call), "fake-ask-question" (AskUserQuestion), "fake-ask-plan" (ExitPlanMode),
+// "fake-ask-mail" (the Google server's send_gmail_message) and "fake-ask-event" (its manage_event, making an event). It
 // waits for each `control_response` on stdin (taking in messages sent meanwhile), and its reply says what each answer
-// was ("permission Bash: allow", with a question's answers or a plan's new mode, or "deny: <message>"). An `interrupt`
+// was ("permission Bash: allow", with a question's answers, a plan's new mode or a Google tool's input as allowed, or
+// "deny: <message>"). An allowed Google tool is run, with the input it was allowed with, on the `google` server of the
+// run's --mcp-config if it has one over stdio (such as the stub Google server), and the reply says what it returned. An `interrupt`
 // meanwhile cancels the request (`control_cancel_request`) and ends the turn as interrupted. A run whose input starts
 // with an `initialize` control request that registers the in-process "huntaway" server (`sdkMcpServers`) calls the
 // board's tools through it for each "fake-board-call <tool> <JSON arguments>" line in its prompt (an `mcp_message`
@@ -356,9 +359,83 @@ const toolResult = (id: string, content: string, parent: string | null = null, i
     message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, ...(isError === null ? {} : { is_error: isError }) }] },
   })
 
+const list = (v: unknown): ReadonlyArray<unknown> => (Array.isArray(v) ? v : [])
+
+/**
+ * Runs `tool` of MCP server `server` with `input`, as Claude Code runs a tool once it's allowed: the server as the run's
+ * --mcp-config gives it, over stdio, its answer's text. Null when the config has no such server.
+ */
+const callMcp = (server: string, tool: string, input: unknown): string | null => {
+  const path = opt("--mcp-config")
+  if (path === null) return null
+  let config: unknown
+  try {
+    config = parse(readFileSync(path, "utf8"))
+  } catch {
+    return null
+  }
+  const s = field(field(config, "mcpServers"), server)
+  const command = str(field(s, "command"))
+  if (command === "") return null
+  const own = field(s, "env")
+  const lines = [
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "0" } },
+    },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: tool, arguments: input } },
+  ]
+  const ran = spawnSync(command, list(field(s, "args")).map(str), {
+    input: lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+    env: { ...env, ...(isObject(own) ? Object.fromEntries(Object.entries(own).map(([k, v]) => [k, str(v)])) : {}) },
+    encoding: "utf8",
+    timeout: 30_000,
+  })
+  const answer = ran.stdout
+    .split("\n")
+    .map(parse)
+    .find((m) => field(m, "id") === 2)
+  const error = field(answer, "error")
+  if (error !== undefined) return `error: ${str(field(error, "message"))}`
+  return list(field(field(answer, "result"), "content"))
+    .map((c) => str(field(c, "text")))
+    .join("\n")
+}
+
+/** The Google tools it asks for, by marker. */
+const GOOGLE_ASKS: Record<string, readonly [string, Json]> = {
+  "fake-ask-mail": [
+    "send_gmail_message",
+    {
+      to: "kim@example.com",
+      subject: "Invoice 4411",
+      body: "Hi Kim,\n\nInvoice 4411 is paid: the money went out this morning.\n\nThanks",
+      body_format: "plain",
+    },
+  ],
+  "fake-ask-event": [
+    "manage_event",
+    {
+      action: "create",
+      summary: "1:1 with Sam",
+      start_time: "2026-11-16T14:00:00",
+      end_time: "2026-11-16T14:30:00",
+      timezone: "Pacific/Auckland",
+      attendees: ["sam@example.com"],
+      location: "Queen St",
+      description: "Catch up on the budget.",
+    },
+  ],
+}
+
 const askPermissions = async (text: string) => {
   const markers =
-    opt("--permission-prompt-tool") === "stdio" ? ["fake-ask-permission", "fake-ask-question", "fake-ask-plan"].filter((m) => text.includes(m)) : []
+    opt("--permission-prompt-tool") === "stdio"
+      ? ["fake-ask-permission", "fake-ask-question", "fake-ask-plan", ...Object.keys(GOOGLE_ASKS)].filter((m) => text.includes(m))
+      : []
   for (const marker of markers) {
     // Asked as Claude Code asks with --permission-prompt-tool stdio: the call, then a control request for it.
     let name = "Bash"
@@ -369,6 +446,11 @@ const askPermissions = async (text: string) => {
     } else if (marker === "fake-ask-plan") {
       name = "ExitPlanMode"
       toolInput = { plan: "# Plan: fake things\n\n1. Do a fake thing" }
+    }
+    const google = GOOGLE_ASKS[marker]
+    if (google !== undefined) {
+      name = `mcp__google__${google[0]}`
+      toolInput = google[1]
     }
     const tool = `toolu_${hex(12)}`
     const ask = randomUUID()
@@ -384,8 +466,11 @@ const askPermissions = async (text: string) => {
     let said = `permission ${name}: ${allowed ? "allow" : `deny: ${String(answer.message)}`}`
     if (allowed && name === "AskUserQuestion") said += ` ${JSON.stringify(field(answer.updatedInput, "answers") ?? null)}`
     if (allowed && answer.updatedPermissions !== undefined && answer.updatedPermissions !== null) said += ` ${JSON.stringify(answer.updatedPermissions)}`
+    // A Google tool runs with the input it was allowed with.
+    const ran = allowed && google !== undefined ? callMcp("google", google[0], answer.updatedInput ?? toolInput) : null
+    if (allowed && google !== undefined) said += ` ${JSON.stringify(answer.updatedInput ?? null)}${ran === null ? "" : ` → ${ran}`}`
     answers.push(said)
-    toolResult(tool, allowed ? "fake" : String(answer.message), null, !allowed)
+    toolResult(tool, allowed ? (ran ?? "fake") : String(answer.message), null, !allowed)
   }
 }
 

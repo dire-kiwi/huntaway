@@ -58,6 +58,11 @@ export class Run extends Schema.Class<Run, { readonly brand: unique symbol }>("R
   /** Context size at the first and the latest model request of the current turn. */
   turn_start_tokens: Schema.NullOr(Schema.Int),
   turn_tokens: Schema.NullOr(Schema.Int),
+  /**
+   * The hops of the message its current turn took in last (its start's, or the latest steered into it): one of its
+   * agent's messages to another task's goes one further (docs/plan/07-agents.md, Hops between agents).
+   */
+  hops: Schema.Int,
   created_at: Timestamp,
   ended_at: Schema.NullOr(Timestamp),
 }) {

@@ -1,8 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Context, Deferred, Effect, Layer } from "effect"
+import { Context, Deferred, Effect, Layer, Option } from "effect"
 import type { Scope } from "effect"
 import { SqlClient } from "effect/sql"
-import { LinkId, Timestamp } from "@huntaway/contracts"
+import { LinkId, TaskId, Timestamp } from "@huntaway/contracts"
+import type { RunId } from "@huntaway/contracts"
 import type { Profile, RemoteToolCall, ToolOutcome } from "@huntaway/contracts"
 import { TestBoard } from "@huntaway/testing"
 import { mcpLayer } from "../Main.ts"
@@ -10,10 +11,12 @@ import { McpHooks } from "../mcp/McpHooks.ts"
 import { OtherHosts } from "../mcp/OtherHosts.ts"
 import type { OtherHost } from "../mcp/OtherHosts.ts"
 import { agentOf, call, err, grant, keys, list, ok, profile, project, str, task } from "../mcp/tools/tests/board.ts"
+import { MAX_HOPS } from "../mcp/tools/common.ts"
 import { ToolCalls } from "../mcp/ToolCalls.ts"
 import { toJson } from "../platform/columns.ts"
 import { Identity } from "../platform/Identity.ts"
 import { Profiles } from "../profiles/Profiles.ts"
+import { RunRepo } from "../runs/RunRepo.ts"
 import { HostTools } from "./HostTools.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 import type { LinkMode } from "./LinkRepo.ts"
@@ -95,7 +98,15 @@ const linked = (mode: LinkMode = "outbound", via: "dialled" | "dial-in" = mode =
             call: (c): Effect.Effect<ToolOutcome> => {
               asked.up.push(c)
               return on(hub)(
-                Effect.flatMap(HostTools, (tools) => tools.takeUp(host, via, { profile: c.profile, tool: c.tool, args: c.args, call_id: c.call_id ?? "none" })),
+                Effect.flatMap(HostTools, (tools) =>
+                  tools.takeUp(host, via, {
+                    profile: c.profile,
+                    tool: c.tool,
+                    args: c.args,
+                    call_id: c.call_id ?? "none",
+                    ...(c.hops === undefined ? {} : { hops: c.hops }),
+                  }),
+                ),
               )
             },
           }
@@ -161,6 +172,13 @@ const projectKeys = (rows: ReadonlyArray<Readonly<Record<string, unknown>>>) => 
 const value = (o: ToolOutcome) => (o._tag === "Ok" ? o.value : assert.fail(`it failed: ${o._tag === "Err" ? o.message : (o.why ?? "off")}`))
 const failure = (o: ToolOutcome) => (o._tag === "Err" ? o.message : assert.fail(`it didn't fail: ${o._tag}`))
 
+/** The hops of the task's latest run. */
+const hopsOf = (id: TaskId) =>
+  Effect.flatMap(RunRepo, (runs) => runs.latest(id)).pipe(Effect.map((r) => (Option.isSome(r) ? r.value.hops : assert.fail("no run"))))
+
+/** The agent's turn is `hops` along (as if a message that far had started it). */
+const setHops = (agent: { readonly run: { readonly id: RunId } }, hops: number) => Effect.flatMap(RunRepo, (runs) => runs.update(agent.run.id, { hops }))
+
 const SWITCH = `the user can switch on "Let this host's agents use this board" for homeserver in Settings → Hosts there`
 
 describe("board tools up a link", () => {
@@ -214,6 +232,32 @@ describe("board tools up a link", () => {
       // Switched off again, it's refused at once.
       yield* letIn(b, false)
       assert.include(err(yield* host(call(me, "get_task", { task_id: "HUB-1" }))), "doesn't let this host's agents use its board")
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect("a message to another host's task carries the hops of the agent's turn, up and down (HE-26)", () =>
+    Effect.gen(function* () {
+      const b = yield* boards()
+      yield* letIn(b, true)
+      // Up: the host's agent, a message into its turn, messages the hub's task.
+      yield* b.host(setHops(b.me, 1))
+      ok(yield* b.host(call(b.me, "send_to_task", { task_id: "HUB-1", message: "hi" })))
+      assert.strictEqual(yield* b.hub(hopsOf(b.hubTask.id)), 2)
+      // Down: the hub's agent messages the host's task.
+      const hubAgent = yield* b.hub(agentOf(b.personal))
+      yield* b.hub(setHops(hubAgent, 2))
+      const lap = ok(yield* b.hub(call(hubAgent, "send_to_task", { task_id: "LAP-1", message: "hi" })))
+      assert.strictEqual(yield* b.host(hopsOf(TaskId.make(str(lap, "id")))), MAX_HOPS)
+      // Past the limit, refused wherever the task is.
+      yield* b.host(setHops(b.me, MAX_HOPS))
+      assert.include(err(yield* b.host(call(b.me, "send_to_task", { task_id: "HUB-1", message: "again" }))), "The message wasn't sent")
+      // And by the host that has the task, for a call that comes to it that far along.
+      const far = yield* b.host(
+        Effect.flatMap(ToolCalls, (calls) =>
+          calls.remote({ profile: "personal", tool: "send_to_task", args: { task_id: "LAP-1", message: "again" }, call_id: null, hops: MAX_HOPS }),
+        ),
+      )
+      assert.include(failure(far), "The message wasn't sent")
     }).pipe(Effect.scoped),
   )
 

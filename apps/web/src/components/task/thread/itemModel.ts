@@ -152,7 +152,8 @@ function promptOf(r: ThreadRequest, md: Fields, input: unknown): PromptData {
     input,
     ...optional("tool_use_id", stringOf(md.tool_use_id)),
     ...optional("kind", stringOf(md.kind)),
-    ...optional("agent", stringOf(md.agent)),
+    // A Codex run's prompt carries what answering it as Codex takes it needs.
+    ...optional("agent", stringOf(md.agent) ?? (md.codex === undefined ? undefined : "codex")),
     ...(md.rule === undefined ? {} : { rule: { tool: shown(rule.tool) } }),
     ...optional("expires_at", stringOf(md.expires_at)),
     ...optional("note", stringOf(md.note)),
@@ -160,6 +161,7 @@ function promptOf(r: ThreadRequest, md: Fields, input: unknown): PromptData {
     ...optional("feedback", stringOf(md.feedback)),
     ...optional("mode", stringOf(md.mode)),
     ...optional("answers", answersOf(md.answers)),
+    ...(md.edited === true ? { edited: true } : {}),
   }
 }
 

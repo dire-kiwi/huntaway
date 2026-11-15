@@ -64,7 +64,7 @@ for (const { name, checks, shown } of [
   test(`Fix broken checks is there for a pull request ${name}, and says when nothing failed`, async () => {
     await withBrowser(server, {}, async (ui) => {
       const { task, calls } = await taskWith(ui.page, `Unwatched, ${name}`, checks)
-      await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Details", `wait ${shown}`])
+      await ui.run([`goto /p/${project.id}?task=${task.id}`, `wait ${shown}`])
       assert.equal(await ui.page.locator("[title*='checks failed'], [title*='check failed']").count(), 0, "no failed checks mark")
       await ui.run(["click Fix broken checks", "wait no checks have failed on o/r#7's head commit"])
       assert.deepEqual(calls, [task.id])
@@ -76,7 +76,7 @@ test("failed checks from the last read are listed with links to their runs, and 
   await withBrowser(server, {}, async (ui) => {
     const failed = [{ name: "Tests / server", conclusion: "failure", url: "https://github.com/o/r/actions/runs/9/job/42" }]
     const { task } = await taskWith(ui.page, "Failing", snapshot("failed", failed))
-    await ui.run([`goto /p/${project.id}?task=${task.id}`, "click Details", "wait 1 check failed on", "wait Fix broken checks"])
+    await ui.run([`goto /p/${project.id}?task=${task.id}`, "wait 1 check failed on", "wait Fix broken checks"])
     assert.equal(await ui.page.getByRole("link", { name: "Tests / server" }).getAttribute("href"), failed[0].url)
     assert.equal(await ui.page.locator(`[data-task='${task.id}'] [title^='1 check failed on #7']`).count(), 1, "the card's mark")
   })

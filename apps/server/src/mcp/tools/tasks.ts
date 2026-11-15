@@ -14,7 +14,7 @@ import { Runs } from "../../runs/Runs.ts"
 import { makeReach } from "../resolve.ts"
 import { ApprovalKind, ForPlanning, ForReviewers, Rerunnable, ToolError } from "../tool.ts"
 import type { McpCaller } from "../tool.ts"
-import { asker, boardTool, given, Json, ProfileArg, TaskRefArg, told } from "./common.ts"
+import { asker, boardTool, given, Json, MAX_HOPS, nextHops, ProfileArg, TaskRefArg, told, tooManyHops } from "./common.ts"
 import { BAD_REMIND_AT, reminderTime } from "./reminders.ts"
 import { field, makeTaskJson, overview, TASK_FIELD_DEFAULT_LIMIT, TASK_FIELD_MAX_LIMIT } from "./taskJson.ts"
 
@@ -429,8 +429,10 @@ export const taskTools = Effect.gen(function* () {
       // Its agent starts (or it's queued for what it depends on). Refused, the task is made all the same and the agent
       // told why it didn't start, rather than given an error it might make the task again for.
       let note: string | null = null
-      if (start) {
-        const sent = yield* Effect.result(runs.send(t.id, { text: "", source: "agent" }))
+      const hops = nextHops(caller)
+      if (start && hops > MAX_HOPS) note = tooManyHops("The task was made, but its agent wasn't started")
+      else if (start) {
+        const sent = yield* Effect.result(runs.send(t.id, { text: "", source: "agent", hops }))
         if (Result.isSuccess(sent)) t = sent.success
         else if (sent.failure._tag === "SendRefused")
           note = sent.failure.reason === "no_agents" ? NOT_STARTED : `The task was made, but not started: ${sent.failure.detail}`
@@ -479,9 +481,12 @@ export const taskTools = Effect.gen(function* () {
         !t.waiting &&
         t.id !== caller.task?.id &&
         !(yield* runs.isRunning(t.id))
-      if (starts) {
+      // Past the limit, it's moved but its agent isn't started.
+      const hops = nextHops(caller)
+      const held = starts && hops > MAX_HOPS
+      if (starts && !held) {
         // On a host that can't run agents, it's left in In progress, as before.
-        t = yield* runs.send(t.id, { text: "", source: "agent" }).pipe(
+        t = yield* runs.send(t.id, { text: "", source: "agent", hops }).pipe(
           Effect.catchIf(
             (e) => e._tag === "SendRefused" && e.reason === "no_agents",
             () => Effect.succeed(t),
@@ -489,11 +494,12 @@ export const taskTools = Effect.gen(function* () {
         )
       }
       const v = yield* json.summarize(t)
+      if (held) v["note"] = tooManyHops("It's in in_progress, but its agent wasn't started")
       // Closed without being merged, the tasks merging into it wait for the user to say where they go.
-      const held = t.status === "done" && !isMerged(t) && t.project_id !== null ? reaching(yield* repo.projectTasks(t.project_id), t.id) : []
-      if (held.length > 0) {
+      const waiting = t.status === "done" && !isMerged(t) && t.project_id !== null ? reaching(yield* repo.projectTasks(t.project_id), t.id) : []
+      if (waiting.length > 0) {
         v["note"] =
-          `Tasks merge into this one and aren't done: ${held.map((x) => x.key).join(", ")}. Their merges wait until the user says where ` +
+          `Tasks merge into this one and aren't done: ${waiting.map((x) => x.key).join(", ")}. Their merges wait until the user says where ` +
           "they go now (where this task was going, one of them in its place, or closed too): ask the user with request_user_input, then set " +
           "merges_into on each with update_task, or leave it to them on the board."
       }
@@ -503,9 +509,12 @@ export const taskTools = Effect.gen(function* () {
 
   const sendToTask = boardTool(SendToTask, (params, caller) =>
     Effect.gen(function* () {
+      // Before it's looked for: wherever the task is, here or on another host, the message would be as far.
+      const hops = nextHops(caller)
+      if (hops > MAX_HOPS) return yield* ToolError.other(tooManyHops("The message wasn't sent"))
       const found = yield* reach.task(caller, params.task_id, given(params.profile))
       if (found.id === caller.task?.id) return yield* ToolError.other("cannot send a message to your own task")
-      return yield* json.summarize(yield* runs.send(found.id, { text: params.message, source: "agent" }))
+      return yield* json.summarize(yield* runs.send(found.id, { text: params.message, source: "agent", hops }))
     }).pipe(told),
   )
 

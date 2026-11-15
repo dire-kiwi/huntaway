@@ -144,6 +144,7 @@ CREATE TABLE task_queue (
   text TEXT NOT NULL,                          -- '' for an automation run parked with no text
   source TEXT NOT NULL,                        -- user | agent | routine | automation | board
   automation_run_id TEXT,
+  hops INTEGER NOT NULL DEFAULT 0,             -- agent-to-agent messages that led to it (HE-26; 0: the user's, the board's)
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX task_queue_task ON task_queue(task_id, seq);
@@ -157,6 +158,7 @@ CREATE TABLE task_steers (
   text TEXT NOT NULL,
   source TEXT NOT NULL,
   automation_run_id TEXT,
+  hops INTEGER NOT NULL DEFAULT 0,             -- as the queue's
   written INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 ) STRICT;
@@ -185,6 +187,8 @@ The wire still shows `queued_message` (one text) and `steering` (a list). The ta
 rows: `queued_message` is the queue's texts joined with a blank line, or null. What the old flags encoded is now read
 off the rows: "everything queued came from agents" is "no row has source `user`"; "the user's own part" is the
 `user` rows' text; the automation runs a queued message carries are the rows' `automation_run_id`s.
+Each row keeps its `hops`, and `runs.hops` the hops of what the run's current turn took in last (migration
+`2026-11-15-message-hops`; [07-agents.md](07-agents.md#hops-between-agents)).
 [The inventory](inventory/01-run-lifecycle.md) (section 9, _Turns, steering, closing the input_) has the rules for
 when a message is steered, queued, requeued ahead, or taken by a run.
 

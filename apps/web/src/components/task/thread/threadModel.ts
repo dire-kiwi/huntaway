@@ -42,6 +42,8 @@ export interface PromptData {
   readonly mode?: string | undefined
   /** The answers given, question by question. */
   readonly answers?: ReadonlyArray<ReadonlyArray<string>> | undefined
+  /** A tool call allowed as the user edited its input (a draft mail): `input` is what it ran with. */
+  readonly edited?: true | undefined
 }
 
 /** An option of a board question. */

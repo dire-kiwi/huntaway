@@ -22,7 +22,7 @@ test("a link to a document shows its title, opens in the board, and has a link b
   await withBrowser(server, {}, async (ui) => {
     const { page } = ui
     const board = `/p/${project.id}?task=${task.id}`
-    await ui.run([`goto ${board}`, "click details", "wait Published"])
+    await ui.run([`goto ${board}`, "wait Published"])
     const links = page.locator(".prose-chat a")
     // The URL is the title, the author's own words stay, and another site's link is as it was.
     await links.filter({ hasText: "Rollout plan" }).waitFor()

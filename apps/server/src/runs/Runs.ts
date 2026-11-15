@@ -316,7 +316,7 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
               return yield* new SendRefused({ reason: "nothing_queued", detail: "nothing is queued to send" })
             }
             const combined = combine([...taken, ...(message === null ? [] : [rowOf(message)])])
-            const run = yield* runs.insert({ id: runId, task_id: id, kind, created_at: at })
+            const run = yield* runs.insert({ id: runId, task_id: id, kind, hops: combined.hops, created_at: at })
             // 6.5: the automation runs whose messages it starts with are its, for their cost.
             yield* runs.chargeAutomationRuns(run.id, combined.automationRuns)
             const writeNo = explain === undefined ? yield* record(before, kind, combined, message) : yield* explain(before)
@@ -446,7 +446,14 @@ export class Runs extends Context.Service<Runs, RunsShape>()("huntaway-server/ru
             Effect.gen(function* () {
               yield* tasks.addSteer(
                 id,
-                { id: steerId, run_id: live.id, text, source: message.source, automation_run_id: message.automation_run_id ?? null },
+                {
+                  id: steerId,
+                  run_id: live.id,
+                  text,
+                  source: message.source,
+                  automation_run_id: message.automation_run_id ?? null,
+                  hops: message.hops ?? 0,
+                },
                 at,
               )
               yield* labelled(task)

@@ -33,8 +33,11 @@ export interface ApprovalRulesRepoShape {
   readonly save: (profile: ProfileId, rules: Rules | null) => Effect.Effect<void>
   /** Adds an entry to the action log, and drops the profile's entries past the newest `KEEP`. */
   readonly insert: (profile: ProfileId, action: ApprovalAction) => Effect.Effect<void>
-  /** Prompt `request` was answered: its pending entry, settled, if it had one. */
-  readonly settle: (request: RequestId, outcome: ActionOutcome, by: AnsweredBy, at: Timestamp) => Effect.Effect<ActionRow | null>
+  /**
+   * Prompt `request` was answered: its pending entry, settled, if it had one; with `summary`, what the call was allowed
+   * with in place of its own.
+   */
+  readonly settle: (request: RequestId, outcome: ActionOutcome, by: AnsweredBy, at: Timestamp, summary: string | null) => Effect.Effect<ActionRow | null>
   /** A profile's action log, newest first: `limit` entries. */
   readonly list: (profile: ProfileId, limit: number) => Effect.Effect<ReadonlyArray<ApprovalAction>>
 }
@@ -100,9 +103,10 @@ export class ApprovalRulesRepo extends Context.Service<ApprovalRulesRepo, Approv
             (SELECT id FROM approval_log WHERE profile_id = ${profile} ORDER BY created_at DESC, rowid DESC LIMIT ${KEEP})`
         }).pipe(Effect.orDie)
 
-      const settle = (request: RequestId, outcome: ActionOutcome, by: AnsweredBy, at: Timestamp) =>
+      const settle = (request: RequestId, outcome: ActionOutcome, by: AnsweredBy, at: Timestamp, summary: string | null) =>
         Effect.gen(function* () {
-          const changed = yield* sql<{ readonly id: string }>`UPDATE approval_log SET outcome = ${outcome}, answered_by = ${by}, decided_at = ${at}
+          const changed = yield* sql<{ readonly id: string }>`UPDATE approval_log SET outcome = ${outcome}, answered_by = ${by}, decided_at = ${at},
+            summary = COALESCE(${summary}, summary)
             WHERE request_id = ${request} AND outcome = 'pending' RETURNING id`
           if (changed.length === 0) return null
           const row = yield* findSettled(request)

@@ -44,7 +44,7 @@ test("the composer keeps its draft across tabs, cards and a reload, and what's t
     const sends = gate()
     const calls = await routeRpc(page, (r) => (r.tag === "tasks.send" ? sends.hold() : undefined))
     const composer = composerOf(page)
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click thread", "wait No agent has worked on this yet"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}&side`, "click thread", "wait No agent has worked on this yet"])
     await composer.fill("A draft for the agent")
     await ui.run(["click changes", "gone No agent has worked on this yet", "click thread"])
     assert.equal(await composer.inputValue(), "A draft for the agent", "after another tab")
@@ -86,7 +86,7 @@ test("a message sent while its composer is gone doesn't come back as a draft", a
     }
 
     // Sent, then another card opened before the host answers.
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click thread"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}&side`, "click thread"])
     await composer.fill("Send this once")
     await composer.press("Enter")
     await page.locator(`[data-task="${other.id}"]`).click()
@@ -120,7 +120,7 @@ test("a draft the browser can't store stays usable, and its send still goes", as
     const calls = await routeRpc(page, async (r) => (r.tag === "tasks.send" ? success(await server.rpc("tasks.get", { id: task.id })) : undefined))
     const composer = composerOf(page)
     const notice = page.getByText("This browser couldn't save the draft")
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click thread"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}&side`, "click thread"])
     await composer.fill("Short")
     const stored = () => page.evaluate((id) => Object.entries(localStorage).find(([k]) => k.includes(id))?.[1] ?? null, task.id)
     await eventually(async () => assert.ok((await stored())?.includes("Short"), "the draft is stored"))
@@ -161,7 +161,7 @@ test("an edit of the description survives a change to it, and a failed save says
     const { page } = ui
     let failing = false
     await routeRpc(page, (r) => (r.tag === "tasks.update" && failing ? failure({ _tag: "Invalid", field: "description", reason: "disk full" }) : undefined))
-    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "click details", "wait Old text", "click Edit description"])
+    await ui.run([`goto /p/${board.project.id}?task=${task.id}`, "wait Old text", "click Edit description"])
     const field = page.locator("section:has(h3:text-is('Description')) textarea")
     await field.fill("My new text")
     await server.rpc("tasks.update", { id: task.id, patch: { description: "Changed elsewhere" } })

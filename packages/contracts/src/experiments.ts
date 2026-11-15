@@ -14,6 +14,12 @@ export const EXPERIMENTS = [
       "A finished turn's tool calls and its result line fold into one row, “Worked for 2m 10s · 7 steps”, with an amber dot if a step waited for approval and a red one if a step failed or was refused. Click it to see the steps.",
   },
   {
+    id: "draft_cards",
+    name: "Show outgoing mail and events as drafts",
+    description:
+      "When an agent asks to send a mail or to add or change a calendar event (the assistant's Google tools), its prompt shows the mail or the event as it will go out, rather than the tool's input: Send or Discard a mail, and edit its To, Subject and body before sending it (on Claude Code).",
+  },
+  {
     id: "check_ins",
     name: "Assistant check-ins",
     description:
