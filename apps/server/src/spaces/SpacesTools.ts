@@ -101,11 +101,23 @@ export const spacesTools = Effect.gen(function* () {
   const create = (name: string, reuse: boolean) =>
     Effect.gen(function* () {
       if (reuse) {
-        const found = yield* Effect.option(spaces.find(name))
+        // None of that name is the one case that makes one; a name several Spaces share is refused with their ids.
+        const found = yield* spaces.find(name).pipe(
+          Effect.asSome,
+          Effect.catchTag("NotFound", () => Effect.succeedNone),
+        )
         if (Option.isSome(found)) {
           const s = found.value
-          if (s.state === "stopped" || s.state === "failed") yield* spaces.start(s.id)
-          return told(yield* spaces.settled(s.id), "Using the Space")
+          // One that failed before it had a container (pulling or building its image, `docker run`) has nothing to
+          // start: it's dropped and made again.
+          const kept =
+            s.state === "stopped" || s.state === "failed"
+              ? yield* spaces.start(s.id).pipe(
+                  Effect.as(true),
+                  Effect.catchTag("NotFound", () => Effect.as(spaces.remove(s.id), false)),
+                )
+              : true
+          if (kept) return told(yield* spaces.settled(s.id), "Using the Space")
         }
       }
       const made = yield* spaces.create({ name })

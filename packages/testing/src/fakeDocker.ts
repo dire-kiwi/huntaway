@@ -23,6 +23,8 @@ export interface FakeDocker {
   readonly files: (name: string) => Effect.Effect<Readonly<Record<string, string>>>
   /** The port every container's spacesd is on (a `fakeSpacesd`'s). */
   readonly setSpacesdPort: (port: number) => Effect.Effect<void>
+  /** Make `command` (`pull`, `run`…) fail with `reason` from now on, or (null) work again. */
+  readonly setFail: (command: string, reason: string | null) => Effect.Effect<void>
   /** Make the engine unreachable, or reachable again. */
   readonly setDown: (down: boolean) => Effect.Effect<void>
 }
@@ -48,6 +50,8 @@ export const fakeDocker = Effect.gen(function* () {
         Effect.orDie,
       ),
     setSpacesdPort: (port) => fs.writeFileString(`${dir}/spacesd-port`, `${port}`).pipe(Effect.orDie),
+    setFail: (command, reason) =>
+      (reason === null ? fs.remove(`${dir}/fail-${command}`, { force: true }) : fs.writeFileString(`${dir}/fail-${command}`, reason)).pipe(Effect.orDie),
     setDown: (down) => (down ? fs.writeFileString(`${dir}/down`, "") : fs.remove(`${dir}/down`, { force: true })).pipe(Effect.orDie),
   }
   return docker

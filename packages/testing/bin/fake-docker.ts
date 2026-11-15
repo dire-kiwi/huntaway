@@ -6,7 +6,8 @@
 // line) to calls.jsonl there, and gives every container's spacesd port as the number in `spacesd-port` (a fake spacesd's,
 // `fakeSpacesd`). `docker exec`: a command run through `timeout` (`Spaces.bash`) prints `Linux space <command>` and
 // exits 0, or exits with the number after `exit ` in it; any other (a file written into a home) keeps its standard input
-// in the container's `files`. `down` in the folder makes the engine unreachable.
+// in the container's `files`. `down` in the folder makes the engine unreachable; `fail-<command>` (`fail-pull`, say)
+// makes that command fail with what the file says.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
 
 interface Container {
@@ -46,6 +47,8 @@ const flags = (name: string) => args.flatMap((a, i) => (a === name ? [args[i + 1
 const shown = (c: Container) => ({ Name: c.Name, State: c.State, Config: c.Config, NetworkSettings: c.NetworkSettings })
 const named = (name: string) => state.containers[name] ?? fail(`Error response from daemon: No such container: ${name}`)
 
+// `fail-<command>` in the folder: that command fails with what's in it.
+if (existsSync(`${dir}/fail-${args[0] ?? ""}`)) fail(readFileSync(`${dir}/fail-${args[0] ?? ""}`, "utf8").trim())
 if (existsSync(`${dir}/down`)) fail("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?")
 
 switch (args[0] ?? "") {

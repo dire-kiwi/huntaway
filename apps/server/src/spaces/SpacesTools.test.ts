@@ -158,6 +158,35 @@ describe("the spaces server", () => {
   )
 
   it.effect(
+    "a Space that failed before it had a container is made again by name; a name two Spaces share is refused with their ids",
+    () =>
+      withSpaces(({ docker }) =>
+        Effect.gen(function* () {
+          const agent = yield* fakeAgent()
+          // The first Space pulls Cua's image, and the pull fails: it shows as failed, with no container.
+          yield* docker.setFail("pull", "Error response from daemon: net/http: TLS handshake timeout")
+          const failed = said(yield* spacesCall(agent, "create_space", { name: "Lab" }))
+          assert.isTrue(failed.error && failed.text.includes("is failed: docker pull: Error response from daemon"), failed.text)
+          const first = idIn(failed.text)
+          // Asked again, it's made anew rather than started (which would have found no container).
+          yield* docker.setFail("pull", null)
+          const made = said(yield* spacesCall(agent, "create_space", { name: "Lab" }))
+          assert.isTrue(!made.error && made.text.startsWith("Made the Space Lab"), made.text)
+          assert.notStrictEqual(idIn(made.text), first)
+          assert.notInclude(said(yield* spacesCall(agent, "list_spaces", {})).text, first)
+
+          // A second Lab, asked for as new: then the name is ambiguous, and reusing it is refused, not made a third time.
+          const second = idIn(said(yield* spacesCall(agent, "create_space", { name: "Lab", reuse: false })).text)
+          const runs = (yield* docker.calls).filter((c) => c[0] === "run").length
+          const refused = said(yield* spacesCall(agent, "create_space", { name: "Lab" }))
+          assert.isTrue(refused.error && refused.text.includes("2 Spaces are named Lab") && refused.text.includes(second), refused.text)
+          assert.strictEqual((yield* docker.calls).filter((c) => c[0] === "run").length, runs)
+        }),
+      ),
+    TIMEOUT,
+  )
+
+  it.effect(
     "delete_space asks the user first, whatever the mode",
     () =>
       withSpaces(({ docker }) =>

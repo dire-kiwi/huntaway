@@ -1263,7 +1263,10 @@ Runs get a `spaces` MCP server beside `desktop`, after Cua Spaces' own tools
   `list_spaces`; `create_space {name, reuse?}` (reuse, the default, takes a Space of that name, started if it's stopped;
   either way it waits with `Spaces.settled`); `start_space`, `stop_space`, `delete_space`; `space_bash {space, command,
   timeout?}`; `space_list_tools {space, tool?}`; `space_call_tool {space, tool, args?}`; `space_view`. A Space is named
-  by id or name (`Spaces.find`; a name several share is refused with their ids). Agents make Spaces without sign-ins.
+  by id or name (`Spaces.find`; a name several share is refused with their ids, and `create_space` reuses only on
+  NotFound, so it doesn't make another of an ambiguous name). A Space found `failed` before it had a container (its
+  pull, build or `docker run` failed: it is only in `Spaces`' pending map) is removed and made again rather than
+  started (found on review). Agents make Spaces without sign-ins.
 - **`space_bash`** (`Spaces.bash`): `docker exec --user cua` under `timeout --kill-after=5 <n>` (at most 600 s), so the
   command stops in the container and not only Docker's CLI; HOME is looked up (`docker exec` keeps the image's
   `/root`) and the command runs with `bash -l` in it. The agent gets the exit code and the last 30,000 characters of
