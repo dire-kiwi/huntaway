@@ -79,7 +79,7 @@ function describe(
   const download = job.download ?? null
   switch (key) {
     case "starting":
-      return { what: kind === "update" ? "Fetching the update…" : "Getting ready…", detail: null, share: null }
+      return { what: kind === "update" ? "Fetching the update…" : "Starting…", detail: null, share: null }
     case "downloading":
       return {
         what: `Downloading ${v}…`,

@@ -248,7 +248,7 @@ export function RestartModal({
             {job.log.length > 0 && (
               <pre
                 ref={logRef}
-                className="h-72 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap text-[#b9b9c8]"
+                className="max-h-72 overflow-auto rounded-md border border-line bg-[#0c0c10] p-2 font-mono text-[11.5px] leading-[1.45] whitespace-pre-wrap text-[#b9b9c8]"
               >
                 {job.log.join("\n")}
               </pre>
