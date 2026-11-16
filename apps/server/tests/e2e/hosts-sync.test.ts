@@ -62,9 +62,10 @@ describe("settings sync and discovery, whole servers", () => {
         assert.include(hostInfo.capabilities, "settings_sync")
         yield* linkTo(hub, hostServer.port, hostServer.token, hostInfo.host_id)
 
-        // Off on a host: no entries, nothing merged into it.
+        // On unless switched off (HE-46); off on a host: no entries, nothing merged into it.
+        assert.isTrue((yield* host("settingsSync.get", undefined)).enabled)
+        yield* host("host.updateSettings", { patch: { settings_sync: false } })
         assert.deepStrictEqual((yield* host("settingsSync.get", undefined)).entries, [])
-        yield* hub("host.updateSettings", { patch: { settings_sync: true } })
         yield* host("host.updateSettings", { patch: { settings_sync: true } })
 
         yield* host("host.updateSettings", { patch: { default_model: "sonnet" } })

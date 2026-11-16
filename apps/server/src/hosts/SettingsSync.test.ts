@@ -87,7 +87,7 @@ const board = (on: { hub?: boolean; a?: boolean; b?: boolean; bId?: string } = {
       [a, on.a],
       [b, on.b],
     ] as const) {
-      if (sw !== false) yield* host.write("settings_sync", "true")
+      yield* host.write("settings_sync", sw === false ? "false" : null)
       yield* host.sync.observe
     }
     const linked = new Set([a, b])
@@ -415,9 +415,11 @@ describe("settings sync between a hub and two hosts", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   )
 
-  it.effect("a host says whether sync is on, and once on its entries are its values from before sync", () =>
+  it.effect("a host says whether sync is on (unless switched off), and once on its entries are its values from before sync", () =>
     Effect.gen(function* () {
       const h = yield* boardAs("h")
+      assert.isTrue((yield* h.sync.status).enabled)
+      yield* h.set({ settings_sync: false })
       assert.deepStrictEqual(yield* h.sync.status, { enabled: false, host_id: HostId.make("h"), entries: [] })
       yield* h.set({ settings_sync: true })
       const got = yield* h.sync.status
@@ -426,7 +428,8 @@ describe("settings sync between a hub and two hosts", () => {
         got.entries.map((e) => e.name),
         "global/default_permission_mode",
       )
-      assert.isTrue(got.entries.every((e) => e.changed_at === "" && e.vv["h"] === 1))
+      // Its own values, from before it synced (again): no time, and only its own counter.
+      assert.isTrue(got.entries.every((e) => e.changed_at === "" && Object.keys(e.vv).join() === "h"))
       // Off again: nothing to merge into, and its entries are not given out.
       yield* h.set({ settings_sync: false })
       assert.deepStrictEqual((yield* h.sync.status).entries, [])
@@ -491,7 +494,7 @@ describe("settings sync of the hosts' global skills and MCP servers (HE-46)", ()
       assert.deepStrictEqual(yield* t.hub.servers, [])
 
       yield* TestClock.adjust("1 second")
-      yield* t.b.write("settings_sync", "true")
+      yield* t.b.write("settings_sync", null)
       yield* t.b.sync.observe
       yield* t.settle()
       // The hosts that synced first keep their text; what only b had, it brings.

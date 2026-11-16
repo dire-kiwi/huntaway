@@ -97,7 +97,8 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
           terminal_tools: yield* Schema.decodeEffect(TerminalTools)(text(KEY.terminal_tools)).pipe(Effect.orElseSucceed(() => [])),
           public_url: text(KEY.public_url),
           release_prereleases: text(KEY.release_prereleases) === "true",
-          settings_sync: text(KEY.settings_sync) === "true",
+          // On unless switched off (HE-46).
+          settings_sync: text(KEY.settings_sync) !== "false",
           experiments: EXPERIMENTS.flatMap((e) => (text(experimentKey(e.id)) === "true" ? [e.id] : [])),
           role: (yield* pick(HostRole, KEY.role)) ?? "projects",
         } satisfies Settings
@@ -127,7 +128,7 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
               if (value !== undefined) yield* repo.set(key, value)
             }
             if (patch.release_prereleases !== undefined) yield* repo.set(KEY.release_prereleases, patch.release_prereleases ? "true" : null)
-            if (patch.settings_sync !== undefined) yield* repo.set(KEY.settings_sync, patch.settings_sync ? "true" : null)
+            if (patch.settings_sync !== undefined) yield* repo.set(KEY.settings_sync, patch.settings_sync ? null : "false")
             if (patch.role !== undefined) yield* repo.set(KEY.role, patch.role === "access" ? "access" : null)
             const on = patch.experiments
             if (on !== undefined) for (const e of EXPERIMENTS) yield* repo.set(experimentKey(e.id), on.includes(e.id) ? "true" : null)

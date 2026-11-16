@@ -55,7 +55,7 @@ interface Pass {
 }
 
 export interface SettingsSyncShape {
-  /** Whether this host syncs its settings (`settings_sync`). */
+  /** Whether this host syncs its settings: unless `settings_sync` is "false". */
   readonly enabled: Effect.Effect<boolean>
   /** Notes the changes made on this host since the last look. Nothing while sync is off. */
   readonly observe: Effect.Effect<void>
@@ -97,7 +97,7 @@ export class SettingsSync extends Context.Service<SettingsSync, SettingsSyncShap
       const { fields, announce } = yield* makeFields
       const me: HostId = identity.hostId
 
-      const enabled = Effect.map(settings.get(SETTING), (v) => v === "true")
+      const enabled = Effect.map(settings.get(SETTING), (v) => v !== "false")
 
       /** A change made on this host: its counter goes up, and what lost to the value before is dropped. */
       const bump = (r: Row, value: unknown, now: string) => {

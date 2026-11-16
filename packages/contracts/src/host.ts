@@ -37,7 +37,7 @@ export const HostSettings = Schema.Struct({
   public_url: Schema.NullOr(Schema.String),
   /** Release checks include prereleases. */
   release_prereleases: Schema.Boolean,
-  /** Keep this host's settings the same as the board's other hosts that have this on. */
+  /** Keep this host's settings the same as the board's other hosts that have this on: on unless switched off (HE-46). */
   settings_sync: Schema.Boolean,
   /**
    * The experiments switched on (Settings → Experiments), for the whole board. Open strings, and optional, so that a

@@ -170,7 +170,6 @@ describe("the mesh, whole servers", () => {
         const a = yield* boardClient(aServer.port, aServer.token)
         const b = yield* boardClient(bServer.port, bServer.token)
         const c = yield* boardClient(cServer.port, cServer.token)
-        for (const board of [a, b, c]) yield* board("host.updateSettings", { patch: { settings_sync: true } })
         // A links B, and C links B: B is the one host between them.
         yield* a("hub.hosts.add", { url: `http://127.0.0.1:${bServer.port}`, token: bServer.token })
         yield* c("hub.hosts.add", { url: `http://127.0.0.1:${bServer.port}`, token: bServer.token })

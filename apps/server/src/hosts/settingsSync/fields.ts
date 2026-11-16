@@ -37,7 +37,10 @@ export interface Field {
   readonly event: FieldEvent
 }
 
-/** The setting that switches sync on for this host ("true"). It doesn't sync itself. */
+/**
+ * The setting that switches sync off for this host ("false"); unset, it syncs (HE-46: the board's settings are the same on
+ * every host unless one is taken out). It doesn't sync itself.
+ */
 export const SETTING = "settings_sync"
 /** When this host began to sync, which goes when sync is switched off. */
 export const SINCE = "settings_sync_since"
