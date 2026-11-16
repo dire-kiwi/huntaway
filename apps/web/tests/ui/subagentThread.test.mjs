@@ -380,3 +380,72 @@ test("a crowded review thread's header keeps its buttons within the side panel",
     await ui.run(["size 720x900", "click Subagents in this thread", "click css=.shadow-xl button:has-text('Explore config')", "wait Show in thread"])
   })
 })
+
+// HE-40 review: editing the title puts a new h1 in the title row, which the controls' fit didn't watch, so a smaller
+// view after it left the controls beside a title of no width, and Close off the window.
+test("the controls still leave the title row after the title is edited", async () => {
+  const long = "Subagents, with a title long enough to need its room in the header of the task view"
+  await server.rpc("host.updateSettings", { patch: { terminal_tools: [tool(0), tool(1)] } })
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    const h1 = page.locator("h1[title='Double-click to rename']")
+    const header = () =>
+      h1.evaluate((el) => {
+        let clip = { right: window.innerWidth }
+        for (let p = el.closest("header").parentElement; p; p = p.parentElement)
+          if (getComputedStyle(p).overflowX !== "visible") {
+            clip = p.getBoundingClientRect()
+            break
+          }
+        const close = el.closest("header").querySelector("[title^='Close']").getBoundingClientRect()
+        return {
+          beside: !!el.parentElement.querySelector("[title='Subagents in this thread']"),
+          inside: close.right <= Math.min(clip.right, window.innerWidth),
+          title: el.clientWidth,
+          natural: el.scrollWidth,
+        }
+      })
+    const fits = async (where) => {
+      await eventually(async () => {
+        const h = await header()
+        assert.ok(h.inside, `Close is cut off ${where}`)
+        assert.ok(h.title >= Math.min(100, h.natural), `the title is ${h.title}px wide ${where}`)
+      })
+    }
+    const open = async (task, size) => {
+      await ui.run([
+        `size ${size}`,
+        `goto /p/${board.project.id}?task=${task.id}`,
+        "click Thread",
+        "wait Main agent's summary.",
+        "wait Subagents in this thread",
+      ])
+      assert.ok((await header()).beside, `the controls aren't beside the title at ${size}`)
+    }
+
+    // Renamed (Enter), then a smaller window.
+    const renamed = await threadTask(long)
+    await open(renamed, "1900x1000")
+    await h1.dblclick()
+    await ui.run(["press Control+a", `type ${long}, renamed`, "press Enter", `wait ${long}, renamed`])
+    await ui.run(["size 1000x1000"])
+    await eventually(async () => assert.ok(!(await header()).beside, "the controls stayed beside the title"))
+    await fits("after a rename and a smaller window")
+
+    // Edited and left as it was (Escape), then a smaller window.
+    const edited = await threadTask(long)
+    await open(edited, "1500x1000")
+    await h1.dblclick()
+    await ui.run(["press Escape", `wait ${long}`, "size 1000x1000"])
+    await eventually(async () => assert.ok(!(await header()).beside, "the controls stayed beside the title"))
+    await fits("after an edit and a smaller window")
+
+    // A short title renamed to a long one, the window as it was.
+    const short = await threadTask("Short")
+    await open(short, "1300x1000")
+    await h1.dblclick()
+    await ui.run(["press Control+a", `type ${long}`, "press Enter", `wait ${long}`])
+    await fits("after a short title was renamed to a long one")
+  })
+  await server.rpc("host.updateSettings", { patch: { terminal_tools: [] } })
+})

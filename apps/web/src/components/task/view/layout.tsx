@@ -59,10 +59,26 @@ export function useControlsFit(wide: boolean, width: number | null, reset: strin
       // The row's width as it is now: the observer can see a new size before `width` has caught up with it.
       if (short > 0) setNeed({ reset, px: row.getBoundingClientRect().width + short })
     }
-    // A change in any of the row's parts (a pill coming, a tab) changes the title's width, or the controls'.
+    // The row is as wide as the view, so it sees every resize of it; a change in any of the row's parts (a pill coming, a
+    // tab) changes the title's width, or the controls'.
     const ro = new ResizeObserver(check)
-    for (const el of row.children) ro.observe(el)
-    return () => ro.disconnect()
+    const watch = () => {
+      ro.observe(row)
+      // Observing one already observed does nothing.
+      for (const el of row.children) ro.observe(el)
+    }
+    watch()
+    // Parts come and go (the title's h1 is a new one after it's edited), and a new title's text can be longer than the
+    // room the old one had without its box changing: watch the new parts, and measure again.
+    const mo = new MutationObserver(() => {
+      watch()
+      check()
+    })
+    mo.observe(row, { childList: true, subtree: true, characterData: true })
+    return () => {
+      ro.disconnect()
+      mo.disconnect()
+    }
   }, [row, inRow, reset])
   return [setRow, inRow] as const
 }
