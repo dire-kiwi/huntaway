@@ -3,7 +3,7 @@ import type { Scope } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Hex } from "effect/encoding"
 import type { Rpc } from "effect/rpc"
-import { Conflict, HostOffline, Invalid, LinkId, LinkRefused, NotFound } from "@huntaway/contracts"
+import { boardScopes, Conflict, HostOffline, Invalid, LinkId, LinkRefused, NotFound } from "@huntaway/contracts"
 import type { AssertedSession, DeviceId, HostId, Scope as SessionScope, SessionShape } from "@huntaway/contracts"
 import { Identity } from "../platform/Identity.ts"
 import { LinkConnections, STREAM_PATH } from "./LinkConnections.ts"
@@ -98,7 +98,8 @@ export class Relay extends Context.Service<
         if (session.kind === "link" && as === undefined)
           return yield* new Conflict({ reason: "in_use", detail: "a host's own connection is relayed further only for a client of its own" })
         const now = yield* Clock.currentTimeMillis
-        const who = session.kind === "link" && as !== undefined ? as : { kind: session.kind, scopes: [...session.scopes], device_id: session.device_id }
+        // `as` only ever narrows: whoever asks, the client's session gets no more than the asker's own scopes.
+        const who = as ?? { kind: session.kind, scopes: [...session.scopes], device_id: session.device_id }
         const asserted: AssertedSession = {
           kind: who.kind === "link" ? "board" : who.kind,
           scopes: who.scopes.filter((scope) => scope !== "link" && session.scopes.has(scope)),
@@ -125,10 +126,14 @@ export class Relay extends Context.Service<
           return yield* new LinkRefused({ reason: `${identity.hostName} doesn't let this host reach it back` })
         if (!STREAM_PATH.test(path)) return yield* new LinkRefused({ reason: `${path} isn't something a host is asked for` })
         const now = yield* Clock.currentTimeMillis
+        // What the socket may do is this hub's to say, not the asker's: no more than a board user's scopes, never `link`
+        // (a host that dialled in calls no board tools down, nor attaches, through it), and a device's no more than a
+        // device's. The host's agents' calls go up on its control connection, under the link's `uplink` switch.
+        const kind = session.kind === "device" ? "device" : "board"
         return yield* issue({ _tag: "Self", via: live.value.id }, path, {
-          kind: session.kind,
-          scopes: session.scopes,
-          device_id: session.device_id,
+          kind,
+          scopes: session.scopes.filter((scope) => boardScopes.has(scope) && (kind === "board" || scope === "read" || scope === "operate")),
+          device_id: kind === "device" ? session.device_id : null,
           exp: Math.min(session.exp, now + Duration.toMillis(LINKED)),
         })
       })

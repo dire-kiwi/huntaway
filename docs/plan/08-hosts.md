@@ -275,7 +275,12 @@ show as one board on every one of them.
   its own board token as well as the hub token), and registers the link as `reverse`: the sealed session it attached
   with shows that the other end holds its token, which is more than a dial-in shows. A host that dials in with the hub
   token under the id of a `reverse` link is refused, and a reverse attach is taken even for a profile's assistant host
-  (that rule is for a host this one dials itself). A host that dialled in (`--hub`) asks its hub for a ticket on the
+  (that rule is for a host this one dials itself). The attach back is held, and made again with back-off, for as long
+  as the dialled connection lasts, and it takes the place of a `reverse` or dial-in registration of its id the host
+  still holds (a half-open socket, a link the host forgot), so the link comes back by itself. The session a ticket
+  gives is the hub's to say: a board user's scopes at most, a device's for a device, never `link` (the host's agents
+  call board tools up its control connection, under `uplink`). `as` on `hub.hosts.openRelay` only ever narrows the
+  asker's own session. A host that dialled in (`--hub`) asks its hub for a ticket on the
   connection it attached on (`link.ticket { path, session }`), which the hub gives while its `inbound` link to that host
   has the switch on; the host opens the hub's `/api/relay/<ticket>`, piped to the hub's own `path` with the session
   sealed by the hub, and registers the hub as a `hub` link (a `links` row with its URL and no token) while its connection
@@ -324,8 +329,9 @@ show as one board on every one of them.
   - **Profiles themselves**: `profile/<name>/exists` (true, null once removed, or `{ renamed_to }`). A profile one host
     has is made on the others (a row with no configs, then its other fields; `Profiles.scratchDirs` makes its scratch
     folder). A rename is kept as the profile's former name (`profile_former_names`, `ProfileRepo.renamed`), so the old
-    name reads `{ renamed_to }` and the other hosts rename theirs, with its work, in place of an empty one of the new name
-    that sync may have made first. One removed is removed elsewhere only where it has no projects and no tasks
+    name reads `{ renamed_to }` and the other hosts rename theirs (a change of case too), with its work, in place of an empty one of the new name
+    that sync may have made first. A name a profile takes is no former name any more (`ProfileRepo.insert`, `update`),
+    so a new profile of an old name, removed, reads as removed. One removed is removed elsewhere only where it has no projects and no tasks
     (`ProfileRepo.holds`): sync never deletes work, and the value it couldn't take waits (it isn't sent back as a change)
     until the profile holds nothing there.
   - **More of a profile**: `asana_enabled`, `telemetry`, `telemetry_titles`, `tint`; its configs (`configs`), its
@@ -333,6 +339,8 @@ show as one board on every one of them.
     global skills and servers (`tool_switches`, `skill:<name>` and `mcp:<name>`). Its configs are one field each,
     `profile/<name>/config/<config>` (true, or null once taken off), so each host keeps the configs of its own the others
     have none of; one taken off resets the assistant's and threads' config if it was theirs, as `Profiles.update` does.
+    Agent configs and their names are each host's own, so a config renamed or deleted on one host isn't taken off the
+    profile elsewhere: a field is looked at only while this host has a config of its name.
   - **Agent configs' options by config name**: `config/<name>/show_usage`, `restart_window`, `api_url`.
   - **Skill sources**: `skill_source/<url>|<ref>|<folder>`. A host takes one with no commit, and `AgentTools.catchUp`
     (at the start and on every `agent_tools_changed`) clones it there and deletes the clones of sources removed.
