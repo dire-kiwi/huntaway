@@ -1372,10 +1372,16 @@ section 2.
   `snappy.ts`; an index block's entries are followed whatever their separator key's type, as a block's last key may be a
   deletion) and interpreted by `chromiumStorage.ts`. A profile is offered only when its folder holds a cookie store.
   A site (`sites.ts`) is a registrable domain by the public suffix list (`tldts`, ICANN and private sections, as
-  browsers read it: `amazon.com.mx`, `someone.github.io`), whose subdomains' cookies it takes in; a host without one
-  (an IP address, `localhost`, a name under an unknown last label like `foo.local`) is a site of its own that matches
-  only itself, so no site takes in its siblings. A site that looks signed in is pre-ticked, an identity provider
-  (Google, Microsoft, Apple, Okta) never is. Nothing is decrypted to list sites. `bring` sends only sites the
+  browsers read it: `amazon.com.mx`, `someone.github.io`); a host without one (an IP address, `localhost`, a name under
+  an unknown last label like `foo.local`) is a site of its own. A cookie or origin belongs to the site `siteOf` names
+  for its host and to no other: listing, counting and sending go by that one rule, so a site nested under another by
+  the private section (`mybucket.s3.amazonaws.com` under `amazonaws.com`) is listed and sent on its own. Only a
+  profile's own first-party cookies are read: not partitioned ones (Firefox's `originAttributes` `^partitionKey=`,
+  Chromium's CHIPS `top_frame_site_key`, where the column exists) nor a Firefox container's (`^userContextId=`), which
+  the bundle would carry as first-party rows and could replace the real cookie with. A site that looks signed in is
+  pre-ticked, an identity provider never is: Google, Microsoft, Apple, Okta and Auth0 by the name before the public
+  suffix (so `google.co.nz` and every other Google country domain, which hold the account's session cookies), and
+  `live.com`, `office.com`, `icloud.com`, `oktacdn.com` by domain. Nothing is decrypted to list sites. `bring` sends only sites the
   profile's own list has (what `sites` showed), so whatever the dialog lists can be sent and nothing wider can be asked
   for.
 - **Decrypting** (`chromiumCrypto.ts`, with Effect's `Kdf`/`Cipher`/`Digest`): a Chromium `v10` value uses the fixed

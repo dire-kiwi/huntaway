@@ -8,7 +8,7 @@ import type { StorageFile } from "./chromiumStorage.ts"
 import { latest, readLog, readTable } from "./leveldb.ts"
 import { approvedSites, askInput, checkSites, pickProfile } from "./request.ts"
 import type { Candidate } from "./request.ts"
-import { hostKeyInSite, isIdentityProvider, isPublicSuffix, looksSignedIn, normalizeHost, originHost, siteOf } from "./sites.ts"
+import { isIdentityProvider, isPublicSuffix, looksSignedIn, normalizeHost, originHost, siteOf } from "./sites.ts"
 import { unsnappy } from "./snappy.ts"
 import { headerRefusal, importRequest, manifestRequest, parseImport, parseManifest, parseWipe, unframe, wipeRequest } from "./wire.ts"
 
@@ -265,6 +265,9 @@ describe("chromium localStorage", () => {
   })
 })
 
+/** Whether `host` is in `site`, by the one rule listing, counting and sending go by. */
+const of = (host: string, site: string) => siteOf(host) === site
+
 describe("sites", () => {
   it("names a host's site by the public suffix list", () => {
     assert.strictEqual(siteOf("api.github.com"), "github.com")
@@ -280,17 +283,21 @@ describe("sites", () => {
     assert.strictEqual(siteOf("192.168.0.1"), "192.168.0.1")
     assert.strictEqual(siteOf("localhost"), "localhost")
   })
-  it("matches a host_key to its site and not a look-alike, a sibling or another address", () => {
-    assert.isTrue(hostKeyInSite(".github.com", "github.com"))
-    assert.isTrue(hostKeyInSite("api.github.com", "github.com"))
-    assert.isFalse(hostKeyInSite("evilgithub.com", "github.com"))
-    assert.isFalse(hostKeyInSite("github.com.evil.example", "github.com"))
-    assert.isFalse(hostKeyInSite("bank.com.mx", "com.mx"))
-    assert.isFalse(hostKeyInSite("10.0.0.1", "0.1"))
-    assert.isTrue(hostKeyInSite("127.0.0.1", "127.0.0.1"))
-    assert.isFalse(hostKeyInSite("10.127.0.0.1", "127.0.0.1"))
-    assert.isTrue(hostKeyInSite("localhost", "localhost"))
-    assert.isFalse(hostKeyInSite("app.localhost", "localhost"))
+  it("puts a host in its own site only: not a look-alike's, a sibling's, another address's or a nesting one's", () => {
+    assert.isTrue(of(".github.com", "github.com"))
+    assert.isTrue(of("api.github.com", "github.com"))
+    assert.isFalse(of("evilgithub.com", "github.com"))
+    assert.isFalse(of("github.com.evil.example", "github.com"))
+    assert.isFalse(of("bank.com.mx", "com.mx"))
+    assert.isFalse(of("10.0.0.1", "0.1"))
+    assert.isTrue(of("127.0.0.1", "127.0.0.1"))
+    assert.isFalse(of("10.127.0.0.1", "127.0.0.1"))
+    assert.isTrue(of("localhost", "localhost"))
+    assert.isFalse(of("app.localhost", "localhost"))
+    // Under the list's private section, a bucket or an account is a site of its own, not amazonaws.com's or windows.net's.
+    assert.isTrue(of("sts.amazonaws.com", "amazonaws.com"))
+    assert.strictEqual(siteOf("mybucket.s3.amazonaws.com"), "mybucket.s3.amazonaws.com")
+    assert.strictEqual(siteOf("acct.blob.core.windows.net"), "acct.blob.core.windows.net")
   })
   it("knows a public suffix", () => {
     for (const s of ["com", "com.mx", "co.kr", "co.uk", "github.io"]) assert.isTrue(isPublicSuffix(s), s)
@@ -299,7 +306,14 @@ describe("sites", () => {
   it("knows identity providers", () => {
     assert.isTrue(isIdentityProvider("accounts.google.com"))
     assert.isTrue(isIdentityProvider("my-tenant.okta.com"))
+    // A Google country domain holds the same account's session cookies.
+    assert.isTrue(isIdentityProvider("google.co.nz"))
+    assert.isTrue(isIdentityProvider("google.de"))
+    assert.isTrue(isIdentityProvider("google.com.au"))
+    assert.isTrue(isIdentityProvider("login.microsoftonline.com"))
+    assert.isTrue(isIdentityProvider("live.com"))
     assert.isFalse(isIdentityProvider("github.com"))
+    assert.isFalse(isIdentityProvider("googleblog.example"))
   })
   it("guesses a sign-in from cookie names", () => {
     assert.isTrue(looksSignedIn(["__Host-session"]))

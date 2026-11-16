@@ -46,7 +46,7 @@ const EXPIRES = 13453171036399180n
 const crypto = Layer.mergeAll(Kdf.layerWebCrypto, Cipher.layerWebCrypto, Digest.layerWebCrypto).pipe(Layer.provideMerge(SecureRandom.layerWebCrypto))
 
 /** A Google Chrome profile (`Default`) in `home` with these cookies, `v10`-encrypted with their host_key's digest. */
-const chromeProfile = (home: string, cookies: ReadonlyArray<readonly [string, string, string]>) =>
+const chromeProfile = (home: string, cookies: ReadonlyArray<readonly [string, string, string, string?]>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -57,16 +57,16 @@ const chromeProfile = (home: string, cookies: ReadonlyArray<readonly [string, st
       const sql = Context.get(context, SqlClient.SqlClient)
       yield* sql`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)`
       yield* sql`INSERT INTO meta VALUES ('version', '24')`
-      yield* sql`CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER,
-                 is_secure INTEGER, is_httponly INTEGER, samesite INTEGER)`
+      yield* sql`CREATE TABLE cookies (host_key TEXT, top_frame_site_key TEXT NOT NULL DEFAULT '', name TEXT, value TEXT,
+                 encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, samesite INTEGER)`
       const key = yield* deriveKey(yield* Kdf.Kdf, V10_PASSWORD)
       const cipher = yield* Cipher.Cipher
       const digest = yield* Digest.Digest
-      for (const [host, name, value] of cookies) {
+      for (const [host, name, value, topFrame = ""] of cookies) {
         const sum = yield* digest.digest(Digest.sha256, new TextEncoder().encode(host))
         const body = yield* cipher.encrypt(key, Uint8Array.from([...sum, ...new TextEncoder().encode(value)]), { iv: new Uint8Array(16).fill(0x20) })
         const encrypted = Uint8Array.from([0x76, 0x31, 0x30, ...body])
-        yield* sql`INSERT INTO cookies VALUES (${host}, ${name}, '', ${encrypted}, '/', ${EXPIRES}, 1, 1, 1)`
+        yield* sql`INSERT INTO cookies VALUES (${host}, ${topFrame}, ${name}, '', ${encrypted}, '/', ${EXPIRES}, 1, 1, 1)`
       }
     }).pipe(Effect.provide(crypto), Effect.orDie),
   )
@@ -88,6 +88,8 @@ describe("space_request_sign_ins", () => {
         const home = yield* tempDir
         yield* chromeProfile(home, [
           [".github.com", "user_session", "gh-secret"],
+          // A partitioned (CHIPS) twin, set inside another site's page: never sent as the first-party cookie.
+          [".github.com", "user_session", "gh-partitioned", "https://other.example"],
           ["accounts.google.com", "SID", "g-secret"],
           [".other.com", "pref", "o-value"],
         ])
@@ -141,6 +143,7 @@ describe("space_request_sign_ins", () => {
           assert.include(bundle, Base64.encode(new TextEncoder().encode("gh-secret")))
           assert.include(bundle, Base64.encode(new TextEncoder().encode("g-secret")))
           assert.notInclude(bundle, Base64.encode(new TextEncoder().encode("o-value")))
+          assert.notInclude(bundle, Base64.encode(new TextEncoder().encode("gh-partitioned")))
           // The Space's browser was closed by exact process names first.
           assert.isTrue((yield* docker.calls).some((c) => c[0] === "exec" && (c.at(-1) ?? "").includes("pkill -TERM -x")))
 

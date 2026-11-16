@@ -16,7 +16,7 @@ import { storageItems, storageOrigins } from "./teleport/chromiumStorage.ts"
 import type { StorageFile } from "./teleport/chromiumStorage.ts"
 import { manifestValue, signInEntries, tar } from "./teleport/bundle.ts"
 import type { CookieRow, StorageItem } from "./teleport/bundle.ts"
-import { hostKeyInSite, isIdentityProvider, looksSignedIn, normalizeHost, originHost, siteOf } from "./teleport/sites.ts"
+import { isIdentityProvider, looksSignedIn, normalizeHost, originHost, siteOf } from "./teleport/sites.ts"
 import { Spaces } from "./Spaces.ts"
 import { TeleportRepo } from "./TeleportRepo.ts"
 import {
@@ -67,6 +67,15 @@ type CookieRead = typeof CookieRead.Type
 /** A cookie's host and name alone, for counting a profile's sites without reading any big or encrypted column. */
 const CookieName = Schema.Struct({ host_key: Schema.String, name: Schema.String })
 type CookieName = typeof CookieName.Type
+
+const decodeCount = Schema.decodeUnknownOption(Schema.Array(Schema.Struct({ n: Schema.Finite })))
+
+/** Whether a Chromium `cookies` table has CHIPS's `top_frame_site_key` (older databases don't). */
+const hasPartitions = (sql: SqlClient.SqlClient) =>
+  Effect.map(
+    sql`SELECT count(*) AS n FROM pragma_table_info('cookies') WHERE name = 'top_frame_site_key'`,
+    (rows) => Option.getOrElse(decodeCount(rows), () => [])[0]?.n === 1,
+  )
 
 /** Chrome's epoch offset: microseconds between 1601-01-01 and 1970-01-01. */
 const CHROME_EPOCH_MICROS = 11644473600 * 1_000_000
@@ -240,6 +249,11 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
         return yield* read(sql).pipe(Effect.orElseSucceed(() => null))
       })
 
+      // Only a profile's own first-party cookies are read: not partitioned ones, which a site set inside another site's
+      // page (Firefox's Total Cookie Protection, `originAttributes` `^partitionKey=…`; Chromium's CHIPS,
+      // `top_frame_site_key`), nor a Firefox container's (`^userContextId=…`). The bundle's rows are first-party, so a
+      // partitioned twin of a cookie, or another container's account, would be sent as that cookie and could replace it.
+
       /** Just each cookie's host and name, for counting a profile's sites. */
       const cookieNames = (b: BrowserCatalog, dir: string): Effect.Effect<ReadonlyArray<CookieName>> =>
         Effect.scoped(
@@ -247,7 +261,11 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
             const path = yield* cookieStore(b, dir)
             const decode = Schema.decodeUnknownOption(Schema.Array(CookieName))
             const got = yield* withDb(path, (sql) =>
-              b.kind === "firefox" ? sql`SELECT host AS host_key, name FROM moz_cookies` : sql`SELECT host_key, name FROM cookies`,
+              b.kind === "firefox"
+                ? sql`SELECT host AS host_key, name FROM moz_cookies WHERE originAttributes = ''`
+                : Effect.flatMap(hasPartitions(sql), (partitioned) =>
+                    partitioned ? sql`SELECT host_key, name FROM cookies WHERE top_frame_site_key = ''` : sql`SELECT host_key, name FROM cookies`,
+                  ),
             )
             return got === null ? [] : Option.getOrElse(decode(got), () => [])
           }),
@@ -265,13 +283,19 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
                 ? Effect.zipWith(
                     sql`SELECT host AS host_key, name, CAST('' AS BLOB) AS encrypted_value, value, path,
                        CAST(expiry AS TEXT) AS expires_utc, isSecure AS is_secure, isHttpOnly AS is_httponly, sameSite AS samesite
-                       FROM moz_cookies`,
+                       FROM moz_cookies WHERE originAttributes = ''`,
                     sql`SELECT CAST(user_version AS TEXT) AS value FROM pragma_user_version`,
                     (rows, meta) => ({ rows, meta }),
                   )
                 : Effect.zipWith(
-                    sql`SELECT host_key, name, encrypted_value, CAST(value AS TEXT) AS value, path,
-                       CAST(expires_utc AS TEXT) AS expires_utc, is_secure, is_httponly, samesite FROM cookies`,
+                    Effect.flatMap(hasPartitions(sql), (partitioned) =>
+                      partitioned
+                        ? sql`SELECT host_key, name, encrypted_value, CAST(value AS TEXT) AS value, path,
+                           CAST(expires_utc AS TEXT) AS expires_utc, is_secure, is_httponly, samesite FROM cookies
+                           WHERE top_frame_site_key = ''`
+                        : sql`SELECT host_key, name, encrypted_value, CAST(value AS TEXT) AS value, path,
+                           CAST(expires_utc AS TEXT) AS expires_utc, is_secure, is_httponly, samesite FROM cookies`,
+                    ),
                     sql`SELECT CAST(value AS TEXT) AS value FROM meta WHERE key = 'version'`,
                     (rows, meta) => ({ rows, meta }),
                   ),
@@ -344,7 +368,9 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
         read: { readonly rows: ReadonlyArray<CookieRead>; readonly version: number },
         wanted: ReadonlySet<string>,
       ) {
-        const keep = read.rows.filter((c) => [...wanted].some((w) => hostKeyInSite(c.host_key, w)))
+        // Picked by the rule the sites were listed by: a site nested under another (`mybucket.s3.amazonaws.com` under
+        // `amazonaws.com`, the public suffix list's private section) is its own, and isn't sent with it.
+        const keep = read.rows.filter((c) => wanted.has(siteOf(c.host_key)))
         if (b.kind === "firefox") return { cookies: keep.map((c) => firefoxCookie(c, read.version)), appBound: 0, unread: 0 }
         const requireDigest = read.version >= DIGEST_VERSION
         let appBound = 0

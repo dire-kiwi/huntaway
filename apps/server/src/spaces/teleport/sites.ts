@@ -2,10 +2,11 @@ import { parse } from "tldts"
 
 // Grouping a browser profile's cookies and localStorage into "sites" the Bring-sign-ins dialog lists (HE-49), and the
 // rules for what it pre-ticks. A site is a registrable domain by the public suffix list (`tldts`, its private section
-// too, as browsers use it: `github.com`, `bbc.co.uk`, `amazon.com.mx`, `someone.github.io`): its cookies are every row
-// whose host_key is the domain or a subdomain of it, its localStorage every origin under it. A host with no registrable
-// domain (an IP address, `localhost`, a bare suffix) is a site of its own that matches only itself, so no site ever
-// takes in its siblings. No I/O here.
+// too, as browsers use it: `github.com`, `bbc.co.uk`, `amazon.com.mx`, `someone.github.io`). A cookie or a localStorage
+// origin belongs to the site `siteOf` names for its host, and to no other: listing, counting and sending all go by that
+// one rule, so a site nested under another by the list's private section (`mybucket.s3.amazonaws.com` under
+// `amazonaws.com`) is listed, counted and sent on its own. A host with no registrable domain (an IP address,
+// `localhost`, a bare suffix) is a site of its own. No I/O here.
 
 /** The public suffix list as browsers read it: its ICANN and private sections. */
 const PSL = { allowPrivateDomains: true }
@@ -32,21 +33,10 @@ export const siteOf = (host: string): string => {
   return h === "" ? "" : (registrable(h) ?? h)
 }
 
-/** Whether `site` is a host of its own (an IP address, `localhost`, `foo.local`, a bare suffix): it matches only itself. */
-const exact = (site: string): boolean => registrable(site) !== site
-
 /** Whether `s` is a public suffix (`com`, `co.kr`, `github.io`): never a site to send, it would hold everyone's cookies. */
 export const isPublicSuffix = (s: string): boolean => {
   const p = parse(normalizeHost(s), PSL)
   return p.isIp !== true && p.domain === null && p.publicSuffix === normalizeHost(s) && (p.isIcann === true || p.isPrivate === true)
-}
-
-/** Whether a cookie's host_key belongs to `site`: the site itself or, for a registrable domain, a subdomain of it. */
-export const hostKeyInSite = (hostKey: string, site: string): boolean => {
-  const h = normalizeHost(hostKey)
-  const a = normalizeHost(site)
-  if (a === "" || h === "") return false
-  return h === a || (!exact(a) && h.endsWith(`.${a}`))
 }
 
 /** The host of an origin (`https://github.com:443` → `github.com`), or "" when it doesn't parse. */
@@ -59,29 +49,19 @@ export const originHost = (origin: string): string => {
 }
 
 /**
- * Identity providers, by registrable domain: a teleport of these alone signs the Space into nothing of the user's, and
- * a teleport of them with a site they sign in to would hand over the account itself. Never pre-ticked (the design);
- * the user may still tick one.
+ * Identity providers: a teleport of them hands over the account itself (Google's session cookies are on every
+ * `google.<country>` the user visited, not only google.com). Never pre-ticked (the design); the user may still tick
+ * one. By the name before the public suffix, for the providers that have country domains (`google.co.nz`, `apple.de`,
+ * `microsoft.com.au`), and by whole domain for the rest.
  */
-export const IDENTITY_PROVIDERS = new Set([
-  "google.com",
-  "accounts.google.com",
-  "gstatic.com",
-  "microsoft.com",
-  "microsoftonline.com",
-  "live.com",
-  "office.com",
-  "apple.com",
-  "icloud.com",
-  "okta.com",
-  "oktacdn.com",
-  "auth0.com",
-])
+const PROVIDER_NAMES: ReadonlySet<string> = new Set(["google", "gstatic", "microsoft", "microsoftonline", "apple", "okta", "oktapreview", "okta-emea", "auth0"])
+const PROVIDER_DOMAINS: ReadonlySet<string> = new Set(["live.com", "office.com", "icloud.com", "oktacdn.com"])
 
-/** Whether `site` is an identity provider (its registrable domain is one, or it is an Okta/Auth0 tenant). */
+/** Whether `site` is an identity provider's (any of its subdomains or country domains). */
 export const isIdentityProvider = (site: string): boolean => {
-  const s = normalizeHost(site)
-  return IDENTITY_PROVIDERS.has(s) || s.endsWith(".okta.com") || s.endsWith(".okta-emea.com") || s.endsWith(".auth0.com")
+  const s = siteOf(site)
+  const name = parse(s, PSL).domainWithoutSuffix
+  return PROVIDER_DOMAINS.has(s) || (name !== null && PROVIDER_NAMES.has(name))
 }
 
 const SIGNED_IN_HINTS = ["session", "sess", "sid", "auth", "token", "login", "logged_in", "secure_", "remember", "oauth", "jwt", "account"]

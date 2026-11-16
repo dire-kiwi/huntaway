@@ -1,7 +1,8 @@
 import { NodeServices } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Context, Effect, FileSystem, Layer, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Result, Schema } from "effect"
+import { Base64 } from "effect/encoding"
 import { SqlClient } from "effect/sql"
 import { fakeDocker, fakeSpacesd, tempDir, TestBoard } from "@huntaway/testing"
 import { Spaces } from "./Spaces.ts"
@@ -9,8 +10,9 @@ import { Teleport } from "./Teleport.ts"
 
 // HE-49: Teleport reading a current Firefox (147 and later keep profiles under `~/.config/mozilla/firefox`; from schema
 // 16, Firefox 142, `moz_cookies.expiry` is in milliseconds; `SAMESITE_UNSET` is 256), and sending what `sites` lists,
-// `localhost` included, but nothing wider than a site of the profile's. Over a fake Docker CLI and a fake spacesd that
-// keeps each bundle.
+// `localhost` included, but nothing wider than a site of the profile's: not a partitioned or container cookie (sent as
+// first-party it could replace the real one), nor a site nested under a picked one by the public suffix list's private
+// section. Over a fake Docker CLI and a fake spacesd that keeps each bundle.
 
 /** Chrome's epoch offset: microseconds between 1601 and 1970. */
 const CHROME_EPOCH_MICROS = 11644473600 * 1_000_000
@@ -31,9 +33,13 @@ const firefoxProfile = (home: string) =>
       yield* sql`CREATE TABLE moz_cookies (id INTEGER PRIMARY KEY, originAttributes TEXT NOT NULL DEFAULT '', name TEXT, value TEXT,
                  host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER, creationTime INTEGER, isSecure INTEGER,
                  isHttpOnly INTEGER, sameSite INTEGER)`
-      yield* sql`INSERT INTO moz_cookies (name, value, host, path, expiry, isSecure, isHttpOnly, sameSite)
-                 VALUES ('sid', 'ex-secret', '.example.com', '/', ${EXPIRY_MS}, 1, 1, 256),
-                        ('session', 'dev-secret', 'localhost', '/', ${EXPIRY_MS}, 0, 1, 1)`
+      yield* sql`INSERT INTO moz_cookies (originAttributes, name, value, host, path, expiry, isSecure, isHttpOnly, sameSite)
+                 VALUES ('', 'sid', 'ex-secret', '.example.com', '/', ${EXPIRY_MS}, 1, 1, 256),
+                        ('', 'session', 'dev-secret', 'localhost', '/', ${EXPIRY_MS}, 0, 1, 1),
+                        ('^partitionKey=%28https%2Cother.example%29', 'sid', 'third-party', '.example.com', '/', ${EXPIRY_MS}, 1, 1, 0),
+                        ('^userContextId=2', 'sid', 'work-account', '.example.com', '/', ${EXPIRY_MS}, 1, 1, 0),
+                        ('', 'aws-sid', 'aws-secret', 'sts.amazonaws.com', '/', ${EXPIRY_MS}, 1, 1, 0),
+                        ('', 'bucket', 'bucket-secret', 'mybucket.s3.amazonaws.com', '/', ${EXPIRY_MS}, 1, 1, 0)`
     }).pipe(Effect.orDie),
   )
 
@@ -52,7 +58,7 @@ const tarFile = (tar: Uint8Array, name: string): string | null => {
 }
 
 const Cookies = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ host_key: Schema.String, name: Schema.String, expires_utc: Schema.Finite, samesite: Schema.Finite })),
+  Schema.Array(Schema.Struct({ host_key: Schema.String, name: Schema.String, value: Schema.String, expires_utc: Schema.Finite, samesite: Schema.Finite })),
 )
 
 describe("Teleport", () => {
@@ -71,7 +77,15 @@ describe("Teleport", () => {
           const firefox = sources.find((s) => s.key === "firefox")
           assert.deepStrictEqual(firefox?.profiles, [{ id: "abcd.default-release", label: "default-release" }])
           const listed = yield* teleport.sites("firefox", "abcd.default-release")
-          assert.deepStrictEqual(listed.sites.map((s) => s.site).toSorted(), ["example.com", "localhost"])
+          assert.deepStrictEqual(
+            listed.sites.map((s) => [s.site, s.cookie_count]).toSorted((a, b) => String(a[0]).localeCompare(String(b[0]))),
+            [
+              ["amazonaws.com", 1],
+              ["example.com", 1],
+              ["localhost", 1],
+              ["mybucket.s3.amazonaws.com", 1],
+            ],
+          )
 
           const spaces = yield* Spaces
           const made = yield* spaces.create({ name: "Fox" })
@@ -81,7 +95,12 @@ describe("Teleport", () => {
           assert.strictEqual(wide._tag, "Invalid")
           assert.lengthOf(spacesd.teleports, 0)
 
-          const r = yield* teleport.bring({ id: made.id, browser: "firefox", profile: "abcd.default-release", sites: ["example.com", "localhost"] })
+          const r = yield* teleport.bring({
+            id: made.id,
+            browser: "firefox",
+            profile: "abcd.default-release",
+            sites: ["example.com", "localhost", "amazonaws.com"],
+          })
           assert.strictEqual(r.import.app, "firefox")
           const sent = tarFile(spacesd.teleports[0]?.bundle ?? new Uint8Array(), "cookies.json")
           const cookies = yield* Schema.decodeUnknownEffect(Cookies)(sent).pipe(Effect.orDie)
@@ -91,7 +110,9 @@ describe("Teleport", () => {
           // Firefox's SAMESITE_UNSET (256) is unspecified, not Strict; Lax stays Lax.
           assert.strictEqual(sid?.samesite, -1)
           assert.strictEqual(cookies.find((c) => c.name === "session")?.samesite, 1)
-          assert.deepStrictEqual(cookies.map((c) => c.host_key).toSorted(), [".example.com", "localhost"])
+          // Only the first-party, default-container sid; and amazonaws.com without the bucket nested under it.
+          assert.deepStrictEqual(cookies.map((c) => c.host_key).toSorted(), [".example.com", "localhost", "sts.amazonaws.com"])
+          assert.strictEqual(new TextDecoder().decode(Result.getOrElse(Base64.decode(sid?.value ?? ""), () => new Uint8Array())), "ex-secret")
         }).pipe(Effect.provide(TestBoard({ dockerBin: docker.bin, home, configHome: `${home}/.config` })))
       }).pipe(Effect.provide(NodeServices.layer)),
     30_000,
