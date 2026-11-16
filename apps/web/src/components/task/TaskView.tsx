@@ -30,13 +30,14 @@ import { useNarrow } from "../../narrow"
 import { openingTab } from "./openingTab"
 import { useSubagentView } from "./thread/subagentView"
 import { AgentIcon } from "../ui/AgentIcon"
+import { AgentsPill } from "../layout/AgentsPill"
 import { ContextPill } from "./Context"
 import { TaskTypeBadge } from "./documentInfo"
 import { ReminderButton, StarButton, useCanMark } from "./Reminders"
 import { Button, IconButton } from "../ui"
 import { DetailsSide } from "./view/details/Details"
 import { KeyItems } from "./view/details/KeyItems"
-import { PanelButtons, useWide, type Mode, type Tab } from "./view/layout"
+import { PanelButtons, useControlsFit, useWide, type Mode, type Tab } from "./view/layout"
 import { TabContent } from "./view/TabContent"
 import { TitleEditor } from "./view/Title"
 import { ReviewDot } from "./Review"
@@ -51,9 +52,7 @@ import { isWorkflowTab, useWorkflowRuns, workflowRunning, workflowTab, workflowT
 
 // Step 1 (docs/plan/09-frontend.md, "Step 1 as done for task/"): what the task view has that needs a later milestone is
 // left out here, each with a note: the browser pane (M6; the desktop view, 6.10, has a fixed half of the width until the
-// browser's splitter comes),
-// and the Agents pill (layout/AgentsPill, with the layout's later pieces). Subprojects are a
-// legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
+// browser's splitter comes). Subprojects are a legacy branch, deleted. The assistant's brief, memory, routines and action log tabs, and finding a routine's thread,
 // are 6.7's.
 
 /** The column beside the main area, where there's room: the key items, or beside the Details tab the rest of the details. */
@@ -178,7 +177,9 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const host = useHost(task?.host_id)
   const profileName = useProfileName(task)
   const agents = canRunAgents(host)
-  const [rootRef, wide] = useWide()
+  const [rootRef, wide, width] = useWide()
+  // The controls beside the title, while they fit there; else in a row of their own.
+  const [titleRowRef, controlsInRow] = useControlsFit(wide, width, taskId)
   const narrow = useNarrow()
   const canMark = useCanMark(task)
   const [markErr, setMarkErr] = useState<string | null>(null)
@@ -353,6 +354,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const controls = (
     <>
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
+      <AgentsPill task={task} onReveal={() => setTab("thread")} />
       <ContextPill task={task} />
       <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
         {tabs.map((t) => (
@@ -411,7 +413,7 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   return (
     <div ref={rootRef} className="flex h-full min-h-0 flex-col">
       <header className={clsx("shrink-0 border-b border-line", mode === "page" && "drag")}>
-        <div className="flex h-12 items-center gap-2 px-3">
+        <div ref={titleRowRef} className="flex h-12 items-center gap-2 px-3">
           {(mode === "page" || narrow) && (
             <IconButton
               className="no-drag narrow:-ml-1.5"
@@ -451,13 +453,13 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
             </span>
           )}
           <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
-            {wide && controls}
+            {controlsInRow && controls}
             {narrow && run}
             {mode !== "page" && <PanelButtons mode={mode} />}
           </div>
         </div>
         {/* A phone's row scrolls sideways, with the tabs first (and Start or Stop in the row above), fading out at the edge. */}
-        {!wide && (
+        {!controlsInRow && (
           <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2 narrow:flex-nowrap narrow:overflow-x-auto narrow:pr-4 narrow:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] narrow:[scrollbar-width:none] narrow:*:shrink-0">
             {controls}
           </div>

@@ -1,6 +1,5 @@
 // A review thread's own view (plan task 4.6; the old view/ReviewThreadView.tsx): a reviewer's, summarizer's or workflow
-// step's conversation, beside the review or summary it's working on. Left out until the layout's later pieces: the
-// Agents pill (layout/AgentsPill).
+// step's conversation, beside the review or summary it's working on.
 import { isSummaryThread, isWorkflowThread, type HostTask as Task } from "@huntaway/client"
 import { clsx } from "clsx"
 import { ChevronLeft, ChevronRight, GitBranch, Square, X } from "lucide-react"
@@ -9,11 +8,12 @@ import { useBoard } from "../../../state/board"
 import { navigate, openTask } from "../../../state/route"
 import { exitError, useMutation } from "../../../state/mutation"
 import { useProject } from "../../boardHelpers"
+import { AgentsPill } from "../../layout/AgentsPill"
 import { ContextPill } from "../Context"
 import { ChangeSummaryView, reviewParts, ReviewSummary } from "../Review"
 import { Thread } from "../Thread"
 import { Button, cost, IconButton } from "../../ui"
-import { PanelButtons, useWide, type Mode } from "./layout"
+import { PanelButtons, useControlsFit, useWide, type Mode } from "./layout"
 import { Row, Section } from "./details/Section"
 
 const NO_REVIEW = <div className="rounded-xl border border-dashed border-line p-6 text-center text-[13px] text-muted">No review has run yet.</div>
@@ -24,7 +24,9 @@ const NO_SUMMARY = <div className="rounded-xl border border-dashed border-line p
 export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode }) {
   const parent = useBoard((s) => (thread.parent_id ? s.tasks[thread.parent_id] : undefined))
   const project = useProject(thread.project_id)
-  const [rootRef, wide] = useWide()
+  const [rootRef, wide, width] = useWide()
+  // The pills and Stop beside the title while they fit (in the side panel they often don't); else in a row of their own.
+  const [titleRowRef, controlsInRow] = useControlsFit(true, width, thread.id)
   const key = parent && `${project?.key ?? "T"}-${parent.number}`
   // Which of the task's reviewers this is, when it has several. A summary thread summarises its changes instead.
   const reviewer = parent?.review ? reviewParts(parent.review).find((p) => p.thread_id === thread.id)?.label : undefined
@@ -42,48 +44,57 @@ export function ReviewThreadView({ thread, mode }: { thread: Task; mode: Mode })
     })
   }
   const err = stopErr?.thread === thread.id ? stopErr.text : null
+  const controls = (
+    <>
+      <AgentsPill task={thread} />
+      <ContextPill task={thread} />
+      {thread.running && (
+        <Button size="sm" onClick={stop}>
+          <Square size={11} fill="currentColor" /> Stop
+        </Button>
+      )}
+    </>
+  )
   return (
     <div ref={rootRef} className="flex h-full min-h-0 flex-col">
-      <header className={clsx("flex h-12 shrink-0 items-center gap-2 border-b border-line px-3", mode === "page" && "drag")}>
-        <IconButton className="no-drag narrow:-ml-1.5" title="Back" onClick={back}>
-          <ChevronLeft size={16} />
-        </IconButton>
-        <button
-          className="no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden"
-          onClick={() => project && navigate({ name: "board", projectId: project.id })}
-        >
-          {project?.name}
-        </button>
-        <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
-        {parent && (
-          <>
-            <button className="no-drag shrink-0 font-mono text-[12px] text-faint hover:text-fg" onClick={back}>
-              {key}
-            </button>
-            <ChevronRight size={12} className="shrink-0 text-faint" />
-          </>
-        )}
-        <h1 className="min-w-0 truncate text-[13.5px] font-medium">
-          {step ? (
-            thread.title
-          ) : summary ? (
-            "Summary"
-          ) : (
+      <header className={clsx("shrink-0 border-b border-line", mode === "page" && "drag")}>
+        <div ref={titleRowRef} className="flex h-12 items-center gap-2 px-3">
+          <IconButton className="no-drag narrow:-ml-1.5" title="Back" onClick={back}>
+            <ChevronLeft size={16} />
+          </IconButton>
+          <button
+            className="no-drag shrink-0 text-[12.5px] text-muted hover:text-fg narrow:hidden"
+            onClick={() => project && navigate({ name: "board", projectId: project.id })}
+          >
+            {project?.name}
+          </button>
+          <ChevronRight size={12} className="shrink-0 text-faint narrow:hidden" />
+          {parent && (
             <>
-              Review
-              {reviewer && parent?.review && parent.review.reviewers.length > 1 && <span className="font-normal text-muted"> · {reviewer}</span>}
+              <button className="no-drag shrink-0 font-mono text-[12px] text-faint hover:text-fg" onClick={back}>
+                {key}
+              </button>
+              <ChevronRight size={12} className="shrink-0 text-faint" />
             </>
           )}
-        </h1>
-        <div className="no-drag ml-auto flex items-center gap-2">
-          <ContextPill task={thread} />
-          {thread.running && (
-            <Button size="sm" onClick={stop}>
-              <Square size={11} fill="currentColor" /> Stop
-            </Button>
-          )}
-          {mode !== "page" && <PanelButtons mode={mode} />}
+          <h1 className="min-w-0 truncate text-[13.5px] font-medium">
+            {step ? (
+              thread.title
+            ) : summary ? (
+              "Summary"
+            ) : (
+              <>
+                Review
+                {reviewer && parent?.review && parent.review.reviewers.length > 1 && <span className="font-normal text-muted"> · {reviewer}</span>}
+              </>
+            )}
+          </h1>
+          <div className="no-drag ml-auto flex shrink-0 items-center gap-2">
+            {controlsInRow && controls}
+            {mode !== "page" && <PanelButtons mode={mode} />}
+          </div>
         </div>
+        {!controlsInRow && <div className="no-drag flex flex-wrap items-center gap-2 px-3 pb-2">{controls}</div>}
       </header>
       {err && (
         <div className="flex shrink-0 items-start gap-1 border-b border-line px-3 py-2 text-[11.5px] text-red-400">

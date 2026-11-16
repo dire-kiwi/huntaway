@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react"
 import { errorText } from "../../state/mutation"
 
 // An error's message, for showing: state/mutation.ts's.
@@ -21,9 +21,10 @@ export function useDraft<T>(value: T, hold = false) {
 
 /**
  * Closes a popover on a press outside it or Escape, while it's `open`: put the returned ref on the element that holds
- * both the popover and the button that opens it, so a press on the button isn't one outside.
+ * both the popover and the button that opens it, so a press on the button isn't one outside. A popover drawn elsewhere
+ * (through a portal) passes its own element as `inside`, so a press on it isn't one outside either.
  */
-export function useDismiss<T extends HTMLElement>(open: boolean, close: () => void) {
+export function useDismiss<T extends HTMLElement>(open: boolean, close: () => void, inside?: RefObject<HTMLElement | null>) {
   const root = useRef<T>(null)
   const latest = useRef(close)
   useLayoutEffect(() => {
@@ -32,7 +33,7 @@ export function useDismiss<T extends HTMLElement>(open: boolean, close: () => vo
   useEffect(() => {
     if (!open) return undefined
     const onDown = (e: MouseEvent) => {
-      if (!(e.target instanceof Node && root.current?.contains(e.target))) latest.current()
+      if (!(e.target instanceof Node && (root.current?.contains(e.target) || inside?.current?.contains(e.target)))) latest.current()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
@@ -46,6 +47,6 @@ export function useDismiss<T extends HTMLElement>(open: boolean, close: () => vo
       document.removeEventListener("mousedown", onDown)
       document.removeEventListener("keydown", onKey, true)
     }
-  }, [open])
+  }, [open, inside])
   return root
 }
