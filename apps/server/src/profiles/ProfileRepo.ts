@@ -62,7 +62,10 @@ export interface ProfileRepoShape {
   readonly asanaToken: (id: ProfileId) => Effect.Effect<Redacted.Redacted | null>
   /** How many of the profile's tasks have an agent running. */
   readonly running: (id: ProfileId) => Effect.Effect<number>
-  /** How many projects and tasks the profile has here: what keeps settings sync from deleting it (HE-46). */
+  /**
+   * How many projects, tasks, automations, pens, documents (and their images) and docs site connections the profile has
+   * here: everything deleting it deletes, and what keeps settings sync from deleting it (HE-46).
+   */
   readonly holds: (id: ProfileId) => Effect.Effect<number>
   /** Notes that the profile was called `from` (HE-46): settings sync tells a rename from a removal by it. */
   readonly renamed: (id: ProfileId, from: string) => Effect.Effect<void>
@@ -127,9 +130,11 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
         )
 
       const holds = (id: ProfileId) =>
-        sql<{
-          readonly n: number
-        }>`SELECT (SELECT COUNT(*) FROM projects WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM tasks WHERE profile_id = ${id}) AS n`.pipe(
+        sql<{ readonly n: number }>`SELECT
+            (SELECT COUNT(*) FROM projects WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM tasks WHERE profile_id = ${id})
+            + (SELECT COUNT(*) FROM automations WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM pens WHERE profile_id = ${id})
+            + (SELECT COUNT(*) FROM docs WHERE profile_id = ${id}) + (SELECT COUNT(*) FROM doc_images WHERE profile_id = ${id})
+            + (SELECT COUNT(*) FROM docs_site_connections WHERE profile_id = ${id}) AS n`.pipe(
           Effect.map((rows) => rows[0]?.n ?? 0),
           Effect.orDie,
         )

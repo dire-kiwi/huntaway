@@ -12,6 +12,7 @@ import { Actor } from "../platform/Changes.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import { Profiles } from "../profiles/Profiles.ts"
+import { Pens } from "../tasks/Pens.ts"
 import { Tasks } from "../tasks/Tasks.ts"
 import { HostSettings } from "../settings/HostSettings.ts"
 import { SettingsRepo } from "../settings/SettingsRepo.ts"
@@ -37,6 +38,7 @@ const boardAs = (id: string) =>
     const rulesRepo = Context.get(context, ApprovalRulesRepo)
     const tools = Context.get(context, AgentTools)
     const tasks = Context.get(context, Tasks)
+    const pens = Context.get(context, Pens)
     const configs = Context.get(context, AgentConfigs)
     const folders = Context.get(context, DataDir)
     const peer: SyncPeer = { id, name: id, get: sync.status, merge: (entries) => Effect.ignore(sync.merge(entries)) }
@@ -71,6 +73,9 @@ const boardAs = (id: string) =>
       clones: folders.file("skill-sources"),
       /** A scratch task in `profile`: something of the profile's on this host. */
       task: (profile: string) => Effect.orDie(tasks.create({ profile_id: ProfileId.make(profile), title: "Notes" }, Actor.user)),
+      pens,
+      folder: (profile: string) => folders.profileDir(ProfileId.make(profile)),
+      exists: (path: string) => Effect.orDie(fs.exists(path)),
       /** The host's global skills and servers, changed as the board does it and noted. */
       tools,
       noted: <A, E>(change: Effect.Effect<A, E>) =>
@@ -476,6 +481,37 @@ describe("settings sync between a hub and two hosts", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   )
 
+  it.effect("a profile removed elsewhere stays while it has a pen here, and goes with its folder once it has none (HE-46 review)", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      const pa = yield* t.a.profile({ name: "side" })
+      yield* t.settle()
+      const onB = ProfileId.make((yield* t.b.profiles.list).find((p) => p.name === "side")?.id ?? "")
+      // A pen is no project or task, but deleting the profile deletes it.
+      const pen = yield* Effect.orDie(t.b.pens.create({ profile_id: onB, name: "Ideas" }))
+      yield* Effect.orDie(t.a.profiles.delete(pa.id))
+      yield* t.a.sync.observe
+      yield* t.settle([t.hub, t.a])
+      assert.isTrue((yield* t.b.profiles.list).some((p) => p.name === "side"))
+      assert.deepStrictEqual(
+        (yield* Effect.orDie(t.b.pens.list(onB))).map((p) => p.name),
+        ["Ideas"],
+      )
+      assert.isTrue(yield* t.b.exists(t.b.folder(onB)))
+
+      // The pen gone, the removal waiting on b is taken, and the profile's folder goes after it.
+      yield* Effect.orDie(t.b.pens.delete(pen.id, Actor.user))
+      yield* t.settle()
+      assert.isFalse((yield* t.b.profiles.list).some((p) => p.name === "side"))
+      // Removed by `Profiles.folders` on the `profiles_changed` the removal sent: waited for, as it reads the disk.
+      const gone = yield* t.b.exists(t.b.folder(onB)).pipe(
+        Effect.tap(() => Effect.yieldNow),
+        Effect.repeat({ until: (there) => !there, times: 10_000 }),
+      )
+      assert.isFalse(gone)
+    }).pipe(Effect.provide(NodeServices.layer)),
+  )
+
   it.effect("a change the server makes itself is a change, and a value a host can't take stays out of its settings", () =>
     Effect.gen(function* () {
       const t = yield* board()
@@ -699,7 +735,7 @@ describe("settings sync of the rest of the board (HE-46)", () => {
       yield* t.settle()
       yield* t.a.patch(work.id, { reviewers: [{ claude_config_id: mainA.id, model: "opus", effort: null }] })
       yield* t.a.noted(t.a.tools.setSwitch({ scope: "profile", scope_id: work.id, item_id: x.id, enabled: true }))
-      yield* t.a.noted(t.a.configs.update(mainA.id, { show_usage: false, restart_window: true }))
+      yield* t.a.noted(t.a.configs.update(mainA.id, { show_usage: false, restart_window: true, api_url: "http://localhost:8317", api_key: "sk-a" }))
       yield* t.settle()
 
       const onB = (yield* t.b.profiles.list).find((p) => p.name === "work")
@@ -711,7 +747,8 @@ describe("settings sync of the rest of the board (HE-46)", () => {
       const xOnB = (yield* t.b.tools.global).skills.find((k) => k.name === "deploy")
       assert.deepStrictEqual((yield* t.b.tools.global).profile_switches[ProfileId.make(onB?.id ?? "")], { [xOnB?.id ?? ""]: true })
       const bMain = (yield* Effect.orDie(t.b.configs.list)).find((c) => c.id === mainB.id)
-      assert.deepStrictEqual([bMain?.show_usage, bMain?.restart_window, bMain?.config_dir], [false, true, "/b/claude"])
+      // Its proxy goes with its key, which stays where it is: b's "main" keeps none.
+      assert.deepStrictEqual([bMain?.show_usage, bMain?.restart_window, bMain?.config_dir, bMain?.api_url ?? null], [false, true, "/b/claude", null])
 
       // The hub has no config of that name: its "work" waits with none, and doesn't send that back as a change.
       const onHub = (yield* t.hub.profiles.list).find((p) => p.name === "work")

@@ -337,13 +337,15 @@ show as one board on every one of them.
   the value that lost is kept to use instead); what changed is how much of the board it holds
   (`hosts/settingsSync/boardFields.ts`):
   - **Profiles themselves**: `profile/<name>/exists` (true, null once removed, or `{ renamed_to }`). A profile one host
-    has is made on the others (a row with no configs, then its other fields; `Profiles.scratchDirs` makes its scratch
+    has is made on the others (a row with no configs, then its other fields; `Profiles.folders` makes its scratch
     folder). A rename is kept as the profile's former name (`profile_former_names`, `ProfileRepo.renamed`), so the old
     name reads `{ renamed_to }` and the other hosts rename theirs (a change of case too), with its work, in place of an empty one of the new name
     that sync may have made first. A name a profile takes is no former name any more (`ProfileRepo.insert`, `update`),
-    so a new profile of an old name, removed, reads as removed. One removed is removed elsewhere only where it has no projects and no tasks
-    (`ProfileRepo.holds`): sync never deletes work, and the value it couldn't take waits (it isn't sent back as a change)
-    until the profile holds nothing there.
+    so a new profile of an old name, removed, reads as removed. One removed is removed elsewhere only where it holds nothing (`ProfileRepo.holds`:
+    no projects, tasks, automations, pens, documents or their images, or docs site connection, all of which deleting a
+    profile deletes; on review of HE-46): sync never deletes work, and the value it couldn't take waits (it isn't sent
+    back as a change) until the profile holds nothing there. Its folder goes after, as `Profiles.delete` removes it
+    (`Profiles.folders`, on `profiles_changed`).
   - **More of a profile**: `asana_enabled`, `telemetry`, `telemetry_titles`, `tint`; its configs (`configs`), its
     assistant's and threads' config, and its reviewers' and summarizers' configs, all by config name; its switches for
     global skills and servers (`tool_switches`, `skill:<name>` and `mcp:<name>`). Its configs are one field each,
@@ -351,12 +353,13 @@ show as one board on every one of them.
     have none of; one taken off resets the assistant's and threads' config if it was theirs, as `Profiles.update` does.
     Agent configs and their names are each host's own, so a config renamed or deleted on one host isn't taken off the
     profile elsewhere: a field is looked at only while this host has a config of its name.
-  - **Agent configs' options by config name**: `config/<name>/show_usage`, `restart_window`, `api_url`.
+  - **Agent configs' options by config name**: `config/<name>/show_usage`, `restart_window`. Not `api_url`: a proxy goes
+    with the key for it, which stays on its host, and may be one only that host reaches (on review of HE-46).
   - **Skill sources**: `skill_source/<url>|<ref>|<folder>`. A host takes one with no commit, and `AgentTools.catchUp`
     (at the start and on every `agent_tools_changed`) clones it there and deletes the clones of sources removed.
   - A value naming a config, skill or server this host lacks is taken in part or not at all, and taken again once it has
     it: settings sync's "couldn't take" path, which never sends this host's value back as a change. Paths (`clone_dir`,
-    `config_dir`), logins and keys (`asana_token`, configs' keys, telemetry's password), `assistant_host`,
+    `config_dir`), logins and keys (`asana_token`, configs' keys and proxies, telemetry's password), `assistant_host`,
     `scratch_host`, `public_url`, the host's role, its links and every browser's own preferences stay where they are.
 - Tested: `hosts/Mesh.test.ts` (the path vector), `hosts/SettingsSync.test.ts` (skills and servers), and
   `tests/e2e/hosts-mesh.test.ts` (three servers in a chain by URL, a host dialled in to a hub, each switch turned off,

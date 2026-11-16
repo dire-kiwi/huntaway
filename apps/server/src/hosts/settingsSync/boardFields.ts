@@ -259,8 +259,9 @@ export const makeBoardFields = Effect.gen(function* () {
    * Whether a profile of that name is on the board: true, null once removed, or `{ renamed_to }` once renamed (its former
    * names are kept, `ProfileRepo.renamed`). One another host made is made here (no configs but those its other fields
    * name, once they are applied). One renamed elsewhere is renamed here, in place of an empty one of the new name sync may
-   * have made first. One removed elsewhere is removed here only while it has no projects and no tasks here: sync never
-   * deletes work, and the profile stays until it holds none.
+   * have made first. One removed elsewhere is removed here only while it holds nothing here (`ProfileRepo.holds`: no
+   * projects, tasks, automations, pens, documents or docs site connection): sync never deletes work, and the profile
+   * stays until it holds none. Its folder goes after (`Profiles.folders`).
    */
   const exists = (name: string): BoardField => ({
     name: profilePrefix(name) + EXISTS,
@@ -284,7 +285,7 @@ export const makeBoardFields = Effect.gen(function* () {
           if (p === undefined) return yield* Effect.void
           const there = yield* byName(to.renamed_to)
           if (there !== undefined) {
-            if ((yield* profiles.holds(there.id)) > 0) return yield* Effect.fail(`a profile ${to.renamed_to} with projects or tasks is here too`)
+            if ((yield* profiles.holds(there.id)) > 0) return yield* Effect.fail(`a profile ${to.renamed_to} that holds work here is here too`)
             yield* profiles.delete(there.id)
           } else if ((yield* profiles.list).some((o) => o.id !== p.id && sameName(o.name, to.renamed_to))) {
             return yield* Effect.fail(`a profile ${to.renamed_to} in another case is here`)
@@ -293,25 +294,22 @@ export const makeBoardFields = Effect.gen(function* () {
           return yield* profiles.renamed(p.id, name)
         }
         if (p === undefined) return yield* Effect.void
-        if ((yield* profiles.holds(p.id)) > 0) return yield* Effect.fail("it has projects or tasks on this host, which aren't deleted by sync")
+        if ((yield* profiles.holds(p.id)) > 0)
+          return yield* Effect.fail("it holds projects, tasks, automations, pens or documents on this host, which sync doesn't delete")
         return yield* Effect.asVoid(profiles.delete(p.id))
       }),
     event: "profiles",
     absentUnknown: true,
   })
 
-  /** An agent config's options that mean the same on every host, by its name (its folder and keys stay here). */
-  const configField = (c: AgentConfigRow, key: "show_usage" | "restart_window" | "api_url"): BoardField => ({
+  /**
+   * An agent config's options that mean the same on every host, by its name. Its folder, keys and proxy (`api_url`, which
+   * goes with its key and may be one only this host reaches) stay here.
+   */
+  const configField = (c: AgentConfigRow, key: "show_usage" | "restart_window"): BoardField => ({
     name: configPrefix(c.name) + key,
     read: Effect.map(configs.get(c.id), (o) => (Option.isNone(o) ? null : o.value[key])),
-    write: (v) =>
-      Effect.gen(function* () {
-        if (key === "api_url") {
-          if (v !== null && (typeof v !== "string" || !/^https?:\/\/\S+$/.test(v))) return yield* Effect.fail("must be an http(s) URL or null")
-          return yield* configs.update(c.id, { api_url: v })
-        }
-        return yield* configs.update(c.id, { [key]: yield* bool(v) })
-      }),
+    write: (v) => Effect.flatMap(bool(v), (on) => configs.update(c.id, { [key]: on })),
     event: "profiles",
     absentUnknown: false,
   })
@@ -356,7 +354,7 @@ export const makeBoardFields = Effect.gen(function* () {
       for (const c of yield* configs.list) {
         if (configNamesSeen.has(c.name)) continue
         configNamesSeen.add(c.name)
-        out.push(configField(c, "show_usage"), configField(c, "restart_window"), configField(c, "api_url"))
+        out.push(configField(c, "show_usage"), configField(c, "restart_window"))
       }
       return out
     })

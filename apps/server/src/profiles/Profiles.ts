@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Option, Redacted, Result, Schema, Stream } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Redacted, Ref, Result, Schema, Stream } from "effect"
 import { SecureRandom } from "effect/crypto"
 import { Invalid, LinkId, ProfileId } from "@huntaway/contracts"
 import type { AgentConfigId, AsanaTask, Conflict, NewProfile, Profile, ProfilePatch } from "@huntaway/contracts"
@@ -249,26 +249,31 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
 
   /**
    * Every profile's scratch folder, made at the start and whenever the profiles change: one settings sync made (HE-46)
-   * was made in a transaction, which makes no folders.
+   * was made in a transaction, which makes no folders. And the folder of one that went, as `delete` removes it: one
+   * settings sync removed (HE-46) was removed in a transaction, which removes no folders either.
    */
-  static readonly scratchDirs = Layer.effectDiscard(
+  static readonly folders = Layer.effectDiscard(
     Effect.gen(function* () {
       const repo = yield* ProfileRepo
       const events = yield* Events
       const dataDir = yield* DataDir
       const fs = yield* FileSystem.FileSystem
-      const make = Effect.flatMap(repo.list, (all) =>
-        Effect.forEach(all, (p) => fs.makeDirectory(`${dataDir.profileDir(p.id)}/scratch`, { recursive: true }).pipe(Effect.ignore), {
-          concurrency: 1,
-          discard: true,
-        }),
-      )
+      const known = yield* Ref.make<ReadonlySet<ProfileId>>(new Set())
+      const tidy = Effect.gen(function* () {
+        const all = yield* repo.list
+        for (const p of all) yield* fs.makeDirectory(`${dataDir.profileDir(p.id)}/scratch`, { recursive: true }).pipe(Effect.ignore)
+        const now = new Set(all.map((p) => p.id))
+        const gone = [...(yield* Ref.getAndSet(known, now))].filter((id) => !now.has(id))
+        if (gone.length === 0) return
+        const used = yield* repo.usedPaths
+        for (const id of gone) yield* removeUnusedDir(fs, dataDir.profileDir(id), used, "profile")
+      })
       yield* Effect.gen(function* () {
         const watch = yield* events.watch(undefined)
-        yield* make
+        yield* tidy
         yield* watch.live.pipe(
           Stream.filter((e) => e.type === "profiles_changed"),
-          Stream.runForEach(() => make),
+          Stream.runForEach(() => tidy),
         )
       }).pipe(Effect.scoped, Effect.forever, Effect.forkScoped)
     }),

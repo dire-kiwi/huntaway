@@ -339,7 +339,7 @@ export const PlatformLive = platformLayer(Db.layer)
 
 // Step 4: every area, bottom up. Each line provides the ones above it.
 const SettingsLive = Layer.mergeAll(About.layer, HostSettings.layer, Folders.layer).pipe(Layer.provideMerge(SettingsRepo.layer))
-const ProfilesLive = Layer.mergeAll(Profiles.ensureFromConfig, Profiles.scratchDirs).pipe(
+const ProfilesLive = Layer.mergeAll(Profiles.ensureFromConfig, Profiles.folders).pipe(
   Layer.provideMerge(Layer.mergeAll(Profiles.layer, Usage.layer, ConfigArchives.layer)),
   Layer.provideMerge(AgentConfigs.layer),
   // 6.11: Asana (connecting a profile, its search) and config archives.
