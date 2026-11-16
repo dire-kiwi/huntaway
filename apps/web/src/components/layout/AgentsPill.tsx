@@ -12,10 +12,13 @@ import { useDismiss } from "../ui"
 export function AgentsPill({
   task,
   onReveal,
+  align = "right",
   className,
 }: {
   task: { readonly host_id: string; readonly id: string; readonly running: boolean }
   onReveal?: (() => void) | undefined
+  /** Which of the pill's edges the list hangs from: its right at the right of a header, its left where it's on the left. */
+  align?: "left" | "right" | undefined
   className?: string | undefined
 }) {
   // The thread's own model (itemModel builds it once for both): a long thread's window knows the subagents started
@@ -87,7 +90,12 @@ export function AgentsPill({
             document.body,
           )
         ) : (
-          <div className="absolute top-full right-0 z-30 mt-1.5 max-h-96 w-96 overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl">
+          <div
+            className={clsx(
+              "absolute top-full z-30 mt-1.5 max-h-96 w-96 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-line-strong bg-panel-2 p-1 shadow-xl",
+              align === "left" ? "left-0" : "right-0",
+            )}
+          >
             {items}
           </div>
         ))}

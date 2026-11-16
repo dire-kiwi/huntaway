@@ -352,7 +352,8 @@ export function TaskView({ taskId, mode = "page" }: { taskId: string; mode?: Mod
   const controls = (
     <>
       {canMark && <ReminderButton task={task} onError={setMarkErr} />}
-      <AgentsPill task={task} onReveal={() => setTab("thread")} />
+      {/* Without room, the controls are a row of their own under the title, from the left. */}
+      <AgentsPill task={task} onReveal={() => setTab("thread")} align={wide ? "right" : "left"} />
       <ContextPill task={task} />
       <div className="flex items-center gap-1 rounded-lg border border-line bg-panel p-0.5 narrow:order-first">
         {tabs.map((t) => (

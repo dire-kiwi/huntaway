@@ -248,3 +248,35 @@ test("the Agents list shows in the narrow layout, and opens a subagent", async (
     await ui.run(["wait Show in thread", "wait Subagent searching now.", "gone css=.shadow-xl button:has-text('Explore config')"])
   })
 })
+
+// HE-40 review: with the task view too narrow for the controls beside the title (but not the narrow layout), they are a
+// row of their own from the left, and the list hung from the pill's right edge went off the dialog's left, titles and all.
+test("the Agents list stays within a task view whose controls are in a row of their own", async () => {
+  const task = await threadTask("Subagents in a small window")
+  await withBrowser(server, {}, async (ui) => {
+    const { page } = ui
+    // In the task dialog, and in the side panel beside the board.
+    for (const [size, side] of [
+      ["760x900", ""],
+      ["950x900", ""],
+      ["1400x900", "&side"],
+    ]) {
+      await ui.run([
+        `size ${size}`,
+        `goto /p/${board.project.id}?task=${task.id}${side}`,
+        "click Thread",
+        "wait Main agent's summary.",
+        "click Subagents in this thread",
+      ])
+      const title = page.locator(".shadow-xl button:has-text('Explore config') span.truncate").first()
+      await title.waitFor()
+      const fits = await title.evaluate((el) => {
+        const list = el.closest(".shadow-xl").getBoundingClientRect()
+        const r = el.getBoundingClientRect()
+        return list.left >= 0 && list.right <= window.innerWidth && el.contains(document.elementFromPoint(r.x + 4, r.y + r.height / 2))
+      })
+      assert.ok(fits, `the list isn't all shown at ${size}`)
+      await ui.run(["press Escape", "gone css=.shadow-xl button:has-text('Explore config')"])
+    }
+  })
+})
