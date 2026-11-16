@@ -1,9 +1,11 @@
 import { clsx } from "clsx"
 import { GitBranch, Plus, Trash2 } from "lucide-react"
 import { useAtomValue } from "@effect/atom-react"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import type { McpServer, Skill } from "@huntaway/contracts"
 import { canRunAgents, mutate, query } from "@huntaway/client"
+import { useShallow } from "../../boardHelpers"
+import { HostSelect } from "../hosts/profileFields"
 import { useBoard } from "../../../state/board"
 import { useAction } from "../../../state/mutation"
 import { Button, resultError, resultValue, useConfirm } from "../../ui"
@@ -13,20 +15,38 @@ import { SourceCard, SourceAdder } from "./SkillSources"
 import { PanelHeading } from "../parts"
 import { describe, rejectFailure, type Change } from "./parts"
 
-// Settings → Skills and MCP (6.4; huntaway's settings/agentTools/GlobalAgentToolsPanel.tsx). Picking another host's is
-// M7's (the hosts); every host here has skill sources and subfolders, so the old API checks are gone.
+// Settings → Skills and MCP (6.4; huntaway's settings/agentTools/GlobalAgentToolsPanel.tsx). Every host here has skill
+// sources and subfolders, so the old API checks are gone.
 
-/** A host's global skills and MCP servers, each switched on or off by default per profile. */
+/**
+ * A host's global skills and MCP servers, each switched on or off by default per profile. With several hosts, a picker
+ * says whose: each host keeps its own, and only its own profiles' agents get them. It starts on this board's host if
+ * that has profiles, else on the first that has: a board whose own host has none (a laptop's showing another machine's
+ * projects) would otherwise add skills where no agent runs. The host is settled once the board has loaded and kept
+ * while it's offline (a laptop asleep, a restart), so the panel doesn't remount, losing an open editor, or move a
+ * change to another host; only a host gone from the board is given up.
+ */
 export function GlobalAgentToolsPanel() {
-  const hostId = useBoard((b) => {
-    const usable = b.hosts.filter(canRunAgents)
-    return usable.find((h) => h.local)?.id ?? usable[0]?.id ?? b.localHostId ?? ""
-  })
-  return hostId ? <HostAgentTools hostId={hostId} /> : null
+  const loaded = useBoard((b) => b.loaded)
+  const known = useBoard(useShallow((b) => b.hosts.map((h): string => h.id)))
+  const hosts = useBoard(useShallow((b) => b.hosts.filter(canRunAgents)))
+  const withProfiles = useBoard(useShallow((b) => b.hosts.filter((h) => b.profiles.some((p) => p.host_id === h.id)).map((h) => h.id)))
+  const fallback = useBoard((b) => b.localHostId ?? "")
+  const [chosen, setChosen] = useState("")
+  const profiled = hosts.filter((h) => withProfiles.includes(h.id))
+  const first = profiled.find((h) => h.local) ?? profiled[0] ?? hosts.find((h) => h.local) ?? hosts[0]
+  const settled = chosen !== "" && known.includes(chosen)
+  if (loaded && !settled && first) setChosen(first.id)
+  const hostId = settled ? chosen : (first?.id ?? fallback)
+  if (!hostId) return null
+  const offline = !hosts.some((h) => h.id === hostId)
+  const several = hosts.filter((h) => h.id !== hostId).length > 0
+  return <HostAgentTools key={hostId} hostId={hostId} offline={offline} picker={several ? <HostSelect value={hostId} onChange={setChosen} /> : null} />
 }
 
 /** The panel for one host: its tools, read while it's shown and again after each change (an `agentTools.*` mutation). */
-function HostAgentTools({ hostId }: { hostId: string }) {
+function HostAgentTools({ hostId, offline, picker }: { hostId: string; offline: boolean; picker: ReactNode }) {
+  const hostName = useBoard((b) => b.hosts.find((h) => h.id === hostId)?.name ?? "this host")
   const allProfiles = useBoard((b) => b.profiles)
   const profiles = allProfiles.filter((p) => p.host_id === hostId)
   const result = useAtomValue(query("agentTools.get", hostId, undefined))
@@ -147,55 +167,69 @@ function HostAgentTools({ hostId }: { hostId: string }) {
           <Plus size={13} /> Add MCP server
         </Button>
       </PanelHeading>
-      {tools && (
-        <div className="mt-5 space-y-3">
-          {tools.skills.length + tools.mcp_servers.length === 0 && tools.skill_sources.length === 0 && (
-            <div className="rounded-xl border border-dashed border-line p-4 text-[12.5px] text-faint">No global skills or MCP servers on this host yet.</div>
-          )}
-          {ownSkills.length > 0 && (
-            <div className="rounded-xl border border-line">
-              <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">Skills</div>
-              <div className="divide-y divide-line/70">{ownSkills.map(row)}</div>
-            </div>
-          )}
-          {tools.skill_sources.map((src) => {
-            const skills = tools.skills.filter((s) => s.source_id === src.id)
-            return (
-              <SourceCard
-                key={src.id}
-                source={src}
-                skills={skills}
-                profiles={profiles}
-                isOn={isOn}
-                updating={updating === src.id}
-                renderSkill={row}
-                onSwitchAll={(profileId, on) =>
-                  void run(mutate("agentTools.setSwitch", hostId, { scope: "profile", scope_id: profileId, source_id: src.id, enabled: on ? true : null }))
-                }
-                onUpdate={() => {
-                  setUpdating(src.id)
-                  void run(mutate("agentTools.updateSource", hostId, { id: src.id })).finally(() => setUpdating(null))
-                }}
-                onRemove={() =>
-                  confirm.ask({
-                    title: `Remove ${src.name}`,
-                    body: `Remove "${src.name}" and its ${skills.length} skill${skills.length === 1 ? "" : "s"} from every profile and project on this host?`,
-                    action: "Remove source",
-                    danger: true,
-                    onConfirm: () => confirmed(mutate("agentTools.removeSource", hostId, { id: src.id })),
-                  })
-                }
-              />
-            )
-          })}
-          {tools.mcp_servers.length > 0 && (
-            <div className="rounded-xl border border-line">
-              <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">MCP servers</div>
-              <div className="divide-y divide-line/70">{tools.mcp_servers.map(row)}</div>
-            </div>
-          )}
-        </div>
-      )}
+      <div className="mt-5 space-y-3">
+        {picker && <div className="w-64">{picker}</div>}
+        {offline && (
+          <div className="rounded-xl border border-dashed border-line p-3 text-[12.5px] text-muted">
+            {hostName} is offline: its skills and MCP servers can't be read or changed until it's back.
+          </div>
+        )}
+        {tools && profiles.length === 0 && (
+          <div className="rounded-xl border border-dashed border-line p-3 text-[12.5px] text-muted">
+            {hostName} has no profiles, so its skills and MCP servers reach no agent and there is nothing to switch on.
+            {picker ? " Pick the host your projects run on." : ""}
+          </div>
+        )}
+        {tools && (
+          <div className="space-y-3">
+            {tools.skills.length + tools.mcp_servers.length === 0 && tools.skill_sources.length === 0 && (
+              <div className="rounded-xl border border-dashed border-line p-4 text-[12.5px] text-faint">No global skills or MCP servers on this host yet.</div>
+            )}
+            {ownSkills.length > 0 && (
+              <div className="rounded-xl border border-line">
+                <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">Skills</div>
+                <div className="divide-y divide-line/70">{ownSkills.map(row)}</div>
+              </div>
+            )}
+            {tools.skill_sources.map((src) => {
+              const skills = tools.skills.filter((s) => s.source_id === src.id)
+              return (
+                <SourceCard
+                  key={src.id}
+                  source={src}
+                  skills={skills}
+                  profiles={profiles}
+                  isOn={isOn}
+                  updating={updating === src.id}
+                  renderSkill={row}
+                  onSwitchAll={(profileId, on) =>
+                    void run(mutate("agentTools.setSwitch", hostId, { scope: "profile", scope_id: profileId, source_id: src.id, enabled: on ? true : null }))
+                  }
+                  onUpdate={() => {
+                    setUpdating(src.id)
+                    void run(mutate("agentTools.updateSource", hostId, { id: src.id })).finally(() => setUpdating(null))
+                  }}
+                  onRemove={() =>
+                    confirm.ask({
+                      title: `Remove ${src.name}`,
+                      body: `Remove "${src.name}" and its ${skills.length} skill${skills.length === 1 ? "" : "s"} from every profile and project on this host?`,
+                      action: "Remove source",
+                      danger: true,
+                      onConfirm: () => confirmed(mutate("agentTools.removeSource", hostId, { id: src.id })),
+                    })
+                  }
+                />
+              )
+            })}
+            {tools.mcp_servers.length > 0 && (
+              <div className="rounded-xl border border-line">
+                <div className="px-3 pt-2.5 text-[12px] font-medium text-muted">MCP servers</div>
+                <div className="divide-y divide-line/70">{tools.mcp_servers.map(row)}</div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
       {confirm.dialog}
       {addingSource && (

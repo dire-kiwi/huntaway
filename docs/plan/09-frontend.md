@@ -388,8 +388,11 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   6.12's), "Create a GitHub repository for it" (`projects.createOnGithub`; a repository made but not pushed says so and
   waits for "Open project"), or the GitHub tab (`settings/GithubRepos.tsx`'s picker over `profiles.githubRepos`, then
   `projects.clone`). `settings/repoSource.ts` keeps the old helpers and the `ia.newProjectSource` key. The old modal's
-  host picker and making the profile on another host are M7's: the project goes on the page's own host, in one of its
-  profiles.
+  host picker is back (HE-38): with more than one host that runs agents, a Host field (`hosts/profileFields`'
+  `HostSelect`) picks where the project goes, and the folder browser and GitHub picker follow it. On a host without the
+  picked profile, the dialog makes it there first (`profiles.create`) with the configs ticked in a `ConfigPicker`, or,
+  when the host has no configs, with the folder typed as its first config (`configs.create`), as Settings → Profiles
+  does.
 - **The compare view** (`changes/Compare.tsx`) mounts over the page from `App.tsx` on `?task=…&compare`, from a card's
   model badge (`board/Fanout.tsx`), a card's menu ("Compare all N from its prompt") and the Details panel's Same prompt
   section. Facts and the pick are `tasks.fanout` and `tasks.pickFanout`, each one's diff `git.taskDiff`; the facts go
@@ -421,8 +424,13 @@ to do), `board/`, `task/` with `thread/`, `changes/`, `docs/`, `settings/`. The 
   (`tasks.skills`, kept a minute per task and config as before; `/compact`, `/plan` for a task, `/new`). Calls are
   `rpc(host, "agentTools.…")`, read again after a change, as the old ones were. The project settings' Agents tab had no
   agent-tools part.
-- **Changed.** Every host has sources, subfolders, `/plan` and `/new`, so the API checks are gone; the host picker waits
-  for M7 (the page's own host); the menu's state is adjusted during render and its list keyed by task and config
+- **Changed.** Every host has sources, subfolders, `/plan` and `/new`, so the API checks are gone; the host picker waited
+  for M7 (the page's own host), and came back in HE-41: with more than one host that runs agents, a picker says whose
+  tools these are, starting on this board's host if it has profiles, else on the first that has (a board whose own
+  host has none showed tools no agent got, with no profile to switch them on). The host is settled once the board
+  has loaded and kept while it's offline, so the panel doesn't remount (losing an open editor) or move to another host
+  when a link drops; the picker lists it as offline (`tests/ui/globalAgentToolsHost.test.mjs`);
+  the menu's state is adjusted during render and its list keyed by task and config
   instead of a ref the lint refuses.
 - **Checks.** `tests/ui/skillSources.test.mjs` (the old one, and a global skill and server added, switched, refused and
   deleted), `tests/ui/agentTools.test.mjs` (fast switch clicks, with `agentTools.updateProject` held by `routeRpc`; it
