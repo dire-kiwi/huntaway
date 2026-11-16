@@ -3,8 +3,9 @@ import type { Cause, Scope } from "effect"
 import { Capability, PROTOCOL } from "@huntaway/contracts"
 import type { Invalid, LinkHello, LinkId, SettingsSyncStatus, SyncEntry, Unavailable } from "@huntaway/contracts"
 import { Events } from "../platform/Events.ts"
-import { LinkConnections } from "./LinkConnections.ts"
+import { LinkConnections, sharedWith } from "./LinkConnections.ts"
 import type { Live } from "./LinkConnections.ts"
+import { LinkRepo } from "./LinkRepo.ts"
 import { SettingsSync } from "./SettingsSync.ts"
 import type { SettingsSyncShape } from "./SettingsSync.ts"
 import { mergeEntry, parseEntries } from "./settingsSync/merge.ts"
@@ -16,7 +17,9 @@ import { mergeEntry, parseEntries } from "./settingsSync/merge.ts"
 // several hubs, or an exchange that runs again for what it applied itself, settles after one more round.
 //
 // Only hosts with the `settings_sync` capability that have sync switched on take part, and only while the hub has it on
-// too: the hub's own entries are what a host that was away catches up from.
+// too: the hub's own entries are what a host that was away catches up from. A host that dialled in with the hub token
+// takes part only once its link's Mesh switch is on (HE-46; `sharedWith`): until then the hub neither reads its entries,
+// nor sends it its own, nor watches its board. Turning the switch drops the host, which dials in again and is taken then.
 
 /** How long after a change an exchange starts: one save often sends several events. */
 export const DELAY = Duration.millis(200)
@@ -119,7 +122,14 @@ export class SettingsSyncExchange extends Context.Service<SettingsSyncExchange, 
       const connections = yield* LinkConnections
       const events = yield* Events
 
-      const peers = Effect.map(connections.connected, (lives) => lives.flatMap((live) => peerOf(live) ?? []))
+      const repo = yield* LinkRepo
+
+      /** The connected links that take part. */
+      const taking = Effect.gen(function* () {
+        const rows = new Map((yield* repo.list).map((row) => [row.id, row]))
+        return (yield* connections.connected).filter((live) => peerOf(live) !== null && sharedWith(live, rows.get(live.id)))
+      })
+      const peers = Effect.map(taking, (lives) => lives.flatMap((live) => peerOf(live) ?? []))
       const exchange = Effect.flatMap(peers, (list) => exchangeWith(sync, list)).pipe(
         Effect.catchCause(warn("exchanging")),
         Effect.withSpan("SettingsSyncExchange.exchange"),
@@ -147,7 +157,7 @@ export class SettingsSyncExchange extends Context.Service<SettingsSyncExchange, 
           Effect.forever,
         )
       const reconcile = Effect.gen(function* () {
-        const lives = (yield* connections.connected).filter((live) => peerOf(live) !== null)
+        const lives = yield* taking
         const before = yield* Ref.get(watched)
         for (const live of lives) {
           if (before.get(live.id) === live) continue

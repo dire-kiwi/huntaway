@@ -1,7 +1,7 @@
 import { Context, Effect, FiberMap, Layer, Ref, Schema, Stream, SubscriptionRef } from "effect"
 import { Host, HostId, LinkId } from "@huntaway/contracts"
 import { Identity } from "../platform/Identity.ts"
-import { LinkConnections, meshes } from "./LinkConnections.ts"
+import { LinkConnections, meshes, sharedWith } from "./LinkConnections.ts"
 import type { Live } from "./LinkConnections.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 
@@ -113,7 +113,9 @@ export class Mesh extends Context.Service<
         )
 
       const sync = Effect.gen(function* () {
-        const now = (yield* connections.connected).filter((live) => meshes(live.hello))
+        // A host that dialled in has its directory taken only while its link's Mesh switch is on.
+        const rows = new Map((yield* repo.list).map((row) => [row.id, row]))
+        const now = (yield* connections.connected).filter((live) => meshes(live.hello) && sharedWith(live, rows.get(live.id)))
         const before = yield* Ref.get(watching)
         for (const live of now) if (before.get(live.id) !== live) yield* FiberMap.run(fibers, live.id, watch(live))
         for (const id of before.keys()) {

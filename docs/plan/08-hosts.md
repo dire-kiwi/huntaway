@@ -291,6 +291,12 @@ show as one board on every one of them.
   lasts. Only `outbound` and `ssh` links are dialled (`dials`); a `reverse` or `hub` link waits for the other end and
   shows `offline` until it is heard from. Each of these is a `Live` like the others, so the relay, settings sync and discovery use them alike. The switch
   turned off redials the link (or drops the host that dialled in, which dials again and gets no tickets).
+- **Settings sync and the directory with a host that dialled in** wait for the switch too (`sharedWith`, on review of
+  HE-46): while its `inbound` link has it off, the hub neither reads that host's synced entries, nor sends it its own,
+  nor watches its board or its directory, so the hub token alone neither reads nor writes any host's skills, MCP servers
+  (and their secrets), profiles or approval rules. A host the hub dials, or one attached back over a link it dialled,
+  proved it holds the other end's own token and shares from the start. Turning the switch on drops the host, which
+  dials in again and is taken into the exchange then.
 - **What it lets in.** With the switch on, the users of the other host can use this board as this host's users can use
   theirs, and the hosts this one reaches. A host's agents still call board tools across hosts only as before: calls go
   down only over `dialled` and `dial-in` connections, and up to a hub under its `uplink` switch (`Uplink.otherHosts`
@@ -314,8 +320,8 @@ show as one board on every one of them.
   picker and the default host for new work). It is in `host.info`, `link.hello` and each `Host`; the web app reads each
   host's own from its board (`hostSettings`), since a hello is only as new as the connection. Settings → Hosts sets it
   on any host, through that host's session.
-- **Config sync across the mesh.** Settings sync's exchange runs over every connected `Live`, `reverse` and `hub` ones
-  included, and its merge is idempotent, commutative and associative, so a change crosses the mesh hop by hop. The
+- **Config sync across the mesh.** Settings sync's exchange runs over every connected `Live` it shares with (`reverse` and `hub` ones
+  included, a host that dialled in once its Mesh switch is on), and its merge is idempotent, commutative and associative, so a change crosses the mesh hop by hop. The
   host's **global skills and MCP servers** sync as fields (`hosts/settingsSync/agentTools.ts`): `skill/<name>`
   (`{ content, enabled }`) and `mcp_server/<name>` (`{ config, enabled, auto_allow }`), null when removed. The fields are
   the host's own and those other hosts' entries name (`fields(known)`), so one added elsewhere is made here when it is

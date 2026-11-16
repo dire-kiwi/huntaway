@@ -147,6 +147,14 @@ export const meshes = (hello: LinkHello): boolean => hello.protocol === PROTOCOL
 /** Whether this host dials `link` itself: by URL, or over SSH. */
 export const dials = (link: Pick<LinkRow, "mode">): boolean => link.mode === "outbound" || link.mode === "ssh"
 
+/**
+ * Whether this host shares its board with `live` (settings sync, the mesh's directory), `row` being its link: always but
+ * for a host that dialled in, whose hub token any host given it holds, which is shared with only while its link's Mesh
+ * switch is on (docs/plan/08-hosts.md, The mesh), as the relay's tickets for it are.
+ */
+export const sharedWith = (live: Pick<Live, "via">, row: Pick<LinkRow, "mode" | "mesh"> | null | undefined): boolean =>
+  live.via !== "dial-in" || (row?.mode === "inbound" && row.mesh)
+
 /** `http(s)://…` as the websocket URL of `path` there. */
 export const wsUrl = (url: string, path: string) => `${url.replace(/\/+$/, "").replace(/^http/, "ws")}${path}`
 

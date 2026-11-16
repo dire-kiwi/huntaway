@@ -317,7 +317,7 @@ function MeshToggle({ host }: { host: Host }) {
             {host.mode === "inbound" && (
               <span className="block">
                 {host.name} dials in with the hub token, which any host given it holds, so a host that dials in for the first time starts with this off, and any
-                host given that token could claim to be {host.name} while it is away.
+                host given that token could claim to be {host.name} while it is away. Off, settings don&apos;t sync with {host.name} either, nor through it.
               </span>
             )}
           </>

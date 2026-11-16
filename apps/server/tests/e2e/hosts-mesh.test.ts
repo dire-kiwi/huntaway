@@ -71,6 +71,7 @@ const toolsWhen = (board: Board, ready: (tools: GlobalAgentTools) => boolean, wh
     what,
   )
 
+const HOST_SKILL = "---\nname: from-host\ndescription: A host's own.\n---\n\nKept here.\n"
 const SKILL = "---\nname: deploy-notes\ndescription: How this fleet deploys.\n---\n\nUse the release script.\n"
 
 describe("the mesh, whole servers", () => {
@@ -132,25 +133,50 @@ describe("the mesh, whole servers", () => {
   )
 
   it.live(
-    "a host that dials in to a hub reaches the hub back once the hub turns its Mesh switch on, and not after it's off",
+    "a host that dials in to a hub shares the hub's board, settings included, once the hub turns its Mesh switch on, and not after it's off",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const hubServer = yield* startServer(SERVE)
+        const otherServer = yield* startServer(SERVE)
         const hubToken = (yield* fs.readFileString(`${hubServer.dataDir}/hub_token`)).trim()
         const hostServer = yield* startServer([...SERVE, "--hub", `http://127.0.0.1:${hubServer.port}`, "--hub-token", hubToken])
         const hub = yield* boardClient(hubServer.port, hubServer.token)
+        const other = yield* boardClient(otherServer.port, otherServer.token)
         const host = yield* boardClient(hostServer.port, hostServer.token)
         const hubId = (yield* hub("host.info", undefined)).host_id
         const hostId = (yield* host("host.info", undefined)).host_id
+        // A host the hub links by URL, with whom it shares settings from the start.
+        yield* hub("hub.hosts.add", { url: `http://127.0.0.1:${otherServer.port}`, token: otherServer.token })
 
         // A host the hub hasn't seen before: known only by the id it gives with the hub token, it starts with Mesh off.
         const onHub = yield* hostsWhen(hub, (hs) => entry(hs, hostId)?.connected === true, "the hub shows the host")
         assert.deepStrictEqual([entry(onHub, hostId)?.mode, entry(onHub, hostId)?.mesh], ["inbound", false])
         const refused = yield* Effect.flip(host("hub.hosts.openRelay", { host_id: hubId }))
         assert.strictEqual(refused._tag, "NotFound")
-        // On: the hub drops the host, which dials in again and reaches the hub back.
+
+        // Its settings are kept apart from the hub's, both ways: a skill of the host's isn't taken by the exchange that
+        // brings a server of the hub's to the other host (which reads every host it shares with before it sends any).
+        yield* host("agentTools.addSkill", { project_id: null, skill: { content: HOST_SKILL } })
+        yield* hub("agentTools.addServer", { project_id: null, server: { name: "hub-only", config: { type: "http", url: "https://hub.example.com/mcp" } } })
+        yield* toolsWhen(other, (t) => t.mcp_servers.some((s) => s.name === "hub-only"), "the other host has the hub's server")
+        assert.isFalse(
+          (yield* hub("agentTools.get", undefined)).skills.some((s) => s.name === "from-host"),
+          "the hub took the host's skill",
+        )
+        assert.isFalse(
+          (yield* other("agentTools.get", undefined)).skills.some((s) => s.name === "from-host"),
+          "the other host has the host's skill",
+        )
+        assert.isFalse(
+          (yield* host("agentTools.get", undefined)).mcp_servers.some((s) => s.name === "hub-only"),
+          "the host has the hub's server",
+        )
+
+        // On: the hub drops the host, which dials in again and reaches the hub back; their settings sync.
         yield* hub("hub.hosts.update", { id: LinkId.make(hostId), mesh: true })
+        yield* toolsWhen(host, (t) => t.mcp_servers.some((s) => s.name === "hub-only"), "the host has the hub's server")
+        yield* toolsWhen(other, (t) => t.skills.some((s) => s.name === "from-host"), "the other host has the host's skill")
         const onHost = yield* hostsWhen(host, (hs) => entry(hs, hubId)?.connected === true, "the host shows the hub")
         assert.strictEqual(entry(onHost, hubId)?.mode, "hub")
 
