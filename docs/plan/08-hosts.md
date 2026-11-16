@@ -274,11 +274,13 @@ show as one board on every one of them.
   as it takes a dial-in (`OpenStream` for each socket it wants, answered on its `/api/link/stream/<id>`, which now takes
   its own board token as well as the hub token), and registers the link as `reverse`: the sealed session it attached
   with shows that the other end holds its token, which is more than a dial-in shows. A host that dials in with the hub
-  token under the id of a `reverse` link is refused. A host that dialled in (`--hub`) asks its hub for a ticket on the
+  token under the id of a `reverse` link is refused, and a reverse attach is taken even for a profile's assistant host
+  (that rule is for a host this one dials itself). A host that dialled in (`--hub`) asks its hub for a ticket on the
   connection it attached on (`link.ticket { path, session }`), which the hub gives while its `inbound` link to that host
   has the switch on; the host opens the hub's `/api/relay/<ticket>`, piped to the hub's own `path` with the session
   sealed by the hub, and registers the hub as a `hub` link (a `links` row with its URL and no token) while its connection
-  lasts. Each of these is a `Live` like the others, so the relay, settings sync and discovery use them alike. The switch
+  lasts. Only `outbound` and `ssh` links are dialled (`dials`); a `reverse` or `hub` link waits for the other end and
+  shows `offline` until it is heard from. Each of these is a `Live` like the others, so the relay, settings sync and discovery use them alike. The switch
   turned off redials the link (or drops the host that dialled in, which dials again and gets no tickets).
 - **What it lets in.** With the switch on, the users of the other host can use this board as this host's users can use
   theirs, and the hosts this one reaches. A host's agents still call board tools across hosts only as before: calls go
@@ -289,7 +291,10 @@ show as one board on every one of them.
   neighbour is taken as `mode: "mesh"`, with `through` (the neighbour) and `route` (the neighbour first, then that
   entry's own route). An entry whose route already passes through this host is left out, so no route loops back and a
   host that goes away leaves every directory as its neighbours' do. Of two routes the shorter is taken; none longer than
-  8. A host this one links itself is always its own entry, even while that link is down.
+  8. A host this one links itself is always its own entry, even while that link is down. A neighbour's list like the one
+  held changes nothing, and `hub.hosts.watch` sends only a list that differs from the one before (`sameHosts`): each
+  host's list is made from its neighbours', so two that took every list as news would send theirs back and forth for
+  ever (found on review).
 - **The relay** to a mesh host asks the neighbour for a ticket (`hub.hosts.openRelay` with `as`: the client's kind,
   scopes and device), and opens the neighbour's `/api/relay/<ticket>` over this host's way to it. A session of kind
   `link` may now ask the relay, but only for a client of its own (`as`), never with more than its own scopes, never
@@ -316,13 +321,18 @@ show as one board on every one of them.
   start). The merge was already convergent (version vectors; changes made apart go to the later, then by host id, and
   the value that lost is kept to use instead); what changed is how much of the board it holds
   (`hosts/settingsSync/boardFields.ts`):
-  - **Profiles themselves**: `profile/<name>/exists` (true, or null once removed). A profile one host has is made on the
-    others (a row with no configs, then its other fields; `Profiles.scratchDirs` makes its scratch folder). One removed
-    is removed elsewhere only where it has no projects and no tasks (`ProfileRepo.holds`): sync never deletes work, and
-    the value it couldn't take waits (it isn't sent back as a change) until the profile holds nothing there.
+  - **Profiles themselves**: `profile/<name>/exists` (true, null once removed, or `{ renamed_to }`). A profile one host
+    has is made on the others (a row with no configs, then its other fields; `Profiles.scratchDirs` makes its scratch
+    folder). A rename is kept as the profile's former name (`profile_former_names`, `ProfileRepo.renamed`), so the old
+    name reads `{ renamed_to }` and the other hosts rename theirs, with its work, in place of an empty one of the new name
+    that sync may have made first. One removed is removed elsewhere only where it has no projects and no tasks
+    (`ProfileRepo.holds`): sync never deletes work, and the value it couldn't take waits (it isn't sent back as a change)
+    until the profile holds nothing there.
   - **More of a profile**: `asana_enabled`, `telemetry`, `telemetry_titles`, `tint`; its configs (`configs`), its
     assistant's and threads' config, and its reviewers' and summarizers' configs, all by config name; its switches for
-    global skills and servers (`tool_switches`, `skill:<name>` and `mcp:<name>`).
+    global skills and servers (`tool_switches`, `skill:<name>` and `mcp:<name>`). Its configs are one field each,
+    `profile/<name>/config/<config>` (true, or null once taken off), so each host keeps the configs of its own the others
+    have none of; one taken off resets the assistant's and threads' config if it was theirs, as `Profiles.update` does.
   - **Agent configs' options by config name**: `config/<name>/show_usage`, `restart_window`, `api_url`.
   - **Skill sources**: `skill_source/<url>|<ref>|<folder>`. A host takes one with no commit, and `AgentTools.catchUp`
     (at the start and on every `agent_tools_changed`) clones it there and deletes the clones of sources removed.

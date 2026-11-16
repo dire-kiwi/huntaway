@@ -389,7 +389,7 @@ describe("settings sync between a hub and two hosts", () => {
       )
       // Renamed on a: renamed everywhere, the same profile with its work, not removed and made again.
       const personalOnB = (yield* t.b.profiles.list).find((p) => p.name === "personal")
-      yield* t.b.task(personalOnB?.id ?? "")
+      yield* t.b.task(ProfileId.make(personalOnB?.id ?? ""))
       yield* t.a.patch(other.id, { name: "home", merge_approval: false })
       yield* t.settle()
       for (const h of [t.hub, t.b]) {
@@ -402,7 +402,7 @@ describe("settings sync between a hub and two hosts", () => {
       // And again: a chain of names ends at the last.
       yield* t.a.patch(other.id, { name: "house" })
       yield* t.settle()
-      assert.strictEqual((yield* Effect.orDie(t.b.profiles.get(personalOnB?.id ?? ""))).name, "house")
+      assert.strictEqual((yield* Effect.orDie(t.b.profiles.get(ProfileId.make(personalOnB?.id ?? "")))).name, "house")
       assert.deepStrictEqual(
         (yield* t.hub.sync.entries).filter((e) => e.lost.length > 0),
         [],
@@ -418,7 +418,7 @@ describe("settings sync between a hub and two hosts", () => {
       const onB = (yield* t.b.profiles.list).find((p) => p.name === "side")
       assert.isDefined(onB)
       // b has a task in it; the hub has nothing.
-      yield* t.b.task(onB?.id ?? "")
+      yield* t.b.task(ProfileId.make(onB?.id ?? ""))
       yield* Effect.orDie(t.a.profiles.delete(pa.id))
       yield* t.a.sync.observe
       yield* t.settle([t.hub, t.a])
@@ -664,7 +664,7 @@ describe("settings sync of the rest of the board (HE-46)", () => {
         [[mainB.id, "opus"]],
       )
       const xOnB = (yield* t.b.tools.global).skills.find((k) => k.name === "deploy")
-      assert.deepStrictEqual((yield* t.b.tools.global).profile_switches[onB?.id ?? ""], { [xOnB?.id ?? ""]: true })
+      assert.deepStrictEqual((yield* t.b.tools.global).profile_switches[ProfileId.make(onB?.id ?? "")], { [xOnB?.id ?? ""]: true })
       const bMain = (yield* Effect.orDie(t.b.configs.list)).find((c) => c.id === mainB.id)
       assert.deepStrictEqual([bMain?.show_usage, bMain?.restart_window, bMain?.config_dir], [false, true, "/b/claude"])
 
@@ -682,13 +682,13 @@ describe("settings sync of the rest of the board (HE-46)", () => {
       const extra = yield* Effect.orDie(t.a.configs.create({ name: "extra", config_dir: "/a/extra" }))
       const laptop = yield* Effect.orDie(t.b.configs.create({ name: "b-laptop", config_dir: "/b/laptop" }))
       yield* t.a.patch(work.id, { claude_config_ids: [mainA.id, extra.id] })
-      yield* t.b.patch(onB?.id ?? "", { claude_config_ids: [mainB.id, laptop.id], assistant_config_id: mainB.id })
+      yield* t.b.patch(ProfileId.make(onB?.id ?? ""), { claude_config_ids: [mainB.id, laptop.id], assistant_config_id: mainB.id })
       yield* t.settle()
       assert.deepStrictEqual((yield* Effect.orDie(t.a.profiles.get(work.id))).claude_config_ids, [mainA.id, extra.id])
-      assert.deepStrictEqual((yield* Effect.orDie(t.b.profiles.get(onB?.id ?? ""))).claude_config_ids, [mainB.id, laptop.id])
+      assert.deepStrictEqual((yield* Effect.orDie(t.b.profiles.get(ProfileId.make(onB?.id ?? "")))).claude_config_ids, [mainB.id, laptop.id])
       yield* t.a.patch(work.id, { claude_config_ids: [extra.id] })
       yield* t.settle()
-      const after = yield* Effect.orDie(t.b.profiles.get(onB?.id ?? ""))
+      const after = yield* Effect.orDie(t.b.profiles.get(ProfileId.make(onB?.id ?? "")))
       assert.deepStrictEqual([after.claude_config_ids, after.assistant_config_id], [[laptop.id], null])
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )

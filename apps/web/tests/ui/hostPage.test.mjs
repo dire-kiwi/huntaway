@@ -45,10 +45,13 @@ test("a config's login is copied to the linked host, into a config made there", 
   assert.equal(readFileSync(join(to, ".credentials.json"), "utf8"), '{"token":"t"}')
 })
 
-test("the linked host's page switches its settings sync on, and Remove takes it off the board", async () => {
+test("the linked host's page switches its settings sync off and on again, and Remove takes it off the board", async () => {
   await withBrowser(hub, {}, async (ui) => {
-    await ui.run([`goto /hosts/${hostId}`, "wait Settings sync", "wait Off: this host keeps its own settings", "click Sync this host's settings"])
-    await ui.run(["wait A setting changed here goes to the other hosts"])
+    // On unless switched off (HE-46).
+    await ui.run([`goto /hosts/${hostId}`, "wait Settings sync", "wait A setting changed here goes to the other hosts", "click Sync this host's settings"])
+    await ui.run(["wait Off: this host keeps its own settings"])
+    assert.equal((await host.rpc("host.settings")).settings_sync, false)
+    await ui.run(["click Sync this host's settings", "wait A setting changed here goes to the other hosts"])
     assert.equal((await host.rpc("host.settings")).settings_sync, true)
     await ui.run([
       "click role=button[name='Remove from board']",
