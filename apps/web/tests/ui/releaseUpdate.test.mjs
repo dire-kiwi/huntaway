@@ -283,4 +283,3 @@ test("a restart shows its steps, says not to reload, and reloads for a server ba
     await page.waitForFunction(() => !window.__beforeUpdate, null, { timeout: 10_000 })
   })
 })
-
