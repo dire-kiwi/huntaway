@@ -5,7 +5,7 @@ import { Loader2, Radar, RefreshCw } from "lucide-react"
 import { useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
 import { useMutation } from "../../../state/mutation"
-import { Button, Field, resultError, resultValue } from "../../ui"
+import { Button, Field, Help, resultError, resultValue } from "../../ui"
 
 /**
  * Hosts found on the LAN and Tailscale that aren't on this board yet, each offered for linking by URL. Finding them
@@ -22,10 +22,14 @@ export function NearbyHosts({ onLink }: { onLink: (url: string) => void }) {
   const unlinked = (found?.hosts ?? []).filter((d) => !d.linked && !hosts.some((h) => (d.host_id && h.id === d.host_id) || h.url === d.url))
   const where = found?.tailscale ? "on this network or Tailscale" : "on this network"
   return (
-    <div className="mt-3 rounded-xl border border-line px-4 py-3">
+    <div className="rounded-xl border border-line px-4 py-3">
       <div className="flex items-center gap-2">
         <Radar size={14} className="shrink-0 text-muted" />
-        <div className="flex-1 text-[12.5px] font-medium">Nearby hosts</div>
+        <div className="text-[12.5px] font-medium">Nearby hosts</div>
+        <Help label="Nearby hosts" className="mr-auto">
+          Hosts found {where}, or linked from the hosts linked here, that aren&apos;t on this board yet. A host answers when it listens beyond localhost (not{" "}
+          <code>--host 127.0.0.1</code>); on Tailscale, one on its default port is found whatever its version.
+        </Help>
         <Button size="sm" variant="ghost" disabled={busy} onClick={search} title="Search again">
           {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {busy ? "Searching…" : "Search again"}
         </Button>
@@ -33,10 +37,7 @@ export function NearbyHosts({ onLink }: { onLink: (url: string) => void }) {
       {err ? (
         <div className="mt-1 text-xs text-red-400">Couldn't search: {err}</div>
       ) : found && unlinked.length === 0 ? (
-        <div className="mt-1 text-[11.5px] text-faint">
-          No other hosts found {where}, or linked from the hosts linked here. A host answers when it listens beyond localhost (not <code>--host 127.0.0.1</code>
-          ); on Tailscale, one on its default port is found whatever its version.
-        </div>
+        <div className="mt-1 text-[11.5px] text-faint">No other hosts found {where}, or linked from the hosts linked here.</div>
       ) : (
         <div className="mt-2 space-y-1.5">
           {unlinked.map((d) => (
@@ -69,8 +70,8 @@ export function ScratchHostRow() {
   // The host's settings event puts the choice on the board.
   const save = (id: string) => void updateSettings(local.id, { patch: { scratch_host: id ? LinkId.make(id) : null } })
   return (
-    <div className="mt-3 rounded-xl border border-line px-4 py-3">
-      <Field label="Scratch task host" hint="This board can't run agents, so new scratch tasks (which are in no project) run on this host.">
+    <div className="rounded-xl border border-line px-4 py-3">
+      <Field label="Scratch task host" help="This board can't run agents, so new scratch tasks (which are in no project) run on this host.">
         <select
           value={picked}
           onChange={(e) => save(e.target.value)}

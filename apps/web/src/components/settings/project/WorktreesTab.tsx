@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react"
 import { useState } from "react"
 import { useMutation } from "../../../state/mutation"
 import { Button, Field, Help, Input, Textarea, Toggle } from "../../ui"
-import { Group } from "./parts"
+import { Group } from "../parts"
 import type { ProjectForm, SetField } from "./ProjectSettings"
 
 /** The Worktrees tab: whether tasks get worktrees, where, what each new one gets from the repository, and how they're removed. */

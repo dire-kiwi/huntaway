@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import { defaultAgentHost, profileConfigLabel, profileNames } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
 import { Button, Modal, useConfirm } from "../../ui"
+import { PanelHeading } from "../parts"
 import { ProfileForm, usesAsana } from "./ProfileForm"
 import { useMutation } from "../../../state/mutation"
 
@@ -24,17 +25,16 @@ export function ProfilesPanel() {
   const confirm = useConfirm()
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold">Profiles</h2>
+      <PanelHeading
+        title="Profiles"
+        description="A board of its own for each kind of work (work, personal), with its own projects and agent settings."
+        help="Profiles are set up on each host and appear together by name. Each picks which of its host's agent configs (Claude Code or Codex) its agents use; with more than one, new tasks ask which."
+      >
         <Button size="sm" disabled={!agentHost} onClick={() => agentHost && setEditing({ host: agentHost })}>
           <Plus size={13} /> Add profile
         </Button>
-      </div>
-      <p className="mb-3 text-[12.5px] text-muted">
-        Profiles are set up on each host and appear together by name. Each picks which of its host's agent configs (Claude Code or Codex) its agents use; with
-        more than one, new tasks ask which.
-      </p>
-      <div className="space-y-3">
+      </PanelHeading>
+      <div className="mt-5 space-y-3">
         {names.map((name) => {
           const rows = profiles.filter((p) => p.name === name)
           const missing = online.filter((h) => !rows.some((p) => p.host_id === h.id))

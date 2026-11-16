@@ -4,7 +4,8 @@ import { EXPERIMENTS, type ExperimentId } from "@huntaway/contracts"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { useMutation } from "../../state/mutation"
-import { Toggle } from "../ui"
+import { ToggleField } from "../ui"
+import { PanelHeading } from "./parts"
 
 /**
  * Settings → Experiments (docs/plan/09-frontend.md, Experiments): a switch for each feature still being tried, all off
@@ -27,16 +28,15 @@ export function ExperimentsPanel() {
   }
   return (
     <section>
-      <h2 className="mb-3 text-[13px] font-semibold">Experiments</h2>
-      <div className="space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted">
-        <p>Features that are still being tried. They may change or go away. Each is off until you switch it on, for the whole board.</p>
+      <PanelHeading
+        title="Experiments"
+        description="Features that are still being tried, each off until you switch it on, for the whole board. They may change or go away."
+      />
+      <div className="mt-5 space-y-4">
         {EXPERIMENTS.map((e) => (
-          <div key={e.id} className="space-y-1">
-            <Toggle checked={shown.includes(e.id)} onChange={(v) => set(e.id, v)} label={e.name} />
-            <p className="pl-10.5">{e.description}</p>
-          </div>
+          <ToggleField key={e.id} checked={shown.includes(e.id)} onChange={(v) => set(e.id, v)} label={e.name} help={e.description} />
         ))}
-        {error && <p className="text-red-400">{error}</p>}
+        {error && <p className="text-[12.5px] text-red-400">{error}</p>}
       </div>
     </section>
   )

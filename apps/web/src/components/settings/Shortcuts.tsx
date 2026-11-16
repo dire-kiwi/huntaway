@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, isShortcutKey, saveShortcut, shortcutTaken, SHORTCUTS, useShortcutKeys, type ShortcutId } from "../../shortcuts"
 import { Kbd } from "../ui"
+import { PanelHeading } from "./parts"
 
 /** Settings → Keyboard shortcuts (HA-396): the page's keys, and a new key for the ones that can have one. */
 export function ShortcutsPanel() {
@@ -23,12 +24,12 @@ export function ShortcutsPanel() {
 
   return (
     <section>
-      <h2 className="mb-3 text-[13px] font-semibold">Keyboard shortcuts</h2>
-      <div className="space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted">
-        <p>
-          The keys the board takes when you&apos;re not typing in a field. Click one that can change, then press its new key (Esc leaves it as it is). The
-          changes are kept in this browser.
-        </p>
+      <PanelHeading
+        title="Keyboard shortcuts"
+        description="The keys the board takes when you're not typing in a field."
+        help="Click one that can change, then press its new key (Esc leaves it as it is). The changes are kept in this browser."
+      />
+      <div className="mt-5 space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted">
         {groups.map((group) => (
           <div key={group} className="space-y-1.5">
             <div className="text-[12px] font-medium text-fg">{group}</div>

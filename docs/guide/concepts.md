@@ -152,8 +152,8 @@
 - **Projects** are local repositories. Each has a key (`ABC-12`), a scratch folder, a worktrees
   folder, setup/teardown and status change scripts, a permission mode and an optional model.
 - **Skills and MCP servers**: skills (a `SKILL.md` each) and MCP servers for
-  agents, kept on the host rather than in a repository. **Global** ones (Settings → Skills and MCP
-  servers) are switched on or off by default per profile. A project can override that in its
+  agents, kept on the host rather than in a repository. **Global** ones (Settings → Skills and
+  MCP) are switched on or off by default per profile. A project can override that in its
   settings (_Profile default_, _On_ or _Off_), and it can have its own skills and servers, which
   win over a global one with the same name. A global server named `google` is the assistant's
   alone (see _Google for the assistant_): projects' runs never get it. Before each run, the skills that are on are written to
@@ -165,7 +165,7 @@
   what the project's runs reported in their `init` message over the last two weeks, and anything
   else can be turned off by name. Changes apply from each thread's next message.
 - **Skill sources**: global skills can come from a git repository, as with `npx skills add`.
-  Settings → Skills and MCP servers → _Add from git_ takes a git URL (https, ssh or a local path),
+  Settings → Skills and MCP → _Add from git_ takes a git URL (https, ssh or a local path),
   `git@host:owner/repo` or `owner/repo` for GitHub, and optionally a branch or tag. The host clones it
   (shallow, into `<data-dir>/skill-sources/<id>/`, with its own git setup, so a private repository needs
   credentials there) and every folder with a `SKILL.md` in it (the repository's root too, and `skills/`,

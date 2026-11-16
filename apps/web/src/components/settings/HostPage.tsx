@@ -98,7 +98,7 @@ export function HostPage({ hostId }: { hostId: string }) {
                 <TerminalToolsRow host={host} />
               </section>
               <HostTelemetry hostId={host.id} />
-              {host.local ? <ServerPanel /> : <RemoteServer hostId={host.id} />}
+              {host.local ? <ServerPanel small /> : <RemoteServer hostId={host.id} />}
               <HostService hostId={host.id} />
               {agents && <HostDesktop hostId={host.id} />}
               <HostSpaces host={host} />

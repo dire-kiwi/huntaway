@@ -10,6 +10,7 @@ import { Button, resultError, resultValue, useConfirm } from "../../ui"
 import { SkillEditor } from "./SkillsSection"
 import { McpEditor } from "./McpSection"
 import { SourceCard, SourceAdder } from "./SkillSources"
+import { PanelHeading } from "../parts"
 import { describe, rejectFailure, type Change } from "./parts"
 
 // Settings → Skills and MCP (6.4; huntaway's settings/agentTools/GlobalAgentToolsPanel.tsx). Picking another host's is
@@ -122,27 +123,32 @@ function HostAgentTools({ hostId }: { hostId: string }) {
   }
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">Skills and MCP servers</h2>
-        <div className="flex gap-2">
-          <Button size="sm" onClick={() => setAddingSource(true)}>
-            <GitBranch size={13} /> Add from git
-          </Button>
-          <Button size="sm" onClick={() => setEditing({ kind: "skill", item: null })}>
-            <Plus size={13} /> New skill
-          </Button>
-          <Button size="sm" onClick={() => setEditing({ kind: "server", item: null })}>
-            <Plus size={13} /> Add MCP server
-          </Button>
-        </div>
-      </div>
-      <p className="mb-3 text-[12.5px] text-muted">
-        Skills and MCP servers for agents, kept on the host rather than in a repository. Each profile switches them on or off by default for its projects, and a
-        project can override that in its settings, or add its own. Skills can also come from a git repository, as with npx skills: add the repository, then
-        switch on the skills you want.
-      </p>
+      <PanelHeading
+        title="Skills and MCP"
+        description="Skills and MCP servers for agents, kept on the host rather than in a repository. Saved as you change them."
+        help={
+          <>
+            <span className="block">
+              Each profile switches them on or off by default for its projects, and a project can override that in its settings, or add its own.
+            </span>
+            <span className="block">
+              Skills can also come from a git repository, as with <code>npx skills</code>: add the repository, then switch on the skills you want.
+            </span>
+          </>
+        }
+      >
+        <Button size="sm" onClick={() => setAddingSource(true)}>
+          <GitBranch size={13} /> Add from git
+        </Button>
+        <Button size="sm" onClick={() => setEditing({ kind: "skill", item: null })}>
+          <Plus size={13} /> New skill
+        </Button>
+        <Button size="sm" onClick={() => setEditing({ kind: "server", item: null })}>
+          <Plus size={13} /> Add MCP server
+        </Button>
+      </PanelHeading>
       {tools && (
-        <div className="space-y-3">
+        <div className="mt-5 space-y-3">
           {tools.skills.length + tools.mcp_servers.length === 0 && tools.skill_sources.length === 0 && (
             <div className="rounded-xl border border-dashed border-line p-4 text-[12.5px] text-faint">No global skills or MCP servers on this host yet.</div>
           )}

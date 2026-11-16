@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react"
 import { clsx } from "clsx"
 import { Effect } from "effect"
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity"
-import { Bell, Smartphone, X } from "lucide-react"
+import { Bell, X } from "lucide-react"
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react"
 import { ASSISTANT_PUSH_EVENTS, localHostIdAtom, NOTIFY_EVENTS, PUSH_PROMPTS, query, type QueryResult } from "@huntaway/client"
 import type { PushDevice, PushEvents, PushPrompts } from "@huntaway/contracts"
@@ -17,7 +17,8 @@ import {
   type NotifySettings,
 } from "../../state/notify"
 import { exitError, useAction } from "../../state/mutation"
-import { Button, IconButton, resultError, resultValue, timeAgo, Toggle } from "../ui"
+import { Group, PanelHeading } from "../settings/parts"
+import { Button, Help, IconButton, resultError, resultValue, timeAgo, Toggle } from "../ui"
 import { chime, inDesktopApp, notifyPermission, showNotification, unlockSound } from "./notifier"
 import { endpointAtom, onHub, pushSupport, subscribe, unsubscribe } from "./push"
 
@@ -80,74 +81,97 @@ export function NotificationsPanel() {
   const unavailable = permission === "insecure" || permission === "unsupported" || permission === "denied" || permission === "preview"
   return (
     <section>
-      <h2 className="mb-3 text-[13px] font-semibold">Notifications</h2>
-      <div className="space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted">
-        <p>
-          Tell me when a task needs me, from this browser, while the board is open in it. One of its tabs or windows notifies, and none do for the task open in
-          a focused window. These settings are kept in this browser.
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex w-fit items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5" role="radiogroup" aria-label="Notify with">
-            {NOTIFY_MODES.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                role="radio"
-                aria-checked={settings.mode === m.id}
-                onClick={() => pick(m.id)}
-                className={clsx("rounded-md px-2.5 py-1 text-[12px]", settings.mode === m.id ? "bg-raised text-fg" : "text-muted hover:text-fg")}
-              >
-                {m.label}
-              </button>
-            ))}
+      <PanelHeading
+        title="Notifications"
+        description="How this browser tells you that a task needs you. Kept in this browser."
+        help="They come while the board is open in this browser. One of its tabs or windows notifies, and none do for the task open in a focused window."
+      />
+      <div className="mt-5 space-y-5 text-[12.5px] text-muted">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-muted">Notify with</span>
+            <Help label="Notify with">
+              A system notification, a sound, or both. The sound plays once you&apos;ve clicked or typed on the page since it loaded: browsers don&apos;t let a
+              page play sound before that.
+            </Help>
           </div>
-          {settings.mode !== "off" && (
-            <Button size="sm" onClick={test} disabled={!playsSound(settings.mode) && permission !== "granted"}>
-              <Bell size={13} /> Try it
-            </Button>
-          )}
-        </div>
-        {showsNotifications(settings.mode) && (
-          <div className={clsx("flex items-center gap-3 rounded-lg px-3 py-2", unavailable ? "bg-amber-400/10 text-amber-200" : "bg-white/5")}>
-            <div className="min-w-0 flex-1">
-              <PermissionNote permission={permission} />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex w-fit items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5" role="radiogroup" aria-label="Notify with">
+              {NOTIFY_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.mode === m.id}
+                  onClick={() => pick(m.id)}
+                  className={clsx("rounded-md px-2.5 py-1 text-[12px]", settings.mode === m.id ? "bg-raised text-fg" : "text-muted hover:text-fg")}
+                >
+                  {m.label}
+                </button>
+              ))}
             </div>
-            {permission === "default" && (
-              <Button size="sm" variant="primary" onClick={enable}>
-                Enable
+            {settings.mode !== "off" && (
+              <Button size="sm" onClick={test} disabled={!playsSound(settings.mode) && permission !== "granted"}>
+                <Bell size={13} /> Try it
               </Button>
             )}
           </div>
-        )}
-        {playsSound(settings.mode) && (
-          <p className="text-faint">
-            The sound plays once you've clicked or typed on the page since it loaded: browsers don't let a page play sound before that.
-          </p>
-        )}
-        <div className={clsx("space-y-2", settings.mode === "off" && "opacity-50")}>
-          <div className="text-[12px] font-medium text-fg">When a task</div>
-          {NOTIFY_EVENTS.map((e) => (
-            <label key={e.id} className="flex items-start gap-2.5">
-              <input
-                type="checkbox"
-                className="mt-0.5 accent-accent"
-                checked={settings.events[e.id]}
-                onChange={(ev) => save({ events: Object.assign({}, notifySettings().events, { [e.id]: ev.target.checked }) })}
-              />
-              <span>
-                <span className="text-fg">{e.label}</span> <span className="text-faint">· {e.hint}</span>
-              </span>
-            </label>
-          ))}
+          {/* Where the browser's permission stands: state, so it stays in sight. */}
+          {showsNotifications(settings.mode) && (
+            <div className={clsx("flex items-center gap-3 rounded-lg px-3 py-2", unavailable ? "bg-amber-400/10 text-amber-200" : "bg-white/5")}>
+              <div className="min-w-0 flex-1">
+                <PermissionNote permission={permission} />
+              </div>
+              {permission === "default" && (
+                <Button size="sm" variant="primary" onClick={enable}>
+                  Enable
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-muted">When a task</span>
+            <Help label="When a task">
+              <EventsHelp events={NOTIFY_EVENTS} />
+            </Help>
+          </div>
+          <div className={clsx("space-y-2", settings.mode === "off" && "opacity-50")}>
+            {NOTIFY_EVENTS.map((e) => (
+              <label key={e.id} className="flex items-center gap-2.5 text-fg">
+                <input
+                  type="checkbox"
+                  className="accent-accent"
+                  checked={settings.events[e.id]}
+                  onChange={(ev) => save({ events: Object.assign({}, notifySettings().events, { [e.id]: ev.target.checked }) })}
+                />
+                {e.label}
+              </label>
+            ))}
+          </div>
         </div>
         <Toggle
           checked={settings.count}
           onChange={(count) => save({ count })}
           label={<span>Count the tasks that need attention in the tab's title and icon{inDesktopApp() ? " and on the app's badge" : ""}</span>}
         />
+        {pushSupport() !== "desktop" && <PushPanel />}
       </div>
-      {pushSupport() !== "desktop" && <PushPanel />}
     </section>
+  )
+}
+
+/** What each of `events` is, for the ? beside their checkboxes. */
+function EventsHelp({ events }: { events: ReadonlyArray<{ readonly id: string; readonly label: string; readonly hint: string }> }) {
+  return (
+    <>
+      {events.map((e) => (
+        <span key={e.id} className="block">
+          <span className="text-fg">{e.label}</span>: {e.hint}.
+        </span>
+      ))}
+    </>
   )
 }
 
@@ -199,16 +223,10 @@ function PushPanel() {
   const turnOn = () => change(subscribe(Notification.requestPermission()))
 
   return (
-    <div className="mt-4 space-y-4 rounded-xl border border-line p-4 text-[12.5px] text-muted" aria-label="Push">
-      <div>
-        <div className="mb-1 flex items-center gap-2 text-[12.5px] font-medium text-fg">
-          <Smartphone size={14} /> Push to this device
-        </div>
-        <p>
-          The board pushes notifications of these events to the devices that turn this on, even while the board isn't open on them: a phone with the board on
-          its home screen, say. Tapping one opens the task. Each device picks its own events, whatever the setting above, and whose permission prompts it gets.
-        </p>
-      </div>
+    <Group
+      title="Push to this device"
+      help="The board pushes notifications to the devices that turn this on, even while it isn't open on them: a phone with the board on its home screen, say. Tapping one opens the task. Each device picks its own events, whatever the settings above, and whose permission prompts it gets."
+    >
       {support !== "ok" ? (
         <div className="rounded-lg bg-amber-400/10 px-3 py-2 text-amber-200">
           <PushNote support={support} />
@@ -271,7 +289,7 @@ function PushPanel() {
           ))}
         </div>
       )}
-    </div>
+    </Group>
   )
 }
 
@@ -279,32 +297,27 @@ function PushPanel() {
 function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onChange: (e: PushEvents) => void; compact?: boolean }) {
   return (
     <div className={clsx(compact ? "flex flex-wrap items-center gap-x-4 gap-y-1" : "space-y-2")} role="group" aria-label={`Events pushed to ${device.name}`}>
-      {NOTIFY_EVENTS.map((e) => (
-        <label key={e.id} className="flex items-start gap-2.5">
+      {!compact && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-muted">Push when</span>
+          <Help label="Push when">
+            <EventsHelp events={NOTIFY_EVENTS} />
+            <EventsHelp events={ASSISTANT_PUSH_EVENTS} />
+            <span className="block">
+              <span className="text-fg">Permission prompts</span>: a push names the tool, but not what it&apos;s run with.
+            </span>
+          </Help>
+        </div>
+      )}
+      {[...NOTIFY_EVENTS, ...ASSISTANT_PUSH_EVENTS].map((e) => (
+        <label key={e.id} className="flex items-center gap-2.5 text-fg">
           <input
             type="checkbox"
-            className="mt-0.5 accent-accent"
+            className="accent-accent"
             checked={device.events[e.id]}
             onChange={(ev) => onChange(Object.assign({}, device.events, { [e.id]: ev.target.checked }))}
           />
-          <span>
-            <span className="text-fg">{e.label}</span>
-            {!compact && <span className="text-faint"> · {e.hint}</span>}
-          </span>
-        </label>
-      ))}
-      {ASSISTANT_PUSH_EVENTS.map((e) => (
-        <label key={e.id} className="flex items-start gap-2.5">
-          <input
-            type="checkbox"
-            className="mt-0.5 accent-accent"
-            checked={device.events[e.id]}
-            onChange={(ev) => onChange(Object.assign({}, device.events, { [e.id]: ev.target.checked }))}
-          />
-          <span>
-            <span className="text-fg">{e.label}</span>
-            {!compact && <span className="text-faint"> · {e.hint}</span>}
-          </span>
+          {e.label}
         </label>
       ))}
       <label className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -321,7 +334,6 @@ function DeviceEvents({ device, onChange, compact }: { device: PushDevice; onCha
             </option>
           ))}
         </select>
-        {!compact && <span className="basis-full text-faint">It names the tool, but not what it's run with.</span>}
       </label>
     </div>
   )

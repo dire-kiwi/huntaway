@@ -47,7 +47,7 @@ export function SkillsSection({
           <Plus size={13} /> New skill
         </Button>
       }
-      help="This project's own skills, kept on its host rather than in the repository. Global ones (Settings → Skills and MCP servers) follow the profile's default unless you switch them here. Changes apply from each thread's next message."
+      help="This project's own skills, kept on its host rather than in the repository. Global ones (Settings → Skills and MCP) follow the profile's default unless you switch them here. Changes apply from each thread's next message."
     >
       {tools.skills.length > 0 && (
         <div className="divide-y divide-line/70 rounded-md border border-line/70">
