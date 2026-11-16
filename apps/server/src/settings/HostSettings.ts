@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SecureRandom } from "effect/crypto"
-import { EXPERIMENTS, experimentKey, HostEffort, Invalid, LinkId, PermissionMode, TerminalTool } from "@huntaway/contracts"
+import { EXPERIMENTS, experimentKey, HostEffort, HostRole, Invalid, LinkId, PermissionMode, TerminalTool } from "@huntaway/contracts"
 import type { HostSettings as Settings, HostSettingsPatch } from "@huntaway/contracts"
 import { Db } from "../platform/Db.ts"
 import { Events } from "../platform/Events.ts"
@@ -20,6 +20,7 @@ const KEY = {
   public_url: "public_url",
   release_prereleases: "release_prereleases",
   settings_sync: "settings_sync",
+  role: "host_role",
 } as const
 
 const TerminalTools = JsonColumn(Schema.Array(TerminalTool), [])
@@ -98,6 +99,7 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
           release_prereleases: text(KEY.release_prereleases) === "true",
           settings_sync: text(KEY.settings_sync) === "true",
           experiments: EXPERIMENTS.flatMap((e) => (text(experimentKey(e.id)) === "true" ? [e.id] : [])),
+          role: (yield* pick(HostRole, KEY.role)) ?? "projects",
         } satisfies Settings
       })
 
@@ -126,6 +128,7 @@ export class HostSettings extends Context.Service<HostSettings, HostSettingsShap
             }
             if (patch.release_prereleases !== undefined) yield* repo.set(KEY.release_prereleases, patch.release_prereleases ? "true" : null)
             if (patch.settings_sync !== undefined) yield* repo.set(KEY.settings_sync, patch.settings_sync ? "true" : null)
+            if (patch.role !== undefined) yield* repo.set(KEY.role, patch.role === "access" ? "access" : null)
             const on = patch.experiments
             if (on !== undefined) for (const e of EXPERIMENTS) yield* repo.set(experimentKey(e.id), on.includes(e.id) ? "true" : null)
             const settings = yield* get

@@ -2,8 +2,8 @@ import { Schema } from "effect"
 import { Rpc, RpcGroup } from "effect/rpc"
 import { Conflict, HostOffline, HostRefused, Invalid, NotFound, Unavailable } from "../errors.ts"
 import { Host } from "../host.ts"
-import { HostId, LinkId } from "../ids.ts"
-import { Auth, RequiredScope } from "../session.ts"
+import { DeviceId, HostId, LinkId } from "../ids.ts"
+import { Auth, RequiredScope, Scope } from "../session.ts"
 import { UpdateResult } from "../update.ts"
 
 // What a server adds as the board a client opened (docs/plan/05-protocol.md, `hub.hosts`): the directory of hosts,
@@ -66,9 +66,9 @@ export class HubHostRpcs extends RpcGroup.make(
     success: Schema.Struct({ tailscale: Schema.Boolean, hosts: Schema.Array(FoundHost) }),
     error: Unavailable,
   }).annotate(RequiredScope, "admin"),
-  /** Rename a link, or let its agents use this board's tools (or not). */
+  /** Rename a link, let its agents use this board's tools (or not), or let it reach this board back (`mesh`, HE-46). */
   Rpc.make("hub.hosts.update", {
-    payload: { id: LinkId, name: Schema.optional(Schema.String), uplink: Schema.optional(Schema.Boolean) },
+    payload: { id: LinkId, name: Schema.optional(Schema.String), uplink: Schema.optional(Schema.Boolean), mesh: Schema.optional(Schema.Boolean) },
     error: NotFound,
   }).annotate(RequiredScope, "admin"),
   /** Forget a link; its data stays on that host. */
@@ -87,10 +87,16 @@ export class HubHostRpcs extends RpcGroup.make(
   }).annotate(RequiredScope, "admin"),
   /**
    * A single-use ticket, good for a minute, for `/api/relay/<ticket>`: a socket to that host's `path` (`/api/rpc`, the
-   * default, or a terminal's), carrying this session's scopes.
+   * default, or a terminal's), carrying this session's scopes. A neighbour's own connection (a session of kind `link`)
+   * relays a client of its own further, through this host (HE-46): `as` is that client's session, which gets no more than
+   * the connection's scopes, and never `link`.
    */
   Rpc.make("hub.hosts.openRelay", {
-    payload: { host_id: HostId, path: Schema.optional(Schema.String) },
+    payload: {
+      host_id: HostId,
+      path: Schema.optional(Schema.String),
+      as: Schema.optional(Schema.Struct({ kind: Schema.Literals(["board", "device"]), scopes: Schema.Array(Scope), device_id: Schema.NullOr(DeviceId) })),
+    },
     success: Schema.Struct({ ticket: Schema.String }),
     error: Schema.Union([NotFound, Invalid, HostOffline, HostRefused, Conflict]),
   }).annotate(RequiredScope, "read"),

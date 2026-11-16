@@ -13,6 +13,7 @@ import { helloOf, LinkConnections } from "./LinkConnections.ts"
 import type { LinkView } from "./LinkConnections.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 import type { LinkRow } from "./LinkRepo.ts"
+import { Mesh } from "./Mesh.ts"
 import { checkTarget, Ssh } from "./Ssh.ts"
 
 // The hub's directory of hosts and the links it keeps (docs/plan/08-hosts.md; inventory 05 §2.2): this host and every
@@ -41,6 +42,7 @@ export const localEntry = (info: HostInfo): Host => ({
   last_seen: null,
   last_message_at: null,
   uplink: false,
+  ...(info.role === undefined ? {} : { role: info.role }),
 })
 
 /** A link as the directory shows it: its row, and what the live connection says (never its token or SSH details). */
@@ -52,7 +54,7 @@ export const linkEntry = (row: LinkRow, view: LinkView | undefined): Host => {
     name: row.name,
     local: false,
     connected: view?.status === "connected",
-    mode: live && view?.via === "dial-in" ? "inbound" : row.mode,
+    mode: live && view?.via === "dial-in" ? "inbound" : live && view?.via === "reverse" ? "reverse" : row.mode,
     agents: live ? (hello?.agents ?? null) : null,
     url: row.ssh === null ? row.url : `ssh://${row.ssh.target}`,
     version: live ? (hello?.version ?? null) : null,
@@ -63,9 +65,19 @@ export const linkEntry = (row: LinkRow, view: LinkView | undefined): Host => {
     last_seen: row.last_seen,
     last_message_at: live ? (view?.last_message_at ?? null) : null,
     uplink: row.uplink,
+    // The switch is for links whose other end this host lets in: one it dials, or one that dials in.
+    ...(row.mode === "outbound" || row.mode === "ssh" || row.mode === "inbound" ? { mesh: row.mesh } : {}),
+    ...(live && hello?.role !== undefined ? { role: hello.role } : {}),
     status: view?.status ?? (row.mode === "inbound" ? "offline" : "connecting"),
     status_reason: view?.reason ?? null,
   }
+}
+
+/** What `hub.hosts.update` changes. */
+interface Change {
+  readonly name?: string | undefined
+  readonly uplink?: boolean | undefined
+  readonly mesh?: boolean | undefined
 }
 
 export class Links extends Context.Service<
@@ -77,7 +89,7 @@ export class Links extends Context.Service<
     readonly watch: Stream.Stream<ReadonlyArray<Host>>
     /** Links a host this one can reach at `url` with its board token: it must say who it is first. */
     readonly add: (url: string, token: string) => Effect.Effect<Host, Invalid>
-    readonly update: (id: LinkId, change: { readonly name?: string | undefined; readonly uplink?: boolean | undefined }) => Effect.Effect<void, NotFound>
+    readonly update: (id: LinkId, change: Change) => Effect.Effect<void, NotFound>
     /** Forgets a link; profiles whose assistant ran there have it here again. Its data stays on that host. */
     readonly remove: (id: LinkId) => Effect.Effect<void>
     /** Links a host over SSH: its forced command says who it is and gives its token. */
@@ -105,11 +117,12 @@ export class Links extends Context.Service<
       const configs = yield* AgentConfigs
       const http = yield* HttpClient.HttpClient
       const ssh = yield* Ssh
+      const mesh = yield* Mesh
 
       const list = Effect.gen(function* () {
         const views = yield* connections.views
         const rows = yield* repo.list
-        return [localEntry(yield* about.info), ...rows.map((row) => linkEntry(row, views.get(row.id)))]
+        return [localEntry(yield* about.info), ...rows.map((row) => linkEntry(row, views.get(row.id))), ...(yield* mesh.entries)]
       })
 
       /** Asks `url` who it is, with `token`: its `host.info`. */
@@ -153,17 +166,26 @@ export class Links extends Context.Service<
         if (row !== null) yield* connections.start(row)
         yield* connections.touch
         return linkEntry(
-          row ?? { id, name: info.host_name, mode: "outbound", url, token, ssh: null, uplink: false, last_seen: null, created_at: now },
+          row ?? { id, name: info.host_name, mode: "outbound", url, token, ssh: null, uplink: false, mesh: true, last_seen: null, created_at: now },
           undefined,
         )
       })
 
-      const update = Effect.fn("Links.update")(function* (id: LinkId, change: { readonly name?: string | undefined; readonly uplink?: boolean | undefined }) {
+      const update = Effect.fn("Links.update")(function* (id: LinkId, change: Change) {
         const row = yield* repo.get(id)
         if (row === null) return yield* new NotFound({ what: "host", id })
         const name = change.name?.trim() ?? ""
         if (name !== "") yield* repo.rename(id, name)
         if (change.uplink !== undefined) yield* repo.setUplink(id, change.uplink)
+        if (change.mesh !== undefined && change.mesh !== row.mesh && (row.mode === "outbound" || row.mode === "ssh" || row.mode === "inbound")) {
+          yield* repo.setMesh(id, change.mesh)
+          // Taken as the link connects: one this host dials is dialled again, one that dials in is dropped and dials again.
+          const now = yield* repo.get(id)
+          if (row.mode === "inbound") {
+            const live = yield* connections.live(id).pipe(Effect.option)
+            if (live._tag === "Some") yield* connections.stop(id)
+          } else if (now !== null) yield* connections.start(now)
+        }
         return yield* connections.touch
       })
 
@@ -209,7 +231,7 @@ export class Links extends Context.Service<
         list,
         watch: Stream.concat(
           Stream.fromEffect(list),
-          Stream.mapEffect(connections.changes, () => list, { concurrency: 1 }),
+          Stream.mapEffect(Stream.merge(connections.changes, mesh.changes), () => list, { concurrency: 1 }),
         ),
         add,
         addSsh,

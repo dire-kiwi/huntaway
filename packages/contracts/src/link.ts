@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { UpdatesFrom } from "./host.ts"
+import { HostRole, UpdatesFrom } from "./host.ts"
 import { DeviceId, HostId } from "./ids.ts"
 import { Scope } from "./session.ts"
 
@@ -37,6 +37,8 @@ export const LinkHello = Schema.Struct({
   /** It can run agents. */
   agents: Schema.Boolean,
   updates_from: Schema.NullOr(UpdatesFrom),
+  /** What it is for (HE-46); absent from hosts before it. */
+  role: Schema.optionalKey(HostRole),
 })
 export interface LinkHello extends Schema.Schema.Type<typeof LinkHello> {}
 

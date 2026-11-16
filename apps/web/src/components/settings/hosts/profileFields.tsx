@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react"
-import { agentOf, canRunAgents, type HostAgentConfig as ClaudeConfig, query } from "@huntaway/client"
+import { agentOf, canRunAgents, holdsProjects, type HostAgentConfig as ClaudeConfig, query } from "@huntaway/client"
 import { clsx } from "clsx"
 import { profileNames, useShallow } from "../../boardHelpers"
 import { useBoard } from "../../../state/board"
@@ -122,9 +122,9 @@ export function AccessPicker({ own, value, onChange }: { own: string; value: Rea
   )
 }
 
-/** Hosts that can take agent work. */
-export function HostSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => canRunAgents(h))))
+/** Hosts that can take agent work; with `projects`, those that hold projects (not for access only). */
+export function HostSelect({ value, onChange, projects = false }: { value: string; onChange: (id: string) => void; projects?: boolean }) {
+  const hosts = useBoard(useShallow((s) => s.hosts.filter((h) => (projects ? holdsProjects(h, s.hostSettings[h.id]?.role) : canRunAgents(h)))))
   const picked = useBoard((s) => s.hosts.find((h) => h.id === value))
   return (
     <select

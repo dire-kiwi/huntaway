@@ -8,9 +8,9 @@ import { AsyncResult, Atom } from "effect/reactivity"
 import { Loader2, Server, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../../state/board"
-import { exitError, useAction } from "../../../state/mutation"
+import { exitError, useAction, useMutation } from "../../../state/mutation"
 import { navigate } from "../../../state/route"
-import { Button, Input, timeAgo, ToggleField, useConfirm } from "../../ui"
+import { Button, Help, Input, timeAgo, ToggleField, useConfirm } from "../../ui"
 import { compareVersions } from "../versions"
 import { hubMutate, hubRpc, useHubMutation } from "./hub"
 import { useUpdateCommit } from "./useUpdateCommit"
@@ -23,7 +23,14 @@ const MODE_LABEL: Record<Host["mode"], string> = {
   outbound: "linked by URL",
   inbound: "dials in",
   ssh: "over SSH",
+  reverse: "links this host",
+  hub: "this host dials in to it",
+  mesh: "in the mesh",
 }
+
+/** What a host is for: its own setting as its board has it, else what it said when it connected (HE-46). */
+export const roleOf = (host: Pick<Host, "id" | "role">, settings: Readonly<Record<string, { readonly role?: Host["role"] }>>): "projects" | "access" =>
+  settings[host.id]?.role ?? host.role ?? "projects"
 
 /** A commit, short. */
 const short = (c: string | null | undefined) => (c ? c.slice(0, 7) : null)
@@ -179,6 +186,9 @@ export function HostRow({ host }: { host: Host }) {
     void update({ id: LinkId.make(host.id), name: to })
   }
   const away = !host.local && host.status !== "connected" && host.status !== undefined
+  // A host this one reaches through another, or that links this one itself, is forgotten where its link is.
+  const own = host.mode === "outbound" || host.mode === "ssh" || host.mode === "inbound"
+  const through = useBoard((s) => (host.through ? (s.hosts.find((h) => h.id === host.through)?.name ?? null) : null))
   return (
     <div className="flex items-center gap-3 rounded-xl border border-line px-4 py-3" data-host={host.id}>
       <Server size={15} className="shrink-0 text-muted" />
@@ -203,7 +213,7 @@ export function HostRow({ host }: { host: Host }) {
           </div>
         )}
         <div className="truncate text-[11.5px] text-faint">
-          {MODE_LABEL[host.mode]}
+          {host.mode === "mesh" && through ? `through ${through}` : MODE_LABEL[host.mode]}
           {host.url ? ` · ${host.url}` : ""}
           {away ? ` · ${status.label.toLowerCase()}${host.status_reason ? `: ${host.status_reason}` : ""}` : ""}
           {!host.connected && host.last_seen ? ` · last seen ${timeAgo(host.last_seen)}` : ""}
@@ -211,36 +221,108 @@ export function HostRow({ host }: { host: Host }) {
         </div>
         <HostVersion host={host} />
         {showRenameError && rename.error && <div className="mt-1 text-xs text-red-400">Couldn't rename it: {rename.error}</div>}
+        <RoleField host={host} />
+        <MeshToggle host={host} />
         <UplinkToggle host={host} />
       </div>
       <Button size="sm" onClick={() => navigate({ name: "host", hostId: host.id })}>
         Configure
       </Button>
-      {!host.local && (
+      {!host.local && host.mode !== "mesh" && (
         <>
           <Button size="sm" variant="ghost" disabled={rename.busy} onClick={startRename}>
             {rename.busy && <Loader2 size={12} className="animate-spin" />} Rename
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            title="Remove from this board (its data stays on the host)"
-            aria-label={`Remove ${host.name}`}
-            onClick={() =>
-              confirm.ask({
-                title: `Remove ${host.name}`,
-                body: `Remove ${host.name} from this board? Its projects and agents stay on that host.`,
-                action: "Remove from board",
-                danger: true,
-                onConfirm: () => hubRpc("hub.hosts.remove", { id: LinkId.make(host.id) }),
-              })
-            }
-          >
-            <Trash2 size={13} />
-          </Button>
+          {own && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Remove from this board (its data stays on the host)"
+              aria-label={`Remove ${host.name}`}
+              onClick={() =>
+                confirm.ask({
+                  title: `Remove ${host.name}`,
+                  body: `Remove ${host.name} from this board? Its projects and agents stay on that host.`,
+                  action: "Remove from board",
+                  danger: true,
+                  onConfirm: () => hubRpc("hub.hosts.remove", { id: LinkId.make(host.id) }),
+                })
+              }
+            >
+              <Trash2 size={13} />
+            </Button>
+          )}
         </>
       )}
       {confirm.dialog}
+    </div>
+  )
+}
+
+/**
+ * What a host is for (HE-46): one for projects is offered for new projects; one for access only is a way in to the board
+ * (a public hub, say) and isn't. Set on the host itself, through its own session, so any host's can be set from here.
+ */
+function RoleField({ host }: { host: Host }) {
+  const settings = useBoard((s) => s.hostSettings)
+  const [state, update] = useMutation("host.updateSettings")
+  const role = roleOf(host, settings)
+  if (!host.connected) return null
+  const reachable = settings[host.id] !== undefined
+  return (
+    <div className="mt-2 flex items-center gap-1.5 text-[12.5px]">
+      <span className="text-muted">For</span>
+      {reachable ? (
+        <select
+          aria-label={`What ${host.name} is for`}
+          className="h-7 rounded-md border border-line bg-panel px-1.5 text-[12.5px] outline-none"
+          value={role}
+          disabled={state.busy}
+          onChange={(e) => void update(host.id, { patch: { role: e.target.value === "access" ? "access" : "projects" } })}
+        >
+          <option value="projects">Projects</option>
+          <option value="access">Access only</option>
+        </select>
+      ) : (
+        <span>{role === "access" ? "Access only" : "Projects"}</span>
+      )}
+      <Help label="What this host is for">
+        A host for projects holds projects and runs their agents. A host for access only is a way in to the board, like a public hub: it isn&apos;t offered for
+        new projects. With settings sync on, its settings, skills and MCP servers are kept the same as the other hosts&apos; either way.
+      </Help>
+      {state.error && <span className="text-xs text-red-400">{state.error}</span>}
+    </div>
+  )
+}
+
+/**
+ * Whether the host this one links may reach this board back, and the hosts it reaches (HE-46). On by default: linking
+ * two hosts either way makes one board of them, with each one's hosts on the other's.
+ */
+function MeshToggle({ host }: { host: Host }) {
+  const [action, update] = useHubMutation("hub.hosts.update")
+  if (host.mesh === undefined) return null
+  return (
+    <div className="mt-2 space-y-1">
+      <ToggleField
+        checked={host.mesh}
+        onChange={(on) => {
+          if (!action.busy) void update({ id: LinkId.make(host.id), mesh: on })
+        }}
+        label={`Let ${host.name} reach this board`}
+        help={
+          <>
+            <span className="block">
+              On, {host.name}&apos;s board shows this host and the hosts it reaches, and their projects, as this board shows {host.name}&apos;s, and settings
+              sync (skills and MCP servers too) reaches the hosts beyond it. Off, only this host reaches {host.name}.
+            </span>
+            {host.mode === "inbound" && (
+              <span className="block">{host.name} dials in with the hub token, so any host given that token could claim to be it while it is away.</span>
+            )}
+          </>
+        }
+      />
+      {action.error && <div className="text-xs text-red-400">{action.error}</div>}
     </div>
   )
 }
@@ -251,7 +333,7 @@ export function HostRow({ host }: { host: Host }) {
  */
 function UplinkToggle({ host }: { host: Host }) {
   const [action, update] = useHubMutation("hub.hosts.update")
-  if (host.local || !(host.uplink || host.connected)) return null
+  if (host.local || host.mode === "mesh" || host.mode === "reverse" || host.mode === "hub" || !(host.uplink || host.connected)) return null
   return (
     <div className="mt-2 space-y-1">
       <ToggleField

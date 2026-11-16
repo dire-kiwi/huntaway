@@ -100,6 +100,7 @@ import { Udp } from "./hosts/discovery/Udp.ts"
 import { HostTools } from "./hosts/HostTools.ts"
 import { Hubs } from "./hosts/Hubs.ts"
 import { LinkConnections } from "./hosts/LinkConnections.ts"
+import { Mesh } from "./hosts/Mesh.ts"
 import { LinkRepo } from "./hosts/LinkRepo.ts"
 import { Links } from "./hosts/Links.ts"
 import { Relay } from "./hosts/Relay.ts"
@@ -454,7 +455,8 @@ const UdpLive = Udp.layerNode({ createSocket, networkInterfaces })
  * the hubs that take its agents' calls up.
  */
 const HostLinksLive = Uplink.otherHosts.pipe(
-  Layer.provideMerge(Layer.mergeAll(Uplink.layer, LinkConnections.layer, Hubs.layer)),
+  Layer.provideMerge(Layer.mergeAll(Uplink.layer, Hubs.layer)),
+  Layer.provideMerge(LinkConnections.layer),
   Layer.provideMerge(Layer.mergeAll(LinkRepo.layer, SessionSeal.layer, Ssh.layer)),
 )
 
@@ -469,7 +471,7 @@ const HostsLive = Layer.mergeAll(
   Discovery.layer,
   CopyConfig.layer,
 ).pipe(
-  Layer.provideMerge(Layer.mergeAll(HostTools.layer, SettingsSync.layer)),
+  Layer.provideMerge(Layer.mergeAll(HostTools.layer, SettingsSync.layer, Mesh.layer)),
   Layer.provideMerge(Layer.mergeAll(SettingsSyncRepo.layer, UdpLive, Tailscale.layer)),
 )
 

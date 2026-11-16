@@ -21,13 +21,13 @@ export const HubHostHandlers = HubHostRpcs.toLayer(
       "hub.hosts.sshKey": () => Effect.map(links.sshKey, (public_key) => ({ public_key })),
       "hub.hosts.join": ({ url }) => links.join(url),
       "hub.hosts.discover": () => discovery.discover,
-      "hub.hosts.update": ({ id, name, uplink }) => links.update(id, { name, uplink }),
+      "hub.hosts.update": ({ id, name, uplink, mesh }) => links.update(id, { name, uplink, mesh }),
       "hub.hosts.remove": ({ id }) => links.remove(id),
       "hub.hosts.copyConfig": (input) => copyConfig.copy(input),
       "hub.hosts.pushUpdate": ({ id }) => hostUpdates.push(id),
-      "hub.hosts.openRelay": ({ host_id, path }) =>
+      "hub.hosts.openRelay": ({ host_id, path, as }) =>
         Effect.gen(function* () {
-          return { ticket: yield* relay.open(yield* Session, host_id, path ?? "/api/rpc") }
+          return { ticket: yield* relay.open(yield* Session, host_id, path ?? "/api/rpc", as) }
         }),
     })
   }),

@@ -6,7 +6,7 @@ import type { LinkHello, OpenStream } from "@huntaway/contracts"
 import { Identity } from "../platform/Identity.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
 import { About } from "../settings/About.ts"
-import { helloOf, peerClient, wsUrl } from "./LinkConnections.ts"
+import { helloOf, LinkConnections, peerClient, STREAM_PATH, wsUrl } from "./LinkConnections.ts"
 import type { PeerClient } from "./LinkConnections.ts"
 import { dial, pipe } from "./pipe.ts"
 import { SessionSeal } from "./SessionSeal.ts"
@@ -16,10 +16,8 @@ import { SessionSeal } from "./SessionSeal.ts"
 // `link.attach` held open. For each `OpenStream` the hub sends, the host dials the hub's `/api/link/stream/<id>` and
 // pipes it to its own `path` here, with the session the hub asked for sealed under this host's own token (the hub
 // never holds it). Back-off doubles to 30 s and resets only after a connection that lasted a minute, so a hub that
-// refuses at once is not redialled every second.
-
-/** What may be asked for: this host's RPC, or a terminal by its ticket (the relay's own rule). */
-const PATH = /^\/api\/(rpc|terminal\/[A-Za-z0-9_-]{1,200})$/
+// refuses at once is not redialled every second. A hub in the mesh (HE-46) is registered as a link of this host's too
+// (`LinkConnections.viaHub`) while the connection lasts, if it lets this host reach it back.
 
 /** A hub this host is connected to: what it said, and its client (agents' board tools go up through it, 7.4). */
 export interface Hub {
@@ -44,10 +42,13 @@ export class Hubs extends Context.Service<
   static readonly dialIn = Layer.effectDiscard(
     Effect.gen(function* () {
       const hubs = yield* Hubs
+      const connections = yield* LinkConnections
       const address = (yield* HttpServer.HttpServer).address
       if (address._tag === "UnixPathAddress") return
       // Listening on every address: this host reaches itself on loopback.
-      yield* hubs.start(HttpServer.formatAddress(address).replace("//0.0.0.0:", "//127.0.0.1:").replace("//[::]:", "//[::1]:"))
+      const local = HttpServer.formatAddress(address).replace("//0.0.0.0:", "//127.0.0.1:").replace("//[::]:", "//[::1]:")
+      yield* connections.listening(local)
+      yield* hubs.start(local)
     }),
   )
 
@@ -58,13 +59,14 @@ export class Hubs extends Context.Service<
       const identity = yield* Identity
       const about = yield* About
       const seal = yield* SessionSeal
+      const connections = yield* LinkConnections
       const hubs = yield* Ref.make<ReadonlyMap<string, Hub>>(new Map())
       const hubToken = config.hubToken === null ? null : Redacted.value(config.hubToken)
 
       /** One socket the hub asked for, piped until either end closes. */
       const answer = (local: string, url: string, hub: LinkHello, request: OpenStream) =>
         Effect.gen(function* () {
-          if (!PATH.test(request.path) || hubToken === null) return
+          if (!STREAM_PATH.test(request.path) || hubToken === null) return
           const sealed = yield* seal.seal(identity.token, request.session)
           const here = yield* dial(wsUrl(local, request.path), { headers: { [LINK_HEADER]: hub.host_id, [SESSION_HEADER]: sealed } })
           const there = yield* dial(wsUrl(url, `/api/link/stream/${request.id}`), { headers: { authorization: `Bearer ${hubToken}` } })
@@ -88,6 +90,7 @@ export class Hubs extends Context.Service<
           )
           const answers = yield* FiberSet.make()
           yield* Effect.logInfo(`dialled in to hub ${theirs.name} at ${url}`)
+          yield* Effect.forkScoped(connections.viaHub(url, theirs, client))
           yield* Effect.raceFirst(
             client("link.attach", mine).pipe(Stream.runForEach((request) => FiberSet.run(answers, answer(local, url, theirs, request).pipe(Effect.ignore)))),
             Deferred.await(disconnected),

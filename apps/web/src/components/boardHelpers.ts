@@ -2,6 +2,7 @@
 // so the components change one import (docs/plan/09-frontend.md, step 1). They read `state/board.ts`.
 import {
   canRunAgents,
+  holdsProjects,
   optimisticMove,
   usableHost,
   type Board,
@@ -83,9 +84,20 @@ export const moveTaskEffect = (task: { readonly host_id: string; readonly id: st
     startMove(task, patch, (result) => resume(result._tag === "Success" ? Effect.succeed(result.value) : Effect.failCause(result.cause))),
   )
 
-/** Where new work goes by default: this host if it can run agents, else the first one that can. */
-export function defaultAgentHost(hosts: State["hosts"] = board.get().hosts): string | null {
-  return (hosts.find((h) => h.local && canRunAgents(h)) ?? hosts.find(usableHost))?.id ?? null
+/**
+ * Where new work goes by default: this host if it can run agents, else the first one that can; of those, one that holds
+ * projects first (not one for access only, HE-46).
+ */
+export function defaultAgentHost(hosts: State["hosts"] = board.get().hosts, settings: State["hostSettings"] = board.get().hostSettings): string | null {
+  const projects = (h: State["hosts"][number]) => holdsProjects(h, settings[h.id]?.role)
+  return (
+    (
+      hosts.find((h) => h.local && projects(h)) ??
+      hosts.find((h) => usableHost(h) && projects(h)) ??
+      hosts.find((h) => h.local && canRunAgents(h)) ??
+      hosts.find(usableHost)
+    )?.id ?? null
+  )
 }
 
 /**
@@ -100,7 +112,7 @@ export function scratchHost(profileName: string, s: Pick<State, "hosts" | "hostS
   const preferred = [
     local && canRunAgents(local) ? local.id : null,
     usable.find((h) => picked != null && String(h.id) === String(picked))?.id,
-    defaultAgentHost(s.hosts),
+    defaultAgentHost(s.hosts, s.hostSettings),
     ...usable.map((h) => h.id),
   ]
   const on = (h: string | null | undefined) => s.profiles.find((p) => p.host_id === h && p.name === profileName)

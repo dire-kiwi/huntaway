@@ -24,7 +24,7 @@ export const DELAY = Duration.millis(200)
 const REWATCH = "1 second"
 
 /** The events that say a synced setting may have changed. */
-const synced = (type: string) => type === "settings_changed" || type === "profiles_changed" || type === "approval_rules"
+const synced = (type: string) => type === "settings_changed" || type === "profiles_changed" || type === "approval_rules" || type === "agent_tools_changed"
 
 /** A call to a host the hub exchanges entries with failed. */
 export class PeerFailed extends Schema.TaggedError<PeerFailed, { readonly brand: unique symbol }>()("PeerFailed", { reason: Schema.String }) {}

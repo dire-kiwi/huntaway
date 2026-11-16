@@ -11,6 +11,7 @@ import { ProfileRepo } from "../../profiles/ProfileRepo.ts"
 import type { ProfileColumns } from "../../profiles/ProfileRepo.ts"
 import { HostSettings } from "../../settings/HostSettings.ts"
 import { SettingsRepo } from "../../settings/SettingsRepo.ts"
+import { makeToolFields } from "./agentTools.ts"
 
 // The fields settings sync keeps the same on the hosts that switch it on (inventory 05 §3.3, the synced fields): a fixed
 // list, each under a name that doesn't depend on the host. A profile has a different id on each host, so its fields go
@@ -20,7 +21,11 @@ import { SettingsRepo } from "../../settings/SettingsRepo.ts"
 export class Refused extends Schema.TaggedError<Refused, { readonly brand: unique symbol }>()("Refused", { reason: Schema.String }) {}
 
 /** The event that tells the board a field changed: the host's settings, its profiles, or a profile's approval rules. */
-export type FieldEvent = { readonly _tag: "settings" } | { readonly _tag: "profiles" } | { readonly _tag: "rules"; readonly profile: ProfileId }
+export type FieldEvent =
+  | { readonly _tag: "settings" }
+  | { readonly _tag: "profiles" }
+  | { readonly _tag: "rules"; readonly profile: ProfileId }
+  | { readonly _tag: "tools" }
 
 /** A setting that syncs, as it is on this host. */
 export interface Field {
@@ -153,55 +158,64 @@ export const makeFields = Effect.gen(function* () {
   const approvalRules = yield* ApprovalRules
   const configs = yield* AgentConfigs
   const events = yield* Events
+  const tools = yield* makeToolFields
 
-  /** The fields that sync, for the profiles this host has. */
-  const fields = Effect.gen(function* () {
-    const out: Array<Field> = []
-    for (const [key, check] of GLOBAL) {
-      out.push({
-        name: `global/${key}`,
-        read: settings.get(key),
-        write: (v) => Effect.flatMap(check(v), (value) => settings.set(key, value)),
-        event: { _tag: "settings" },
-      })
-    }
-    const names = new Set<string>()
-    for (const p of yield* profiles.list) {
-      // Two profiles of one name (allowed before HA-37, in different cases only): the oldest is the one that syncs.
-      if (names.has(p.name)) continue
-      names.add(p.name)
-      const prefix = profilePrefix(p.name)
-      const current = profiles.get(p.id)
-      for (const [key, field] of PROFILE) {
+  /**
+   * The fields that sync, for the profiles this host has, and its global skills and servers with those `known` (the
+   * entries' names: one another host has is made here when it is applied, HE-46).
+   */
+  const fields = (known: Iterable<string>) =>
+    Effect.gen(function* () {
+      const out: Array<Field> = []
+      for (const [key, check] of GLOBAL) {
         out.push({
-          name: prefix + key,
-          read: Effect.map(current, Option.match({ onNone: () => null, onSome: (row) => field.read(row) ?? null })),
-          write: (v) => Effect.flatMap(field.columns(v, p.name), (columns) => profiles.update(p.id, columns)),
-          event: { _tag: "profiles" },
+          name: `global/${key}`,
+          read: settings.get(key),
+          write: (v) => Effect.flatMap(check(v), (value) => settings.set(key, value)),
+          event: { _tag: "settings" },
         })
       }
-      out.push({
-        name: prefix + APPROVAL_RULES,
-        read: rulesRepo.saved(p.id),
-        write: (v) =>
-          v === null
-            ? rulesRepo.save(p.id, null)
-            : decodeRules(v).pipe(
-                Effect.mapError(() => new Refused({ reason: "must be {rules, expiry_minutes}" })),
-                Effect.flatMap((rules) => Effect.mapError(checkRules(rules), (e) => new Refused({ reason: e.reason }))),
-                Effect.flatMap((rules) => rulesRepo.save(p.id, rules)),
-              ),
-        event: { _tag: "rules", profile: p.id },
-      })
-    }
-    return out
-  })
+      const names = new Set<string>()
+      for (const p of yield* profiles.list) {
+        // Two profiles of one name (allowed before HA-37, in different cases only): the oldest is the one that syncs.
+        if (names.has(p.name)) continue
+        names.add(p.name)
+        const prefix = profilePrefix(p.name)
+        const current = profiles.get(p.id)
+        for (const [key, field] of PROFILE) {
+          out.push({
+            name: prefix + key,
+            read: Effect.map(current, Option.match({ onNone: () => null, onSome: (row) => field.read(row) ?? null })),
+            write: (v) => Effect.flatMap(field.columns(v, p.name), (columns) => profiles.update(p.id, columns)),
+            event: { _tag: "profiles" },
+          })
+        }
+        out.push({
+          name: prefix + APPROVAL_RULES,
+          read: rulesRepo.saved(p.id),
+          write: (v) =>
+            v === null
+              ? rulesRepo.save(p.id, null)
+              : decodeRules(v).pipe(
+                  Effect.mapError(() => new Refused({ reason: "must be {rules, expiry_minutes}" })),
+                  Effect.flatMap((rules) => Effect.mapError(checkRules(rules), (e) => new Refused({ reason: e.reason }))),
+                  Effect.flatMap((rules) => rulesRepo.save(p.id, rules)),
+                ),
+          event: { _tag: "rules", profile: p.id },
+        })
+      }
+      for (const f of yield* tools.fields(known)) {
+        out.push({ name: f.name, read: f.read, write: (v) => Effect.mapError(f.write(v), (reason) => new Refused({ reason })), event: { _tag: "tools" } })
+      }
+      return out
+    })
 
   /** Tells the board about fields that changed here, inside the transaction that changed them (sent once it commits). */
   const announce = (changed: ReadonlyArray<FieldEvent>) =>
     Effect.gen(function* () {
       if (changed.some((e) => e._tag === "settings")) yield* events.emit({ type: "settings_changed", settings: yield* hostSettings.get })
       if (changed.some((e) => e._tag === "profiles")) yield* configs.emitChanged
+      if (changed.some((e) => e._tag === "tools")) yield* events.emit({ type: "agent_tools_changed" })
       const rulesOf = new Set(changed.flatMap((e) => (e._tag === "rules" ? [e.profile] : [])))
       for (const profile of rulesOf) {
         const view = yield* approvalRules.get(profile).pipe(Effect.option)

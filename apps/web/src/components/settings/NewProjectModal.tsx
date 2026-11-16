@@ -2,7 +2,7 @@
 // `project` event. The project goes on any host that can run agents (HE-38): on one without the picked profile, the
 // profile is made there first, with the configs picked, or with the folder typed as its first config when the host has
 // none (as Settings → Profiles does).
-import { canRunAgents, mutate } from "@huntaway/client"
+import { holdsProjects, mutate } from "@huntaway/client"
 import { AgentConfigId } from "@huntaway/contracts"
 import { clsx } from "clsx"
 import { Effect, Exit, Fiber } from "effect"
@@ -28,7 +28,7 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
   // With every profile on the board, the project's profile is picked here.
   const [profileName, setProfileName] = useState(profile !== undefined && names.includes(profile) ? profile : (names[0] ?? ""))
   const [host, setHost] = useState(() => defaultAgentHost() ?? board.get().localHostId ?? "")
-  const hostCount = useBoard((s) => s.hosts.filter((h) => canRunAgents(h)).length)
+  const hostCount = useBoard((s) => s.hosts.filter((h) => holdsProjects(h, s.hostSettings[h.id]?.role)).length)
   const profileRow = useBoard((s) => s.profiles.find((p) => p.host_id === host && p.name === profileName))
   const profileId = profileRow?.id
   // Without the profile on the host, it's made there: with the host's configs picked, or the folder typed as its first.
@@ -180,6 +180,7 @@ export function NewProjectModal({ profile, onClose }: { profile?: string | undef
         {hostCount > 1 && (
           <Field label="Host" hint="The machine the repository is on. Its agents run there.">
             <HostSelect
+              projects
               value={host}
               onChange={(h) => {
                 setHost(h)

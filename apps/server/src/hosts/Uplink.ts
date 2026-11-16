@@ -174,9 +174,13 @@ export class Uplink extends Context.Service<Uplink, UplinkShape>()("huntaway-ser
       const uplink = yield* Uplink
       const repo = yield* LinkRepo
 
+      // A link that lets this host reach it back (`reverse`, `hub`) isn't one its agents' calls go down: they go up to a
+      // hub as before, where its `uplink` switch says whether they are taken (HE-46).
+      const toolLinks = Effect.map(connections.connected, (all) => all.filter((live) => live.via === "dialled" || live.via === "dial-in"))
+
       const links = Effect.gen(function* () {
         const rows = new Map((yield* repo.list).map((row) => [row.id, row.name]))
-        return (yield* connections.connected)
+        return (yield* toolLinks)
           .filter((live) => live.hello.protocol === PROTOCOL)
           .map((live): OtherHost => {
             const name = rows.get(live.id) ?? live.hello.name
@@ -185,7 +189,7 @@ export class Uplink extends Context.Service<Uplink, UplinkShape>()("huntaway-ser
       })
 
       const upHubs = Effect.gen(function* () {
-        const linked = new Set((yield* connections.connected).map((live) => String(live.id)))
+        const linked = new Set((yield* toolLinks).map((live) => String(live.id)))
         const out = new Map<string, OtherHost>()
         for (const hub of yield* hubs.connected) {
           const id = hub.hello.host_id

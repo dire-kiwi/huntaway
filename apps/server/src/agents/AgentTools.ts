@@ -20,6 +20,7 @@ import type {
 } from "@huntaway/contracts"
 import { Git } from "../git/Git.ts"
 import { DataDir } from "../platform/DataDir.ts"
+import { Events } from "../platform/Events.ts"
 import { Db } from "../platform/Db.ts"
 import { nowTimestamp } from "../platform/columns.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
@@ -169,6 +170,7 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
       const projects = yield* ProjectRepo
       const configs = yield* AgentConfigRepo
       const codex = yield* CodexQueries
+      const events = yield* Events
       // One source operation at a time: they clone, swap folders and write skills. (Runs only read the clones.)
       const busy = yield* Semaphore.make(1)
       // Never wait for a password: ssh in batch mode, unless the environment says how to run ssh.
@@ -682,20 +684,24 @@ export class AgentTools extends Context.Service<AgentTools, AgentToolsShape>()("
         return result
       })
 
+      // The host's global skills and servers changed: its settings read them again, and settings sync passes them on (HE-46).
+      const changed = events.emit({ type: "agent_tools_changed" })
+      const announced = <A, E>(owner: ProjectId | null, effect: Effect.Effect<A, E>) => (owner === null ? Effect.tap(effect, () => changed) : effect)
+
       return AgentTools.of({
         global,
         project: overview,
         updateProject,
         setSwitch,
-        addSkill,
-        updateSkill,
-        removeSkill,
-        addServer,
-        updateServer,
-        removeServer,
-        addSource,
-        updateSource,
-        removeSource,
+        addSkill: (owner, input) => announced(owner, addSkill(owner, input)),
+        updateSkill: (owner, id, input) => announced(owner, updateSkill(owner, id, input)),
+        removeSkill: (owner, id) => announced(owner, removeSkill(owner, id)),
+        addServer: (owner, input) => announced(owner, addServer(owner, input)),
+        updateServer: (owner, id, input) => announced(owner, updateServer(owner, id, input)),
+        removeServer: (owner, id) => announced(owner, removeServer(owner, id)),
+        addSource: (input) => announced(null, addSource(input)),
+        updateSource: (id) => announced(null, updateSource(id)),
+        removeSource: (id) => announced(null, removeSource(id)),
         forRun: forTask(true),
         preview: forTask(false),
         recordSeen,
