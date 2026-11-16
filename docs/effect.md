@@ -179,9 +179,8 @@ TypeScript rules above, `import/no-cycle`, and the package boundaries as `no-res
 `apps/desktop/src/{boot,preload,shared}`) and for config files; `strict-effect-provide` and `process-env` are off for
 entry points, tests and `packages/testing`; the components get the React hook rules and are otherwise as strict as the
 rest (step 2 of docs/plan/09-frontend.md): their times are `DateTime` (`components/ui/dates.ts`, `state/clock.ts`), their
-DOM timers `state/timers.ts`, their handlers start mutations rather than being `async`. The one exception is
-`components/docs/docFrame.ts`, whose comment script runs as source inside a document's sandboxed frame, where there is
-no Effect: `global-timers` is off for it.
+DOM timers `state/timers.ts`, their handlers start mutations rather than being `async`, with no exception (the Docs page's frame script, which had
+one, went with it to the docs plugin in HE-42).
 
 `tsconfig.base.json` holds the language service's options, which the lint reads too: `allowedUnstableApis` names every
 unstable module this code base builds on (anything else unstable is an error, so a new one is a reviewed change to

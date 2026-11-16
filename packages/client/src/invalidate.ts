@@ -1,7 +1,7 @@
 import { Context, Effect, Hash } from "effect"
 import { Atom, type AtomRegistry, Reactivity } from "effect/reactivity"
 import { TaskId } from "@huntaway/contracts"
-import { docsKey, type HostBoard } from "./board/hostBoard.ts"
+import type { HostBoard } from "./board/hostBoard.ts"
 import { isAssistant } from "./logic/assistant.ts"
 import type { Methods } from "./rpc.ts"
 
@@ -38,9 +38,6 @@ const taskState = (board: HostBoard, id: string): string => {
   return t ? `${t.running}:${t.worktree_state}` : ""
 }
 
-/** The number of the host's latest `docs` / `doc_comments` / `docs_site` event about a profile (and document). */
-const docsSeq = (board: HostBoard, kind: "docs" | "comments" | "site", profile: string, slug = ""): number => board.docs.get(docsKey(kind, profile, slug)) ?? 0
-
 /** A task's branch and column as well: what its diff against its base is taken from (the compare view's diffs). */
 const taskBranch = (board: HostBoard, id: string): string => {
   const t = board.tasks.get(TaskId.make(id))
@@ -67,14 +64,6 @@ const assistantRunning = (board: HostBoard, profile: string): string => {
 export const triggers: { readonly [M in keyof Methods]?: BoardTrigger<M> } = {
   // A task's git state changes as its agent starts and stops, and with its worktree (the old useGitStatus).
   "git.status": (board, p) => taskState(board, p.id),
-  // 6.3: the Docs page reads a profile's documents again on its `docs` events, and on `docs_site` (their published
-  // state is the site's); a document's comments on its `doc_comments`; the latest version (not a numbered one) on `docs`.
-  "docs.list": (board, p) => `${docsSeq(board, "docs", p.profile_id)}:${docsSeq(board, "site", p.profile_id)}`,
-  "docs.get": (board, p) => `${docsSeq(board, "docs", p.profile_id)}:${docsSeq(board, "site", p.profile_id)}`,
-  "docs.labels": (board, p) => docsSeq(board, "docs", p.profile_id),
-  "docs.version": (board, p) => (p.version === null ? docsSeq(board, "docs", p.profile_id) : 0),
-  "docs.comments": (board, p) => docsSeq(board, "comments", p.profile_id, p.slug),
-  "docs.hostedStatus": (board, p) => docsSeq(board, "site", p.profile_id),
   // HE-34: a plugin's pages are rendered again on its events that say so (`reload`).
   "plugins.page": (board, p) => board.plugins.get(p.plugin)?.reload ?? 0,
   // A task's skills are its config's (the old SkillMenu's cache was per config).

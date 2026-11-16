@@ -13,7 +13,6 @@ import {
   DESKTOP_SERVER,
   desktopAllowed,
   desktopDisallowed,
-  DOCS_SERVER,
   GH_SERVER,
   GH_WRITES,
   ghAllowed,
@@ -70,7 +69,6 @@ export interface BoardManifest {
 /** The board's HTTP MCP servers this server serves, besides the board's own (whose HTTP transport a compaction uses). */
 export interface ServedServers {
   readonly gh: boolean
-  readonly docs: boolean
   /** Computer use is on for this host and it has a driver. */
   readonly desktop: boolean
   /** HE-37: Spaces are on for this host's agents and it has Docker. None when missing. */
@@ -185,7 +183,6 @@ export const boardServers = (input: Pick<ClaudeLaunchInput, "mcp" | "tools">, se
   const out: Record<string, unknown> = {}
   if (!inProcess) out[BOARD_SERVER] = { type: "http", url: url(BOARD_SERVER), headers, timeout: BOARD_TIMEOUT_MS }
   if (servers.gh) out[GH_SERVER] = { type: "http", url: url(GH_SERVER), headers, timeout: GH_TIMEOUT_MS }
-  if (servers.docs) out[DOCS_SERVER] = { type: "http", url: url(DOCS_SERVER), headers }
   if (servers.desktop) out[DESKTOP_SERVER] = { type: "http", url: url(DESKTOP_SERVER), headers, timeout: DESKTOP_TIMEOUT_MS }
   if (servers.spaces === true) out[SPACES_SERVER] = { type: "http", url: url(SPACES_SERVER), headers, timeout: SPACES_TIMEOUT_MS }
   // HE-34: the plugins' (already narrowed to the run's, `pluginServers`).
@@ -213,7 +210,6 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
 
     const servers: ServedServers = {
       gh: usesServer(tools, GH_SERVER, input.served.gh),
-      docs: usesServer(tools, DOCS_SERVER, input.served.docs),
       desktop: usesServer(tools, DESKTOP_SERVER, input.served.desktop),
       spaces: usesServer(tools, SPACES_SERVER, input.served.spaces === true),
       plugins: pluginServers(tools, input.served),
@@ -238,10 +234,9 @@ export const claudeLaunch = (input: ClaudeLaunchInput): Effect.Effect<LaunchSpec
       if (rulesHook !== null) hooks.push(rulesHook)
     }
     if (hooks.length > 0) args.push("--settings", yield* hookSettings(hooks))
-    // The board's tools never need approval, nor do some of the gh server's, nor the docs server's (they only touch
-    // the profile's documents), nor the desktop's that only look.
+    // The board's tools never need approval, nor do some of the gh server's, nor the desktop's that only look, nor a
+    // plugin's whose tools only touch its own data (the docs plugin's).
     args.push("--allowedTools", ...boardToolsAllowed(input.permissionMode, toolNames(input.mcp.manifest)))
-    if (servers.docs) args.push(`mcp__${DOCS_SERVER}`)
     if (servers.desktop) args.push(...desktopAllowed())
     if (servers.spaces === true) args.push(...spacesAllowed())
     for (const p of servers.plugins ?? []) if (p.preApproved) args.push(`mcp__${p.name}`)

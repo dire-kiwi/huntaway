@@ -4,7 +4,7 @@ import { BookOpen, Bot, ChevronRight, FileText, Globe, LayoutGrid, ListChecks, L
 import { memo, useContext, useState, type ReactNode } from "react"
 import { navigate } from "../../../state/route"
 // 6.3
-import { publishedDocPath } from "../../docs/docs"
+import { publishedDocPath } from "./docLinks"
 import { lineage, SubagentRowCtx, ThreadCtx, usePendingFocus, useThread } from "./context"
 import { fieldsOf, listOf, shown, stringOf, type Fields } from "./fields"
 import type { Call } from "./threadModel"
@@ -113,7 +113,7 @@ function desktopSummary(tool: string, input: Fields): string {
   return where
 }
 
-/** 6.3: the link to the document a `publish_document` call published, which opens in the board (HA-281). */
+/** 6.3: the link to the document a `publish_document` call published, which opens in the board as the docs plugin's page (HA-281, HE-42). */
 function PublishedDoc({ call }: { call: Call }) {
   if (call.name !== "mcp__docs__publish_document" || !call.result || call.result.isError) return null
   const doc = publishedDocPath(call.result.content)

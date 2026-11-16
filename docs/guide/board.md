@@ -37,50 +37,29 @@ menu pins the projects it lists); pinned projects show a pin, and the initial of
 profile when it's another one. The active profile and pinned projects are saved in this browser,
 and the board opens on the active profile's board.
 
-Under the active profile's **Assistant** (see [assistant.md](assistant.md)), **Docs** lists its
-documents (HA-281): the reports, plans and write-ups its agents publish with the `docs` MCP server
-(see _Docs_ in [agents.md](agents.md)), with each one's latest version, when it was updated and the
-task that published it, which opens from there. A document opens on its pages, at
-`/docs/<profile>/d/<slug>/`: a menu of them (nested by their paths), the page, and a picker of its
-versions with each one's message. Links between pages open them there, in the same version; links out
-open in a new tab. Pages come rendered from their host and show in a sandboxed frame, as plans do.
-Their images (HA-327: AVIFs the host keeps, see _Docs_ in [agents.md](agents.md)) are fetched by the board
-and given to the frame as data: URLs; remote images aren't shown.
-Local documents collect no answers yet, so their form fields (`<Approval />`, inputs) are read-only.
-Selecting text in a page offers **Comment** (HA-302), as on the hosted site: it quotes the text in the
-**Comments** panel beside the page, where you leave a comment for the agent. A comment belongs to the version it was
-made on: the panel lists the page's comments, highlighted in the page (clicking one scrolls to it), each with Edit and
-Delete, and below them those on other pages and versions. **Send to the agent** sends the unsent ones, as one message,
-to the task that published the document (its latest version's, while it's on the board and not in an archived project);
-an edited comment is unsent again. Agents can also read them with the docs server's `get_feedback`. The header's comment
-button hides the panel. Comments stay on the host: publishing to hosted docs doesn't take them.
-A task's thread links each document it published to its page here. Docs lists the documents of every host the profile
-is on.
+**Docs** in the menu is the docs plugin's (HE-42): [dire-kiwi/docs](https://github.com/dire-kiwi/docs)'s
+`@dire-kiwi/docs-huntaway`, which this build includes (a plugin, see
+[docs/plan/15-plugins.md](../plan/15-plugins.md)). It lists a profile's documents, the
+reports, plans and write-ups its agents publish with the `docs` MCP server (see _Docs_ in [agents.md](agents.md)), by
+folder (named after the publishing task's project unless the agent gives another; **Rename** a folder there) or by
+label, each with its latest version and the task that published it. A document opens on its pages at
+`/docs/<profile id>/d/<slug>/` (`-/v/<n>/` for a version), the address agents give in their links, with a menu of its
+pages, a picker of its versions, **Labels**, **Move** and **Delete**. Pages are rendered on the host by the hosted
+site's own renderer and show in the plugin's sandboxed frame; their images are AVIFs the host keeps, given to the frame
+as data: URLs. Form fields (`<Approval />`, inputs) are read-only: documents on the board collect no answers.
 
-Docs is a tree of folders (HA-290), as on the hosted site: folders first, then documents, each by name, and
-each document one entry however many pages it has. A document an agent publishes goes in a folder named after its
-task's project (a task with no project's at the top level) unless the agent gives another; documents from before
-folders were filed the same way, by the task that published their first version. A folder closes and opens with a
-click, and stays as you left it in this browser. A document's **Move** (or dragging it onto a folder, or onto a
-document in one) puts it in another folder: type a path like `Huntaway/plans`, with the folders there are suggested, or
-a new one to make it, or nothing for the top level. A folder's **Rename** moves everything in it, and in the folders
-inside it, to the new path. A folder is there while a document is in it, and moving a document doesn't change its
-address. A later publish leaves a document where it is. On a profile on several hosts, each host's documents are a tree
-of their own, under its name.
+Selecting text in a page offers a comment, as on the hosted site: write it in the popup, and it's saved when you click
+away and shows as a bubble beside the text it quotes. **Send** sends the unsent ones, as one message, to the task that
+published the document; agents also read them with the docs server's `get_feedback`. A task's thread links each
+document it published to its page here, and a task's page lists them; Settings has a Docs section.
 
-Documents can be published to a hosted docs site (HA-282): [dire-kiwi/docs](https://github.com/dire-kiwi/docs),
-https://docs.nest.dire.nz by default, where they can be read and shared. **Connect to hosted docs** at the top of
-Docs connects the profile: **Sign in** shows a code and a link to the site, where you sign in, check the code and
-choose **Allow** (the OAuth device flow; the host waits for it), or paste a personal access token from the site's
-**Access** page. The host keeps the sign-in and renews it; the board only sees whether it's connected and as whom.
-**Disconnect** forgets it on the host (revoke it under **Access** to end it on the site too). A document's
-**Publish** publishes the version shown, with all its pages, its title and its version's message. The first time
-it asks for the slug on the site (the local one by default), and a new document there goes in the folder it's in here;
-after that each publish adds a new version of the same document there, wherever it is (moves on either side leave
-the other as it is). The document then shows the version published there, with a link, or that it has local changes
-since. The site's errors (a slug another user has, a sign-in that has expired or been revoked) show in the dialog.
-To try it against a local site, run `DOCS_DEV_LOGIN=1 cargo run` in a checkout of dire-kiwi/docs (after building
-its `frontend`, see its README), and connect to `http://localhost:3000`.
+**Connect to hosted docs**, on the Docs page, connects the profile to a hosted docs site (https://docs.nest.dire.nz by
+default) with the OAuth device sign-in or a pasted personal access token, kept and renewed on the host. A document's
+**Publish** then publishes the version shown there; it asks first if a document of yours already has that slug, and
+publishing again adds a version to the same document there. The plugin's README in dire-kiwi/docs says more.
+
+The documents of a board from before the plugin (its `docs*`/`doc_*` tables, with their images, comments and hosted
+sign-ins) are copied into the plugin's own database the first time it runs on the host.
 
 Add a project with the **+** by the _Projects_ heading. Its _Folder_ tab picks a folder on the
 host (a repository, or a new folder that's created for it). Its _GitHub_ tab clones a

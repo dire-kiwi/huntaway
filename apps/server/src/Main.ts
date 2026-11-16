@@ -29,7 +29,6 @@ import {
   BoardRpcs,
   CheckpointRpcs,
   ConfigRpcs,
-  DocRpcs,
   // 6.10: computer use.
   DesktopRpcs,
   // HE-35
@@ -114,14 +113,6 @@ import { AssistantHost } from "./hosts/AssistantHost.ts"
 import { LinkStreamRoute } from "./http/linkStream.ts"
 import { RelayRoute } from "./http/relay.ts"
 // 6.3: documents.
-import { DocImages } from "./docs/DocImages.ts"
-import { DocRepo } from "./docs/DocRepo.ts"
-import { Docs } from "./docs/Docs.ts"
-import { DocsRender } from "./docs/DocsRender.ts"
-import { DocsSiteRepo } from "./docs/DocsSiteRepo.ts"
-import { HostedDocs } from "./docs/HostedDocs.ts"
-import { DocsTools } from "./mcp/tools/docs.ts"
-import { DocHandlers } from "./rpc/docs.ts"
 // 6.10: computer use.
 import { CuaDriver } from "./desktop/CuaDriver.ts"
 import { CuaInstall } from "./desktop/CuaInstall.ts"
@@ -446,7 +437,7 @@ const RunsArea = Runs.layer.pipe(
  */
 export const mcpLayer = <E, R>(hooks: Layer.Layer<McpHooks, E, R>) =>
   Layer.mergeAll(McpControlRegistered, McpCodexRegistered).pipe(
-    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools, DocsTools /* 6.3 */)),
+    Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpControlLive), BoardTools, GhTools)),
     Layer.provideMerge(Layer.fresh(ToolCalls.layer)),
     Layer.provideMerge(Layer.mergeAll(Layer.fresh(McpServers.layer), McpCallRepo.layer, hooks)),
   )
@@ -598,12 +589,6 @@ const WorkflowsLive = WorkflowApprovals.layer.pipe(
   Layer.provideMerge(WorkflowStore.layer),
 )
 
-/** 6.3: the docs area: published documents, their images, and publishing them to a hosted docs site. */
-const DocsLive = Docs.layer.pipe(
-  Layer.provideMerge(HostedDocs.layer),
-  Layer.provideMerge(Layer.mergeAll(DocRepo.layer, DocsSiteRepo.layer, DocImages.layer, DocsRender.layer)),
-)
-
 /**
  * HE-34: the plugins the server runs: those it's built with (`plugins/installed.ts`), and on a demo board the example
  * `notes` plugin too (`@huntaway/plugin/example/notes`), to show what a plugin adds.
@@ -652,8 +637,6 @@ export const areasLayer = <T, E1, R1, E2, R2, C, E3, R3>(
     Layer.provideMerge(WorkflowsLive),
     // 6.7: the assistant, over documents (its brief) and automations (its routines).
     Layer.provideMerge(AssistantLive),
-    // 6.3: documents, which the docs server's tools call.
-    Layer.provideMerge(DocsLive),
     // 6.2: a task's documents, kept as its runs write them (`TurnHooks`).
     Layer.provideMerge(TaskDocuments.registered.pipe(Layer.provideMerge(TaskDocuments.layer), Layer.provideMerge(TaskDocumentRepo.layer))),
     // M2 to M5's areas.
@@ -712,7 +695,6 @@ export const Served = PublicRpcs.merge(
   CheckpointRpcs,
   GitRpcs,
   // 6.3
-  DocRpcs,
   // 6.1
   TerminalRpcs,
   // 6.11
@@ -763,7 +745,6 @@ export const HandlersLive = Layer.mergeAll(
   CheckpointHandlers,
   GitHandlers,
   // 6.3
-  DocHandlers,
   // 6.1
   TerminalHandlers,
   // 6.11

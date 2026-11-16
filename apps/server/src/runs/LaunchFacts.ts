@@ -4,7 +4,7 @@ import type { AgentConfigId, PermissionMode, Project, Rewind, Task, TaskId } fro
 import type { LaunchSpec } from "../agents/AgentDriver.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { AgentTools } from "../agents/AgentTools.ts"
-import { cacheDirsIn, codexEffort, reviewFilesystem } from "../agents/claude/access.ts"
+import { cacheDirsIn, codexEffort, DOCS_SERVER, reviewFilesystem } from "../agents/claude/access.ts"
 import { claudeLaunch, recordedEffort } from "../agents/claude/launch.ts"
 import { codexLaunch } from "../agents/codex/launch.ts"
 import type { LaunchRefused } from "../agents/codex/launch.ts"
@@ -302,6 +302,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
           spacesHost: served.spaces === true ? identity.hostName : null,
+          docsServer: (served.plugins ?? []).some((p) => p.name === DOCS_SERVER),
           memory: workspace?.memory,
         })
         const configDir = yield* configDirOf(task, cfg)
@@ -429,6 +430,7 @@ export class LaunchFacts extends Context.Service<LaunchFacts, LaunchFactsShape>(
           tmp,
           desktopHost: served.desktop ? identity.hostName : null,
           spacesHost: served.spaces === true ? identity.hostName : null,
+          docsServer: (served.plugins ?? []).some((p) => p.name === DOCS_SERVER),
           memory: workspace?.memory,
         })
         const configDir = yield* configDirOf(task, cfg)

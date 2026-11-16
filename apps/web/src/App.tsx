@@ -7,7 +7,6 @@ import { profileNames, useProfileName } from "./components/boardHelpers"
 import { Sidebar } from "./components/layout/Sidebar"
 import { RehearsalBanner } from "./components/layout/RehearsalBanner"
 import { UnhandledErrors } from "./components/layout/UnhandledErrors"
-import { DocsPage } from "./components/docs/DocsPage"
 import { Analytics } from "./components/settings/Analytics"
 import { Guide } from "./components/settings/Guide"
 import { HostPage } from "./components/settings/HostPage"
@@ -121,7 +120,6 @@ export function App() {
             {route.name === "group" && <GroupBoard hostId={route.hostId} group={route.group} />}
             {route.name === "task" && <TaskView taskId={route.taskId} />}
             {route.name === "assistant" && <AssistantPage key={route.profile} profile={route.profile} />}
-            {route.name === "docs" && <DocsPage key={route.profile} route={route} />}
             {route.name === "projectSettings" && <ProjectSettings key={route.projectId} projectId={route.projectId} tab={route.tab} />}
             {route.name === "settings" && <Settings tab={route.tab} />}
             {route.name === "analytics" && <Analytics profile={route.profile ?? null} />}

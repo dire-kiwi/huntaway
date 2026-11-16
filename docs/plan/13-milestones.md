@@ -117,7 +117,7 @@ Independent of each other unless said; all need M3, and the ones touching git ne
 | ---- | -------------------------------------------------------------------------------------------------- | ---------- | ------------------------ |
 | 6.1  | `Terminals`, `Pty`, the terminal socket; the Terminal tab                                          | 4.1        | 05 §2.5                  |
 | 6.2  | `TaskDocuments`: plans, artifacts, diagrams, answers                                               | 2.6        | 02 §2.7                  |
-| 6.3  | `Docs`, `DocImages`, the `docs` server, `HostedDocs`; step 1 for `docs/`                           | 3.1        | 02 §2.8, 03 §2.11        |
+| 6.3  | `Docs`, `DocImages`, the `docs` server, `HostedDocs`; step 1 for `docs/` (the docs plugin since HE-42) | 3.1        | 02 §2.8, 03 §2.11        |
 | 6.4  | `AgentTools`: skills, MCP servers, switches, sources, a task's skills                              | 2.5        | 02 §2.5                  |
 | 6.5  | `Automations`, `Scheduler`, `Webhooks`, `Routines` and their tools                                 | 3.4        | 06 §2.3                  |
 | 6.6  | `workflows/graph.ts` with the old cases, `WorkflowEngine`, its tools, the reactor's workflow steps | 4.7        | 06 §2.1–2.2              |

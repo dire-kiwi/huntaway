@@ -100,7 +100,11 @@ export const AutomationsChanged = Schema.Struct({
   automation_id: AutomationId,
   ...seq,
 })
-/** 6.3: a profile's document was published, moved, relabelled or (`deleted`) deleted: it is read again. */
+/**
+ * 6.3: a profile's document was published, moved, relabelled or (`deleted`) deleted. Only hosts from before HE-42 send
+ * this and the two below (their documents were built in; now they are the docs plugin's, with `plugin` events): they stay
+ * in the union so a stream from one still decodes, and the web ignores them.
+ */
 export const DocsChanged = Schema.Struct({
   type: Schema.Literal("docs"),
   profile_id: ProfileId,
@@ -108,9 +112,9 @@ export const DocsChanged = Schema.Struct({
   deleted: Schema.optional(Schema.Boolean),
   ...seq,
 })
-/** 6.3: a document's comments changed (added, edited, deleted or sent): they are read again. */
+/** 6.3: a document's comments changed (added, edited, deleted or sent). From hosts before HE-42 only. */
 export const DocCommentsChanged = Schema.Struct({ type: Schema.Literal("doc_comments"), profile_id: ProfileId, slug: Schema.String, ...seq })
-/** 6.3: a profile's connection to its docs site changed (a sign-in started, stopped, connected or was forgotten). */
+/** 6.3: a profile's connection to its docs site changed. From hosts before HE-42 only. */
 export const DocsSiteChanged = Schema.Struct({ type: Schema.Literal("docs_site"), profile_id: ProfileId, ...seq })
 /** 6.6: a project's workflow was made, changed or deleted: its workflows are read again (`workflows.list`). */
 export const WorkflowsChanged = Schema.Struct({ type: Schema.Literal("workflows_changed"), project_id: ProjectId, workflow_id: WorkflowId, ...seq })
@@ -154,7 +158,7 @@ export const BoardEvent = Schema.Union([
   RoutineReported,
   // 6.5
   AutomationsChanged,
-  // 6.3: documents.
+  // 6.3: documents, from hosts before HE-42.
   DocsChanged,
   DocCommentsChanged,
   DocsSiteChanged,

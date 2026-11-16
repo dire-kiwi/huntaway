@@ -5,7 +5,7 @@ import { navigate } from "../../../state/route"
 import { usePlugins } from "../../plugins/usePlugins"
 import { NavItem } from "./NavItem"
 
-/** HE-34: the plugins' pages (docs/plan/15-plugins.md), the page's own host's, under the profile's documents. */
+/** HE-34: the plugins' pages (docs/plan/15-plugins.md), the page's own host's: the docs plugin's documents among them. */
 export function PluginEntries({ route }: { route: Route }) {
   const host = useBoard((s) => s.localHostId)
   const pages = usePlugins(host).filter((p) => p.nav !== null && p.error === null)

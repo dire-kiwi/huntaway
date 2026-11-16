@@ -19,7 +19,6 @@ import {
   ConfigRpcs,
   DesktopRpcs,
   SpacesRpcs,
-  DocRpcs,
   FanoutRpcs,
   GithubRepoRpcs,
   GitRpcs,
@@ -74,12 +73,6 @@ import { Automations } from "./automations/Automations.ts"
 import { RoutineHost } from "./automations/RoutineHost.ts"
 import { Routines } from "./automations/Routines.ts"
 import { Board } from "./board/Board.ts"
-import { DocImages } from "./docs/DocImages.ts"
-import { DocRepo } from "./docs/DocRepo.ts"
-import { Docs } from "./docs/Docs.ts"
-import { DocsRender } from "./docs/DocsRender.ts"
-import { DocsSiteRepo } from "./docs/DocsSiteRepo.ts"
-import { HostedDocs } from "./docs/HostedDocs.ts"
 import { TaskDocumentRepo } from "./docs/TaskDocumentRepo.ts"
 import { TaskDocuments } from "./docs/TaskDocuments.ts"
 import { ChangesTab } from "./git/ChangesTab.ts"
@@ -151,7 +144,6 @@ import { AuthReadOnly } from "./rpc/AuthLive.ts"
 import { AutomationHandlers } from "./rpc/automations.ts"
 import { BoardHandlers } from "./rpc/board.ts"
 import { CheckpointHandlers } from "./rpc/checkpoints.ts"
-import { DocHandlers } from "./rpc/docs.ts"
 import { FanoutHandlers } from "./rpc/fanout.ts"
 import { GitHandlers } from "./rpc/git.ts"
 import { GithubRepoHandlers } from "./rpc/githubRepos.ts"
@@ -323,12 +315,6 @@ export const ReadOnlyAreas = Layer.mergeAll(Board.layer, LinkRepo.layer).pipe(
       Layer.provideMerge(Memory.layer),
     ),
   ),
-  Layer.provideMerge(
-    Docs.layer.pipe(
-      Layer.provideMerge(HostedDocs.layer),
-      Layer.provideMerge(Layer.mergeAll(DocRepo.layer, DocsSiteRepo.layer, DocImages.layer, DocsRender.layer)),
-    ),
-  ),
   Layer.provideMerge(TaskDocuments.layer.pipe(Layer.provideMerge(TaskDocumentRepo.layer))),
   Layer.provideMerge(ActingAreas),
   Layer.provideMerge(ReadOnlyPlatform),
@@ -354,7 +340,6 @@ export const ReadOnlyServed = PublicRpcs.merge(
   PermissionRpcs,
   CheckpointRpcs,
   GitRpcs,
-  DocRpcs,
   TerminalRpcs,
   AsanaRpcs,
   ConfigArchiveRpcs,
@@ -394,7 +379,6 @@ export const ReadOnlyRpcHandlers = Layer.mergeAll(
   PermissionHandlers,
   CheckpointHandlers,
   GitHandlers,
-  DocHandlers,
   AsanaHandlers,
   FanoutHandlers,
   GithubRepoHandlers,

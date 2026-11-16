@@ -8,7 +8,7 @@ import { definePlugin, Page, PluginError, PluginHost, PluginImport, pluginTool }
 import type { Plugin } from "@huntaway/plugin"
 import notes from "@huntaway/plugin/example/notes"
 import { TestBoard } from "@huntaway/testing"
-import { caller, ok as okText, refused, since } from "../docs/tests/docs.ts"
+import { caller, ok as okText, refused, since } from "../mcp/tools/tests/calls.ts"
 import { McpServers } from "../mcp/McpServers.ts"
 import { DataDir } from "../platform/DataDir.ts"
 import { Plugins } from "./Plugins.ts"
@@ -192,7 +192,7 @@ describe("a plugin that can't start", () => {
       make: Effect.succeed({}),
     })
     const refusing = definePlugin({ id: "refusing", name: "Refusing", version: "1", make: Effect.fail(PluginError.failed("no config")) })
-    const reserved = definePlugin({ id: "docs", name: "Docs", version: "1", make: Effect.succeed({}) })
+    const reserved = definePlugin({ id: "gh", name: "GitHub", version: "1", make: Effect.succeed({}) })
     const misnamed = definePlugin({ id: "My-Plugin", name: "Mine", version: "1", make: Effect.succeed({}) })
     return run(
       Effect.gen(function* () {
@@ -202,7 +202,7 @@ describe("a plugin that can't start", () => {
           [
             ["broken", list[0]?.error?.slice(0, 40) ?? "?"],
             ["refusing", "no config"],
-            ["docs", "docs is one of the board's own names, so"],
+            ["gh", "gh is one of the board's own names, so a"],
             ["My-Plugin", "a plugin's id is a lowercase letter, the"],
             ["notes", null],
           ],

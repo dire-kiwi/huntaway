@@ -1,6 +1,7 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber, Layer, Queue, Redacted, Schema, Stream } from "effect"
+import { Tool } from "effect/ai"
 import { Base64Url } from "effect/encoding"
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http"
 import type { HttpClientResponse } from "effect/http"
@@ -11,12 +12,15 @@ import type { McpRunSettings } from "../../agents/AgentDriver.ts"
 import { Identity } from "../../platform/Identity.ts"
 import { RunDir } from "../../runs/RunDir.ts"
 import { RunRepo } from "../../runs/RunRepo.ts"
+import { McpServers } from "../McpServers.ts"
+import { toolArguments } from "../tool.ts"
 import { McpHttpRoute, RETRY_MS } from "./http.ts"
 
 // The board's MCP servers over HTTP (docs/plan/inventory/03-mcp.md 2.2): the old mcp/http.test.ts's cases with the test
 // tools, on a real HTTP server on a free port: each run's secret, the JSON-RPC, a call answered on an event stream with
 // its priming event, and the answer of a call whose stream broke given on the stream its client reconnects with
-// (`Last-Event-ID`), across a restart too. gh's and desktop's own tools come with their servers (M4, M6); docs' (6.3) is the last case here.
+// (`Last-Event-ID`), across a restart too. gh's and desktop's own tools come with their servers (M4, M6); a plugin's server's own request limit (HE-34)
+// is the last case here.
 
 /** The route on a test HTTP server, over `board` (the MCP area and the whole board's services). */
 const served = <ROut, E, R>(board: Layer.Layer<ROut, E, R>) =>
@@ -104,8 +108,8 @@ const message = (event: SseEvent) => Schema.decodeEffect(Schema.fromJsonString(R
 
 const touched = Effect.flatMap(TestTools, (tools) => tools.touched)
 
-/** 6.3: a `publish_document` call. */
-const publishCall = (args: unknown) => ({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "publish_document", arguments: args } })
+/** A call of a test plugin server's `size` tool. */
+const sizeCall = (data: string) => ({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "size", arguments: { data } } })
 
 const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } }
 
@@ -313,7 +317,6 @@ describe("MCP over HTTP", () => {
       // Each with arguments it takes (gh's tools check theirs first, as the board's do).
       for (const [server, tool, args] of [
         ["gh", "git_push", {}],
-        ["docs", "publish_document", { pages: [{ path: "index", content: "x" }] }],
         ["huntaway", "test_touch", { label: "x" }],
       ] as const) {
         const v = yield* body(
@@ -331,27 +334,28 @@ describe("MCP over HTTP", () => {
     }).pipe(Effect.provide(served(TestMcp()))),
   )
 
-  // 6.3: the old docs_mcp.test.ts `runs_reach_it_over_http_whatever_has_their_board_tools`.
-  it.effect("a run reaches the docs server whatever has its board tools, with a body up to 64 MiB", () =>
+  // HE-34 (6.3's old docs_mcp.test.ts `runs_reach_it_over_http_whatever_has_their_board_tools`): a plugin's server is
+  // reached whatever has the run's board tools, and takes a body up to its own limit (the docs plugin's 64 MiB, for its
+  // images), more than the board's own servers' 32 MiB.
+  it.effect("a run reaches a plugin's server whatever has its board tools, with a body up to the plugin's limit", () =>
     Effect.gen(function* () {
-      // A run whose board tools are in process still has this server (as it has gh's).
+      const servers = yield* McpServers
+      const size = Tool.make("size", { parameters: Schema.Struct({ data: Schema.String }), success: Schema.Finite })
+      yield* servers.define("big", {
+        title: "big",
+        instructions: () => Effect.succeed(null),
+        offers: () => Effect.succeed(true),
+        preApproved: true,
+        maxRequestBytes: 64 << 20,
+      })
+      yield* servers.add("big", [{ tool: size, args: toolArguments(size), run: (args) => Effect.succeed(String(args["data"]).length) }])
       const run = yield* running({ in_process: true })
-      const page = { pages: [{ path: "index", content: "# Over HTTP" }] }
-      const answer = yield* post(run.path("docs"), run.secret, publishCall(page), "application/json")
-      assert.strictEqual(answer.status, 200)
-      const v = yield* body(answer)
-      assert.include(said(v.result)[0], '"slug": "over-http"')
-      // Only with the run's own secret.
-      assert.strictEqual((yield* post(run.path("docs"), "nope", publishCall(page))).status, 401)
-      // Images as they were given may be more than the other servers' 32 MiB.
-      const big = yield* post(
-        run.path("docs"),
-        run.secret,
-        publishCall({ ...page, images: [{ name: "a.png", data: "A".repeat(40 << 20) }] }),
-        "application/json",
-      )
+      assert.strictEqual((yield* post(run.path("big"), "nope", sizeCall("x"))).status, 401)
+      const big = yield* post(run.path("big"), run.secret, sizeCall("A".repeat(40 << 20)), "application/json")
       assert.strictEqual(big.status, 200)
-      assert.deepStrictEqual(said((yield* body(big)).result), ['image "a.png" isn\'t PNG, JPEG, WebP, GIF or AVIF', true])
+      assert.deepStrictEqual(said((yield* body(big)).result), [String(40 << 20), false])
+      // The board's own servers take less.
+      assert.notStrictEqual((yield* post(run.path("gh"), run.secret, sizeCall("A".repeat(40 << 20)), "application/json")).status, 200)
     }).pipe(Effect.provide(served(TestMcp()))),
   )
 })

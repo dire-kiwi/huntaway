@@ -179,42 +179,22 @@ running `gh` (`cd x && gh pr view`, `$(gh …)`, `bash -c 'gh …'` and the like
 tools instead. Codex has no such hook, so Codex agents are only told. A project that turns the
 server off, or has its own `gh`, gets neither.
 
-**Docs.** Each run also gets the `docs` MCP server (HA-280), for documents the user reads on the
-board: reports, plans, research. Its tools are the hosted docs app's (`publish_document`,
-`list_documents`, `get_document`, `read_page`, `move_document`, `get_feedback` and `list_components`, with the same schemas, checks,
-errors and warnings, from its renderer `@dire-kiwi/docs-render`), but the documents are kept on the
-host, in the profile of the run's task: each publish makes a new version of the document, with its
-Markdown or MDX pages (`mode: "merge"` keeps the previous version's other pages, `delete_paths`
-drops some), and slugs are unique per profile. A new document goes in a folder named after the task's project
-unless the agent gives `folder` (used as it's given, so `plans` is a top-level folder), and later publishes leave it
-where it is; `move_document` moves one (HA-290). `get_feedback` (HA-302) gives the comments the user left on
-the board's pages (the text they selected, with its context, and what they said), as the hosted app gives its
-selections, with `version` and `since`; form fields collect no answers here, so its `responses` are always empty and
-agents are told to ask in the thread instead. Sharing (`share_document`) isn't there. Its tools run without asking (in `--allowedTools`, or approved
-in Codex's config), and agents are told to publish write-ups there and give the user the URL it
-returns: `<board>/docs/<profile id>/d/<slug>/` (the host's _Public URL_, or its own address), with
-`-/v/<n>/` for a version. The board reads them with the `docs.*` RPC methods, and shows
-them on the profile's Docs page (see [board.md](board.md)), with links built from its own address. A project
-can turn the server off (its runs then have no `docs` server at all, nor the note about it), or
-replace it with its own named `docs`.
-
-Documents can have images (HA-327, as on the hosted app since DOC-12). `publish_document` takes
-`images`, a list of `{name, data}` (`data` in base64, `name` a relative path such as `images/chart.png`
-that pages refer to it by: `![Chart](images/chart.png)`, from the page's folder or else from the
-document's root), and takes inline `data:image/…;base64,…` URIs out of the pages (those in code
-stay as written), giving each a name of its own (`images/inline-<hash>.avif`). PNG, JPEG, WebP,
-GIF (its first frame) and AVIF are taken, read from the bytes; anything else, SVG included, is refused. Each
-image is converted to AVIF on the host (an AVIF is kept as it came), and the publish is refused,
-naming the image and its size, if one is over 512,000 bytes (500 KB) once converted: it isn't
-resized to fit. Only the AVIF is kept, not what was uploaded, once per profile whichever
-documents use it, and it's deleted with the last document that does. Image data doesn't count
-toward a page's 1,000,000 bytes, and the docs server takes requests of up to 64 MB (the other
-servers 32 MB). A version has the images of its publish; with `mode: "merge"` it also keeps the
-previous version's images that its pages still show. On the board a page's images come from
-`docs.image` (by the image's SHA-256), which the board gives the page's sandboxed
-frame as data: URLs: the frame can't fetch with the board's token, and its policy still refuses
-anything remote, remote images included. _Publish_ to the docs site sends the version's AVIFs as
-the site's `images`.
+**Docs.** Each run also gets the `docs` MCP server, for documents the user reads on the board: reports, plans,
+research. It is the docs plugin's (HE-42: `@dire-kiwi/docs-huntaway` from
+[dire-kiwi/docs](https://github.com/dire-kiwi/docs), included in this build; the board had it built in before, HA-280).
+Its tools are the hosted docs app's (`publish_document`, `list_documents`, `get_document`, `read_page`,
+`move_document`, `set_document_labels`, `list_labels`, `get_feedback` and `list_components`, with the same schemas,
+checks, errors and warnings, from the site's own renderer), but the documents are kept on the host, in the profile of
+the run's task: each publish makes a new version (`mode: "merge"` keeps the previous version's other pages), slugs are
+unique per profile, and a new document goes in a folder named after the task's project unless the agent gives
+`folder`. Images go in `images` or inline as data: URIs, are converted to AVIF on the host and refused over 500 KB once
+converted; the server takes requests of up to 64 MB (the board's own servers 32 MB). `get_feedback` gives the comments
+the user left on the board's pages. Sharing (`share_document`) isn't there. Its tools run without asking (in
+`--allowedTools`, or approved in Codex's config), its instructions say how to use it, and agents are told to publish
+write-ups there and give the user the URL it returns: `<board>/docs/<profile id>/d/<slug>/` (the host's _Public URL_,
+or its own address), with `-/v/<n>/` for a version, which opens as the plugin's page (see [board.md](board.md)). A
+project can turn the server off (its runs then have no `docs` server at all, nor the note about it), or replace it
+with its own named `docs`.
 
 **Computer use.** On a host where it's turned on, runs also get the `desktop` MCP server (HA-273): the agent sees and
 uses the host's own desktop (native apps' windows) through [Cua Driver](https://github.com/trycua/cua) (MIT). It's off
@@ -317,7 +297,7 @@ call's JSON-RPC id, which the board finds among the run's open calls in `mcp_cal
 prompt it gives up on is a `control_cancel_request` instead.
 
 Older Codex sessions and compactions reach the board's tools over MCP's streamable HTTP transport, and every
-run reaches the `gh` and `docs` servers that way, at `/api/mcp/<run id>/huntaway`, `/api/mcp/<run id>/gh` and `/api/mcp/<run id>/docs` on
+run reaches the `gh` server and the plugins' (`docs`) that way, at `/api/mcp/<run id>/huntaway`, `/api/mcp/<run id>/gh` and `/api/mcp/<run id>/docs` on
 the host's internal address (`127.0.0.1:<port>`, the host that runs the agent). Each run's `mcp.json` has them as `http` servers with a bearer token of the
 run's own (an HMAC of the run's id with the host's token), which only acts as that run: the server
 says which run a call is for, not the agent, and the agent never holds the host's token. What the

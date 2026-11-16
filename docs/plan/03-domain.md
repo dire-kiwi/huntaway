@@ -202,7 +202,7 @@ Each keeps its old fields. What changes:
 | `Pen`                   | `pens.ts`                                  | Without `hidden`                                                                                 |
 | `Automation`, `Trigger`, `Action`, `AutomationRun` | `automations.ts` | `Action.task_type` no longer takes document names                                              |
 | `Workflow`, `Graph`, `Node`, `Edge`, `WorkflowRun` | `workflows.ts`   | Without the legacy node kinds (`set_status`, `trigger` on `status`/`finished`)                  |
-| `Doc`, `DocVersion`, `DocComment`… | `docs.ts`                       | Same                                                                                             |
+| `Doc`, `DocVersion`, `DocComment`… | gone (HE-42)                    | The docs plugin's own (15-plugins.md)                                                            |
 | `Host`, `HostInfo`, `HostSettings`, `ServerStatus`, `ReleaseStatus` | `server.ts` | `api_version`/`api_compat` replaced by `protocol` and `version`; `capabilities` stays. `HostInfo` gains `read_only` (a [rehearsal](11-migration.md#rehearsal)). `HostSettings` without `thread_items` |
 | `Usage`, `UsageLimit`   | `usage.ts`                                 | Same                                                                                             |
 | `PendingPermission`, `Approval` | `permissions.ts`, `approvals.ts`   | `kind` is `tool \| project \| delete_task \| automation \| workflow`, each with its own input    |

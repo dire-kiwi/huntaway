@@ -11,7 +11,6 @@
     "test:ui": "pnpm run build && vp test --config tests/ui/vitest.config.ts"
   },
   "dependencies": {
-    "@dire-kiwi/docs-render": "https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz",
     "@effect/atom-react": "catalog:",
     "@effect/platform-browser": "catalog:",
     "@fontsource-variable/jetbrains-mono": "5.3.0",

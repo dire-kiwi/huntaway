@@ -68,7 +68,7 @@ const inputOf = (golden: LaunchGolden, own: Partial<ClaudeLaunchInput>): ClaudeL
   permissionMode: "default" satisfies PermissionMode,
   rules: null,
   tools: noRunTools,
-  served: { gh: true, docs: true, desktop: false },
+  served: { gh: true, desktop: false, plugins: [{ name: "docs", preApproved: true }] },
   githubAccount: null,
   addDirs: [],
   attachmentDirs: [],
@@ -112,7 +112,7 @@ describe("claudeLaunch", () => {
   it.effect("a run without a launcher has no hooks, and a server the board doesn't serve isn't offered", () =>
     Effect.gen(function* () {
       const golden = goldenOf("a task's first run")
-      const spec = yield* claudeLaunch({ ...inputOf(golden, {}), exe: null, served: { gh: false, docs: false, desktop: false } })
+      const spec = yield* claudeLaunch({ ...inputOf(golden, {}), exe: null, served: { gh: false, desktop: false } })
       assert.isFalse(spec.args.includes("--settings"))
       // gh's read-only tools stay allowed, as they were whether or not the run had the server.
       assert.isFalse(spec.args.includes("mcp__docs"))
@@ -131,7 +131,7 @@ describe("claudeLaunch", () => {
         { name: "off", preApproved: true },
       ]
       const tools = { ...noRunTools, disallowed: ["mcp__off"] }
-      const spec = yield* claudeLaunch({ ...inputOf(golden, {}), tools, served: { gh: false, docs: false, desktop: false, plugins } })
+      const spec = yield* claudeLaunch({ ...inputOf(golden, {}), tools, served: { gh: false, desktop: false, plugins } })
       assert.deepStrictEqual(spec.mcpServers, {
         notes: { type: "http", url: "/api/mcp/RUN/notes", headers: { Authorization: "Bearer SECRET" } },
         asks: { type: "http", url: "/api/mcp/RUN/asks", headers: { Authorization: "Bearer SECRET" } },

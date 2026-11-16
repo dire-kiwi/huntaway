@@ -61,13 +61,12 @@ export const definePlugin = (plugin: Plugin): Plugin => plugin
 
 /**
  * Names a plugin can't take: the board's own MCP servers (and its old name), and the first segments of the board's own
- * pages and routes.
+ * pages and routes. Not `docs`: the board's documents are the docs project's plugin of that id (HE-42).
  */
 export const RESERVED_IDS: ReadonlyArray<string> = [
   "huntaway",
   "issue_agent",
   "gh",
-  "docs",
   "desktop",
   "api",
   "plugins",

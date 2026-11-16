@@ -44,6 +44,8 @@ export interface RunTold {
   readonly desktopHost?: string | null | undefined
   /** HE-37: it has the `spaces` server: the host's name, whose Spaces they are; none by default. */
   readonly spacesHost?: string | null | undefined
+  /** HE-42: the board serves a `docs` server, the docs plugin's (`docsNote`); not by default. */
+  readonly docsServer?: boolean | undefined
   /** 6.7: the assistant's (or a routine thread's) memory as its files say now; none by default. */
   readonly memory?: string | undefined
 }
@@ -215,9 +217,10 @@ export class Prompts extends Context.Service<Prompts, PromptsShape>()("huntaway-
           githubAccount: set(project?.github_account) ?? set(profile.github_account),
           pen: kind._tag === "Pen" ? yield* penOf(task, kind) : "",
           github: yield* githubOf(task, project),
-          // The board serves gh (4.4) and docs (6.3), unless the project has its own server of that name or turns it off (6.4).
+          // The board serves gh (4.4), and docs when the docs plugin runs (HE-42), unless the project has its own server of
+          // that name or turns it off (6.4).
           ghTools: usesServer(tools, GH_SERVER, true),
-          docsTools: usesServer(tools, DOCS_SERVER, true),
+          docsTools: usesServer(tools, DOCS_SERVER, run.docsServer === true),
           // 6.6: an `open_pr` step follows In progress's done, so the agent isn't told to push and open one itself.
           boardPr: yield* workflowFacts.boardOpensPr(task),
         }

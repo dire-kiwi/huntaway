@@ -2,10 +2,9 @@
 
 HE-34, 15 November 2026. A plugin adds to the board what the board would otherwise have to build in: an MCP server for
 its agents, pages and HTTP routes, over a SQLite database of its own. The first one meant is the docs project's
-(`dire-kiwi/docs`): the board's built-in documents (`apps/server/src/docs`, `apps/web/src/components/docs`, the
-`docs` MCP server) copy the hosted docs site's features, and a plugin of the docs project's would replace them, so the
-two stop drifting apart. This page is the API and how the board runs it; moving documents into a plugin is a task of
-its own (below, What's next).
+(`dire-kiwi/docs`): the board's built-in documents copied the hosted docs site's features, and a plugin of the docs
+project's replaces them, so the two stop drifting apart. This page is the API and how the board runs it. HE-42 made the
+switch: the board is built with `@dire-kiwi/docs-huntaway` (below, The docs plugin), and its own documents are gone.
 
 ## What a plugin is
 
@@ -78,8 +77,8 @@ new tab. A `settings` or `task` frame is as tall as its page. A plugin page's li
 (`/notes/<profile id>`): in a `srcdoc` frame a relative link resolves against the board's current address.
 
 The first path segment of a board URL that isn't one of the board's own is a plugin's (`router.ts`), so a plugin's
-links are stable and shareable: `<board public URL>/<id>/<path>` (`PluginHost.pageUrl`). The board's built-in `/docs`
-stays the board's until a `docs` plugin replaces it; `docs` is reserved until then.
+links are stable and shareable: `<board public URL>/<id>/<path>` (`PluginHost.pageUrl`). `/docs/…` is the docs
+plugin's (HE-42), at the paths the built-in documents had, so the links agents were given keep working.
 
 ## Calls and events
 
@@ -106,8 +105,7 @@ refusals as `PluginError`s); `emit`; `secrets.get/set/remove(profile | null, nam
 
 ## Installing
 
-A plugin is a dependency of `apps/server` (a GitHub release's tarball URL, as `@dire-kiwi/docs-render` is: there is
-no registry), imported in `apps/server/src/plugins/installed.ts` and listed there; `InstalledLive` (Main.ts) gives that
+A plugin is a dependency of `apps/server` (a GitHub release's tarball URL: there is no registry), imported in `apps/server/src/plugins/installed.ts` and listed there; `InstalledLive` (Main.ts) gives that
 list, plus `notes` on a demo board. Being a dependency, it can have native or WebAssembly dependencies of its own
 (pnpm installs them), and it ships in a release with the server. Tests give their own list
 (`TestBoard(overrides, plugins)`).
@@ -133,11 +131,33 @@ the session (the board has one user: what it knows is the session's kind and sco
 HTTP; a Settings section; calls routed to the plugin's host as every RPC is; TypeScript with native or WebAssembly
 dependencies, installed from a tarball.
 
+## The docs plugin (HE-42)
+
+`@dire-kiwi/docs-huntaway` (dire-kiwi/docs, `huntaway/`; DOC-16), installed from its `huntaway-v<version>` release's
+tarball and listed in `installed.ts`. Its id is `docs`, so `docs` is off `RESERVED_IDS`, and the board's own documents
+are gone: `apps/server/src/docs`'s `Docs`, `DocRepo`, `DocImages`, `DocsRender`, `HostedDocs`, `DocsSiteRepo`, the
+`docs` built-in server (`BuiltInServer`, `ServedServers.docs`, its 64 MiB limit: the plugin's `maxRequestBytes`), the
+`docs.*` RPCs and their contract, the Docs page, its route and sidebar entry, and the demo board's document. What
+stays the board's:
+
+- **Its tables.** `docs*`/`doc_*` stay in the board's schema, written by the legacy import (`importLegacy`'s `docs`
+  family), so a switch from the old server carries documents over: the plugin's first migration copies them
+  (`IMPORTABLE`). Nothing else reads or writes them.
+- **The note.** A run whose launch serves a server named `docs` (`RunTold.docsServer`) is still told to publish
+  write-ups there (`prompts/docsNote.ts`); the plugin's own instructions say how.
+- **Links.** A thread's links to `/docs/<profile id>/d/<slug>/` and a `publish_document` call's result open in the
+  board as the plugin's page (`task/thread/docLinks.ts`), showing the slug where they showed the title.
+- **Old hosts' events.** `docs`, `doc_comments` and `docs_site` stay in `BoardEvent`, which has no catch-all member,
+  so a stream from a host before HE-42 still decodes; the web ignores them.
+
+Updating it is a new release in dire-kiwi/docs (`render-v…` first if it needs a new renderer, then `huntaway-v…`) and
+the tarball URL bumped in `apps/server/package.json`. pnpm records no `integrity` for a tarball that is only a
+dependency's (the renderer is the plugin's), and `pnpm deploy` (`scripts/package-server.sh`) refuses one without: put
+the renderer's in `pnpm-lock.yaml` by hand, `sha512-` and the base64 of its tarball's SHA-512 (`openssl dgst -sha512
+-binary <tgz> | base64 -w0`), which later installs keep.
+
 ## What's next
 
-- **The docs plugin** (the docs project's): `docs` taken off `RESERVED_IDS`, the board's built-in documents removed
-  (its `docs` server, `Docs*`, the Docs page, `docs.*` RPCs), the plugin's first migration copying the `doc*` tables
-  (`IMPORTABLE`). Its comment UI comes with it (the popup on the selection, bubbles beside the text: docs#11).
 - `@huntaway/plugin` published as a tarball on releases, so a plugin outside this repository has its types.
 - A page's query string (`render`'s `query` is empty from the web app for now), a plugin's pages on another host than
   the page's own (the frame takes a `host`; the menu shows the page's own host's), plugins in backups, and the phone

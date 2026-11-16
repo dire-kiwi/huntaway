@@ -208,9 +208,9 @@ importers:
 
   apps/server:
     dependencies:
-      '@dire-kiwi/docs-render':
-        specifier: https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz
-        version: https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz
+      '@dire-kiwi/docs-huntaway':
+        specifier: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.1.0/dire-kiwi-docs-huntaway-0.1.0.tgz
+        version: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.1.0/dire-kiwi-docs-huntaway-0.1.0.tgz(@huntaway/plugin@packages+plugin)(@types/node@24.19.2)(effect@4.1.4)
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.1.3(effect@4.1.4)(redis@6.3.1)
@@ -251,9 +251,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@dire-kiwi/docs-render':
-        specifier: https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz
-        version: https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz
       '@effect/atom-react':
         specifier: 'catalog:'
         version: 4.1.3(effect@4.1.4)(react@19.3.1)(scheduler@0.28.0)
@@ -880,9 +877,17 @@ packages:
   '@chevrotain/utils@13.2.0':
     resolution: {integrity: sha512-SzKYY68rseOrb9KILVzPsl6SjkQtdWw01SRGB5aCVI5kFcHltQsOYV3JB0Ffst72DgkvHCyDQ0NLwxtmCCf97Q==}
 
-  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz':
-    resolution: {integrity: sha512-GInuvnnHSqLQsmLfw3OeC0aJiU4ThxO98rJurDI4mRsukzTaSMm3NO0K6nNpgr6/AUGby9lEct7KTppeP5oi0w==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz}
-    version: 0.2.0
+  '@dire-kiwi/docs-huntaway@https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.1.0/dire-kiwi-docs-huntaway-0.1.0.tgz':
+    resolution: {integrity: sha512-46z/RWbVhahsv/DdTZeuhmakqgNAATPzo00f9Y8v6/TDaDQpiW9HJSCSK23DPZPgaJQFiUl2k8/iMNAUz9Hsuw==, tarball: https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.1.0/dire-kiwi-docs-huntaway-0.1.0.tgz}
+    version: 0.1.0
+    engines: {node: '>=24'}
+    peerDependencies:
+      '@huntaway/plugin': '*'
+      effect: ^4.1.4
+
+  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.4.0/dire-kiwi-docs-render-0.4.0.tgz':
+    resolution: {integrity: sha512-j11/yW7uuqvjwauVklAwad3EWuRZR2a1/XV+KzswmCuk4Rgk/7v5JFT4c3jmCu93XEc2FBWskRPn8YJ05VX20Q==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.4.0/dire-kiwi-docs-render-0.4.0.tgz}
+    version: 0.4.0
     engines: {node: '>=20'}
 
   '@effect/atom-react@4.1.3':
@@ -6490,7 +6495,16 @@ snapshots:
 
   '@chevrotain/utils@13.2.0': {}
 
-  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.2.0/dire-kiwi-docs-render-0.2.0.tgz': {}
+  '@dire-kiwi/docs-huntaway@https://github.com/dire-kiwi/docs/releases/download/huntaway-v0.1.0/dire-kiwi-docs-huntaway-0.1.0.tgz(@huntaway/plugin@packages+plugin)(@types/node@24.19.2)(effect@4.1.4)':
+    dependencies:
+      '@dire-kiwi/docs-render': https://github.com/dire-kiwi/docs/releases/download/render-v0.4.0/dire-kiwi-docs-render-0.4.0.tgz
+      '@huntaway/plugin': link:packages/plugin
+      effect: 4.1.4
+      sharp: 0.35.5(@types/node@24.19.2)
+    transitivePeerDependencies:
+      - '@types/node'
+
+  '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.4.0/dire-kiwi-docs-render-0.4.0.tgz': {}
 
   '@effect/atom-react@4.1.3(effect@4.1.4)(react@19.3.0)(scheduler@0.28.0)':
     dependencies:
@@ -10874,11 +10888,11 @@ snapshots:
 
   node-abi@4.40.0:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.6
 
   node-api-version@0.2.1:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.6
 
   node-fetch@2.7.0:
     dependencies:
@@ -10893,7 +10907,7 @@ snapshots:
       graceful-fs: 4.2.11
       nopt: 9.0.0
       proc-log: 6.1.0
-      semver: 7.7.4
+      semver: 7.8.6
       tar: 7.5.22
       tinyglobby: 0.2.17
       undici: 6.29.1
