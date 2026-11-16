@@ -5,6 +5,7 @@ import { TestClock } from "effect/testing"
 import { HostId, PROTOCOL } from "@huntaway/contracts"
 import type { ApprovalRule, HostSettingsPatch, NewProfile, ProfileId, ProfilePatch, SyncEntry } from "@huntaway/contracts"
 import { tempDir, TestBoard } from "@huntaway/testing"
+import { AgentTools } from "../agents/AgentTools.ts"
 import { ApprovalRules } from "../agents/ApprovalRules.ts"
 import { ApprovalRulesRepo } from "../agents/ApprovalRulesRepo.ts"
 import { Profiles } from "../profiles/Profiles.ts"
@@ -30,6 +31,7 @@ const boardAs = (id: string) =>
     const profiles = Context.get(context, Profiles)
     const rules = Context.get(context, ApprovalRules)
     const rulesRepo = Context.get(context, ApprovalRulesRepo)
+    const tools = Context.get(context, AgentTools)
     const peer: SyncPeer = { id, name: id, get: sync.status, merge: (entries) => Effect.ignore(sync.merge(entries)) }
     return {
       id,
@@ -57,6 +59,17 @@ const boardAs = (id: string) =>
       setRules: (profile: ProfileId, list: ReadonlyArray<ApprovalRule>, expiry: number) =>
         Effect.andThen(Effect.orDie(rules.set(profile, { rules: list, expiry_minutes: expiry })), sync.observe),
       saved: (profile: ProfileId) => rulesRepo.saved(profile),
+      /** The host's global skills and servers, changed as the board does it and noted. */
+      tools,
+      noted: <A, E>(change: Effect.Effect<A, E>) =>
+        Effect.gen(function* () {
+          const out = yield* Effect.orDie(change)
+          yield* sync.observe
+          yield* TestClock.adjust("3 millis")
+          return out
+        }),
+      skills: Effect.map(tools.global, (g) => g.skills.map((x) => [x.name, x.content, x.enabled])),
+      servers: Effect.map(tools.global, (g) => g.mcp_servers.map((x) => [x.name, x.config.url ?? null, x.auto_allow])),
     }
   })
 type Board = Effect.Success<ReturnType<typeof boardAs>>
@@ -419,5 +432,111 @@ describe("settings sync between a hub and two hosts", () => {
       assert.deepStrictEqual((yield* h.sync.status).entries, [])
       assert.isTrue(Exit.isFailure(yield* Effect.exit(h.sync.resolve("global/default_model", Option.none()))))
     }).pipe(Effect.provide(NodeServices.layer)),
+  )
+})
+
+const skill = (name: string, body = "Do it this way.") => `---\nname: ${name}\ndescription: ${name} for the fleet.\n---\n\n${body}\n`
+
+describe("settings sync of the hosts' global skills and MCP servers (HE-46)", () => {
+  it.effect("a skill or server added, changed or removed on one host is the same on the others", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      yield* t.settle()
+      const added = yield* t.a.noted(t.a.tools.addSkill(null, { content: skill("deploy") }))
+      yield* t.b.noted(t.b.tools.addServer(null, { name: "docs", config: { type: "http", url: "https://docs.example.com/mcp" } }))
+      yield* t.settle()
+      for (const h of [t.hub, t.a, t.b]) {
+        assert.deepStrictEqual(yield* h.skills, [["deploy", skill("deploy"), true]], h.id)
+        assert.deepStrictEqual(yield* h.servers, [["docs", "https://docs.example.com/mcp", false]], h.id)
+      }
+
+      yield* t.b.noted(
+        t.b.tools.updateSkill(null, (yield* t.b.tools.global).skills[0]?.id ?? "", { content: skill("deploy", "Use the script."), enabled: false }),
+      )
+      yield* t.settle()
+      assert.deepStrictEqual(yield* t.a.skills, [["deploy", skill("deploy", "Use the script."), false]])
+
+      yield* t.a.noted(t.a.tools.removeSkill(null, added.id))
+      const docs = (yield* t.hub.tools.global).mcp_servers[0]?.id ?? ""
+      yield* t.hub.noted(t.hub.tools.updateServer(null, docs, { auto_allow: true }))
+      yield* t.settle()
+      for (const h of [t.hub, t.a, t.b]) {
+        assert.deepStrictEqual(yield* h.skills, [], h.id)
+        assert.deepStrictEqual(yield* h.servers, [["docs", "https://docs.example.com/mcp", true]], h.id)
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+
+  it.effect("a host's skills and servers from before it synced join the others', and nothing it lacks is taken for removed", () =>
+    Effect.gen(function* () {
+      // Each host has its own before sync starts; the same skill on two of them with different text.
+      const t = yield* board({ b: false }, (hub, a, b) =>
+        Effect.gen(function* () {
+          yield* Effect.orDie(hub.tools.addSkill(null, { content: skill("review") }))
+          yield* Effect.orDie(a.tools.addSkill(null, { content: skill("release") }))
+          yield* Effect.orDie(b.tools.addSkill(null, { content: skill("release", "Theirs.") }))
+          yield* Effect.orDie(b.tools.addServer(null, { name: "local", config: { command: "local-mcp" } }))
+        }),
+      )
+      yield* t.settle([t.hub, t.a])
+      assert.deepStrictEqual(
+        (yield* t.a.skills).map((x) => x[0]),
+        ["release", "review"],
+      )
+      // b doesn't sync: nothing of the others' reaches it, nor its own them.
+      assert.deepStrictEqual(
+        (yield* t.b.skills).map((x) => x[0]),
+        ["release"],
+      )
+      assert.deepStrictEqual(yield* t.hub.servers, [])
+
+      yield* TestClock.adjust("1 second")
+      yield* t.b.write("settings_sync", "true")
+      yield* t.b.sync.observe
+      yield* t.settle()
+      // The hosts that synced first keep their text; what only b had, it brings.
+      for (const h of [t.hub, t.a, t.b]) {
+        assert.deepStrictEqual(
+          yield* h.skills,
+          [
+            ["release", skill("release"), true],
+            ["review", skill("review"), true],
+          ],
+          h.id,
+        )
+        assert.deepStrictEqual(
+          (yield* h.servers).map((x) => x[0]),
+          ["local"],
+          h.id,
+        )
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+
+  it.effect("a skill a host can't take stays as it is there, and one it lacks isn't made from nothing", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      yield* t.settle()
+      const at = "2026-11-16T00:00:00.000Z"
+      const entry = (name: string, value: unknown): SyncEntry => ({
+        name,
+        value,
+        vv: { x: 1 },
+        changed_at: at,
+        changed_by: HostId.make("x"),
+        since: "",
+        lost: [],
+      })
+      // A skill whose text names another skill than its field's, and a server with no command or URL: kept, not applied.
+      yield* t.b.sync.merge([
+        entry("skill/deploy", { content: skill("other"), enabled: true }),
+        entry("mcp_server/odd", { config: {}, enabled: true, auto_allow: false }),
+      ])
+      assert.deepStrictEqual(yield* t.b.skills, [])
+      assert.deepStrictEqual(yield* t.b.servers, [])
+      // A skill removed elsewhere that this host never had stays removed, with no entry of its own made for it.
+      yield* t.a.sync.merge([entry("skill/gone", null)])
+      assert.strictEqual((yield* t.a.entry("skill/gone"))?.changed_by, "x")
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })
