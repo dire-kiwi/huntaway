@@ -99,6 +99,8 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
         Effect.gen(function* () {
           const row = yield* encodeColumns({ ...columns, id, created_at: createdAt })
           yield* sql`INSERT INTO profiles ${sql.insert(row)}`
+          // A name a profile takes is no other's former name any more (HE-46).
+          if (columns.name !== undefined) yield* sql`DELETE FROM profile_former_names WHERE name = ${columns.name}`
         }).pipe(Effect.orDie)
 
       const update = (id: ProfileId, columns: ProfileColumns) =>
@@ -106,6 +108,7 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
           const row = yield* encodeColumns(columns)
           if (Object.keys(row).length === 0) return
           yield* sql`UPDATE profiles SET ${sql.update(row)} WHERE id = ${id}`
+          if (columns.name !== undefined) yield* sql`DELETE FROM profile_former_names WHERE name = ${columns.name}`
         }).pipe(Effect.orDie)
 
       const asanaToken = (id: ProfileId) =>

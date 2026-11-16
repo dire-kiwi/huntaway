@@ -410,6 +410,51 @@ describe("settings sync between a hub and two hosts", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   )
 
+  it.effect("a name a profile left is taken again, removed again, and the profile that left it stays (HE-46 review)", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      const alpha = yield* t.a.profile({ name: "alpha" })
+      yield* t.settle()
+      yield* t.a.patch(alpha.id, { name: "beta" })
+      yield* t.settle()
+      yield* t.a.patch(alpha.id, { tint: "#aa0000" })
+      const betaOnB = (yield* t.b.profiles.list).find((p) => p.name === "beta")
+      // A new "alpha", then removed: a removal, not "renamed to beta" again.
+      const again = yield* t.a.profile({ name: "alpha" })
+      yield* t.a.sync.observe
+      yield* t.settle()
+      yield* Effect.orDie(t.a.profiles.delete(again.id))
+      yield* t.a.sync.observe
+      yield* t.settle()
+      for (const h of [t.hub, t.b]) {
+        const names = (yield* h.profiles.list).map((p) => p.name)
+        assert.deepStrictEqual(names, ["beta"], h.id)
+      }
+      const still = yield* Effect.orDie(t.b.profiles.get(ProfileId.make(betaOnB?.id ?? "")))
+      assert.deepStrictEqual([still.name, still.tint], ["beta", "#aa0000"])
+      assert.strictEqual((yield* Effect.orDie(t.a.profiles.get(alpha.id))).tint, "#aa0000")
+    }).pipe(Effect.provide(NodeServices.layer)),
+  )
+
+  it.effect("a rename that changes only the case is taken, with what follows it (HE-46 review)", () =>
+    Effect.gen(function* () {
+      const t = yield* board()
+      const p = yield* t.a.profile({ name: "test" })
+      yield* t.settle()
+      const onB = (yield* t.b.profiles.list).find((x) => x.name === "test")
+      yield* t.a.patch(p.id, { name: "Test" })
+      yield* t.settle()
+      yield* t.a.patch(p.id, { tint: "#336699" })
+      yield* t.settle()
+      const now = yield* Effect.orDie(t.b.profiles.get(ProfileId.make(onB?.id ?? "")))
+      assert.deepStrictEqual([now.name, now.tint], ["Test", "#336699"])
+      assert.deepStrictEqual(
+        (yield* t.b.profiles.list).map((x) => x.name),
+        ["Test"],
+      )
+    }).pipe(Effect.provide(NodeServices.layer)),
+  )
+
   it.effect("a profile removed on one host is removed on the others, but never where it holds work (HE-46)", () =>
     Effect.gen(function* () {
       const t = yield* board()
@@ -690,6 +735,17 @@ describe("settings sync of the rest of the board (HE-46)", () => {
       yield* t.settle()
       const after = yield* Effect.orDie(t.b.profiles.get(ProfileId.make(onB?.id ?? "")))
       assert.deepStrictEqual([after.claude_config_ids, after.assistant_config_id], [[laptop.id], null])
+
+      // A config renamed or deleted on one host hasn't been taken off the profile: the others keep theirs.
+      yield* t.b.patch(ProfileId.make(onB?.id ?? ""), { claude_config_ids: [mainB.id, laptop.id] })
+      yield* t.a.patch(work.id, { claude_config_ids: [mainA.id, extra.id] })
+      yield* t.settle()
+      yield* t.a.noted(t.a.configs.update(mainA.id, { name: "primary" }))
+      yield* t.settle()
+      assert.deepStrictEqual((yield* Effect.orDie(t.b.profiles.get(ProfileId.make(onB?.id ?? "")))).claude_config_ids, [mainB.id, laptop.id])
+      yield* t.a.noted(t.a.configs.delete(extra.id))
+      yield* t.settle()
+      assert.deepStrictEqual((yield* Effect.orDie(t.b.profiles.get(ProfileId.make(onB?.id ?? "")))).claude_config_ids, [mainB.id, laptop.id])
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

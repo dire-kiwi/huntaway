@@ -193,12 +193,17 @@ export const makeBoardFields = Effect.gen(function* () {
       absentUnknown: true,
     }
   }
-  /** The configs named for profile `p` here and in `known`'s entries. */
+  /**
+   * The configs named for profile `p` here and in `known`'s entries that this host has a config of. Agent configs and
+   * their names are each host's own: one renamed or deleted here hasn't been taken off the profile, so its field isn't
+   * looked at while this host has no config of the name (its entry waits, as a profile's do for a profile of its name),
+   * and the profile keeps it on the others. A config renamed here is one of the new name on the profile.
+   */
   const configsOf = (p: Profile, known: Iterable<string>) =>
     Effect.map(configNames, (c) => {
       const out = new Set(p.claude_config_ids.flatMap((id) => c.name(id) ?? []))
       for (const name of namesBetween(known, `${profilePrefix(p.name)}config/`, "")) out.add(name)
-      return [...out].toSorted()
+      return [...out].filter((name) => c.id(name) !== null).toSorted()
     })
   const configOf = (p: Profile, key: "assistant_config_id" | "threads_config_id") =>
     column(
@@ -270,6 +275,7 @@ export const makeBoardFields = Effect.gen(function* () {
         const p = yield* byName(name)
         if (v === true) {
           if (p !== undefined) return yield* Effect.void
+          // One of the name in another case may be one being renamed to this: the rename comes, and this is taken after.
           if ((yield* profiles.list).some((o) => sameName(o.name, name))) return yield* Effect.fail("a profile of that name in another case is here")
           return yield* profiles.insert(yield* newId, yield* nowTimestamp, { name, claude_config_ids: [] })
         }
@@ -280,7 +286,7 @@ export const makeBoardFields = Effect.gen(function* () {
           if (there !== undefined) {
             if ((yield* profiles.holds(there.id)) > 0) return yield* Effect.fail(`a profile ${to.renamed_to} with projects or tasks is here too`)
             yield* profiles.delete(there.id)
-          } else if ((yield* profiles.list).some((o) => sameName(o.name, to.renamed_to))) {
+          } else if ((yield* profiles.list).some((o) => o.id !== p.id && sameName(o.name, to.renamed_to))) {
             return yield* Effect.fail(`a profile ${to.renamed_to} in another case is here`)
           }
           yield* profiles.update(p.id, { name: to.renamed_to })
