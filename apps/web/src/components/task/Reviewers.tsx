@@ -168,7 +168,7 @@ export function SummarizerList({
   models: InheritedModels
   value: ReadonlyArray<Reviewer>
   onChange: (v: Reviewer[]) => void
-  /** Skills the project has, offered as the skills to pick from. */
+  /** The board's skills (a project's own among them, for a project's), offered to pick from as in a reviewer's. */
   skills?: string[] | undefined
 }) {
   const list = value.length ? value : [DEFAULT_REVIEWER]

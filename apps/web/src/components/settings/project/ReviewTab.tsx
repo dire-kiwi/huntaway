@@ -95,6 +95,7 @@ function ProjectSummarizer({ project, onChange }: { project: ProjectForm; onChan
   const configs = useBoard(useShallow((s) => s.claudeConfigs.filter((c) => c.host_id === project.host_id)))
   const profile = useBoard((s) => s.profiles.find((p) => p.host_id === project.host_id && p.id === project.profile_id))
   const own = project.summarizers.length > 0
+  const extras = useReviewerExtras(project.host_id, project.id)
   const profiles = profile?.summarizers.length ? profile.summarizers : [DEFAULT_REVIEWER]
   const models = { project: project.model, profile: profile?.default_model }
   return (
@@ -109,7 +110,9 @@ function ProjectSummarizer({ project, onChange }: { project: ProjectForm; onChan
           what="summarizers"
           profileHas={profiles.map((r) => summarizerLabel(r, configs)).join("; ")}
         />
-        {own && <SummarizerList hostId={project.host_id} configs={configs} models={models} value={project.summarizers} onChange={onChange} />}
+        {own && (
+          <SummarizerList hostId={project.host_id} configs={configs} models={models} value={project.summarizers} onChange={onChange} skills={extras?.skills} />
+        )}
       </div>
     </Field>
   )

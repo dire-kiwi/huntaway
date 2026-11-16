@@ -229,7 +229,14 @@ export function ProfileForm({
           label="Summarizers"
           help="Who summarises a task's changes once its review passes, each in a thread of its own. Give them different skills or prompts to compare which summarises best; a quick, cheap model is usually enough."
         >
-          <SummarizerList hostId={host} configs={hostConfigs} models={{ profile: model }} value={summarizers} onChange={setSummarizers} />
+          <SummarizerList
+            hostId={host}
+            configs={hostConfigs}
+            models={{ profile: model }}
+            value={summarizers}
+            onChange={setSummarizers}
+            skills={reviewExtras?.skills}
+          />
         </Field>
         <ToggleField
           checked={mergeApproval}
