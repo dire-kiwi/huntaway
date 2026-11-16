@@ -10,6 +10,8 @@ import { answerPrompt } from "./promptAnswers"
 import { AskCard, BoardQuestionCard, PlanCard, questionsOf, SkippedLine } from "./requestCards"
 import { ConnectionCard } from "./ConnectionCard"
 import { DraftCard } from "./draftCards"
+import { SignInsCard } from "./SignInsCard"
+import { signInsAsk } from "./signIns"
 import { draftOf } from "./drafts"
 import { useThread } from "./context"
 import { Markdown } from "./Markdown"
@@ -100,6 +102,9 @@ export function PromptCard({ id, data, hostId }: { id: number; data: PromptData;
   if (QUESTION_TOOLS.includes(data.tool_name) && questionsOf(data).length)
     return <AskCard id={id} data={data} hostId={hostId} from={<PromptFrom data={data} />} movedOn={movedOn} />
   if (data.tool_name === "ExitPlanMode") return <PlanCard data={data} hostId={hostId} taskId={taskId} from={<PromptFrom data={data} />} movedOn={movedOn} />
+  // HE-49: bringing the host's sign-ins into a Space, with the sites the user can trim.
+  const signIns = data.kind ? null : signInsAsk(data.tool_name, data.input)
+  if (signIns) return <SignInsCard ask={signIns} data={data} hostId={hostId} from={<PromptFrom data={data} />} />
   const draft = drafts && !data.kind ? draftOf(data.tool_name, data.input) : null
   if (draft) {
     const footer = (

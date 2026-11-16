@@ -88,6 +88,17 @@ export const SpaceSignIn = change(
   },
 )
 
+export const SpaceRequestSignIns = change(
+  "space_request_sign_ins",
+  'Ask the user to bring their own sign-ins for some sites from the host\'s browser into a running Space, so its browser starts out signed in (teleport: cookies and local storage, not saved passwords). Give the sites as registrable domains ("github.com", "figma.com"). It asks the user itself, whatever the mode: the card names the Space, the browser profile and the sites, and the user can untick any of them before allowing it. Only sites the host\'s browser holds are offered, and identity providers (google.com, microsoftonline.com, apple.com, okta.com…) are left unticked unless the user ticks them. Returns which sites were brought; a denial sends nothing.',
+  {
+    space,
+    sites: Schema.Array(Schema.String.annotate({ description: "A registrable domain to bring sign-ins for." })).annotate({
+      description: "The sites to bring sign-ins for.",
+    }),
+  },
+)
+
 /** The tools, in `tools/list`'s order. */
 export const SPACES_TOOLS = [
   ListSpaces,
@@ -100,4 +111,5 @@ export const SPACES_TOOLS = [
   SpaceCallTool,
   SpaceView,
   SpaceSignIn,
+  SpaceRequestSignIns,
 ] as const

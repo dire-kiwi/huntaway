@@ -79,6 +79,8 @@ export interface SpacesShape {
    * measured on) to its session, so one caller's requests share one.
    */
   readonly driver: (id: string, key: string, method: string, params: unknown) => Effect.Effect<DriverAnswer, NotFound | Unavailable>
+  /** A running Space's spacesd endpoint (its published port on loopback and its token), for a direct gRPC-Web call (HE-49's teleport). */
+  readonly endpoint: (id: string) => Effect.Effect<{ readonly port: number; readonly token: string }, NotFound | Unavailable>
 }
 
 /** What answers on a Space's port is the Space's to choose: the server never follows it somewhere else. */
@@ -509,6 +511,14 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
         return parseAnswer(r.type, r.text, 2)
       })
 
+      const endpoint = Effect.fn("Spaces.endpoint")(function* (id: string) {
+        const c = yield* running(id)
+        const port = portOf(c)
+        const token = tokenOf(c)
+        if (port === null || token === null) return yield* unavailable("The Space's spacesd isn't reachable.")
+        return { port, token }
+      })
+
       return Spaces.of({
         status,
         create,
@@ -525,6 +535,7 @@ export class Spaces extends Context.Service<Spaces, SpacesShape>()("huntaway-ser
         find,
         bash,
         driver,
+        endpoint,
       })
     }),
   )

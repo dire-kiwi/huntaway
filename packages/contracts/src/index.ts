@@ -12,6 +12,8 @@ export * from "./capabilities.ts"
 export * from "./desktop.ts"
 // HE-35: Spaces.
 export * from "./space.ts"
+// HE-49: teleport sign-ins into a Space.
+export * from "./teleport.ts"
 export * from "./dirs.ts"
 export * from "./errors.ts"
 export * from "./events.ts"
@@ -46,6 +48,8 @@ export * from "./rpc/checkpoints.ts"
 export * from "./rpc/desktop.ts"
 // HE-35: Spaces.
 export * from "./rpc/spaces.ts"
+// HE-49: teleport.
+export * from "./rpc/teleport.ts"
 export * from "./rpc/git.ts"
 export * from "./rpc/host.ts"
 export * from "./rpc/hub.ts"

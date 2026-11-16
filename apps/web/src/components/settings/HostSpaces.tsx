@@ -4,12 +4,13 @@ import { AgentConfigId, type Host, type Space, type SpaceView } from "@huntaway/
 import { clsx } from "clsx"
 import { type Effect, Exit } from "effect"
 import type { AtomRegistry } from "effect/reactivity"
-import { ExternalLink, KeyRound, Loader2, Monitor, Play, Plus, RefreshCw, Square, Trash2 } from "lucide-react"
+import { ExternalLink, Import, KeyRound, Loader2, Monitor, Play, Plus, RefreshCw, Square, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useBoard } from "../../state/board"
 import { useAction } from "../../state/mutation"
 import { Button, Field, Input, Modal, ModalFooter, resultError, resultValue, timeAgo, Toggle, useConfirm } from "../ui"
 import { SpaceSignInModal } from "./SiteSignIns"
+import { BringSignInsModal } from "./TeleportDialog"
 
 /**
  * Spaces on a host (HE-35): Linux desktops in Docker, each with Cua's spacesd and Cua Driver, and Claude Code and Codex
@@ -24,6 +25,7 @@ export function HostSpaces({ host }: { host: Host }) {
   const [creating, setCreating] = useState(false)
   const [viewing, setViewing] = useState<{ readonly space: Space; readonly view: SpaceView } | null>(null)
   const [signingIn, setSigningIn] = useState<Space | null>(null)
+  const [bringing, setBringing] = useState<Space | null>(null)
   const [doing, setDoing] = useState<string | null>(null)
   const [action, run] = useAction()
   const confirm = useConfirm()
@@ -107,6 +109,17 @@ export function HostSpaces({ host }: { host: Host }) {
                     {busy === `sync:${s.id}` ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Sign-ins
                   </Button>
                 )}
+                {s.state === "running" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Bring your own sign-ins from a browser on this host into the Space"
+                    disabled={!!busy}
+                    onClick={() => setBringing(s)}
+                  >
+                    <Import size={12} /> Bring sign-ins
+                  </Button>
+                )}
                 {(s.state === "stopped" || s.state === "failed") && (
                   <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void act(`start:${s.id}`, mutate("spaces.start", hostId, { id: s.id }))}>
                     {busy === `start:${s.id}` ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Start
@@ -153,6 +166,7 @@ export function HostSpaces({ host }: { host: Host }) {
       {creating && <NewSpaceModal hostId={hostId} onClose={() => setCreating(false)} />}
       {signingIn && <SpaceSignInModal hostId={hostId} space={signingIn} onClose={() => setSigningIn(null)} />}
       {viewing && <SpaceViewer host={host} space={viewing.space} view={viewing.view} onClose={() => setViewing(null)} />}
+      {bringing && <BringSignInsModal host={hostId} space={bringing} onClose={() => setBringing(null)} />}
       {confirm.dialog}
     </section>
   )

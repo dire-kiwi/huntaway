@@ -30,6 +30,7 @@ const FakeSpaces = Layer.succeed(
     find: () => Effect.die("not in this test"),
     bash: () => Effect.die("not in this test"),
     driver: () => Effect.die("not in this test"),
+    endpoint: () => Effect.die("not in this test"),
   }),
 )
 

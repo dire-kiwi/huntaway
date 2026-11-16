@@ -200,7 +200,7 @@ export class ToolCalls extends Context.Service<ToolCalls, ToolCallsShape>()("hun
               .record({ task: caller.task, tool: name, input: args, rule: blocked, result: { outcome: "blocked", by: "rule" } })
               .pipe(Effect.andThen(Effect.fail(ToolError.other(blockedReason(rule.tool)))))
           }
-          return hooks.askRule(caller, name, args, rule)
+          return Effect.asVoid(hooks.askRule(caller, name, args, rule))
         })
 
       /** The gates, in order, then the tool (docs/plan/07-agents.md, Dispatch). */

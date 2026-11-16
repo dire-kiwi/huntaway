@@ -34,7 +34,9 @@
 // Code does (`isReplay`), and answered in its reply. A run started with `--permission-prompt-tool stdio` asks for
 // permission as Claude Code does, with a `can_use_tool` control request on stdout, for each of these in its prompt:
 // "fake-ask-permission" (a Bash call), "fake-ask-question" (AskUserQuestion), "fake-ask-plan" (ExitPlanMode),
-// "fake-ask-mail" (the Google server's send_gmail_message) and "fake-ask-event" (its manage_event, making an event). It
+// "fake-ask-mail" (the Google server's send_gmail_message), "fake-ask-event" (its manage_event, making an event) and
+// "fake-ask-sign-ins" (HE-49: the spaces server's space_request_sign_ins, as its card's input; an allowed one's reply
+// gives the input it was allowed with). It
 // waits for each `control_response` on stdin (taking in messages sent meanwhile), and its reply says what each answer
 // was ("permission Bash: allow", with a question's answers, a plan's new mode or a Google tool's input as allowed, or
 // "deny: <message>"). An allowed Google tool is run, with the input it was allowed with, on the `google` server of the
@@ -405,6 +407,23 @@ const callMcp = (server: string, tool: string, input: unknown): string | null =>
     .join("\n")
 }
 
+/** What `space_request_sign_ins`'s card is asked with (the server's `askInput`). */
+const SIGN_INS_ASK: Json = {
+  space: "a1b2c3d4e5",
+  space_name: "Research",
+  browser: "chromium",
+  browser_label: "Chromium",
+  profile: "Default",
+  profile_label: "Work",
+  sites: ["github.com", "figma.com"],
+  offered: [
+    { site: "github.com", cookie_count: 9, storage_count: 2, identity_provider: false },
+    { site: "figma.com", cookie_count: 4, storage_count: 0, identity_provider: false },
+    { site: "google.com", cookie_count: 6, storage_count: 3, identity_provider: true },
+  ],
+  not_found: ["nothere.com"],
+}
+
 /** The Google tools it asks for, by marker. */
 const GOOGLE_ASKS: Record<string, readonly [string, Json]> = {
   "fake-ask-mail": [
@@ -434,7 +453,7 @@ const GOOGLE_ASKS: Record<string, readonly [string, Json]> = {
 const askPermissions = async (text: string) => {
   const markers =
     opt("--permission-prompt-tool") === "stdio"
-      ? ["fake-ask-permission", "fake-ask-question", "fake-ask-plan", ...Object.keys(GOOGLE_ASKS)].filter((m) => text.includes(m))
+      ? ["fake-ask-permission", "fake-ask-question", "fake-ask-plan", "fake-ask-sign-ins", ...Object.keys(GOOGLE_ASKS)].filter((m) => text.includes(m))
       : []
   for (const marker of markers) {
     // Asked as Claude Code asks with --permission-prompt-tool stdio: the call, then a control request for it.
@@ -446,6 +465,9 @@ const askPermissions = async (text: string) => {
     } else if (marker === "fake-ask-plan") {
       name = "ExitPlanMode"
       toolInput = { plan: "# Plan: fake things\n\n1. Do a fake thing" }
+    } else if (marker === "fake-ask-sign-ins") {
+      name = "mcp__spaces__space_request_sign_ins"
+      toolInput = SIGN_INS_ASK
     }
     const google = GOOGLE_ASKS[marker]
     if (google !== undefined) {
@@ -469,6 +491,7 @@ const askPermissions = async (text: string) => {
     // A Google tool runs with the input it was allowed with.
     const ran = allowed && google !== undefined ? callMcp("google", google[0], answer.updatedInput ?? toolInput) : null
     if (allowed && google !== undefined) said += ` ${JSON.stringify(answer.updatedInput ?? null)}${ran === null ? "" : ` → ${ran}`}`
+    if (allowed && marker === "fake-ask-sign-ins") said += ` sites=${JSON.stringify(field(answer.updatedInput, "sites") ?? null)}`
     answers.push(said)
     toolResult(tool, allowed ? (ran ?? "fake") : String(answer.message), null, !allowed)
   }

@@ -37,7 +37,7 @@ push          Push
 hosts         Links · LinkConnections · Relay · Discovery · Ssh · Uplink · SettingsSync
 terminal      Terminals · Pty
 desktop       CuaDriver · DesktopClaims
-spaces        Docker · Spaces · SpacesTools
+spaces        Docker · Spaces · TeleportRepo · Teleport · SpacesTools
 update        Supervisor · Restarts · Systemd · Releases · Service · Updater
 analytics     Analytics · Disk
 board         Board
@@ -1347,6 +1347,59 @@ through the Space's own Cua Driver; Cua's teleport (a browser's signed-in state 
 - **Tests**: `signInFill.test.ts` (a scripted driver: the sequence, the origin check, the scrubbing) and
   `SpacesTools.test.ts` (the tool through `ToolCalls` over `fakeSpacesd`'s scripted login tab, `LOGIN_REFS`: asked in
   Bypass, denied, allowed, and no row the board kept has the password).
+
+#### Teleport: a host browser's sign-ins into a Space (HE-49)
+
+Teleport brings a signed-in browser's state from the host that runs the server (where you also browse, on this setup)
+into a Space, so its browser starts out signed in, after Cua Spaces' teleport. Only cookies and local storage move;
+saved passwords do not (Sign-ins, HE-48, cover those). Design:
+[docs/he-48-passwords-and-teleport-for-spaces](http://127.0.0.1:7879/docs/ae5dff1f-2fe6-4339-825d-0aa572897dba/d/he-48-passwords-and-teleport-for-spaces/),
+section 2.
+
+- **`Teleport`** (`spaces/Teleport.ts`, beside `Spaces`): `sources` (the host's browsers and their profiles), `sites`
+  (a profile's sites with cookie counts, nothing decrypted), `bring` (send the chosen sites in), `imports` (what landed
+  in a Space), `remove` (wipe one). Its RPCs (`rpc/teleport.ts`, `teleport.*`) are `terminal` to read and `admin` to
+  bring or remove. The host page's **Bring sign-ins…** dialog (`settings/TeleportDialog.tsx`) uses them.
+- **Reading the host** (`spaces/teleport/`, pure where it can be): `browsers.ts` is the catalog (Chrome/Chromium, Brave,
+  Edge, Vivaldi under `~/.config/<dir>`; Firefox under `~/.mozilla/firefox`) and the profile lists (Chromium's
+  `Local State`, Firefox's `profiles.ini`). Cookies come from the profile's `Cookies` SQLite (the newer of `Cookies`
+  and `Network/Cookies`) read through a private copy with an ephemeral `SqliteClient` (so a running browser's lock
+  doesn't matter); `expires_utc` is read as text because it overflows a JS number. Local storage comes from
+  `Local Storage/leveldb`, read whole by `leveldb.ts` (its logs and tables, newest value per key, Snappy via
+  `snappy.ts`; an index block's entries are followed whatever their separator key's type, as a block's last key may be a
+  deletion) and interpreted by `chromiumStorage.ts`. A profile is offered only when its folder holds a cookie store. Sites are registrable domains (`sites.ts`, after Cua's
+  conservative grouping): a site that looks signed in is pre-ticked, an identity provider (Google, Microsoft, Apple,
+  Okta) never is. Nothing is decrypted to list sites.
+- **Decrypting** (`chromiumCrypto.ts`, with Effect's `Kdf`/`Cipher`/`Digest`): a Chromium `v10` value uses the fixed
+  `peanuts` key, `v11` the browser's own libsecret Safe Storage secret (`secret-tool lookup application <name>`: `chrome`,
+  `chromium`, `brave`… per catalog entry); both derive an AES-128-CBC key by PBKDF2-HMAC-SHA1 over `saltysalt` with a
+  16-space IV. App-bound `v20` is skipped. In a `Cookies` database of version 24 or later (Chrome 130+) every value
+  starts with its host_key's SHA-256, which is checked and stripped, so a wrong key's rare padding pass isn't sent as
+  garbage. Cookies that couldn't be read are counted in the result's `skipped`. Firefox cookies are plaintext. Values are decrypted only for the sites the user sends, and never
+  logged, returned or stored on the host.
+- **Sending** (`bundle.ts`, `wire.ts`): the server closes the Space's browser (spacesd refuses to on Linux, and its
+  importer assumes the profile is free): `pkill -x` on the browsers' process names, waiting up to 10 s, then KILL, and
+  the teleport fails with `Unavailable` if one is still running. Then it calls
+  `cua.env.v1.TeleportService` over gRPC-Web with hand-written protobuf as `spacesd.ts` does: `GetManifest` to check
+  the provider and bundle version, then `ImportSession` in chunks of at most 4 MiB, committed with the bundle's
+  lowercase-hex SHA-256 and `options.expires_at_ms` (the **Wipe after** choice). The bundle is a tar
+  (`cua-teleport-bundle` v1) whose first entry is `manifest.json` (each entry's sha256), then `cookies.json` (decrypted
+  rows, values base64), `localstorage.json` and `tabs.json`. The receiver re-encrypts the cookies under the Space's own
+  key. The `import_id` is kept in `space_teleports` (`TeleportRepo`) so **Remove sign-ins** can `WipeImport`.
+- **An agent can ask** with `space_request_sign_ins {space, sites[]}`, which asks the user itself whatever the thread's
+  mode (`McpHooks.askRule` with no rule, which now returns the input as allowed). Its prompt is `USER_ONLY`
+  (`permissions/prompts.ts`): Bypass doesn't answer it, and it can't be always allowed; Don't ask denies it. It is in
+  `SPACES_ASKS_ITSELF`, so neither CLI asks first too, and in `SPACES_WRITES`, so reviewers don't get it. The sites
+  must be registrable domains (`teleport/request.ts`: `com` or a subdomain is refused) that a host profile holds; the
+  profile holding most of them is picked. The card (`task/thread/SignInsCard.tsx`) names the Space, the browser
+  profile and the sites with their cookie counts, identity providers unticked; the user unticks what shouldn't go (or
+  ticks a provider back) and allows it, and only the sites left ticked, of those offered, are sent. A denial sends
+  nothing.
+- **Honest limits**: the bundle crosses the wire as plaintext inside the Space's own request; anything that controls the
+  Space (its user has sudo) can use a teleported session, as in Cua Spaces. The dialog says so.
+- **Tests**: `teleport/plain.test.ts` (the wire messages, the tar bundle, Snappy, the LevelDB/localStorage reader, the
+  site grouping, the browser catalogs) and `teleport/crypto.test.ts` (the `v10` derive/decrypt round trip and the
+  host_key digest strip). The wire and bundle were checked end to end against the real spacesd receiver in the image.
 
 ## Hook commands<a id="hook-commands"></a>
 
