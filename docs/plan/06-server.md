@@ -1360,22 +1360,32 @@ section 2.
   (a profile's sites with cookie counts, nothing decrypted), `bring` (send the chosen sites in), `imports` (what landed
   in a Space), `remove` (wipe one). Its RPCs (`rpc/teleport.ts`, `teleport.*`) are `terminal` to read and `admin` to
   bring or remove. The host page's **Bring sign-ins…** dialog (`settings/TeleportDialog.tsx`) uses them.
-- **Reading the host** (`spaces/teleport/`, pure where it can be): `browsers.ts` is the catalog (Chrome/Chromium, Brave,
-  Edge, Vivaldi under `~/.config/<dir>`; Firefox under `~/.mozilla/firefox`) and the profile lists (Chromium's
-  `Local State`, Firefox's `profiles.ini`). Cookies come from the profile's `Cookies` SQLite (the newer of `Cookies`
+- **Reading the host** (`spaces/teleport/`, pure where it can be): `browsers.ts` is the catalog and the profile lists
+  (Chromium's `Local State`, Firefox's `profiles.ini`). Each browser's roots are tried in order (`rootsOf`), and the
+  first with a profile holding cookies is used: its folder under the config folder (`$XDG_CONFIG_HOME`, else
+  `~/.config`: `google-chrome`, `chromium`, `BraveSoftware/Brave-Browser`, `microsoft-edge`, `vivaldi`, and
+  `mozilla/firefox`, where Firefox 147 and later keep new profiles), then the older and packaged places (Firefox's
+  `~/.mozilla/firefox`, snap's and flatpak's; Chromium's snap and flatpak). Cookies come from the profile's `Cookies` SQLite (the newer of `Cookies`
   and `Network/Cookies`) read through a private copy with an ephemeral `SqliteClient` (so a running browser's lock
   doesn't matter); `expires_utc` is read as text because it overflows a JS number. Local storage comes from
   `Local Storage/leveldb`, read whole by `leveldb.ts` (its logs and tables, newest value per key, Snappy via
   `snappy.ts`; an index block's entries are followed whatever their separator key's type, as a block's last key may be a
-  deletion) and interpreted by `chromiumStorage.ts`. A profile is offered only when its folder holds a cookie store. Sites are registrable domains (`sites.ts`, after Cua's
-  conservative grouping): a site that looks signed in is pre-ticked, an identity provider (Google, Microsoft, Apple,
-  Okta) never is. Nothing is decrypted to list sites.
+  deletion) and interpreted by `chromiumStorage.ts`. A profile is offered only when its folder holds a cookie store.
+  A site (`sites.ts`) is a registrable domain by the public suffix list (`tldts`, ICANN and private sections, as
+  browsers read it: `amazon.com.mx`, `someone.github.io`), whose subdomains' cookies it takes in; a host without one
+  (an IP address, `localhost`, a name under an unknown last label like `foo.local`) is a site of its own that matches
+  only itself, so no site takes in its siblings. A site that looks signed in is pre-ticked, an identity provider
+  (Google, Microsoft, Apple, Okta) never is. Nothing is decrypted to list sites. `bring` sends only sites the
+  profile's own list has (what `sites` showed), so whatever the dialog lists can be sent and nothing wider can be asked
+  for.
 - **Decrypting** (`chromiumCrypto.ts`, with Effect's `Kdf`/`Cipher`/`Digest`): a Chromium `v10` value uses the fixed
   `peanuts` key, `v11` the browser's own libsecret Safe Storage secret (`secret-tool lookup application <name>`: `chrome`,
   `chromium`, `brave`… per catalog entry); both derive an AES-128-CBC key by PBKDF2-HMAC-SHA1 over `saltysalt` with a
   16-space IV. App-bound `v20` is skipped. In a `Cookies` database of version 24 or later (Chrome 130+) every value
   starts with its host_key's SHA-256, which is checked and stripped, so a wrong key's rare padding pass isn't sent as
-  garbage. Cookies that couldn't be read are counted in the result's `skipped`. Firefox cookies are plaintext. Values are decrypted only for the sites the user sends, and never
+  garbage. Cookies that couldn't be read are counted in the result's `skipped`. Firefox cookies are plaintext; from
+  `moz_cookies` schema 16 (Firefox 142, its `PRAGMA user_version`) `expiry` is in milliseconds, before it in seconds.
+  SameSite 0, 1 and 2 are kept, anything else (Firefox's `SAMESITE_UNSET`, 256) goes as unspecified (-1), not Strict. Values are decrypted only for the sites the user sends, and never
   logged, returned or stored on the host.
 - **Sending** (`bundle.ts`, `wire.ts`): the server closes the Space's browser (spacesd refuses to on Linux, and its
   importer assumes the profile is free): `pkill -x` on the browsers' process names, waiting up to 10 s, then KILL, and
@@ -1390,7 +1400,8 @@ section 2.
   mode (`McpHooks.askRule` with no rule, which now returns the input as allowed). Its prompt is `USER_ONLY`
   (`permissions/prompts.ts`): Bypass doesn't answer it, and it can't be always allowed; Don't ask denies it. It is in
   `SPACES_ASKS_ITSELF`, so neither CLI asks first too, and in `SPACES_WRITES`, so reviewers don't get it. The sites
-  must be registrable domains (`teleport/request.ts`: `com` or a subdomain is refused) that a host profile holds; the
+  must be sites as `siteOf` names them (`teleport/request.ts`: a public suffix such as `com` or `co.kr`, or a
+  subdomain, is refused) that a host profile holds; the
   profile holding most of them is picked. The card (`task/thread/SignInsCard.tsx`) names the Space, the browser
   profile and the sites with their cookie counts, identity providers unticked; the user unticks what shouldn't go (or
   ticks a provider back) and allows it, and only the sites left ticked, of those offered, are sent. A denial sends
@@ -1398,8 +1409,12 @@ section 2.
 - **Honest limits**: the bundle crosses the wire as plaintext inside the Space's own request; anything that controls the
   Space (its user has sudo) can use a teleported session, as in Cua Spaces. The dialog says so.
 - **Tests**: `teleport/plain.test.ts` (the wire messages, the tar bundle, Snappy, the LevelDB/localStorage reader, the
-  site grouping, the browser catalogs) and `teleport/crypto.test.ts` (the `v10` derive/decrypt round trip and the
-  host_key digest strip). The wire and bundle were checked end to end against the real spacesd receiver in the image.
+  site grouping, the browser catalogs and roots, the agent request's checks), `teleport/crypto.test.ts` (the `v10`
+  derive/decrypt round trip and the host_key digest check), `Teleport.test.ts` (a schema-17 Firefox profile under the
+  config folder: millisecond expiry, unset SameSite, `localhost`, and `com` refused) and `RequestSignIns.test.ts` (the
+  agent tool through `ToolCalls` over `fakeSpacesd`'s teleport service: asked in Bypass, denied, trimmed, removed);
+  `tests/ui/signInsCard.test.mjs` draws the card. The wire and bundle were checked end to end against the real
+  spacesd receiver in the image.
 
 ## Hook commands<a id="hook-commands"></a>
 

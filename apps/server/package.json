@@ -21,7 +21,8 @@
     "@huntaway/plugin": "workspace:*",
     "@huntaway/shared": "workspace:*",
     "effect": "catalog:",
-    "sharp": "catalog:"
+    "sharp": "catalog:",
+    "tldts": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

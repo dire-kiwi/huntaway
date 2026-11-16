@@ -152,7 +152,7 @@ describe("space_request_sign_ins", () => {
           yield* teleport.remove(made?.import_id ?? "")
           assert.deepStrictEqual(spacesd.wiped, [made?.import_id])
           assert.lengthOf(yield* teleport.imports(space), 0)
-        }).pipe(Effect.provide(TestBoard({ dockerBin: docker.bin, home })))
+        }).pipe(Effect.provide(TestBoard({ dockerBin: docker.bin, home, configHome: `${home}/.config` })))
       }).pipe(Effect.provide(NodeServices.layer)),
     TIMEOUT,
   )

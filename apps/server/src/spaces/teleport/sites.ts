@@ -1,10 +1,14 @@
-// Grouping a browser profile's cookies and localStorage into "sites" the Bring-sign-ins dialog lists (HE-49), and the
-// rules for what it pre-ticks. A site is a registrable domain (`github.com`): its cookies are every row whose host_key
-// is the domain or a subdomain of it, its localStorage every origin under it. Conservative, after Cua's `cua-teleport`
-// (`registrable_domain`, `host_key_in_site`): an unknown suffix stays its own site rather than swallowing siblings. No
-// I/O here.
+import { parse } from "tldts"
 
-const MULTI_LABEL_SUFFIXES = new Set(["co.uk", "org.uk", "gov.uk", "ac.uk", "co.jp", "com.au", "com.br", "co.nz", "co.in", "com.cn"])
+// Grouping a browser profile's cookies and localStorage into "sites" the Bring-sign-ins dialog lists (HE-49), and the
+// rules for what it pre-ticks. A site is a registrable domain by the public suffix list (`tldts`, its private section
+// too, as browsers use it: `github.com`, `bbc.co.uk`, `amazon.com.mx`, `someone.github.io`): its cookies are every row
+// whose host_key is the domain or a subdomain of it, its localStorage every origin under it. A host with no registrable
+// domain (an IP address, `localhost`, a bare suffix) is a site of its own that matches only itself, so no site ever
+// takes in its siblings. No I/O here.
+
+/** The public suffix list as browsers read it: its ICANN and private sections. */
+const PSL = { allowPrivateDomains: true }
 
 /** A host as a bare, lower-case name: trimmed, its leading cookie dot gone. */
 export const normalizeHost = (host: string): string => {
@@ -12,25 +16,37 @@ export const normalizeHost = (host: string): string => {
   return (t.startsWith(".") ? t.slice(1) : t).toLowerCase()
 }
 
-/** Whether `host` is one of the two-label public suffixes known here (`co.uk`): a site of its own would hold a country's cookies. */
-export const isKnownSuffix = (host: string): boolean => MULTI_LABEL_SUFFIXES.has(normalizeHost(host))
-
-/** The registrable domain of `host` (`api.github.com` → `github.com`), a small suffix list aside; its own name when it has one or two labels. */
-export const registrableDomain = (host: string): string => {
-  const h = normalizeHost(host)
-  const labels = h.split(".").filter((l) => l !== "")
-  if (labels.length <= 2) return h
-  const lastTwo = `${labels[labels.length - 2]}.${labels[labels.length - 1]}`
-  if (MULTI_LABEL_SUFFIXES.has(lastTwo) && labels.length >= 3) return `${labels[labels.length - 3]}.${lastTwo}`
-  return lastTwo
+/**
+ * A host's registrable domain, when it has one under a suffix the list knows (ICANN's or the private section's); null
+ * for an IP address, a single label, a bare suffix, or a name under an unknown last label (`0.1`, `foo.local`), which the
+ * list's default rule would otherwise treat as a suffix of its own.
+ */
+const registrable = (host: string): string | null => {
+  const p = parse(host, PSL)
+  return p.isIp !== true && (p.isIcann === true || p.isPrivate === true) ? p.domain : null
 }
 
-/** Whether a cookie's host_key belongs to the site `apex`: the apex itself or a subdomain, never a look-alike. */
-export const hostKeyInSite = (hostKey: string, apex: string): boolean => {
+/** The site of `host`: its registrable domain (`api.github.com` → `github.com`), or the host itself when it has none. */
+export const siteOf = (host: string): string => {
+  const h = normalizeHost(host)
+  return h === "" ? "" : (registrable(h) ?? h)
+}
+
+/** Whether `site` is a host of its own (an IP address, `localhost`, `foo.local`, a bare suffix): it matches only itself. */
+const exact = (site: string): boolean => registrable(site) !== site
+
+/** Whether `s` is a public suffix (`com`, `co.kr`, `github.io`): never a site to send, it would hold everyone's cookies. */
+export const isPublicSuffix = (s: string): boolean => {
+  const p = parse(normalizeHost(s), PSL)
+  return p.isIp !== true && p.domain === null && p.publicSuffix === normalizeHost(s) && (p.isIcann === true || p.isPrivate === true)
+}
+
+/** Whether a cookie's host_key belongs to `site`: the site itself or, for a registrable domain, a subdomain of it. */
+export const hostKeyInSite = (hostKey: string, site: string): boolean => {
   const h = normalizeHost(hostKey)
-  const a = normalizeHost(apex)
+  const a = normalizeHost(site)
   if (a === "" || h === "") return false
-  return h === a || h.endsWith(`.${a}`)
+  return h === a || (!exact(a) && h.endsWith(`.${a}`))
 }
 
 /** The host of an origin (`https://github.com:443` → `github.com`), or "" when it doesn't parse. */

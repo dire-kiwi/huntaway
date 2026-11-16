@@ -9,15 +9,14 @@ import type { BringResult, BringSignIns, BrowserSource, TeleportImport, Teleport
 import { nowTimestamp } from "../platform/columns.ts"
 import { Proc } from "../platform/Proc.ts"
 import { ServerConfig } from "../platform/ServerConfig.ts"
-import { CATALOG, catalogFor, chromiumProfiles, firefoxProfiles } from "./teleport/browsers.ts"
+import { CATALOG, catalogFor, chromiumProfiles, firefoxProfiles, rootsOf } from "./teleport/browsers.ts"
 import type { BrowserCatalog } from "./teleport/browsers.ts"
 import { decryptValue, deriveKey, DIGEST_VERSION, secretToolArgs, V10_PASSWORD, versionOf } from "./teleport/chromiumCrypto.ts"
 import { storageItems, storageOrigins } from "./teleport/chromiumStorage.ts"
 import type { StorageFile } from "./teleport/chromiumStorage.ts"
 import { manifestValue, signInEntries, tar } from "./teleport/bundle.ts"
-import { checkSites } from "./teleport/request.ts"
 import type { CookieRow, StorageItem } from "./teleport/bundle.ts"
-import { hostKeyInSite, isIdentityProvider, looksSignedIn, originHost, registrableDomain } from "./teleport/sites.ts"
+import { hostKeyInSite, isIdentityProvider, looksSignedIn, normalizeHost, originHost, siteOf } from "./teleport/sites.ts"
 import { Spaces } from "./Spaces.ts"
 import { TeleportRepo } from "./TeleportRepo.ts"
 import {
@@ -72,18 +71,31 @@ type CookieName = typeof CookieName.Type
 /** Chrome's epoch offset: microseconds between 1601-01-01 and 1970-01-01. */
 const CHROME_EPOCH_MICROS = 11644473600 * 1_000_000
 
-/** A Firefox cookie row (plaintext) as a bundle row: its expiry (unix seconds) becomes Chrome's microseconds since 1601. */
-const firefoxCookie = (c: CookieRead): CookieRow => {
+/**
+ * A cookie's SameSite as Chrome's row has it: 0 none, 1 lax, 2 strict, anything else unspecified (-1). Firefox's
+ * `SAMESITE_UNSET` is 256: as Strict, the cookie would stop going with cross-site navigations (sign-in redirects).
+ */
+export const sameSiteOf = (n: number): number => (n === 0 || n === 1 || n === 2 ? n : -1)
+
+/** The `moz_cookies` schema version (`PRAGMA user_version`) from which `expiry` is in milliseconds (Firefox 142). */
+export const FIREFOX_MS_EXPIRY = 16
+
+/**
+ * A Firefox cookie row (plaintext) as a bundle row: its expiry (unix seconds, or milliseconds from schema
+ * `FIREFOX_MS_EXPIRY`) becomes Chrome's microseconds since 1601.
+ */
+export const firefoxCookie = (c: CookieRead, schema: number): CookieRow => {
   const expiry = Number(c.expires_utc)
+  const seconds = schema >= FIREFOX_MS_EXPIRY ? expiry / 1000 : expiry
   return {
     host_key: c.host_key,
     name: c.name,
     value: new TextEncoder().encode(c.value),
     path: c.path,
-    expires_utc: expiry === 0 ? 0 : expiry * 1_000_000 + CHROME_EPOCH_MICROS,
+    expires_utc: expiry === 0 ? 0 : Math.round(seconds * 1_000_000) + CHROME_EPOCH_MICROS,
     is_secure: c.is_secure !== 0,
     is_httponly: c.is_httponly !== 0,
-    samesite: Math.max(-1, Math.min(2, c.samesite)),
+    samesite: sameSiteOf(c.samesite),
   }
 }
 
@@ -102,6 +114,9 @@ export const CLOSE_BROWSER = [
   'for i in $(seq 1 10); do pgrep -x "$p" >/dev/null || exit 0; sleep 0.5; done',
   "exit 3",
 ].join("\n")
+
+/** A profile's directory under its browser's root (a Firefox profile's path may be absolute). */
+const profileDir = (root: string, profile: string): string => (profile.startsWith("/") ? profile : `${root}/${profile}`)
 
 /** When the Space wipes a teleport itself: a wall-clock millisecond, or 0 for never. */
 const wipeAfterMs = (when: WipeAfter | undefined, now: number): number => (when === "hour" ? now + 3600_000 : when === "day" ? now + 86400_000 : 0)
@@ -149,10 +164,6 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
 
       // ---- the host's browsers ----
 
-      /** The profile directory of a Chromium browser (`<dir>/<profile>`) or a Firefox profile (relative or absolute). */
-      const profileDir = (b: BrowserCatalog, profile: string): string =>
-        b.kind === "firefox" && profile.startsWith("/") ? profile : `${home}/${b.dir}/${profile}`
-
       /** Whether a profile directory holds a cookie store (a config folder with no profile in it lists none). */
       const hasCookies = Effect.fnUntraced(function* (b: BrowserCatalog, dir: string) {
         const stores = b.kind === "firefox" ? [`${dir}/cookies.sqlite`] : [`${dir}/Cookies`, `${dir}/Network/Cookies`]
@@ -160,22 +171,27 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
         return false
       })
 
-      /** A browser's profiles that hold cookies; null when it has none (it isn't offered). */
+      /**
+       * A browser's root (the first of `rootsOf` that has a profile holding cookies) and those profiles; null when it has
+       * none (it isn't offered).
+       */
       const profilesOf = Effect.fnUntraced(function* (b: BrowserCatalog) {
-        const root = `${home}/${b.dir}`
-        if (!(yield* exists(root))) return null
-        const listed =
-          b.kind === "firefox" ? firefoxProfiles(yield* readText(`${root}/profiles.ini`)) : chromiumProfiles(yield* readText(`${root}/Local State`))
-        const out: Array<{ readonly id: string; readonly label: string }> = []
-        for (const p of listed) if (yield* hasCookies(b, profileDir(b, p.id))) out.push(p)
-        return out.length === 0 ? null : out
+        for (const root of rootsOf(b, home, config.configHome)) {
+          if (!(yield* exists(root))) continue
+          const listed =
+            b.kind === "firefox" ? firefoxProfiles(yield* readText(`${root}/profiles.ini`)) : chromiumProfiles(yield* readText(`${root}/Local State`))
+          const profiles: Array<{ readonly id: string; readonly label: string }> = []
+          for (const p of listed) if (yield* hasCookies(b, profileDir(root, p.id))) profiles.push(p)
+          if (profiles.length > 0) return { root, profiles }
+        }
+        return null
       })
 
       const sources = Effect.gen(function* () {
         const out: Array<BrowserSource> = []
         for (const b of CATALOG) {
-          const profiles = yield* profilesOf(b)
-          if (profiles !== null && profiles.length > 0) out.push({ key: b.key, kind: b.kind, label: b.label, profiles })
+          const found = yield* profilesOf(b)
+          if (found !== null) out.push({ key: b.key, kind: b.kind, label: b.label, profiles: found.profiles })
         }
         return out
       }).pipe(Effect.withSpan("Teleport.sources"))
@@ -185,9 +201,10 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
       const resolve = Effect.fnUntraced(function* (browser: string, profile: string) {
         const b = catalogFor(browser)
         if (b === null) return yield* new Invalid({ field: "browser", reason: `no browser ${browser}` })
-        const profiles = yield* profilesOf(b)
-        if (profiles === null || !profiles.some((p) => p.id === profile)) return yield* new NotFound({ what: "browser profile", id: `${browser}/${profile}` })
-        const dir = profileDir(b, profile)
+        const found = yield* profilesOf(b)
+        if (found === null || !found.profiles.some((p) => p.id === profile))
+          return yield* new NotFound({ what: "browser profile", id: `${browser}/${profile}` })
+        const dir = profileDir(found.root, profile)
         if (!(yield* exists(dir))) return yield* new NotFound({ what: "browser profile", id: `${browser}/${profile}` })
         return { b, dir }
       })
@@ -236,7 +253,7 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
           }),
         ).pipe(Effect.orElseSucceed(() => []))
 
-      /** A profile's cookie rows, and its Chromium `Cookies` database version (0 for Firefox, or when it has none). */
+      /** A profile's cookie rows, and its database's version (Chromium's `meta` row; Firefox's `user_version`; 0 if none). */
       const cookieRows = (b: BrowserCatalog, dir: string): Effect.Effect<{ readonly rows: ReadonlyArray<CookieRead>; readonly version: number }> =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -245,11 +262,12 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
             const decodeMeta = Schema.decodeUnknownOption(Schema.Array(Schema.Struct({ value: Schema.String })))
             const got = yield* withDb(path, (sql) =>
               b.kind === "firefox"
-                ? Effect.map(
+                ? Effect.zipWith(
                     sql`SELECT host AS host_key, name, CAST('' AS BLOB) AS encrypted_value, value, path,
                        CAST(expiry AS TEXT) AS expires_utc, isSecure AS is_secure, isHttpOnly AS is_httponly, sameSite AS samesite
                        FROM moz_cookies`,
-                    (rows) => ({ rows, meta: [] as ReadonlyArray<unknown> }),
+                    sql`SELECT CAST(user_version AS TEXT) AS value FROM pragma_user_version`,
+                    (rows, meta) => ({ rows, meta }),
                   )
                 : Effect.zipWith(
                     sql`SELECT host_key, name, encrypted_value, CAST(value AS TEXT) AS value, path,
@@ -279,15 +297,15 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
         return out
       })
 
-      const sites = Effect.fn("Teleport.sites")(function* (browser: string, profile: string) {
-        const { b, dir } = yield* resolve(browser, profile)
+      /** A profile's sites: its cookies' and localStorage origins' hosts, grouped by `siteOf`. */
+      const siteList = Effect.fnUntraced(function* (b: BrowserCatalog, dir: string) {
         const cookies = yield* cookieNames(b, dir)
         const files = yield* storageFiles(b, dir)
         const originsByHost = storageOrigins(files).map((o) => originHost(o))
         // Group by registrable domain.
         const byDomain = new Map<string, { names: Array<string>; cookies: number; storage: number }>()
         const bump = (host: string): { names: Array<string>; cookies: number; storage: number } => {
-          const site = registrableDomain(host)
+          const site = siteOf(host)
           let g = byDomain.get(site)
           if (g === undefined) {
             g = { names: [], cookies: 0, storage: 0 }
@@ -309,7 +327,12 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
           identity_provider: isIdentityProvider(site),
         }))
         list.sort((a, b2) => (a.signed_in === b2.signed_in ? b2.cookie_count - a.cookie_count : a.signed_in ? -1 : 1))
-        const out: TeleportSites = { browser, kind: b.kind, profile, sites: list }
+        return list
+      })
+
+      const sites = Effect.fn("Teleport.sites")(function* (browser: string, profile: string) {
+        const { b, dir } = yield* resolve(browser, profile)
+        const out: TeleportSites = { browser, kind: b.kind, profile, sites: yield* siteList(b, dir) }
         return out
       })
 
@@ -322,7 +345,7 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
         wanted: ReadonlySet<string>,
       ) {
         const keep = read.rows.filter((c) => [...wanted].some((w) => hostKeyInSite(c.host_key, w)))
-        if (b.kind === "firefox") return { cookies: keep.map(firefoxCookie), appBound: 0, unread: 0 }
+        if (b.kind === "firefox") return { cookies: keep.map((c) => firefoxCookie(c, read.version)), appBound: 0, unread: 0 }
         const requireDigest = read.version >= DIGEST_VERSION
         let appBound = 0
         let unread = 0
@@ -343,7 +366,7 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
                 expires_utc: Number(c.expires_utc),
                 is_secure: c.is_secure !== 0,
                 is_httponly: c.is_httponly !== 0,
-                samesite: Math.max(-1, Math.min(2, c.samesite)),
+                samesite: sameSiteOf(c.samesite),
               })
             continue
           }
@@ -387,7 +410,7 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
             expires_utc: Number(c.expires_utc),
             is_secure: c.is_secure !== 0,
             is_httponly: c.is_httponly !== 0,
-            samesite: Math.max(-1, Math.min(2, c.samesite)),
+            samesite: sameSiteOf(c.samesite),
           })
         }
         return { cookies: out, appBound, unread }
@@ -421,10 +444,13 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
       const bring = Effect.fn("Teleport.bring")(function* (input: BringSignIns) {
         const space = yield* spaces.find(input.id)
         const { b, dir } = yield* resolve(input.browser, input.profile)
-        // Registrable domains only: `com` would match every .com cookie.
-        const checked = checkSites(input.sites)
-        if (checked.invalid.length > 0) return yield* new Invalid({ field: "sites", reason: `not registrable domains: ${checked.invalid.join(", ")}` })
-        const wanted = new Set(checked.valid)
+        // Only sites the profile itself lists (`siteList`, which `sites` shows): so whatever the dialog listed can be sent,
+        // and nothing wider (`com`, `co.kr`) than a site of its own can be asked for.
+        const listed = new Set((yield* siteList(b, dir)).map((x) => x.site))
+        const asked = [...new Set(input.sites.map(normalizeHost).filter((x) => x !== ""))]
+        const strange = asked.filter((x) => !listed.has(x))
+        if (strange.length > 0) return yield* new Invalid({ field: "sites", reason: `not sites of this profile: ${strange.join(", ")}` })
+        const wanted = new Set(asked)
         if (wanted.size === 0) return yield* new Invalid({ field: "sites", reason: "pick at least one site" })
         const { port, token } = yield* spaces.endpoint(space.id)
 
@@ -442,7 +468,7 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
         const read = yield* cookieRows(b, dir)
         const { cookies, appBound, unread } = yield* decryptCookies(b, read, wanted)
         const files = yield* storageFiles(b, dir)
-        const originSet = new Set(storageOrigins(files).filter((o) => wanted.has(registrableDomain(originHost(o)))))
+        const originSet = new Set(storageOrigins(files).filter((o) => wanted.has(siteOf(originHost(o)))))
         const storage: ReadonlyArray<StorageItem> = storageItems(files, originSet)
         const notes = [
           ...(appBound === 0 ? [] : [`${appBound} cookie${appBound === 1 ? "" : "s"} app-bound (v20), which only ${b.label} itself can read`]),
@@ -497,14 +523,14 @@ export class Teleport extends Context.Service<Teleport, TeleportShape>()("huntaw
         }
 
         const createdAt = yield* nowTimestamp
-        const siteList = [...wanted]
-        const label = siteList.length <= 3 ? siteList.join(", ") : `${siteList.slice(0, 2).join(", ")} and ${siteList.length - 2} more`
+        const sentSites = [...wanted]
+        const label = sentSites.length <= 3 ? sentSites.join(", ") : `${sentSites.slice(0, 2).join(", ")} and ${sentSites.length - 2} more`
         const record: TeleportImport = {
           import_id: importId,
           space_id: space.id,
           app: b.app,
           label,
-          site_count: siteList.length,
+          site_count: sentSites.length,
           expires_at: expiresMs === 0 ? null : Timestamp.make(DateTime.formatIso(DateTime.makeUnsafe(expiresMs))),
           created_at: createdAt,
         }

@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Option, Schema } from "effect"
-import { CATALOG, chromiumProfiles, firefoxProfiles } from "./browsers.ts"
+import { CATALOG, catalogFor, chromiumProfiles, firefoxProfiles, rootsOf } from "./browsers.ts"
 import { manifestValue, signInEntries, tar } from "./bundle.ts"
 import type { CookieRow } from "./bundle.ts"
 import { storageItems, storageOrigins } from "./chromiumStorage.ts"
@@ -8,7 +8,7 @@ import type { StorageFile } from "./chromiumStorage.ts"
 import { latest, readLog, readTable } from "./leveldb.ts"
 import { approvedSites, askInput, checkSites, pickProfile } from "./request.ts"
 import type { Candidate } from "./request.ts"
-import { hostKeyInSite, isIdentityProvider, looksSignedIn, normalizeHost, originHost, registrableDomain } from "./sites.ts"
+import { hostKeyInSite, isIdentityProvider, isPublicSuffix, looksSignedIn, normalizeHost, originHost, siteOf } from "./sites.ts"
 import { unsnappy } from "./snappy.ts"
 import { headerRefusal, importRequest, manifestRequest, parseImport, parseManifest, parseWipe, unframe, wipeRequest } from "./wire.ts"
 
@@ -266,16 +266,35 @@ describe("chromium localStorage", () => {
 })
 
 describe("sites", () => {
-  it("finds the registrable domain", () => {
-    assert.strictEqual(registrableDomain("api.github.com"), "github.com")
-    assert.strictEqual(registrableDomain("www.example.co.uk"), "example.co.uk")
-    assert.strictEqual(registrableDomain("github.com"), "github.com")
+  it("names a host's site by the public suffix list", () => {
+    assert.strictEqual(siteOf("api.github.com"), "github.com")
+    assert.strictEqual(siteOf("www.example.co.uk"), "example.co.uk")
+    assert.strictEqual(siteOf("github.com"), "github.com")
+    // Any country's second level, not a short list: two banks in Mexico are two sites.
+    assert.strictEqual(siteOf("www.amazon.com.mx"), "amazon.com.mx")
+    assert.strictEqual(siteOf("bank.com.mx"), "bank.com.mx")
+    // The private section too, as browsers use it: one github.io page isn't another's.
+    assert.strictEqual(siteOf("someone.github.io"), "someone.github.io")
+    // No registrable domain: the host is a site of its own.
+    assert.strictEqual(siteOf("127.0.0.1"), "127.0.0.1")
+    assert.strictEqual(siteOf("192.168.0.1"), "192.168.0.1")
+    assert.strictEqual(siteOf("localhost"), "localhost")
   })
-  it("matches a host_key to its site and not a look-alike", () => {
+  it("matches a host_key to its site and not a look-alike, a sibling or another address", () => {
     assert.isTrue(hostKeyInSite(".github.com", "github.com"))
     assert.isTrue(hostKeyInSite("api.github.com", "github.com"))
     assert.isFalse(hostKeyInSite("evilgithub.com", "github.com"))
     assert.isFalse(hostKeyInSite("github.com.evil.example", "github.com"))
+    assert.isFalse(hostKeyInSite("bank.com.mx", "com.mx"))
+    assert.isFalse(hostKeyInSite("10.0.0.1", "0.1"))
+    assert.isTrue(hostKeyInSite("127.0.0.1", "127.0.0.1"))
+    assert.isFalse(hostKeyInSite("10.127.0.0.1", "127.0.0.1"))
+    assert.isTrue(hostKeyInSite("localhost", "localhost"))
+    assert.isFalse(hostKeyInSite("app.localhost", "localhost"))
+  })
+  it("knows a public suffix", () => {
+    for (const s of ["com", "com.mx", "co.kr", "co.uk", "github.io"]) assert.isTrue(isPublicSuffix(s), s)
+    for (const s of ["github.com", "amazon.com.mx", "localhost", "127.0.0.1"]) assert.isFalse(isPublicSuffix(s), s)
   })
   it("knows identity providers", () => {
     assert.isTrue(isIdentityProvider("accounts.google.com"))
@@ -319,11 +338,27 @@ describe("space_request_sign_ins", () => {
     sites: [site("github.com", 9), site("google.com", 4, true), site("figma.com", 1)],
   }
 
-  it("takes only registrable domains", () => {
-    assert.deepStrictEqual(checkSites(["GitHub.com", "com", "api.github.com", "github.com", "co.uk", "bbc.co.uk", " "]), {
-      valid: ["github.com", "bbc.co.uk"],
-      invalid: ["com", "api.github.com", "co.uk"],
-    })
+  it("takes only sites: no subdomain, no public suffix", () => {
+    assert.deepStrictEqual(
+      checkSites([
+        "GitHub.com",
+        "com",
+        "api.github.com",
+        "github.com",
+        "co.uk",
+        "bbc.co.uk",
+        " ",
+        "com.mx",
+        "co.kr",
+        "amazon.com.mx",
+        "localhost",
+        "127.0.0.1",
+      ]),
+      {
+        valid: ["github.com", "bbc.co.uk", "amazon.com.mx", "localhost", "127.0.0.1"],
+        invalid: ["com", "api.github.com", "co.uk", "com.mx", "co.kr"],
+      },
+    )
   })
 
   it("picks the profile holding most of the sites, and offers only those, identity providers unticked", () => {
@@ -349,6 +384,19 @@ describe("space_request_sign_ins", () => {
 })
 
 describe("browsers", () => {
+  it("looks for Firefox under the config folder first (Firefox 147+), then its older, snap and flatpak places", () => {
+    const firefox = catalogFor("firefox")
+    assert.isNotNull(firefox)
+    if (firefox === null) return
+    assert.deepStrictEqual(rootsOf(firefox, "/h", "/h/.config").slice(0, 3), [
+      "/h/.config/mozilla/firefox",
+      "/h/.mozilla/firefox",
+      "/h/snap/firefox/common/.mozilla/firefox",
+    ])
+    const chrome = catalogFor("google-chrome")
+    assert.deepStrictEqual(chrome === null ? [] : rootsOf(chrome, "/h", "/x"), ["/x/google-chrome"])
+  })
+
   it("looks each Chromium-family browser's Safe Storage secret up under its own name", () => {
     const keyrings = Object.fromEntries(CATALOG.map((b) => [b.key, b.keyring]))
     assert.strictEqual(keyrings["google-chrome"], "chrome")

@@ -7,13 +7,15 @@ import type { TeleportApp } from "./bundle.ts"
 // folder; Firefox keeps `cookies.sqlite` and a `storage` tree. A browser's profiles are listed from its `Local State`
 // (Chromium) or `profiles.ini` (Firefox). No I/O here: it takes the files' contents.
 
-/** A browser the host may have, by how its profile is read and where it keeps it (relative to the home). */
+/** A browser the host may have, by how its profile is read and where it keeps it. */
 export interface BrowserCatalog {
   readonly key: string
   readonly kind: BrowserKind
   readonly label: string
-  /** The browser's user-data dir under the home (Chromium) or its profiles root (Firefox). */
-  readonly dir: string
+  /** Its user-data dir (Chromium) or profiles root (Firefox) under the config folder (`$XDG_CONFIG_HOME`, `~/.config`). */
+  readonly config: string
+  /** Other places it may keep it, under the home, tried in order after the config folder's (snap, flatpak, legacy). */
+  readonly elsewhere: ReadonlyArray<string>
   /** The spacesd teleport provider the bundle goes to. */
   readonly app: TeleportApp
   /**
@@ -26,12 +28,40 @@ export interface BrowserCatalog {
 
 /** The browsers teleport knows, in the order the dialog offers them. */
 export const CATALOG: ReadonlyArray<BrowserCatalog> = [
-  { key: "google-chrome", kind: "chromium", label: "Google Chrome", dir: ".config/google-chrome", app: "chrome", keyring: "chrome" },
-  { key: "chromium", kind: "chromium", label: "Chromium", dir: ".config/chromium", app: "chrome", keyring: "chromium" },
-  { key: "brave", kind: "chromium", label: "Brave", dir: ".config/BraveSoftware/Brave-Browser", app: "chrome", keyring: "brave" },
-  { key: "microsoft-edge", kind: "chromium", label: "Microsoft Edge", dir: ".config/microsoft-edge", app: "chrome", keyring: "microsoft-edge" },
-  { key: "vivaldi", kind: "chromium", label: "Vivaldi", dir: ".config/vivaldi", app: "chrome", keyring: "vivaldi" },
-  { key: "firefox", kind: "firefox", label: "Firefox", dir: ".mozilla/firefox", app: "firefox", keyring: null },
+  { key: "google-chrome", kind: "chromium", label: "Google Chrome", config: "google-chrome", elsewhere: [], app: "chrome", keyring: "chrome" },
+  {
+    key: "chromium",
+    kind: "chromium",
+    label: "Chromium",
+    config: "chromium",
+    elsewhere: ["snap/chromium/common/chromium", ".var/app/org.chromium.Chromium/config/chromium"],
+    app: "chrome",
+    keyring: "chromium",
+  },
+  { key: "brave", kind: "chromium", label: "Brave", config: "BraveSoftware/Brave-Browser", elsewhere: [], app: "chrome", keyring: "brave" },
+  { key: "microsoft-edge", kind: "chromium", label: "Microsoft Edge", config: "microsoft-edge", elsewhere: [], app: "chrome", keyring: "microsoft-edge" },
+  { key: "vivaldi", kind: "chromium", label: "Vivaldi", config: "vivaldi", elsewhere: [], app: "chrome", keyring: "vivaldi" },
+  {
+    key: "firefox",
+    kind: "firefox",
+    label: "Firefox",
+    // Firefox 147 and later keep new profiles under the config folder; older ones, and snap and flatpak builds, elsewhere.
+    config: "mozilla/firefox",
+    elsewhere: [
+      ".mozilla/firefox",
+      "snap/firefox/common/.mozilla/firefox",
+      ".var/app/org.mozilla.firefox/config/mozilla/firefox",
+      ".var/app/org.mozilla.firefox/.mozilla/firefox",
+    ],
+    app: "firefox",
+    keyring: null,
+  },
+]
+
+/** Where a browser may keep its profiles, in the order they're tried: its config folder's place first. */
+export const rootsOf = (b: BrowserCatalog, home: string, configHome: string): ReadonlyArray<string> => [
+  `${configHome}/${b.config}`,
+  ...b.elsewhere.map((d) => `${home}/${d}`),
 ]
 
 export const catalogFor = (key: string): BrowserCatalog | null => CATALOG.find((b) => b.key === key) ?? null

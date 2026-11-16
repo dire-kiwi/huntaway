@@ -1,6 +1,6 @@
 import { Option, Schema } from "effect"
 import type { TeleportSite } from "@huntaway/contracts"
-import { isKnownSuffix, normalizeHost, registrableDomain } from "./sites.ts"
+import { isPublicSuffix, normalizeHost, siteOf } from "./sites.ts"
 
 // What `space_request_sign_ins` asks the user (HE-49), plainly: the sites an agent names are checked (each must be a
 // registrable domain the chosen browser profile holds), the profile holding most of them is picked, and the card's input
@@ -10,14 +10,17 @@ import { isKnownSuffix, normalizeHost, registrableDomain } from "./sites.ts"
 /** The tool's name as its prompt is raised (`McpHooks.askRule`). */
 export const REQUEST_TOOL = "mcp__spaces__space_request_sign_ins"
 
-/** A site name an agent gave, checked: a registrable domain (`github.com`), not a suffix (`com`) or a subdomain. */
+/**
+ * Site names an agent gave, checked: each must be a site as `siteOf` names one (`github.com`, `localhost`, an IP), not
+ * a subdomain (`api.github.com`) or a public suffix (`com`, `co.kr`). Whether the profile holds it is checked after.
+ */
 export const checkSites = (sites: ReadonlyArray<string>): { readonly valid: ReadonlyArray<string>; readonly invalid: ReadonlyArray<string> } => {
   const valid: Array<string> = []
   const invalid: Array<string> = []
   for (const raw of sites) {
     const s = normalizeHost(raw)
     if (s === "") continue
-    const ok = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/u.test(s) && registrableDomain(s) === s && !isKnownSuffix(s)
+    const ok = siteOf(s) === s && !isPublicSuffix(s)
     if (!ok) invalid.push(raw.trim())
     else if (!valid.includes(s)) valid.push(s)
   }

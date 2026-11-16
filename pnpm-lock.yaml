@@ -45,6 +45,9 @@ catalogs:
     sharp:
       specifier: 0.35.5
       version: 0.35.5
+    tldts:
+      specifier: 7.5.4
+      version: 7.5.4
     typescript:
       specifier: 7.0.2
       version: 7.0.2
@@ -232,6 +235,9 @@ importers:
       sharp:
         specifier: 'catalog:'
         version: 0.35.5(@types/node@24.19.2)
+      tldts:
+        specifier: 'catalog:'
+        version: 7.5.4
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
@@ -886,7 +892,7 @@ packages:
       effect: ^4.1.4
 
   '@dire-kiwi/docs-render@https://github.com/dire-kiwi/docs/releases/download/render-v0.4.0/dire-kiwi-docs-render-0.4.0.tgz':
-    resolution: {integrity: sha512-j11/yW7uuqvjwauVklAwad3EWuRZR2a1/XV+KzswmCuk4Rgk/7v5JFT4c3jmCu93XEc2FBWskRPn8YJ05VX20Q==, tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.4.0/dire-kiwi-docs-render-0.4.0.tgz}
+    resolution: {tarball: https://github.com/dire-kiwi/docs/releases/download/render-v0.4.0/dire-kiwi-docs-render-0.4.0.tgz}
     version: 0.4.0
     engines: {node: '>=20'}
 
@@ -5623,6 +5629,13 @@ packages:
   tinyrainbow@3.2.0:
     resolution: {integrity: sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==}
     engines: {node: '>=14.0.0'}
+
+  tldts-core@7.5.4:
+    resolution: {integrity: sha512-9+4zWtKEDZ3V3FoZ1B97rv+5z5oqp7yeXGVze3CxgQ+CJro9do9DCPD00wxstYZDXDMXsurkBerFfiB6GYtPbA==}
+
+  tldts@7.5.4:
+    resolution: {integrity: sha512-Rn2ABgjHZrA+jzqom5zhxA0hLohzYrIgfCPyhpTUxqsUrcsBYuab49LseR9waB9Jr8/MxdodvMHA91oRiGLO3Q==}
+    hasBin: true
 
   tmp-promise@3.0.3:
     resolution: {integrity: sha512-RwM7MoPojPxsOBYnyd2hy0bxtIlVrihNs9pj5SUvY8Zz1sQcQG2tG1hSr8PDxfgEB8RNKDhqbIlroIarSNDNsQ==}
@@ -11834,6 +11847,12 @@ snapshots:
   tinypool@2.2.0: {}
 
   tinyrainbow@3.2.0: {}
+
+  tldts-core@7.5.4: {}
+
+  tldts@7.5.4:
+    dependencies:
+      tldts-core: 7.5.4
 
   tmp-promise@3.0.3:
     dependencies:

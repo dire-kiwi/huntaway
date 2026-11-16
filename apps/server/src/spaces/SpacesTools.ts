@@ -247,7 +247,7 @@ export const spacesTools = Effect.gen(function* () {
       if (s.state !== "running") return text(`${s.name} isn't running: start it with start_space first.`, true)
       const { valid, invalid } = checkSites(sites)
       if (valid.length === 0) {
-        return text(`Give sites as registrable domains, like github.com${invalid.length > 0 ? ` (not: ${invalid.join(", ")})` : ""}.`, true)
+        return text(`Give sites as registrable domains, like github.com or bbc.co.uk${invalid.length > 0 ? ` (not: ${invalid.join(", ")})` : ""}.`, true)
       }
       const candidates: Array<Candidate> = []
       for (const src of yield* teleport.sources) {
@@ -272,7 +272,7 @@ export const spacesTools = Effect.gen(function* () {
       const out = [`Brought sign-ins for ${chosen.join(", ")} into ${s.name} from ${picked.browserLabel} (${picked.profileLabel}).`]
       const left = valid.filter((v) => !chosen.includes(v))
       if (left.length > 0) out.push(`Not brought: ${left.join(", ")}.`)
-      if (invalid.length > 0) out.push(`Not registrable domains, so not offered: ${invalid.join(", ")}.`)
+      if (invalid.length > 0) out.push(`Not sites (a subdomain, or a public suffix such as com), so not offered: ${invalid.join(", ")}.`)
       if (r.skipped.length > 0) out.push(`Skipped: ${r.skipped.join("; ")}.`)
       out.push("The Space's browser starts out signed in to those sites the next time it opens.")
       return text(out.join("\n"))
