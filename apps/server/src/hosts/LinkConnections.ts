@@ -142,6 +142,9 @@ export const helloOf = (info: HostInfo): LinkHello => ({
 /** Whether a peer that said `hello` joins the mesh: it speaks this protocol and has the capability. */
 export const meshes = (hello: LinkHello): boolean => hello.protocol === PROTOCOL && hello.capabilities.includes(Capability.mesh)
 
+/** Whether this host dials `link` itself: by URL, or over SSH. */
+export const dials = (link: Pick<LinkRow, "mode">): boolean => link.mode === "outbound" || link.mode === "ssh"
+
 /** `http(s)://…` as the websocket URL of `path` there. */
 export const wsUrl = (url: string, path: string) => `${url.replace(/\/+$/, "").replace(/^http/, "ws")}${path}`
 
@@ -470,7 +473,8 @@ export class LinkConnections extends Context.Service<
         const row = yield* repo.get(id)
         if (!reverse && row?.mode === "reverse")
           return `${row.name} links ${identity.hostName} itself, so a host that dials in under its id (${id}) with the hub token isn't taken for it`
-        if (row !== null && row.mode !== "inbound" && (yield* repo.assistantHosts).has(id))
+        // One that attaches back holds this host's token: it is the host, whatever profile runs its assistant there.
+        if (!reverse && row !== null && dials(row) && (yield* repo.assistantHosts).has(id))
           return `${identity.hostName} links assistant host ${row.name} itself, so a host that dials in under its id (${id}) isn't taken for it`
         return null
       })
@@ -611,7 +615,7 @@ export class LinkConnections extends Context.Service<
             for (const live of (yield* Ref.get(lives)).values()) {
               if (live.via !== "dial-in" || !assistants.has(live.id)) continue
               const row = yield* repo.get(live.id)
-              if (row !== null && row.mode !== "inbound")
+              if (row !== null && dials(row))
                 yield* live.drop(`${identity.hostName} links assistant host ${row.name} itself, so a host that dials in under its id isn't taken for it`)
             }
           }),
@@ -619,8 +623,9 @@ export class LinkConnections extends Context.Service<
         Effect.forkScoped,
       )
 
-      // Every link the hub dials is dialled from the start.
-      for (const link of yield* repo.list) if (link.mode !== "inbound") yield* start(link)
+      // Every link the hub dials is dialled from the start: by URL or over SSH. One that dials in, attaches back
+      // (`reverse`) or is a hub this host dials in to (`hub`) comes another way, and has no URL and token to dial.
+      for (const link of yield* repo.list) if (dials(link)) yield* start(link)
 
       return LinkConnections.of(connections)
     }),

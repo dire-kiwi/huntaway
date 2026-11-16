@@ -9,11 +9,11 @@ import { nowTimestamp } from "../platform/columns.ts"
 import { Identity } from "../platform/Identity.ts"
 import { AgentConfigs } from "../profiles/AgentConfigs.ts"
 import { About } from "../settings/About.ts"
-import { helloOf, LinkConnections } from "./LinkConnections.ts"
+import { dials, helloOf, LinkConnections } from "./LinkConnections.ts"
 import type { LinkView } from "./LinkConnections.ts"
 import { LinkRepo } from "./LinkRepo.ts"
 import type { LinkRow } from "./LinkRepo.ts"
-import { Mesh } from "./Mesh.ts"
+import { Mesh, sameHosts } from "./Mesh.ts"
 import { checkTarget, Ssh } from "./Ssh.ts"
 
 // The hub's directory of hosts and the links it keeps (docs/plan/08-hosts.md; inventory 05 §2.2): this host and every
@@ -68,7 +68,8 @@ export const linkEntry = (row: LinkRow, view: LinkView | undefined): Host => {
     // The switch is for links whose other end this host lets in: one it dials, or one that dials in.
     ...(row.mode === "outbound" || row.mode === "ssh" || row.mode === "inbound" ? { mesh: row.mesh } : {}),
     ...(live && hello?.role !== undefined ? { role: hello.role } : {}),
-    status: view?.status ?? (row.mode === "inbound" ? "offline" : "connecting"),
+    // Only a link this host dials is connecting before it is heard from; the others wait for the other end.
+    status: view?.status ?? (dials(row) ? "connecting" : "offline"),
     status_reason: view?.reason ?? null,
   }
 }
@@ -229,10 +230,11 @@ export class Links extends Context.Service<
 
       return Links.of({
         list,
+        // Only a list that differs from the one before: the neighbours watching it would otherwise take each as news.
         watch: Stream.concat(
           Stream.fromEffect(list),
           Stream.mapEffect(Stream.merge(connections.changes, mesh.changes), () => list, { concurrency: 1 }),
-        ),
+        ).pipe(Stream.changesWith(sameHosts)),
         add,
         addSsh,
         sshKey: ssh.publicKey,

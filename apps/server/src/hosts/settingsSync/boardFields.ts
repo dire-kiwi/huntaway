@@ -38,8 +38,11 @@ const namesBetween = (known: Iterable<string>, prefix: string, suffix: string): 
   const out: Array<string> = []
   for (const n of known) {
     if (!n.startsWith(prefix) || !n.endsWith(suffix) || n.length <= prefix.length + suffix.length) continue
+    const part = n.slice(prefix.length, n.length - suffix.length)
+    // A name is encoded: a `/` in it is a field further down (`profile/<name>/config/<config>`), not this one.
+    if (part.includes("/")) continue
     try {
-      out.push(decodeURIComponent(n.slice(prefix.length, n.length - suffix.length)))
+      out.push(decodeURIComponent(part))
     } catch {
       // One encoded wrong is no profile's.
     }
@@ -50,12 +53,10 @@ const namesBetween = (known: Iterable<string>, prefix: string, suffix: string): 
 const sameName = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
 const bool = (v: unknown): Effect.Effect<boolean, string> => (typeof v === "boolean" ? Effect.succeed(v) : Effect.fail("must be true or false"))
-const names = (v: unknown): Effect.Effect<ReadonlyArray<string>, string> =>
-  Array.isArray(v) && v.every((x) => typeof x === "string") ? Effect.succeed(v) : Effect.fail("must be a list of names")
-
 /** A reviewer as it syncs: its config by name. */
 const SyncedReviewer = Schema.Struct({ ...Reviewer.fields, claude_config_id: Schema.NullOr(Schema.String) })
 const decodeReviewers = Schema.decodeUnknownEffect(Schema.NullOr(Schema.Array(SyncedReviewer)))
+const decodeRenamed = Schema.decodeUnknownEffect(Schema.Struct({ renamed_to: Schema.String }))
 const decodeSwitches = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Boolean))
 
 /** `list` with each one's config `as` says. */
@@ -150,21 +151,55 @@ export const makeBoardFields = Effect.gen(function* () {
         }),
     )
 
-  /** The profile's configs, and its assistant's and threads' config, by name. */
-  const configList = (p: Profile) =>
-    column(
-      p,
-      "configs",
-      (row) => Effect.map(configNames, (c) => row.claude_config_ids.flatMap((id) => c.name(id) ?? [])),
-      (v) =>
+  /**
+   * Whether the profile has the config of that name (true, or null once taken off): one field each, so a host keeps the
+   * configs of its own that another host has none of, and a config taken off on one host goes from the others. One this
+   * host has no config of the name is waited for. Taken off, the assistant's and threads' config go back to the default
+   * if it was theirs, as `Profiles.update` does.
+   */
+  const configOn = (p: Profile, config: string): BoardField => {
+    const current = Effect.map(profiles.get(p.id), Option.getOrNull)
+    return {
+      name: `${profilePrefix(p.name)}config/${encodeURIComponent(config)}`,
+      read: Effect.gen(function* () {
+        const row = yield* current
+        if (row === null) return null
+        const c = yield* configNames
+        return row.claude_config_ids.some((id) => c.name(id) === config) ? true : null
+      }),
+      write: (v) =>
         Effect.gen(function* () {
-          const want = yield* names(v)
+          const row = yield* current
+          if (row === null) return yield* Effect.void
           const c = yield* configNames
-          const ids = want.flatMap((n) => c.id(n) ?? [])
-          if (ids.length === 0 && want.length > 0) return yield* Effect.fail("none of those configs is on this host")
-          return { claude_config_ids: ids.map((id) => AgentConfigId.make(id)) }
+          const has = row.claude_config_ids
+          if (v === true) {
+            const id = c.id(config)
+            if (id === null) return yield* Effect.fail(`there's no config ${config} on this host`)
+            if (has.includes(AgentConfigId.make(id))) return yield* Effect.void
+            return yield* profiles.update(row.id, { claude_config_ids: [...has, AgentConfigId.make(id)] })
+          }
+          if (v !== null) return yield* Effect.fail("must be true or null")
+          const left = has.filter((id) => c.name(id) !== config)
+          if (left.length === has.length) return yield* Effect.void
+          const stays = (id: AgentConfigId | null) => id === null || left.includes(id)
+          return yield* profiles.update(row.id, {
+            claude_config_ids: left,
+            ...(stays(row.assistant_config_id) ? {} : { assistant_config_id: null }),
+            ...(stays(row.threads_config_id) ? {} : { threads_config_id: null }),
+          })
         }),
-    )
+      event: "profiles",
+      absentUnknown: true,
+    }
+  }
+  /** The configs named for profile `p` here and in `known`'s entries. */
+  const configsOf = (p: Profile, known: Iterable<string>) =>
+    Effect.map(configNames, (c) => {
+      const out = new Set(p.claude_config_ids.flatMap((id) => c.name(id) ?? []))
+      for (const name of namesBetween(known, `${profilePrefix(p.name)}config/`, "")) out.add(name)
+      return [...out].toSorted()
+    })
   const configOf = (p: Profile, key: "assistant_config_id" | "threads_config_id") =>
     column(
       p,
@@ -216,13 +251,20 @@ export const makeBoardFields = Effect.gen(function* () {
   }
 
   /**
-   * Whether a profile of that name is on the board. One another host made is made here (no configs but those of the
-   * names its other fields give, once they are applied); one removed elsewhere is removed here only while it has no
-   * projects and no tasks here: a profile that holds work is never deleted by sync, and stays until it doesn't.
+   * Whether a profile of that name is on the board: true, null once removed, or `{ renamed_to }` once renamed (its former
+   * names are kept, `ProfileRepo.renamed`). One another host made is made here (no configs but those its other fields
+   * name, once they are applied). One renamed elsewhere is renamed here, in place of an empty one of the new name sync may
+   * have made first. One removed elsewhere is removed here only while it has no projects and no tasks here: sync never
+   * deletes work, and the profile stays until it holds none.
    */
   const exists = (name: string): BoardField => ({
     name: profilePrefix(name) + EXISTS,
-    read: Effect.map(byName(name), (p) => (p === undefined ? null : true)),
+    read: Effect.gen(function* () {
+      if ((yield* byName(name)) !== undefined) return true
+      const id = yield* profiles.formerly(name)
+      const now = id === null ? null : Option.getOrNull(yield* profiles.get(id))
+      return now === null ? null : { renamed_to: now.name }
+    }),
     write: (v) =>
       Effect.gen(function* () {
         const p = yield* byName(name)
@@ -231,7 +273,19 @@ export const makeBoardFields = Effect.gen(function* () {
           if ((yield* profiles.list).some((o) => sameName(o.name, name))) return yield* Effect.fail("a profile of that name in another case is here")
           return yield* profiles.insert(yield* newId, yield* nowTimestamp, { name, claude_config_ids: [] })
         }
-        if (v !== null) return yield* Effect.fail("must be true or null")
+        if (v !== null) {
+          const to = yield* decodeRenamed(v).pipe(Effect.mapError(() => "must be true, null or {renamed_to}"))
+          if (p === undefined) return yield* Effect.void
+          const there = yield* byName(to.renamed_to)
+          if (there !== undefined) {
+            if ((yield* profiles.holds(there.id)) > 0) return yield* Effect.fail(`a profile ${to.renamed_to} with projects or tasks is here too`)
+            yield* profiles.delete(there.id)
+          } else if ((yield* profiles.list).some((o) => sameName(o.name, to.renamed_to))) {
+            return yield* Effect.fail(`a profile ${to.renamed_to} in another case is here`)
+          }
+          yield* profiles.update(p.id, { name: to.renamed_to })
+          return yield* profiles.renamed(p.id, name)
+        }
         if (p === undefined) return yield* Effect.void
         if ((yield* profiles.holds(p.id)) > 0) return yield* Effect.fail("it has projects or tasks on this host, which aren't deleted by sync")
         return yield* Effect.asVoid(profiles.delete(p.id))
@@ -257,8 +311,9 @@ export const makeBoardFields = Effect.gen(function* () {
   })
 
   /** The fields: each profile's here and each one `known` names, and each config's here. */
-  const fields = (known: Iterable<string>) =>
+  const fields = (given: Iterable<string>) =>
     Effect.gen(function* () {
+      const names = [...given]
       const out: Array<BoardField> = []
       const here = yield* profiles.list
       const seen = new Set<string>()
@@ -284,13 +339,13 @@ export const makeBoardFields = Effect.gen(function* () {
           ),
           reviewers(p, "reviewers"),
           reviewers(p, "summarizers"),
-          configList(p),
           configOf(p, "assistant_config_id"),
           configOf(p, "threads_config_id"),
           switches(p),
         )
+        for (const config of yield* configsOf(p, names)) out.push(configOn(p, config))
       }
-      for (const name of namesBetween(known, "profile/", `/${EXISTS}`)) if (!seen.has(name)) out.push(exists(name))
+      for (const name of namesBetween(names, "profile/", `/${EXISTS}`)) if (!seen.has(name)) out.push(exists(name))
       const configNamesSeen = new Set<string>()
       for (const c of yield* configs.list) {
         if (configNamesSeen.has(c.name)) continue

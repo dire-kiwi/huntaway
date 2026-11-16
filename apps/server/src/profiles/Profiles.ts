@@ -190,6 +190,7 @@ export class Profiles extends Context.Service<Profiles, ProfilesShape>()("huntaw
               tint,
             }
             yield* repo.update(id, columns)
+            if (name !== undefined && name !== current.name) yield* repo.renamed(id, current.name)
             yield* configs.emitChanged
             return yield* getProfile(id)
           }),

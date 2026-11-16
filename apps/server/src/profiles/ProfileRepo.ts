@@ -64,6 +64,10 @@ export interface ProfileRepoShape {
   readonly running: (id: ProfileId) => Effect.Effect<number>
   /** How many projects and tasks the profile has here: what keeps settings sync from deleting it (HE-46). */
   readonly holds: (id: ProfileId) => Effect.Effect<number>
+  /** Notes that the profile was called `from` (HE-46): settings sync tells a rename from a removal by it. */
+  readonly renamed: (id: ProfileId, from: string) => Effect.Effect<void>
+  /** The profile that was called `name` before, if it is still here. */
+  readonly formerly: (name: string) => Effect.Effect<ProfileId | null>
   /**
    * Delete the profile and what hangs off it, by hand and in order: review threads, its other tasks, its projects,
    * the row. (The foreign keys would cascade; the order is the old `delete_profile`'s, for the steps later milestones
@@ -153,6 +157,14 @@ export class ProfileRepo extends Context.Service<ProfileRepo, ProfileRepoShape>(
         asanaToken,
         running,
         holds,
+        renamed: (id, from) =>
+          sql`INSERT INTO profile_former_names (name, profile_id) VALUES (${from}, ${id})
+              ON CONFLICT (name) DO UPDATE SET profile_id = excluded.profile_id`.pipe(Effect.asVoid, Effect.orDie),
+        formerly: (name) =>
+          sql<{ readonly id: ProfileId }>`SELECT profile_id AS id FROM profile_former_names WHERE name = ${name}`.pipe(
+            Effect.map((rows) => rows[0]?.id ?? null),
+            Effect.orDie,
+          ),
         delete: remove,
         usedPaths,
       })

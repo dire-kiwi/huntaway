@@ -1,6 +1,5 @@
-import { Context, Effect, FiberMap, Layer, Ref, Stream, SubscriptionRef } from "effect"
-import { HostId, LinkId } from "@huntaway/contracts"
-import type { Host } from "@huntaway/contracts"
+import { Context, Effect, FiberMap, Layer, Ref, Schema, Stream, SubscriptionRef } from "effect"
+import { Host, HostId, LinkId } from "@huntaway/contracts"
 import { Identity } from "../platform/Identity.ts"
 import { LinkConnections, meshes } from "./LinkConnections.ts"
 import type { Live } from "./LinkConnections.ts"
@@ -14,6 +13,9 @@ import { LinkRepo } from "./LinkRepo.ts"
 
 /** Hosts further than this are left out: a mesh of a few machines never needs them. */
 export const MAX_HOPS = 8
+
+/** Two directories alike, host by host. */
+export const sameHosts = Schema.toEquivalence(Schema.Array(Host))
 
 /** How long a neighbour's directory waits before it is watched again after its stream ended. */
 const REWATCH = "1 second"
@@ -95,7 +97,14 @@ export class Mesh extends Context.Service<
       /** `live`'s directory, kept until its connection goes; watched again a second after its stream ends. */
       const watch = (live: Live) =>
         live.client("hub.hosts.watch", undefined).pipe(
-          Stream.runForEach((hosts) => SubscriptionRef.update(lists, (all) => new Map(all).set(live.id, hosts))),
+          // A list like the one held changes nothing: the neighbour sends its list again whenever this host's changes,
+          // so a list taken as new every time would have the two send theirs back and forth for ever.
+          Stream.runForEach((hosts) =>
+            SubscriptionRef.update(lists, (all) => {
+              const had = all.get(live.id)
+              return had !== undefined && sameHosts(had, hosts) ? all : new Map(all).set(live.id, hosts)
+            }),
+          ),
           Effect.catchCause((cause) => Effect.logDebug(`mesh: ${live.hello.name}'s directory`, cause)),
           Effect.andThen(forget(live.id)),
           Effect.andThen(Effect.sleep(REWATCH)),

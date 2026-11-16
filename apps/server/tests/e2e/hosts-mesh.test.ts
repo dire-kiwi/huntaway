@@ -194,4 +194,43 @@ describe("the mesh, whole servers", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     90_000,
   )
+
+  it.live(
+    "two linked hosts go quiet; a restart keeps the other way up; a host linked back can be a profile's assistant host",
+    () =>
+      Effect.gen(function* () {
+        const aServer = yield* startServer(SERVE)
+        const bServer = yield* startServer(SERVE)
+        const a = yield* boardClient(aServer.port, aServer.token)
+        const b = yield* boardClient(bServer.port, bServer.token)
+        const aId = (yield* a("host.info", undefined)).host_id
+        const bId = (yield* b("host.info", undefined)).host_id
+        yield* a("hub.hosts.add", { url: `http://127.0.0.1:${bServer.port}`, token: bServer.token })
+        yield* hostsWhen(b, (hs) => entry(hs, aId)?.connected === true, "B shows A")
+        yield* hostsWhen(a, (hs) => entry(hs, bId)?.connected === true, "A shows B")
+
+        // Idle, a directory changes only with a ping's heard time (every 20 s): no more than a few lists in 5 s, where
+        // the two re-sending each other's lists sent thousands.
+        const burst = yield* a("hub.hosts.watch", undefined).pipe(Stream.take(10), Stream.runCount, Effect.timeoutOption("5 seconds"))
+        assert.isTrue(Option.isNone(burst), "A's directory kept changing while nothing happened")
+
+        // B restarts: A dials it again and attaches back, and B shows A connected, not a link it can't dial.
+        yield* bServer.process.kill({ killSignal: "SIGKILL" })
+        const again = yield* startServer([...SERVE, "--port", String(bServer.port)], {}, bServer.dataDir)
+        const b2 = yield* boardClient(again.port, again.token)
+        // Before A is back it is away, never "refused" for a link B has no URL or token to dial.
+        assert.notStrictEqual(entry(yield* b2("hub.hosts.list", undefined), aId)?.status, "refused")
+        const onB = yield* hostsWhen(b2, (hs) => entry(hs, aId)?.connected === true, "B shows A again after its restart")
+        assert.strictEqual(entry(onB, aId)?.mode, "reverse")
+
+        // B's profile runs its assistant on A, which B reaches back over A's link: A's attach is still taken.
+        const profile = yield* b2("profiles.create", { profile: { name: "assist" } })
+        yield* b2("profiles.update", { id: profile.id, patch: { assistant_host: LinkId.make(aId) } })
+        yield* a("hub.hosts.update", { id: LinkId.make(bId), mesh: false })
+        yield* hostsWhen(b2, (hs) => entry(hs, aId)?.connected !== true, "A no longer attaches back")
+        yield* a("hub.hosts.update", { id: LinkId.make(bId), mesh: true })
+        yield* hostsWhen(b2, (hs) => entry(hs, aId)?.connected === true, "A attaches back to B, whose profile's assistant runs on A")
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    90_000,
+  )
 })
